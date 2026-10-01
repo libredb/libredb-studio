@@ -201,6 +201,7 @@ An SSH tunnel is supported, because etcd advertises no address the client follow
 ### 4.6 Server versions
 
 etcd 3.7 is tested and claimed; `Status.version` is read at connect and shown, and nothing is refused by version, so a feature an older server lacks fails in that server's own words.
+The Storage tab reads the version too: a server before 3.6 sends no storage quota, and 3.6.0 to 3.6.5 send one left at its default as 0, so a 0 from 3.6 or later is read as the 2 GiB default (section 7).
 Kubernetes distributions ship older etcd: k3s v1.35.5 embeds etcd 3.6.7, below the nested-transaction RBAC fix of 3.6.9 and the open-ended watch fix of 3.6.14 and 3.7.1.
 
 ### 4.7 A user who is not root
@@ -209,7 +210,7 @@ etcd refuses a whole range the caller's grants do not cover, so the walks of the
 A group keeps the ranges it may read, and every read Studio generates for it reads those ranges and no other bytes; the counts say which scope they cover.
 Listing leases needs READ on every leased key in the cluster, and listing users and roles needs the root role, so those folders carry etcd's refusal as a note instead of a list.
 etcd lists no permission for the root role, which may read and write every key, so the result of `role get root` carries the warning "The root role may read and write every key, whatever permissions etcd lists for it.", and the root role's Source tab heads its permissions with the same words.
-A grant an admin changes is seen from the first call that meets etcd's "revision of auth store is old", after which the grants are read again.
+A grant an admin changes is seen from the first call that meets etcd's "revision of auth store is old", after which the grants are read again before the next call that uses them; a value edit's apply sends nothing before its one transaction, so it leaves that read to the next call.
 
 ## 5. Query interface
 
@@ -218,7 +219,7 @@ A grant an admin changes is seen from the first call that meets etcd's "revision
 #### Words
 
 The command line is split into words by the POSIX shell's quoting rules: single quotes keep everything literally, double quotes escape only `"`, `\`, `$`, a backquote and a newline, a backslash outside quotes escapes the next character, and a `#` that begins a word starts a comment.
-Studio runs no shell, so text a shell would expand or reject is refused rather than taken literally: an unquoted or double-quoted `$` before anything but a blank, the end of the word or a closing double quote; an unquoted or double-quoted backquote; a `~` that begins a word, or follows the `=` or a `:` of an unquoted `NAME=` word; unquoted braces holding an unquoted comma, or a `..` whether its dots are quoted or not, which a shell expands into several words, so unquoted JSON such as `{"a":1,"b":2}` is refused; a backslash that ends the text; and an unquoted `;`, `&`, `|`, `<`, `>`, `(` or `)`.
+Studio runs no shell, so text a shell would expand or reject is refused rather than taken literally: an unquoted or double-quoted `$` before anything but a blank, the end of the word or a closing double quote; an unquoted or double-quoted backquote; a `~` that begins a word, or follows the `=` or a `:` of an unquoted `NAME=` word; an unquoted `=` that begins a word holding more than it, which zsh expands to a command's path (a lone `=` stays data); unquoted braces holding an unquoted comma, or a `..` whether its dots are quoted or not, which a shell expands into several words, so unquoted JSON such as `{"a":1,"b":2}` is refused; a backslash that ends the text; and an unquoted `;`, `&`, `|`, `<`, `>`, `(` or `)`.
 Glob characters are data, as a shell passes them when nothing matches.
 
 #### One command per run
@@ -291,6 +292,7 @@ A live watch panel is filed as U56.
 | `ETCD_RECEIVE_CAP_BYTES` | 16,777,216 | The largest single answer the channel accepts |
 
 Every page of one read is pinned to its first page's revision, and a read the budget stops answers the rows it holds with a warning naming the bound and the key it stopped before.
+The six lists etcd answers whole, from `lease list`, `lease timetolive --keys`, `user list`, `role list`, `user get --detail` and `role get`, show their first `DEFAULT_QUERY_LIMIT` entries with a warning naming how many etcd answered, since only the receive cap bounds them on the wire.
 etcd's `Range` limits a page by its count of keys alone, so a page whose answer the receive cap refuses is asked again from the same key and revision with half its limit, and the read goes on from that size; only a single key larger than the cap fails, naming the cap (measured: twenty values of 1 MiB answered 20,972,150 bytes, past the 16 MiB cap, at a first page of 100).
 An answer past the receive cap to a `put` or `del` says that etcd applied the write, and to a `txn` that one of its branches ran, because etcd answers a write only after applying it.
 
@@ -376,7 +378,7 @@ The Keys panel walks the key space with `/` as its separator, one keys-only page
 The pattern box takes a prefix, not a glob: `/app/*` walks `/app/` and never `/apple/x`, and a `*` typed elsewhere is data.
 The total is the exact count of the keys the walk covers at its revision, and for a user who is not root, of the keys under the ranges it may read.
 A key that is not UTF-8 is left out and counted on one line, because a key decoded with replacement characters would address another key.
-Activating a key opens its Source tab; a compaction between pages asks to start the walk again.
+Activating a key opens its Source tab; a compaction between pages asks to start the walk again, and so does a page that would read other ranges than the walk's first page, after the grants were read again (section 4.7) or under another prefix.
 The embedded workspace ships no Keys panel; a key is read there with a typed `get`.
 
 ## 7. Monitoring & health
@@ -384,7 +386,7 @@ The embedded workspace ships no Keys panel; a key is read there with a typed `ge
 Health reads `Status` of the member this connection reaches, then the alarm list, which covers every member, and raises instead of answering healthy in two cases: a member with no leader raises the lost-quorum error, and an alarm raised on any member raises "etcd reports active alarms: ...", naming every alarm and the Admin > Operations card that disarms them once their cause is fixed.
 Test Connection then reports the connection as connected but degraded, with that sentence, and fleet health reports it as an error.
 The overview gives the version, the exact key count and the member's size on disk; for a user who is not root the count covers the ranges it may read and the Tables card says so.
-Storage is one row for the answering member, a quota of 0 read as etcd's 2 GiB default; the Tables tab counts each group's keys when it opens, "The key-prefix groups; a key in no group is counted in the Overview and not here".
+Storage is one row for the answering member, its usage the size on disk over the quota the member runs under, a quota of 0 from 3.6 or later read as the 2 GiB default (3.6.0 to 3.6.5 send the flag's 0, and 3.6.6 and later answer the default themselves), and "-" when the quota is disabled (a negative `--quota-backend-bytes`) or not reported (a server before 3.6 sends none); the Tables tab counts each group's keys when it opens, "The key-prefix groups; a key in no group is counted in the Overview and not here".
 etcd keeps no query log and reports no client sessions, and its performance metrics are not read.
 
 ## 8. Maintenance
@@ -442,6 +444,7 @@ The walk's bounds of section 6.1 and the read bounds of section 5.4 were measure
 A watch at the cap returned 10 ms after its window at a query timeout of 5,000 ms, so the margin stays 1,000 ms.
 Through the network alias the three members of `etcd-cluster` share inside the compose network, stopping the answering member cost 0 reads, the next read answered from another member in 2 ms, and no pause between two write answers passed 28 ms, under Node v26.10.0 (KE13).
 With two of three members stopped, endpoint status, a serializable get, a serializable member list, lease list, a read-only txn of serializable gets and defragment answered in 2 to 14 ms, and the linearizable get and member list failed within 2 ms with the lost-quorum sentence (KE14).
+Sent with the `hasleader` metadata to the same member, each of those six failed with "etcdserver: no leader" under Bun and Node (the six `etcd-cluster/*-no-leader-hasleader` captures of `tests/fixtures/etcd/`, 2026-10-01), which is why section 4.4 sends them without it.
 A value edit whose Txn met its deadline while two followers were paused was applied in 3 of 3 runs, and every one was reported as possibly applied; a top-level put in the same state was never sent, because the read before it met its deadline first (KE15).
 A write that met `etcdserver: invalid auth token` or `etcdserver: user name is empty` was not applied, so such a write is sent once more after its one renewal; no write could be made to meet `etcdserver: revision of auth store is old`, so a write that does keeps the sentence that it may have been applied (KE12).
 A five-minute watch under Bun saw 297 of the 298 writes made one a second from its start to its close, with no stall and its slowest paged read taking 11 ms, and a ten-second watch at 23 writes a second saw every one of 232 writes in three runs of three (KE16).
