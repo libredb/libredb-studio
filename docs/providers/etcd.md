@@ -179,8 +179,8 @@ The connect sequence answers each of etcd's refusals in words of its own: a pass
 | `disable`, or no TLS panel | plaintext | not checked | not checked |
 | `require` | TLS | not checked | not checked |
 | `verify-system` | TLS | the runtime's roots | checked |
-| `verify-ca` | TLS | the pasted CA | checked, as every Node provider of this repository checks it |
-| `verify-full` | TLS | the pasted CA | checked |
+| `verify-ca` | TLS | the pasted CA, or the runtime's roots when none is pasted | checked, as in `verify-full`, by decision: not every other provider checks it in this mode |
+| `verify-full` | TLS | the pasted CA, or the runtime's roots when none is pasted | checked |
 
 The certificate is checked against the connection's host, or against the far end of the SSH tunnel when one carries the connection, never against the tunnel's local `127.0.0.1`.
 A certificate that carries only an IP address verifies for that IP.
