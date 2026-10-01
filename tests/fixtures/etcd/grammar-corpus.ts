@@ -264,6 +264,8 @@ export const GRAMMAR_CORPUS: readonly GrammarCorpusCase[] = [
   shellRefusal("a ~ that begins a word is refused", "get ~/x", "shell-expansion", 4),
   // Measured: bash passes a=/home/x/x for a=~/x outside POSIX mode.
   shellRefusal("a ~ after the = of a NAME= word is refused", "put k a=~/x", "shell-expansion", 6),
+  // Measured: zsh 5.9 passes /usr/bin/ls for =ls, where bash and dash pass =ls.
+  shellRefusal("an = that begins a word is refused", "put k =ls", "shell-expansion", 6),
   // Measured: bash and zsh pass two words for {a,b}.
   shellRefusal("braces holding a comma are refused", "put k {a,b}", "shell-expansion", 6),
   shellRefusal("a backquote is refused", "put k `ls`", "shell-expansion", 6),

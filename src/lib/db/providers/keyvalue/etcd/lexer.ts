@@ -14,10 +14,12 @@
  *   zsh 5.9 before it was written down: a `$` before anything but a blank, the end of the word or
  *   a closing double quote (bash reads `$'..'`, `$".."` and `$[..]`, zsh `$=x` and `$~x`), a
  *   backquote, a `~` that begins a word or follows the `=` or a `:` of an unquoted `NAME=` word
- *   (bash outside POSIX mode), braces holding an unquoted comma or a `..` quoted or not (bash
- *   and zsh expand them into several words, zsh even `{1.'.'3}`), a backslash that ends the text
- *   (bash keeps it and zsh drops it), and `;`, `&`, `|`, `<`, `>`, `(` and `)`. Glob characters
- *   stay data, as a shell passes them when nothing matches.
+ *   (bash outside POSIX mode), an unquoted `=` that begins a word holding more than it (zsh puts
+ *   the path of the command the rest names in its place, or fails), braces holding an unquoted
+ *   comma or a `..` quoted or not (bash and zsh expand them into several words, zsh even
+ *   `{1.'.'3}`), a backslash that ends the text (bash keeps it and zsh drops it), and `;`, `&`,
+ *   `|`, `<`, `>`, `(` and `)`. Glob characters stay data, as a shell passes them when nothing
+ *   matches.
  * - A txn body is read as etcdctl v3.7.2 reads its standard input (txn_command.go): each line
  *   trimmed as Go's strings.TrimSpace trims it, a compare split as ParseCompare's
  *   fmt.Sscanf("%q) %s %q") reads it, a request split by Argify's regular expression (util.go),
@@ -320,6 +322,7 @@ const DOLLAR = shellSentence(
 );
 const BACKQUOTE = shellSentence("the backquote", "which a shell reads as a command to run", KEEP_TEXT);
 const TILDE = shellSentence("the ~ that begins the word", "which a shell expands to a home directory", KEEP_WORD);
+const EQUALS = shellSentence("the = that begins the word", "which zsh expands to a command's path", KEEP_WORD);
 const ASSIGNMENT_TILDE = shellSentence(
   "the ~ after the = or a : of the word",
   "which bash expands to a home directory",
@@ -457,6 +460,8 @@ interface JoinedWord extends WordText {
 function wordRefusals(word: JoinedWord): LexRefusal[] {
   const sentences: LineRefusal["sentence"][] = [];
   if (word.text.startsWith("~") && word.quoting[0] === "u") sentences.push(TILDE);
+  // zsh reads the rest of the word, its quotes removed, as a command's name, so a lone = stays data.
+  if (word.text.length > 1 && word.text.startsWith("=") && word.quoting[0] === "u") sentences.push(EQUALS);
   if (hasAssignmentTilde(word.text, word.quoting)) sentences.push(ASSIGNMENT_TILDE);
   if (hasBraceExpansion(word.text, word.quoting)) sentences.push(BRACES);
   return sentences.map((sentence) => ({
@@ -1296,10 +1301,11 @@ export function holdsUnprintedRune(text: string): boolean {
 /**
  * A word that reads back as itself in both word rules and in a shell, so it needs no quotes:
  * letters, digits and `_-./:@%+=,^`, and the characters past ASCII that Go's %q prints as
- * themselves. It is conservative on purpose: glob characters, which the lexer reads as data, are
- * quoted too, so a generated command also pastes into a shell as written, and so is a word that
- * begins with `=`, which zsh expands to a command's path (measured: zsh 5.9 read =ls as /usr/bin/ls),
- * and every character Go would escape, so no invisible or reordering character is shown bare (spec 5.5).
+ * themselves, but never a word that begins with `=`, which zsh expands to a command's path
+ * (measured: zsh 5.9 read =ls as /usr/bin/ls) and the command line's rule therefore refuses. It is
+ * conservative on purpose: glob characters, which the lexer reads as data, are quoted too, so a
+ * generated command also pastes into a shell as written, and so is every character Go would escape,
+ * so no invisible or reordering character is shown bare (spec 5.5).
  */
 function isBare(text: string): boolean {
   if (text === "" || text.startsWith("=")) return false;

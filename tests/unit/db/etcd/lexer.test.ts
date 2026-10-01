@@ -128,6 +128,12 @@ const WORD_RULES: readonly [rule: string, text: string, words: readonly string[]
   ],
   ["a $ at the end of a line inside double quotes is data", 'put k "a$\nb"', ["put", "k", "a$\nb"]],
   ["a ~ inside a word is data", "put k a~b", ["put", "k", "a~b"]],
+  ["a lone =, and an = followed only by empty quotes, is data", "put k = =''", ["put", "k", "=", "="]],
+  [
+    "a quoted or escaped = that begins a word is data, and so is an = inside a word",
+    "put k \\=ls '='ls x==ls",
+    ["put", "k", "=ls", "=ls", "x==ls"],
+  ],
   ["a ~ not right after the = or a : of a NAME= word is data", "put k a=b~c a=x:y~", ["put", "k", "a=b~c", "a=x:y~"]],
   [
     "a ~ after a quoted or escaped : of a NAME= word, or itself quoted or escaped, is data",
@@ -184,6 +190,8 @@ const tilde = (line: number, column: number) =>
   `Studio runs no shell, so it refuses the ~ that begins the word at line ${line}, column ${column}, which a shell expands to a home directory: write the word between single quotes to keep it as written.`;
 const assignmentTilde = (line: number, column: number) =>
   `Studio runs no shell, so it refuses the ~ after the = or a : of the word at line ${line}, column ${column}, which bash expands to a home directory: write the word between single quotes to keep it as written.`;
+const equals = (line: number, column: number) =>
+  `Studio runs no shell, so it refuses the = that begins the word at line ${line}, column ${column}, which zsh expands to a command's path: write the word between single quotes to keep it as written.`;
 const braces = (line: number, column: number) =>
   `Studio runs no shell, so it refuses the braces in the word at line ${line}, column ${column}, which a shell may expand into several words: write the word between single quotes to keep it as written.`;
 const operator = (char: string, line: number, column: number) =>
@@ -193,7 +201,8 @@ const operator = (char: string, line: number, column: number) =>
  * The spec's list (a name, a digit, {, (, @, *, #, ?, -, $ and ! after a $) plus what the
  * measurement found it missed: bash and zsh read $'..' as ANSI-C quoting, bash reads $".." and
  * $[..], zsh reads $=x, $^x, $~x and $+x, bash (outside POSIX mode) expands a ~ after the = or a :
- * of a NAME= word, and bash and zsh expand braces holding a comma or "..".
+ * of a NAME= word, zsh expands a word that begins with an unquoted = to a command's path, and bash
+ * and zsh expand braces holding a comma or "..".
  */
 const SHELL_REFUSALS: readonly [form: string, text: string, code: string, column: number, message: string][] = [
   ["$NAME", "put k $HOME", "shell-expansion", 6, dollar(1, 7)],
@@ -229,6 +238,12 @@ const SHELL_REFUSALS: readonly [form: string, text: string, code: string, column
     assignmentTilde(1, 7),
   ],
   ["a ~ right after a : of a NAME= word", "put k a=b:~/x", "shell-expansion", 6, assignmentTilde(1, 7)],
+  // Measured: zsh 5.9 read =ls, ='ls' and =l"s" as /usr/bin/ls and failed on =nosuchcmd, == and =/x with
+  // "not found", under -c, under -i and in a script, where bash 5.2.21 and dash passed each as written.
+  ["an = that begins a word (zsh)", "put k =ls", "shell-expansion", 6, equals(1, 7)],
+  ["an = that begins a word whose rest is quoted (zsh)", "put k ='ls'", "shell-expansion", 6, equals(1, 7)],
+  ["an = that begins a key (zsh)", "get =ls", "shell-expansion", 4, equals(1, 5)],
+  ["== (zsh)", "put k ==", "shell-expansion", 6, equals(1, 7)],
   ["braces holding a comma", "put k {a,b}", "shell-expansion", 6, braces(1, 7)],
   ["braces holding ..", "put k {1..3}", "shell-expansion", 6, braces(1, 7)],
   ["braces inside a word", "put k x{a,b}y", "shell-expansion", 6, braces(1, 7)],
@@ -369,7 +384,8 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
 
   test("a name begins with a letter or _, goes on with letters, digits and _, and ends at an unquoted =, and only txn itself is txn", () => {
     expect(split("1A=2 get").lead).toEqual({ roles: [], commandIndex: 0 });
-    expect(split("=A get").lead).toEqual({ roles: [], commandIndex: 0 });
+    // A word that begins with = holds no name; a lone = is the one such word the command line reads.
+    expect(split("= get").lead).toEqual({ roles: [], commandIndex: 0 });
     expect(split("_A=2 get").lead).toEqual({ roles: ["assignment"], commandIndex: 1 });
     // Measured: bash 5.2.21, dash and zsh 5.9 each passed A1=x and A1_B2=3 to env as assignments.
     expect(split("A1=x get").lead).toEqual({ roles: ["assignment"], commandIndex: 1 });
