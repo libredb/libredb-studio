@@ -962,13 +962,18 @@ describe("TreeRow trailing slot", () => {
     expect(withFailure.querySelector('[data-testid="tree-row-unavailable"]')).toBeNull();
   });
 
-  test("a sentence in the slot leaves the row's name its room, capped as the type slot is", () => {
+  test("a sentence and the row's name split the room 60/40, and each takes what the other leaves", () => {
     // etcd's reader, as Task 27 saw it: the Leases folder carries a refusal many times its name's
     // width, and the two shared the row's shrinking in proportion to their widths, so the name read
-    // "Le...". The cap is the class doing the work, since the name and the sentence both truncate
-    // either way. happy-dom lays nothing out, so the class is what this can read, as the flat
-    // explorer's column list pins its own cap.
+    // "Le...". A 40% cap on the sentence kept the name whole but cut every sentence wider than 40%
+    // of the row, even where the row had room for it. The split does neither: each starts from its
+    // share of the row, grows into what the other leaves, and stops at its own text, so a sentence
+    // is cut only where the two do not fit. happy-dom lays nothing out, so the classes are what this
+    // can read, as the flat explorer's column list pins its own cap.
     const refusal = "Listing leases needs READ on every leased key in the cluster (etcd: permission denied)";
+    const tokens = (element: Element | null) => element?.className.split(" ") ?? [];
+    const nameShare = ["grow", "basis-[60%]", "max-w-max", "truncate"];
+    const sentenceShare = ["ml-auto", "min-w-0", "grow", "basis-[40%]", "max-w-max", "truncate"];
     const folder = flattenTree(
       stateOf({
         kinds: [{ id: "lease", role: "config", label: "Lease", labelPlural: "Leases" }],
@@ -982,15 +987,26 @@ describe("TreeRow trailing slot", () => {
     if (folder === undefined) throw new Error("the walk emitted no folder row to draw");
 
     const refused = drawRow({ row: folder });
-    expect(refused.querySelector('[data-testid="tree-row-label"]')?.textContent).toBe("Leases");
+    const name = refused.querySelector('[data-testid="tree-row-label"]');
+    expect(name?.textContent).toBe("Leases");
+    expect(tokens(name)).toEqual(expect.arrayContaining(nameShare));
     const sentence = refused.querySelector('[data-testid="tree-row-unavailable"]');
     expect(sentence?.getAttribute("title")).toBe(refusal);
-    expect(sentence?.className).toContain("truncate");
-    expect(sentence?.className).toContain("max-w-[40%]");
+    expect(tokens(sentence)).toEqual(expect.arrayContaining(sentenceShare));
+    expect(tokens(sentence)).not.toContain("max-w-[40%]");
 
-    // A failure takes the same slot from the refusal, so it leaves the name the same room.
+    // A failure takes the same slot from the refusal, so it splits the row the same way.
     const failed = drawRow({ row: folder, failure: { message: refusal } });
-    expect(failed.querySelector('[data-testid="tree-row-failure"]')?.className).toContain("max-w-[40%]");
+    expect(tokens(failed.querySelector('[data-testid="tree-row-label"]'))).toEqual(expect.arrayContaining(nameShare));
+    const failure = failed.querySelector('[data-testid="tree-row-failure"]');
+    expect(tokens(failure)).toEqual(expect.arrayContaining(sentenceShare));
+    expect(tokens(failure)).not.toContain("max-w-[40%]");
+
+    // The control: a row with no sentence draws its name exactly as before, so an object's count and
+    // a column's type share the row with it as they always have.
+    const counted = drawRow({ row: openOrdersRow({}), object: ordersObject });
+    expect(counted.querySelector('[data-testid="tree-row-count"]')).not.toBeNull();
+    expect(counted.querySelector('[data-testid="tree-row-label"]')?.className).toBe("truncate");
   });
 
   test("the twisty is not a tab stop, on the very row that holds the tree's one", () => {
