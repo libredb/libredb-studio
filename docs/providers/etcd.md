@@ -8,7 +8,7 @@ Tracking issue: [#1089](https://github.com/libredb/libredb-studio/issues/1089), 
 ## 1. Overview
 
 Studio reads and writes an etcd cluster through a subset of `etcdctl`'s command line, shows its keys as prefix groups in the object tree and every key in the Keys panel, edits a key's value through a guarded transaction, and offers compaction, defragmentation and alarm disarm to an admin.
-It is Kubernetes-aware: every write that touches a Kubernetes key prefix or kube-apiserver's `compact_rev_key` is refused before any request, a Kubernetes protobuf or encrypted value and every secret are withheld on every surface, and a Kubernetes JSON or CBOR value is shown with its label.
+It is Kubernetes-aware: every write that touches a Kubernetes key prefix or kube-apiserver's `compact_rev_key` is refused before any write is sent, a Kubernetes protobuf or encrypted value and every secret are withheld on every surface, and a Kubernetes JSON or CBOR value is shown with its label.
 It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only cluster operations and machine-access refusals: no agent execution and no MCP.
 
 ### Concept mapping
