@@ -229,7 +229,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
   private session: EtcdSession | null = null;
   /** Set by the adapter's `onAuthStoreChanged` (R13 D10): the next walk that reads keys reads the grants again. */
   private grantsStale = false;
-  /** One read of the grants that surfaces starting together share. */
+  /** One read of the grants that walks starting together share. */
   private pendingGrants: Promise<EtcdGrants> | undefined;
   private readonly running = new Map<string, RunningQuery>();
 
@@ -441,7 +441,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
   /**
    * AuthStatus, then UserGet and RoleGet unless its revision is the one the grants were read under and the
    * adapter reported no change since; the grants read and the revision read before them replace the ones kept.
-   * Surfaces that start together share the one read.
+   * Walks that start together share the one read.
    */
   private readGrantsAgain(session: EtcdSession, user: string): Promise<EtcdGrants> {
     const signal = () => this.callSignal();
@@ -456,7 +456,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
             return grants;
           },
           (error: unknown) => {
-            // Read again at the next surface: the change it would have read has not been read yet.
+            // Read again at the next walk: the change it would have read has not been read yet.
             this.grantsStale = true;
             throw error;
           },
