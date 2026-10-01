@@ -1,7 +1,13 @@
 import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { createFakeEtcdClient, type FakeEtcdClient } from "../../helpers/etcd-fake-client";
+import { KEY_SPACE_HEADER } from "../../helpers/etcd-key-space";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
+import type { EtcdAlarm, EtcdMember, EtcdStatus } from "@/lib/db/providers/keyvalue/etcd/client";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
+import type { DatabaseConnection } from "@/lib/types";
 import {
   QueryError,
   DatabaseError,
@@ -114,6 +120,70 @@ const validConnection = {
   port: 5432,
   database: "testdb",
 };
+
+/** A single-member etcd with authentication off, for E6 through this route (#1089, spec 3.6). */
+const etcdConnection = {
+  id: "etcd-e6",
+  name: "etcd E6",
+  type: "etcd",
+  host: "etcd.test",
+  port: 2379,
+};
+
+const ETCD_STATUS: EtcdStatus = {
+  header: KEY_SPACE_HEADER,
+  version: "3.7.2",
+  dbSize: "20480",
+  dbSizeInUse: "16384",
+  dbSizeQuota: "0",
+  leader: KEY_SPACE_HEADER.memberId,
+  raftIndex: "40",
+  raftTerm: "2",
+  raftAppliedIndex: "40",
+  errors: [],
+  isLearner: false,
+  storageVersion: "3.7.0",
+};
+const ETCD_MEMBER: EtcdMember = {
+  id: KEY_SPACE_HEADER.memberId,
+  name: "etcd-1",
+  peerUrls: ["http://127.0.0.1:2380"],
+  clientUrls: ["http://127.0.0.1:2379"],
+  isLearner: false,
+};
+/** A raised NOSPACE alarm, so a disarm has a request to send. */
+const ETCD_ALARM: EtcdAlarm = { memberId: ETCD_MEMBER.id, alarm: "nospace" };
+
+/** One provider the factory stand-in built, its client, and how many calls its connect sent. */
+interface OpenedEtcd {
+  readonly client: FakeEtcdClient;
+  readonly connectCalls: number;
+}
+
+/**
+ * The next `getOrCreateProvider` call answered as the factory answers an etcd connection: a provider built
+ * from the connection this route hands it, connected to a fake client that records every call. It reads the
+ * route's argument, so a route that dropped or rewrote the posted connection's `readOnly` on its way to the
+ * factory builds a read-write provider here, and the operation is sent.
+ */
+function nextEtcdProvider(opened: OpenedEtcd[]): void {
+  mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
+    const client = createFakeEtcdClient({
+      authStatus: async () => ({ enabled: false, authRevision: "1" }),
+      status: async () => ETCD_STATUS,
+      memberList: async () => ({ header: KEY_SPACE_HEADER, members: [ETCD_MEMBER] }),
+      compact: async () => {},
+      defragment: async () => {},
+      alarmList: async () => [ETCD_ALARM],
+      alarmDisarm: async (alarm) => [alarm],
+      close: async () => {},
+    });
+    const etcd = new EtcdProvider(args[0] as DatabaseConnection, {}, {}, async () => client);
+    await etcd.connect();
+    opened.push({ client, connectCalls: client.calls.length });
+    return etcd as never;
+  });
+}
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/maintenance", () => {
@@ -763,4 +833,40 @@ describe("POST /api/db/maintenance", () => {
     expect(mockProvider.runMaintenance).not.toHaveBeenCalled();
     expect(mockAuditPush).not.toHaveBeenCalled();
   });
+
+  // #1089 E6: the provider refuses every maintenance operation on a read-only connection, and only the
+  // connection this route hands the factory tells it so.
+  test.each([
+    ["compact", "compact"],
+    ["defragment", "defragment"],
+    ["disarm", "alarmDisarm"],
+  ] as const)(
+    "an etcd %s on a connection carrying readOnly: true answers 400 naming the mode and sends nothing; without it, it sends %s",
+    async (type, rpc) => {
+      const opened: OpenedEtcd[] = [];
+      nextEtcdProvider(opened);
+      const refused = await POST(
+        createMockRequest("/api/db/maintenance", {
+          method: "POST",
+          body: { type, connection: { ...etcdConnection, readOnly: true } },
+        }) as never,
+      );
+      expect(refused.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(refused)).error).toBe(readOnlySentence("connection"));
+      const [readOnlyProvider] = opened;
+      expect(readOnlyProvider.client.calls.slice(readOnlyProvider.connectCalls)).toEqual([]);
+
+      // The control: the same request on the connection without readOnly sends the operation's own call.
+      nextEtcdProvider(opened);
+      const ran = await POST(
+        createMockRequest("/api/db/maintenance", {
+          method: "POST",
+          body: { type, connection: etcdConnection },
+        }) as never,
+      );
+      expect(ran.status).toBe(200);
+      const [, writer] = opened;
+      expect(writer.client.calls.slice(writer.connectCalls).map((call) => call.method)).toContain(rpc);
+    },
+  );
 });
