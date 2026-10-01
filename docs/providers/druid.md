@@ -1728,9 +1728,9 @@ end through the registry.
 
 ```bash
 # Just this provider
-bun test tests/integration/db/druid-provider.test.ts
-bun test tests/unit/db/druid
-bun test tests/unit/lib/explain/druid-native.test.ts
+bun tests/run-tests.ts tests/integration/db/druid-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/druid
+bun tests/run-tests.ts tests/unit/lib/explain/druid-native.test.ts
 
 # Full isolated suite (CI-equivalent)
 bun run test

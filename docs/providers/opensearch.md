@@ -1505,8 +1505,8 @@ empties, and `runMaintenance()` refusing with its reason.
 ### 11.3 Run it
 
 ```bash
-bun test tests/integration/db/opensearch-provider.test.ts
-bun test tests/unit/db/search
+bun tests/run-tests.ts tests/integration/db/opensearch-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/search
 
 # Full isolated suite (CI-equivalent)
 bun run test

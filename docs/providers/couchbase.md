@@ -1296,8 +1296,8 @@ read with both of its refusal branches and both of its derivation pins ([§6b](#
 
 ```bash
 # Just this provider
-bun test tests/integration/db/couchbase-provider.test.ts
-bun test tests/unit/db/couchbase
+bun tests/run-tests.ts tests/integration/db/couchbase-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/couchbase
 
 # Full isolated suite (CI-equivalent)
 bun run test

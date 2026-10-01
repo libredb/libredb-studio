@@ -1500,9 +1500,9 @@ including identifier quoting and literal escaping.
 
 ```bash
 # Just this provider
-bun test tests/integration/db/clickhouse-provider.test.ts
-bun test tests/unit/db/clickhouse
-bun test tests/unit/lib/explain/clickhouse-json.test.ts
+bun tests/run-tests.ts tests/integration/db/clickhouse-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/clickhouse
+bun tests/run-tests.ts tests/unit/lib/explain/clickhouse-json.test.ts
 
 # Full isolated suite (CI-equivalent)
 bun run test
