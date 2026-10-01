@@ -1632,4 +1632,34 @@ describe("the refresh pattern, held to the parser (spec 5.1.1, 5.1.2, 6.2)", () 
     expect(parseEtcdCommand(text, LIMITS)).toMatchObject({ ok: true, parsed: { command: { kind: "put" } } });
     expect(shouldRefreshSchema(text, pattern)).toBe(true);
   });
+
+  /**
+   * A CRLF the pattern could read two ways, as the end of a comment line, or as a CR that ends the line with the LF
+   * left to the blank lines after it, gave n CRLF comment lines 2^n readings, all tried before a read is answered:
+   * in the browser, on its main thread, after every read the editor runs, whose text has CRLF line ends on Windows
+   * (Monaco 0.57's default end of line there). The bound sits far from both sides: such a pattern took the read 2.3 s
+   * here under Bun and 43 s in V8 on 26 CRLF comment lines, and this one decides it in under 1 ms (measured
+   * 2026-10-02).
+   */
+  test.each([
+    ["CRLF comment lines", "# note\r\n"],
+    ["CRLF comment lines each followed by a blank line", "# note\r\n\r\n"],
+  ])(
+    "the refresh pattern reads a CRLF one way, so 26 %s above a read or a write are decided at once, as the parser decides them (spec 5.1.1, 6.2)",
+    (label, line) => {
+      const BOUND_MS = 500;
+      const pattern = ETCD_SCHEMA_REFRESH_PATTERN;
+      const refreshing: ReadonlySet<string> = new Set(["put", "del", "txn", "lease-grant", "lease-revoke"]);
+      for (const command of ["get /a", "put /a b"]) {
+        const text = `${line.repeat(26)}${command}`;
+        const parsed = parseEtcdCommand(text, LIMITS);
+        if (!parsed.ok) throw new Error(`${JSON.stringify(text)} is refused: ${parsed.refusal.message}`);
+        const started = performance.now();
+        const refreshes = shouldRefreshSchema(text, pattern);
+        const elapsed = performance.now() - started;
+        expect(refreshes, `26 ${label} above ${command}`).toBe(refreshing.has(parsed.parsed.command.kind));
+        expect(elapsed, `26 ${label} above ${command} took ${elapsed.toFixed(1)}ms`).toBeLessThan(BOUND_MS);
+      }
+    },
+  );
 });

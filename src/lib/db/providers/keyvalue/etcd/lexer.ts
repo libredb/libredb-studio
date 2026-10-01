@@ -1403,8 +1403,13 @@ export function quoteTxnWord(bytes: Uint8Array): string {
 // The refresh pattern: the command word as a regular expression (spec 6.2)
 // ============================================================================
 
-/** A line end as `physicalLines` ends one: a CRLF, a lone CR or an LF (spec 5.1.1). */
-const LINE_END = String.raw`(?:\r\n?|\n)`;
+/**
+ * A line end as `physicalLines` ends one: a CRLF, a lone CR or an LF (spec 5.1.1). A CR followed by an LF ends a
+ * line only as the CRLF's first half, so a CRLF has one reading: were that CR also a line end of its own, the blank
+ * lines after a comment line could take the LF, and n CRLF comment lines would have 2^n readings, all tried before
+ * a read is answered.
+ */
+const LINE_END = String.raw`(?:\r\n|\r(?!\n)|\n)`;
 
 /** A backslash-newline at a CRLF, CR or LF line end, which joins two lines outside single quotes (spec 5.1.1). */
 const LINE_JOIN = String.raw`\\${LINE_END}`;
@@ -1482,8 +1487,11 @@ const LEASE_WRITE = [
  * the documented multi-line forms reload the tree. Not read: a line join inside a word, two joins side by side,
  * and a join after a second run of blanks. Patterns that read them took JavaScriptCore, the engine of Bun and
  * Safari, 6.8 s on 20,000 joins in one gap and 38 s on 80,000 assignments (measured 2026-10-01), where this one
- * decides each in under 0.25 s. One reading goes the other way: a path whose quoted text itself holds etcdctl
- * and a write command, such as '/etcdctl put /x/etcdctl', reloads the tree whatever command follows it.
+ * decides each in under 0.25 s. A CRLF has one reading (`LINE_END`), so 80,000 CRLF comment lines above a read
+ * take it 45 ms in JavaScriptCore, where a pattern that also read their CR as a line end of its own took 2.7 s
+ * there and 43 s in V8 on 26 of them (measured 2026-10-02). One reading goes the other way: a path whose quoted
+ * text itself holds etcdctl and a write command, such as '/etcdctl put /x/etcdctl', reloads the tree whatever
+ * command follows it.
  * `shouldRefreshSchema` compiles it with `i` alone, so `^` is the start of the whole buffer.
  */
 export const ETCD_SCHEMA_REFRESH_PATTERN = [
