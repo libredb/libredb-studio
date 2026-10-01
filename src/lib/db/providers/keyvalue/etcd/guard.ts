@@ -105,23 +105,40 @@ function confirmationFor(targets: readonly DelSpec[], quoting: KeyQuoting): Etcd
   return { type: "connection-name", targets: targets.map((target) => targetOf(target, quoting)) };
 }
 
-const sameBytes = (a: EtcdBytes | undefined, b: EtcdBytes | undefined): boolean =>
-  a === undefined || b === undefined ? a === b : compareBytes(a, b) === 0;
+/** A string that stands for a byte sequence, one character per byte, for a Set key. */
+function byteId(bytes: EtcdBytes): string {
+  let id = "";
+  for (const byte of bytes) id += String.fromCharCode(byte);
+  return id;
+}
+
+/**
+ * The items in the order first written, each once by `id`. One Set, so a txn of many requests is read
+ * in time linear in them: the browser's gate reads every txn it is shown, before the provider's own
+ * parse refuses a branch past its row limit.
+ */
+function firstOfEach<T>(items: readonly T[], id: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const itemId = id(item);
+    if (seen.has(itemId)) return false;
+    seen.add(itemId);
+    return true;
+  });
+}
 
 /** The keys in the order first written, each once. */
 function uniqueKeys(keys: readonly EtcdBytes[]): EtcdBytes[] {
-  return keys.filter((key, index) => keys.findIndex((other) => compareBytes(other, key) === 0) === index);
+  return firstOfEach(keys, byteId);
 }
 
 /** The deletes in the order first written, each range once, whichever spelling named it. */
 function uniqueRanges(deletes: readonly DelSpec[]): DelSpec[] {
-  const ranges = deletes.map(commandRange);
-  return deletes.filter(
-    (_del, index) =>
-      ranges.findIndex(
-        (other) => sameBytes(other.key, ranges[index].key) && sameBytes(other.rangeEnd, ranges[index].rangeEnd),
-      ) === index,
-  );
+  return firstOfEach(deletes, (del) => {
+    const range = commandRange(del);
+    // JSON keeps the key apart from the range end, and an absent end apart from an empty one.
+    return JSON.stringify([byteId(range.key), range.rangeEnd === undefined ? null : byteId(range.rangeEnd)]);
+  });
 }
 
 const readOf = (kind: EtcdCommandKind): CommandAssessment => ({

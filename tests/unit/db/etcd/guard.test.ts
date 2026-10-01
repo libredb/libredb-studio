@@ -346,6 +346,75 @@ describe("the gate's vocabulary (spec 5.5)", () => {
     expect(readEtcdOperations("watch /a --command-timeout=10h")).toEqual(["watch"]);
   });
 
+  /**
+   * A timing guard, because a txn's single-key targets and its destructive ranges were once
+   * deduplicated with a findIndex scan per request, quadratic in the requests, and the browser's gate
+   * reads every txn it is shown twice before the provider's own parse refuses a branch past its row
+   * limit: in isDangerousQuery when Run is pressed, and in the dialog's typed confirmation. Measured
+   * with that scan, with bun 1.4.2 on an i7-13650HX, readEtcdOperations took:
+   *
+   *    5,000 puts      70ms
+   *   10,000 puts     307ms
+   *   20,000 puts    1035ms (313 KiB)
+   *
+   * Both readers answer from one assessCommand of the gate's parse, so the assessment is timed alone,
+   * over a command parsed as the gate parses it, with no cap it cannot know; the parse of these texts
+   * is linear (44 to 61ms) and is not what this guards. The bound leaves measured room on both sides
+   * at the 50,000 requests below: the scan took 4.6s over the puts, 3.1 times the bound, and 8.9s over
+   * the deletes, past bun's default 5s test timeout as well, while the assessment as it is took at
+   * most 63ms alone and 87ms under coverage, 17 times below the bound. Each answer is asserted with
+   * its time: a fast wrong answer is not a pass.
+   */
+  test("the gate's assessment of a txn grows with its requests, not with their square", () => {
+    const BOUND_MS = 1_500;
+    const REQUESTS = 50_000;
+    const unbounded = {
+      maxLimit: Number.POSITIVE_INFINITY,
+      txnRangeLimit: Number.POSITIVE_INFINITY,
+      maxCommandTimeoutMs: Number.POSITIVE_INFINITY,
+      maxWatchWindowMs: Number.POSITIVE_INFINITY,
+    };
+    const askedOf = ({ gate, operations, typedConfirmation }: CommandAssessment) => ({
+      gate,
+      operations,
+      typedConfirmation,
+    });
+    type Asked = ReturnType<typeof askedOf>;
+    const numbered = (index: number) => String(index).padStart(6, "0");
+    const keys = Array.from({ length: REQUESTS }, (_unused, index) => `/k/${numbered(index)}`);
+    const prefixes = Array.from({ length: REQUESTS }, (_unused, index) => `/d/${numbered(index)}/`);
+    const cases: [label: string, text: string, expected: Asked, targets: number][] = [
+      [
+        "50,000 puts of distinct keys",
+        `txn\n\n${keys.map((key) => `put ${key} v`).join("\n")}`,
+        { gate: "one-click", operations: ["txn", "put"], typedConfirmation: undefined },
+        REQUESTS,
+      ],
+      [
+        "50,000 deletes of distinct prefixes",
+        `txn\n\n${prefixes.map((prefix) => `del ${prefix} --prefix`).join("\n")}`,
+        {
+          gate: "typed",
+          operations: ["txn", "del"],
+          typedConfirmation: { type: "connection-name", targets: prefixes.map((prefix) => `${prefix} (prefix)`) },
+        },
+        0,
+      ],
+    ];
+
+    for (const [label, text, expected, targets] of cases) {
+      const parsed = parseEtcdCommand(text, unbounded);
+      if (!parsed.ok) throw new Error(`expected ${label} to parse, got: ${parsed.refusal.message}`);
+      const started = performance.now();
+      const assessed = assessCommand(parsed.parsed.command);
+      const elapsed = performance.now() - started;
+
+      expect(askedOf(assessed), label).toEqual(expected);
+      expect([assessed.singleKeyTargets.length, assessed.writeRanges.length], label).toEqual([targets, REQUESTS]);
+      expect(elapsed, `${label} took ${elapsed.toFixed(1)}ms`).toBeLessThan(BOUND_MS);
+    }
+  });
+
   test("text the parser refuses names no operation and asks nothing, because it will not run", () => {
     for (const text of ["", "   ", "compaction 5", "del", "get /a; del /b", "put /a $HOME", "frobnicate"]) {
       expect(readEtcdOperations(text)).toEqual([]);
