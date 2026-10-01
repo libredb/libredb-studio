@@ -6,7 +6,10 @@ import React from "react";
 import { describe, test, expect, mock, afterEach } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TablesTab } from "@/components/monitoring/tabs/TablesTab";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { toTableStats } from "@/lib/db/providers/keyvalue/etcd/monitoring";
 import type { MonitoringData, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { TABLE_LABELS } from "../../fixtures/provider-labels";
 
 function makeData(): MonitoringData {
@@ -837,6 +840,42 @@ describe("a provider that declares what its list holds", () => {
     expect(getByTestId("tables-stat-size").textContent).toBe("820 MB");
     expect(queryByText("Across the list")).not.toBeNull();
     expect(queryByText("Total")).toBeNull();
+  });
+
+  // etcd spec 7.1 and 6.3: the rows are the key-prefix groups, and a key in no group is counted in the
+  // Overview alone, so the cards count the groups listed, under etcd's caption. The labels and the
+  // capabilities are the ones the provider answers /api/db/provider-meta with, read unconnected.
+  test("etcd's Tables cards render under its tableStatsCaption, titled Listed", () => {
+    const etcd = new EtcdProvider(CENSUS_CONNECTION.etcd);
+    const base = makeData();
+    const data = {
+      ...base,
+      overview: { ...base.overview, tableCount: 7 },
+      tables: toTableStats([
+        { group: "/apisix/routes/*", count: "2" },
+        { group: "/config/app/*", count: "3" },
+      ]),
+    } as MonitoringData;
+    const { getByTestId, queryByText } = render(
+      <TablesTab
+        data={data}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={etcd.getCapabilities()}
+        labels={etcd.getLabels()}
+      />,
+    );
+
+    expect(getByTestId("tables-list-scope").textContent).toBe(
+      "The key-prefix groups; a key in no group is counted in the Overview and not here",
+    );
+    expect(queryByText("Listed")).not.toBeNull();
+    expect(queryByText("Tables")).toBeNull();
+    // Two groups listed, five keys between them: never the Overview's seven, which count the ungrouped keys too.
+    expect(getByTestId("tables-stat-count").textContent).toBe("2");
+    expect(queryByText("5 rows")).not.toBeNull();
+    // No RPC reports a group's bytes, so the size is unknown rather than a sum of zeros.
+    expect(getByTestId("tables-stat-size").textContent).toBe("N/A");
   });
 
   test("an engine that declares no caption renders exactly as it does with no labels at all", () => {
