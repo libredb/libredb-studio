@@ -1,0 +1,22 @@
+version: "1"
+
+# The read-only recipe of docs/SEED_CONNECTIONS.md and docs/providers/etcd.md (#1089 E6): one seed every
+# role reaches, read-only, and one for the people who may write. managed: true is written out on both,
+# because a connection's own value overrides a file-wide defaults.managed: false, and the load refuses
+# readOnly: true on a connection that is not managed.
+connections:
+  - id: "cluster-read"
+    name: "Cluster"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "cluster-write"
+    name: "Cluster (write)"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    roles: ["admin"]
+    managed: true
