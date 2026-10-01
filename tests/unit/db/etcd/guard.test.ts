@@ -183,6 +183,19 @@ describe("a txn (spec 5.1.3, 5.1.4, 5.5)", () => {
     });
   });
 
+  test("two destructive ranges that only their bytes tell apart are two targets, each listed as written (spec 5.5)", () => {
+    // 0xff and 0xfe are not UTF-8, and a lenient decoder reads each as U+FFFD: both prefixes as one text.
+    expect(gateRow(txn("", 'del "/a\\xff/" --prefix', 'del "/a\\xfe/" --prefix')).typedConfirmation).toEqual({
+      type: "connection-name",
+      targets: ['"/a\\xff/" (prefix)', '"/a\\xfe/" (prefix)'],
+    });
+    // Each range's key joined to its end reads /a/c in both.
+    expect(gateRow(txn("", "del /a /c", "del /a/ c")).typedConfirmation).toEqual({
+      type: "connection-name",
+      targets: ["/a to /c (range)", "/a/ to c (range)"],
+    });
+  });
+
   test("two different prefix deletes ask for the connection's name and list both prefixes", () => {
     expect(gateRow(txn("", "del /a/ --prefix", "", "del /b/ --prefix")).typedConfirmation).toEqual({
       type: "connection-name",
@@ -273,6 +286,18 @@ describe("the single-key targets and the write ranges (spec E8)", () => {
       ["/d/", "/d0"],
       ["/b", undefined],
     ]);
+  });
+
+  test("a txn's single-key targets that only their bytes tell apart are each kept, byte for byte, for E8 to read", () => {
+    /** The single-key targets, as hex, of a txn that puts each key, written in Go quoting. */
+    const putTargets = (...keys: string[]) =>
+      assess(`txn\n\n${keys.map((key) => `put "${key}" v`).join("\n")}`).singleKeyTargets.map(hex);
+    // 0xff and 0xfe are not UTF-8, and a lenient decoder reads each as U+FFFD: both keys as one text.
+    expect(putTargets("/k\\xff", "/k\\xfe")).toEqual(["2f6bff", "2f6bfe"]);
+    // Each byte written in decimal and joined reads 47123 in both.
+    expect(putTargets("/\\x01\\x17", "/\\x0c\\x03")).toEqual(["2f0117", "2f0c03"]);
+    // Each byte written in hex without padding and joined reads 2f123 in both.
+    expect(putTargets("/\\x01\\x23", "/\\x12\\x03")).toEqual(["2f0123", "2f1203"]);
   });
 
   test("a protected key written with Go escapes in a txn branch is the same bytes, which E8's check meets (R11 ETCD-5)", () => {
