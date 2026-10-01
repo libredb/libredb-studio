@@ -229,7 +229,9 @@ Glob characters are data, as a shell passes them when nothing matches.
 
 Blank and comment lines before the command are skipped, and so are a leading prompt `$` or `%`, `env`, `ETCDCTL_API=3` and an `etcdctl` word with or without a path, so `./etcdctl put`, `% etcdctl put` and `env ETCDCTL_API=3 etcdctl del` run as pasted.
 Any other environment assignment is refused by name, and a command that pipes, reads standard input or passes connection flags is refused naming what it refused.
-The one global flag taken is `--command-timeout=<duration>`, a Go duration, capped by the connection's query timeout; Studio applies it to every command it runs, while etcdctl applies it to `get`, `put`, `del`, `lease grant`, `lease revoke`, `member list`, `endpoint`, `alarm` and `auth status`, and for `watch` it is the watch window.
+After any command but `txn`, which reads the lines below it as its body, blank and comment lines are skipped too, and a second command line is refused, naming its line, with the advice to select the line to run, because the editor then sends the selection alone.
+Before the command word, and between a command group and its subcommand, the only flag taken is `--command-timeout`: any other is refused, a command's own flag included, which etcdctl runs there when it is written with `=` (`etcdctl --prefix=true get /a/`, `etcdctl member --consistency=s list`), so write it after the command and its subcommand.
+The one global flag taken is `--command-timeout=<duration>`, a Go duration, and a value above the connection's query timeout is refused, naming it; Studio applies it to every command it runs, while etcdctl applies it to `get`, `put`, `del`, `lease grant`, `lease revoke`, `member list`, `endpoint`, `alarm` and `auth status`, and for `watch` it is the watch window, refused above the cap of section 5.3.
 Every other global flag is refused by name: `--endpoints`, `--user`, `--password`, `--cacert`, `--cert`, `--key`, `--insecure-transport`, `--insecure-skip-tls-verify`, `--insecure-discovery`, `--discovery-srv`, `--discovery-srv-name` and `--auth-jwt-token`, because the connection decides where Studio connects and as whom; `--dial-timeout`, `--keepalive-time` and `--keepalive-timeout`, because the connection decides how Studio keeps its channel to etcd; `--max-request-bytes` and `--max-recv-bytes`, because Studio bounds every request and every answer itself; `--write-out` and `--hex`, because the grid decides the output; and `--debug`, because it switches on etcdctl's own client logging, which Studio does not have.
 
 #### Commands
@@ -268,7 +270,8 @@ A compare is `<target>("<key>") <op> "<value>"` with the targets `create`, `mod`
 etcdctl 3.7.2 cannot run a lease compare, because it passes the value as a string and its client library panics with "bad value"; Studio reads the lease id in hex, the spelling of `--lease` and `lease list`, not the README's decimal.
 A request line is split the way etcdctl splits it, so `put k it's` is one value, and a quoted word followed directly by another character, or a quote left open, is refused.
 A `#` line directly above a compare or a request, or after the last section, is a comment; any other `#` line is refused, because it would make an empty section.
-A ranged `get` in a txn is sent with its `--limit`, or with `ETCD_READ_BOUNDS.firstPageSize` when none is typed, and a branch whose rows could pass the row limit is refused.
+A ranged `get` in a txn, other than a `--count-only` one, is sent with its `--limit`, or with `ETCD_READ_BOUNDS.firstPageSize` when none is typed, and a `--limit` above `ETCD_READ_BOUNDS.firstPageSize` is refused, naming it, because etcd builds a txn's whole answer at once and cannot page it.
+A branch whose rows could pass the row limit is refused.
 
 ### 5.2 Result shape
 
@@ -279,7 +282,8 @@ Revisions, versions, counts and TTLs are decimal strings, a member id is lowerca
 
 ### 5.3 The bounded watch
 
-A watch runs for its window, `--command-timeout` when given, else 5 seconds, capped at the connection's query timeout less `ETCD_READ_BOUNDS.watchMarginMs`; it ends early at the row limit or the byte budget, and its end is one warning naming the range, the window and the cause.
+A watch runs for its window, `--command-timeout` when given, else 5 seconds, and the window's cap is the connection's query timeout less `ETCD_READ_BOUNDS.watchMarginMs`: a `--command-timeout` above the cap is refused, naming it, a default window longer than the cap is shortened to it and its warning says so, and a query timeout at or below the margin leaves no window, so a watch is refused.
+A watch ends early at the row limit or the byte budget, and its end is one warning naming the range, the window and the cause.
 A compaction, a permission refusal or a server cancellation ends the watch as an error, never as a quiet window; the stream is always cancelled when the watch ends.
 A live watch panel is filed as U56.
 
