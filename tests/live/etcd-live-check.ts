@@ -1637,14 +1637,18 @@ async function idempotence(): Promise<void> {
     // oxlint-disable-next-line no-await-in-loop -- each one-shot runs again against its own fixture, one after another, so each probe sees one step.
     const gateway = await rootGateway(fixture);
     // oxlint-disable-next-line no-await-in-loop -- each one-shot runs again against its own fixture, one after another, so each probe sees one step.
-    await check(`D-ORCH-1 ${name}: the control, a scratch write, moves the revision the probe reads`, async () => {
-      const before = state(fixture);
-      await gatewayPut(gateway, `${SCRATCH_PREFIX}idempotence`, "control");
-      const after = state(fixture);
-      await gatewayDeletePrefix(gateway, SCRATCH_PREFIX);
-      must(after.revision !== before.revision, "the probe did not see a write");
-      return `${before.revision} to ${after.revision}`;
-    });
+    await check(
+      `D-ORCH-1 ${name}: the control, a scratch write, moves the revision and the key count the probe reads`,
+      async () => {
+        const before = state(fixture);
+        await gatewayPut(gateway, `${SCRATCH_PREFIX}idempotence`, "control");
+        const after = state(fixture);
+        await gatewayDeletePrefix(gateway, SCRATCH_PREFIX);
+        must(after.revision !== before.revision, "the probe did not see a write");
+        must(after.count !== before.count, "the probe did not see the key count move");
+        return `revision ${before.revision} to ${after.revision}, count ${before.count} to ${after.count}`;
+      },
+    );
     if (fixture.auth) {
       // oxlint-disable-next-line no-await-in-loop -- each one-shot runs again against its own fixture, one after another, so each probe sees one step.
       await check(`D-ORCH-1 ${name}: the control, a grant, moves the AuthRevision the probe reads`, async () => {
