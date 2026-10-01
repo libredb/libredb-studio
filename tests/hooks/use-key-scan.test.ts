@@ -1307,4 +1307,55 @@ describe("a walk in a declared shape", () => {
 
     expect(result.current.stoppedBy).toBe("Stopped after 10,000 keys. Narrow the prefix to walk a smaller key space.");
   });
+
+  /**
+   * A key a page left out was walked as surely as one it named (spec 4.6): etcd read it, and it took
+   * its room on the page. So Scan all's cap counts both, or a prefix of keys that are not UTF-8 text
+   * is read whole by a gesture the cap says stops after ten thousand keys.
+   */
+  test("counts the keys a page left out toward Scan all's cap", async () => {
+    // Two hundred pages that name nothing and leave out a batch each: 100,000 keys, ten times the cap.
+    let pages = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": () => {
+        pages += 1;
+        return skippingPage([], pages === 200 ? "0" : `k:page-${pages}:7:100000`, ETCD_SCAN.defaultCount);
+      },
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanAll();
+    });
+
+    // The cap's own arithmetic, twenty round trips of 500, and not the two hundred of the whole key space.
+    expect(fetchMock.mock.calls.length).toBe(SCAN_ALL_MAX_KEYS / ETCD_SCAN.defaultCount);
+    expect(result.current.exhausted).toBe(false);
+    expect(result.current.stoppedBy).toBe("Stopped after 10,000 keys. Narrow the prefix to walk a smaller key space.");
+    expect(result.current.skipped).toEqual({ count: SCAN_ALL_MAX_KEYS, reason: REASON });
+    expect(result.current.scanned).toBe(0);
+  });
+
+  test("adds the keys a page named and the keys it left out toward the cap", async () => {
+    // Ten named keys and 490 left out a page: the cap is spent at twenty pages, not at the thousand it
+    // takes to be handed ten thousand names.
+    let pages = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": () => {
+        pages += 1;
+        const named = Array.from({ length: 10 }, (_, index) => `/bulk/${pages}/${index}`);
+        return skippingPage(named, pages === 2_000 ? "0" : `k:page-${pages}:7:1000000`, 490);
+      },
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanAll();
+    });
+
+    expect(fetchMock.mock.calls.length).toBe(SCAN_ALL_MAX_KEYS / ETCD_SCAN.defaultCount);
+    expect(result.current.scanned).toBe(200);
+    expect(result.current.skipped).toEqual({ count: 9_800, reason: REASON });
+    expect(result.current.stoppedBy).toBe("Stopped after 10,000 keys. Narrow the prefix to walk a smaller key space.");
+  });
 });

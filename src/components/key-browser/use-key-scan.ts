@@ -34,6 +34,10 @@ import { isUnderPrefix, pathKey, pathPattern } from "./tree";
  * Ten thousand is a client-side budget and not an engine limit: at the default batch of 500 it is
  * twenty round trips, which is a gesture a person will wait for and a load a server will answer. A
  * key space larger than this is one where the right answer is "narrow the pattern".
+ *
+ * A key a page LEFT OUT counts as one it named (spec 4.6): the server read it and it took its room on
+ * the page, so a walk of keys that are not UTF-8 text spends this budget as a walk of named keys does.
+ * Counted by names alone, such a prefix would be read whole by a gesture that says it stops here.
  */
 export const SCAN_ALL_MAX_KEYS = 10_000;
 
@@ -431,8 +435,11 @@ export function useKeyScan(options: {
     // repository's coverage gate is right to refuse - the bound's sentence is the panel's, drawn from
     // the tree's size, and it is shown whether or not a `Scan all` ever ran.
     while (!stopped.current && !spent.current && failure.current === null) {
+      // oxlint-disable-next-line no-await-in-loop -- each page starts at the cursor the last one wrote.
       await scanMore();
-      if (scannedKeys.current >= SCAN_ALL_MAX_KEYS && !spent.current) {
+      // The keys the walk was handed and the keys its pages left out: see `SCAN_ALL_MAX_KEYS`.
+      const walkedKeys = scannedKeys.current + (skippedKeys.current?.count ?? 0);
+      if (walkedKeys >= SCAN_ALL_MAX_KEYS && !spent.current) {
         const limit = SCAN_ALL_MAX_KEYS.toLocaleString("en-US");
         // The word for what narrows a walk follows the declaration: a prefix, or a `MATCH` pattern.
         const narrow = shape.pattern === "prefix" ? "prefix" : "pattern";
