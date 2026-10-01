@@ -192,6 +192,7 @@ Under Bun a failed TLS connection carries no cause, so the error says that the r
 A connection names one endpoint, and Studio dials that endpoint, or the local end of its tunnel, and nothing else: the client URLs `member list` shows are data and are never dialled, and `--cluster` is refused.
 A DNS name that resolves to several members reaches the next one when the first fails, through grpc-js's `pick_first` policy.
 Every call carries etcd's `hasleader` metadata except the calls a member answers from its own state (`Status`, `Defragment`, `LeaseLeases`, a serializable `MemberList`, a serializable `Range`, and a read-only `txn` of serializable gets), so a call that needs the leader fails at once during a lost quorum instead of waiting seven seconds.
+A connection whose member has no leader is refused at once with the lost-quorum error, so the provider never connects in a degraded state, and only a provider connected before the loss goes on answering the calls a member answers from its own state.
 
 ### 4.5 SSH tunnel
 
@@ -336,7 +337,7 @@ The walk reads keys only, at one revision, and jumps past a group once a page ha
 Past a cap the Key Prefixes count is a floor counted from "one key-prefix walk capped at G groups", "one key-prefix walk that stopped after S keys" or "one key-prefix walk that read at most P keys under any one prefix", with G, S and P the values of `ETCD_GROUP_CAP`, `ETCD_WALK_KEY_CAP` and `ETCD_WALK_SEGMENT_BUDGET` above, and the tree badges it.
 A first segment that reaches the per-segment budget is listed as `F/*`, titled "At least P keys; this prefix was not read to the end, so its deeper groups are not listed".
 A compaction between the pages of the walk is reported as such, and the walk is run again.
-Members come from a serializable `MemberList`, so the tree answers during a lost quorum.
+Members come from a serializable `MemberList`, so during a lost quorum a provider connected before the loss still lists the Members folder, while the key-prefix walk fails at once with the lost-quorum error and a new connection is refused (section 4.4).
 
 ### 6.2 Object source (#789)
 
