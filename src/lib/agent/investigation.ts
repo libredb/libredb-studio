@@ -142,6 +142,7 @@ import {
 } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import type { DatabaseType } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
@@ -3487,6 +3488,9 @@ export async function runInvestigation(
         // The engine this drive was given, not one read off the record: a statement is
         // written for the connection it would actually be run against.
         dialect: context.connection.type,
+        // The language its editor renders it in, from the capabilities this drive holds, because the
+        // rail's answer card has none to read it from and tinted every etcd draft "unknown" (#1089).
+        language: editorLanguageForTabType(resolveTabType(context.capabilities)),
         // The engine's own query language goes in beside the inventory (#414): both
         // halves of this validation are SQL readers, and on an engine that speaks no SQL
         // both were wrong at once — the guard marking every correct draft as not

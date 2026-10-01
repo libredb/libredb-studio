@@ -118,7 +118,10 @@ const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued"
  * (`if (!draft.guardApplicable)`) is the WRONG one: it would tell a reader that this
  * engine's statements are not SQL about every PostgreSQL draft recorded before #414.
  */
-export type AgentPlanStatementView = Pick<PlanStatementEvent, "sql" | "readOnly" | "guardViolation" | "identifiers"> & {
+export type AgentPlanStatementView = Pick<
+  PlanStatementEvent,
+  "sql" | "readOnly" | "guardViolation" | "identifiers" | "language"
+> & {
   /** Whether the SQL statement guard could read this draft at all. */
   readonly guardApplicable: boolean;
   /**
@@ -1199,6 +1202,9 @@ function describeEvent(
           guardApplicable,
           ...(event.guardViolation === undefined ? {} : { guardViolation: event.guardViolation }),
           identifiers: event.identifiers,
+          // Copied where the server recorded it, and left absent where it did not: the card reads
+          // an absent language the way it always has (#1089).
+          ...(event.language === undefined ? {} : { language: event.language }),
           // The word this run's own capture used, so the card's marks and this
           // entry's detail cannot describe one inventory in two vocabularies.
           noun,

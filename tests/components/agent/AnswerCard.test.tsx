@@ -106,6 +106,7 @@ function planTimeline(options: {
   readonly guardApplicable?: boolean;
   readonly guardViolation?: "NON_READ_STATEMENT" | "MULTIPLE_STATEMENTS";
   readonly identifiers: Parameters<typeof draftEvent>[0]["identifiers"];
+  readonly language?: Parameters<typeof draftEvent>[0]["language"];
   readonly prose?: string;
   /** The run's grounding: another capture entry, or `null` for a run that captured nothing. */
   readonly capture?: AgentLedgerEntry | null;
@@ -129,6 +130,8 @@ function draftEvent(options: {
     | { readonly kind: "checked"; readonly unknownTables: readonly string[] }
     | { readonly kind: "no-inventory" }
     | { readonly kind: "not-applicable" };
+  /** The editor language the server recorded with the draft; absent, as a ledger written before it. */
+  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -136,6 +139,7 @@ function draftEvent(options: {
     sql: options.sql ?? STATEMENT,
     dialect: "postgres",
     readOnly: options.readOnly,
+    ...(options.language === undefined ? {} : { language: options.language }),
     ...(options.guardApplicable === undefined ? {} : { guardApplicable: options.guardApplicable }),
     ...(options.guardViolation === undefined ? {} : { guardViolation: options.guardViolation }),
     identifiers: options.identifiers,
@@ -325,6 +329,42 @@ describe("AnswerCard — a plan run's statement", () => {
       />,
     );
     expect(unexamined.getByTestId("agent-answer-statement").getAttribute("data-language")).toBe("unknown");
+  });
+
+  test("with no capabilities to hand, the language the server recorded with the draft tints it (#1089)", () => {
+    // How the rail renders the card: no capabilities, so before the server recorded the language
+    // every etcd draft was "unknown" and the sky accent never rendered in the product (Task 27).
+    const etcd = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: "get /app/config/ --prefix --limit=50",
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "etcd",
+        })}
+      />,
+    );
+    const block = etcd.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("etcd");
+    expect(block.className).toContain("border-hue-sky/40");
+    cleanup();
+
+    // The control: another recorded language takes its own accent, so the reading is the record's.
+    const promql = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: "rate(http_requests_total[5m])",
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "promql",
+        })}
+      />,
+    );
+    const promqlBlock = promql.getByTestId("agent-answer-statement");
+    expect(promqlBlock.getAttribute("data-language")).toBe("promql");
+    expect(promqlBlock.className).toContain("border-hue-indigo/40");
   });
 
   test("keeps the accessible name the guard's marks travel in", () => {

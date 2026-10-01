@@ -48,6 +48,7 @@ import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 import type { ObjectRole } from "@/lib/db/types";
+import type { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
@@ -1254,6 +1255,15 @@ export type AgentRunEvent =
       readonly sql: string;
       /** The engine it was written for — the connection this drive was given. */
       readonly dialect: DatabaseType;
+      /**
+       * The editor language this connection's statements render in, resolved from the drive's
+       * capabilities by the ladder `tab-language.ts` walks (#1089).
+       *
+       * Recorded because the rail renders the answer card with no capabilities, so without it the
+       * card had only `guardApplicable` to go on and drew every etcd or PromQL draft as "unknown".
+       * OPTIONAL for the reason `guardApplicable` is: a ledger recorded before it carries none.
+       */
+      readonly language?: ReturnType<typeof editorLanguageForTabType>;
       readonly readOnly: boolean;
       /**
        * Whether the guard could read this draft's language at all (#414).

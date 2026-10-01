@@ -2870,8 +2870,9 @@ export const AgentRail = React.memo(function AgentRail({
           No `capabilities`: this rail is given a connection id and a type, not a provider
           descriptor, and there is no fetch here to get one — every test in this suite
           counts the requests this component makes. The card's fallback is the honest one
-          for that state: it tints from what the LEDGER says the guard could read, and
-          answers "unknown" rather than SQL where nothing said.
+          for that state: it tints from the language the LEDGER recorded with the draft
+          (#1089), and in a ledger written before that, from what the guard could read,
+          answering "unknown" rather than SQL where nothing said.
 
           The run's grounding is not passed either, and deliberately: the card reads the
           capture off this same timeline. It used to be a second prop beside it, and a
