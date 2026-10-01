@@ -250,13 +250,29 @@ export function cancelReasonToEtcdError(cancelReason: string): EtcdError {
 }
 
 /**
+ * The renewal answers of spec E4 that KE12 measured as leaving a write unapplied, in etcd's words: a
+ * write that met one is on 4.5's closed list, so the adapter sends it once more after its one renewal.
+ */
+export const ETCD_RENEWAL_ANSWERS_NOT_APPLIED: ReadonlySet<string> = new Set([
+  // Measured by Task 22 on 2026-10-01 (KE12, etcd 3.7.2 on etcd-auth-password): a value edit's Txn that met
+  // the first and a put sent with no token that met the second were read back as root, and neither was
+  // applied. "etcdserver: revision of auth store is old" stays off: a simple token takes the auth store's
+  // revision at each call, so no write could be made to meet it, and one that does keeps the unknown outcome.
+  "etcdserver: invalid auth token",
+  "etcdserver: user name is empty",
+]);
+
+/**
  * True when a write that met `error` was certainly not applied: it never left the client, or etcd
  * answered it from the closed list of spec 4.5, which etcd gives before a write can be applied.
- * The renewal answers of spec E4 are not on it until KE12 shows, live, that a write meeting one
- * was not applied, and "database space exceeded" never is, because etcd applies the write first.
+ * A renewal answer of spec E4 is on it only where KE12 showed, live, that a write meeting it was not
+ * applied (`ETCD_RENEWAL_ANSWERS_NOT_APPLIED`), and "database space exceeded" never is, because etcd
+ * applies the write first.
  */
 export function writeNotApplied(error: EtcdError): boolean {
   switch (error.category) {
+    case "unauthenticated":
+      return ETCD_RENEWAL_ANSWERS_NOT_APPLIED.has(error.detail);
     case "not-connected":
     case "tls":
     case "closed":
@@ -463,8 +479,9 @@ export function toProviderError(error: unknown, context: EtcdErrorContext): Erro
         : new QueryError(`The ${command} was cancelled before etcd answered.${answered(error.detail)}`, PROVIDER);
     case "unauthenticated":
       // Raised by the adapter only after its one renewal (spec E4). A write meeting one is an unknown
-      // outcome until KE12 shows, answer by answer, that such a write was not applied.
-      return context.write
+      // outcome unless KE12 showed, answer by answer, that such a write was not applied; one that was
+      // not is raised after its one retry, as a read's is.
+      return context.write && !writeNotApplied(error)
         ? unknownOutcome(error, `etcd did not accept this connection's sign-in for the ${command}.`)
         : new AuthenticationError(
             `etcd did not accept this connection's sign-in for the ${command}: connect again.${answered(error.detail)}`,

@@ -1150,6 +1150,9 @@ describe("applyEtcdValueEdit: the answer after the send (spec 4.5, 5.6)", () => 
       "unsupported",
     ],
     ["a closed client", new EtcdError("closed", "The etcd client is closed"), "unsupported"],
+    // The renewal answers KE12 measured as leaving a write unapplied, met again after the one retry (Task 22).
+    ["an expired token after the one retry", toEtcdError(grpc(16, "etcdserver: invalid auth token")), "unsupported"],
+    ["a missing token after the one retry", toEtcdError(grpc(3, "etcdserver: user name is empty")), "unsupported"],
   ];
   for (const [name, error, refusal] of NOT_APPLIED) {
     test(`${name}, on 4.5's closed list: refused with etcd's words, and nothing is read after it`, async () => {
@@ -1299,7 +1302,8 @@ describe("applyEtcdValueEdit: the answer after the send (spec 4.5, 5.6)", () => 
     ["a dropped connection", toEtcdError(grpc(14, "Connection dropped"))],
     ["etcd's own cancel", toEtcdError(grpc(1, "etcdserver: request canceled"))],
     ["the call's own abort", new EtcdError("cancelled", "Cancelled on client", 1)],
-    ["an auth answer after the one renewal", toEtcdError(grpc(16, "etcdserver: invalid auth token"))],
+    // The renewal answer KE12 could not make a write meet (Task 22), so its outcome stays unknown.
+    ["an auth answer after the one renewal", toEtcdError(grpc(3, "etcdserver: revision of auth store is old"))],
   ];
   for (const [name, error] of UNKNOWN) {
     test(`${name}: interrupted with committed unknown, and no read decides it, whatever it would show`, async () => {

@@ -29,6 +29,7 @@ import { EtcdError, type EtcdErrorCategory } from "@/lib/db/providers/keyvalue/e
 import {
   cancelReasonToEtcdError,
   connectStepError,
+  ETCD_RENEWAL_ANSWERS_NOT_APPLIED,
   type EtcdErrorConnection,
   type EtcdErrorContext,
   etcdWords,
@@ -551,9 +552,9 @@ describe("toProviderError: a write whose outcome is unknown (QueryError, 400, no
       "The put was cancelled after it was sent. (etcd: request canceled)",
     ],
     [
-      "a renewal answer, until KE12 shows it was not applied",
-      toEtcdError(grpc(16, "etcdserver: invalid auth token")),
-      "etcd did not accept this connection's sign-in for the put. (etcd: invalid auth token)",
+      "the renewal answer KE12 could not show was not applied",
+      toEtcdError(grpc(3, "etcdserver: revision of auth store is old")),
+      "etcd did not accept this connection's sign-in for the put. (etcd: revision of auth store is old)",
     ],
     [
       "an answer outside the closed list",
@@ -859,6 +860,22 @@ describe("toProviderError: a read's deadline, a cancel, authentication", () => {
       expect((await respond(mapped)).status).toBe(401);
     });
   }
+
+  for (const [code, details] of [
+    [16, "etcdserver: invalid auth token"],
+    [3, "etcdserver: user name is empty"],
+  ] as const) {
+    test(`a write that met a renewal answer KE12 measured as not applied is an AuthenticationError, as a read's is: ${details}`, async () => {
+      // Sent once more after the one renewal, it met the answer again: nothing was written.
+      const mapped = toProviderError(toEtcdError(grpc(code, details)), write("put"));
+      expect(mapped).toBeInstanceOf(AuthenticationError);
+      expect(mapped.message).toBe(
+        `etcd did not accept this connection's sign-in for the put: connect again. (etcd: ${details.slice("etcdserver: ".length)})`,
+      );
+      expect(mapped.message).not.toContain(UNKNOWN_OUTCOME);
+      expect((await respond(mapped)).status).toBe(401);
+    });
+  }
 });
 
 describe("toProviderError: PermissionDenied names the command, the range and what the user may read", () => {
@@ -1015,6 +1032,9 @@ describe("writeNotApplied: the closed list of spec 4.5, and what never left the 
       grpc(8, "etcdserver: too many requests"),
       grpc(14, "etcdserver: no leader"),
       grpc(7, "etcdserver: permission denied"),
+      // The renewal answers KE12 measured as leaving a write unapplied (Task 22).
+      grpc(16, "etcdserver: invalid auth token"),
+      grpc(3, "etcdserver: user name is empty"),
       grpc(14, "No connection established. Last error: Failed to connect. Resolution note: "),
       grpc(
         14,
@@ -1034,9 +1054,7 @@ describe("writeNotApplied: the closed list of spec 4.5, and what never left the 
       grpc(1, "etcdserver: request canceled"),
       grpc(4, "context deadline exceeded"),
       grpc(4, "Deadline exceeded"),
-      grpc(16, "etcdserver: invalid auth token"),
       grpc(3, "etcdserver: revision of auth store is old"),
-      grpc(3, "etcdserver: user name is empty"),
       grpc(8, "Received message larger than max (9000000 vs 8388608)"),
       grpc(5, "etcdserver: requested lease not found"),
       grpc(15, "etcdserver: corrupt cluster"),
@@ -1226,5 +1244,35 @@ describe("isUserNameEmpty: step 2's reading of an older server (spec 6.1)", () =
     expect(isUserNameEmpty(toEtcdError(grpc(3, "etcdserver: invalid auth token")))).toBe(false);
     expect(isUserNameEmpty(grpc(3, "etcdserver: user name is empty"))).toBe(false);
     expect(isUserNameEmpty(undefined)).toBe(false);
+  });
+});
+
+describe("KE12: the renewal answers measured as leaving a write unapplied (spec E4, 4.5)", () => {
+  // Measured by Task 22 on etcd-auth-password (etcd 3.7.2): each answer below met a write that was read
+  // back as root and found not applied (a value edit's Txn, and a put sent with no token), so a write
+  // meeting it is on 4.5's closed list and is retried once after the renewal.
+  test.each([
+    ["etcdserver: invalid auth token", 16],
+    ["etcdserver: user name is empty", 3],
+  ] as const)("%s is on the closed list", (detail, code) => {
+    expect(ETCD_RENEWAL_ANSWERS_NOT_APPLIED.has(detail)).toBe(true);
+    expect(writeNotApplied(new EtcdError("unauthenticated", detail, code))).toBe(true);
+  });
+
+  test("the answer no write could be made to meet stays off, so a write meeting it keeps the unknown outcome", () => {
+    // A simple token takes the auth store's revision at each call, so a write sent after a grant was applied
+    // (measured twice); only a race between the call and its apply answers it, which the run could not provoke.
+    const old = new EtcdError("unauthenticated", "etcdserver: revision of auth store is old", 3);
+    expect([...ETCD_RENEWAL_ANSWERS_NOT_APPLIED].sort()).toEqual([
+      "etcdserver: invalid auth token",
+      "etcdserver: user name is empty",
+    ]);
+    expect(writeNotApplied(old)).toBe(false);
+    expect(toProviderError(old, write()).message).toContain(UNKNOWN_OUTCOME);
+  });
+
+  test("an unauthenticated write whose answer is on the list never says it may have been applied", () => {
+    const invalid = new EtcdError("unauthenticated", "etcdserver: invalid auth token", 16);
+    expect(toProviderError(invalid, write()).message).not.toContain(UNKNOWN_OUTCOME);
   });
 });

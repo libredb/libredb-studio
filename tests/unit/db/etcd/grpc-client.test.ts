@@ -1281,10 +1281,68 @@ describe("spec E4: the token and its bounded renewal", () => {
       (c) => c.alarmDisarm({ memberId: "10276657743932975437", alarm: "corrupt" }, options),
     ],
   ];
-  const WRITE_CASES = WRITES.flatMap(([label, rpc, run]) =>
-    E4_ANSWERS.map(([answer, code, details]) => [`${label} meeting ${answer}`, rpc, run, code, details] as const),
+  // KE12 (Task 22): the two answers measured as leaving a write unapplied, and the one no write could be made to meet.
+  const NOT_APPLIED_ANSWERS = E4_ANSWERS.filter(([, , details]) => details !== AUTH_STORE_OLD);
+  const UNKNOWN_ANSWERS = E4_ANSWERS.filter(([, , details]) => details === AUTH_STORE_OLD);
+  const writeCases = (answers: typeof E4_ANSWERS) =>
+    WRITES.flatMap(([label, rpc, run]) =>
+      answers.map(([answer, code, details]) => [`${label} meeting ${answer}`, rpc, run, code, details] as const),
+    );
+  test.each(writeCases(NOT_APPLIED_ANSWERS))(
+    "%s, which KE12 measured as not applied, renews once and is sent once more under the new token",
+    async (_label, rpc, run, code, details) => {
+      let changed = 0;
+      const { wire, client } = await recorded(
+        {
+          answers: {
+            // The renewal answers late: a write sent again before its renewal ended would carry token-1.
+            "Auth/Authenticate": [signedIn("token-1"), later(20, signedIn("token-2"))],
+            [rpc]: [refuse(code, details), () => MINIMAL[rpc]],
+          },
+        },
+        PASSWORD,
+        { onAuthStoreChanged: () => changed++ },
+      );
+      await client.authenticate(options);
+      await run(client);
+      expect(tokensOf(wire.calls)).toEqual([
+        ["Auth/Authenticate", null],
+        [rpc, "token-1"],
+        ["Auth/Authenticate", null],
+        [rpc, "token-2"],
+      ]);
+      // The same write, once more.
+      expect(wire.calls[3].request).toEqual(wire.calls[1].request);
+      expect(changed).toBe(0);
+    },
   );
-  test.each(WRITE_CASES)(
+
+  test.each(NOT_APPLIED_ANSWERS)(
+    "a write meeting %s before and after its one renewal raises the second answer, which says nothing was written",
+    async (_label, code, details) => {
+      const { wire, client } = await recorded(
+        {
+          answers: {
+            "Auth/Authenticate": [signedIn("token-1"), signedIn("token-2")],
+            "KV/Txn": [refuse(code, details), refuse(code, details)],
+          },
+        },
+        PASSWORD,
+      );
+      await client.authenticate(options);
+      const error = await failure(client.txn({ compare: [], success: [put], failure: [] }, options));
+      expect(error).toMatchObject({ category: "unauthenticated", detail: details, grpcCode: code });
+      expect(toProviderError(error, context("put", true)).message).not.toContain("The write may have been applied");
+      expect(tokensOf(wire.calls)).toEqual([
+        ["Auth/Authenticate", null],
+        ["KV/Txn", "token-1"],
+        ["Auth/Authenticate", null],
+        ["KV/Txn", "token-2"],
+      ]);
+    },
+  );
+
+  test.each(writeCases(UNKNOWN_ANSWERS))(
     "%s renews once and is raised as it came, sent once, and the same write after it carries the new token",
     async (_label, rpc, run, code, details) => {
       let changed = 0;
@@ -1301,7 +1359,7 @@ describe("spec E4: the token and its bounded renewal", () => {
       );
       await client.authenticate(options);
       const error = await failure(run(client));
-      // Its own answer, sent once: KE12 has measured no renewal answer as not applied, so its outcome is unknown.
+      // Its own answer, sent once: KE12 could not make a write meet this answer, so its outcome is unknown.
       expect(error).toMatchObject({ category: "unauthenticated", detail: details, grpcCode: code });
       expect(toProviderError(error, context("put", true)).message).toContain("The write may have been applied");
       expect(tokensOf(wire.calls)).toEqual([
@@ -1316,7 +1374,40 @@ describe("spec E4: the token and its bounded renewal", () => {
     },
   );
 
-  test.each(E4_ANSWERS)(
+  test.each(NOT_APPLIED_ANSWERS)(
+    "a write meeting %s whose renewal fails raises the renewal's failure, as a read does, since nothing was written",
+    async (_label, code, details) => {
+      const { wire, client } = await recorded(
+        {
+          answers: {
+            "Auth/Authenticate": [
+              signedIn("token-1"),
+              refuse(3, "etcdserver: authentication failed, invalid user ID or password"),
+              signedIn("token-2"),
+            ],
+            "KV/Txn": [refuse(code, details)],
+            "KV/Range": [refuse(code, details), () => rangeAnswer()],
+          },
+        },
+        PASSWORD,
+      );
+      await client.authenticate(options);
+      const error = await failure(client.txn({ compare: [], success: [put], failure: [] }, options));
+      expect(error).toMatchObject({ category: "auth-failed" });
+      // The failed renewal left the token it would have replaced, so the next call meets the answer and renews.
+      await INVOKE["KV/Range"](client);
+      expect(tokensOf(wire.calls)).toEqual([
+        ["Auth/Authenticate", null],
+        ["KV/Txn", "token-1"],
+        ["Auth/Authenticate", null],
+        ["KV/Range", "token-1"],
+        ["Auth/Authenticate", null],
+        ["KV/Range", "token-2"],
+      ]);
+    },
+  );
+
+  test.each(UNKNOWN_ANSWERS)(
     "a write meeting %s whose renewal fails raises its own answer, never the sign-in's, and the next call signs in again",
     async (_label, code, details) => {
       let changed = 0;
@@ -1354,6 +1445,33 @@ describe("spec E4: the token and its bounded renewal", () => {
   );
 
   test("a write whose signal aborts while it waits for its renewal raises its own answer at once, and sends nothing more", async () => {
+    // The answer KE12 could not make a write meet, so the write's outcome stays unknown.
+    const { wire, client } = await recorded(
+      {
+        answers: {
+          "Auth/Authenticate": [signedIn("token-1"), never],
+          "KV/DeleteRange": [refuse(3, AUTH_STORE_OLD)],
+        },
+      },
+      PASSWORD,
+    );
+    await client.authenticate(options);
+    const cancel = new AbortController();
+    let settled = false;
+    const deleting = INVOKE["KV/DeleteRange"](client, { signal: cancel.signal }).finally(() => {
+      settled = true;
+    });
+    await Bun.sleep(20);
+    // The write waits for the renewal it started, so the next call would carry the new token.
+    expect(settled).toBe(false);
+    cancel.abort();
+    expect(await failure(deleting)).toMatchObject({ category: "unauthenticated", detail: AUTH_STORE_OLD });
+    expect(wire.calls.map((call) => call.rpc)).toEqual(["Auth/Authenticate", "KV/DeleteRange", "Auth/Authenticate"]);
+    // The renewal is the client's own call, which close() ends.
+    await client.close();
+  });
+
+  test("a write KE12 measured as not applied, whose signal aborts while it waits for its renewal, ends with the abort and sends nothing more", async () => {
     const { wire, client } = await recorded(
       {
         answers: {
@@ -1370,19 +1488,15 @@ describe("spec E4: the token and its bounded renewal", () => {
       settled = true;
     });
     await Bun.sleep(20);
-    // The write waits for the renewal it started, so the next call would carry the new token.
+    // It waits for the renewal, to be sent once more under the new token, as a read does.
     expect(settled).toBe(false);
     cancel.abort();
-    expect(await failure(deleting)).toMatchObject({
-      category: "unauthenticated",
-      detail: "etcdserver: invalid auth token",
-    });
+    expect(await failure(deleting)).toMatchObject({ category: "cancelled" });
     expect(wire.calls.map((call) => call.rpc)).toEqual(["Auth/Authenticate", "KV/DeleteRange", "Auth/Authenticate"]);
-    // The renewal is the client's own call, which close() ends.
     await client.close();
   });
 
-  test("a keep-alive meeting a renewal answer is a write: renewed once, raised as it came, and its stream cancelled", async () => {
+  test("a keep-alive meeting a renewal answer KE12 measured as not applied is renewed once and sent once more, each stream cancelled", async () => {
     const { wire, client } = await recorded(
       {
         answers: {
@@ -1396,8 +1510,36 @@ describe("spec E4: the token and its bounded renewal", () => {
       PASSWORD,
     );
     await client.authenticate(options);
+    expect(await client.leaseKeepAliveOnce("7587863092875085100", options)).toEqual({
+      id: "7587863092875085100",
+      ttl: "60",
+    });
+    expect(tokensOf(wire.calls)).toEqual([
+      ["Auth/Authenticate", null],
+      ["Lease/LeaseKeepAlive", "token-1"],
+      ["Auth/Authenticate", null],
+      ["Lease/LeaseKeepAlive", "token-2"],
+    ]);
+    expect(wire.cancels).toEqual(["Lease/LeaseKeepAlive", "Lease/LeaseKeepAlive"]);
+  });
+
+  test("a keep-alive meeting a renewal answer is a write: renewed once, raised as it came, and its stream cancelled", async () => {
+    // The answer KE12 could not make a write meet, so the keep-alive's outcome stays unknown.
+    const { wire, client } = await recorded(
+      {
+        answers: {
+          "Auth/Authenticate": [signedIn("token-1"), signedIn("token-2")],
+          "Lease/LeaseKeepAlive": [
+            () => ({ messages: [], end: { error: statusError(3, AUTH_STORE_OLD) } }),
+            () => ({ messages: [{ ID: "7587863092875085100", TTL: "60" }], end: "open" }),
+          ],
+        },
+      },
+      PASSWORD,
+    );
+    await client.authenticate(options);
     const error = await failure(client.leaseKeepAliveOnce("7587863092875085100", options));
-    expect(error).toMatchObject({ category: "unauthenticated", detail: "etcdserver: invalid auth token" });
+    expect(error).toMatchObject({ category: "unauthenticated", detail: AUTH_STORE_OLD });
     expect(tokensOf(wire.calls)).toEqual([
       ["Auth/Authenticate", null],
       ["Lease/LeaseKeepAlive", "token-1"],
