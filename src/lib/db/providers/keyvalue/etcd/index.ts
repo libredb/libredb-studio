@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
 import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
 import type {
   ActiveSessionDetails,
@@ -198,6 +198,11 @@ interface EtcdSession {
   /** The etcd user the grants belong to; absent where authentication is off. */
   readonly user?: string;
   grants: EtcdGrants;
+  /**
+   * The auth store's revision AuthStatus answered before the grants were read (spec 4.7); absent where it
+   * answered none, an etcd below 3.7 reading "user name is empty" for an AuthStatus without a token.
+   */
+  authRevision?: string;
 }
 
 /** A query in flight under the caller's id, so cancelQuery reaches it (spec 5.5). */
@@ -242,6 +247,11 @@ function stepError(step: EtcdConnectStep, error: unknown, context: EtcdErrorCont
     : toProviderError(error, context);
 }
 
+/** The error context of every call that reads `user`'s grants, AuthStatus's revision among them (spec 4.7). */
+function grantsContext(user: string, errors: EtcdErrorConnection): EtcdErrorContext {
+  return { command: `read of etcd user ${user}'s grants`, write: false, connection: errors };
+}
+
 /**
  * The grants of spec 4.7 for `user`: every key for a user holding the root role, else the READ and READWRITE
  * permissions of its roles as the readable union and the WRITE and READWRITE ones as the writable union.
@@ -255,7 +265,7 @@ async function readGrants(
   errors: EtcdErrorConnection,
   signal: () => AbortSignal,
 ): Promise<EtcdGrants> {
-  const context: EtcdErrorContext = { command: `read of etcd user ${user}'s grants`, write: false, connection: errors };
+  const context = grantsContext(user, errors);
   try {
     const held = roles ?? (await client.userGet(user, { signal: signal() }));
     if (held.includes(ROOT_ROLE)) return EVERY_KEY;
@@ -269,6 +279,29 @@ async function readGrants(
       return { state: "refused", refusal: mapped };
     throw mapped;
   }
+}
+
+/** The auth store's revision as AuthStatus answers it now (spec 4.7), a failure raised as the read of the grants. */
+async function readAuthRevision(
+  client: EtcdClient,
+  user: string,
+  errors: EtcdErrorConnection,
+  signal: AbortSignal,
+): Promise<string> {
+  try {
+    return (await client.authStatus({ signal })).authRevision;
+  } catch (error) {
+    throw toProviderError(error, grantsContext(user, errors));
+  }
+}
+
+/**
+ * A read of the grants that failed, kept for the one count that met it as a refused read is kept, so the
+ * prefix folder carries its sentence and the other kinds are still counted (spec 4.3); a defect is raised.
+ */
+function unreadGrants(error: unknown): EtcdGrants {
+  if (error instanceof DatabaseError) return { state: "refused", refusal: error };
+  throw error;
 }
 
 export class EtcdProvider extends BaseDatabaseProvider {
@@ -413,10 +446,14 @@ export class EtcdProvider extends BaseDatabaseProvider {
       });
     }
     let enabled: boolean | undefined;
+    let authRevision: string | undefined;
     let roles: readonly string[] | undefined;
     if (auth.kind !== "password") {
       enabled = await client.authStatus({ signal: signal() }).then(
-        (status) => status.enabled,
+        (status) => {
+          authRevision = status.authRevision;
+          return status.enabled;
+        },
         (error: unknown) => {
           if (isUserNameEmpty(error)) return true;
           throw toProviderError(error, step("auth status"));
@@ -440,7 +477,10 @@ export class EtcdProvider extends BaseDatabaseProvider {
     }
     if (enabled === undefined) {
       enabled = await client.authStatus({ signal: signal() }).then(
-        (answer) => answer.enabled,
+        (answer) => {
+          authRevision = answer.authRevision;
+          return answer.enabled;
+        },
         (error: unknown) => {
           throw toProviderError(error, step("auth status"));
         },
@@ -448,7 +488,14 @@ export class EtcdProvider extends BaseDatabaseProvider {
     }
     const user = enabled ? principal?.name : undefined;
     const grants = user === undefined ? EVERY_KEY : await readGrants(client, user, roles, errors, signal);
-    return { client, options, errors, ...(user === undefined ? {} : { user }), grants };
+    return {
+      client,
+      options,
+      errors,
+      ...(user === undefined ? {} : { user }),
+      grants,
+      ...(authRevision === undefined ? {} : { authRevision }),
+    };
   }
 
   private requireSession(): EtcdSession {
@@ -457,23 +504,50 @@ export class EtcdProvider extends BaseDatabaseProvider {
     return this.session!;
   }
 
-  /** The grants as they stand, read again first after an auth-store change (R13 D10). */
+  /** The grants as they stand, read again first after an auth-store change the adapter reported (R13 D10). */
   private async currentGrants(session: EtcdSession): Promise<EtcdGrants> {
     if (this.pendingGrants !== undefined) return this.pendingGrants;
     if (!this.grantsStale || session.user === undefined) return session.grants;
-    this.grantsStale = false;
-    const reading = readGrants(session.client, session.user, undefined, session.errors, () => this.callSignal())
-      .then(
-        (grants) => {
-          session.grants = grants;
-          return grants;
-        },
-        (error: unknown) => {
-          // Read again at the next surface: the change it would have read has not been read yet.
-          this.grantsStale = true;
-          throw error;
-        },
-      )
+    return this.readGrantsAgain(session, session.user);
+  }
+
+  /**
+   * The grants a walk that reads keys runs under (spec 4.7): AuthStatus first, and the grants read again when
+   * the auth store's revision is not the one they were read under. etcd checks its default simple token at the
+   * auth store's revision as it stands, so no call made after an auth change meets "revision of auth store is
+   * old" and reaches the adapter's hook, and the revision is what tells the walk; where authentication is off
+   * there is no grant to read.
+   */
+  private async walkGrants(session: EtcdSession): Promise<EtcdGrants> {
+    if (this.pendingGrants !== undefined) return this.pendingGrants;
+    if (session.user === undefined) return session.grants;
+    return this.readGrantsAgain(session, session.user);
+  }
+
+  /**
+   * AuthStatus, then UserGet and RoleGet unless its revision is the one the grants were read under and the
+   * adapter reported no change since; the grants read and the revision read before them replace the ones kept.
+   * Surfaces that start together share the one read.
+   */
+  private readGrantsAgain(session: EtcdSession, user: string): Promise<EtcdGrants> {
+    const signal = () => this.callSignal();
+    const reading = readAuthRevision(session.client, user, session.errors, signal())
+      .then((revision) => {
+        if (!this.grantsStale && revision === session.authRevision) return session.grants;
+        this.grantsStale = false;
+        return readGrants(session.client, user, undefined, session.errors, signal).then(
+          (grants) => {
+            session.grants = grants;
+            session.authRevision = revision;
+            return grants;
+          },
+          (error: unknown) => {
+            // Read again at the next surface: the change it would have read has not been read yet.
+            this.grantsStale = true;
+            throw error;
+          },
+        );
+      })
       .finally(() => {
         this.pendingGrants = undefined;
       });
@@ -485,6 +559,12 @@ export class EtcdProvider extends BaseDatabaseProvider {
   private async surface(): Promise<SurfaceCall> {
     const session = this.requireSession();
     return this.surfaceOver(session, await this.currentGrants(session));
+  }
+
+  /** One walk that reads keys, over the grants read again first where they changed (spec 4.7). */
+  private async walkSurface(): Promise<SurfaceCall> {
+    const session = this.requireSession();
+    return this.surfaceOver(session, await this.walkGrants(session));
   }
 
   /**
@@ -588,7 +668,11 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     requireRoot(container);
-    const { client, grants, context } = await this.surface();
+    const session = this.requireSession();
+    // The grants scope the prefix count alone, so a read of them that fails is kept for that folder, and the
+    // other kinds are counted all the same: the members, which a lost quorum still serves, among them (spec 4.3).
+    const grants = await this.walkGrants(session).catch(unreadGrants);
+    const { client, context } = this.surfaceOver(session, grants);
     const counts = await countEtcdObjects(client, context);
     // A refused read of the grants is the group folder's own sentence (spec 4.7), never a count of no range.
     return grants.state === "refused" ? { ...counts, [GROUP_KIND]: { unavailable: grants.refusal.message } } : counts;
@@ -596,8 +680,9 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     requireRoot(container);
-    const { client, grants, context } = await this.surface();
-    if (KEY_READING_KINDS.has(kind)) requireKeysReadable(grants);
+    const walks = KEY_READING_KINDS.has(kind);
+    const { client, grants, context } = await (walks ? this.walkSurface() : this.surface());
+    if (walks) requireKeysReadable(grants);
     return listEtcdObjects(client, context, kind);
   }
 
@@ -618,13 +703,14 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
-    const { client, grants, context } = await this.surface();
-    if (KEY_READING_KINDS.has(kind)) requireKeysReadable(grants);
+    const walks = KEY_READING_KINDS.has(kind);
+    const { client, grants, context } = await (walks ? this.walkSurface() : this.surface());
+    if (walks) requireKeysReadable(grants);
     return readEtcdObjectSource(client, context, path, kind, limit);
   }
 
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
-    const { client, grants, context } = await this.surface();
+    const { client, grants, context } = await this.walkSurface();
     requireKeysReadable(grants);
     return scanEtcdKeysPage(client, context, options);
   }
@@ -632,10 +718,14 @@ export class EtcdProvider extends BaseDatabaseProvider {
   /**
    * The stamp is the composition root's (spec 4.5): the fingerprint both edit routes compare with the
    * connection they resolved, a fresh id the apply's audit files it under, and the time, as Redis stamps.
+   * A read-only connection's build is refused by E6 before the edit module reads anything, so it reads no
+   * grant, nor the auth store's revision, before that refusal.
    */
   public async buildObjectEdit(request: ObjectEditRequest): Promise<ObjectEditBuild> {
-    const { client, grants, context } = await this.surface();
+    const session = this.requireSession();
+    const grants = session.options.readOnly === undefined ? await this.walkGrants(session) : session.grants;
     requireKeysReadable(grants);
+    const { client, context } = this.surfaceOver(session, grants);
     return buildEtcdValueEdit(client, context, request, {
       type: this.type,
       connectionFingerprint: await connectionFingerprint(this.config),
@@ -666,7 +756,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   public async getOverview(): Promise<DatabaseOverview> {
-    const { client, grants, context } = await this.surface();
+    const { client, grants, context } = await this.walkSurface();
     requireKeysReadable(grants);
     return readEtcdOverview(client, context);
   }
@@ -678,7 +768,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
   /** One count per listed group, over its readable intersection, read when the panel opens (spec 7.1). */
   public async getTableStats(): Promise<TableStats[]> {
-    const { client, grants, context } = await this.surface();
+    const { client, grants, context } = await this.walkSurface();
     requireKeysReadable(grants);
     const groups = await listEtcdObjects(client, context, GROUP_KIND);
     return readEtcdTableStats(client, context, groups.map(groupPrefix));

@@ -591,7 +591,10 @@ describe("the connect sequence (spec 6.1)", () => {
         .groups.map(groupLabel)
         .sort(),
     );
-    expect(methods(client, 4).every((method) => method === "range")).toBe(true);
+    // A user can lose the root role, so the walk reads the auth store's revision first, and then keys alone (spec 4.7).
+    const [check, ...walk] = methods(client, 4);
+    expect(check).toBe("authStatus");
+    expect(walk.every((method) => method === "range")).toBe(true);
   });
 
   test("each role's permissions are read, in the order UserGet names the roles, and the grants are their union", async () => {
@@ -967,6 +970,37 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
   const listed = async (provider: EtcdProvider) =>
     (await provider.listObjects([], "prefix")).map((group) => group.name).sort();
 
+  test("under etcd's default simple tokens, where no call after an auth change meets the stale revision, a walk reads the grants again once the auth store's revision moved", async () => {
+    let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
+    let authRevision = "5";
+    const client = readerClient({
+      authStatus: async () => ({ enabled: true, authRevision }),
+      roleGet: async () => permissions,
+      // etcd checks every call against the grants as they stand, whatever the provider read.
+      range: (request, options) => keySpaceRange(KEYS, permissions)(request, options),
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    expect(await listed(provider)).toEqual(visibleGroups(["/app/a/b", "/app/cfg", "/app/x/y", "/config/a"]));
+
+    // An admin took the prefix away and granted another key: the auth store moved on, and the adapter said nothing.
+    permissions = [
+      { type: "read", key: encode("/config/a") },
+      { type: "read", key: encode("/config/b") },
+    ];
+    authRevision = "7";
+    const before = client.calls.length;
+    expect(await listed(provider)).toEqual(visibleGroups(["/config/a", "/config/b"]));
+    expect(methods(client, before).slice(0, 3)).toEqual(["authStatus", "userGet", "roleGet"]);
+    expect((await provider.countObjects([])).prefix).toEqual({
+      count: 1,
+      sampledFrom: "the 2 ranges etcd user reader may read",
+    });
+    // The revision the grants were read under is kept, so a walk after it reads AuthStatus and no grant.
+    const again = client.calls.length;
+    expect(await listed(provider)).toEqual(visibleGroups(["/config/a", "/config/b"]));
+    expect(methods(client, again).filter((method) => method !== "range")).toEqual(["authStatus"]);
+  });
+
   test("a renewal that met the stale auth revision narrows the next walk to the grants read again", async () => {
     let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
     const client = readerClient({ roleGet: async () => permissions, range: keySpaceRange(KEYS, READER_PERMISSIONS) });
@@ -978,15 +1012,15 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     hooks[0].onAuthStoreChanged?.();
     const before = client.calls.length;
     expect(await listed(provider)).toEqual(visibleGroups(["/config/a"]));
-    expect(methods(client, before).slice(0, 2)).toEqual(["userGet", "roleGet"]);
-    for (const call of callsOf(client, before + 2)) {
+    expect(methods(client, before).slice(0, 3)).toEqual(["authStatus", "userGet", "roleGet"]);
+    for (const call of callsOf(client, before + 3)) {
       expect(call.method).toBe("range");
       expect(Buffer.from((call.args[0] as { key: Uint8Array }).key).toString()).toStartWith("/config/a");
     }
-    // The grants read again are the ones kept: the walk after it reads them and reads no grant again.
+    // The grants read again are the ones kept: the walk after it reads the revision and no grant again.
     const again = client.calls.length;
     expect(await listed(provider)).toEqual(visibleGroups(["/config/a"]));
-    expect(methods(client, again).filter((method) => method !== "range")).toEqual([]);
+    expect(methods(client, again).filter((method) => method !== "range")).toEqual(["authStatus"]);
   });
 
   test("without the hook, no grant is read again", async () => {
@@ -1008,6 +1042,7 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
       listed(provider),
       provider.getOverview(),
     ]);
+    expect(methods(client).filter((method) => method === "authStatus")).toHaveLength(2);
     expect(methods(client).filter((method) => method === "userGet")).toHaveLength(2);
     expect(methods(client).filter((method) => method === "roleGet")).toHaveLength(2);
     // None of them walks the grants the change replaced while the new ones are being read.
@@ -1038,7 +1073,7 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect(counts.member).toEqual({ count: 1 });
   });
 
-  test("a read of the grants that fails is raised, and the next surface reads them again", async () => {
+  test("a read of the grants that fails is raised by a walk, carried by the prefix folder in the count, and read again by the next walk", async () => {
     let fail = false;
     const client = readerClient({
       userGet: async () => {
@@ -1049,10 +1084,36 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
     fail = true;
     hooks[0].onAuthStoreChanged?.();
-    await expect(provider.countObjects([])).rejects.toBeInstanceOf(ConnectionError);
+    await expect(provider.listObjects([], "prefix")).rejects.toBeInstanceOf(ConnectionError);
+    const counts = await provider.countObjects([]);
+    expect(counts.prefix).toEqual({
+      unavailable: "etcd did not answer the read of etcd user reader's grants. (etcd: request timed out)",
+    });
+    expect(counts.member).toEqual({ count: 1 });
     fail = false;
-    await provider.countObjects([]);
-    expect(methods(client).filter((method) => method === "userGet")).toHaveLength(3);
+    expect((await provider.countObjects([])).prefix).toEqual({
+      count: visibleGroups(["/app/a/b", "/app/cfg", "/app/x/y", "/config/a"]).length,
+      sampledFrom: "the 2 ranges etcd user reader may read",
+    });
+    expect(methods(client).filter((method) => method === "userGet")).toHaveLength(4);
+  });
+
+  test("during a lost quorum the count of a user who is not root still lists the members, and the prefix folder carries the lost quorum (spec 4.3)", async () => {
+    let quorum = true;
+    const noLeader = () => new EtcdError("no-leader", "etcdserver: no leader", 14);
+    const client = readerClient({
+      authStatus: async () => {
+        if (!quorum) throw noLeader();
+        return { enabled: true, authRevision: "5" };
+      },
+      range: (request, options) =>
+        quorum ? keySpaceRange(KEYS, READER_PERMISSIONS)(request, options) : Promise.reject(noLeader()),
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    quorum = false;
+    const counts = await provider.countObjects([]);
+    expect(counts.member).toEqual({ count: 1 });
+    expect(counts.prefix).toEqual({ unavailable: expect.stringContaining("the cluster has lost quorum") });
   });
 
   test("an apply reads no grant before its one Txn, so a read of them that fails cannot turn an edit never sent into one whose outcome is unknown (spec 4.5, E6)", async () => {
@@ -1096,7 +1157,7 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     grantsAnswer = true;
     const walked = client.calls.length;
     await provider.listObjects([], "prefix");
-    expect(methods(client, walked).slice(0, 2)).toEqual(["userGet", "roleGet"]);
+    expect(methods(client, walked).slice(0, 3)).toEqual(["authStatus", "userGet", "roleGet"]);
   });
 
   test("on an etcd whose authentication is off the hook has no grant to read", async () => {
@@ -1332,7 +1393,7 @@ describe("each call's deadline, the connection's query timeout (spec 5.3)", () =
     await provider.connect();
     answer = false;
     hooks[0].onAuthStoreChanged?.();
-    await reached(() => provider.countObjects([]), "read of etcd user reader's grants");
+    await reached(() => provider.listObjects([], "prefix"), "read of etcd user reader's grants");
   });
 });
 
@@ -1355,49 +1416,65 @@ describe("every surface answers what its module answers, with the same calls (sp
     return { type, connectionFingerprint: fingerprint, planId, issuedAt };
   };
 
+  /**
+   * Each surface, what its module answers over the same client and context, and whether it is a walk that reads
+   * keys, which reads the auth store's revision first for a user who is not root (spec 4.7).
+   */
   const SURFACES: ReadonlyArray<
     readonly [
       string,
       (provider: EtcdProvider) => Promise<unknown>,
       (client: FakeEtcdClient, context: EtcdSurfaceContext, answered: unknown) => Promise<unknown>,
+      walks: boolean,
     ]
   > = [
-    ["countObjects", (p) => p.countObjects([]), (c, x) => countEtcdObjects(c, x)],
-    ["listObjects of the groups", (p) => p.listObjects([], "prefix"), (c, x) => listEtcdObjects(c, x, "prefix")],
-    ["listObjects of the members", (p) => p.listObjects([], "member"), (c, x) => listEtcdObjects(c, x, "member")],
+    ["countObjects", (p) => p.countObjects([]), (c, x) => countEtcdObjects(c, x), true],
+    ["listObjects of the groups", (p) => p.listObjects([], "prefix"), (c, x) => listEtcdObjects(c, x, "prefix"), true],
+    [
+      "listObjects of the members",
+      (p) => p.listObjects([], "member"),
+      (c, x) => listEtcdObjects(c, x, "member"),
+      false,
+    ],
     [
       "describeObjects of the groups",
       (p) => p.describeObjects([], "prefix", 10),
       async (c, x) => describeEtcdObjects("prefix", await listEtcdObjects(c, x, "prefix"), 10),
+      true,
     ],
     [
       "describeObjects of a kind with no columns",
       (p) => p.describeObjects([], "member"),
       async () => describeEtcdObjects("member", []),
+      false,
     ],
     [
       "a member's source",
       (p) => p.readObjectSource([member], "member"),
       (c, x) => readEtcdObjectSource(c, x, [member], "member"),
+      false,
     ],
     [
       "a key's source",
       (p) => p.readObjectSource(["/app/cfg"], "key", 64),
       (c, x) => readEtcdObjectSource(c, x, ["/app/cfg"], "key", 64),
+      true,
     ],
     [
       "a Keys panel page",
       (p) => p.scanKeysPage({ cursor: "0", count: 10, pattern: "/app/" }),
       (c, x) => scanEtcdKeysPage(c, x, { cursor: "0", count: 10, pattern: "/app/" }),
+      true,
     ],
     [
       "a value edit's build",
       (p) => p.buildObjectEdit(REQUEST),
       (c, x, answered) => buildEtcdValueEdit(c, x, REQUEST, stampOf(answered)),
+      true,
     ],
-    ["getHealth", (p) => p.getHealth(), (c, x) => readEtcdHealth(c, x)],
-    ["getOverview", (p) => p.getOverview(), (c, x) => readEtcdOverview(c, x)],
-    ["getStorageStats", (p) => p.getStorageStats(), (c, x) => readEtcdStorageStats(c, x)],
+    ["getHealth", (p) => p.getHealth(), (c, x) => readEtcdHealth(c, x), false],
+    ["getOverview", (p) => p.getOverview(), (c, x) => readEtcdOverview(c, x), true],
+    ["getStorageStats", (p) => p.getStorageStats(), (c, x) => readEtcdStorageStats(c, x), false],
     [
       "getTableStats",
       (p) => p.getTableStats(),
@@ -1407,17 +1484,20 @@ describe("every surface answers what its module answers, with the same calls (sp
           x,
           (await listEtcdObjects(c, x, "prefix")).map((group) => group.name.slice(0, -1)),
         ),
+      true,
     ],
   ];
 
-  test.each(SURFACES)("%s, as the reader", async (_name, surface, module) => {
+  test.each(SURFACES)("%s, as the reader", async (_name, surface, module, walks) => {
     const client = readerClient();
     const { provider } = await connected(PASSWORD_CONNECTION, client);
     const twin = readerClient();
     const mark = client.calls.length;
     const answered = await surface(provider);
     expect(answered).toEqual(await module(twin, contextFor(PASSWORD_CONNECTION, READER_PERMISSIONS), answered));
-    expect(callsOf(client, mark)).toEqual(callsOf(twin));
+    // The revision matches the one the grants were read under, so no grant is read again.
+    const check = walks ? [{ method: "authStatus", args: [] }] : [];
+    expect(callsOf(client, mark)).toEqual([...check, ...callsOf(twin)]);
   });
 
   test.each(SURFACES)("%s, with authentication off", async (_name, surface, module) => {
@@ -1717,6 +1797,19 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
     },
   );
 
+  test("a read-only reader's value edit is refused before any request, the auth store's revision unread (spec 4.5, E6)", async () => {
+    const client = readerClient();
+    const { provider } = await connected({ ...PASSWORD_CONNECTION, readOnly: true }, client);
+    const mark = client.calls.length;
+    const refusal: ObjectEditRefusal = {
+      refusal: "privilege",
+      sentence: readOnlySentence("connection"),
+      at: { within: "none" },
+    };
+    expect(await provider.buildObjectEdit(REQUEST)).toEqual({ built: false, refusal });
+    expect(client.calls.length).toBe(mark);
+  });
+
   test("a read etcd refuses names what the reader may read (spec 5.6, 4.7)", async () => {
     const { provider } = await connected(PASSWORD_CONNECTION, readerClient());
     const failure = await provider.query("get /secret/x").then(
@@ -1743,7 +1836,7 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
     );
     expect(failure).toBeInstanceOf(QueryError);
     expect(failure?.message).toContain(`etcd user reader may read: ${describeScope(readableScope(narrowed))}.`);
-    expect(methods(client, mark)).toEqual(["userGet", "roleGet", "range"]);
+    expect(methods(client, mark)).toEqual(["authStatus", "userGet", "roleGet", "range"]);
   });
 
   test("with authentication off, or as root, a refusal carries no list of what may be read", async () => {
