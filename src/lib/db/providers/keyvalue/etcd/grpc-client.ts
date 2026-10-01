@@ -919,7 +919,8 @@ export async function createGrpcEtcdClient(
    * renewal answers KE12 measured as leaving a write unapplied (`ETCD_RENEWAL_ANSWERS_NOT_APPLIED`). A write that
    * met any other renewal answer waits for the renewal it started or joined, so the next call carries the new token
    * and a stale auth revision is still reported (R13 D10), and is then raised with its own answer, in 5.6's class of
-   * a write whose outcome is unknown, whatever the renewal met.
+   * a write whose outcome is unknown, whatever the renewal met. A write KE12 left unapplied is sent again only after
+   * a renewal that succeeded, so one whose renewal fails, or whose own abort ends the wait, keeps that outcome known.
    */
   const bounded = async <T>(exchange: () => Promise<Attempt<T>>, write: boolean, signal: AbortSignal): Promise<T> => {
     const sentWith = token;
@@ -933,7 +934,16 @@ export async function createGrpcEtcdClient(
       await renewed.catch(() => undefined);
       throw first.error;
     }
-    await renewed;
+    try {
+      await renewed;
+    } catch (failure) {
+      // A read raises the renewal's failure, and so does a write when the error table words that failure as nothing
+      // written; any other would read as a write that left the client, so the write raises its own answer instead.
+      throw write && !saysNothingWritten(failure) ? first.error : failure;
+    }
+    // The call's own abort ended the wait, so the retry is never sent: a read raises the abort, and a write its own
+    // answer, since the abort would read as a write that left the client (spec 5.6).
+    if (write && signal.aborted) throw first.error;
     const second = await exchange();
     if (second.ok) return second.value;
     throw second.error;
@@ -1169,6 +1179,14 @@ function until(done: Promise<void>, signal: AbortSignal): Promise<void> {
     const release = cancelOnAbort(signal, resolve);
     done.then(resolve, reject).finally(release);
   });
+}
+
+/**
+ * Whether the error table words `error`, raised for a write, without the sentence that the write may have been
+ * applied (spec 5.6): etcd's refusal of the credentials, or an answer on spec 4.5's closed list (`writeNotApplied`).
+ */
+function saysNothingWritten(error: unknown): boolean {
+  return error instanceof EtcdError && (error.category === "auth-failed" || writeNotApplied(error));
 }
 
 /** Whether a call carries `hasleader: true` (spec 6.1, HASLEADER_RULES). */

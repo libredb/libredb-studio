@@ -1489,29 +1489,90 @@ describe("spec E4: the token and its bounded renewal", () => {
     await client.close();
   });
 
-  test("a write KE12 measured as not applied, whose signal aborts while it waits for its renewal, ends with the abort and sends nothing more", async () => {
-    const { wire, client } = await recorded(
+  test.each([
+    ["a cancel", undefined],
+    ["its deadline", new DOMException("The operation timed out.", "TimeoutError")],
+  ] as const)(
+    "a write KE12 measured as not applied that %s ends while it waits for its renewal raises its own answer, which says nothing was written, and sends nothing more",
+    async (_label, reason) => {
+      const { wire, client } = await recorded(
+        {
+          answers: {
+            "Auth/Authenticate": [signedIn("token-1"), never],
+            "KV/DeleteRange": [refuse(16, "etcdserver: invalid auth token")],
+          },
+        },
+        PASSWORD,
+      );
+      await client.authenticate(options);
+      const abort = new AbortController();
+      let settled = false;
+      const deleting = INVOKE["KV/DeleteRange"](client, { signal: abort.signal }).finally(() => {
+        settled = true;
+      });
+      await Bun.sleep(20);
+      // It waits for the renewal, to be sent once more under the new token, as a read does.
+      expect(settled).toBe(false);
+      abort.abort(reason);
+      const error = await failure(deleting);
+      // The retry was never sent, so the one answer etcd gave, which left the write unapplied, is its outcome.
+      expect(error).toMatchObject({
+        category: "unauthenticated",
+        detail: "etcdserver: invalid auth token",
+        grpcCode: 16,
+      });
+      expect(toProviderError(error, context("del", true)).message).toBe(
+        "etcd did not accept this connection's sign-in for the del: connect again. (etcd: invalid auth token)",
+      );
+      expect(wire.calls.map((call) => call.rpc)).toEqual(["Auth/Authenticate", "KV/DeleteRange", "Auth/Authenticate"]);
+      await client.close();
+    },
+  );
+
+  test.each([
+    ["a dropped connection", 14, "Connection dropped"],
+    ["etcd's request timeout", 14, "etcdserver: request timed out"],
+    ["its deadline", 4, "Deadline exceeded after 5.000s,remote_addr=127.0.0.1:2379"],
+  ] as const)(
+    "a write KE12 measured as not applied whose renewal meets %s raises its own answer, since the error table would word that failure as a write sent",
+    async (_label, code, details) => {
+      const { wire, client } = await recorded(
+        {
+          answers: {
+            "Auth/Authenticate": [signedIn("token-1"), refuse(code, details)],
+            "KV/DeleteRange": [refuse(16, "etcdserver: invalid auth token")],
+          },
+        },
+        PASSWORD,
+      );
+      await client.authenticate(options);
+      const error = await failure(INVOKE["KV/DeleteRange"](client));
+      expect(error).toMatchObject({
+        category: "unauthenticated",
+        detail: "etcdserver: invalid auth token",
+        grpcCode: 16,
+      });
+      expect(toProviderError(error, context("del", true)).message).not.toContain("The write may have been applied");
+      expect(wire.calls.map((call) => call.rpc)).toEqual(["Auth/Authenticate", "KV/DeleteRange", "Auth/Authenticate"]);
+    },
+  );
+
+  test("a write KE12 measured as not applied whose renewal meets a lost quorum raises it, as a read does, since it says nothing was applied", async () => {
+    const { client } = await recorded(
       {
         answers: {
-          "Auth/Authenticate": [signedIn("token-1"), never],
+          "Auth/Authenticate": [signedIn("token-1"), refuse(14, "etcdserver: no leader")],
           "KV/DeleteRange": [refuse(16, "etcdserver: invalid auth token")],
         },
       },
       PASSWORD,
     );
     await client.authenticate(options);
-    const cancel = new AbortController();
-    let settled = false;
-    const deleting = INVOKE["KV/DeleteRange"](client, { signal: cancel.signal }).finally(() => {
-      settled = true;
-    });
-    await Bun.sleep(20);
-    // It waits for the renewal, to be sent once more under the new token, as a read does.
-    expect(settled).toBe(false);
-    cancel.abort();
-    expect(await failure(deleting)).toMatchObject({ category: "cancelled" });
-    expect(wire.calls.map((call) => call.rpc)).toEqual(["Auth/Authenticate", "KV/DeleteRange", "Auth/Authenticate"]);
-    await client.close();
+    const error = await failure(INVOKE["KV/DeleteRange"](client));
+    expect(error).toMatchObject({ category: "no-leader", detail: "etcdserver: no leader" });
+    expect(toProviderError(error, context("del", true)).message).toStartWith(
+      "The etcd member this connection reaches has no leader: the cluster has lost quorum, so nothing was applied.",
+    );
   });
 
   test("a keep-alive meeting a renewal answer KE12 measured as not applied is renewed once and sent once more, each stream cancelled", async () => {
