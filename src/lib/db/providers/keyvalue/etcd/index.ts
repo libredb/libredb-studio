@@ -90,13 +90,58 @@ import { commandResult } from "./results";
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
 
+/** A backslash-newline at a CRLF, CR or LF line end, which joins two lines outside single quotes (spec 5.1.1). */
+const LINE_JOIN = String.raw`\\(?:\r\n?|\n)`;
+
+/** Quote marks, which a word may hold anywhere: the lexer removes them and keeps the text they quote (spec 5.1.1). */
+const QUOTES = `['"]*`;
+
+/** The blanks between two words of the command line, with a line join before them, after them or both. */
+const WORD_GAP = String.raw`(?:${LINE_JOIN})?[ \t]+(?:${LINE_JOIN}[ \t]*)?`;
+
+/** Blank lines before the command, a line join among them. */
+const BLANK_LINES = String.raw`\s*(?:\\[\r\n]\s*)*`;
+
+/** `text` from inside a word on: each character bare or escaped, with quote marks between them and after the last. */
+function spelledFrom(text: string): string {
+  const characters = [...text].map((char) => String.raw`\\?${char.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}`);
+  return `${characters.join(QUOTES)}${QUOTES}`;
+}
+
+/** A word whose text is `text`, as the lexer reads it (spec 5.1.1). */
+const spelledWord = (text: string): string => `${QUOTES}${spelledFrom(text)}`;
+
+/** `--command-timeout` and its value, after `=` or a gap, then the gap before the next word (spec 5.1.2). */
+const COMMAND_TIMEOUT = String.raw`${spelledWord("--command-timeout")}(?:\\?=|${WORD_GAP})\S+${WORD_GAP}`;
+
+/** `lease grant` and `lease revoke`, which add and remove what the Leases folder lists (spec 6.2). */
+const LEASE_WRITE = [
+  spelledWord("lease"),
+  WORD_GAP,
+  `(?:${COMMAND_TIMEOUT})*`,
+  `(?:${spelledWord("grant")}|${spelledWord("revoke")})`,
+].join("");
+
 /**
- * Anchored to the command word the parser reads (spec 6.2): past leading comment lines, the leading tokens
- * of spec 5.1.2 and `--command-timeout`, so a key named like a verb reloads nothing. `shouldRefreshSchema`
+ * Anchored to the command word the parser reads (spec 6.2): past the blank and comment lines before it, the
+ * leading tokens of spec 5.1.2 and `--command-timeout`, so a key named like a verb reloads nothing. Each word
+ * may be spelled as the lexer reads it, with quote marks anywhere in it and any character escaped, and a line
+ * join may stand at either end of the blanks between two words, so the documented multi-line forms reload the
+ * tree (5.1.1). A line join inside a word, or two in one gap, is not read: patterns that read them took
+ * JavaScriptCore, the engine of Bun and Safari, 6.8 s on 20,000 joins in one gap and 38 s on 80,000
+ * assignments (measured 2026-10-01), where this one decides each in under 0.2 s. `shouldRefreshSchema`
  * compiles it with `i` alone, so `^` is the start of the whole buffer.
  */
-const SCHEMA_REFRESH_PATTERN =
-  "^(?:\\s*#[^\\n]*\\n)*\\s*(?:[$%]\\s+)?(?:env\\s+)?(?:ETCDCTL_API=3\\s+)*(?:(?:\\S*/)?etcdctl\\s+)?(?:--command-timeout(?:=|\\s+)\\S+\\s+)*(?:put|del|txn|lease\\s+(?:--command-timeout(?:=|\\s+)\\S+\\s+)*(?:grant|revoke))\\b";
+const SCHEMA_REFRESH_PATTERN = [
+  String.raw`^(?:${BLANK_LINES}#[^\n]*\n)*${BLANK_LINES}`,
+  `(?:[$%]${WORD_GAP})?`,
+  `(?:${spelledWord("env")}${WORD_GAP})?`,
+  `(?:ETCDCTL_API=${QUOTES}${spelledFrom("3")}${WORD_GAP})*`,
+  String.raw`(?:(?:\S*/)?${QUOTES}${spelledFrom("etcdctl")}${WORD_GAP})?`,
+  `(?:${COMMAND_TIMEOUT})*`,
+  `(?:${["put", "del", "txn"].map(spelledWord).join("|")}|${LEASE_WRITE})`,
+  String.raw`(?=(?:${LINE_JOIN})?(?:\s|$))`,
+].join("");
 
 /** The kind that groups keys (spec 4.1): the one the grants scope, and whose names end in `*`. */
 const GROUP_KIND = "prefix";

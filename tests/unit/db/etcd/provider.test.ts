@@ -78,6 +78,7 @@ import type {
   ProviderExecutionContext,
 } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { shouldRefreshSchema } from "@/lib/query-generators";
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../../helpers/etcd-fake-client";
 import { KEY_SPACE_HEADER, type KeySpaceEntry, keySpaceRange, permissionDenied } from "../../../helpers/etcd-key-space";
 
@@ -376,11 +377,66 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
     expect(provider.getCapabilities().maintenanceOperations).toEqual(["compact", "defragment", "disarm"]);
   });
 
-  test("the refresh pattern is spec 6.2's, each backslash written once in the pattern", () => {
-    const { provider } = build(CONNECTION, etcdClient());
-    expect(provider.getCapabilities().schemaRefreshPattern).toBe(
-      String.raw`^(?:\s*#[^\n]*\n)*\s*(?:[$%]\s+)?(?:env\s+)?(?:ETCDCTL_API=3\s+)*(?:(?:\S*/)?etcdctl\s+)?(?:--command-timeout(?:=|\s+)\S+\s+)*(?:put|del|txn|lease\s+(?:--command-timeout(?:=|\s+)\S+\s+)*(?:grant|revoke))\b`,
-    );
+  test("the refresh pattern reloads the tree exactly for the texts the parser reads as a write, however their words are spelled (spec 5.1.1, 5.1.2, 6.2)", () => {
+    const pattern = build(CONNECTION, etcdClient()).provider.getCapabilities().schemaRefreshPattern;
+    const refreshing: ReadonlySet<string> = new Set(["put", "del", "txn", "lease-grant", "lease-revoke"]);
+    const texts = [
+      // A line join among the blanks between two words, the documented multi-line forms among them.
+      "ETCDCTL_API=3 etcdctl \\\n  del /app/x",
+      "etcdctl \\\nput /newgroup/a v",
+      "etcdctl \\\r\nput /newgroup/a v",
+      "etcdctl\\\n  put /app/x v",
+      "etcdctl --command-timeout=5s \\\n  del /app/x",
+      "etcdctl \\\n  --command-timeout=5s \\\n  put /app/x v",
+      "--command-timeout \\\n5s put /a b",
+      "$ \\\nput /a b",
+      "  \\\n  put /a b",
+      "lease \\\ngrant 60",
+      "lease\\\n revoke 694d77aa9e38260f",
+      "lease --command-timeout 5s \\\ngrant 60",
+      // Quote marks and escapes inside a word, which the lexer removes.
+      "'put' /app/x v",
+      '"del" /a',
+      "p'ut' /a b",
+      "pu\\t /a b",
+      "'lease' 'grant' 60",
+      '\'txn\'\nmod("/a") > "0"\n\nput /a b\n\n',
+      "ETCDCTL_API='3' etcdctl put /a b",
+      'ETCDCTL_API="3" put /a b',
+      "'env' ETCDCTL_API=3 put /a b",
+      '"./etcdctl" put /a b',
+      "/usr/local/bin/'etcdctl' del /a",
+      "'--command-timeout'=5s put /a b",
+      // The same spellings around a command that writes nothing, and a key named like a verb.
+      "etcdctl \\\nget /app/del",
+      "'get' /app/put",
+      "ETCDCTL_API='3' etcdctl get /put",
+      "get \\\n  put",
+      "lease \\\nkeep-alive --once 694d8147df1dc4c8",
+      "lease 'timetolive' 694d8147df1dc4c8",
+      "etcdctl \\\n  member list",
+    ];
+    const parsed = texts.map((text) => {
+      const result = parseEtcdCommand(text, LIMITS);
+      if (!result.ok) throw new Error(`${JSON.stringify(text)} is refused: ${result.refusal.message}`);
+      return { text, refreshes: refreshing.has(result.parsed.command.kind) };
+    });
+    expect(texts.map((text) => ({ text, refreshes: shouldRefreshSchema(text, pattern) }))).toEqual(parsed);
+    // The corpus holds texts on both sides of the pattern.
+    expect(parsed.filter((entry) => entry.refreshes).length).toBeGreaterThan(0);
+    expect(parsed.filter((entry) => !entry.refreshes).length).toBeGreaterThan(0);
+  });
+
+  test("a line join inside a word, or two in one gap, is not read by the refresh pattern, as its docblock states (spec 6.2)", () => {
+    const pattern = build(CONNECTION, etcdClient()).provider.getCapabilities().schemaRefreshPattern;
+    for (const text of ["pu\\\nt /a b", "etcdctl \\\n\\\nput /a b"]) {
+      const parsed = parseEtcdCommand(text, LIMITS);
+      expect({ text, kind: parsed.ok ? parsed.parsed.command.kind : parsed.refusal.message }).toEqual({
+        text,
+        kind: "put",
+      });
+      expect({ text, refreshes: shouldRefreshSchema(text, pattern) }).toEqual({ text, refreshes: false });
+    }
   });
 
   test("the labels are ETCD_LABELS, a copy on every call", () => {
