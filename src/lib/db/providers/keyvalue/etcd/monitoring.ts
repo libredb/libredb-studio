@@ -12,7 +12,7 @@ import type { DatabaseOverview, HealthInfo, StorageStats, TableStats } from "@/l
 import type { EtcdAlarm, EtcdInt64, EtcdMember, EtcdStatus } from "./client";
 import { memberHexId } from "./keys";
 
-/** "2147483648": a quota of 0 means the 2 GiB default (R06 2.9). */
+/** "2147483648": the quota etcd runs under when --quota-backend-bytes is 0, its default (R06 2.9). */
 export const ETCD_DEFAULT_QUOTA_BYTES: EtcdInt64 = "2147483648";
 
 /** What etcd does not report, in the words the monitoring panels already render (Kafka KM3). */
@@ -89,20 +89,31 @@ export function toOverview(input: EtcdOverviewInput): DatabaseOverview {
   };
 }
 
+/** Whether a Status `version` is 3.6 or later, the first release whose Status carries `dbSizeQuota`. */
+function carriesQuota(version: string): boolean {
+  const [major, minor] = version.split(".").map(Number);
+  return major > 3 || (major === 3 && minor >= 6);
+}
+
 /**
  * One row for the answering member (spec 7.1): its size on disk and in use, and `usagePercent`, its
- * size on disk over the quota, a quota of 0 read as the 2 GiB default (R06 2.9). `StorageStats` has no
- * field for the size in use, so the row's size text carries it beside the size on disk.
+ * size on disk over the quota it runs under. That is the member's `dbSizeQuota`, but for a 0 from 3.6 or
+ * later, which is the 2 GiB default: 3.6.0 to 3.6.5 send the flag's 0, and 3.6.6 and later answer the
+ * default themselves (measured 2026-10-01). A server before 3.6 sends no `dbSizeQuota`, and a negative one
+ * is etcd's disabled quota (storage/quota.go), so neither has a share to give: the field is left out and
+ * the Storage tab draws "-". `StorageStats` has no field for the size in use, so the row's size text
+ * carries it beside the size on disk.
  */
 export function toStorageStats(status: EtcdStatus): StorageStats[] {
-  const quota = status.dbSizeQuota === "0" ? ETCD_DEFAULT_QUOTA_BYTES : status.dbSizeQuota;
+  const reported = Number(status.dbSizeQuota);
+  const quota = reported === 0 && carriesQuota(status.version) ? Number(ETCD_DEFAULT_QUOTA_BYTES) : reported;
   return [
     {
       name: `member ${memberHexId(status.header.memberId)}`,
       location: "the member this connection reaches",
       size: `${formatEtcdBytes(status.dbSize)} on disk, ${formatEtcdBytes(status.dbSizeInUse)} in use`,
       sizeBytes: Number(status.dbSize),
-      usagePercent: (Number(status.dbSize) / Number(quota)) * 100,
+      ...(quota > 0 ? { usagePercent: (Number(status.dbSize) / quota) * 100 } : {}),
     },
   ];
 }

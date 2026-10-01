@@ -137,10 +137,47 @@ describe("toStorageStats (spec 7.1)", () => {
     ]);
   });
 
-  test("a quota of 0 is the 2 GiB default (R06 2.9), and a quota the server sets is read as it is", () => {
-    expect(ETCD_DEFAULT_QUOTA_BYTES).toBe(String(2 * 1024 ** 3));
-    expect(toStorageStats(status({ dbSize: "536870912", dbSizeQuota: "0" }))[0].usagePercent).toBe(25);
+  test("a quota the server sets is read as it is", () => {
     expect(toStorageStats(status({ dbSize: "536870912", dbSizeQuota: "1073741824" }))[0].usagePercent).toBe(50);
+  });
+
+  test("a disabled quota, a negative --quota-backend-bytes etcd answers as it was set, gives no share rather than a negative one (spec 7.1)", () => {
+    // Measured on etcd v3.7.2 started with --quota-backend-bytes=-1: it logs "disabled backend quota" and
+    // answers dbSizeQuota -1, which over a 20 KiB member read -2048000%.
+    const [row] = toStorageStats(status({ dbSize: "20480", dbSizeInUse: "16384", dbSizeQuota: "-1" }));
+    expect(row).toEqual({
+      name: "member 8e9e05c52164694d",
+      location: "the member this connection reaches",
+      size: "20 KiB on disk, 16 KiB in use",
+      sizeBytes: 20480,
+    });
+    expect("usagePercent" in row).toBe(false);
+  });
+
+  test("a quota of 0 from 3.6 or later is the 2 GiB default, which 3.6.0 to 3.6.5 send as the flag's 0 (R06 2.9)", () => {
+    // Measured 2026-10-01 with --quota-backend-bytes left at its default: v3.6.0 and v3.6.5 sent no
+    // dbSizeQuota, which reads as 0, and v3.6.6 and v3.7.2 answered 2147483648; v3.6.5 answered a set
+    // quota (4194304) and a disabled one (-1) as they were set.
+    expect(ETCD_DEFAULT_QUOTA_BYTES).toBe(String(2 * 1024 ** 3));
+    for (const version of ["3.6.0", "3.6.5", "3.7.2"]) {
+      const [row] = toStorageStats(status({ version, dbSize: "536870912", dbSizeQuota: "0" }));
+      expect([version, row.usagePercent]).toEqual([version, 25]);
+    }
+  });
+
+  test("a quota of 0 from a server before 3.6, which sends no dbSizeQuota, gives no share of a guessed quota (spec 7.1)", () => {
+    // dbSizeQuota is a 3.6 field (rpc.proto, etcd_version_field 3.6), so a server before it reports no
+    // quota at all. Measured on v3.5.21 under a 4 MiB quota: a member at NOSPACE, 98.8% full, read 0.19%.
+    const [row] = toStorageStats(
+      status({ version: "3.5.21", dbSize: "4145152", dbSizeInUse: "4128768", dbSizeQuota: "0" }),
+    );
+    expect(row).toEqual({
+      name: "member 8e9e05c52164694d",
+      location: "the member this connection reaches",
+      size: "4 MiB on disk, 3.9 MiB in use",
+      sizeBytes: 4145152,
+    });
+    expect("usagePercent" in row).toBe(false);
   });
 });
 
