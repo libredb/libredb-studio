@@ -3452,11 +3452,90 @@ describe("over grpc-js: the channel's own rules (spec E1, E4, E16, 6.1)", () => 
     }
   }, 30_000);
 
-  test("the channel's options: no service config from DNS, the receive cap, no environment proxy, and the TLS name (spec E1, E4, E5, E14)", () => {
+  test("a member that goes silent with its connection open is dropped by the keepalive, and the next command reaches another through pick_first (Review Focus 3)", async () => {
+    const statusAs =
+      (version: string): Unary =>
+      (_call, callback) =>
+        callback(null, { ...MINIMAL["Maintenance/Status"], version });
+    const members = [
+      await serve({ Maintenance: { Status: statusAs("member-a") } }),
+      await serve({ Maintenance: { Status: statusAs("member-b") } }),
+    ];
+    // Each member behind a forwarder that can go silent: it keeps every connection open and passes no byte either way,
+    // as a lost host, a partition or a frozen VM leaves a connection, where a stopped member closes its own.
+    const sockets: net.Socket[] = [];
+    const forwarder = (upstream: number) => {
+      const state = { silent: false };
+      const listener = net.createServer((near) => {
+        const far = net.connect(upstream, "127.0.0.1");
+        sockets.push(near, far);
+        near.on("data", (chunk: Buffer) => {
+          if (!state.silent) far.write(chunk);
+        });
+        far.on("data", (chunk: Buffer) => {
+          if (!state.silent) near.write(chunk);
+        });
+        near.on("error", () => undefined);
+        far.on("error", () => undefined);
+        near.on("close", () => far.destroy());
+        far.on("close", () => near.destroy());
+      });
+      return { listener, state };
+    };
+    const listen = (listener: net.Server, port: number, host: string) =>
+      new Promise<number>((resolve, reject) => {
+        listener.once("error", reject);
+        listener.listen(port, host, () => resolve((listener.address() as AddressInfo).port));
+      });
+    const forwarders = members.map((member) => forwarder(member.port));
+    let port: number | undefined;
+    for (let tries = 0; port === undefined && tries < 5; tries++) {
+      // oxlint-disable-next-line no-await-in-loop -- a port is taken on 127.0.0.1 before the same one is tried on ::1.
+      const taken = await listen(forwarders[0].listener, 0, "127.0.0.1");
+      // oxlint-disable-next-line no-await-in-loop -- the same port, now on ::1.
+      port = await listen(forwarders[1].listener, taken, "::1").catch(() => {
+        forwarders[0].listener.close();
+        return undefined;
+      });
+    }
+    if (port === undefined) throw new Error("No port was free on both 127.0.0.1 and ::1");
+    const lookup = spyOn(dns.promises, "lookup").mockImplementation((async () => [
+      { address: "127.0.0.1", family: 4 },
+      { address: "::1", family: 6 },
+    ]) as never);
+    const client = await createGrpcEtcdClient({
+      ...PLAINTEXT,
+      target: `dns:etcd-silent.test:${port}`,
+      callTimeoutMs: 20_000,
+    });
+    try {
+      const answering = (await client.status(options)).version === "member-a" ? 0 : 1;
+      forwarders[answering].state.silent = true;
+      // The keepalive finds the connection dead well inside the call's 20 s deadline, which this command and every one
+      // after it would otherwise wait out on that connection, so pick_first would never dial another member.
+      expect(await failure(client.status(options))).toMatchObject({
+        category: "unavailable",
+        detail: "Connection dropped",
+        grpcCode: 14,
+      });
+      expect((await client.status(options)).version).toBe(answering === 0 ? "member-b" : "member-a");
+    } finally {
+      await client.close();
+      lookup.mockRestore();
+      for (const socket of sockets) socket.destroy();
+      for (const { listener } of forwarders) listener.close();
+      for (const { server } of members) server.forceShutdown();
+    }
+  }, 40_000);
+
+  test("the channel's options: no service config from DNS, the receive cap, no environment proxy, a keepalive etcd accepts, and the TLS name (spec E1, E4, E5, E14, 6.1)", () => {
     const base = {
       "grpc.service_config_disable_resolution": 1,
       "grpc.max_receive_message_length": PLAINTEXT.receiveCapBytes,
       "grpc.enable_http_proxy": 0,
+      // No grpc.keepalive_permit_without_calls: etcd counts a ping on a connection with no call open as a strike.
+      "grpc.keepalive_time_ms": 10_000,
+      "grpc.keepalive_timeout_ms": 6_000,
     };
     expect(channelOptions(PLAINTEXT)).toEqual(base);
     expect(channelOptions(PASSWORD)).toEqual({ ...base, "grpc.ssl_target_name_override": "etcd.test" });

@@ -522,7 +522,7 @@ function wireMethod(rpc: EtcdWireRpc): MethodDefinition<object, object> {
   return (DEFINITION[`etcdserverpb.${service}`] as ServiceDefinition)[method];
 }
 
-/** The one implementation over @grpc/grpc-js: the target, the credentials of spec E5, the receive cap of E14, deadlines and aborts. */
+/** The one implementation over @grpc/grpc-js: the target, the credentials of spec E5, the receive cap of E14, the keepalive of 6.1, deadlines and aborts. */
 export const grpcWireTransport: EtcdWireTransport = (options) => {
   const closing = new ClosingCredentials(channelCredentials(options.tls));
   const client = new Client(options.target, closing, channelOptions(options));
@@ -547,12 +547,22 @@ export const grpcWireTransport: EtcdWireTransport = (options) => {
  * past the receive cap is read. E5: the TLS identity is the override in every TLS mode, never the dialled address.
  * E1: the channel dials the endpoint itself, never a proxy that `grpc_proxy`, `https_proxy` or `http_proxy` names,
  * which grpc-js otherwise asks to CONNECT to the endpoint (`mapProxyName`, http_proxy.ts).
+ * 6.1: while a call is open, an HTTP/2 ping goes out every 10 s, and one unanswered for 6 s drops the connection, so a
+ * member that stops answering without closing it (a lost host, a partition, a frozen VM) fails the call it holds, and
+ * pick_first dials the next address of the name for the next one; grpc-js 1.14.5 sends no ping by default
+ * (`keepaliveTimeMs` -1, transport.ts), and each command then waited out its deadline on the dead connection. etcd
+ * enforces 5 s between pings and refuses one with no call open (`--grpc-keepalive-min-time`, `PermitWithoutStream:
+ * false`, SRC `etcd__server_embed_etcd.go` near 777-781), answering either with a too_many_pings GOAWAY, so the
+ * interval is twice that minimum and `grpc.keepalive_permit_without_calls` stays off; the timeout is etcdctl's own
+ * `--keepalive-timeout` default (SRC `etcdctl__ctlv3__ctl.go` near 37).
  */
 export function channelOptions(options: EtcdConnectionOptions): ChannelOptions {
   return {
     "grpc.service_config_disable_resolution": 1,
     "grpc.max_receive_message_length": options.receiveCapBytes,
     "grpc.enable_http_proxy": 0,
+    "grpc.keepalive_time_ms": 10_000,
+    "grpc.keepalive_timeout_ms": 6_000,
     ...(options.tls === undefined ? {} : { "grpc.ssl_target_name_override": options.tls.serverNameOverride }),
   };
 }
