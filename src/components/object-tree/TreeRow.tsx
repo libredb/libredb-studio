@@ -381,13 +381,19 @@ export function TreeRow({
         reachable only when the stored answer was EMPTY, so there are no column rows under this
         one either way. And this is the rule the count one block below already follows, one step
         further on: the slot carries one report, and the rest stand down.
+
+        THE SENTENCE TAKES AT MOST 40% OF THE ROW, the type slot's cap, so the name keeps the
+        rest. Uncapped, the two shared the row's shrinking in proportion to their widths, and a
+        refusal many times a folder's name cut it to two letters: etcd's reader saw `Le...`,
+        `U...` and `R...` for Leases, Users and Roles (#1089). The whole sentence stays in the
+        title and in the row's name.
       */}
       {row.unavailable !== undefined && failure === undefined && (
         <span
           id={rowNameId("unavailable", row.id)}
           data-testid="tree-row-unavailable"
           title={row.unavailable}
-          className="ml-auto truncate pl-2 text-[10px] text-warning"
+          className="ml-auto min-w-0 max-w-[40%] truncate pl-2 text-[10px] text-warning"
         >
           {row.unavailable}
         </span>
@@ -398,7 +404,7 @@ export function TreeRow({
           id={rowNameId("failure", row.id)}
           data-testid="tree-row-failure"
           title={failure.message}
-          className="ml-auto truncate pl-2 text-[10px] text-destructive"
+          className="ml-auto min-w-0 max-w-[40%] truncate pl-2 text-[10px] text-destructive"
         >
           {failure.message}
         </span>

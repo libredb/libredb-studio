@@ -962,6 +962,37 @@ describe("TreeRow trailing slot", () => {
     expect(withFailure.querySelector('[data-testid="tree-row-unavailable"]')).toBeNull();
   });
 
+  test("a sentence in the slot leaves the row's name its room, capped as the type slot is", () => {
+    // etcd's reader, as Task 27 saw it: the Leases folder carries a refusal many times its name's
+    // width, and the two shared the row's shrinking in proportion to their widths, so the name read
+    // "Le...". The cap is the class doing the work, since the name and the sentence both truncate
+    // either way. happy-dom lays nothing out, so the class is what this can read, as the flat
+    // explorer's column list pins its own cap.
+    const refusal = "Listing leases needs READ on every leased key in the cluster (etcd: permission denied)";
+    const folder = flattenTree(
+      stateOf({
+        kinds: [{ id: "lease", role: "config", label: "Lease", labelPlural: "Leases" }],
+        containerDepth: 0,
+        containers: [],
+        expanded: new Set<string>(),
+        counts: { "": { lease: { unavailable: refusal } } },
+        objects: {},
+      }),
+    ).find((row) => row.kind === "folder");
+    if (folder === undefined) throw new Error("the walk emitted no folder row to draw");
+
+    const refused = drawRow({ row: folder });
+    expect(refused.querySelector('[data-testid="tree-row-label"]')?.textContent).toBe("Leases");
+    const sentence = refused.querySelector('[data-testid="tree-row-unavailable"]');
+    expect(sentence?.getAttribute("title")).toBe(refusal);
+    expect(sentence?.className).toContain("truncate");
+    expect(sentence?.className).toContain("max-w-[40%]");
+
+    // A failure takes the same slot from the refusal, so it leaves the name the same room.
+    const failed = drawRow({ row: folder, failure: { message: refusal } });
+    expect(failed.querySelector('[data-testid="tree-row-failure"]')?.className).toContain("max-w-[40%]");
+  });
+
   test("the twisty is not a tab stop, on the very row that holds the tree's one", () => {
     // The roving tabindex is the whole keyboard design: ArrowRight and ArrowLeft open and close a
     // row, so a focusable twisty would add a second tab stop to every mounted object row and a
