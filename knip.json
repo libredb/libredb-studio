@@ -20,7 +20,8 @@
     "ajv"
   ],
   "ignoreBinaries": [
-    "genhtml"
+    "genhtml",
+    "ss"
   ],
   "ignoreExportsUsedInFile": {
     "interface": true,
