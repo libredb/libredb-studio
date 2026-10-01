@@ -611,6 +611,12 @@ function overtaken(command: string, revision: EtcdInt64, typed: boolean): QueryE
   );
 }
 
+/**
+ * One page of a get, and the limit it was read with. etcd's Range limits a page by its count of keys
+ * alone, so a page whose answer the receive cap refused (KE4, measured: twenty values of 1 MiB answered
+ * 20,972,150 bytes past the 16 MiB cap) is asked again from the same key, at the same revision, with
+ * half its limit; a page of one key the cap refuses raises the cap's sentence.
+ */
 async function readPage(
   run: Run,
   spec: GetSpec,
@@ -618,10 +624,13 @@ async function readPage(
   limit: number,
   revision: EtcdInt64 | undefined,
   later: boolean,
-): Promise<EtcdRangeResponse> {
+): Promise<{ readonly answer: EtcdRangeResponse; readonly limit: number }> {
   try {
-    return await run.client.range(rangeRequest(spec, range, limit, revision), run.call);
+    return { answer: await run.client.range(rangeRequest(spec, range, limit, revision), run.call), limit };
   } catch (error) {
+    if (limit > 1 && error instanceof EtcdError && error.category === "resource-exhausted") {
+      return readPage(run, spec, range, Math.floor(limit / 2), revision, later);
+    }
     if (later && error instanceof EtcdError && error.category === "compacted") {
       throw overtaken(run.failure.command, revision as EtcdInt64, spec.revision !== undefined);
     }
@@ -674,7 +683,11 @@ async function readGet(run: Run, spec: GetSpec): Promise<CommandOutcome> {
     }
     return { pageBytes };
   };
-  let page = await readPage(run, spec, range, Math.min(size, asked), spec.revision, false);
+  const first = Math.min(size, asked);
+  let read = await readPage(run, spec, range, first, spec.revision, false);
+  // A page the receive cap made smaller is the size the read goes on from (KE4).
+  if (read.limit < first) size = read.limit;
+  let page = read.answer;
   const { header } = page;
   const revision = spec.revision ?? header.revision;
   let taken = take(page);
@@ -688,8 +701,11 @@ async function readGet(run: Run, spec: GetSpec): Promise<CommandOutcome> {
     }
     if (taken.pageBytes * 2 <= bounds.byteBudget - bytes) size = Math.min(size * 2, bounds.maxPageSize);
     const from = after(kvs[kvs.length - 1].key);
+    const wanted = Math.min(size, asked - kvs.length);
     // oxlint-disable-next-line no-await-in-loop -- each page starts past the last key of the page before it.
-    page = await readPage(run, spec, { ...range, key: from }, Math.min(size, asked - kvs.length), revision, true);
+    read = await readPage(run, spec, { ...range, key: from }, wanted, revision, true);
+    if (read.limit < wanted) size = read.limit;
+    page = read.answer;
     taken = take(page);
   }
   return {

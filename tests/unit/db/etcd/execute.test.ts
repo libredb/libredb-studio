@@ -1047,6 +1047,70 @@ describe("a get, paged and pinned (spec 5.4, E14)", () => {
     });
   });
 
+  /**
+   * The store behind a receive cap: an answer whose rows take more than `cap` bytes is refused as grpc-js
+   * refuses one past the channel's maximum receive size (KE4, measured: twenty values of 1 MiB answered
+   * 20,972,150 bytes past a 16 MiB cap).
+   */
+  const capped =
+    (entries: readonly EtcdKeyValue[], cap: number) =>
+    async (request: EtcdRangeRequest): Promise<EtcdRangeResponse> => {
+      const answer = await store(entries)(request);
+      const bytes = answer.kvs.reduce((sum, entry) => sum + entry.key.byteLength + entry.value.byteLength, 0);
+      if (bytes > cap)
+        throw new EtcdError("resource-exhausted", `Received message larger than max (${bytes} vs ${cap})`, 8);
+      return answer;
+    };
+
+  test("KE4: a page the receive cap refuses is asked again from the same key and revision with half its limit", async () => {
+    // An 8-byte key and a 300-byte value: two rows are 616 bytes, past a 500-byte cap, and one row is 308.
+    const entries = keys(4, "/app/k", "x".repeat(300));
+    const fake = createFakeEtcdClient({ range: capped(entries, 500) });
+    const outcome = await run(fake, "get /app/ --prefix", harness({ bounds: SMALL }));
+    const requests = sent(fake).map((call) => call[1] as EtcdRangeRequest);
+    // The size the read goes on from is the halved one, and it grows again while the pages stay small.
+    expect(requests.map((request) => request.limit)).toEqual([2, 1, 2, 1, 1, 1]);
+    expect(requests[2]).toEqual({ ...requests[3], limit: 2 });
+    expect(requests[3]).toMatchObject({ key: after("/app/k00"), revision: "57" });
+    expect(outcome).toMatchObject({
+      kvs: entries.slice(0, 3),
+      more: true,
+      stopped: { by: "bytes", beforeKey: enc("/app/k03") },
+    });
+  });
+
+  test("KE4: the limit is halved, not stepped down, so a large first page reaches one that fits in few asks", async () => {
+    // Three rows are 924 bytes, past a 700-byte cap, and two are 616: the first page of three (the row limit
+    // and one key past it) is asked again for one, where stepping down would ask for two.
+    const entries = keys(4, "/app/k", "x".repeat(300));
+    const fake = createFakeEtcdClient({ range: capped(entries, 700) });
+    const bounds = { ...SMALL, firstPageSize: 4, rowLimit: 2 };
+    const outcome = await run(fake, "get /app/ --prefix", harness({ bounds }));
+    expect(sent(fake).map((call) => (call[1] as EtcdRangeRequest).limit)).toEqual([3, 1, 2]);
+    expect(outcome).toMatchObject({ kvs: entries.slice(0, 2), stopped: { by: "rows", beforeKey: enc("/app/k02") } });
+  });
+
+  test("KE4: a key the receive cap refuses on its own raises the cap's sentence, after a page of one key", async () => {
+    const fake = createFakeEtcdClient({ range: capped([kv("/app/k00", "y".repeat(600))], 500) });
+    const raised = await run(fake, "get /app/ --prefix", harness({ bounds: SMALL })).catch((error: unknown) => error);
+    expect(sent(fake).map((call) => (call[1] as EtcdRangeRequest).limit)).toEqual([2, 1]);
+    expect(raised).toBeInstanceOf(QueryError);
+    expect((raised as QueryError).message).toBe(
+      "etcd's answer to the get is larger than this connection's receive cap of 16 MiB: narrow the read. (Received message larger than max (608 vs 500))",
+    );
+  });
+
+  test("KE4, the control: another failure of a page is raised at once, never asked again with a smaller limit", async () => {
+    const fake = createFakeEtcdClient({
+      range: async () => {
+        throw new EtcdError("too-many-requests", "etcdserver: too many requests", 8);
+      },
+    });
+    const raised = await run(fake, "get /app/ --prefix", harness({ bounds: SMALL })).catch((error: unknown) => error);
+    expect(sent(fake).map((call) => (call[1] as EtcdRangeRequest).limit)).toEqual([2]);
+    expect(raised).toBeInstanceOf(Error);
+  });
+
   test("a first row larger than the budget is held, so its value still answers one row", async () => {
     const entries = [kv("/app/k00", "y".repeat(2_000)), kv("/app/k01", "z")];
     const fake = createFakeEtcdClient({ range: store(entries) });
