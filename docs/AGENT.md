@@ -59,14 +59,14 @@ Three properties frame everything below, and each of them is load-bearing rather
   on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
   because it composes catalog statements, and `agent-operations` everywhere else, because asking a
   provider to describe its own schema sends nothing an engine has to plan. That is what lets grounding
-  reach the fifteen the read-only profile refuses, and it still cannot narrow any workflow's
+  reach the sixteen the read-only profile refuses, and it still cannot narrow any workflow's
   reach: the profile whose acquisition would be refused is never the profile that capture asks for. Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
   editor replay is ever handed the editor's writable pool. **Plan mode grounds itself the same way**
   — the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics
   beside it, before the model's first turn — so a plan run is now ordinarily grounded on every engine,
-  including the fifteen where an agent run cannot read anything at all. What is left of the old engine
+  including the sixteen where an agent run cannot read anything at all. What is left of the old engine
   rule is narrower and still worth stating: the engine no longer decides WHETHER a plan run is
   grounded, only whether it is grounded through a composed statement or through its provider, and
   whether it gets statistics. A run whose reading fails — a provider that cannot describe itself, a
@@ -272,7 +272,7 @@ somebody else's run, and no credential is ever persisted (only the connection id
 Which connections qualify is decided in the browser before a run is opened, by
 `resolveAgentRunConnectionId` (`src/hooks/use-connection-payload.ts`):
 
-- an **admin-managed** seed connection — the server's copy is authoritative and the UI is read-only,
+- an **admin-managed** seed connection: the server's copy is authoritative and not editable in the UI,
   so `seed:<id>` means the same database on every resume;
 - the **editable copy of a seed** — what a zero-config deployment ships — but only while the copy
   still matches the descriptor the browser last fetched from the server. Every field deciding which
@@ -568,7 +568,7 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row. `ESTIMATE_BUILDERS` serves those two and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and
-  nothing else, and #414 added no engine to it: on the other sixteen `readSchemaStatistics` answers
+  nothing else, and #414 added no engine to it: on the other seventeen `readSchemaStatistics` answers
   `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
@@ -689,9 +689,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
-   because SQLite resolves table names at prepare time). On the other seventeen it is **one**, the
+   because SQLite resolves table names at prepare time). On the other eighteen it is **one**, the
    single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other sixteen hold no statistics this run
+   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other seventeen hold no statistics this run
    knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
@@ -729,7 +729,7 @@ exactly why: the engines that answer differently are not the ones a reader would
   hard-coded before.
 - **What a derived grouping IS**, said once and only where it is true. A noun alone does not tell a
   model that a key pattern is not addressable, and no fact about Redis could — the grouping is this
-  product's own. `ProviderCapabilities.tablesAreDerivedGroupings` is `true` on Redis and LibreDB
+  product's own. `ProviderCapabilities.tablesAreDerivedGroupings` is `true` on Redis, LibreDB and etcd
   alone, and where it is, the plan rules carry one sentence saying what the rows are (groupings this
   server derived from a bounded scan), what a statement may name instead (a whole key, or a pattern
   scan in whatever form the engine offers), and that the list is one reading's reach rather than the
@@ -749,7 +749,7 @@ block tagged with the connection's canonical type-id, rationale after the block,
 not in the inventory.
 Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, and since #1085 a `promql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
 That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all nineteen ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all twenty ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -944,7 +944,7 @@ Two consequences worth stating:
   composed path has and the provider path cannot: reads audited statement by statement rather than as
   one opaque call; foreign keys, which no provider can report on an engine that declares none; and
   SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
-  does not expose in the same shape. Collapsing the other seventeen onto the composed one is the thing
+  does not expose in the same shape. Collapsing the other eighteen onto the composed one is the thing
   #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
   against a live server, and until it is, refusing the dialect was the honest answer and reading the
   provider is a better one.
@@ -2562,7 +2562,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the nineteen
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the twenty
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp

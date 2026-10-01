@@ -24,6 +24,25 @@ import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy"
 import type { ObjectEditBuild } from "@/lib/db/types";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ETCD_KEY_SCAN } from "@/lib/db/providers/keyvalue/etcd/key-scan";
+import { ETCD_READ_BOUNDS } from "@/lib/db/providers/keyvalue/etcd/execute";
+import { ETCD_RECEIVE_CAP_BYTES } from "@/lib/db/providers/keyvalue/etcd/connection-options";
+import {
+  ETCD_GROUP_CAP,
+  ETCD_WALK_FIRST_PAGE,
+  ETCD_WALK_KEY_CAP,
+  ETCD_WALK_SEGMENT_BUDGET,
+} from "@/lib/db/providers/keyvalue/etcd/objects";
+import { ETCD_TABLE_STATS_CONCURRENCY } from "@/lib/db/providers/keyvalue/etcd/monitoring-reads";
+import { ETCD_MAINTENANCE_SPECS } from "@/lib/db/providers/keyvalue/etcd/maintenance";
+import { PROTECTED_KEYS, PROTECTED_PREFIXES, SECRET_ROOTS } from "@/lib/db/providers/keyvalue/etcd/keys";
+import {
+  ETCD_COMMAND_TABLE,
+  ETCD_REFUSED_COMMANDS,
+  ETCD_REFUSED_GLOBAL_FLAGS,
+} from "@/lib/db/providers/keyvalue/etcd/commands";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+
 import { PROGRAMME_CONTROL_IDS } from "../../../../scripts/security-check.mjs";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
 import { KEY_SPACE_HEADER } from "../../../helpers/etcd-key-space";
@@ -360,5 +379,149 @@ describe("docs/SECURITY.md carries the read-only control, its note and its three
     ],
   ])("the any-host limitation states %s", (_label, sentence) => {
     expect(ANY_HOST).toContain(sentence);
+  });
+});
+
+const ETCD_DOC_LINES = DOC.split("\n");
+
+/** The bounds-table row whose first cell is exactly `cell`, or undefined. */
+const boundRow = (cell: string): string | undefined => ETCD_DOC_LINES.find((line) => line.startsWith(`| ${cell} |`));
+
+/** A heading's words without its `#` marks and its section number: "## 12. Connecting to ..." reads "Connecting to ...". */
+const headingWords = (line: string): string => line.replace(/^#+ /, "").replace(/^\d+(?:\.\d+)*\.?\s+/, "");
+
+/** The text of the section headed `heading` (any level, numbered or not), up to the next heading of the same or a higher level. */
+function docSection(text: string, heading: string): string | undefined {
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => /^#{2,4} /.test(line) && headingWords(line) === headingWords(heading));
+  if (start < 0) return undefined;
+  const level = /^#+/.exec(lines[start])?.[0].length ?? 2;
+  const end = lines.findIndex(
+    (line, index) => index > start && /^#+ /.test(line) && (/^#+/.exec(line)?.[0].length ?? 9) <= level,
+  );
+  return lines.slice(start, end < 0 ? undefined : end).join("\n");
+}
+
+const en = (value: number) => value.toLocaleString("en-US");
+
+describe("the bounds docs/providers/etcd.md quotes are the constants (spec 5.4, 11, KE1 to KE5)", () => {
+  test("the readers find what exists and nothing that does not", () => {
+    // Control: a reader that matched nothing would fail every row below loudly, but one that
+    // matched everything would pass them all.
+    expect(boundRow("`ETCD_GROUP_CAP`")).toBeDefined();
+    expect(boundRow("`ETCD_NO_SUCH_CONSTANT`")).toBeUndefined();
+    expect(docSection(DOC, "Connecting to a Kubernetes control-plane etcd")).toBeDefined();
+    expect(docSection(DOC, "No such section")).toBeUndefined();
+  });
+
+  test.each([
+    ["`DEFAULT_QUERY_LIMIT`", DEFAULT_QUERY_LIMIT],
+    ["`ETCD_READ_BOUNDS.firstPageSize`", ETCD_READ_BOUNDS.firstPageSize],
+    ["`ETCD_READ_BOUNDS.maxPageSize`", ETCD_READ_BOUNDS.maxPageSize],
+    ["`ETCD_READ_BOUNDS.byteBudget`", ETCD_READ_BOUNDS.byteBudget],
+    ["`ETCD_READ_BOUNDS.cellLimit`", ETCD_READ_BOUNDS.cellLimit],
+    ["`ETCD_READ_BOUNDS.watchMarginMs`", ETCD_READ_BOUNDS.watchMarginMs],
+    ["`ETCD_RECEIVE_CAP_BYTES`", ETCD_RECEIVE_CAP_BYTES],
+    ["`ETCD_GROUP_CAP`", ETCD_GROUP_CAP],
+    ["`ETCD_WALK_KEY_CAP`", ETCD_WALK_KEY_CAP],
+    ["`ETCD_WALK_SEGMENT_BUDGET`", ETCD_WALK_SEGMENT_BUDGET],
+    ["`ETCD_WALK_FIRST_PAGE`", ETCD_WALK_FIRST_PAGE],
+    ["`ETCD_KEY_SCAN.defaultCount`", ETCD_KEY_SCAN.defaultCount],
+    ["`ETCD_KEY_SCAN.maxCount`", ETCD_KEY_SCAN.maxCount],
+    ["`ETCD_TABLE_STATS_CONCURRENCY`", ETCD_TABLE_STATS_CONCURRENCY],
+  ])("the %s row states %d", (cell, value) => {
+    const row = boundRow(cell);
+    expect(row).toBeDefined();
+    // The second cell, not anywhere in the row: a row whose reason happened to hold the number
+    // would pass a containment check over the whole line.
+    expect(row?.split(" | ")[1]).toBe(en(value));
+  });
+
+  test("the walk's bounds keep the order spec 4.3 requires: P below S, G below INVENTORY_LIMIT", () => {
+    expect(ETCD_WALK_SEGMENT_BUDGET).toBeLessThan(ETCD_WALK_KEY_CAP);
+    expect(ETCD_GROUP_CAP).toBeLessThan(5000);
+  });
+});
+
+describe("docs/providers/etcd.md states the grammar and the maintenance wording the code holds (spec 5.1, 7.2)", () => {
+  const grammar = docSection(DOC, "5.1 The grammar") ?? "";
+  const maintenance = docSection(DOC, "8. Maintenance") ?? "";
+
+  test("every command of the subset is in the commands table, spelled as etcdctl spells it", () => {
+    const missing = ETCD_COMMAND_TABLE.filter((entry) => !grammar.includes(`| \`${entry.words.join(" ")}\` |`)).map(
+      (entry) => entry.words.join(" "),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  test("every command refused by name, and every refused global flag, is named", () => {
+    const commands = ETCD_REFUSED_COMMANDS.filter((entry) => !grammar.includes(`\`${entry.words.join(" ")}\``));
+    const flags = ETCD_REFUSED_GLOBAL_FLAGS.filter((entry) => !grammar.includes(`\`${entry.flag}\``));
+    expect(commands.map((entry) => entry.words.join(" "))).toEqual([]);
+    expect(flags.map((entry) => entry.flag)).toEqual([]);
+  });
+
+  test("each maintenance card's label, title and description is quoted exactly", () => {
+    for (const type of ["compact", "defragment", "disarm"] as const) {
+      const spec = ETCD_MAINTENANCE_SPECS[type];
+      expect(spec?.title).toBeDefined();
+      expect(maintenance).toContain(`"${spec?.label}"`);
+      expect(maintenance).toContain(`"${spec?.title}"`);
+      expect(maintenance).toContain(`"${spec?.description}"`);
+    }
+  });
+});
+
+describe("the protected set is stated where an operator reads it (spec E8, E9, 12)", () => {
+  test("the provider doc names every protected prefix, the protected key and every secrets root", () => {
+    const writes = docSection(DOC, "3.2 Kubernetes writes are refused (E8)") ?? "";
+    const values = docSection(DOC, "3.3 Values that are never shown (E9)") ?? "";
+    for (const prefix of PROTECTED_PREFIXES) expect(writes).toContain(`\`${prefix}\``);
+    for (const key of PROTECTED_KEYS) expect(writes).toContain(`\`${key}\``);
+    for (const root of SECRET_ROOTS) expect(values).toContain(`\`${root}\``);
+  });
+
+  test("docs/SECURITY.md carries the control row and its note, naming the same set", () => {
+    const row = SECURITY.split("\n").find(
+      (line) => /^\| \d+\.\d+ \|/.test(line) && line.includes("Kubernetes storage prefix"),
+    );
+    expect(row).toBeDefined();
+    const id = row?.split(" | ")[0].replace("| ", "");
+    expect(row).toContain("tests/unit/db/etcd/write-policy.test.ts");
+    const note = SECURITY.split("\n\n").find((paragraph) => paragraph.startsWith(`**${id}.**`));
+    expect(note).toBeDefined();
+    for (const prefix of PROTECTED_PREFIXES) expect(note).toContain(`\`${prefix}\``);
+    for (const key of PROTECTED_KEYS) expect(note).toContain(`\`${key}\``);
+  });
+});
+
+describe("docs/providers/etcd.md states the limits of spec E17 and the Kubernetes path of spec 12", () => {
+  const limits = docSection(DOC, "13. Known limitations") ?? "";
+  const kubernetes = docSection(DOC, "Connecting to a Kubernetes control-plane etcd") ?? "";
+
+  test.each([
+    "A `put`'s value is part of the statement text, so it reaches query history and saved queries, as a Redis `SET` does.",
+    "The editor path writes no audit event for any engine: only the value edit of the Source tab and the maintenance cards are audited.",
+    "Cancelling a write in the editor shows it as cancelled even when etcd applied it: read the key again before you run the command again.",
+    "A read-only seed restrains only the seeded connection: a `user` can post a connection of their own to the same host and port.",
+  ])("E17: %s", (sentence) => {
+    expect(limits).toContain(sentence);
+  });
+
+  test.each([
+    "/etc/kubernetes/pki/etcd/ca.crt",
+    "/etc/kubernetes/pki/etcd/healthcheck-client.crt",
+    "/etc/kubernetes/pki/etcd/healthcheck-client.key",
+    "/var/lib/rancher/k3s/server/tls/etcd/server-ca.crt",
+    "/var/lib/rancher/k3s/server/tls/etcd/client.crt",
+    "/var/lib/rancher/k3s/server/tls/etcd/client.key",
+  ])("the Kubernetes section names %s", (path) => {
+    expect(kubernetes).toContain(`\`${path}\``);
+  });
+
+  test("the Kubernetes section keeps the key out of the ConfigMap and says the API server compacts", () => {
+    expect(kubernetes).toContain("Never put the client key in `seedConnections.config`");
+    expect(kubernetes).toContain("kube-apiserver compacts etcd every 5 minutes");
+    expect(kubernetes).toContain("verify-full");
   });
 });

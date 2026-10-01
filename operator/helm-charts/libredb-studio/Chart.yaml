@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting eighteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus and Apache Kafka
+description: Web-based SQL IDE for cloud-native teams supporting nineteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka and etcd
 type: application
-version: 0.1.72
+version: 0.1.73
 appVersion: "0.17.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -45,6 +45,9 @@ keywords:
   # One keyword only, like duckdb above: `kafka` is the type-id and also the word an evaluator
   # looking for a Kafka client types, so there is no second spelling to catch.
   - kafka
+  # One keyword only, like kafka above: `etcd` is the type-id and the word an evaluator looking
+  # for an etcd client types, so there is no second spelling to catch.
+  - etcd
   # A relative, not a provider: VictoriaMetrics answers the Prometheus HTTP API and connects as
   # `prometheus` at the tier its gate-4 probe measured (docs/providers/README.md). The first
   # wire-compatible relative given a keyword, because an evaluator looking for a VictoriaMetrics
@@ -150,6 +153,8 @@ annotations:
   # sign-in, and appVersion 0.17.0 does not read the variable, so the value acts only once
   # an application release moves appVersion. Unlike the 0.1.52 precedent, which exposed a
   # setting the image already read, this one exposes a setting ahead of the image.
+  # False: 0.1.73 changes chart metadata only, naming etcd in the description, the keywords and
+  # the README; no template, value or default moves.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -165,7 +170,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "New value config.passkeyOrigin, written to PASSKEY_ORIGIN only when set: the public origin people open Studio at (scheme, host and port, no path), such as https://studio.example.com. Passkeys also need config.storageProvider sqlite or postgres and authProvider local, and browsers offer them only over https or on http://localhost; NOTES.txt warns about a value that cannot work. It needs an application image that includes passkey sign-in (#785): appVersion 0.17.0 does not read it, so it acts once an application release moves appVersion. Guide: docs/PASSKEYS.md"
+    - "The application image gains the etcd provider (#1089); no template, value or default moves, and it acts once an application release moves appVersion."
 dependencies:
   - name: postgresql
     version: "16.x.x"

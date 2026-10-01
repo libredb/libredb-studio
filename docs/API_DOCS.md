@@ -27,12 +27,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus and Apache Kafka.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka and etcd.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - Eighteen engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka
+- **Multi-Database Support** - Nineteen engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -412,7 +412,7 @@ Execute SQL query on connected database.
 
 The `pagination` object reports the auto-limiting applied by the server.
 `limit` is `options.limit` when the caller sent one and 500 otherwise; the app's own tree click sends 50.
-`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify and the returned page filled that limit, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4).
+`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify and the returned page filled that limit, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4), and the etcd provider does so whenever its row limit, byte budget or cell bound cut a `get` or a watch.
 
 A shorter result under an injected cap has `wasLimited: false`.
 Under that cap, a result of exactly `limit` rows still has `wasLimited: true` and `hasMore: true` even when the next page comes back empty, because the limiter asks for `limit` rows and not one more.
@@ -422,7 +422,7 @@ Under that cap, a result of exactly `limit` rows still has `wasLimited: true` an
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
-Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus and Kafka ignore it. `GET /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
+Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus, Kafka and etcd ignore it. `GET /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
 
 **The database a run reads (optional):**
 ```json
@@ -896,6 +896,9 @@ A request refused before the provider is called writes no maintenance event.
 | `optimize` | - | OPTIMIZE | - | Optimize table (MySQL only) |
 | `check` | - | CHECK | PRAGMA integrity_check | Check table integrity |
 | `kill` | pg_terminate_backend | KILL | - | Terminate a session by PID |
+| `compact` | - | - | - | etcd: compact history to the current revision |
+| `defragment` | - | - | - | etcd: defragment the member the connection reaches |
+| `disarm` | - | - | - | etcd: disarm every raised alarm |
 
 **Response (200 OK):**
 ```json
@@ -1204,7 +1207,9 @@ way to hold more is to come back with the cursor it was given. That is a differe
 a route of its own rather than an option on the object routes.
 
 The walk is offered by an engine that declares `keyScan` in `POST /api/db/provider-meta`'s
-`capabilities`; Redis declares `{ "defaultCount": 500, "maxCount": 1000 }`. Every other connection
+`capabilities`; Redis declares `{ "defaultCount": 500, "maxCount": 1000 }`.
+etcd declares its own counts, with `separator: "/"`, `cursor: "opaque"`, `pattern: "prefix"` and `totalScope: "walk"` ([providers/etcd.md](./providers/etcd.md), section 6.4).
+Every other connection
 answers `400`, in this route's own words. A provider that declares the capability and implements no
 walk is a distinct `500` rather than a crash: `ProviderCapabilities` is published, so that is a state
 an external implementer can genuinely be in.
@@ -1859,7 +1864,7 @@ interface DatabaseConnection {
   saslMechanism?: 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512'; // Kafka only: the SASL mechanism that checks user and password, absent meaning none. A user or password with no mechanism is refused, and every mechanism requires TLS
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect)
   readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
-  managed?: boolean;       // true = admin-controlled, read-only in UI
+  managed?: boolean;       // true = admin-controlled: not editable in the UI, secrets kept on the server
   seedId?: string;         // stable reference to seed config ID
   agentUser?: string;      // optional least-privilege role for the agent read-only execution profile (#328)
   agentPassword?: string;  // password for agentUser; secret-classified, sealed at rest by connection-secrets
@@ -1867,7 +1872,7 @@ interface DatabaseConnection {
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 

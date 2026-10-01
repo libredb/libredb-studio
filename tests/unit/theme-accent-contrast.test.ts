@@ -223,11 +223,11 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
 ];
 
 /**
- * The four hues where two engines share a hue and are held apart only by step, so
+ * The five hues where two engines share a hue and are held apart only by step, so
  * the `-alt` is a distinct IDENTITY and has to join the separation set. Pinned by
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
  */
-const IDENTITY_ALTS = ["sky", "yellow", "emerald", "teal"] as const;
+const IDENTITY_ALTS = ["blue", "sky", "yellow", "emerald", "teal"] as const;
 
 /**
  * What theme.css actually declares, and what each declaration is supposed to be.

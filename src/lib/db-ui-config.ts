@@ -383,8 +383,9 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   },
   etcd: {
     icon: EtcdIcon,
-    // etcd's own mark is a mid blue. `hue-blue` is PostgreSQL's identity, so this takes its `-alt` step,
-    // which no engine carries; tests/unit/lib/db-ui-config.test.ts asserts every engine colour differs.
+    // etcd's own mark is a mid blue (#419EDA). `hue-blue` is PostgreSQL's; its `-alt` step is a
+    // second identity only if it clears the separation test, which is why `blue` joined
+    // IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry (KE9).
     color: "text-hue-blue-alt",
     label: "etcd",
     // The client port etcd listens on.

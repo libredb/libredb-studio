@@ -28,13 +28,13 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 73
+- [Drivers and connections](#drivers-and-connections) — D1-D136, U17 · 80
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 41
-- [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3-DOC8 · 5
-- [Release pipeline](#release-pipeline) — REL1–REL4 · 4
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U64 · 51
+- [Dependencies](#dependencies) — P1-P6 · 6
+- [Documentation](#documentation) — DOC3-DOC9 · 6
+- [Release pipeline](#release-pipeline) — REL1-REL5 · 5
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -344,6 +344,7 @@ Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL
 fifth of five instances of one gap, and the fix already exists in the codebase.
 Amended 2026-09-23: the fix now exists twice, and the second copy is deliberate.
 Amended 2026-09-25: the mapping now exists three times, the third in the Kafka provider (#1088), deliberate for the same reason.
+Amended 2026-09-30: the mapping now exists four times, the fourth in the etcd provider (#1089), `connection-options.ts`, deliberate for the same reason; like Kafka's it is a mapping only, over grpc-js's own TLS, and it adds the IP-identity rule of the etcd design's E5.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -1667,6 +1668,7 @@ Measured 2026-09-24 through the real tunnel client, factory and providers, again
 MSSQL, MongoDB, Redis, Cassandra and Oracle were read, not measured; MySQL and Oracle pass `verify-ca`, because that mode does not check the name there.
 It fails closed, so no identity check is skipped, but it leaves a tunnel user who needs a working connection with `require`, which encrypts without verifying.
 Over a tunnel the HTTP providers also send no SNI and a `Host` of `127.0.0.1:<local port>`, so a reverse proxy that routes by either can send the request elsewhere; that was observed as the headers sent, not measured against a proxy.
+Amended 2026-09-30: the etcd provider (#1089) checks a tunnelled connection's certificate against `TUNNEL_FAR_END`, as the server name for a DNS name and through `checkServerIdentity` for an address, so the sentence above that nothing reads `TUNNEL_FAR_END` for TLS no longer holds; every other driver still verifies `127.0.0.1`.
 
 Found 2026-09-24 while checking the Prometheus provider's TLS path after #1104.
 Not fixed there: the rewrite and every driver's TLS options are shared by all engines.
@@ -1871,7 +1873,7 @@ Both reach the caller as a shorter list with no reason: `GET /api/connections/ma
 
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
-`queryReadOnly` takes no signal (`src/lib/db/types.ts:951`), and `cancelQuery` cannot find its statement.
+`queryReadOnly` takes no signal (`DatabaseProvider.queryReadOnly` in `src/lib/db/types.ts`), and `cancelQuery` cannot find its statement.
 When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, and on SQLite while blocking the process (A1).
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
@@ -1891,6 +1893,74 @@ Measured on 2026-09-27, on `main` at ef1748e3:
 Do it after #1148 has merged, in a PR of its own, and not alongside another architectural change: the owner asked for the two to stay apart.
 
 **Done when:** which object-path shapes an engine accepts is part of its declaration, read through one kernel reader in the way `acceptedContainerShapes()` reads `containerPathShapes`; `attachedSegment` is gone from `ObjectPathShapeEngine`; the three local `shapeList` object-path sentences go through the shared renderer; the object routes refuse a path the engine does not accept by the same reader, before the provider is called; and every provider refusal sentence stays byte-identical.
+
+### D130. A Kubernetes protobuf value is withheld and never decoded
+
+The etcd provider withholds a value that begins with the Kubernetes protobuf envelope `k8s\x00`, labelled with the `apiVersion` and `kind` of its `runtime.Unknown` header (`withheldLabel` in `src/lib/db/providers/keyvalue/etcd/values.ts`), and never reads the object's fields (#1089, spec section 2).
+So a Pod, a ConfigMap or a Deployment stored in etcd is shown as "Kubernetes protobuf (v1, Pod), 1,204 bytes", which is safe and tells an operator nothing about the object.
+Decoding needs the Kubernetes API types for every stored kind, a dependency set this PR did not take on.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec section 2).
+
+**Done when:** a Kubernetes protobuf value that is not a Secret is decoded behind the withheld label, on demand, with the Secret rule of spec E9 unchanged, and a test over `tests/fixtures/etcd/`'s Pod envelope shows its decoded fields and no Secret's.
+
+### D131. An etcd connection names one endpoint, so a cluster without a DNS name that resolves to its members has no failover
+
+The etcd connection has one Host and one Port (`buildEtcdConnectionOptions` in `src/lib/db/providers/keyvalue/etcd/connection-options.ts`); grpc-js's `pick_first` fails over across the addresses one name resolves to, which the etcd live check measures (KE13), but a cluster addressed by member IPs has no such name.
+etcdctl takes `--endpoints` as a list.
+A list field needs a new connection field through the whole checklist of `docs/ADDING_A_PROVIDER.md`, which the etcd PR did not open.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec 6.1).
+
+**Done when:** an etcd connection can name several endpoints, the channel fails over across them, E3's rule that Studio dials only configured endpoints holds for each, and a live check stops the answering member and the next call is answered by another.
+
+### D132. grpc-js sends an IP-literal target as the TLS server name, which Node 25 and later and Bun refuse
+
+`@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
+The etcd provider works around it with a server-name override that is not an IP and a `checkServerIdentity` that verifies the IP (spec E5), which depends on grpc-js internals and is why grpc-js is pinned exactly.
+No open grpc-node issue covers it; the closed #1919 is about `0.0.0.0`.
+An upstream issue is drafted in the etcd PR's final report and is posted only with the maintainer's approval.
+
+Found 2026-09-30 by the client measurement of the etcd design (R07, M6).
+
+**Done when:** grpc-node answers the issue with a release that sends no IP as the server name, the etcd provider drops its override for an IP identity, and `tests/unit/db/etcd/tls-handshake.test.ts` still passes on Node 24, Node 26 and Bun.
+
+### D133. Application secret roots in etcd are shown by default
+
+The etcd provider withholds Kubernetes secrets by prefix and by envelope (spec E9), and nothing else: Apache APISIX's `ssls`, `secrets`, `credentials` and `consumers` roots hold private keys and credentials as they were sent unless APISIX's own data encryption is configured, and the provider shows them.
+Measured in the design's landscape review (R09 7.1) against APISIX's documented layout; read, not driven against a live APISIX.
+
+Found 2026-09-30 while designing the etcd provider (#1089).
+
+**Done when:** a declared list of application secret roots, APISIX's four among them, is withheld by default with a label naming the application, a connection can opt out per root, and a test over each root shows the label and no value byte.
+
+### D134. A write under an application's coordination prefix is not warned about
+
+Patroni's `leader`, `failover` and `sync` keys, Vitess's topology and Calico's IPAM blocks live in etcd, and a hand write there can fail over a database or corrupt a network (R09 7.3); the etcd provider refuses only the Kubernetes prefixes (spec E8) and asks nothing more for these.
+
+Found 2026-09-30 while designing the etcd provider (#1089).
+
+**Done when:** a declared list of advisory prefixes makes a write that meets one ask for a typed confirmation naming the application, never a refusal, and a test drives a `put` under Patroni's `leader` through the confirmation gate.
+
+### D135. kine and Xline are not registered as etcd relatives
+
+kine, the k3s default datastore, implements a subset of the etcd API and refuses `DeleteRange`, serializable and sorted reads and lease listing, registers no Auth service, answers `LeaseGrant` with an id equal to the TTL and accepts four `txn` shapes; Xline claims full compatibility, answered every read and lease call measured, and refuses `Defragment` (R09 3.8, section 4).
+Neither is refused by the etcd provider, and neither is claimed.
+
+Found 2026-09-30 while designing the etcd provider (spec section 8).
+
+**Done when:** each has its own gate-4 probe against a live instance, answering the questions of the etcd design's section 8, and a `WIRE_COMPATIBLE_ENGINES` entry at the tier it measured, or a recorded refusal.
+
+### D136. `MongoDBProvider.runMaintenance` checks its operation with a set lookup the compiler does not read
+
+`runMaintenance` in `src/lib/db/providers/document/mongodb.ts` refuses an unknown operation with `SUPPORTED_MAINTENANCE_TYPES.has(type)`, a `ReadonlySet<MaintenanceType>` lookup that narrows nothing, and then ends its work in a `switch` over the six members of `MaintenanceType` with no `default`.
+So the set and the `switch` are two hand-kept lists of one union, and a seventh member makes the method's result possibly undefined to the compiler instead of failing at the lookup.
+That is why `MaintenanceType` stayed at six when etcd added `compact`, `defragment` and `disarm`: they went into a union of their own, `MaintenanceOperation` in `src/lib/db/types.ts`, whose docblock records the reason.
+
+Found 2026-09-30 while widening the maintenance operations for the etcd provider (#1089, section 7.2).
+Not fixed there: the etcd work edits no other provider's file.
+
+**Done when:** the MongoDB dispatch is exhaustive by construction, a `switch` whose `default` asserts `never` or a record keyed by the operation, the set is gone, and a unit test drives an unknown operation to its refusal.
 
 ## Value interpolation
 
@@ -2227,6 +2297,7 @@ MSSQL and MongoDB declare `check` as globally runnable and MySQL declares `optim
 `ProviderLabels` has only the `analyzeGlobal*` and `vacuumGlobal*` triads, so a global card can only be
 rendered where the provider's `vacuumActionOperation` happens to redirect the vacuum slot to it. MySQL
 gets an Optimize card that way; MSSQL's and MongoDB's `check` gets nothing.
+Amended 2026-09-30: the Operations tab now draws a declared card for an operation whose `MaintenanceOperationSpec` carries a `title` and a `description` (#1089), so a global operation gets a card by declaring them; DuckDB's optimize and the global check of SQL Server, SQLite, libSQL and MySQL stay withheld until each provider declares them after a live run, and MongoDB's check leaves this entry, because `src/lib/db/providers/document/mongodb.ts` declares it `global: false`.
 
 Deliberately not fixed with U9 (2026-08-25): inventing card copy for five providers without measuring
 what each statement actually does is the generic mapping #427 reverted. What is needed first is the
@@ -2618,6 +2689,7 @@ Read from the bundle, not yet seen in a browser.
 
 Found 2026-09-23 while writing `registerPromqlLanguage` on the `redis-language.ts` template for #1085 (section 3.2); the template works for PromQL only because the bundle ships no `promql` id.
 Not fixed in #1085: registering Redis differently changes how every Redis tab is highlighted, which is not that PR's to change.
+Amended 2026-09-30: the etcd language registers an id the bundle does not ship, `etcd`, which `tests/isolated/monaco-language-ids.test.ts` pins, the shape this entry's fix takes.
 
 `grep -rn 'getLanguages().some' src/lib/editor/redis-language.ts` returns exactly one hit, that early return, and the bundle's own registration of the id is what `tests/isolated/monaco-language-ids.test.ts` asserts.
 
@@ -2838,6 +2910,100 @@ Not fixed in #1070: the PR does not touch the agent rail.
 
 **Done when:** a connection switch either closes the consent step or keeps it with the rail header naming the step's connection, the rail stops showing the previous connection's run after the switch, and a component test pins both across a connection change.
 
+### U55. The editor path writes no audit event for a write statement on any engine
+
+`POST /api/db/query` runs a `put`, an `UPDATE` or a `DEL` and records no audit event, on every engine; only the object-edit apply route and the maintenance route audit (`src/app/api/db/objects/edit-apply/route.ts`, `src/app/api/db/maintenance/route.ts`).
+The etcd provider states it as a limit (`docs/providers/etcd.md`, section 13), and the maintainer decided on 2026-09-30 to file it as product-wide work rather than add it for one engine.
+
+Found 2026-09-30 while designing the etcd provider (#1089).
+
+**Done when:** a statement the confirmation gate classifies as a write writes one audit event with the connection, the actor and the classification, never the statement's values, on every engine, and a route test drives one write per engine family.
+
+### U56. A watch is bounded, and there is no live panel for streamed results
+
+The etcd `watch` runs for a window and answers its events as one result (`runBoundedWatch` in `src/lib/db/providers/keyvalue/etcd/watch.ts`), because the query route answers once; a Kafka tail and Redis `SUBSCRIBE` need the same streamed panel.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec 5.3).
+
+**Done when:** a result panel shows events as they arrive over a streamed route, with a stop control and a bound, and the etcd watch, a Kafka tail and a Redis `SUBSCRIBE` each drive it in a component test.
+
+### U57. The confirmation gate posts Redis and MongoDB write statements, values included, to the model provider
+
+`QuerySafetyDialog` posts every dangerous statement it shows to `/api/ai/query-safety` (`src/components/QuerySafetyDialog.tsx`), so a Redis `SET` or a MongoDB update leaves the deployment with its values when a model is configured.
+The etcd row of the destructive vocabulary declares `safetyAnalysis: false` and posts nothing (spec E10); the other engines were not changed by the etcd PR.
+Reproduce: open the dialog for a Redis `DEL user:1` with a model configured and watch the network tab for the POST.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
+
+**Done when:** a vocabulary row can decline the model analysis, the Redis and MongoDB rows decide whether they do, and a component test shows no request to the AI route for a declining row.
+
+### U58. TablesTab's Vacuum summary card reads 0 and "OK" on an engine that declares no vacuum
+
+`vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card shows 0 with a green "OK"; Redis, Couchbase, ClickHouse and Trino show it today, and etcd does after the etcd PR.
+Reproduce: open the Tables tab on the compose Redis and read the Vacuum card.
+
+Found 2026-09-30 while designing the etcd provider (R11 ARCH-3).
+
+**Done when:** `vacuumStateKnown` requires `vacuumSupported`, the card is absent or says the engine has no vacuum, and a component test pins it for an engine without one.
+
+### U59. Redis's command unit borrows the default payload wording of the preview
+
+`ApplyPreviewDialog.tsx` writes "library code" for a command unit that sets no `payloadLabel`, which is Redis's word, while etcd's unit sets `payloadLabel: "value"`; Redis's own declaration in `src/lib/db/providers/keyvalue/redis.ts` was left alone by the etcd PR's isolation rule.
+
+Found 2026-09-30 while designing the etcd provider (R11 CF-3).
+
+**Done when:** Redis's unit declares `payloadLabel: "library code"`, the dialog's default is a neutral word, and the Redis preview pin in `tests/components/object-source/ApplyPreviewDialog.test.tsx` stays byte-identical.
+
+### U60. The connection form sends a client certificate the current SSL mode does not draw
+
+The TLS panel draws the client certificate only in `verify-ca` and `verify-full`, and a certificate typed there stays in the form state and is sent after a switch to `require` or `verify-system` (`src/hooks/use-connection-form.ts`), so an etcd connection signs in as a Common Name the user cannot see.
+Reproduce with a hook test: type a client certificate under `verify-full`, switch to `require`, build the connection, and read `ssl.clientCert`.
+
+Found 2026-09-30 while designing the etcd provider (R12 UX-8).
+
+**Done when:** a mode that draws no client certificate sends none, or draws what it sends, and a hook test pins the switch.
+
+### U61. The editor's cancel discards the cancel route's answer, so a write etcd applied is shown as cancelled
+
+`use-query-execution.ts` aborts its own request, posts the cancel and shows the statement as cancelled whatever the route answers (`cancelQuery` and the cancellation branch of the run's error handling), so a write the engine had applied, for which the etcd provider's `cancelQuery` answers `false`, is shown as cancelled.
+The etcd provider states it as a limit (`docs/providers/etcd.md`, section 13).
+
+Found 2026-09-30 while designing the etcd provider (R12 CF-11).
+
+**Done when:** a cancel whose route answer is `cancelled: false` says that the statement may have run, and a hook test pins both answers.
+
+### U62. The object-edit wire checks answer for an array with a hole in it
+
+The shape checks of `src/lib/api/object-edit-wire.ts` walk steps, segments, session pins, consequences and lost consequences with `Array.prototype.every`, which skips a hole.
+Measured 2026-09-30 with `isObjectEditUnitShape`: a statement unit whose one step's `segments` is `[{ from: "provider", text: "AB" }, <hole>]` throws a `TypeError` from `spansTheText` instead of answering false, and a unit whose `steps` is a valid step followed by a hole answers true.
+JSON never carries a hole, so a request body cannot reach it; an in-memory caller can.
+
+Found 2026-09-30 while extending the command unit for the etcd provider (#1089).
+Not fixed there: the checks belong to every engine's edit path.
+
+**Done when:** each of those checks walks its array the way `isBoundedTextList` in the same file does, a hole answers false, and a unit test holds a hole in each of the five arrays.
+
+### U63. The key browser carries three lint warnings
+
+`bunx eslint src/components/key-browser/KeyBrowser.tsx` reports three warnings.
+`react-hooks/exhaustive-deps`: `databaseRow` is a new object on every render, so the `useMemo` that reads it recomputes the panel's rows on every render.
+`jsx-a11y/role-has-required-aria-props`, twice: both `role="treeitem"` rows carry no `aria-selected`, so a screen reader cannot tell which key is open.
+
+Found 2026-09-30 while generalising the key browser for the etcd provider (#1089).
+Not fixed there: neither changes what the etcd work needed from the panel.
+
+**Done when:** `databaseRow` is memoised, both tree rows state `aria-selected`, the file lints clean, and a component test reads `aria-selected` on the open key's row.
+
+### U64. The tab manager's deferred preview runs are never cleared
+
+`handleTableClick` in `src/hooks/use-tab-manager.ts` schedules the preview query with `setTimeout(..., 100)` on two paths, the fresh tab and the rerun of a failed one, and keeps no handle to either.
+A shell that unmounts within those 100 ms still calls `executeQuery` for a tab that no longer exists.
+
+Found 2026-09-30 while reviewing the tree click for the etcd provider (#1089).
+Not fixed there: the hook serves every engine.
+
+**Done when:** the pending timers live in a ref that an unmount effect clears, and a hook test unmounts inside the window and sees no query run.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -2959,6 +3125,15 @@ so in `CLAUDE.md`, which today says nothing about it, or sweep the orphans and t
 `calendar.tsx` went. Until then every Dependabot major on one of those packages costs a review for a
 component nothing renders. Reproduce the list with a per-file importer count over `src/components/ui/`.
 
+### P6. knip reports a configuration hint on every run
+
+`bun run knip` exits 0 and prints "Configuration hints (1)": `.css  knip.json  Compiled extension excluded by project (imports not followed)`.
+knip does not follow a `.css` import, so a stylesheet imported only for its side effect is neither a dependency nor an unused file to it, and the hint is printed on every run of the required check, where a new hint is easy to miss beside it.
+
+Found 2026-09-30 by the etcd PR's knip run (#1089), which removed the other hint, `gh` in `ignoreBinaries`, after measuring that no script needs it.
+
+**Done when:** `knip.json` either declares a compiler for `.css` or states that the project's stylesheets are out of scope in a form knip accepts, and `bun run knip` prints no configuration hint.
+
 ## Documentation
 
 ### DOC3. Six channel listings carry corrected copy that nobody has resubmitted
@@ -3041,6 +3216,8 @@ It edits none of these files, and it leaves as they were these fleet counts in c
 - `src/lib/agent/schema-stats.ts`, the no-statistics docblock: "on the twelve type-ids whose inventory comes from their own provider", which are seventeen now.
 - `tests/unit/db/duckdb/seam-guard.test.ts`, the header: "the fourteen engines that are not DuckDB".
 - `e2e/login.spec.ts` and `tests/components/LoginPage.test.tsx`: "forty named products" and the "twenty-six" relatives, written for the gap each test closes and true of the registry then.
+Amended 2026-09-30: the Redis doc drift recorded by the etcd design (R01 9.6) belongs here too; the etcd PR edits no other provider's doc beyond the two `MaintenanceType` counts of `duckdb.md` and `cassandra.md`.`, followed by the drift's one-line description copied from R01 section 9.6 (`/home/cevheri/projects/libredb/reviews/2026-09-30-etcd-design/01-redis-precedent.md
+The drift, in `docs/providers/redis.md`: its Driver row says `ioredis` `^5.9.2` where `package.json` holds `^5.11.1`, it says key-prefix groups sort by descending key count where the provider sorts them by path, it names `maxScan = 1000` where the constant is `KEY_SCAN_LIMIT` in `src/lib/db/providers/keyvalue/redis.ts`, and it calls `listObjects` and `describeObjects` with a `table` kind Redis does not declare.
 
 Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: that PR edits another provider's doc only where a shared surface it changed alters what the doc describes, and no count here is about such a surface; the four comments sit in other providers' directories, which it does not edit, so their mirrors stay with them to change together.
@@ -3103,6 +3280,16 @@ and the citations present at that commit all resolve. The test needs one case pe
 accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
 
 ---
+
+### DOC9. Two tables of the README and the provider index count a fleet that has since grown
+
+`README.md`'s "Test Architecture" table (and its `README_zh.md` peer) counts 24 integration files where `tests/integration/` holds 36, and lists 13 of the providers; `docs/providers/README.md`'s in-network port table stops at Trino, with no Cassandra, Prometheus, Kafka or etcd.
+`find tests/integration -name '*.test.ts' | wc -l` gives the first count.
+
+Found 2026-09-30 while re-deriving the etcd PR's numerals (reconciliation N-76).
+Not fixed there: completing each table needs facts that PR did not measure, and neither gains an etcd row alone.
+
+**Done when:** both tables are re-derived from the tree, each with a test or a comment naming the command that derives it.
 
 ## Release pipeline
 
@@ -3217,6 +3404,16 @@ out. Its floor assertion needs the same treatment as the citation scan's.
 `git ls-files` and intersecting, so a working tree with local drafts under `docs/` or `deploy/`
 gives the same verdict as a clean checkout. Each scan's own floor assertion stays, so a broken
 enumeration still fails loudly rather than passing vacuously.
+
+### REL5. Fourteen scripts do nothing and exit 0 when run through a symlinked checkout
+
+Each of `scripts/*.mjs` that runs as a command compares `path.resolve(process.argv[1])` with `fileURLToPath(import.meta.url)`; through a symlinked checkout Node keeps the link in `argv[1]` and resolves `import.meta.url` to the real file, so the comparison fails and the script exits 0 without running.
+`readme-check.mjs`, `security-check.mjs`, `sync-chart-version.mjs` and `distribution-check.mjs` are drift guards of the required check, so a guard run that way passes silently.
+Measured 2026-09-30 by the etcd PR's descriptor generator, which compares real paths on both sides instead (`scripts/generate-etcd-descriptor.mjs`); `grep -rl 'path.resolve(process.argv' scripts` returns exactly 14 hits.
+
+Not fixed there: the etcd PR touches no other script.
+
+**Done when:** every command script decides that it runs as the program by comparing real paths, as `generate-etcd-descriptor.mjs` does, and one test runs a drift guard through a symlinked checkout and sees it check.
 
 ## Chart configuration surface
 
@@ -4245,6 +4442,7 @@ A Redis-wire relative that refuses `FUNCTION LIST` (KeyDB, DragonflyDB, Garnet) 
 
 Found 2026-09-24 while checking the VictoriaMetrics relative after #1104.
 Not fixed there: both rules of the walk are documented decisions (the `walkObjectInventory` docblock), so changing either is a ruling rather than a fix.
+Amended 2026-09-30: the etcd provider's `lease`, `user` and `role` kinds are exempt by declaring `countIsListing` (#1089), so plan mode grounds a user who is not root; the general ruling stays open.
 
 **Done when:** a ruling chooses between recording a refused kind in the inventory, with the engine's sentence, while keeping the kinds that were read, and keeping the whole-capture refusal with a message that names the refused kind rather than an unreachable server; and a test drives the walk over a provider whose one kind's listing throws.
 
