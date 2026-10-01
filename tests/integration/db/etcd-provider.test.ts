@@ -605,6 +605,9 @@ describe("the object surface (spec 4, gate 1)", () => {
   test.each([
     ["a JSON value", "/app/cfg"],
     ["a text value", "/app/a/b"],
+    // The helper throws on an empty or whitespace-only text part, so these two pass only as refusals (spec 4.4).
+    ["an empty value", "/values/empty"],
+    ["a whitespace-only value", "/values/whitespace"],
   ])("satisfies the object-surface contract, the key sample holding %s", async (_label, key) => {
     const { provider } = await connected(ETCD, clusterWire());
     await assertObjectSurface(provider, {
@@ -618,6 +621,20 @@ describe("the object surface (spec 4, gate 1)", () => {
     });
     await provider.disconnect();
   });
+
+  test.each([
+    ["/values/empty", "The value is empty (0 bytes).", 0],
+    ["/values/whitespace", "The value holds only whitespace (5 bytes).", 5],
+  ] as const)(
+    "the Source tab of the seeded %s is the refusal naming the fact, with value_bytes in Part 2 (spec 4.4, R12 CIC-16)",
+    async (key, sentence, bytes) => {
+      const { provider } = await connected(ETCD, clusterWire());
+      const [value, metadata] = (await provider.readObjectSource([key], "key")).parts;
+      expect(value).toEqual({ id: "value", label: "Value", unavailable: sentence });
+      expect(JSON.parse((metadata as { readonly text: string }).text).value_bytes).toBe(bytes);
+      await provider.disconnect();
+    },
+  );
 
   test("lists the groups spec 4.1's rule makes of the seeded keys, and no key name", async () => {
     const { provider } = await connected(ETCD, clusterWire());
