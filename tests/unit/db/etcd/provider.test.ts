@@ -999,6 +999,19 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect(methods(client).filter((method) => method === "userGet")).toHaveLength(4);
   });
 
+  test("a defect met reading the grants is raised by the count, never kept as the prefix folder's sentence", async () => {
+    let defect = false;
+    const client = readerClient({
+      authStatus: async () => {
+        if (defect) throw new TypeError("the adapter could not read its own answer");
+        return { enabled: true, authRevision: "5" };
+      },
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    defect = true;
+    await expect(provider.countObjects([])).rejects.toThrow(new TypeError("the adapter could not read its own answer"));
+  });
+
   test("during a lost quorum the count of a user who is not root still lists the members, and the prefix folder carries the lost quorum (spec 4.3)", async () => {
     let quorum = true;
     const noLeader = () => new EtcdError("no-leader", "etcdserver: no leader", 14);
