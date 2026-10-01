@@ -461,7 +461,7 @@ answer). The floor that matters here is 3.37, and both builds are above it.
 `containerLevels` is `[]`, `containerDepth()` answers 0, and `listContainers()` answers `[]`. A connection
 addresses one database and every object in it is addressed by a bare name, so `DatabaseObject.path` for a
 table is `['orders']` and for a trigger `['orders', 'orders_stamp']`. No synthetic `main` container is
-invented to make the shape match the other sixteen engines.
+invented to make the shape match the other engines.
 
 #### The four kinds, and the one that is NOT declared
 
