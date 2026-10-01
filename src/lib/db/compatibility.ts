@@ -138,8 +138,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
  *
  * Also the DENOMINATOR the outward-facing catalog copy is counted against:
  * `tests/unit/lib/catalog-copy-engine-count.test.ts` compares this length with every
- * numeral qualifying "engines" in thirteen storefront files, which until #D47 were only ever
- * corrected by somebody noticing.
+ * numeral qualifying "engines" in each storefront file its `COPY_FILES` lists, which until
+ * #D47 were only ever corrected by somebody noticing.
  */
 export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
   SHIPPED_DATABASE_TYPES.filter((type) => EXTERNAL[type]),
