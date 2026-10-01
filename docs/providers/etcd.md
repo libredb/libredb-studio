@@ -51,7 +51,8 @@ It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only 
 
 The constructor validates nothing and opens nothing, so a provider built from any connection answers its capabilities and labels.
 `connect()` checks the endpoint, the credentials and the TLS panel first, opens one gRPC channel, and runs the connect sequence of section 4.2; `disconnect()` closes that channel.
-After `disconnect()` no socket of the Studio process stays open to the endpoint, including one whose peer never answered.
+After `disconnect()` no socket of the Studio process stays open to the endpoint, including one whose peer never answered the TLS handshake or never sent HTTP/2's settings, and nothing is dialled again.
+The one exception is a TCP connect still under way when the connection closes, which grpc-js gives no way to abort: it is ended the moment the peer answers it, or the kernel gives up on it first (on Linux after `tcp_syn_retries`, six retries by default).
 The channel never goes through an `http_proxy`, `https_proxy` or `grpc_proxy` variable: use an SSH tunnel to reach a private endpoint.
 
 ### 2.4 The client, and why
