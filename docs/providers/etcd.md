@@ -166,7 +166,8 @@ A host that holds a colon and is not an IPv6 literal, such as one typed `https:/
 
 ### 4.2 Authentication
 
-With a User and a Password, Studio signs in with `Authenticate` on connect and sends the token on every call; on "invalid auth token", "user name is empty" or "revision of auth store is old" it signs in once more and retries that call once, concurrent calls share the one renewal, and a second failure is raised.
+With a User and a Password, Studio signs in with `Authenticate` on connect and sends the token on every call; on "invalid auth token", "user name is empty" or "revision of auth store is old" it signs in once more, concurrent calls share the one renewal, a read is sent once more, and a second failure is raised.
+A write is sent once more only after "invalid auth token" or "user name is empty", which left a write unapplied when measured (section 11.4); a write that met "revision of auth store is old" waits for the renewal and is then raised with the sentence that it may have been applied, because no write could be made to meet that answer and be measured.
 A User or a Password over no TLS is refused with "A User or Password needs TLS on etcd: choose an SSL mode under SSL / TLS, or clear them. A plaintext etcd with password authentication cannot be connected."
 With a client certificate and no password, etcd reads the certificate's Common Name as the user when the server runs with `--client-cert-auth`; with both, etcd authenticates the password.
 The connect sequence answers each of etcd's refusals in words of its own: a password on an etcd without authentication, authentication on with no credential configured, a certificate whose Common Name is no etcd user, and a server that did not read the certificate.
@@ -289,6 +290,7 @@ A live watch panel is filed as U56.
 | `ETCD_RECEIVE_CAP_BYTES` | 16,777,216 | The largest single answer the channel accepts |
 
 Every page of one read is pinned to its first page's revision, and a read the budget stops answers the rows it holds with a warning naming the bound and the key it stopped before.
+etcd's `Range` limits a page by its count of keys alone, so a page whose answer the receive cap refuses is asked again from the same key and revision with half its limit, and the read goes on from that size; only a single key larger than the cap fails, naming the cap (measured: twenty values of 1 MiB answered 20,972,150 bytes, past the 16 MiB cap, at a first page of 100).
 An answer past the receive cap to a `put` or `del` says that etcd applied the write, and to a `txn` that one of its branches ran, because etcd answers a write only after applying it.
 
 ### 5.5 Cancellation and the confirmation gate
@@ -428,7 +430,17 @@ bun run test
 
 ### 11.4 The live check
 
-Run by hand against the fixtures of section 11.3: `bun tests/live/etcd-live-check.ts --service etcd`.
+`tests/live/etcd-live-check.ts` runs a real `EtcdProvider` against the fixtures of section 11.3 and fails on any change it made outside its scratch prefix `/libredb-live-check/` (keys, values, revisions, leases, users and roles), after driving every refusal of section 3.2 and the three read-only arms of section 3.4 live.
+It runs by hand, once per fixture, with the fixtures' certificates copied out as `docker/etcd/README.md` shows: `ETCD_LIVE_CERTS=/tmp/etcd-auth-certs bun tests/live/etcd-live-check.ts --service etcd`, and the same with `etcd-cluster`, `etcd-auth` or `etcd-auth-password`.
+Measured on 2026-10-01 against etcd 3.7.2, with every before and after snapshot identical: 92 of 92 checks passed on `etcd`, 99 of 99 on `etcd-cluster` with the KE14 and KE15 measurements, 98 of 98 on `etcd-auth` as root and as the reader, and 79 of 79 on `etcd-auth-password`.
+The walk's bounds of section 6.1 and the read bounds of section 5.4 were measured on 401,440 keys (200,000 in one flat directory sorting first, 200,000 under 1,000 groups, and values of 64 KiB and 1 MiB): the tree's walk took 290 ms and its count read "one key-prefix walk that stopped after 100,000 keys"; the table statistics of its 388 groups took 350 ms; a get of twenty 1 MiB values answered 7 rows in 99 ms with the member at 320.6 MiB before and 421.2 MiB after, and a get of 1,000 values of 64 KiB answered 127 rows in 48 ms with the member at 421.2 MiB before and 433.7 MiB after, each stopped by the byte budget.
+A watch at the cap returned 10 ms after its window at a query timeout of 5,000 ms, so the margin stays 1,000 ms.
+Through the network alias the three members of `etcd-cluster` share inside the compose network, stopping the answering member cost 0 reads, the next read answered from another member in 2 ms, and no pause between two write answers passed 28 ms, under Node v26.10.0 (KE13).
+With two of three members stopped, endpoint status, a serializable get, a serializable member list, lease list, a read-only txn of serializable gets and defragment answered in 2 to 14 ms, and the linearizable get and member list failed within 2 ms with the lost-quorum sentence (KE14).
+A value edit whose Txn met its deadline while two followers were paused was applied in 3 of 3 runs, and every one was reported as possibly applied; a top-level put in the same state was never sent, because the read before it met its deadline first (KE15).
+A write that met `etcdserver: invalid auth token` or `etcdserver: user name is empty` was not applied, so such a write is sent once more after its one renewal; no write could be made to meet `etcdserver: revision of auth store is old`, so a write that does keeps the sentence that it may have been applied (KE12).
+A five-minute watch under Bun saw 297 of the 298 writes made one a second from its start to its close, with no stall and its slowest paged read taking 11 ms, and a ten-second watch at 23 writes a second saw every one of 232 writes in three runs of three (KE16).
+Through a real SSH tunnel, `verify-full` accepted the far end's name and refused an address the certificate does not carry (KE8).
 
 ## 12. Connecting to a Kubernetes control-plane etcd
 
