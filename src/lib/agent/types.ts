@@ -543,7 +543,9 @@ export interface AgentInventoryObject {
   /**
    * Present where this connection may read only part of the object, so a read of the whole object
    * is refused: a listed object that carried `DatabaseObject.readRanges` (#1089 4.7), which is an
-   * etcd group the user's grants do not cover. Absent means the whole object may be read.
+   * etcd group the user's grants do not cover. Absent means only that the listing carried no
+   * `readRanges`: on etcd, the user's grants cover the group. No other engine declares a partial
+   * read, so on any other engine absence does not state that a read is granted.
    *
    * A mark and never the ranges: they are the connection's grants and a piece may name a key, so
    * the walk derives this from them and copies none of them (E13).
