@@ -538,4 +538,15 @@ describe("the Tables card of a count that is a floor", () => {
     expect(tablesCard(getByText).textContent).toBe("Tables2461 indexes");
     expect(queryByTestId("overview-table-count-scope")).toBeNull();
   });
+
+  test("an overview without the field writes a count of a thousand or more in raw digits, as it always has", () => {
+    // The digit grouping is the floor's alone. Below 1,000 a grouped count and a raw one are the same
+    // text, so only a count this size shows that every other provider's card still renders as before.
+    const base = makeData();
+    const data = { ...base, overview: { ...base.overview, tableCount: 401_440 } } as MonitoringData;
+    const { getByText, queryByTestId } = render(<OverviewTab data={data} loading={false} />);
+
+    expect(tablesCard(getByText).textContent).toBe("Tables40144061 indexes");
+    expect(queryByTestId("overview-table-count-scope")).toBeNull();
+  });
 });
