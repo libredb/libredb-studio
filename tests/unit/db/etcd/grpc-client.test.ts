@@ -1840,7 +1840,7 @@ describe("the watch and the keep-alive (spec 5.3, E16)", () => {
     expect(wire.writes).toEqual([]);
   });
 
-  test("a fragmented answer is reassembled into one batch, and an answer without events is no batch", async () => {
+  test("a fragmented answer is handed on fragment by fragment, and an answer without events is no batch", async () => {
     const { batches, outcome } = await watchOnce([
       watchResponse({ created: true }),
       watchResponse({ fragment: true, events: [putEvent("/app/a", "5")] }),
@@ -1851,10 +1851,86 @@ describe("the watch and the keep-alive (spec 5.3, E16)", () => {
       watchResponse({ canceled: true, compact_revision: "4" }),
     ]);
     expect(await outcome).toEqual({ reason: "compacted", compactRevision: "4" });
-    expect(batches).toHaveLength(2);
-    expect(batches[0].header).toEqual(DECODED_HEADER);
-    expect(batches[0].events.map((event) => textOf(event.kv.key))).toEqual(["/app/a", "/app/b", "/app/c"]);
-    expect(batches[1].events.map((event) => textOf(event.kv.key))).toEqual(["/app/d"]);
+    expect(batches.map((batch) => batch.header)).toEqual([
+      DECODED_HEADER,
+      DECODED_HEADER,
+      DECODED_HEADER,
+      DECODED_HEADER,
+    ]);
+    expect(batches.map((batch) => batch.events.map((event) => textOf(event.kv.key)))).toEqual([
+      ["/app/a"],
+      ["/app/b"],
+      ["/app/c"],
+      ["/app/d"],
+    ]);
+  });
+
+  /** One watch over a recorded stream, counting the messages the adapter reads from it. */
+  const watchCounted = async (messages: object[], onBatch: (batch: EtcdWatchBatch) => "continue" | "stop") => {
+    const wire = recordedEtcdWire({ answers: { "Watch/Watch": [() => ({ messages, end: "open" })] } });
+    const read = { messages: 0 };
+    const client = await createGrpcEtcdClient(PLAINTEXT, {}, (channelOptions) => {
+      const channel = wire.transport(channelOptions);
+      return {
+        ...channel,
+        stream: (rpc, call) => {
+          const stream = channel.stream(rpc, call);
+          return {
+            ...stream,
+            read: () => {
+              read.messages++;
+              return stream.read();
+            },
+          };
+        },
+      };
+    });
+    const window = new AbortController();
+    const outcome = client.watch({ key: bytes("/app/"), rangeEnd: bytes("/app0") }, onBatch, { signal: window.signal });
+    return { wire, read, window, outcome };
+  };
+  const keysOf = (batch: EtcdWatchBatch) => batch.events.map((event) => textOf(event.kv.key));
+
+  test("a stop inside a fragmented answer reads no fragment after it, so the bounds stop a watch inside one revision (spec 5.3, E14)", async () => {
+    const batches: string[][] = [];
+    const { wire, read, outcome } = await watchCounted(
+      [
+        watchResponse({ created: true }),
+        watchResponse({ fragment: true, events: [putEvent("/app/a", "5"), putEvent("/app/b", "5")] }),
+        watchResponse({ fragment: true, events: [putEvent("/app/c", "5")] }),
+        watchResponse({ events: [putEvent("/app/d", "5")] }),
+      ],
+      (batch) => {
+        batches.push(keysOf(batch));
+        return "stop";
+      },
+    );
+    expect(await outcome).toEqual({ reason: "stopped" });
+    expect(batches).toEqual([["/app/a", "/app/b"]]);
+    // The created answer and the first fragment: the two fragments after the stop were never read.
+    expect(read.messages).toBe(2);
+    expect(wire.cancels).toEqual(["Watch/Watch"]);
+  });
+
+  test("an abort inside a fragmented answer keeps every fragment that arrived before it, never a quiet window (spec 5.3)", async () => {
+    const batches: string[][] = [];
+    const { wire, window, outcome } = await watchCounted(
+      [
+        watchResponse({ created: true }),
+        watchResponse({ fragment: true, events: [putEvent("/app/a", "5")] }),
+        watchResponse({ fragment: true, events: [putEvent("/app/b", "5")] }),
+      ],
+      (batch) => {
+        batches.push(keysOf(batch));
+        return "continue";
+      },
+    );
+    // The last fragment never arrives: the window closes while etcd is still sending the answer.
+    await Bun.sleep(20);
+    window.abort();
+    expect(await outcome).toEqual({ reason: "aborted" });
+    expect(batches).toEqual([["/app/a"], ["/app/b"]]);
+    expect(wire.cancels).toEqual(["Watch/Watch"]);
   });
 
   test("a delete event and a previous value are decoded as the seam spells them", async () => {
@@ -2781,7 +2857,7 @@ describe("over grpc-js: the wire both ways", () => {
     expect(metadata("Status")).not.toHaveProperty("hasleader");
   }, 20_000);
 
-  test("a watch: a fragmented answer reassembled, and the server sees the stream cancelled when it stops", async () => {
+  test("a watch: a stop on the first fragment of an answer ends it there, and the server sees the stream cancelled", async () => {
     let cancelled = false;
     let created: unknown;
     const { server, port } = await serve({
@@ -2811,7 +2887,7 @@ describe("over grpc-js: the wire both ways", () => {
         options,
       );
       expect(end).toEqual({ reason: "stopped" });
-      expect(keys).toEqual(["/app/a", "/app/b"]);
+      expect(keys).toEqual(["/app/a"]);
       expect(created).toMatchObject({
         create_request: { key: bytes("/app/"), range_end: bytes("/app0"), fragment: true },
       });

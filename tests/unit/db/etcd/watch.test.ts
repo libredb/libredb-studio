@@ -1,6 +1,6 @@
 /**
  * The bounded watch (spec 5.3), through the shared fake client (plan C12), whose `watch` behaves as
- * the adapter's does by the seam's contract (plan C1): it hands each complete batch to the loop's
+ * the adapter's does by the seam's contract (plan C1): it hands each batch to the loop's
  * callback, settles "stopped" when the callback answers stop, settles "aborted" when the call's
  * signal aborts, and otherwise settles with the end etcd sent or rejects with the stream's failure.
  * The window's clock is injected, so no test waits on a real timer.

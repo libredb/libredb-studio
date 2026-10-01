@@ -125,7 +125,10 @@ export interface EtcdWatchEvent {
   readonly prevKv?: EtcdKeyValue;
 }
 
-/** One complete watch response, fragments already reassembled by the adapter. */
+/**
+ * The events of one watch response, or of one fragment of a large one: the adapter hands each on as it arrives, so
+ * the watch's row limit and byte budget apply inside one response (spec 5.3, E14).
+ */
 export interface EtcdWatchBatch {
   readonly header: EtcdResponseHeader;
   readonly events: readonly EtcdWatchEvent[];
@@ -221,9 +224,9 @@ export interface EtcdClient {
   deleteRange(request: EtcdDeleteRangeRequest, options: EtcdCallOptions): Promise<EtcdDeleteRangeResponse>;
   txn(request: EtcdTxnRequest, options: EtcdCallOptions): Promise<EtcdTxnResponse>;
   /**
-   * Opens one watch, calls `onBatch` for every complete response in order, and settles when
-   * `onBatch` answers "stop", the signal aborts, or the server cancels; it always ends the
-   * stream with `call.cancel()` before it settles (spec 5.3).
+   * Opens one watch, calls `onBatch` for every response and every fragment that carries events, in
+   * order, and settles when `onBatch` answers "stop", the signal aborts, or the server cancels; it
+   * always ends the stream with `call.cancel()` before it settles (spec 5.3).
    */
   watch(
     request: EtcdWatchRequest,

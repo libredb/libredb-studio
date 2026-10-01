@@ -5,10 +5,10 @@
  * `createGrpcEtcdClient` is plan C1's `EtcdClient` over a narrow transport, `EtcdWireTransport` (plan C5). It turns
  * each seam request into the descriptor's wire message and each answer back, attaches the token and the `hasleader`
  * metadata (spec E4, 6.1), puts the connection's deadline and the call's own signal on every call (spec 5.3), renews
- * the token within spec E4's bound, reassembles a fragmented watch answer, ends every watch and keep-alive stream
- * with `call.cancel()` (spec 5.3, E16), ends every socket the channel still holds when it closes, a TLS handshake or an
- * HTTP/2 session waiting for SETTINGS among them, and dials nothing after it (E16), and hands every failure to
- * `toEtcdError` (plan C9). Tests run it over the
+ * the token within spec E4's bound, hands each fragment of a watch answer on as it arrives, ends every watch and
+ * keep-alive stream with `call.cancel()` (spec 5.3, E16), ends every socket the channel still holds when it closes, a
+ * TLS handshake or an HTTP/2 session waiting for SETTINGS among them, and dials nothing after it (E16), and hands every
+ * failure to `toEtcdError` (plan C9). Tests run it over the
  * recorded transport of tests/helpers/etcd-fixtures.ts (plan C11), so only the server is fake; the provider runs it
  * over `grpcWireTransport`, the one implementation that knows grpc-js.
  *
@@ -935,7 +935,6 @@ export async function createGrpcEtcdClient(
     const stream = channel.stream("Watch/Watch", wireCall("Watch/Watch", {}, signal));
     try {
       stream.write(watchRequest(request, cursor.startRevision));
-      const fragments: WireEvent[] = [];
       for (;;) {
         // oxlint-disable-next-line no-await-in-loop -- a watch answers one response after another, in order.
         const response = await readWatch(stream, signal);
@@ -951,9 +950,10 @@ export async function createGrpcEtcdClient(
         const answered = header(response.header, "Watch/Watch");
         // A watch created again starts after the last revision this one delivered, so no event arrives twice.
         if (response.created && cursor.startRevision === undefined) cursor.startRevision = following(answered.revision);
-        fragments.push(...response.events);
-        if (response.fragment || fragments.length === 0) continue;
-        const events = fragments.splice(0).map(watchEvent);
+        // Each fragment is handed on as it arrives, so the row limit and the byte budget stop a watch inside one large
+        // answer, and the fragments that arrived before an abort, the window's included, are not lost (spec 5.3, E14).
+        if (response.events.length === 0) continue;
+        const events = response.events.map(watchEvent);
         cursor.startRevision = following(events[events.length - 1].kv.modRevision);
         if (onBatch({ header: answered, events }) === "stop") return { end: { reason: "stopped" } };
       }
@@ -1346,7 +1346,8 @@ function watchRequest(request: EtcdWatchRequest, startRevision: EtcdInt64 | unde
       ...(request.rangeEnd === undefined ? {} : { range_end: request.rangeEnd }),
       ...(startRevision === undefined ? {} : { start_revision: startRevision }),
       ...(request.prevKv === true ? { prev_kv: true } : {}),
-      // Spec 5.3: etcd splits a large answer, which the watch leg reassembles before handing it on.
+      // Spec 5.3: etcd splits a large answer, whose fragments the watch leg hands on one by one, so the watch loop
+      // gathers them within its bounds before results.ts shapes them.
       fragment: true,
     },
   };
