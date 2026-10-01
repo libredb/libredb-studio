@@ -332,11 +332,14 @@ function cancelledOnClient(): Error {
 
 /**
  * The captures a call may be answered from when no `answers` entry takes it: the service's own, but for a capture
- * split per runtime and one no member answered (a refused socket, a TLS failure, a deadline before any answer),
- * which a test reads by name only, since no request of the adapter's means one of them by its fields alone.
+ * split per runtime, one no member answered (a refused socket, a TLS failure, a deadline before any answer) and
+ * a KE14 `-hasleader` row (a call the adapter sends without `hasleader`, sent with it), which a test reads by name
+ * only, since no request of the adapter's means one of them by its fields alone.
  */
 function searchable(service: EtcdFixtureService): EtcdCapture[] {
-  return ETCD_FIXTURE_NAMES.filter((name) => name.startsWith(`${service}/`) && !/\.(bun|node)$/.test(name))
+  return ETCD_FIXTURE_NAMES.filter(
+    (name) => name.startsWith(`${service}/`) && !/\.(bun|node)$/.test(name) && !name.endsWith("-hasleader"),
+  )
     .map(etcdCapture)
     .filter((capture) => capture.$captured.memberId !== "none");
 }

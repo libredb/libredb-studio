@@ -566,6 +566,23 @@ describe("recordedEtcdWire", () => {
     await expect(transport.unary("Maintenance/Status", {}, liveCall())).rejects.toThrow("No transport capture answers");
   });
 
+  test("a KE14 capture taken with hasleader, on a call the adapter sends without it, is read by name only", async () => {
+    const exempt = { ...liveCall(), metadata: {} };
+    const channel = recordedEtcdWire({ service: "etcd-cluster" }).transport({});
+    await expect(channel.unary("Lease/LeaseLeases", {}, exempt)).rejects.toThrow(
+      "No etcd-cluster capture answers Lease/LeaseLeases {}",
+    );
+    const gets = etcdCapture("etcd-cluster/txn-serializable-gets-no-leader-hasleader").$captured.request as object;
+    await expect(channel.unary("KV/Txn", gets, exempt)).rejects.toThrow("No etcd-cluster capture answers KV/Txn");
+    const named = recordedEtcdWire({
+      service: "etcd-cluster",
+      answers: { "Lease/LeaseLeases": [{ fixture: "etcd-cluster/lease-leases-no-leader-hasleader" }] },
+    }).transport({});
+    await expect(named.unary("Lease/LeaseLeases", {}, liveCall())).rejects.toMatchObject({
+      details: "etcdserver: no leader",
+    });
+  });
+
   test("answers are used in order before the captures: a fixture, a value, a throw", async () => {
     const wire = recordedEtcdWire({
       service: "etcd-cluster",
@@ -585,7 +602,7 @@ describe("recordedEtcdWire", () => {
     });
     expect(await channel.unary("Maintenance/Status", { a: 1 }, liveCall())).toEqual({ echoed: { a: 1 } });
     await expect(channel.unary("Maintenance/Status", {}, liveCall())).rejects.toThrow("refused by the test");
-    // Six etcd-cluster captures answer Status {} alike; with no field to prefer one, the first by name answers.
+    // Five etcd-cluster captures answer Status {} alike; with no field to prefer one, the first by name answers.
     expect(await channel.unary("Maintenance/Status", {}, liveCall())).toEqual(
       etcdFixture("etcd-cluster/status-after-defragment"),
     );

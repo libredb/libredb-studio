@@ -1,6 +1,6 @@
 # etcd fixtures
 
-Verbatim answers of etcd v3.7.2 to `@grpc/grpc-js` 1.14.5, captured from the services of `database-compose.yml` before any provider code was written (spec 10, gate 4), but for the six KE14 rows the next section names, which were added after it.
+Verbatim answers of etcd v3.7.2 to `@grpc/grpc-js` 1.14.5, captured from the services of `database-compose.yml` before any provider code was written (spec 10, gate 4), but for the six KE14 rows that "How they were captured" names, which were added after it.
 A test that needs a real etcd answer loads one of these files through `tests/helpers/etcd-fixtures.ts` instead of writing its own, and the provider's integration test runs the real adapter over the recorded transport that helper builds.
 The capture harness is `tests/live/etcd-evidence.ts`, run by hand and never by `bun run test`.
 It calls every surface separately, records a pass or the verbatim error, and renders the three generated blocks below from the files and its run report, so no value in them was typed by hand.
@@ -103,12 +103,11 @@ Their texts are pinned from etcd v3.7.2's `api/v3rpc/rpctypes/error.go`, each wi
 ## Rows told apart only by name
 
 The recorded transport answers a call from the capture whose `match` the request carries, the one naming the most fields first, and then the first by name.
-It never answers from a capture split per runtime, or from one that no member answered, because no request means one of those by its fields alone.
-Some rows answer the same request differently because the server's state, or the call's metadata, differed, so a test that means the second reads it by name through the transport's `answers`:
+It never answers from a capture split per runtime, from one that no member answered, or from a KE14 `-hasleader` row, which carries `hasleader` on a call the adapter sends without it, because no request means one of those by its fields alone.
+Some rows answer the same request differently because the server's state differed, so a test that means the second reads it by name through the transport's `answers`:
 
 - `etcd/lease-keep-alive` and `etcd/lease-keep-alive-expired`: before and after the revoke.
-- The six `Status` rows of `etcd-cluster`: the leader, a follower, member 2 around its defragmentation, and member 1 without a quorum, without `hasleader` and with it.
-- `etcd-cluster/defragment`, `range-serializable-no-leader` and `member-list-serializable-no-leader`, and the `-no-leader-hasleader` row of each: the same request without `hasleader` and with it, which the transport does not read, so it answers the first by name.
+- The five `Status` rows of `etcd-cluster`: the leader, a follower, member 2 around its defragmentation, and member 1 without a quorum.
 - `etcd-auth-password/error-range-no-token`, `etcd-auth-password/error-invalid-auth-token`, `etcd-auth-password/error-auth-revision-old` and `etcd-auth-password/range-token-before-auth-change`: the same `Range` with no token, with an expired token, during an auth change, and after one.
 - `etcd-auth-password/authenticate` and `etcd-auth-password/error-authenticate-wrong-password`: the same user, with its password and with another.
 
