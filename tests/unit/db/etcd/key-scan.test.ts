@@ -418,7 +418,12 @@ describe("a user who is not root (spec 4.7)", () => {
     const { client } = spaceClient(KEYS, { readable: grants });
     const first = await scanEtcdKeysPage(client, reader(grants), start(2));
     expect(first.keys).toEqual(["/app/a/1", "/app/a/2"]);
-    expect(decodeScanCursor(first.cursor)).toMatchObject({ nextKey: enc("/app/x/") });
+    expect(decodeScanCursor(first.cursor)).toMatchObject({
+      nextKey: enc("/app/x/"),
+      digest: walkDigest(undefined, readableScope(grants)),
+    });
+    const second = await scanEtcdKeysPage(client, reader(grants), { cursor: first.cursor, count: 3 });
+    expect(second).toMatchObject({ keys: ["/app/x/a", "/app/x/b", "/app/x/c"], cursor: "0", total: 5 });
   });
 
   test("a key that is not UTF-8 takes its room on a page, so the page reads no more of the next piece than the room left", async () => {
