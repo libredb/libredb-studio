@@ -1017,6 +1017,50 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect(methods(client).filter((method) => method === "userGet")).toHaveLength(3);
   });
 
+  test("an apply reads no grant before its one Txn, so a read of them that fails cannot turn an edit never sent into one whose outcome is unknown (spec 4.5, E6)", async () => {
+    const writer: readonly EtcdPermission[] = [{ type: "readwrite", key: encode("/app/"), rangeEnd: encode("/app0") }];
+    let grantsAnswer = true;
+    const overrides: Partial<EtcdClient> = {
+      roleGet: async () => writer,
+      range: keySpaceRange(KEYS, writer),
+      userGet: async () => {
+        if (grantsAnswer) return ["reader"];
+        throw unavailable();
+      },
+      txn: async () => ({
+        header: KEY_SPACE_HEADER,
+        succeeded: true,
+        responses: [{ op: "put" as const, response: { header: KEY_SPACE_HEADER } }],
+      }),
+    };
+    const client = readerClient(overrides);
+    const { provider, hooks } = await connected(PASSWORD_CONNECTION, client);
+    const built = await provider.buildObjectEdit(REQUEST);
+    if (!built.built) throw new Error(`the build refused the edit: ${JSON.stringify(built.refusal)}`);
+    const readOnlyClient = readerClient(overrides);
+    const readOnly = await connected({ ...PASSWORD_CONNECTION, readOnly: true }, readOnlyClient);
+    // An admin changed the auth store, a renewal met the stale revision, and the grants cannot be read now.
+    hooks[0].onAuthStoreChanged?.();
+    readOnly.hooks[0].onAuthStoreChanged?.();
+    grantsAnswer = false;
+    const mark = client.calls.length;
+    expect((await provider.applyObjectEdit(built.plan)).outcome).toBe("applied");
+    expect(methods(client, mark)).toEqual(["txn"]);
+    const readOnlyMark = readOnlyClient.calls.length;
+    const refused = await readOnly.provider.applyObjectEdit(built.plan);
+    expect({ ...refused, duration: 0 }).toEqual({
+      outcome: "refused",
+      refusal: { refusal: "privilege", sentence: readOnlySentence("connection"), at: { within: "none" } },
+      duration: 0,
+    });
+    expect(readOnlyClient.calls.length).toBe(readOnlyMark);
+    // The change is still read before the next walk.
+    grantsAnswer = true;
+    const walked = client.calls.length;
+    await provider.listObjects([], "prefix");
+    expect(methods(client, walked).slice(0, 2)).toEqual(["userGet", "roleGet"]);
+  });
+
   test("on an etcd whose authentication is off the hook has no grant to read", async () => {
     const client = etcdClient();
     const { provider, hooks } = await connected(CONNECTION, client);

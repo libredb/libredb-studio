@@ -179,6 +179,13 @@ interface RunningQuery {
   writeSent: boolean;
 }
 
+/** One surface call's client, the grants it runs under, and its context (spec 3.5). */
+interface SurfaceCall {
+  readonly client: EtcdClient;
+  readonly grants: EtcdGrants;
+  readonly context: EtcdSurfaceContext;
+}
+
 /** A connection is one key space with no container level (spec 4.1), so every object is addressed at the root. */
 function requireRoot(container: readonly string[]): void {
   if (container.length !== 0) {
@@ -441,14 +448,17 @@ export class EtcdProvider extends BaseDatabaseProvider {
     return reading;
   }
 
-  /** The client and the context of one surface call: its own deadline, and the grants as they stand (spec 3.5). */
-  private async surface(): Promise<{
-    readonly client: EtcdClient;
-    readonly grants: EtcdGrants;
-    readonly context: EtcdSurfaceContext;
-  }> {
+  /** One surface call over the grants as they stand, read again first after an auth-store change (R13 D10). */
+  private async surface(): Promise<SurfaceCall> {
     const session = this.requireSession();
-    const grants = await this.currentGrants(session);
+    return this.surfaceOver(session, await this.currentGrants(session));
+  }
+
+  /**
+   * The client and the context of one surface call over `grants`: its own deadline, and the user they scope
+   * (spec 3.5).
+   */
+  private surfaceOver(session: EtcdSession, grants: EtcdGrants): SurfaceCall {
     const scopes = grants.state === "read" ? grants : { readable: NO_KEY, writable: NO_KEY };
     const { principal, readOnly } = session.options;
     // Named whenever authentication is on and the user does not hold root, whatever its grants read, a
@@ -601,9 +611,15 @@ export class EtcdProvider extends BaseDatabaseProvider {
     });
   }
 
-  /** The plan the build made, sent as its one Txn; a read-only provider answers `refused` (spec 4.5, E6). */
+  /**
+   * The plan the build made, sent as its one Txn; a read-only provider answers `refused` (spec 4.5, E6). Nothing
+   * is read before the Txn, the grants after an auth-store change included, which the next walk reads (R13 D10):
+   * here they only name what a refusal says the user may read, and a read of them that failed would be thrown
+   * before the send, which the apply route reports as an edit whose outcome is unknown.
+   */
   public async applyObjectEdit(plan: ObjectEditPlan): Promise<ObjectEditOutcome> {
-    const { client, context } = await this.surface();
+    const session = this.requireSession();
+    const { client, context } = this.surfaceOver(session, session.grants);
     return applyEtcdValueEdit(client, context, plan);
   }
 
