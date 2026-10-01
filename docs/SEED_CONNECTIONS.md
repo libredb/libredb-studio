@@ -209,6 +209,48 @@ The built-in sample connections never carry it, so they are never visible to an 
 A value that is not a boolean fails the whole file, as any invalid field does: `GET /api/connections/managed` then answers 500 with its named reason, and every MCP tool answers that the connection configuration could not be read.
 With no seed file, or with no entry that opts in for the token's role, `list_connections` answers an empty list.
 
+### A read-only cluster for everyone
+
+`readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
+etcd's is the one that does today ([providers/etcd.md](providers/etcd.md), section 3.4), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
+
+```yaml
+version: "1"
+connections:
+  - id: "cluster-read"
+    name: "Cluster"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    user: "reader"
+    password: "${ETCD_READER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${ETCD_CA}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "cluster-write"
+    name: "Cluster (write)"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    user: "writer"
+    password: "${ETCD_WRITER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${ETCD_CA}"
+    roles: ["admin"]
+    managed: true
+```
+
+`managed: true` is written out on both, although it is the default, because a connection's own value overrides a file-wide `defaults.managed: false`.
+The load refuses `readOnly: true` on a connection that is not managed: an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose `readOnly` can be cleared.
+`readOnly` is set per connection and never in `defaults`, which the load refuses, so a later connection in the file never inherits it.
+The mode is a boundary only where etcd authenticates the client with a secret only the seeds hold, a password or a client certificate: on an etcd that authenticates nobody, a `user` who knows the address can reach it with a connection of their own.
+A read-only connection shows a Read-only marker beside its name in the sidebar and in the editor header.
+
 ---
 
 ## Credential Management
