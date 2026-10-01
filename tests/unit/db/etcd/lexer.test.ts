@@ -1570,6 +1570,15 @@ describe("the refresh pattern, held to the parser (spec 5.1.1, 5.1.2, 6.2)", () 
       "put\u00a0/etcdctl get /a",
       "del\f/etcdctl member list",
       "put\u2028/etcdctl get /a",
+      // A text for each fragment of the pattern that a weaker one would misread: a double-quoted path holding a line
+      // break or an escaped quote, an escaped = after --command-timeout, a line join before a comment line, a line
+      // join right after the command word, and a command word that a path to etcdctl goes on from.
+      '"/opt/my\ntools/etcdctl" put /a b',
+      '"/opt/a\\"b/etcdctl" put /a b',
+      "--command-timeout\\=5s put /a b",
+      "\\\n# c\nput /a b",
+      "put\\\n /a b",
+      "put/etcdctl get /a",
       // The same spellings around a command that writes nothing, and a key named like a verb.
       "etcdctl \\\nget /app/del",
       "'get' /app/put",
