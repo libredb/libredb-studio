@@ -6,9 +6,10 @@
  * `createGrpcEtcdClient` over `grpcWireTransport`, one `Status` call, and `toProviderError`, against listeners this
  * file starts: TLS gRPC servers whose certificates are made here with openssl, into a temporary directory, and never
  * committed; `openssl s_server`, which refuses a missing or an untrusted client certificate with the TLS alert etcd's
- * Go stack sends; TCP listeners on `::1` that count what they accept; a Unix socket named after a port; and listeners
- * that stay silent, reset, or are closed. A tunnel-shaped connection is the local forward with TUNNEL_FAR_END set,
- * which is all the factory's SSH tunnel leaves of itself (src/lib/db/factory.ts), so no SSH server is needed.
+ * Go stack sends; TCP listeners on `::1` that count what they accept; a Unix socket named after a port; listeners
+ * that stay silent, reset, or are closed; and a TLS listener that completes the handshake and never sends SETTINGS.
+ * A tunnel-shaped connection is the local forward with TUNNEL_FAR_END set, which is all the factory's SSH tunnel
+ * leaves of itself (src/lib/db/factory.ts), so no SSH server is needed.
  *
  * Each failure is pinned three ways: the code and the text the runtime gave, which a transport wrapped around
  * `grpcWireTransport` records from the error its channel rejected with; the adapter's classification of that error;
@@ -21,12 +22,13 @@
  * server name, which a control connection built here with @grpc/grpc-js directly, without the adapter's override,
  * shows, while the adapter's own connections pass on every runtime (spec E5, reconciliation D0-3).
  *
- * Spec E16: once the cases are done, no socket keeps the Node child running, and under Bun, whose
- * `process.getActiveResourcesInfo` lists nothing, the TLS listener that never answers the handshake holds no
- * connection open, since its client closed it. Nor does a closed client dial again: the reset case's listener
- * accepts nothing in twice grpc-js's initial backoff after the case's close(), under either runtime. The Node child
- * reports on one line and lives until the parent has read the listeners, so a dial its closed channel makes still
- * reaches them.
+ * Spec E16: once the cases are done, no socket keeps the Node child running, and no listener whose peer never answers
+ * holds a connection open, since its client closed it: not the TLS handshake, and not the HTTP/2 session waiting for
+ * SETTINGS, plaintext or TLS, which grpc-js unrefs, so that `process.getActiveResourcesInfo` does not list it, and
+ * which Bun lists nothing of anyway. Nor does a closed client dial again: the reset case's listener accepts nothing in
+ * twice grpc-js's initial backoff after the case's close(), under either runtime. The Node child reports on one line
+ * and lives until the parent has read the listeners, so what its close() left open is still open then, and a dial its
+ * closed channel makes still reaches them.
  *
  * The same child is KE16's fallback for a real-transport test, should Bun's HTTP/2 stall (spec section 11).
  */
@@ -36,6 +38,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net, { type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import tls from "node:tls";
 import * as grpc from "@grpc/grpc-js";
 import { fromJSON } from "@grpc/proto-loader";
 import type { EtcdErrorCategory, EtcdTlsFailure } from "@/lib/db/providers/keyvalue/etcd/client";
@@ -272,8 +275,19 @@ const processes: ReturnType<typeof Bun.spawn>[] = [];
 const counts: Record<string, number> = {};
 /** When each socket listener accepted each connection, by `Date.now()`, which the Node child's clock shares. */
 const acceptedAt: Record<string, number[]> = {};
-/** The connections the TLS listener that never answers still holds, each until its client closes it (spec E16). */
-const heldBySilentTls = new Set<net.Socket>();
+/** The listeners whose peer never answers, whose connections spec E16's checks follow. */
+type Holding = "silent" | "silentTls" | "settingsless";
+/** Each connection such a listener still holds, until its client closes it, with the runtime whose run dialled it. */
+const held = new Map<net.Socket, { readonly listener: Holding; readonly runtime: Runtime }>();
+/** The runtime whose cases are dialling now: each describe sets it before its run. */
+let dialling: Runtime = "bun";
+
+/** Holds an accepted connection until it closes: it reads, so it sees the client's close, and writes nothing. */
+function hold(listener: Holding, socket: net.Socket): void {
+  held.set(socket, { listener, runtime: dialling });
+  socket.on("close", () => held.delete(socket));
+  socket.resume();
+}
 
 async function gRpcServer(name: string, serverCredentials: grpc.ServerCredentials): Promise<number> {
   counts[name] = 0;
@@ -382,6 +396,29 @@ function socketListener(
   });
 }
 
+/**
+ * TLS with the named certificate that completes the handshake, then reads what arrives and writes nothing, so the
+ * client's HTTP/2 session never receives SETTINGS (spec E16); it counts the handshakes it completes.
+ */
+function settingslessListener(name: Holding, certificateName: string): Promise<number> {
+  counts[name] = 0;
+  acceptedAt[name] = [];
+  const listener = tls.createServer(
+    { key: read(`${certificateName}.key`), cert: read(`${certificateName}.crt`), ALPNProtocols: ["h2"] },
+    (socket) => {
+      counts[name]++;
+      acceptedAt[name].push(Date.now());
+      socket.on("error", () => undefined);
+      hold(name, socket);
+    },
+  );
+  sockets.push(listener);
+  return new Promise<number>((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(0, "127.0.0.1", () => resolve((listener.address() as AddressInfo).port));
+  });
+}
+
 /** Carries an accepted connection to the plaintext gRPC server, so a dial through the listener is answered. */
 const forwardTo = (port: number) => (socket: net.Socket) => {
   const upstream = net.connect(port, "127.0.0.1");
@@ -420,7 +457,10 @@ interface Listeners {
   readonly loopback6: number;
   /** A TCP port no case dials, and the name of the Unix socket in the working directory (spec E1). */
   readonly unixName: number;
+  /** TCP that reads and never answers, so a plaintext HTTP/2 session never receives SETTINGS (spec E16). */
   readonly silent: number;
+  /** TLS that completes the handshake and never answers, so a TLS HTTP/2 session never receives SETTINGS (spec E16). */
+  readonly settingsless: number;
   /** TCP that reads the client's hello and never answers it, so a TLS handshake never ends (spec E16). */
   readonly silentTls: number;
   readonly resetting: number;
@@ -465,13 +505,9 @@ beforeAll(async () => {
     plaintext: await gRpcServer("plaintext", grpc.ServerCredentials.createInsecure()),
     loopback6: await socketListener("loopback6", { host: "::1" }, forwardTo(upstream)),
     unixName,
-    silent: await socketListener("silent", { host: "127.0.0.1" }, () => undefined),
-    // It reads what arrives, so it sees the client's close, and it writes nothing.
-    silentTls: await socketListener("silentTls", { host: "127.0.0.1" }, (socket) => {
-      heldBySilentTls.add(socket);
-      socket.on("close", () => heldBySilentTls.delete(socket));
-      socket.resume();
-    }),
+    silent: await socketListener("silent", { host: "127.0.0.1" }, (socket) => hold("silent", socket)),
+    settingsless: await settingslessListener("settingsless", "self-signed"),
+    silentTls: await socketListener("silentTls", { host: "127.0.0.1" }, (socket) => hold("silentTls", socket)),
     resetting: await socketListener("resetting", { host: "127.0.0.1" }, (socket) => socket.resetAndDestroy()),
     closed: await closedPort(),
   };
@@ -610,6 +646,8 @@ const VERIFY_FULL_SELF_SIGNED = "verify-full with no CA rejects a self-signed se
 const VERIFY_SYSTEM_SELF_SIGNED = "verify-system rejects a self-signed server";
 const TLS_TO_PLAINTEXT = "TLS to a plaintext port fails as not TLS, and nothing is sent in plaintext";
 const SILENT_TLS = "a TLS listener that never answers the handshake is a connect timeout: the request never left";
+const SETTINGSLESS_TLS =
+  "a TLS listener that completes the handshake and never sends SETTINGS is a connect timeout: the request never left";
 const RESET_ON_ACCEPT = "a socket reset on accept is a failure to connect";
 
 const CASES: readonly CaseDefinition[] = [
@@ -906,6 +944,18 @@ const CASES: readonly CaseDefinition[] = [
     { timeoutMs: 500 },
   ),
   adapterCase(
+    SETTINGSLESS_TLS,
+    (ports) => direct("127.0.0.1", ports.settingsless, { mode: "require" }),
+    (ports) => (runtime) => ({
+      outcome: "failed",
+      category: "not-connected",
+      grpcCode: 4,
+      text: /^Deadline exceeded after [\d.]+s,.*Waiting for LB pick$/,
+      sentence: noTlsAnswer(runtime, `127.0.0.1:${ports.settingsless}`, false),
+    }),
+    { timeoutMs: 500 },
+  ),
+  adapterCase(
     SILENT_TLS,
     (ports) => direct("127.0.0.1", ports.silentTls, { mode: "require" }),
     (ports) => (runtime) => ({
@@ -1064,7 +1114,10 @@ function expectListeners(run: Run | undefined): void {
   // The controls: the same `::1` listener saw both spellings of the host, and the Unix socket saw grpc-js's dial.
   expect(run.seenWhileDialled.loopback6).toBeGreaterThanOrEqual(2);
   expect(run.seenWhileDialled.unix).toBeGreaterThanOrEqual(1);
-  // The control of spec E16's check: the TLS listener that never answers was dialled.
+  // The controls of spec E16's checks: each listener whose peer never answers was dialled, the settingsless one through
+  // a completed handshake.
+  expect(run.seenWhileDialled.silent).toBeGreaterThanOrEqual(1);
+  expect(run.seenWhileDialled.settingsless).toBeGreaterThanOrEqual(1);
   expect(run.seenWhileDialled.silentTls).toBeGreaterThanOrEqual(1);
   // A TLS connection that failed was never tried again in plaintext: the plaintext server answered no call.
   expect(run.seenWhileDialled.plaintext).toBe(0);
@@ -1087,6 +1140,21 @@ async function acceptsAfterClose(outcome: HandshakeOutcome | undefined): Promise
   const until = closedAt + 2 * GRPC_INITIAL_BACKOFF_MS;
   await Bun.sleep(Math.max(0, until - Date.now()));
   return acceptedAt.resetting.filter((time) => time > closedAt && time <= until).map((time) => time - closedAt);
+}
+
+/**
+ * Spec E16: how many connections of `runtime`'s run each listener whose peer never answers still holds, once each
+ * close has had up to 2 s to arrive; every client a case built is closed by then.
+ */
+async function heldAfterClose(runtime: Runtime): Promise<Record<Holding, number>> {
+  const of = () => [...held.values()].filter((entry) => entry.runtime === runtime);
+  for (const until = Date.now() + 2000; of().length > 0 && Date.now() < until; ) {
+    // oxlint-disable-next-line no-await-in-loop -- a poll: each check waits for the one before it.
+    await Bun.sleep(50);
+  }
+  const still = of();
+  const count = (listener: Holding) => still.filter((entry) => entry.listener === listener).length;
+  return { silent: count("silent"), settingsless: count("settingsless"), silentTls: count("silentTls") };
 }
 
 /** What the Node child reports, on one line of its stdout. */
@@ -1122,7 +1190,7 @@ describe("the certificates (spec E5)", () => {
 
 describe("under Bun (spec E1, E5, 5.6, E16)", () => {
   let run: Run | undefined;
-  let stillHeld: number | undefined;
+  let stillHeld: Record<Holding, number> | undefined;
   let dialledAfterClose: number[] | undefined;
   beforeAll(async () => {
     const workingDirectory = process.cwd();
@@ -1133,12 +1201,7 @@ describe("under Bun (spec E1, E5, 5.6, E16)", () => {
     } finally {
       process.chdir(workingDirectory);
     }
-    // Every client a case built is closed by now, so the listener meets each close shortly after (spec E16).
-    for (const until = Date.now() + 2000; heldBySilentTls.size > 0 && Date.now() < until; ) {
-      // oxlint-disable-next-line no-await-in-loop -- a poll: each check waits for the one before it.
-      await Bun.sleep(50);
-    }
-    stillHeld = heldBySilentTls.size;
+    stillHeld = await heldAfterClose("bun");
     dialledAfterClose = await acceptsAfterClose(run.outcomes.get(RESET_ON_ACCEPT));
   }, 90_000);
 
@@ -1147,15 +1210,17 @@ describe("under Bun (spec E1, E5, 5.6, E16)", () => {
   test("after close(), the reset case's client dials nothing within twice grpc-js's initial backoff (spec E16)", () => {
     expect(dialledAfterClose).toEqual([]);
   });
-  test("once its cases are done, the TLS listener that never answers holds no connection open (spec E16)", () => {
-    expect(stillHeld).toBe(0);
+  test("once its cases are done, no listener whose peer never answers holds a connection open: no handshake, and no session waiting for SETTINGS (spec E16)", () => {
+    expect(stillHeld).toEqual({ silent: 0, settingsless: 0, silentTls: 0 });
   });
 });
 
 describe("in a Node child, the production runtime (spec E5)", () => {
   let run: Run | undefined;
+  let stillHeld: Record<Holding, number> | undefined;
   let dialledAfterClose: number[] | undefined;
   beforeAll(async () => {
+    dialling = "node";
     const node = Bun.which("node");
     if (node === null) {
       throw new Error(
@@ -1183,8 +1248,8 @@ describe("in a Node child, the production runtime (spec E5)", () => {
         // runner's budget ends the file.
         'const openSockets = () => process.getActiveResourcesInfo().filter((name) => name === "TCPSocketWrap" || name === "TLSWrap");',
         "for (const until = Date.now() + 2000; openSockets().length > 0 && Date.now() < until; ) await new Promise((resolve) => setTimeout(resolve, 50));",
-        // It reports on one line, then lives until the parent ends its stdin, so a dial its closed channel makes still
-        // reaches the parent's listeners while the parent reads them.
+        // It reports on one line, then lives until the parent ends its stdin, so that while the parent reads its
+        // listeners, what the child's close() left open is still open, and a dial its closed channel reaches them.
         'process.stdin.on("end", () => process.exit(0));',
         "process.stdin.resume();",
         'process.stdout.write(JSON.stringify({ version: process.version, outcomes, openSockets: openSockets() }) + "\\n");',
@@ -1209,8 +1274,10 @@ describe("in a Node child, the production runtime (spec E5)", () => {
         const line = await firstLine(child.stdout);
         if (line !== undefined) {
           answer = JSON.parse(line) as ChildReport;
+          // Read while the child lives, so what its close() left open is still open, and a dial its closed channel
+          // makes is seen (spec E16).
+          stillHeld = await heldAfterClose("node");
           const reset = answer.outcomes.find((outcome) => outcome.name === RESET_ON_ACCEPT);
-          // Read while the child lives, so a dial its closed channel makes is seen (spec E16).
           if (reset !== undefined) dialledAfterClose = await acceptsAfterClose(reset);
         }
       } finally {
@@ -1236,5 +1303,8 @@ describe("in a Node child, the production runtime (spec E5)", () => {
   });
   test("once its cases are done, no socket keeps the child running (spec E16)", () => {
     expect(run?.openSockets).toEqual([]);
+  });
+  test("once its cases are done, no listener whose peer never answers holds a connection of the child's open, though the child lives (spec E16)", () => {
+    expect(stillHeld).toEqual({ silent: 0, settingsless: 0, silentTls: 0 });
   });
 });

@@ -11,15 +11,18 @@
  * send, the call's own abort, the receive cap, etcd's answers in its own words (KE6), a refused and a reset socket,
  * a name that does not resolve, a TXT service config that would resend a write, failover inside the one channel,
  * the TLS rules of spec E5 the transport applies, over the committed test certificates of tests/fixtures/tls/, and
- * what a closed channel still did (E16): a TLS handshake a peer never answers, which close() ends, and a dial after
- * the close, which refused readiness stops.
+ * what a closed channel still did (E16): a TLS handshake, or an HTTP/2 session waiting for SETTINGS, that a peer
+ * never answers, and a stream still open, which close() ends, and a dial after the close, which refused readiness
+ * stops.
  * Real handshakes against certificates made at test time, under both runtimes, are tls-handshake.test.ts.
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import dns from "node:dns";
 import http2 from "node:http2";
 import net, { type AddressInfo } from "node:net";
+import tls from "node:tls";
 import {
+  type ChannelCredentials,
   Client,
   credentials,
   type experimental,
@@ -3329,6 +3332,32 @@ describe("over grpc-js: nothing of a channel outlives close() (spec E16)", () =>
   /** grpc-js's own TLS credentials, verifying against the runtime's roots: a peer that never answers shows no certificate. */
   const tlsCredentials = () => credentials.createSsl();
 
+  /** TLS that completes the handshake, then reads what arrives and writes nothing, so no SETTINGS ever comes. */
+  async function settingslessListener() {
+    const { server: pair } = loadTlsFixtures();
+    const held = new Set<net.Socket>();
+    const listener = tls.createServer({ key: pair.key, cert: pair.cert, ALPNProtocols: ["h2"] }, (socket) => {
+      held.add(socket);
+      socket.on("close", () => held.delete(socket));
+      socket.on("error", () => undefined);
+      socket.resume();
+    });
+    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+    return { listener, held, port: (listener.address() as AddressInfo).port };
+  }
+
+  /** grpc-js's insecure credentials around a connector that hands every socket straight back, as an established one. */
+  function establishing(): ChannelCredentials {
+    const inner = credentials.createInsecure();
+    spyOn(inner, "_createSecureConnector").mockReturnValue({
+      connect: (socket) => Promise.resolve({ socket, secure: false }),
+      waitForReady: () => Promise.resolve(),
+      getCallCredentials: () => credentials.createEmpty(),
+      destroy: () => undefined,
+    });
+    return inner;
+  }
+
   test("the call fails as a connect timeout, the handshake holds its connection while the client lives, and close() ends it", async () => {
     const silent = await silentListener();
     const client = await createGrpcEtcdClient(at(silent.port, { tls: TLS, callTimeoutMs: 500 }));
@@ -3445,5 +3474,108 @@ describe("over grpc-js: nothing of a channel outlives close() (spec E16)", () =>
     connector.destroy();
     expect(await failure(connector.waitForReady())).toMatchObject({ message: CHANNEL_CLOSED });
     expect(asked).toBe(1);
+  });
+
+  test("a connector's destroy() alone leaves an established socket open, as a load balancer's release needs; the adapter's close ends it", async () => {
+    const silent = await silentListener();
+    const closing = new ClosingCredentials(establishing());
+    const connector = closing._createSecureConnector(TARGET, {});
+    const socket = await dialled(silent.port);
+    expect((await connector.connect(socket)).socket).toBe(socket);
+    // A load balancer's release: grpc-js then shuts the transport down gracefully, so a call in flight finishes.
+    connector.destroy();
+    await Bun.sleep(100);
+    expect({ destroyed: socket.destroyed, held: silent.held.size }).toEqual({ destroyed: false, held: 1 });
+    // The adapter's close().
+    closing.endEverySocket();
+    expect(socket.destroyed).toBe(true);
+    await eventually(() => silent.held.size === 0);
+    silent.listener.close();
+    expect(silent.held.size).toBe(0);
+  });
+
+  test("a socket that closed on its own, ended here or reset by its peer, is held no longer, so the adapter's close leaves it be", async () => {
+    const silent = await silentListener();
+    const closing = new ClosingCredentials(establishing());
+    const connector = closing._createSecureConnector(TARGET, {});
+    const [ended, reset] = await Promise.all([dialled(silent.port), dialled(silent.port)]);
+    // The session grpc-js builds on a socket listens for its errors, and a peer's reset is one.
+    reset.on("error", () => undefined);
+    await connector.connect(ended);
+    await connector.connect(reset);
+    await eventually(() => silent.held.size === 2);
+    const peerOfReset = [...silent.held].find((peer) => peer.remotePort === reset.localPort);
+    const closed = [ended, reset].map((socket) => new Promise((resolve) => socket.once("close", resolve)));
+    ended.destroy();
+    peerOfReset?.resetAndDestroy();
+    await Promise.all(closed);
+    const destroys = [spyOn(ended, "destroy"), spyOn(reset, "destroy")];
+    closing.endEverySocket();
+    silent.listener.close();
+    expect({ peerOfReset: peerOfReset !== undefined, destroyed: destroys.map((spy) => spy.mock.calls.length) }).toEqual(
+      { peerOfReset: true, destroyed: [0, 0] },
+    );
+  });
+
+  test("a session still waiting for the peer's SETTINGS holds its connection while the client lives, and close() ends it, plaintext or TLS", async () => {
+    const plaintext = await silentListener();
+    const settingsless = await settingslessListener();
+    const unverified: EtcdTlsOptions = { ...TLS, mode: "require", verify: false };
+    for (const [peer, overrides] of [
+      [plaintext, {}],
+      [settingsless, { tls: unverified }],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- one peer after another, each with its own client.
+      const client = await createGrpcEtcdClient(at(peer.port, { ...overrides, callTimeoutMs: 500 }));
+      // oxlint-disable-next-line no-await-in-loop -- the one call on that client.
+      const error = await failure(client.status(options));
+      expect(error).toMatchObject({ category: "not-connected", grpcCode: 4 });
+      // The control: the connection is open, its session waiting for SETTINGS, until the client closes.
+      expect({ tls: "tls" in overrides, held: peer.held.size }).toEqual({ tls: "tls" in overrides, held: 1 });
+      // oxlint-disable-next-line no-await-in-loop -- the client closes before the next peer is dialled.
+      await client.close();
+      // oxlint-disable-next-line no-await-in-loop -- a poll for the peer's view of the close.
+      await eventually(() => peer.held.size === 0);
+      peer.listener.close();
+      expect({ tls: "tls" in overrides, held: peer.held.size }).toEqual({ tls: "tls" in overrides, held: 0 });
+    }
+  }, 10_000);
+
+  test("close() cancels every stream still open before it ends the sockets, so a watch in flight ends as cancelled", async () => {
+    let opened = 0;
+    let cancelled = false;
+    const { server, port } = await serve({
+      Watch: {
+        Watch: ((call) => {
+          opened++;
+          call.on("cancelled", () => {
+            cancelled = true;
+          });
+        }) satisfies Bidi,
+      },
+    });
+    const channel = grpcWireTransport(at(port));
+    const call = { metadata: {}, deadline: new Date(Date.now() + 3000), signal: new AbortController().signal };
+    const stream = channel.stream("Watch/Watch", call);
+    stream.write({ create_request: { key: bytes("/a"), fragment: true } });
+    await eventually(() => opened === 1);
+    const reading = failure(stream.read());
+    channel.close();
+    // Cancelled by the client, never a dropped connection's UNAVAILABLE.
+    expect(await reading).toMatchObject({ code: 1, details: "Cancelled on client" });
+    await eventually(() => cancelled);
+    server.forceShutdown();
+    expect(cancelled).toBe(true);
+  }, 10_000);
+
+  test("a stream cancelled before close() is the channel's no longer, so close() does not cancel it again", async () => {
+    const channel = grpcWireTransport(at(await closedPort()));
+    const controller = new AbortController();
+    const removed = spyOn(controller.signal, "removeEventListener");
+    const call = { metadata: {}, deadline: new Date(Date.now() + 3000), signal: controller.signal };
+    channel.stream("Watch/Watch", call).cancel();
+    expect(removed).toHaveBeenCalledTimes(1);
+    channel.close();
+    expect(removed).toHaveBeenCalledTimes(1);
   });
 });

@@ -6,8 +6,9 @@
  * each seam request into the descriptor's wire message and each answer back, attaches the token and the `hasleader`
  * metadata (spec E4, 6.1), puts the connection's deadline and the call's own signal on every call (spec 5.3), renews
  * the token within spec E4's bound, reassembles a fragmented watch answer, ends every watch and keep-alive stream
- * with `call.cancel()` (spec 5.3, E16), ends a TLS handshake still under way when the channel closes and dials nothing
- * after it (E16), and hands every failure to `toEtcdError` (plan C9). Tests run it over the
+ * with `call.cancel()` (spec 5.3, E16), ends every socket the channel still holds when it closes, a TLS handshake or an
+ * HTTP/2 session waiting for SETTINGS among them, and dials nothing after it (E16), and hands every failure to
+ * `toEtcdError` (plan C9). Tests run it over the
  * recorded transport of tests/helpers/etcd-fixtures.ts (plan C11), so only the server is fake; the provider runs it
  * over `grpcWireTransport`, the one implementation that knows grpc-js.
  *
@@ -188,6 +189,7 @@ export interface EtcdWireStream {
 export interface EtcdWireChannel {
   unary(rpc: EtcdUnaryRpc, request: object, call: EtcdWireCall): Promise<object>;
   stream(rpc: EtcdStreamRpc, call: EtcdWireCall): EtcdWireStream;
+  /** `grpcWireTransport` cancels every stream still open, closes the client and ends every socket it holds (E16). */
   close(): void;
 }
 
@@ -521,15 +523,19 @@ function wireMethod(rpc: EtcdWireRpc): MethodDefinition<object, object> {
 
 /** The one implementation over @grpc/grpc-js: the target, the credentials of spec E5, the receive cap of E14, deadlines and aborts. */
 export const grpcWireTransport: EtcdWireTransport = (options) => {
-  const client = new Client(
-    options.target,
-    new ClosingCredentials(channelCredentials(options.tls)),
-    channelOptions(options),
-  );
+  const closing = new ClosingCredentials(channelCredentials(options.tls));
+  const client = new Client(options.target, closing, channelOptions(options));
+  const streams = new Set<EtcdWireStream>();
   return {
     unary: (rpc, request, call) => unaryCall(client, rpc, request, call),
-    stream: (rpc, call) => openStream(client, rpc, call),
-    close: () => client.close(),
+    stream: (rpc, call) => openStream(client, rpc, call, streams),
+    close: () => {
+      // Each stream ends with call.cancel(), grpc-js's close() releases the subchannels, and every socket they still
+      // hold ends last, whatever it waits for (spec E16).
+      for (const stream of streams) stream.cancel();
+      client.close();
+      closing.endEverySocket();
+    },
   };
 };
 
@@ -579,23 +585,32 @@ function verifyOptions(tls: EtcdTlsOptions): VerifyOptions {
 const CHANNEL_CLOSED = "The channel closed before this connection was established";
 
 /**
- * Spec E16: grpc-js's own credentials, plaintext or TLS, wrapped so that a channel that closed opens no connection and
- * keeps no handshake. In grpc-js 1.14.5, `client.close()` reaches the credentials' connector only through its
- * `destroy()` (`Subchannel.unref`, subchannel.ts), which grpc-js's own connectors leave empty, and two things outlived
- * it (measured under Node 24.14.0 and Bun 1.4.2). A TLS handshake the peer never answers:
+ * Spec E16: grpc-js's own credentials, plaintext or TLS, wrapped so that nothing of a channel outlives the adapter's
+ * close(). In grpc-js 1.14.5, `client.close()` reaches the credentials' connector only through its `destroy()`
+ * (`Subchannel.unref`, subchannel.ts), which grpc-js's own connectors leave empty, and three things outlived it
+ * (measured under Node 24.14.0 and Bun 1.4.2). A TLS handshake the peer never answers:
  * `Http2SubchannelConnector.connect` (transport.ts) hands the TCP socket it connected to the connector, whose
  * `connect` (`SecureConnectorImpl`, channel-credentials.ts) waits for the handshake with no bound, so the socket, and
- * the process, stayed alive. And a dial after the close: `Subchannel.unref` moves only a CONNECTING or READY
- * subchannel to IDLE, and one in TRANSIENT_FAILURE dials the endpoint again when its backoff timer ends
- * (`handleBackoffTimer`), whatever its refcount, about a second after the attempt that failed.
+ * the process, stayed alive. A dial after the close: `Subchannel.unref` moves only a CONNECTING or READY subchannel to
+ * IDLE, and one in TRANSIENT_FAILURE dials the endpoint again when its backoff timer ends (`handleBackoffTimer`),
+ * whatever its refcount, about a second after the attempt that failed. And an HTTP/2 session still waiting for the
+ * peer's SETTINGS, plaintext or TLS: `createSession` (transport.ts) opens it over the connector's socket and unrefs it,
+ * and only `Http2SubchannelConnector.shutdown()`, which nothing calls, would close it.
  * The connector below, the hook `experimental.SecureConnector` describes, ends on `destroy()` every socket still in
  * its handshake, and at once a socket handed over after it, whose TCP connect outlived the close, and fails that
  * connect itself, since Node never settles a handshake whose socket was destroyed (Bun reports ECONNRESET); and from
  * `destroy()` on it refuses `waitForReady()`, which grpc-js awaits before every TCP connect, so nothing is dialled.
+ * It keeps every socket it was handed until that socket closes, and `endEverySocket()`, which the adapter's close()
+ * calls, ends them all. A `destroy()` alone ends no socket past its handshake: grpc-js also destroys a connector when
+ * the load balancer releases a subchannel whose address left a re-resolution, and then shuts its transport down
+ * gracefully, so that a call in flight, a write among them, finishes with an answer.
  * The credentials equal only themselves, so no two clients share a subchannel: grpc-js's insecure credentials equal
  * any other, which would let two plaintext clients of one endpoint share one, and one client's close reach the other.
  */
 export class ClosingCredentials extends ChannelCredentials {
+  /** Every socket a connector of these credentials was handed, until it closes. */
+  private readonly sockets = new Set<Socket>();
+
   constructor(private readonly inner: ChannelCredentials) {
     super();
   }
@@ -614,11 +629,16 @@ export class ClosingCredentials extends ChannelCredentials {
     options: ChannelOptions,
     callCredentials?: CallCredentials,
   ): experimental.SecureConnector {
-    return closingConnector(this.inner._createSecureConnector(channelTarget, options, callCredentials));
+    return closingConnector(this.inner._createSecureConnector(channelTarget, options, callCredentials), this.sockets);
+  }
+
+  /** The adapter's close(): ends every socket its connectors still hold, in a handshake, a session or a call. */
+  endEverySocket(): void {
+    for (const socket of this.sockets) socket.destroy();
   }
 }
 
-function closingConnector(inner: experimental.SecureConnector): experimental.SecureConnector {
+function closingConnector(inner: experimental.SecureConnector, sockets: Set<Socket>): experimental.SecureConnector {
   // Each socket still in its handshake, with the failure that ends its connect.
   const handshaking = new Map<Socket, (reason: Error) => void>();
   let destroyed = false;
@@ -634,11 +654,21 @@ function closingConnector(inner: experimental.SecureConnector): experimental.Sec
           end(socket, reject);
           return;
         }
+        sockets.add(socket);
+        socket.once("close", () => sockets.delete(socket));
         handshaking.set(socket, reject);
-        inner
-          .connect(socket)
-          .then(resolve, reject)
-          .finally(() => handshaking.delete(socket));
+        // Out of its handshake the moment that settles, before grpc-js hears of it, so a destroy() right after a
+        // completed handshake leaves the established socket be.
+        inner.connect(socket).then(
+          (secured) => {
+            handshaking.delete(socket);
+            resolve(secured);
+          },
+          (failure: unknown) => {
+            handshaking.delete(socket);
+            reject(failure);
+          },
+        );
       }),
     // grpc-js awaits this before each TCP connect, the one a backoff timer that outlived the close starts included.
     waitForReady: () => (destroyed ? Promise.reject(new Error(CHANNEL_CLOSED)) : inner.waitForReady()),
@@ -689,8 +719,11 @@ function unaryCall(client: Client, rpc: EtcdUnaryRpc, request: object, call: Etc
   });
 }
 
-/** A grpc-js bidirectional stream as the adapter reads it: messages in order, then the end or the call's error. */
-function openStream(client: Client, rpc: EtcdStreamRpc, call: EtcdWireCall): EtcdWireStream {
+/**
+ * A grpc-js bidirectional stream as the adapter reads it: messages in order, then the end or the call's error. It is
+ * one of `open` until it is cancelled, so the channel's close() can cancel it first.
+ */
+function openStream(client: Client, rpc: EtcdStreamRpc, call: EtcdWireCall, open: Set<EtcdWireStream>): EtcdWireStream {
   const method = wireMethod(rpc);
   const duplex: ClientDuplexStream<object, object> = client.makeBidiStreamRequest(
     method.path,
@@ -721,7 +754,7 @@ function openStream(client: Client, rpc: EtcdStreamRpc, call: EtcdWireCall): Etc
     for (const reader of waiting.splice(0)) reader.reject(error);
   });
   const release = cancelOnAbort(call.signal, () => duplex.cancel());
-  return {
+  const stream: EtcdWireStream = {
     write: (message) => {
       duplex.write(message);
     },
@@ -733,10 +766,13 @@ function openStream(client: Client, rpc: EtcdStreamRpc, call: EtcdWireCall): Etc
       return new Promise((resolve, reject) => waiting.push({ resolve, reject }));
     },
     cancel: () => {
+      open.delete(stream);
       release();
       duplex.cancel();
     },
   };
+  open.add(stream);
+  return stream;
 }
 
 type Attempt<T> = { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: EtcdError };
