@@ -939,8 +939,9 @@ export default function Studio() {
    * query and EXECUTES it, so handing it a routine or a trigger would run
    * `SELECT * FROM order_total(integer) LIMIT 50` against the database. The old flat
    * explorer could not reach that state because it only ever listed relations; the tree
-   * lists every declared kind, so the gate is what keeps a click on a function from
-   * being a failed statement in the reader's history.
+   * lists every kind the object surface enumerates (`enumerableKinds`: every declared kind
+   * but one only the Keys panel enumerates, such as etcd's `key`), so the gate is what keeps
+   * a click on a function from being a failed statement in the reader's history.
    *
    * The PATH and not the name. `name` is the label and `path` is the address (standing
    * ruling 2), and the generator now takes segments, so an object outside the session
