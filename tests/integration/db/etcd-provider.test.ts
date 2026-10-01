@@ -17,9 +17,10 @@
  *
  * What is BUILT from a capture rather than read from one, each said again where it is built:
  * - The key space. `KV/Range` is served from the whole seeded key space of `etcd/range-keys-only-all` by
- *   etcd's range rules, each value taken from the value captures of `etcd`, because the provider's walks and
- *   pages ask ranges no capture was taken for. A value no capture holds is never invented: reading one fails
- *   the test by name.
+ *   etcd's range rules, because the provider's walks and pages ask ranges no capture was taken for. A
+ *   keys-only page is that capture's, whose leases etcd answers as 0; a full read answers each key whole, lease
+ *   and revisions included, as the full read of `etcd` that holds it did, under the latest of those reads'
+ *   headers. A value no capture holds is never invented: reading one fails the test by name.
  * - The reader's refusals. A range the `etcd-auth` reader may not read whole is refused with that service's
  *   captured `PermissionDenied`, by the reader's two grants, which a test ties to `etcd-auth/role-get-reader`.
  * - One cluster from two services. The conformance run reads the key space, members, leases and status of
@@ -107,10 +108,10 @@ interface WireRangeRequest {
   readonly count_only?: boolean;
 }
 
-/** The whole seeded key space, keys only, in etcd's byte order. */
+/** The whole seeded key space, keys only, in etcd's byte order, every lease 0 as etcd answers a keys-only read. */
 const ALL = etcdFixture<WireRange>("etcd/range-keys-only-all");
 
-/** Every value the `etcd` captures read, by the key's bytes. */
+/** Every full read the `etcd` captures took, which hold the values. */
 const VALUE_CAPTURES = [
   "etcd/range-key",
   "etcd/range-prefix-app",
@@ -120,10 +121,13 @@ const VALUE_CAPTURES = [
   "etcd/range-prefix-tenant-a",
   "etcd/range-compact-rev-key",
 ] as const;
-const VALUES = new Map(
-  VALUE_CAPTURES.flatMap((name) =>
-    etcdFixture<WireRange>(name).kvs.map((kv) => [kv.key.toString("hex"), kv.value] as const),
-  ),
+
+/** Each key a full read holds, by its bytes, as that read answered it, with the read's header. */
+const FULL_READS = new Map(
+  VALUE_CAPTURES.flatMap((name) => {
+    const read = etcdFixture<WireRange>(name);
+    return read.kvs.map((kv) => [kv.key.toString("hex"), { kv, header: read.header }] as const);
+  }),
 );
 
 const runsToEnd = (end: Uint8Array): boolean => end.length === 1 && end[0] === 0;
@@ -143,27 +147,33 @@ function inRange(key: Buffer, request: WireRangeRequest): boolean {
   return Buffer.compare(key, start) >= 0 && (runsToEnd(end) || Buffer.compare(key, end) < 0);
 }
 
-function valueOf(key: Buffer): Buffer {
-  const value = VALUES.get(key.toString("hex"));
-  if (value === undefined) throw new Error(`No capture holds the value of ${JSON.stringify(key.toString())}`);
-  return value;
+function fullRead(key: Buffer): { readonly kv: WireKeyValue; readonly header: WireHeader } {
+  const read = FULL_READS.get(key.toString("hex"));
+  if (read === undefined) throw new Error(`No capture holds the value of ${JSON.stringify(key.toString())}`);
+  return read;
 }
 
 /**
  * BUILT: `KV/Range` over the seeded key space, by etcd's rules for `limit`, `keys_only` and `count_only`.
- * `permitted` stands for etcd's grant check, whose refusal is the captured one.
+ * A keys-only page is the keys-only capture's. A full read answers each key as the full read holding it did,
+ * under the latest of those reads' headers: `etcd/range-prefix-registry-slashless` was read again at revision
+ * 82, after only its one key had been seeded again (tests/fixtures/etcd/README.md), so every key read at 67
+ * still held that state at 82. `permitted` stands for etcd's grant check, whose refusal is the captured one.
  */
-function servedRange(permitted: (request: WireRangeRequest) => boolean = () => true): RecordedEtcdAnswer {
+function servedRange(permitted: (request: WireRangeRequest) => boolean = () => true): (request: unknown) => WireRange {
   return (request: unknown) => {
     const asked = request as WireRangeRequest;
     if (!permitted(asked)) throw etcdCapture("etcd-auth/error-permission-denied").payload;
     const matching = ALL.kvs.filter((kv) => inRange(kv.key, asked));
     const limit = Number(asked.limit ?? 0);
     const page = asked.count_only === true ? [] : limit > 0 ? matching.slice(0, limit) : matching;
+    const reads = asked.keys_only === true ? [] : page.map((kv) => fullRead(kv.key));
     return {
-      header: ALL.header,
-      // oxlint-disable-next-line no-map-spread -- the captured key-values are shared by every read, so each answer is a changed copy.
-      kvs: page.map((kv) => ({ ...kv, value: asked.keys_only === true ? Buffer.alloc(0) : valueOf(kv.key) })),
+      header: reads.reduce(
+        (latest, read) => (BigInt(read.header.revision) > BigInt(latest.revision) ? read.header : latest),
+        ALL.header,
+      ),
+      kvs: asked.keys_only === true ? page : reads.map((read) => read.kv),
       more: asked.count_only !== true && limit > 0 && matching.length > limit,
       count: String(matching.length),
     };
@@ -433,6 +443,24 @@ describe("the captures this file reads", () => {
     expect(ALL.kvs).toHaveLength(Number(ALL.count));
   });
 
+  test.each(["etcd/range-keys-only-all", ...VALUE_CAPTURES])(
+    "the served key space answers the request of %s as etcd answered it",
+    (name) => {
+      const capture = etcdCapture(name);
+      expect(servedRange()(capture.$captured.request)).toEqual(capture.payload as WireRange);
+    },
+  );
+
+  test("a full read over the real adapter carries the lease etcd's full read of the key answered (spec 5.2)", async () => {
+    const { provider } = await connected(ETCD, clusterWire());
+    const result = await provider.query("get /registry/events/ --prefix");
+    // 694d8147df1dc4c9 is HELD_LEASE in hex, the lease etcd/range-prefix-registry holds for the key.
+    expect(result.rows.map((row) => [row.key, row.lease])).toEqual([
+      ["/registry/events/default/nginx.1", "694d8147df1dc4c9"],
+    ]);
+    await provider.disconnect();
+  });
+
   test("the reader's grants this file checks are the captured role's", () => {
     const role = etcdFixture<{ readonly perm: ReadonlyArray<{ permType: string; key: Buffer; range_end: Buffer }> }>(
       "etcd-auth/role-get-reader",
@@ -444,7 +472,7 @@ describe("the captures this file reads", () => {
   });
 
   test("the served key space holds the secret and the envelopes E9 greps for (the grep's control)", () => {
-    const served = Buffer.concat([...VALUES.values()]);
+    const served = Buffer.concat([...FULL_READS.values()].map((read) => read.kv.value));
     expect(served.includes("libredb-fixture-secret")).toBe(true);
     expect(served.includes("bGlicmVkYi1maXh0dXJlLXNlY3JldA")).toBe(true);
     expect(served.includes(Buffer.from("k8s\u0000"))).toBe(true);
