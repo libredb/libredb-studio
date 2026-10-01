@@ -111,6 +111,30 @@ function spelledFrom(text: string): string {
 /** A word whose text is `text`, as the lexer reads it (spec 5.1.1). */
 const spelledWord = (text: string): string => `${QUOTES}${spelledFrom(text)}`;
 
+/** Characters the lexer keeps as they stand outside quotes: all but a blank, a line end, a quote or a backslash. */
+const BARE_RUN = String.raw`[^ \t\r\n'"\\]*`;
+
+/** Single-quoted text up to its closing quote, all of which the lexer keeps, a line break and a backslash too. */
+const SINGLE_QUOTED = `'[^']*`;
+
+/** Double-quoted text up to its closing quote, a line break among it, and a backslash with the character after it. */
+const DOUBLE_QUOTED = String.raw`"[^"\\]*(?:\\[^\r\n][^"\\]*)*`;
+
+/** An escaped character, or quoted text with its closing quote. */
+const ESCAPED_OR_QUOTED = String.raw`(?:\\[^\r\n]|${SINGLE_QUOTED}'|${DOUBLE_QUOTED}")`;
+
+/** The last slash of a path: bare, escaped, or in quotes that may stay open over `etcdctl`. */
+const LAST_SLASH = String.raw`(?:\\?/|${SINGLE_QUOTED}/|${DOUBLE_QUOTED}\\?/)`;
+
+/**
+ * The path before `etcdctl` (spec 5.1.2), up to its last slash: runs of bare characters between escaped
+ * characters and closed quotes, so it may hold blanks, quoted or escaped, and quoted line breaks. Written one
+ * unit at a time, `(?:bare|escaped|quoted)*`, it stopped matching at a path of 147,000 characters in
+ * JavaScriptCore, which keeps a backtracking record for each unit and answers no match past its limit; as runs
+ * it keeps one for each escape or quote, and matched a bare path of four million (measured 2026-10-01).
+ */
+const ETCDCTL_PATH = `(?:${BARE_RUN}(?:${ESCAPED_OR_QUOTED}${BARE_RUN})*${LAST_SLASH})`;
+
 /** `--command-timeout` and its value, after `=` or a gap, then the gap before the next word (spec 5.1.2). */
 const COMMAND_TIMEOUT = String.raw`${spelledWord("--command-timeout")}(?:\\?=|${WORD_GAP})\S+${WORD_GAP}`;
 
@@ -125,19 +149,22 @@ const LEASE_WRITE = [
 /**
  * Anchored to the command word the parser reads (spec 6.2): past the blank and comment lines before it, the
  * leading tokens of spec 5.1.2 and `--command-timeout`, so a key named like a verb reloads nothing. Each word
- * may be spelled as the lexer reads it, with quote marks anywhere in it and any character escaped, and a line
- * join may stand at either end of the blanks between two words, so the documented multi-line forms reload the
- * tree (5.1.1). A line join inside a word, or two in one gap, is not read: patterns that read them took
- * JavaScriptCore, the engine of Bun and Safari, 6.8 s on 20,000 joins in one gap and 38 s on 80,000
- * assignments (measured 2026-10-01), where this one decides each in under 0.2 s. `shouldRefreshSchema`
- * compiles it with `i` alone, so `^` is the start of the whole buffer.
+ * may be spelled as the lexer reads it (5.1.1), with quote marks anywhere in it and any character escaped, and
+ * the path before `etcdctl` may hold any text the lexer keeps in one word, quoted or escaped blanks and quoted
+ * line breaks among it. A line join may stand before the blanks between two words and another after them, so
+ * the documented multi-line forms reload the tree. Not read: a line join inside a word, two joins side by side,
+ * and a join after a second run of blanks. Patterns that read them took JavaScriptCore, the engine of Bun and
+ * Safari, 6.8 s on 20,000 joins in one gap and 38 s on 80,000 assignments (measured 2026-10-01), where this one
+ * decides each in under 0.25 s. One reading goes the other way: a path whose quoted text itself holds etcdctl
+ * and a write command, such as '/etcdctl put /x/etcdctl', reloads the tree whatever command follows it.
+ * `shouldRefreshSchema` compiles it with `i` alone, so `^` is the start of the whole buffer.
  */
 const SCHEMA_REFRESH_PATTERN = [
   String.raw`^(?:${BLANK_LINES}#[^\n]*\n)*${BLANK_LINES}`,
   `(?:[$%]${WORD_GAP})?`,
   `(?:${spelledWord("env")}${WORD_GAP})?`,
   `(?:ETCDCTL_API=${QUOTES}${spelledFrom("3")}${WORD_GAP})*`,
-  String.raw`(?:(?:\S*/)?${QUOTES}${spelledFrom("etcdctl")}${WORD_GAP})?`,
+  `(?:${ETCDCTL_PATH}?${QUOTES}${spelledFrom("etcdctl")}${WORD_GAP})?`,
   `(?:${COMMAND_TIMEOUT})*`,
   `(?:${["put", "del", "txn"].map(spelledWord).join("|")}|${LEASE_WRITE})`,
   String.raw`(?=(?:${LINE_JOIN})?(?:\s|$))`,

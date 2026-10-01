@@ -377,7 +377,7 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
     expect(provider.getCapabilities().maintenanceOperations).toEqual(["compact", "defragment", "disarm"]);
   });
 
-  test("the refresh pattern reloads the tree exactly for the texts the parser reads as a write, however their words are spelled (spec 5.1.1, 5.1.2, 6.2)", () => {
+  test("the refresh pattern agrees with the parser on writes and reads whose words are quoted, escaped or joined across lines, or whose path to etcdctl holds blanks (spec 5.1.1, 5.1.2, 6.2)", () => {
     const pattern = build(CONNECTION, etcdClient()).provider.getCapabilities().schemaRefreshPattern;
     const refreshing: ReadonlySet<string> = new Set(["put", "del", "txn", "lease-grant", "lease-revoke"]);
     const texts = [
@@ -394,6 +394,22 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
       "lease \\\ngrant 60",
       "lease\\\n revoke 694d77aa9e38260f",
       "lease --command-timeout 5s \\\ngrant 60",
+      // A line join before the blanks between two words and another after them.
+      "etcdctl\\\n \\\nput /a b",
+      "lease\\\r\n\t\\\r grant 60",
+      // A path to etcdctl that holds blanks, quoted or escaped, a quoted line break or a no-break space, its last
+      // slash bare, escaped or in quotes.
+      '"/opt/my tools/etcdctl" put /a b',
+      "/opt/my\\ tools/etcdctl del /a",
+      "'/Applications/etcd tools/etcdctl' lease revoke 694d77aa9e38260f",
+      "'/opt/my tools/'etcdctl put /a b",
+      "/usr/local/bin\\/etcdctl put /a b",
+      '"/usr/bin\\/etcdctl" put /a b',
+      '"/opt/my\ttools/etc"dctl lease grant 60',
+      "/opt/'my tools'/etcdctl \\\n  del /a",
+      "'/opt/my\ntools/etcdctl' put /a b",
+      "/opt/my\u00a0tools/etcdctl put /a b",
+      '$ env ETCDCTL_API=3 "/opt/my tools/etcdctl" --command-timeout=5s txn\nmod("/a") > "0"\n\nput /a b\n\n',
       // Quote marks and escapes inside a word, which the lexer removes.
       "'put' /app/x v",
       '"del" /a',
@@ -415,6 +431,10 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
       "lease \\\nkeep-alive --once 694d8147df1dc4c8",
       "lease 'timetolive' 694d8147df1dc4c8",
       "etcdctl \\\n  member list",
+      "etcdctl\\\n \\\nget /app/del",
+      '"/opt/my tools/etcdctl" get /put',
+      "/opt/my\\ tools/etcdctl member list",
+      "'/opt/my tools/'etcdctl lease list",
     ];
     const parsed = texts.map((text) => {
       const result = parseEtcdCommand(text, LIMITS);
@@ -427,16 +447,34 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
     expect(parsed.filter((entry) => !entry.refreshes).length).toBeGreaterThan(0);
   });
 
-  test("a line join inside a word, or two in one gap, is not read by the refresh pattern, as its docblock states (spec 6.2)", () => {
+  test("the refresh pattern's stated limits: a line join inside a word, two side by side or after a second run of blanks, and a quoted path that holds a write command (spec 6.2)", () => {
     const pattern = build(CONNECTION, etcdClient()).provider.getCapabilities().schemaRefreshPattern;
-    for (const text of ["pu\\\nt /a b", "etcdctl \\\n\\\nput /a b"]) {
+    const reading = (text: string) => {
       const parsed = parseEtcdCommand(text, LIMITS);
-      expect({ text, kind: parsed.ok ? parsed.parsed.command.kind : parsed.refusal.message }).toEqual({
-        text,
-        kind: "put",
-      });
-      expect({ text, refreshes: shouldRefreshSchema(text, pattern) }).toEqual({ text, refreshes: false });
-    }
+      const kind = parsed.ok ? parsed.parsed.command.kind : parsed.refusal.message;
+      return { text, kind, refreshes: shouldRefreshSchema(text, pattern) };
+    };
+    // Writes the parser runs after which the tree is not reloaded.
+    const unread = [
+      "pu\\\nt /a b",
+      "/opt/my\\\ntools/etcdctl put /a b",
+      '"/opt/my\\\ntools/etcdctl" put /a b',
+      "etcdctl \\\n\\\nput /a b",
+      "etcdctl\\\n\\\n put /a b",
+      "etcdctl \\\n \\\nput /a b",
+      "etcdctl\\\n \\\n \\\nput /a b",
+    ];
+    expect(unread.map(reading)).toEqual(unread.map((text) => ({ text, kind: "put", refreshes: false })));
+    // A read the parser runs after which the tree is reloaded.
+    const read = "'/etcdctl put /x/etcdctl' get /a";
+    expect(reading(read)).toEqual({ text: read, kind: "get", refreshes: true });
+  });
+
+  test("the refresh pattern reads a path of 300,000 characters, which a pattern of one unit at a time stops matching in JavaScriptCore, the engine of Bun (spec 6.2)", () => {
+    const pattern = build(CONNECTION, etcdClient()).provider.getCapabilities().schemaRefreshPattern;
+    const text = `/opt/${"x".repeat(300_000)}/etcdctl put /a b`;
+    expect(parseEtcdCommand(text, LIMITS)).toMatchObject({ ok: true, parsed: { command: { kind: "put" } } });
+    expect(shouldRefreshSchema(text, pattern)).toBe(true);
   });
 
   test("the labels are ETCD_LABELS, a copy on every call", () => {
