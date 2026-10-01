@@ -1967,7 +1967,7 @@ Not fixed there: the etcd work edits no other provider's file.
 `createDatabaseProvider` in `src/lib/db/factory.ts` hands `options.queryTimeout ?? connection.queryTimeout` to the provider as it came, and the `BaseDatabaseProvider` constructor in `src/lib/db/base-provider.ts` keeps it, so only the etcd provider refuses a query timeout that is not a whole number of milliseconds from 1 to 2147483647, at connect.
 The connection dialog checks the field (`validateQueryTimeout` in `src/hooks/use-connection-form.ts`), but an inline connection posted to `POST /api/db/query`, and a caller of the published `createDatabaseProvider` or `getOrCreateProvider`, reach every other engine with any value.
 Measured 2026-10-01 under Bun against a listener that never answers: a ClickHouse connection with 2147483648 had no answer after 4,000 ms, 0 and 1.5 timed out within 2 ms, and `"abc"` failed with "Failed to connect to ClickHouse: Value NaN is outside the range [0, 9007199254740991]", while etcd refused all four with "Query timeout must be a whole number between 1 and 2147483647 milliseconds."
-Under Node 24 and 26, which the image runs, 2147483648 raised `TimeoutOverflowWarning` and timed out within 3 ms, and 1.5 and `"abc"` failed with Node's own `delay` argument errors, worded as a failed connection.
+Under Node 24.14.0 and 26.7.0 (the image runs Node 26.10.0), 2147483648 raised `TimeoutOverflowWarning` and timed out within 3 ms, and 1.5 and `"abc"` failed with Node's own `delay` argument errors, worded as a failed connection.
 
 Found while building the etcd provider (#1089), which checks the field itself, and measured again by its review.
 Not fixed there: the factory and the base constructor serve every engine.
