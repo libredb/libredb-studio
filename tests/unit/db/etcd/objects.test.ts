@@ -362,6 +362,45 @@ describe("the prefix-group walk (spec 4.1, 4.3)", () => {
     expect((await countEtcdObjects(surfaceClient(exact).client, surface())).prefix).toEqual({ count: ETCD_GROUP_CAP });
   });
 
+  test("past G groups the walk asks for no page more, in the range it reads or in the ranges after it (spec 4.3, KE1)", async () => {
+    /** The walk over `space`, recording before each page how many groups the keys it was handed make. */
+    const recorded = (space: EtcdWalkSpace) => {
+      const handed: Uint8Array[] = [];
+      const groupsBefore: number[] = [];
+      const range = async (request: EtcdRangeRequest) => {
+        groupsBefore.push(prefixGroups(handed).groups.length);
+        const answer = await space.range(request);
+        for (const kv of answer.kvs) handed.push(kv.key);
+        return answer;
+      };
+      return { range, groupsBefore };
+    };
+    // 5,000 groups of 20 keys, where G comes long before S: the stop inside the one range read.
+    const deep = Array.from(
+      { length: 5_000 * 20 },
+      (_unused, index) => `/g/${pad(Math.floor(index / 20))}/${index % 20}`,
+    );
+    const space = etcdWalkSpace(deep);
+    const walk = recorded(space);
+    const rows = await listEtcdObjects(surfaceClient([], { range: walk.range }).client, surface(), "prefix");
+    expect(rows).toHaveLength(ETCD_GROUP_CAP);
+    expect(Math.max(...walk.groupsBefore)).toBeLessThanOrEqual(ETCD_GROUP_CAP);
+    expect(space.served()).toBeLessThan(ETCD_WALK_KEY_CAP);
+    // A reader of three ranges whose first holds 2,000 groups: the stop before the ranges after it.
+    const grants = [grantPrefix("read", "/a/"), grantPrefix("read", "/b/"), grantPrefix("read", "/c/")];
+    const keys = [...Array.from({ length: 2_000 }, (_unused, index) => `/a/${pad(index)}/k`), "/b/x/k", "/c/x/k"];
+    const scoped = recorded(etcdWalkSpace(keys, { readable: grants }));
+    const { client } = surfaceClient([], { range: scoped.range });
+    expect((await countEtcdObjects(client, reader(grants))).prefix).toEqual({
+      count: ETCD_GROUP_CAP,
+      sampledFrom: `one key-prefix walk capped at ${en(ETCD_GROUP_CAP)} groups, over the 3 ranges etcd user reader may read`,
+    });
+    expect(Math.max(...scoped.groupsBefore)).toBeLessThanOrEqual(ETCD_GROUP_CAP);
+    expect(rangeRequests(client).every((request) => new TextDecoder().decode(request.key).startsWith("/a/"))).toBe(
+      true,
+    );
+  });
+
   test("past S keys the walk stops, reads no more than S, and the count is a floor naming the bound (spec 4.3, KE1)", async () => {
     const perSegment = ETCD_WALK_SEGMENT_BUDGET - 1;
     const segments = Math.ceil(ETCD_WALK_KEY_CAP / perSegment) + 1;
