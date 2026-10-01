@@ -945,9 +945,10 @@ describe("Studio", () => {
   });
 
   /**
-   * The tree lists every declared kind, and the click EXECUTES what it generates, so a
-   * routine reaching `handleTableClick` would run `SELECT * FROM order_total(integer)`
-   * against the database. The gate reads the kind's declared ROLE, never its id.
+   * The tree lists every kind the object surface enumerates (`enumerableKinds`), and the
+   * click EXECUTES what it generates, so a routine reaching `handleTableClick` would run
+   * `SELECT * FROM order_total(integer)` against the database. The gate reads the kind's
+   * declared ROLE, never its id.
    */
   // The gate reads `role`, not the kind id: a view is a relation on every engine that
   // declares one, and `kind === "table"` would refuse it while passing the two tests

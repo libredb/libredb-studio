@@ -56,6 +56,8 @@ git add PKGBUILD .SRCINFO libredb-studio-bin.install LICENSE REUSE.toml
 git commit -m "Initial import: 0.17.0" && git push origin HEAD:master
 ```
 
+The files here name nineteen engines and pin 0.17.0, which ships eighteen, so make that push before the etcd provider (#1089) merges, or render the files with `scripts/render-aur-pkgbuild.mjs` for the release that carries etcd and push that render, with its version in the commit message.
+
 Then set the `aur` channel to `status: live` in `distribution/channels.yaml` and add the key as the
 `AUR_SSH_PRIVATE_KEY` repository secret.
 From then on every stable release publishes by itself: the `aur` job in `release-artifacts.yml` renders
