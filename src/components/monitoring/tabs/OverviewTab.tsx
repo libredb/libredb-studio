@@ -94,12 +94,13 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
 
   // A floor, and not the whole count, when the provider names what it counted from: etcd counts
   // only the ranges a user who is not root may read. The mark is `+` in the number's own text and
-  // the sentence is the tree's floor-badge wording (`formatCount` in object-tree/flatten.ts), so
-  // one floor reads one way on both surfaces. PRESENCE decides, as `isCountSampled` does: a
-  // provider that set the field has said the number is not the whole count. Without it the card
-  // renders exactly as it always has.
+  // the sentence is the tree's floor-badge wording (`formatCount` in object-tree/flatten.ts), its
+  // `en-US` digit grouping included, so one floor reads one way on both surfaces. PRESENCE decides,
+  // as `isCountSampled` does: a provider that set the field has said the number is not the whole
+  // count. Without it the card renders exactly as it always has.
   const tableCount = overview?.tableCount ?? 0;
   const tableCountSampledFrom = overview?.tableCountSampledFrom;
+  const tableFloor = tableCount.toLocaleString("en-US");
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -196,14 +197,14 @@ export function OverviewTab({ data, loading, history = [] }: OverviewTabProps) {
           </CardHeader>
           <CardContent className="p-3 sm:p-4 pt-0">
             <div className="text-lg sm:text-2xl font-medium">
-              {tableCountSampledFrom === undefined ? tableCount : `${tableCount}+`}
+              {tableCountSampledFrom === undefined ? tableCount : `${tableFloor}+`}
             </div>
             {tableCountSampledFrom !== undefined && (
               <p
                 className="text-xs sm:text-xs text-muted-foreground mt-1 break-words"
                 data-testid="overview-table-count-scope"
               >
-                {`At least ${tableCount}: counted from ${tableCountSampledFrom}`}
+                {`At least ${tableFloor}: counted from ${tableCountSampledFrom}`}
               </p>
             )}
             <p className="text-xs sm:text-xs text-muted-foreground mt-1">{overview?.indexCount ?? 0} indexes</p>

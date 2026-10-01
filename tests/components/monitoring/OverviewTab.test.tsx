@@ -6,6 +6,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { OverviewTab } from "@/components/monitoring/tabs/OverviewTab";
+import { flattenTree } from "@/components/object-tree/flatten";
 import { storage } from "@/lib/storage";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
@@ -497,6 +498,29 @@ describe("the Tables card of a count that is a floor", () => {
     expect(queryByText("7")).toBeNull();
     expect(getByTestId("overview-table-count-scope").textContent).toBe(`At least 7: counted from ${SCOPE}`);
     expect(tablesCard(getByText).textContent).toBe(`Tables7+At least 7: counted from ${SCOPE}61 indexes`);
+  });
+
+  test("writes a floor of a thousand or more as the tree's floor badge writes it, digits grouped", () => {
+    // The tree's own badge and title for the same sampled count, so the two surfaces are compared
+    // with each other rather than each with a copy of the other's format.
+    const [folder] = flattenTree({
+      kinds: [{ id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" }],
+      containerDepth: 0,
+      containers: [],
+      expanded: new Set<string>(),
+      counts: { "": { prefix: { count: 401_440, sampledFrom: SCOPE } } },
+      objects: {},
+      details: {},
+      readsColumns: true,
+    });
+    const { badge, badgeTitle } = folder;
+    if (badge === undefined || badgeTitle === undefined) throw new Error("the tree drew no floor for a sampled count");
+    expect(badge).toBe("401,440+");
+
+    const { getByText, getByTestId } = render(<OverviewTab data={floorOf(401_440, SCOPE)} loading={false} />);
+
+    expect(getByTestId("overview-table-count-scope").textContent).toBe(badgeTitle);
+    expect(tablesCard(getByText).textContent).toBe(`Tables${badge}${badgeTitle}61 indexes`);
   });
 
   test("marks the floor on the field's presence, as the tree does, so an empty sentence is still a floor", () => {
