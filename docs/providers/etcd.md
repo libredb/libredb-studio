@@ -270,7 +270,8 @@ A ranged `get` in a txn is sent with its `--limit`, or with `ETCD_READ_BOUNDS.fi
 ### 5.2 Result shape
 
 Every write answers at least one row: `put` answers `key` and `revision`, `del` answers `deleted` and `revision`, and `txn` answers `succeeded` and `revision` and then one row per executed request.
-A key or value that is not UTF-8 is shown as base64, a key beside its own `key_encoding` column, and a value beside `value_encoding`, which is `withheld`, `kubernetes-cbor`, `kubernetes-json`, `json`, `text` or `base64`.
+A key or value that is not UTF-8 is shown as base64, a key beside its own `key_encoding` column, and a value beside `value_encoding`, which is `withheld`, `kubernetes-cbor`, `kubernetes-json`, `json`, `text` or `base64`, as is a previous value's `prev_value_encoding`.
+A value whose cell would pass the cell bound of section 5.4 is shown cut, a base64 one at a whole group of three bytes so that it still decodes, and its encoding gains `, cut`, such as `text, cut` or `base64, cut`, with one warning counting the cut values; a key and a label are never cut.
 Revisions, versions, counts and TTLs are decimal strings, a member id is lowercase hex without padding, and a lease id is 16 lowercase hex digits; either id is read in any padding and case.
 
 ### 5.3 The bounded watch
@@ -286,8 +287,8 @@ A live watch panel is filed as U56.
 | `DEFAULT_QUERY_LIMIT` | 500 | The rows of one result; a `--limit` above it is refused |
 | `ETCD_READ_BOUNDS.firstPageSize` | 100 | The first page of a paged `get`, and a ranged `get` in a `txn` |
 | `ETCD_READ_BOUNDS.maxPageSize` | 500 | The largest page the paged `get` grows to |
-| `ETCD_READ_BOUNDS.byteBudget` | 8,388,608 | The bytes of keys and values one result holds |
-| `ETCD_READ_BOUNDS.cellLimit` | 65,536 | The characters of one cell, cut at a character boundary |
+| `ETCD_READ_BOUNDS.byteBudget` | 8,388,608 | The bytes of keys and values a `get` or a `watch` holds; a `txn` is bounded in its request instead, and its answer by the receive cap |
+| `ETCD_READ_BOUNDS.cellLimit` | 65,536 | The characters of one value's cell, cut at a character boundary, its encoding then gaining `, cut` |
 | `ETCD_READ_BOUNDS.watchMarginMs` | 1,000 | The milliseconds a watch at the cap leaves before the query timeout |
 | `ETCD_RECEIVE_CAP_BYTES` | 16,777,216 | The largest single answer the channel accepts |
 
@@ -295,6 +296,7 @@ Every page of one read is pinned to its first page's revision, and a read the bu
 The six lists etcd answers whole, from `lease list`, `lease timetolive --keys`, `user list`, `role list`, `user get --detail` and `role get`, show their first `DEFAULT_QUERY_LIMIT` entries with a warning naming how many etcd answered, since only the receive cap bounds them on the wire.
 etcd's `Range` limits a page by its count of keys alone, so a page whose answer the receive cap refuses is asked again from the same key and revision with half its limit, and the read goes on from that size; only a single key larger than the cap fails, naming the cap (measured: twenty values of 1 MiB answered 20,972,150 bytes, past the 16 MiB cap, at a first page of 100).
 An answer past the receive cap to a `put` or `del` says that etcd applied the write, and to a `txn` that one of its branches ran, because etcd answers a write only after applying it.
+Bound `params` are refused with a `DatabaseConfigError` before any request, and an empty list binds nothing and is not refused: an etcdctl command has no placeholders, and ignoring the values would run a different command from the one the caller built.
 
 ### 5.5 Cancellation and the confirmation gate
 
