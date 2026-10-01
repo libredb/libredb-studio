@@ -1208,9 +1208,8 @@ a route of its own rather than an option on the object routes.
 
 The walk is offered by an engine that declares `keyScan` in `POST /api/db/provider-meta`'s
 `capabilities`; Redis declares `{ "defaultCount": 500, "maxCount": 1000 }`.
-etcd declares its own counts, with `separator: "/"`, `cursor: "opaque"`, `pattern: "prefix"` and `totalScope: "walk"` ([providers/etcd.md](./providers/etcd.md), section 6.4).
-Every other connection
-answers `400`, in this route's own words. A provider that declares the capability and implements no
+etcd declares its own counts ([providers/etcd.md](./providers/etcd.md), section 6.4).
+Every other connection answers `400`, in this route's own words. A provider that declares the capability and implements no
 walk is a distinct `500` rather than a crash: `ProviderCapabilities` is published, so that is a state
 an external implementer can genuinely be in.
 

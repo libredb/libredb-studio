@@ -287,7 +287,6 @@ A live watch panel is filed as U56.
 | `ETCD_READ_BOUNDS.watchMarginMs` | 1,000 | The milliseconds a watch at the cap leaves before the query timeout |
 | `ETCD_RECEIVE_CAP_BYTES` | 16,777,216 | The largest single answer the channel accepts |
 
-The angle-bracketed cells above name the key of `$S/bounds.json` whose string is written there; no angle bracket remains in the committed file.
 Every page of one read is pinned to its first page's revision, and a read the budget stops answers the rows it holds with a warning naming the bound and the key it stopped before.
 An answer past the receive cap to a `put` or `del` says that etcd applied the write, and to a `txn` that one of its branches ran, because etcd answers a write only after applying it.
 

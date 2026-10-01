@@ -525,3 +525,10 @@ describe("docs/providers/etcd.md states the limits of spec E17 and the Kubernete
     expect(kubernetes).toContain("verify-full");
   });
 });
+
+describe("docs/providers/etcd.md carries no authoring instruction", () => {
+  test("no scratch path and no placeholder note reaches the published doc", () => {
+    expect(DOC).not.toContain("$S/");
+    expect(DOC).not.toContain("angle-bracketed");
+  });
+});

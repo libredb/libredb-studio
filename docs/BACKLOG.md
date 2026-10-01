@@ -3216,7 +3216,7 @@ It edits none of these files, and it leaves as they were these fleet counts in c
 - `src/lib/agent/schema-stats.ts`, the no-statistics docblock: "on the twelve type-ids whose inventory comes from their own provider", which are seventeen now.
 - `tests/unit/db/duckdb/seam-guard.test.ts`, the header: "the fourteen engines that are not DuckDB".
 - `e2e/login.spec.ts` and `tests/components/LoginPage.test.tsx`: "forty named products" and the "twenty-six" relatives, written for the gap each test closes and true of the registry then.
-Amended 2026-09-30: the Redis doc drift recorded by the etcd design (R01 9.6) belongs here too; the etcd PR edits no other provider's doc beyond the two `MaintenanceType` counts of `duckdb.md` and `cassandra.md`.`, followed by the drift's one-line description copied from R01 section 9.6 (`/home/cevheri/projects/libredb/reviews/2026-09-30-etcd-design/01-redis-precedent.md
+Amended 2026-09-30: the Redis doc drift recorded by the etcd design (R01 9.6) belongs here too; the etcd PR edits no other provider's doc beyond the two `MaintenanceOperation` counts of `duckdb.md` and `cassandra.md`.
 The drift, in `docs/providers/redis.md`: its Driver row says `ioredis` `^5.9.2` where `package.json` holds `^5.11.1`, it says key-prefix groups sort by descending key count where the provider sorts them by path, it names `maxScan = 1000` where the constant is `KEY_SCAN_LIMIT` in `src/lib/db/providers/keyvalue/redis.ts`, and it calls `listObjects` and `describeObjects` with a `table` kind Redis does not declare.
 
 Found 2026-09-23 by the #1085 review.
