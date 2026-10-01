@@ -34,7 +34,7 @@ None of it is a GitHub issue.
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U66 · 53
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
-- [Release pipeline](#release-pipeline) — REL1-REL6 · 6
+- [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -3475,6 +3475,19 @@ Found while building the etcd provider (#1089), whose diff touches none of the f
 Not fixed there: none of the five is an etcd file.
 
 **Done when:** `bun run build` prints no tracing warning, because each of the five reads tells Turbopack what it reaches or is marked as outside the trace, and a payload built from the committed tree holds at its root only what the server runs, `LICENSE` and `README.md`.
+
+### REL7. A local E2E run spends the shared account's query budget
+
+`playwright.config.ts` signs nearly every spec in as `user@libredb.org` against one server process, whose "query" bucket in `src/lib/api/rate-limit.ts` (120 requests a minute by default, `RATE_LIMIT_QUERY_MAX`) every db-reaching route draws from.
+CI runs Playwright with one worker and two retries, while a local run takes half the cores as workers and retries nothing, so a fast machine spends the budget in the middle of the suite.
+Measured 2026-10-01 on main 4b6aae8e and on the etcd branch alike: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 3 of 36 runs on each side, `object-edit.spec.ts:621` reading "The source read failed. Too many requests. Try again in 41 seconds.", `:585` timing out after the same refusal, and `security-headers.spec.ts:41` drawing no PNG button on the ERD within 30 s.
+One pass of the suite in CI mode saw `security-headers.spec.ts:41` and `object-edit.spec.ts:621` fail once each and pass on a retry, and a pass with the local defaults failed 7 tests on "Too many requests" in the page.
+The comments in `playwright.config.ts` and `e2e/offline-editor.spec.ts` record the same cause, and three specs, `offline-editor.spec.ts`, `kafka-provider.spec.ts` and `etcd-provider.spec.ts`, were moved to a second server process for it.
+
+Found while running every local gate for the etcd provider (#1089).
+Not fixed there: the E2E harness is not part of the etcd work, and the fix is a choice about the limiter's test configuration.
+
+**Done when:** the E2E servers get a query budget sized for the suite, through `RATE_LIMIT_QUERY_MAX` in their `webServer` env as the passkey server sets `RATE_LIMIT_LOGIN_MAX`, or each spec signs in as an account of its own, and the repeated command above passes 36 of 36 locally.
 
 ## Chart configuration surface
 
