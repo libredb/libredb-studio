@@ -485,8 +485,10 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * One call of a surface that walks no key, over the grants as they stand: they only name the user in a
-   * refusal, so nothing is read before the surface's own requests, and a change waits for the next walk (spec 4.7).
+   * One call of a surface that walks no key, over the grants as they stand: they decide none of its requests, so
+   * nothing is read before the surface's own. They word its refusals, which name the user and what it may read as
+   * the grants were last read, so after an auth-store change a refusal can name a range the user has lost, or
+   * leave out one it gained, until the next walk reads them again (spec 4.7).
    */
   private standingSurface(): SurfaceCall {
     const session = this.requireSession();
