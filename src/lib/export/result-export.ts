@@ -706,7 +706,9 @@ function binaryLiteral(bytes: Uint8Array, dialect: DatabaseType | undefined): st
 }
 
 /**
- * Which Oracle conversion function a `Date` cell is written through.
+ * Which Oracle conversion function a `Date` cell is written through. The provider's own
+ * rows carry a DATE and a TIMESTAMP as text since #1131 (`OracleDateColumn` below), so a
+ * naive `Date` reaches this only from a host that built its rows itself.
  *
  * Oracle parses none of the literal forms a `Date` stringifies to: measured through the
  * real export path on the Oracle Free image (`Oracle AI Database 26ai Free Release
@@ -746,6 +748,25 @@ function oracleDateShape(declared: string | undefined): OracleDateShape {
   return bare.endsWith("TIME ZONE") ? "zoned" : "timestamp";
 }
 
+/**
+ * How one Oracle column's date cells are written: `shape` for a `Date`, and `text` for the
+ * zone-less text the provider reads a DATE and a TIMESTAMP as (#1131).
+ *
+ * `text` is set only for a column DECLARED `DATE` or `TIMESTAMP`, never by the fallback
+ * `shape` takes. A VARCHAR2 holding `2026-09-01 10:30:00` is text, and converting it would
+ * store the NLS rendering of a timestamp where the characters belonged.
+ */
+interface OracleDateColumn {
+  shape: OracleDateShape;
+  text?: "date" | "timestamp";
+}
+
+function oracleDateColumn(declared: string | undefined): OracleDateColumn {
+  const bare = declared?.trim().toUpperCase() ?? "";
+  const text = bare === "DATE" ? "date" : /^TIMESTAMP\s*(\(\d\))?$/.test(bare) ? "timestamp" : undefined;
+  return { shape: oracleDateShape(declared), ...(text === undefined ? {} : { text }) };
+}
+
 /** What `source` declared for `column`, or `undefined`. */
 function declaredTypeOf(source: ResultExportSource, column: string): string | undefined {
   // `Object.hasOwn` for the reason `sqlTypeOf` uses it: a column named `constructor`
@@ -779,6 +800,31 @@ function oracleDateLiteral(value: Date, shape: OracleDateShape): string {
 }
 
 /**
+ * The text the Oracle provider reads a DATE and a TIMESTAMP as (#1131): the wall clock,
+ * a leading `-` on a BC year, and a fraction only where there is one.
+ */
+const ORACLE_ZONELESS_TEXT = /^(-?)\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d{1,9})?$/;
+
+/**
+ * That text as the literal of the declared type, or `undefined` when it is not in that form.
+ *
+ * Quoted as it is, the text is read through the session's `NLS_DATE_FORMAT`, `DD-MON-RR` by
+ * default, and refused. The mask spells the text's own form instead, so it replays the same
+ * in every session: `SYYYY` only for a signed year, and `FF` only for a fraction, since `FF`
+ * with no digit count takes the one to nine digits a TIMESTAMP holds. A DATE has no
+ * fractional second, so a fraction is not a DATE's text. The text is digits and separators
+ * by that same match, so interpolating it needs no quoting.
+ */
+function oracleTextLiteral(text: string, type: "date" | "timestamp"): string | undefined {
+  const match = ORACLE_ZONELESS_TEXT.exec(text);
+  if (match === null) return undefined;
+  const [, sign, fraction] = match;
+  const mask = `${sign === "" ? "YYYY" : "SYYYY"}-MM-DD HH24:MI:SS`;
+  if (type === "date") return fraction === undefined ? `TO_DATE('${text}', '${mask}')` : undefined;
+  return `TO_TIMESTAMP('${text}', '${mask}${fraction === undefined ? "" : ".FF"}')`;
+}
+
+/**
  * A value as SQL.
  *
  * Everything that is not a number, a bigint or a boolean is quoted through the
@@ -788,7 +834,7 @@ function oracleDateLiteral(value: Date, shape: OracleDateShape): string {
  * be stringified to a locale-dependent form no engine parses back, and an object to
  * the literal text `[object Object]`.
  */
-function sqlValue(value: unknown, dialect: DatabaseType | undefined, oracleShape?: OracleDateShape): string {
+function sqlValue(value: unknown, dialect: DatabaseType | undefined, oracle?: OracleDateColumn): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "bigint") return String(value);
   // NaN and ±Infinity are not numbers any of these dialects accepts as a literal,
@@ -796,8 +842,12 @@ function sqlValue(value: unknown, dialect: DatabaseType | undefined, oracleShape
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
   if (typeof value === "boolean") return String(value);
   if (value instanceof Date) {
-    if (oracleShape !== undefined) return oracleDateLiteral(value, oracleShape);
+    if (oracle !== undefined) return oracleDateLiteral(value, oracle.shape);
     return quoteLiteral(value.toISOString(), dialect);
+  }
+  if (typeof value === "string" && oracle?.text !== undefined) {
+    const literal = oracleTextLiteral(value, oracle.text);
+    if (literal !== undefined) return literal;
   }
   // Before the object branch, which used to write a `bytea`/`BLOB` cell as the quoted
   // text `{"type":"Buffer","data":[…]}`. Replayed into Postgres 18.4 that INSERT
@@ -842,10 +892,10 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
     if (rows.length === 0) return sql(NOTHING_TO_EXPORT.rows);
     // Resolved once per column rather than per cell: the shape comes from the declared
     // type, which does not change row to row.
-    const oracleShapes =
-      dialect === "oracle" ? columns.map((column) => oracleDateShape(declaredTypeOf(source, column))) : undefined;
+    const oracleColumns =
+      dialect === "oracle" ? columns.map((column) => oracleDateColumn(declaredTypeOf(source, column))) : undefined;
     const statements = rows.map((row) => {
-      const values = columns.map((column, index) => sqlValue(cellOf(row, column), dialect, oracleShapes?.[index]));
+      const values = columns.map((column, index) => sqlValue(cellOf(row, column), dialect, oracleColumns?.[index]));
       return `INSERT INTO ${tableName} (${quotedColumns.join(", ")}) VALUES (${values.join(", ")});`;
     });
     return sql(statements.join("\n"));

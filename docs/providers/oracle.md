@@ -548,7 +548,8 @@ summary all read.
 | `RAW` | `Buffer` | `{"type":"Buffer","data":[10,11,12]}` | `\x0a0b0c` |
 | `NUMBER` | `number` | `1.2345678901234568e+37` — **digits lost** | the double, see below |
 | `BINARY_DOUBLE` | `number` | `3.5` | the number |
-| `TIMESTAMP` / `DATE` | `Date` | `"2026-08-23T17:46:46.422Z"` | the formatted date |
+| `DATE` | `string`, the stored wall clock (see below) | `"2026-09-01 10:11:12"` | the text |
+| `TIMESTAMP` | `string`, the stored wall clock (see below) | `"2026-09-01 10:30:00.345"`, sub-ms dropped | the text |
 | `TIMESTAMP WITH TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — offset folded to UTC, sub-ms dropped | the formatted date — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
 | `TIMESTAMP WITH LOCAL TIME ZONE` | `Date` | `"2026-08-24T07:11:12.345Z"` — same, normalized to the session time zone first | the formatted date — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
 | `INTERVAL YEAR TO MONTH` | `IntervalYM` | `"+03-07"` | its Oracle literal — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
@@ -561,7 +562,9 @@ summary all read.
 
 `query()` and `queryInTransaction()` pass a per-call **`fetchTypeHandler`**
 ([oracle.ts](../../src/lib/db/providers/sql/oracle.ts)) that maps `CLOB` and `NCLOB` to
-`oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Every other column keeps the driver's own default:
+`oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Apart from `DATE` and `TIMESTAMP`, which it gives a
+converter ([below](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)),
+every other column keeps the driver's own default:
 `RAW` is already a `Buffer` and `VARCHAR2` already a string, and restating them would put this
 provider in charge of types it has no reason to touch.
 
@@ -613,6 +616,70 @@ The handler is deliberately **per-call**, not the process-wide `oracledb.fetchAs
 `fetchAsBuffer` globals: those would also change every schema and monitoring read (the catalog reads read
 `ALL_TAB_COLUMNS.DATA_DEFAULT`, a `LONG`), and they outlive the provider — the embeddable library
 surface runs inside a host application that may have its own oracledb consumers.
+
+#### A DATE and a TIMESTAMP read as the stored wall clock, in every server time zone (#1131)
+
+Neither type holds a zone. oracledb, in Thin and Thick mode alike, builds the `Date` for both by
+reading the stored fields as **local time of the Node process** (`makeDate(useLocal)` in
+`oracledb/lib/util.js`), and every row path then serialized that `Date` as ISO UTC, so the value moved
+with the server's `TZ`. The published image runs in UTC, which hid it; `npx @libredb/studio` on a
+machine east or west of UTC did not. Measured on 2026-10-02 with
+[`tests/live/oracle-zoneless-values.ts`](../../tests/live/oracle-zoneless-values.ts) against
+`gvenzl/oracle-free:slim` (`Oracle AI Database 26ai Free Release 23.26.3.0.0`, oracledb 6.10.0, Bun
+1.4.2), through this provider, for `DATE '2026-09-01'` and `TIMESTAMP '2026-09-01 10:30:00'`, before
+and after this change:
+
+| process `TZ` | `DATE` before | `TIMESTAMP` before | `DATE` now | `TIMESTAMP` now |
+|---|---|---|---|---|
+| `UTC` | `2026-09-01T00:00:00.000Z` | `2026-09-01T10:30:00.000Z` | `2026-09-01 00:00:00` | `2026-09-01 10:30:00` |
+| `Europe/Istanbul` | `2026-08-31T21:00:00.000Z` (the previous day) | `2026-09-01T07:30:00.000Z` (3 hours early) | `2026-09-01 00:00:00` | `2026-09-01 10:30:00` |
+| `America/Los_Angeles` | `2026-09-01T07:00:00.000Z` | `2026-09-01T17:30:00.000Z` (7 hours late) | `2026-09-01 00:00:00` | `2026-09-01 10:30:00` |
+
+The server's own `TO_CHAR` printed the "now" column in every zone, and the same held for the other
+rows of the run: `TO_DATE('2026-08-24 10:11:12')`, `TIMESTAMP '2026-09-01 10:30:00.345'` and `.5`,
+`NULL`, and the BC date `-0044-03-15 00:00:00`, which before read as `-000044-03-15T00:00:00.000Z`
+under `UTC` and as `-000044-03-14T22:04:08.000Z` under Istanbul, the zone's local mean time for that
+year. `TIMESTAMP '2026-09-01 10:30:00 +03:00'` WITH TIME ZONE read as `2026-09-01T07:30:00.000Z`
+throughout, before and after.
+
+The shifted text reached the grid, copy, CSV, JSON, the SQL INSERT export and the MCP and agent reads.
+Over HTTP, where the export receives the row as JSON, the old SQL INSERT export quoted that ISO text
+(`VALUES (1, '2026-08-31T21:00:00.000Z', '2026-09-01T07:30:00.000Z')`) and Oracle refused it on
+replay with `ORA-01861: literal does not match format string`. The in-process export still had the
+driver's `Date` and wrote its local fields, which replayed to the right values. The export of the
+provider's text now replays to values the server calls equal, for all four rows, under Istanbul.
+
+The provider tests pin the reading for all three zones over the `Date` the driver builds, and the live
+script ([§12.4](#124-optional-verifying-against-a-live-oracle)) holds it against the server.
+
+- **The spelling.** A `DATE` is `YYYY-MM-DD HH24:MI:SS`, always with its time, because an Oracle `DATE`
+  always holds one. A `TIMESTAMP` adds the fraction the `Date` kept, with trailing zeros trimmed, and a
+  whole second carries none: `'2026-09-01 10:30:00.345'`, `'2026-09-01 10:30:00.5'`,
+  `'2026-09-01 10:30:00'`. A BC year keeps one leading sign, `'-0044-03-15 00:00:00'`, as
+  `TO_CHAR(d, 'SYYYY-MM-DD HH24:MI:SS')` prints it.
+- **How.** The handler gives both types a **converter** that reads the `Date` back through its *local*
+  getters, the inverse of what the driver did, so the stored fields come back in every zone.
+  `TIMESTAMP WITH TIME ZONE` and `WITH LOCAL TIME ZONE` are left alone: each names an instant, the
+  driver hands over that instant, and its ISO form is the same in every zone.
+- **Why not the NLS formats.** Setting the session's `NLS_DATE_FORMAT` / `NLS_TIMESTAMP_FORMAT` and
+  fetching as a string does nothing in Thin mode, the default, which never asks the server for text for
+  these types: a fetch type of `oracledb.STRING` is the same `Date` put through `toString()`
+  (`oracledb/lib/impl/resultset.js`), in the Node process's zone and without milliseconds, the finding
+  [§5.5](#the-time-zones-and-why-the-offset-is-not-recoverable) records for the zoned type. Moving the
+  session `TIME_ZONE` to UTC was not taken either: Thin sets it at connect to the process's offset, and
+  `CURRENT_DATE` and `LOCALTIMESTAMP` read it, so changing it would change what a user's own query
+  answers.
+- **What the `Date` lost stays lost**, because it is gone before the converter runs:
+  - Digits past the millisecond: `.345678` still reads `.345`.
+  - A wall clock inside the Node zone's spring-forward gap. It exists in the table but not in that
+    zone, so the driver's `Date` is an hour later: `new Date(2026, 2, 8, 2, 30)` reads back as 03:30
+    under `America/Los_Angeles`. UTC has no gap, so the published image is exact.
+  - A year below 100, which the `Date` constructor reads as 19xx.
+
+  `TO_CHAR` in the query is exact for all three.
+- **Library surface:** an in-process consumer now receives strings, not `Date` objects, for these two
+  types. The SQL export reads the text back into an Oracle literal
+  ([§5.5](#the-sql-export-writes-an-oracle-date-literal-not-an-iso-string)).
 
 #### `NUMBER` still loses digits, and that is a separate defect
 
@@ -811,7 +878,21 @@ about which fields of the `Date` are the value:
 | `DATE` | `TO_DATE('2026-08-24 10:11:12', 'YYYY-MM-DD HH24:MI:SS')` — the **local** fields |
 | `TIMESTAMP` (and anything else, and no declared type) | `TO_TIMESTAMP('2026-08-24 10:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3')` — the **local** fields |
 | `TIMESTAMP WITH TIME ZONE`, `TIMESTAMP WITH LOCAL TIME ZONE` | `FROM_TZ(TO_TIMESTAMP('2026-08-24 17:11:12.345', 'YYYY-MM-DD HH24:MI:SS.FF3'), 'UTC')` — the **UTC** instant |
+| `DATE`, holding the provider's text (#1131) | `TO_DATE('2026-09-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS')`, the **text** itself |
+| `TIMESTAMP` or `TIMESTAMP(n)`, holding the provider's text (#1131) | `TO_TIMESTAMP('2026-09-01 10:30:00.345', 'YYYY-MM-DD HH24:MI:SS.FF')`, the **text** itself, `.FF` only when it has a fraction |
 
+- **The provider's own text for a naive column (#1131).** The provider reads a `DATE` and a `TIMESTAMP`
+  as their wall clock ([§5.3](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)),
+  and that text is what reaches the export, over HTTP and in-process alike. Quoted as it is, it would
+  be read through the session's `NLS_DATE_FORMAT` (`DD-MON-RR` by default) and refused, so the export
+  writes it through the function of the declared type, with a mask that spells the text's own form:
+  `SYYYY` only for a BC year, and `FF`, which takes one to nine digits, only when there is a fraction.
+  No getter is read, so the zone the export runs in moves nothing. Two things stay quoted as text:
+  - A cell in a column not declared `DATE` or `TIMESTAMP`: a `VARCHAR2` holding the same characters is
+    text, and converting it would store the NLS rendering of a timestamp in its place.
+  - A value not in that form, a `DATE` text with a fraction included.
+
+  So the `Date` rows above now apply only to a host that builds its rows itself.
 - **Local fields for a naive column**, because that is the inverse of what the driver did: it built
   the `Date` by reading the stored wall clock in the *Node process's* zone. Measured above, a `DATE`
   holding `2026-08-24 10:11:12` arrives as `2026-08-24T07:11:12.000Z` from a process at `+03:00`, so
@@ -841,7 +922,8 @@ about which fields of the `Date` are the value:
   what the column already is.
 
 Verified end to end — read through the provider, exported, replayed into a fresh table, compared **by
-the server**:
+the server**. This run predates #1131, so `D` and `TS` are still the driver's `Date` in it, read by a
+process at `+03:00`:
 
 ```
 PROVIDER ROWS  [{"K":1,"D":"2026-08-24T07:11:12.000Z","TS":"2026-08-24T07:11:12.345Z","TTZ":"2026-08-24T17:11:12.345Z","TLTZ":"2026-08-24T17:11:12.345Z"},
@@ -2030,7 +2112,9 @@ table/index/storage stats, **the LOB fetch type handler** (per type, plus that t
 left alone and that a `BLOB` reaches `asBytes` in both its live and its serialized shape), **the
 `INTERVAL` literals** (both types, positive/negative/zero, a nine-digit year count, nanosecond
 precision, `NULL`, both query paths, and that a result with no interval column keeps the driver's own
-rows array), error mapping,
+rows array), **the `DATE`/`TIMESTAMP` wall clock** (#1131: the same row read under `UTC`,
+`Europe/Istanbul` and `America/Los_Angeles`, the fraction, padding and a BC year, `NULL`, both query
+paths, the two zoned types as untouched controls, and the SQL INSERT export of the read), error mapping,
 and **every `ssl.mode` branch** (the TCPS switch, the
 DN-match flag, the concatenated `walletContent`, and a pasted connect string keeping its own
 protocol) asserted against the attributes `createPool` received.
@@ -2055,6 +2139,19 @@ bun run test:coverage                                    # CI coverage workflow:
 ```bash
 docker run --rm -e ORACLE_PASSWORD=secret -p 1521:1521 gvenzl/oracle-free:slim
 # then connect to localhost:1521 / FREEPDB1 (user system, password secret) in the Studio UI
+```
+
+`tests/live/oracle-zoneless-values.ts` (#1131,
+[§5.3](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)) holds
+the `DATE`/`TIMESTAMP` reading against the server itself. It reads a throwaway table through the
+provider under `UTC`, `Europe/Istanbul` and `America/Los_Angeles` AND as the server's own `TO_CHAR`,
+and requires the two to agree. It also checks that `TIMESTAMP WITH TIME ZONE` stays an instant, that
+the raw driver value is still the shifted `Date` the conversion compensates for, and that the SQL
+INSERT export of the read replays to values the server calls equal. Supply the password configured on
+the container:
+
+```bash
+ORACLE_TEST_PORT=1521 ORACLE_TEST_PASSWORD="$PROBE_PASSWORD" bun tests/live/oracle-zoneless-values.ts
 ```
 
 For the object surface, use the compose service instead, which mounts the fixture
@@ -2130,6 +2227,15 @@ the object tree's own routes under `POST /api/db/objects/*`
   `10:11:12.345 -07:00` comes back rendered `17:11:12.345 UTC`, and the sub-millisecond digits a
   `Date` cannot hold are not in the file either. Both are the driver's truncation, above, not the
   export's.
+- **A `DATE` or `TIMESTAMP` is only as exact as the driver's `Date`.** The provider reads both as their
+  wall clock in every zone (#1131), but the driver has already built the `Date` in the Node process's
+  zone, so three values arrive wrong:
+  - A wall clock inside that zone's spring-forward gap, an hour late.
+  - A year below 100, read as 19xx.
+  - Any digit past the millisecond.
+
+  UTC has no gap, so the published image is exact for the first; `TO_CHAR` in the query is exact for
+  all three ([§5.3](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)).
 - **`oracledb` ships no TypeScript declarations, so the driver surface is hand-declared.** Verified
   on 6.10.0: no `types`/`typings` field in its `package.json` and no `.d.ts` anywhere in the package,
   and there is no `@types/oracledb` in this project's dependencies. `src/types/db-drivers.d.ts`

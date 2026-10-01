@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes } from "@/lib/export/binary";
+import { buildResultExport } from "@/lib/export/result-export";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 
@@ -72,6 +73,12 @@ const DB_TYPE_RAW: oracledb.DbType = { num: 23, name: "DB_TYPE_RAW" };
 // The two INTERVAL identities, as the driver numbers them (measured: 2016 and 2015).
 const DB_TYPE_INTERVAL_YM: oracledb.DbType = { num: 2016, name: "DB_TYPE_INTERVAL_YM" };
 const DB_TYPE_INTERVAL_DS: oracledb.DbType = { num: 2015, name: "DB_TYPE_INTERVAL_DS" };
+// The four datetime identities (oracledb/lib/types.js: 2011 to 2014). The two zoned ones
+// are here as controls: #1131 converts DATE and TIMESTAMP and must not touch them.
+const DB_TYPE_DATE: oracledb.DbType = { num: 2011, name: "DB_TYPE_DATE" };
+const DB_TYPE_TIMESTAMP: oracledb.DbType = { num: 2012, name: "DB_TYPE_TIMESTAMP" };
+const DB_TYPE_TIMESTAMP_TZ: oracledb.DbType = { num: 2013, name: "DB_TYPE_TIMESTAMP_TZ" };
+const DB_TYPE_TIMESTAMP_LTZ: oracledb.DbType = { num: 2014, name: "DB_TYPE_TIMESTAMP_LTZ" };
 const STRING = 2001;
 const BUFFER = 2005;
 
@@ -85,6 +92,10 @@ mock.module("oracledb", () => {
     DB_TYPE_RAW,
     DB_TYPE_INTERVAL_YM,
     DB_TYPE_INTERVAL_DS,
+    DB_TYPE_DATE,
+    DB_TYPE_TIMESTAMP,
+    DB_TYPE_TIMESTAMP_TZ,
+    DB_TYPE_TIMESTAMP_LTZ,
     STRING,
     BUFFER,
     initOracleClient: mockInitOracleClientFn,
@@ -1120,6 +1131,178 @@ describe("OracleProvider", () => {
         });
         const result = await provider.query("SELECT id, name FROM r5_types");
         expect(result.rows).toBe(rows);
+      });
+    });
+
+    // DATE and TIMESTAMP columns (#1131). Neither type holds a zone, and oracledb, in
+    // Thin and Thick mode alike, builds the `Date` for both by reading the stored wall
+    // clock as LOCAL time of the Node process (`makeDate(useLocal)` in
+    // oracledb/lib/util.js). Every row path then serialised it as ISO UTC, so the value
+    // moved with the server's TZ: measured on Oracle Free, `DATE '2026-09-01'` arrived as
+    // `2026-08-31T21:00:00.000Z` under TZ=Europe/Istanbul. The Docker image runs in UTC
+    // and hid it; `npx @libredb/studio` on a laptop anywhere else did not.
+    describe("DATE and TIMESTAMP columns (#1131)", () => {
+      type Converter = (value: unknown) => unknown;
+      type Handler = (meta: { dbType: unknown; name: string }) => { converter?: Converter } | undefined;
+
+      const ZONES = ["UTC", "Europe/Istanbul", "America/Los_Angeles"] as const;
+
+      /** Runs `read` with the process held at `zone`, where `npx @libredb/studio` would run. */
+      async function inZone<T>(zone: string, read: () => Promise<T>): Promise<T> {
+        const runnerZone = process.env.TZ;
+        process.env.TZ = zone;
+        try {
+          return await read();
+        } finally {
+          if (runnerZone === undefined) delete process.env.TZ;
+          else process.env.TZ = runnerZone;
+        }
+      }
+
+      /** The `Date` oracledb builds for a DATE or TIMESTAMP: the stored fields, read as local time. */
+      function driverDate(year: number, month: number, day: number, hour = 0, minute = 0, second = 0, ms = 0) {
+        return new Date(year, month - 1, day, hour, minute, second, ms);
+      }
+
+      const meta = [
+        { name: "D", dbType: DB_TYPE_DATE, dbTypeName: "DATE" },
+        { name: "TS", dbType: DB_TYPE_TIMESTAMP, dbTypeName: "TIMESTAMP" },
+        { name: "TTZ", dbType: DB_TYPE_TIMESTAMP_TZ, dbTypeName: "TIMESTAMP WITH TIME ZONE" },
+      ];
+
+      /**
+       * An execute() that does what the driver does with the per-call handler: it asks the
+       * handler about every column and puts each value through the converter it answers.
+       * The mock's other answers skip that step, so without this no test would see a
+       * converter's output reach a row.
+       */
+      function driverExecute(rows: Record<string, unknown>[]) {
+        return async (_sql: string, _params?: unknown[], opts?: unknown) => {
+          const handler = (opts as { fetchTypeHandler?: Handler }).fetchTypeHandler;
+          const converters = meta.map((column) => handler?.(column)?.converter);
+          return {
+            rows: rows.map((row) =>
+              Object.fromEntries(
+                meta.map((column, index) => {
+                  const convert = converters[index];
+                  return [column.name, convert ? convert(row[column.name]) : row[column.name]];
+                }),
+              ),
+            ),
+            metaData: meta,
+          };
+        };
+      }
+
+      function convert(dbType: oracledb.DbType, value: unknown): unknown {
+        const answer = (lastExecuteOpts.fetchTypeHandler as Handler)({ dbType, name: "C" });
+        expect(answer?.converter).toBeTypeOf("function");
+        return answer!.converter!(value);
+      }
+
+      beforeEach(async () => {
+        await provider.connect();
+      });
+
+      test("a DATE and a TIMESTAMP read as the stored wall clock in every server zone", async () => {
+        for (const zone of ZONES) {
+          // oxlint-disable-next-line no-await-in-loop -- TZ is process-wide, so the zones run one after another.
+          const overWire = await inZone(zone, async () => {
+            mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30) }]);
+            const result = await provider.query("SELECT d, ts FROM tz_probe");
+            return JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+          });
+          expect({ zone, D: overWire[0].D, TS: overWire[0].TS }).toEqual({
+            zone,
+            D: "2026-09-01 00:00:00",
+            TS: "2026-09-01 10:30:00",
+          });
+        }
+      });
+
+      // The two zoned types name an instant, and the driver hands over that instant: its
+      // ISO form is the same in every TZ, so it is the control that must NOT be converted.
+      test("TIMESTAMP WITH TIME ZONE and WITH LOCAL TIME ZONE stay instants", async () => {
+        const instant = new Date("2026-09-01T07:30:00.000Z");
+        mockExecuteFn = driverExecute([{ D: null, TS: null, TTZ: instant }]);
+        const result = await provider.query("SELECT d, ts, ttz FROM tz_probe");
+        expect((result.rows[0] as Record<string, unknown>).TTZ).toBe(instant);
+
+        const handler = lastExecuteOpts.fetchTypeHandler as Handler;
+        expect(handler({ dbType: DB_TYPE_TIMESTAMP_TZ, name: "TTZ" })).toBeUndefined();
+        expect(handler({ dbType: DB_TYPE_TIMESTAMP_LTZ, name: "TLTZ" })).toBeUndefined();
+      });
+
+      test("a DATE keeps its time of day, and has no fraction to carry", async () => {
+        await provider.query("SELECT d FROM tz_probe");
+        expect(convert(DB_TYPE_DATE, driverDate(2026, 8, 24, 10, 11, 12))).toBe("2026-08-24 10:11:12");
+      });
+
+      // A `Date` holds milliseconds and the driver drops the rest of a TIMESTAMP(6)'s digits
+      // before any code here runs. What is left is spelled the way the engine prints a
+      // fraction, with no trailing zeros, and a whole second carries none at all.
+      test("a TIMESTAMP keeps the fraction the driver left it, and a whole second carries none", async () => {
+        await provider.query("SELECT ts FROM tz_probe");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30, 0, 345))).toBe("2026-09-01 10:30:00.345");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30, 0, 500))).toBe("2026-09-01 10:30:00.5");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30, 0, 6))).toBe("2026-09-01 10:30:00.006");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30))).toBe("2026-09-01 10:30:00");
+      });
+
+      // Oracle stores years from 4712 BC, and the driver hands a BC year over as a
+      // negative one. `TO_CHAR(d, 'SYYYY-MM-DD')` prints 44 BC as `-0044-03-15`.
+      test("every field is padded, and a BC year keeps one leading sign", async () => {
+        await provider.query("SELECT d FROM tz_probe");
+        expect(convert(DB_TYPE_DATE, driverDate(999, 1, 2, 3, 4, 5))).toBe("0999-01-02 03:04:05");
+        expect(convert(DB_TYPE_DATE, driverDate(-44, 3, 15))).toBe("-0044-03-15 00:00:00");
+      });
+
+      test("a NULL stays null", async () => {
+        await provider.query("SELECT d, ts FROM tz_probe");
+        expect(convert(DB_TYPE_DATE, null)).toBeNull();
+        expect(convert(DB_TYPE_TIMESTAMP, null)).toBeNull();
+      });
+
+      // The export picks TO_DATE or TO_TIMESTAMP from the declared type, so the text
+      // must arrive beside a declaration that still names the Oracle type.
+      test("the declared column types are unchanged", async () => {
+        mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30), TTZ: null }]);
+        const result = await provider.query("SELECT d, ts, ttz FROM tz_probe");
+        expect(result.columnTypes).toEqual({ D: "DATE", TS: "TIMESTAMP", TTZ: "TIMESTAMP WITH TIME ZONE" });
+      });
+
+      // The two halves of #1131 have to agree: what the provider reads is what the export
+      // is handed, over HTTP as JSON, and the INSERT it writes must name the stored values.
+      // Before, this row was written back as 2026-08-31 21:00:00 under Istanbul.
+      test("a SQL INSERT export of the read writes the stored values back", async () => {
+        const file = await inZone("Europe/Istanbul", async () => {
+          mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30), TTZ: null }]);
+          const result = await provider.query("SELECT d, ts, ttz FROM tz_probe");
+          const rows = JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+          return buildResultExport("sql-insert", {
+            rows,
+            fields: result.fields,
+            tabName: "tz_probe",
+            dialect: "oracle",
+            columnTypes: result.columnTypes,
+          });
+        });
+        expect(file.content).toBe(
+          `INSERT INTO tz_probe ("D", "TS", "TTZ") VALUES (` +
+            `TO_DATE('2026-09-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS'), ` +
+            `TO_TIMESTAMP('2026-09-01 10:30:00', 'YYYY-MM-DD HH24:MI:SS'), NULL);`,
+        );
+      });
+
+      test("queryInTransaction() converts the same way", async () => {
+        await provider.beginTransaction();
+        await inZone("Europe/Istanbul", async () => {
+          mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30) }]);
+          const result = await provider.queryInTransaction("SELECT d, ts FROM tz_probe");
+          const row = result.rows[0] as Record<string, unknown>;
+          expect([row.D, row.TS]).toEqual(["2026-09-01 00:00:00", "2026-09-01 10:30:00"]);
+        });
+        await provider.rollbackTransaction();
       });
     });
   });

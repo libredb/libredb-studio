@@ -1007,6 +1007,58 @@ describe("buildResultExport - Oracle date and timestamp literals", () => {
     );
     expect(file.content).toContain(`VALUES ('2026-08-24T17:11:12.345Z');`);
   });
+
+  // The provider reads a DATE and a TIMESTAMP as the engine's wall clock (#1131), and that
+  // text is what reaches the export, over HTTP and in-process alike. Quoted as it is, it is
+  // read through the session's NLS_DATE_FORMAT (`DD-MON-RR` by default) and refused, so a
+  // column DECLARED one of the two gets the conversion function that parses that text.
+  // No getter is read on this path, which is why the +09:00 held above moves nothing.
+  describe("the provider's DATE and TIMESTAMP text (#1131)", () => {
+    test("writes a DATE's text as TO_DATE of that same text", () => {
+      expect(oracle({ at: "DATE" }, "2026-09-01 00:00:00")).toContain(
+        `VALUES (TO_DATE('2026-09-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS'));`,
+      );
+    });
+
+    test("writes a TIMESTAMP's text as TO_TIMESTAMP, with FF only when there is a fraction", () => {
+      expect(oracle({ at: "TIMESTAMP" }, "2026-09-01 10:30:00")).toContain(
+        `VALUES (TO_TIMESTAMP('2026-09-01 10:30:00', 'YYYY-MM-DD HH24:MI:SS'));`,
+      );
+      expect(oracle({ at: "TIMESTAMP" }, "2026-09-01 10:30:00.345")).toContain(
+        `VALUES (TO_TIMESTAMP('2026-09-01 10:30:00.345', 'YYYY-MM-DD HH24:MI:SS.FF'));`,
+      );
+    });
+
+    // `ALL_TAB_COLUMNS.DATA_TYPE` spells a timestamp column with its precision; a host
+    // declaring from the catalog would hand that spelling over.
+    test("still reads a TIMESTAMP declared with its precision as one", () => {
+      expect(oracle({ at: "timestamp(6)" }, "2026-09-01 10:30:00.5")).toContain(
+        `VALUES (TO_TIMESTAMP('2026-09-01 10:30:00.5', 'YYYY-MM-DD HH24:MI:SS.FF'));`,
+      );
+    });
+
+    test("writes a BC year through the signed year mask", () => {
+      expect(oracle({ at: "DATE" }, "-0044-03-15 00:00:00")).toContain(
+        `VALUES (TO_DATE('-0044-03-15 00:00:00', 'SYYYY-MM-DD HH24:MI:SS'));`,
+      );
+    });
+
+    // The declaration is what makes the text a date. A VARCHAR2 holding the same
+    // characters is text, and converting it would store the NLS rendering of a
+    // timestamp in its place; a zoned column never receives this text from the provider.
+    test("leaves the same text quoted in a column not declared DATE or TIMESTAMP", () => {
+      const text = "2026-09-01 10:30:00";
+      expect(oracle({ at: "VARCHAR2" }, text)).toContain(`VALUES ('2026-09-01 10:30:00');`);
+      expect(oracle({ at: "TIMESTAMP WITH TIME ZONE" }, text)).toContain(`VALUES ('2026-09-01 10:30:00');`);
+      expect(oracle(undefined, text)).toContain(`VALUES ('2026-09-01 10:30:00');`);
+    });
+
+    test("leaves text that is not the provider's form quoted", () => {
+      expect(oracle({ at: "DATE" }, "01-SEP-26")).toContain(`VALUES ('01-SEP-26');`);
+      // A DATE has no fraction, so a fraction is not a DATE's text.
+      expect(oracle({ at: "DATE" }, "2026-09-01 10:30:00.5")).toContain(`VALUES ('2026-09-01 10:30:00.5');`);
+    });
+  });
 });
 
 describe("resultExportFileName", () => {
