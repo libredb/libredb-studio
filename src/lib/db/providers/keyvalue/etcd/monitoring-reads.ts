@@ -19,7 +19,10 @@ const PROVIDER: DatabaseType = "etcd";
 
 export type EtcdMonitoringClient = Pick<EtcdClient, "status" | "alarmList" | "memberList" | "range">;
 
-/** The count_only reads of getTableStats in flight at once (spec KE2); a starting value until Task 22. */
+/**
+ * The count_only reads of getTableStats in flight at once (spec KE2), kept by Task 22's measurement on
+ * 2026-10-01 (KE2: the 388 groups of a key space of 401,440 keys were counted in 350 ms).
+ */
 export const ETCD_TABLE_STATS_CONCURRENCY = 8;
 
 /** One count_only read: its range, and how 5.6's sentences name it. */

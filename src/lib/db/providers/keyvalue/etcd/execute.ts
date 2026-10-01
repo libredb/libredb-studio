@@ -119,9 +119,11 @@ export interface ExecutionBounds {
 }
 
 /**
- * KE4's and KE5's bounds, each a starting value until Task 22 measures it on the KE1 fixture and
- * writes it here: Kafka's measured 8 MiB result budget and 64 KiB cell bound (spec 5.4), and the
- * 1 s margin spec 5.3's example implies (a 5 s query timeout caps a watch at 4 s).
+ * KE4's and KE5's bounds: Kafka's measured 8 MiB result budget and 64 KiB cell bound (spec 5.4), and
+ * the 1 s margin spec 5.3's example implies (a 5 s query timeout caps a watch at 4 s). Each was kept
+ * by Task 22's measurement on the KE1 fixture on 2026-10-01 (KE4: gets of 1 MiB and of 64 KiB values
+ * stopped at B with 7 and 127 rows in 99 and 48 ms; KE5: watches under a 5 s and a 2 s query timeout
+ * returned at most 11 ms past their cap, and one under a 1 s query timeout was refused at once).
  */
 export const ETCD_READ_BOUNDS: Omit<ExecutionBounds, "rowLimit" | "queryTimeoutMs"> = {
   firstPageSize: 100,

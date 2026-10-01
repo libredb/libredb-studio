@@ -363,7 +363,7 @@ describe("E1: the endpoint is exactly what it claims", () => {
     });
   });
 
-  test("the receive cap starts at 16 MiB, KE4's starting value until Task 22 measures it", () => {
+  test("the receive cap is 16 MiB, the value Task 22's KE4 measurement kept", () => {
     expect(ETCD_RECEIVE_CAP_BYTES).toBe(16 * 1024 * 1024);
   });
 

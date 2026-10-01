@@ -30,7 +30,8 @@ const PROVIDER: DatabaseType = "etcd";
 
 /**
  * Spec 4.6: a `/` convention, a cursor only this provider reads, a literal prefix, and a total the walk
- * counts; the two counts are KE3b's starting values.
+ * counts. The two counts were kept by Task 22's measurement on 2026-10-01 (KE3b: in a flat directory
+ * of 200,000 keys, a page of 500 keys took 7 ms and one of 1,000 keys 8 ms).
  */
 export const ETCD_KEY_SCAN: KeyScanCapability = Object.freeze<KeyScanCapability>({
   defaultCount: 500,

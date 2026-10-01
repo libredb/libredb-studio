@@ -141,7 +141,8 @@ export type EtcdLeaderRule = "always" | "never" | "when-linearizable";
  * Spec 6.1's table, keyed by the allowlist: "never" for the calls a member answers from its own state, and
  * "when-linearizable" for the three whose request decides it. A call that needs the leader then fails at once with
  * "etcdserver: no leader" on a member without one (R08 G6.8), while these still answer, as they do for etcdctl.
- * KE14 measures each exemption on etcd-cluster (Task 22); one the measurement does not confirm leaves this table.
+ * KE14 measured each exemption on etcd-cluster on 2026-10-01 (Task 22): with two of three members stopped, all six
+ * answered, while a linearizable get and member list failed at once with "etcdserver: no leader".
  */
 export const HASLEADER_RULES: Readonly<Record<EtcdWireRpc, EtcdLeaderRule>> = {
   "KV/Range": "when-linearizable",
@@ -887,10 +888,11 @@ export async function createGrpcEtcdClient(
   /**
    * One exchange within spec E4's bound. On one of its three answers the token is renewed once, shared with every
    * call that met one under the same token, and a read is sent once more; a second failure is raised. A write is
-   * sent once more only when `writeNotApplied` holds its answer as certainly not applied, which no renewal answer
-   * is until KE12 measures one. Until then a write waits for the renewal it started or joined, so the next call
-   * carries the new token and a stale auth revision is still reported (R13 D10), and is then raised with its own
-   * answer, in 5.6's class of a write whose outcome is unknown, whatever the renewal met.
+   * sent once more after the renewal only when `writeNotApplied` holds its answer as certainly not applied: the
+   * renewal answers KE12 measured as leaving a write unapplied (`ETCD_RENEWAL_ANSWERS_NOT_APPLIED`). A write that
+   * met any other renewal answer waits for the renewal it started or joined, so the next call carries the new token
+   * and a stale auth revision is still reported (R13 D10), and is then raised with its own answer, in 5.6's class of
+   * a write whose outcome is unknown, whatever the renewal met.
    */
   const bounded = async <T>(exchange: () => Promise<Attempt<T>>, write: boolean, signal: AbortSignal): Promise<T> => {
     const sentWith = token;

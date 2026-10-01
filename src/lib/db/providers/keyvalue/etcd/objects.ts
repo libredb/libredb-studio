@@ -165,7 +165,8 @@ export const ETCD_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
   },
 ] as const);
 
-// The walk's bounds (spec 4.3). Each is a starting value until KE1 is measured on the live fixtures (spec 11).
+// The walk's bounds (spec 4.3), kept by Task 22's measurement on 2026-10-01 (KE1: over a key space of 401,440
+// keys, the walk stopped at S after 290 ms with 388 groups).
 /** G (KE1): the most groups the tree and the inventory hold, below `INVENTORY_LIMIT`. */
 export const ETCD_GROUP_CAP = 1_000;
 /** S (KE1): the most keys one walk reads, so it ends within the query timeout. */

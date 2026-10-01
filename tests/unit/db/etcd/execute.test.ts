@@ -221,7 +221,7 @@ function txnAnswer(succeeded: boolean, responses: EtcdTxnResponse["responses"], 
 }
 
 describe("ETCD_READ_BOUNDS (KE4, KE5)", () => {
-  test("holds the starting values Task 22 measures: P 100, a ceiling of 500, 8 MiB, 64 KiB and a 1 s watch margin", () => {
+  test("holds the values Task 22's measurement kept: P 100, a ceiling of 500, 8 MiB, 64 KiB and a 1 s watch margin", () => {
     expect(ETCD_READ_BOUNDS).toEqual({
       firstPageSize: 100,
       maxPageSize: 500,

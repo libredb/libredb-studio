@@ -82,10 +82,12 @@ export const ETCD_DEFAULT_PORT = 2379;
 export const ETCD_IP_SERVER_NAME = "etcd.invalid";
 
 /**
- * The channel's maximum receive size M (spec 5.4, E14): a starting value until KE4 measures it (Task
- * 22). Four times grpc-js 1.14.5's own default of 4 MiB and twice Kafka's measured byte budget of 8
- * MiB, the starting point of B, so a page the budget stops still arrives, while a larger answer fails
- * naming the cap rather than filling the process.
+ * The channel's maximum receive size M (spec 5.4, E14): four times grpc-js 1.14.5's own default of
+ * 4 MiB and twice the byte budget B of 8 MiB. A get page whose answer is past M is asked again with
+ * half its limit (execute.ts readPage), so only a get page of one key past M, or any other answer past
+ * M, fails naming the cap rather than filling the process. Kept by Task 22's measurement on 2026-10-01
+ * (KE4: gets of twenty 1 MiB values and of 64 KiB values stopped at B with 7 and 127 rows in 99 and
+ * 48 ms).
  */
 export const ETCD_RECEIVE_CAP_BYTES = 16 * 1024 * 1024;
 
