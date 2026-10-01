@@ -380,7 +380,8 @@ The embedded workspace ships no Keys panel; a key is read there with a typed `ge
 
 ## 7. Monitoring & health
 
-Health reads `Status` of the member this connection reaches and the alarm list, and a member with no leader raises the lost-quorum error instead of answering healthy.
+Health reads `Status` of the member this connection reaches, then the alarm list, which covers every member, and raises instead of answering healthy in two cases: a member with no leader raises the lost-quorum error, and an alarm raised on any member raises "etcd reports active alarms: ...", naming every alarm and the Admin > Operations card that disarms them once their cause is fixed.
+Test Connection then reports the connection as connected but degraded, with that sentence, and fleet health reports it as an error.
 The overview gives the version, the exact key count and the member's size on disk; for a user who is not root the count covers the ranges it may read and the Tables card says so.
 Storage is one row for the answering member, a quota of 0 read as etcd's 2 GiB default; the Tables tab counts each group's keys when it opens, "The key-prefix groups; a key in no group is counted in the Overview and not here".
 etcd keeps no query log and reports no client sessions, and its performance metrics are not read.
