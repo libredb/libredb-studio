@@ -278,7 +278,8 @@ A branch whose rows could pass the row limit is refused.
 Every write answers at least one row: `put` answers `key` and `revision`, `del` answers `deleted` and `revision`, and `txn` answers `succeeded` and `revision` and then one row per executed request.
 A key or value that is not UTF-8 is shown as base64, a key beside its own `key_encoding` column, and a value beside `value_encoding`, which is `withheld`, `kubernetes-cbor`, `kubernetes-json`, `json`, `text` or `base64`, as is a previous value's `prev_value_encoding`.
 A value whose cell would pass the cell bound of section 5.4 is shown cut, a base64 one at a whole group of three bytes so that it still decodes, and its encoding gains `, cut`, such as `text, cut` or `base64, cut`, with one warning counting the cut values; a key and a label are never cut.
-Revisions, versions, counts and TTLs are decimal strings, a member id is lowercase hex without padding, and a lease id is 16 lowercase hex digits; either id is read in any padding and case.
+Revisions, versions, counts and TTLs are decimal strings, a member id is lowercase hex without padding, and a lease id is 16 lowercase hex digits; either id is read in any padding and case, though a lease id is never read with a sign.
+etcd also grants a lease id a client chose, a negative one included, which `lease list` and a key's `lease` column print as Go prints it, a `-` and 15 digits such as `-000000000000005`: Studio does not address such a lease, so every command that takes a lease id refuses one with a sign before any request, and the Leases folder leaves the lease out (section 6.1).
 
 ### 5.3 The bounded watch
 
@@ -325,6 +326,8 @@ A prefix delete asks for the prefix typed exactly, `/app/` and `/App/` being dif
 | `lease` | Leases | the lease id | JSON |
 | `user` | Users | the user name | JSON |
 | `role` | Roles | the role name | JSON |
+
+Leases leaves out a lease with a negative id, which Studio does not address (section 5.2), and its count is then a floor that says how many it left out.
 
 #### The prefix-group rule
 
@@ -422,7 +425,7 @@ A key-prefix row is labelled "Key Prefix", its rows "Key", its read "Get Keys" a
 A failure before the request left Studio is a connection error; "etcdserver: no leader" is a lost quorum with nothing applied; a write that met a failure after it was sent says that it may have been applied and that the key should be read again before the command is run again; a read's deadline is a timeout; a permission refusal names the command, the range and what the user may read, "etcd user reader may read: /app/ (prefix), /config/a"; and every other answer is etcd's own words after Studio's.
 The token, the password and a value never reach an error.
 A key is named in every message as etcdctl's command line takes it: bare when it reads back as itself, shell-quoted otherwise, and in Go's `%q` form when it holds bytes that are not UTF-8 or a rune Go's `%q` escapes, such as a control character, a bidi override or a zero-width space.
-A lease id past the largest int64 is refused before any request.
+A lease id past the largest int64, or written with a sign, is refused before any request.
 
 ## 11. Testing
 
