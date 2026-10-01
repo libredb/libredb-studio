@@ -182,7 +182,11 @@ export interface EtcdStatus {
   readonly version: string;
   readonly dbSize: EtcdInt64;
   readonly dbSizeInUse: EtcdInt64;
-  /** The server's answer; "0" is replaced by the 2 GiB default server-side (R06 2.9). */
+  /**
+   * The server's answer as it came: from 3.6.6 the quota the member runs under, and on 3.6.0 to 3.6.5
+   * the flag's own value, 0 for the 2 GiB default; on either a negative value is a disabled quota, and
+   * a server before 3.6 sends none, read as "0" (spec 7.1, measured 2026-10-01).
+   */
   readonly dbSizeQuota: EtcdInt64;
   readonly leader: EtcdInt64;
   readonly raftIndex: EtcdInt64;
