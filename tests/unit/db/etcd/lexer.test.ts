@@ -201,8 +201,8 @@ const operator = (char: string, line: number, column: number) =>
  * The spec's list (a name, a digit, {, (, @, *, #, ?, -, $ and ! after a $) plus what the
  * measurement found it missed: bash and zsh read $'..' as ANSI-C quoting, bash reads $".." and
  * $[..], zsh reads $=x, $^x, $~x and $+x, bash (outside POSIX mode) expands a ~ after the = or a :
- * of a NAME= word, zsh expands a word that begins with an unquoted = to a command's path, and bash
- * and zsh expand braces holding a comma or "..".
+ * of a NAME= word, zsh expands a word that begins with an unquoted = and holds more than it to a
+ * command's path, and bash and zsh expand braces holding a comma or "..".
  */
 const SHELL_REFUSALS: readonly [form: string, text: string, code: string, column: number, message: string][] = [
   ["$NAME", "put k $HOME", "shell-expansion", 6, dollar(1, 7)],
@@ -1333,8 +1333,9 @@ describe("quoteWord, the command line's quoting (spec 5.5, 6.4)", () => {
     ["[a", "'[a'"],
     ["a]", "'a]'"],
     ["!", "'!'"],
-    // zsh expands a word that begins with = to a command's path: a bare =ls read /usr/bin/ls in zsh 5.9, and ==
-    // failed with "= not found" (measured), where bash and dash passed both as written.
+    // zsh expands a word that begins with = and holds more than it to a command's path: a bare =ls read /usr/bin/ls
+    // in zsh 5.9, and == failed with "= not found" (measured), where bash and dash passed both as written; a lone =
+    // is quoted as well, which reads back the same.
     ["=ls", "'=ls'"],
     ["==", "'=='"],
     ["=", "'='"],

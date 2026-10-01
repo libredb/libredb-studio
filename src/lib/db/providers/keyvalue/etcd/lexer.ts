@@ -1301,11 +1301,12 @@ export function holdsUnprintedRune(text: string): boolean {
 /**
  * A word that reads back as itself in both word rules and in a shell, so it needs no quotes:
  * letters, digits and `_-./:@%+=,^`, and the characters past ASCII that Go's %q prints as
- * themselves, but never a word that begins with `=`, which zsh expands to a command's path
- * (measured: zsh 5.9 read =ls as /usr/bin/ls) and the command line's rule therefore refuses. It is
- * conservative on purpose: glob characters, which the lexer reads as data, are quoted too, so a
- * generated command also pastes into a shell as written, and so is every character Go would escape,
- * so no invisible or reordering character is shown bare (spec 5.5).
+ * themselves, but never a word that begins with `=`: zsh expands one that holds more than the `=`
+ * to a command's path (measured: zsh 5.9 read =ls as /usr/bin/ls), which the command line's rule
+ * refuses, and a lone `=` is quoted as well, which reads back the same. It is conservative on
+ * purpose: glob characters, which the lexer reads as data, are quoted too, so a generated command
+ * also pastes into a shell as written, and so is every character Go would escape, so no invisible
+ * or reordering character is shown bare (spec 5.5).
  */
 function isBare(text: string): boolean {
   if (text === "" || text.startsWith("=")) return false;
