@@ -178,14 +178,16 @@ The connect sequence answers each of etcd's refusals in words of its own: a pass
 |---|---|---|---|
 | `disable`, or no TLS panel | plaintext | not checked | not checked |
 | `require` | TLS | not checked | not checked |
-| `verify-system` | TLS | the runtime's roots | checked |
+| `verify-system` | TLS | the pasted CA, or the runtime's roots when none is pasted | checked |
 | `verify-ca` | TLS | the pasted CA, or the runtime's roots when none is pasted | checked, as in `verify-full`, by decision: not every other provider checks it in this mode |
 | `verify-full` | TLS | the pasted CA, or the runtime's roots when none is pasted | checked |
 
+`verify-system` is the mode with nothing to paste, but the dialog still draws the CA field in it, and a pasted CA replaces the runtime's roots in every mode that checks the chain, so leave it empty to verify a publicly signed endpoint.
+A panel with no mode, which a seed file may write, verifies as `verify-full`, and a `rejectUnauthorized` the panel sets decides in any TLS mode whether the chain and the name are checked.
 The certificate is checked against the connection's host, or against the far end of the SSH tunnel when one carries the connection, never against the tunnel's local `127.0.0.1`.
 A certificate that carries only an IP address verifies for that IP.
 A client certificate is entered in `verify-ca` or `verify-full`; the dialog still sends a certificate a later switch to another mode hid, a defect of the shared dialog filed as U60.
-Under Bun a failed TLS connection carries no cause, so the error says that the runtime does not report why, and names a missing client certificate from the connection's own configuration.
+Under Bun a chain failure, a name failure and a port that does not answer TLS are named as under Node, but a handshake the server refused, for a missing client certificate or one from another CA, carries no cause: a TLS connection that fails with no cause named says that the runtime does not report why, and names a missing client certificate from the connection's own configuration.
 
 ### 4.4 One endpoint
 
