@@ -28,13 +28,13 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D136, U17 · 80
+- [Drivers and connections](#drivers-and-connections) — D1-D138, U17 · 82
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U64 · 51
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U66 · 53
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
-- [Release pipeline](#release-pipeline) — REL1-REL5 · 5
+- [Release pipeline](#release-pipeline) — REL1-REL6 · 6
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
@@ -1962,6 +1962,29 @@ Not fixed there: the etcd work edits no other provider's file.
 
 **Done when:** the MongoDB dispatch is exhaustive by construction, a `switch` whose `default` asserts `never` or a record keyed by the operation, the set is gone, and a unit test drives an unknown operation to its refusal.
 
+### D137. A connection's query timeout is checked on the server for etcd alone
+
+`createDatabaseProvider` in `src/lib/db/factory.ts` hands `options.queryTimeout ?? connection.queryTimeout` to the provider as it came, and the `BaseDatabaseProvider` constructor in `src/lib/db/base-provider.ts` keeps it, so only the etcd provider refuses a query timeout that is not a whole number of milliseconds from 1 to 2147483647, at connect.
+The connection dialog checks the field (`validateQueryTimeout` in `src/hooks/use-connection-form.ts`), but an inline connection posted to `POST /api/db/query`, and a caller of the published `createDatabaseProvider` or `getOrCreateProvider`, reach every other engine with any value.
+Measured 2026-10-01 under Bun against a listener that never answers: a ClickHouse connection with 2147483648 had no answer after 4,000 ms, 0 and 1.5 timed out within 2 ms, and `"abc"` failed with "Failed to connect to ClickHouse: Value NaN is outside the range [0, 9007199254740991]", while etcd refused all four with "Query timeout must be a whole number between 1 and 2147483647 milliseconds."
+Under Node 24 and 26, which the image runs, 2147483648 raised `TimeoutOverflowWarning` and timed out within 3 ms, and 1.5 and `"abc"` failed with Node's own `delay` argument errors, worded as a failed connection.
+
+Found while building the etcd provider (#1089), which checks the field itself, and measured again by its review.
+Not fixed there: the factory and the base constructor serve every engine.
+
+**Done when:** a query timeout outside whole milliseconds from 1 to 2147483647 is refused for every engine before a provider is built, and a unit test drives 0, 1.5, 2147483648 and a string through `createDatabaseProvider` to that refusal.
+
+### D138. A forward the SSH bastion refuses reaches the provider as a connection that closed
+
+The `forwardOut` callback in `createSSHTunnel` (`src/lib/ssh/tunnel.ts`) ends the local socket when the bastion refuses the channel, `if (err) { socket.end(); return; }`, and records the error nowhere, so the provider behind the tunnel meets a connection that closed and words it as a failure of its own.
+Measured 2026-10-01 through the real tunnel, factory and error mapping against an in-process ssh2 bastion that answers `CHANNEL_OPEN_FAILURE`: ssh2 handed the callback "(SSH) Channel open failure: Connection refused", "Name or service not known" or "open failed", and the user read "No etcd answered a plaintext connection at" the far end, or under TLS that no TLS connection was established, "Connection terminated unexpectedly" on PostgreSQL and "Connection lost: The server closed the connection." on MySQL.
+The sharpest case is a bastion with forwarding disabled in front of a healthy plaintext etcd: the user is told that no etcd answered and is pointed at TLS first.
+
+Found while building the etcd provider (#1089), whose connection sentences name the tunnel among the things to check, and measured again by its review.
+Not fixed there: the tunnel serves every engine.
+
+**Done when:** a refused forward reaches the caller as a connection error that names the bastion's refusal and the far end, on every tunnelled provider, and a test through an in-process ssh2 bastion that refuses the channel pins it.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -3004,6 +3027,29 @@ Not fixed there: the hook serves every engine.
 
 **Done when:** the pending timers live in a ref that an unmount effect clears, and a hook test unmounts inside the window and sees no query run.
 
+### U65. Redis's Load more under a folder whose last segment is `*` walks its parent folder's pattern
+
+`pathPattern` in `src/components/key-browser/tree.ts` builds a folder's Load more pattern under `keyScan.pattern: "glob"` with `prefixPattern` over the joined name, which reads a last segment of `*` as the folder mark, so the folder `["a", "*"]` sends `MATCH a:*`, the pattern of its parent `["a"]`, where a pattern built from the path is `a:\*:*`.
+Rows are never wrong, because `isUnderPrefix` keeps only the folder's keys, but the walk is the parent's.
+Measured 2026-10-01: over the keys `a:*:x`, `a:b:1`, `a:c:2` and `a:d`, `MATCH a:*` covers all four and the folder holds `a:*:x` alone; Redis, Valkey and KeyDB spend `COUNT` on keys before the match filters them, so each press sends back up to 1,000 of the parent's keys and asks a `TYPE` for each, and DragonflyDB and Garnet spend it on matched keys, so the folder takes as many presses as its parent.
+The function's docblock states this, and `tests/unit/components/key-browser-tree.test.ts` pins `pathPattern(["a", "*"])` as `a:*`; the Keys panel sent the same pattern before the etcd work.
+
+Found while generalising the key browser for the etcd provider (#1089), and measured again by its review.
+Not fixed there: the etcd design keeps Redis's glob pattern unchanged.
+
+**Done when:** the glob arm builds its pattern from the path, `escapeGlob` of the joined name followed by the separator and `*`, so `["a", "*"]` sends `a:\*:*`, and the pin in the tree's unit test moves with it.
+
+### U66. No test clears the no-scan checkbox
+
+The connection dialog forwards its "Do not read the object list on connect" checkbox (#765) with `onChange={(e) => setSkipObjectScan(e.target.checked)}` in `src/components/ConnectionModal.tsx`, and `tests/components/ConnectionModal.test.tsx` only clicks it unticked and expects `true`, then checks that a saved choice draws it ticked.
+Measured 2026-10-01: with that handler rewritten in memory to forward `true` always, both dialog suites still pass, 121 of 121, while the real dialog's box then stays ticked after its first click where the committed one alternates, so a connection's no-scan choice could not be cleared and no test would say so.
+The Read-only toggle beside it has had its untick test since the etcd PR.
+
+Found while adding the Read-only toggle for the etcd provider (#1089), and measured again by its review.
+Not fixed there: the no-scan choice is not part of the etcd work.
+
+**Done when:** the dialog suite renders the box ticked, clicks it once, and expects `setSkipObjectScan` called with `false`, in the shape of the Read-only toggle's test.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -3414,6 +3460,18 @@ Measured 2026-09-30 by the etcd PR's descriptor generator, which compares real p
 Not fixed there: the etcd PR touches no other script.
 
 **Done when:** every command script decides that it runs as the program by comparing real paths, as `generate-etcd-descriptor.mjs` does, and one test runs a drift guard through a symlinked checkout and sees it check.
+
+### REL6. Five dynamic file reads make Turbopack trace the whole repository into the server output
+
+`bun run build` prints "Turbopack build encountered 5 warnings", each "Dynamic filesystem access causes tracing of the whole project", at `resolveAgentLedgerDirectory` in `src/lib/agent/config.ts`, `getDatabasePath` in `src/lib/db/providers/sql/duckdb/index.ts` and in `src/lib/db/providers/sql/sqlite.ts`, `loadConfig` in `src/lib/seed/config-loader.ts` and `kubernetesLogin` in `src/lib/seed/vault-client.ts`.
+The trace of `/api/db/query` then lists 2,662 project files outside `node_modules` and `.next`, `src/`, `tests/`, `operator/`, `research/` and `docs/` among them, and `scripts/lib/prune-standalone-payload.sh` removes only what its deny-list names, so a payload built from the committed tree still carries `operator/`, `CONTRIBUTORS.md` and the seven translated READMEs into the release tarball the `npx` launcher downloads.
+Measured 2026-10-01 on a build of the committed tree: marking the five calls `/*turbopackIgnore: true*/` in a scratch copy removed all five warnings and cut that trace to one project file, `seed-assets/sqlite/employee.db`.
+The warnings are printed on every run of the required check, where a sixth is easy to miss; `main`'s CI prints the same five.
+
+Found while building the etcd provider (#1089), whose diff touches none of the five files, and measured again by its review.
+Not fixed there: none of the five is an etcd file.
+
+**Done when:** `bun run build` prints no tracing warning, because each of the five reads tells Turbopack what it reaches or is marked as outside the trace, and a payload built from the committed tree holds at its root only what the server runs, `LICENSE` and `README.md`.
 
 ## Chart configuration surface
 
