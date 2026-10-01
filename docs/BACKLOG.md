@@ -2962,10 +2962,13 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
 
 ### U58. TablesTab's Vacuum summary card reads 0 and "OK" on an engine that declares no vacuum
 
-`vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card shows 0 with a green "OK"; Redis, Couchbase, ClickHouse and Trino show it today, and etcd does after the etcd PR.
-Reproduce: open the Tables tab on the compose Redis and read the Vacuum card.
+`vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card counts the tables whose `bloatRatio` passes 10 as if the engine had a vacuum.
+Nine engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, SQL Server, ClickHouse, Trino, Redis and Couchbase today, and etcd after the etcd PR.
+All but MySQL publish no `bloatRatio`, so their card shows 0 with a green "OK" wherever the tab has table statistics to read; Redis answers none, so its card reads that only while its database is empty, and N/A once the database holds a key.
+MySQL's `bloatRatio` is `DATA_FREE` as a percentage of the table's data and index bytes, so its card counts the tables past 10 percent under the Vacuum title, a count the fix takes off the card too.
+Reproduce: render `TablesTab` with the capabilities `GET /api/db/provider-meta` serves for libSQL, Oracle or SQL Server and the statistics of one table, or open the Tables tab on one of them over a database that holds a table, and read the Vacuum card.
 
-Found 2026-09-30 while designing the etcd provider (R11 ARCH-3).
+Found 2026-09-30 while designing the etcd provider (R11 ARCH-3); its engine list was measured again on 2026-10-01 by the etcd review, from each provider's capabilities and table statistics.
 
 **Done when:** `vacuumStateKnown` requires `vacuumSupported`, the card is absent or says the engine has no vacuum, and a component test pins it for an engine without one.
 
@@ -3262,7 +3265,7 @@ It edits none of these files, and it leaves as they were these fleet counts in c
 - `src/lib/agent/schema-stats.ts`, the no-statistics docblock: "on the twelve type-ids whose inventory comes from their own provider", which are seventeen now.
 - `tests/unit/db/duckdb/seam-guard.test.ts`, the header: "the fourteen engines that are not DuckDB".
 - `e2e/login.spec.ts` and `tests/components/LoginPage.test.tsx`: "forty named products" and the "twenty-six" relatives, written for the gap each test closes and true of the registry then.
-Amended 2026-09-30: the Redis doc drift recorded by the etcd design (R01 9.6) belongs here too; the etcd PR edits no other provider's doc beyond the two `MaintenanceOperation` counts of `duckdb.md` and `cassandra.md`.
+Amended 2026-09-30: the Redis doc drift recorded by the etcd design (R01 9.6) belongs here too, because the etcd PR edits another provider's doc only where a surface it changed moves what that doc says, which are the two `MaintenanceOperation` counts of `duckdb.md` and `cassandra.md` and the citation of the paste handler in `elasticsearch.md` and `opensearch.md`, and no surface it changed moves `redis.md`.
 The drift, in `docs/providers/redis.md`: its Driver row says `ioredis` `^5.9.2` where `package.json` holds `^5.11.1`, it says key-prefix groups sort by descending key count where the provider sorts them by path, it names `maxScan = 1000` where the constant is `KEY_SCAN_LIMIT` in `src/lib/db/providers/keyvalue/redis.ts`, and it calls `listObjects` and `describeObjects` with a `table` kind Redis does not declare.
 
 Found 2026-09-23 by the #1085 review.
