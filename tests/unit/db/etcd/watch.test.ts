@@ -105,6 +105,18 @@ function liveWatch() {
   };
 }
 
+/**
+ * The adapter's watch once etcd refused it in band and its one renewal runs (spec E4): an abort ends the renewal's wait,
+ * and the watch, never created again, settles with that refusal (plan C1).
+ */
+function renewingWatch(cancelReason: string): EtcdClient["watch"] {
+  return (_request, _callback, options: EtcdCallOptions) =>
+    new Promise<EtcdWatchEnd>((resolve) =>
+      options.signal.addEventListener("abort", () => resolve({ reason: "canceled", cancelReason }), { once: true }),
+    );
+}
+const EXPIRED_TOKEN = "rpc error: code = Unauthenticated desc = etcdserver: invalid auth token";
+
 async function failure(pending: Promise<unknown>): Promise<Error> {
   try {
     await pending;
@@ -301,6 +313,43 @@ describe("how a watch ends as an error (spec 5.3, plan Review Focus 3)", () => {
     expect(error).toBeInstanceOf(AuthenticationError);
     expect(error.message).toContain("etcd did not accept this connection's sign-in for the watch");
   });
+
+  test("a window that closes while the adapter renews the token etcd refused the watch for ends with that refusal, never a quiet window", async () => {
+    const { context, timers } = harness();
+    const fake = createFakeEtcdClient({ watch: renewingWatch(EXPIRED_TOKEN) });
+    const pending = runBoundedWatch(fake, REQUEST, BOUNDS, context);
+    timers[0].fn();
+    const error = await failure(pending);
+    expect(error).toBeInstanceOf(AuthenticationError);
+    expect(error.message).toBe(
+      "etcd did not accept this connection's sign-in for the watch: connect again. (etcd: invalid auth token)",
+    );
+  });
+
+  test.each([
+    ["cancelQuery", undefined, QueryCancelledError, "The watch was cancelled."],
+    [
+      "the query timeout",
+      new DOMException("The operation timed out.", "TimeoutError"),
+      TimeoutError,
+      "The watch reached its deadline of 60,000 ms. (The operation timed out.)",
+    ],
+  ] as const)(
+    "%s while the adapter renews the token etcd refused the watch for ends it as the caller's own, never as that refusal (spec 5.6)",
+    async (_label, reason, expected, message) => {
+      const { context, controller } = harness();
+      const pending = runBoundedWatch(
+        createFakeEtcdClient({ watch: renewingWatch(EXPIRED_TOKEN) }),
+        REQUEST,
+        BOUNDS,
+        context,
+      );
+      controller.abort(reason);
+      const error = await failure(pending);
+      expect(error).toBeInstanceOf(expected);
+      expect(error.message).toBe(message);
+    },
+  );
 
   test("a Canceled cancel_reason etcd sent is a QueryError, never the caller's own cancel", async () => {
     const { context } = harness();

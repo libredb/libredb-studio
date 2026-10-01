@@ -105,9 +105,11 @@ export async function runBoundedWatch(
     releaseWindow();
     signal.removeEventListener("abort", forward);
   }
-  const ended = watchEndError(end, failure);
+  // A watch this loop did not end was ended by etcd or by the caller's signal, cancelQuery or the query timeout. Once
+  // that signal has aborted, its abort is the end, so a refusal etcd sent in band, whose renewal the abort cut short,
+  // is not raised in its place (spec 5.6); otherwise an end etcd sent is raised as an error.
+  const ended = endedBy === undefined && signal.aborted ? undefined : watchEndError(end, failure);
   if (ended !== undefined) throw ended;
-  // Only the caller's signal ends a watch this loop did not end: cancelQuery, or the query timeout.
   if (endedBy === undefined) throw toProviderError(toEtcdError(signal.reason, signal), failure);
   return {
     events,

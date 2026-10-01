@@ -1817,6 +1817,33 @@ describe("spec E4: the token and its bounded renewal", () => {
     });
   });
 
+  test("a watch whose signal aborts while its renewal runs ends with etcd's refusal, and is never created again (spec 5.3)", async () => {
+    const reason = "rpc error: code = Unauthenticated desc = etcdserver: invalid auth token";
+    const { wire, client } = await recorded(
+      {
+        answers: {
+          "Auth/Authenticate": [signedIn("token-1"), later(40, signedIn("token-2"))],
+          "Watch/Watch": [() => ({ messages: [cancelledWatch(reason)], end: "open" })],
+          "KV/Range": [() => rangeAnswer()],
+        },
+      },
+      PASSWORD,
+    );
+    await client.authenticate(options);
+    const window = new AbortController();
+    const watching = client.watch({ key: bytes("/app/") }, () => "continue", { signal: window.signal });
+    await Bun.sleep(20);
+    window.abort();
+    // It watched nothing, so the window that closed it cannot make the refusal a quiet one.
+    expect(await watching).toEqual({ reason: "canceled", cancelReason: reason });
+    expect(wire.calls.filter((call) => call.rpc === "Watch/Watch")).toHaveLength(1);
+    expect(wire.cancels).toEqual(["Watch/Watch"]);
+    // The renewal is the client's own call and still lands, so the next call carries its token.
+    await Bun.sleep(60);
+    await INVOKE["KV/Range"](client);
+    expect(tokensOf(wire.calls.filter((call) => call.rpc === "KV/Range"))).toEqual([["KV/Range", "token-2"]]);
+  });
+
   test("with a client certificate, an in-band renewal answer ends the watch as it came", async () => {
     const reason = "rpc error: code = InvalidArgument desc = etcdserver: user name is empty";
     const { wire, client } = await recorded(

@@ -1001,6 +1001,9 @@ export async function createGrpcEtcdClient(
     if ("end" in first) return first.end;
     // Spec 5.3 and E4: one renewal, then the watch is created once more; a second such answer ends it.
     await until(renewAfter(first.renew, first.sentWith), callOptions.signal);
+    // An abort during the renewal leaves etcd's refusal as the end: the watch was never created again, so it watched
+    // nothing, and the window that closed it is no quiet one.
+    if (callOptions.signal.aborted) return { reason: "canceled", cancelReason: first.cancelReason };
     const second = await watchLeg(request, cursor, onBatch, callOptions.signal);
     return "end" in second ? second.end : { reason: "canceled", cancelReason: second.cancelReason };
   };
