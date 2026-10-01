@@ -321,15 +321,25 @@ describe("readEtcdTableStats (spec 7.1, 4.7)", () => {
     expect(rows).toEqual([{ schemaName: "", tableName: "/app/*", rowCount: 4, totalSize: "N/A", totalSizeBytes: 0 }]);
   });
 
-  test("as the reader, a refused count names every range that user may read (spec 5.6)", async () => {
-    const client = createFakeEtcdClient({
-      range: async () => {
-        throw toEtcdError(grpc(7, "etcdserver: permission denied"));
-      },
-    });
-    await expect(
-      readEtcdTableStats(client, surface({ principal: READER, readable: READABLE, writable: READABLE }), ["/app/"]),
-    ).rejects.toThrow(`etcd user reader may read: ${describeScope(READABLE)}.`);
+  test("as the reader, a refused count names the group and how many ranges that user may read, never one, since the agent reads it too (spec 5.6, E13)", async () => {
+    const refusing = () =>
+      createFakeEtcdClient({
+        status: async () => status(),
+        memberList: async () => ({ header: status().header, members: MEMBERS }),
+        range: async () => {
+          throw toEtcdError(grpc(7, "etcdserver: permission denied"));
+        },
+      });
+    const scoped = surface({ principal: READER, readable: READABLE, writable: READABLE });
+    const refused = await readEtcdTableStats(refusing(), scoped, ["/app/"]).catch((error: Error) => error.message);
+    expect(refused).not.toContain("/config/a");
+    expect(refused).toBe(
+      "etcd refused the key count on /app/*: this connection's etcd user is not granted all of it. (etcd: permission denied) etcd user reader may read: 2 ranges.",
+    );
+    // The overview's count names every range, on a surface the model never reads (spec 7.1).
+    await expect(readEtcdOverview(refusing(), scoped)).rejects.toThrow(
+      `etcd refused the key count on /app/ (prefix): this connection's etcd user is not granted all of it. (etcd: permission denied) etcd user reader may read: ${describeScope(READABLE)}.`,
+    );
   });
 
   test("a user who is not root whose grants read every key: a refused count names what it may read, every key (spec 4.7, 5.6)", async () => {

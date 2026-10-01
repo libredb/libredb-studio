@@ -33,10 +33,16 @@ interface CountPiece {
 
 /**
  * errors.ts's facts for one read of this module, as objects.ts states them for every surface: a context
- * that carries a principal names what the user may read, whatever its grants read (spec 4.7, 5.6).
+ * that carries a principal names what the user may read, whatever its grants read (spec 4.7, 5.6), by how
+ * many ranges where `rangesCounted` says the agent reads the refusal too (E13).
  */
-function readContext(context: EtcdSurfaceContext, command: string, range?: string): EtcdErrorContext {
-  return surfaceErrorContext(context, command, range === undefined ? {} : { range });
+function readContext(
+  context: EtcdSurfaceContext,
+  command: string,
+  range?: string,
+  rangesCounted = false,
+): EtcdErrorContext {
+  return surfaceErrorContext(context, command, { ...(range === undefined ? {} : { range }), rangesCounted });
 }
 
 /** One read, its failure raised through errors.ts's table (spec 5.6). */
@@ -74,27 +80,34 @@ async function inBoundedFlight<T, R>(items: readonly T[], limit: number, each: (
   return results;
 }
 
-/** One count_only Range: etcd counts the whole range whatever the limit, and sends no key back. */
+/**
+ * One count_only Range: etcd counts the whole range whatever the limit, and sends no key back. A refusal
+ * names what the user may read by how many ranges when `rangesCounted` (E13).
+ */
 async function countOne(
   client: EtcdMonitoringClient,
   context: EtcdSurfaceContext,
   piece: CountPiece,
+  rangesCounted: boolean,
 ): Promise<EtcdInt64> {
   const answer = await read(
     () => client.range({ ...piece.range, limit: 1, countOnly: true }, { signal: context.signal }),
-    readContext(context, "key count", piece.label),
+    readContext(context, "key count", piece.label, rangesCounted),
   );
   return answer.count;
 }
 
-/** The sum of one count_only per piece, KE2's reads in flight at most, as etcd's 64-bit decimal string. */
+/**
+ * The overview's sum of one count_only per piece, KE2's reads in flight at most, as etcd's 64-bit decimal
+ * string. A refusal names every range the user may read, on a surface the model never reads (spec 7.1).
+ */
 async function countKeys(
   client: EtcdMonitoringClient,
   context: EtcdSurfaceContext,
   pieces: readonly CountPiece[],
 ): Promise<EtcdInt64> {
   const counts = await inBoundedFlight(pieces, ETCD_TABLE_STATS_CONCURRENCY, (piece) =>
-    countOne(client, context, piece),
+    countOne(client, context, piece, false),
   );
   return counts.reduce((sum, count) => sum + BigInt(count), BigInt(0)).toString();
 }
@@ -180,7 +193,8 @@ export async function readEtcdStorageStats(
  * The Tables panel (spec 7.1): one `count_only` per prefix group over its readable intersection (spec
  * 4.7), read when the panel opens and never on connect, KE2's reads in flight at most. The groups are
  * disjoint (spec 4.1), so no key is counted twice; an undecided `F/*` group (R13 D9) is counted over
- * the prefix range of `F/` like any other. A failure names the group, never a grant's key (spec E13).
+ * the prefix range of `F/` like any other. A failure names the group and how many ranges the user may
+ * read, never a grant's key, because the agent reads it as well (spec E13).
  */
 export async function readEtcdTableStats(
   client: EtcdMonitoringClient,
@@ -192,7 +206,7 @@ export async function readEtcdTableStats(
     readablePieces(group.range, context).map((range) => ({ index, range, label: groupLabel(group) })),
   );
   const counts = await inBoundedFlight(pieces, ETCD_TABLE_STATS_CONCURRENCY, (piece) =>
-    countOne(client, context, piece),
+    countOne(client, context, piece, true),
   );
   const totals = groups.map(() => BigInt(0));
   pieces.forEach((piece, at) => {

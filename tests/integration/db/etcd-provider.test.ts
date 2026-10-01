@@ -719,6 +719,31 @@ describe("E13: key names stay in the Keys panel and the Source tab", () => {
       expect([row.id, row.label, row.badge ?? "", row.badgeTitle ?? ""].join(" ")).not.toContain("/config/a");
     }
   });
+
+  test("as the reader granted one key, once an admin revokes its prefix grant, that key's name is in no refusal the agent or the tree reads", async () => {
+    // The provider holds the grants it read at connect, and reads them again only when a renewal meets a
+    // stale auth revision (spec 4.7), so after the revoke etcd refuses the walk of /app/ the provider still makes.
+    let revoked = false;
+    const appRevoked = (request: WireRangeRequest) =>
+      readerMayRead(request) && !(revoked && intervalOf(request).start.toString().startsWith("/app/"));
+    const { provider } = await connected(READER, readerWire({ "KV/Range": always(servedRange(appRevoked)) }));
+    revoked = true;
+    const capture = await captureContextSnapshot(agentContext(provider, READER));
+    expect(capture.kind).toBe("unavailable");
+    expect(JSON.stringify(capture)).not.toContain("/config/a");
+    const rows = await treeOf(provider);
+    const folder = rows.find((row) => row.kindId === "prefix");
+    expect(folder?.unavailable).toContain("etcd refused the Key Prefixes listing");
+    for (const row of rows) {
+      expect([row.label, row.badge ?? "", row.badgeTitle ?? "", row.unavailable ?? ""].join(" ")).not.toContain(
+        "/config/a",
+      );
+    }
+    // The agent's inspect_operations reads the Tables panel's statistics through getTableStats.
+    const stats = await failure(provider.getTableStats());
+    expect(stats).toBeInstanceOf(QueryError);
+    expect(stats.message).not.toContain("/config/a");
+  });
 });
 
 // ============================================================================

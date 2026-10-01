@@ -633,19 +633,24 @@ describe("the permission-aware walk (spec 4.7, plan Review Focus 5)", () => {
     expect(rangeRequests(client)).toEqual([]);
   });
 
-  test("a walk etcd refuses names what the user may read (spec 5.6)", async () => {
-    const grants = [grantPrefix("read", "/app/")];
-    // The grants changed on the server since they were read: etcd now refuses the range.
-    const { client } = surfaceClient(KEYS, {}, { readable: [] });
-    const counts = await countEtcdObjects(client, reader(grants));
-    expect("unavailable" in counts.prefix).toBe(true);
-    // The table's sentence names the range the walk asked for, then what the user may read.
-    expect((counts.prefix as { unavailable: string }).unavailable).toContain(
-      "etcd refused the Key Prefixes listing on /app/ (prefix):",
-    );
-    expect((counts.prefix as { unavailable: string }).unavailable).toContain(
-      `etcd user reader may read: ${describeScope(readableScope(grants))}.`,
-    );
+  test("a walk etcd refuses names how many ranges the user may read and never one, since the agent and the tree read it (spec 5.6, E13)", async () => {
+    // The grants as read at connect: a prefix and two single keys.
+    const grants = [grantPrefix("read", "/app/"), grantKey("read", "/config/a"), grantKey("read", "/secret/x/y")];
+    const refused =
+      "etcd refused the Key Prefixes listing: this connection's etcd user is not granted all of it. (etcd: permission denied) etcd user reader may read: 3 ranges.";
+    // An admin revoked a grant since, so etcd now refuses the walk of its range: the prefix, then a single key.
+    const revoke = async (revoked: EtcdPermission) => {
+      const held = grants.filter((grant) => grant !== revoked);
+      const counts = await countEtcdObjects(surfaceClient(KEYS, {}, { readable: held }).client, reader(grants));
+      const listed = await listEtcdObjects(surfaceClient(KEYS, {}, { readable: held }).client, reader(grants), "prefix")
+        .then(() => "listed")
+        .catch((error: Error) => error.message);
+      for (const sentence of [(counts.prefix as { unavailable?: string }).unavailable, listed]) {
+        for (const key of ["/config/a", "/secret/x/y"]) expect(sentence).not.toContain(key);
+        expect(sentence).toBe(refused);
+      }
+    };
+    await Promise.all([grants[0], grants[1]].map(revoke));
   });
 
   test("surfaceErrorContext names what the user may read wherever the grants were read (spec 5.6)", () => {
@@ -663,6 +668,26 @@ describe("the permission-aware walk (spec 4.7, plan Review Focus 5)", () => {
       command: "get",
       write: false,
       readable: { user: "reader", ranges: "every key" },
+      connection: CONNECTION,
+    });
+    // A read whose refusal the agent and the tree read counts the ranges, never naming one (E13).
+    const two = [grantPrefix("read", "/app/"), grantKey("read", "/config/a")];
+    expect(surfaceErrorContext(reader(two), "key count", { range: "/app/*", rangesCounted: true })).toEqual({
+      command: "key count",
+      write: false,
+      range: "/app/*",
+      readable: { user: "reader", ranges: "2 ranges" },
+      connection: CONNECTION,
+    });
+    expect(surfaceErrorContext(reader([grantKey("read", "/config/a")]), "get", { rangesCounted: true })).toMatchObject({
+      readable: { user: "reader", ranges: "1 range" },
+    });
+    expect(surfaceErrorContext(reader(EVERY_KEY_GRANT), "get", { rangesCounted: true })).toMatchObject({
+      readable: { user: "reader", ranges: "every key" },
+    });
+    expect(surfaceErrorContext(surface(), "get", { rangesCounted: true })).toEqual({
+      command: "get",
+      write: false,
       connection: CONNECTION,
     });
   });

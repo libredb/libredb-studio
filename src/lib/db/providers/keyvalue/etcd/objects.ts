@@ -72,7 +72,6 @@ import {
 import {
   type AccessScope,
   clipToScope,
-  describeRange,
   describeScope,
   ROOT_ROLE,
   ROOT_ROLE_HOLDS_EVERY_KEY,
@@ -248,20 +247,34 @@ function scopedBy(context: EtcdSurfaceContext): string | undefined {
 }
 
 /**
+ * What a user may read as a sentence the agent reads names it (E13): every key, or how many ranges, never
+ * one, because a range may be a single key; the merged ranges, as the walk reads them.
+ */
+function countedScope(scope: AccessScope): string {
+  if (scope.kind === "all") return describeScope(scope);
+  const ranges = clipToScope(ALL_KEYS, scope).length;
+  return `${count(ranges)} range${ranges === 1 ? "" : "s"}`;
+}
+
+/**
  * The error table's context for one surface call (spec 5.6): the surface's words, whether it writes,
- * the range it asked for, and, where spec 4.7 read the grants, what the user may read.
+ * the range it asked for, and, where spec 4.7 read the grants, what the user may read. A read whose
+ * refusal the agent reads as well, the key-prefix walk, which the tree also draws, and the Tables panel's
+ * counts, passes `rangesCounted`, so what the user may read is named by how many ranges and never by one
+ * (E13), as the prefix count's `sampledFrom` names it (spec 4.7).
  */
 export function surfaceErrorContext(
   context: EtcdSurfaceContext,
   command: string,
-  detail: { readonly write?: boolean; readonly range?: string } = {},
+  detail: { readonly write?: boolean; readonly range?: string; readonly rangesCounted?: boolean } = {},
 ): EtcdErrorContext {
   const user = scopedBy(context);
+  const ranges = detail.rangesCounted === true ? countedScope(context.readable) : describeScope(context.readable);
   return {
     command,
     write: detail.write === true,
     ...(detail.range === undefined ? {} : { range: detail.range }),
-    ...(user === undefined ? {} : { readable: { user, ranges: describeScope(context.readable) } }),
+    ...(user === undefined ? {} : { readable: { user, ranges } }),
     connection: context.errors,
   };
 }
@@ -324,7 +337,8 @@ async function walkPage(
         PROVIDER,
       );
     }
-    throw toProviderError(error, surfaceErrorContext(context, LISTING.prefix, { range: describeRange(piece) }));
+    // Each piece is one of the user's grants, which may be a single key, so the refusal names none (E13).
+    throw toProviderError(error, surfaceErrorContext(context, LISTING.prefix, { rangesCounted: true }));
   }
 }
 
