@@ -582,6 +582,8 @@ describe("the leading tokens a documented command carries (spec 5.1.2)", () => {
     expect(refusal("\n  \n# only a comment\n")).toMatchObject(empty);
     expect(refusal("$ ETCDCTL_API=3 etcdctl")).toMatchObject(empty);
     expect(refusal("etcdctl --command-timeout=5s")).toMatchObject(empty);
+    // Followed by blank and comment lines alone, leading tokens are still no command.
+    expect(refusal("etcdctl\n\n# done\n")).toMatchObject(empty);
   });
 });
 
@@ -602,6 +604,30 @@ describe("one command per run (spec 5.1.2)", () => {
     expect(refusal("get /a\nFOO=secret-value").message).toContain("begins with FOO:");
     // The first word ends at a tab as at a space.
     expect(refusal("get /a\nput\t/db/password hunter2").message).toContain("begins with put:");
+  });
+
+  test("a command below a command line that holds only leading tokens is refused, naming its line", () => {
+    const below = (line: number, word: string, first: number) =>
+      `Line ${line} holds a command, which begins with ${word}, but the command is read from line ${first}, which holds no command word: Studio runs one command per run. Select line ${line} to run it, and the editor sends the selection.`;
+    expect(refusal("etcdctl\nget /a")).toEqual({
+      code: "second-command",
+      line: 2,
+      column: 0,
+      message: below(2, "get", 1),
+    });
+    expect(refusal("ETCDCTL_API=3\netcdctl get /a").message).toBe(below(2, "etcdctl", 1));
+    expect(refusal("$\nput /a b").message).toBe(below(2, "put", 1));
+    expect(refusal("etcdctl --command-timeout=5s\nget /a").message).toBe(below(2, "get", 1));
+    expect(refusal("etcdctl \\\n  --command-timeout=5s\nget /a").message).toBe(below(3, "get", 1));
+    // Blank and comment lines are skipped on both sides, and the command line is named where it begins.
+    expect(refusal("# c\nenv\n\n# d\n  del /a")).toEqual({
+      code: "second-command",
+      line: 5,
+      column: 2,
+      message: below(5, "del", 2),
+    });
+    // The line's first word is named without whatever follows its =.
+    expect(refusal("etcdctl\nFOO=secret-value").message).toBe(below(2, "FOO", 1));
   });
 
   test("a long first word is cut", () => {

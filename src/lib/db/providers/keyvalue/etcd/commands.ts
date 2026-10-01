@@ -1473,8 +1473,8 @@ function firstWordOf(line: SplitLine): string {
 /**
  * Parses editor text to one etcdctl command (spec 5.1). Blank and comment lines before the command
  * are skipped, and so are those after it; the leading tokens of a documented command are dropped;
- * `txn` takes the rest of the text as its body; and any other command followed by another line is
- * refused, naming that line.
+ * `txn` takes the rest of the text as its body; and a line after any other command, or after a command
+ * line that holds only leading tokens, is refused, naming that line.
  */
 export function parseEtcdCommand(text: string, limits: EtcdParseLimits): ParseResult {
   const read = splitWords(text);
@@ -1500,7 +1500,18 @@ export function parseEtcdCommand(text: string, limits: EtcdParseLimits): ParseRe
       index = next - 1;
     }
   }
-  if (lead.commandIndex >= words.length) return fail(refusal("empty", EMPTY));
+  if (lead.commandIndex >= words.length) {
+    // The command line holds only leading tokens: a line after it is a command of its own, not this one's.
+    const below = lines.find((line) => line.role === "content");
+    if (below === undefined) return fail(refusal("empty", EMPTY));
+    return fail(
+      refusal(
+        "second-command",
+        `Line ${below.line} holds a command, which begins with ${firstWordOf(below)}, but the command is read from line ${words[0].line}, which holds no command word: Studio runs one command per run. Select line ${below.line} to run it, and the editor sends the selection.`,
+        { line: below.line, column: below.start },
+      ),
+    );
+  }
 
   const resolved = resolveCommand(words, lead.commandIndex, found);
   if (isRefusal(resolved)) return fail(resolved);

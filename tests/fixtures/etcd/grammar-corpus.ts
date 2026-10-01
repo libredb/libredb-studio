@@ -288,6 +288,14 @@ export const GRAMMAR_CORPUS: readonly GrammarCorpusCase[] = [
     parse: { ok: false, code: "second-command", line: 2 },
   },
   {
+    // The command line ends at the line break before any command word, so line 2 is a line of its own.
+    name: "a command below a line of leading tokens alone is refused, naming its line",
+    text: "etcdctl\nget /a",
+    sections: ["command", "after-command"],
+    words: [{ line: 1, column: 0, endLine: 1, endColumn: 7, text: "etcdctl" }],
+    parse: { ok: false, code: "second-command", line: 2 },
+  },
+  {
     // Measured: FAILURE, then key1 = "created-key1" and key2 = "some extra key".
     name: 'the README\'s non-interactive txn, mod("key1") > "0"',
     text: 'txn\nmod("key1") > "0"\n\nput key1 "overwrote-key1"\n\nput key1 "created-key1"\nput key2 "some extra key"\n\n',
