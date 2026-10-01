@@ -1558,6 +1558,18 @@ describe("the refresh pattern, held to the parser (spec 5.1.1, 5.1.2, 6.2)", () 
       '"./etcdctl" put /a b',
       "/usr/local/bin/'etcdctl' del /a",
       "'--command-timeout'=5s put /a b",
+      // A comment line that a lone CR ends, as the lexer ends a line at a CRLF, a CR or an LF.
+      "# a comment\rput /a b",
+      "# c\rdel /a",
+      "# c\rlease grant 60",
+      "\\\r# c\rput /a b",
+      // A comment line whose first word is a path to etcdctl followed by a write, above a read.
+      "#/usr/bin/etcdctl del /a\nget /a",
+      // A command word followed by a character other than a blank, which the lexer keeps in the word, here a path
+      // to etcdctl.
+      "put\u00a0/etcdctl get /a",
+      "del\f/etcdctl member list",
+      "put\u2028/etcdctl get /a",
       // The same spellings around a command that writes nothing, and a key named like a verb.
       "etcdctl \\\nget /app/del",
       "'get' /app/put",

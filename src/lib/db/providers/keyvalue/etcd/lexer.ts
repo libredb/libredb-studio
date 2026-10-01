@@ -1403,8 +1403,14 @@ export function quoteTxnWord(bytes: Uint8Array): string {
 // The refresh pattern: the command word as a regular expression (spec 6.2)
 // ============================================================================
 
+/** A line end as `physicalLines` ends one: a CRLF, a lone CR or an LF (spec 5.1.1). */
+const LINE_END = String.raw`(?:\r\n?|\n)`;
+
 /** A backslash-newline at a CRLF, CR or LF line end, which joins two lines outside single quotes (spec 5.1.1). */
-const LINE_JOIN = String.raw`\\(?:\r\n?|\n)`;
+const LINE_JOIN = String.raw`\\${LINE_END}`;
+
+/** A comment line: a `#` that begins its first word, and the rest of the line, up to and including its end. */
+const COMMENT_LINE = String.raw`#[^\r\n]*${LINE_END}`;
 
 /** Quote marks, which a word may hold anywhere: the lexer removes them and keeps the text they quote (spec 5.1.1). */
 const QUOTES = `['"]*`;
@@ -1441,12 +1447,13 @@ const LAST_SLASH = String.raw`(?:\\?/|${SINGLE_QUOTED}/|${DOUBLE_QUOTED}\\?/)`;
 
 /**
  * The path before `etcdctl` (spec 5.1.2), up to its last slash: runs of bare characters between escaped
- * characters and closed quotes, so it may hold blanks, quoted or escaped, and quoted line breaks. Written one
+ * characters and closed quotes, so it may hold blanks, quoted or escaped, and quoted line breaks, and never
+ * an unquoted `#` first, since a word that begins with one begins a comment line instead. Written one
  * unit at a time, `(?:bare|escaped|quoted)*`, it stopped matching at a path of 147,000 characters in
  * JavaScriptCore, which keeps a backtracking record for each unit and answers no match past its limit; as runs
  * it keeps one for each escape or quote, and matched a bare path of four million (measured 2026-10-01).
  */
-const PATH_TO_ETCDCTL = `(?:${BARE_RUN}(?:${ESCAPED_OR_QUOTED}${BARE_RUN})*${LAST_SLASH})`;
+const PATH_TO_ETCDCTL = `(?:(?!#)${BARE_RUN}(?:${ESCAPED_OR_QUOTED}${BARE_RUN})*${LAST_SLASH})`;
 
 /** `--command-timeout` and its value, after `=` or a gap, then the gap before the next word (spec 5.1.2). */
 const COMMAND_TIMEOUT = String.raw`${spelledWord("--command-timeout")}(?:\\?=|${WORD_GAP})\S+${WORD_GAP}`;
@@ -1465,8 +1472,10 @@ const LEASE_WRITE = [
  * lease grant or revoke changes the Leases folder (spec 6.2). It restates this module's command-line rules, so it
  * is built here, beside them.
  *
- * Anchored to the command word the parser reads (spec 6.2): past the blank and comment lines before it, the
- * leading tokens of spec 5.1.2 and `--command-timeout`, so a key named like a verb reloads nothing. Each word
+ * Anchored to the command word the parser reads (spec 6.2): past the blank and comment lines before it, each
+ * ending at a CRLF, a CR or an LF, the leading tokens of spec 5.1.2 and `--command-timeout`, so a key named
+ * like a verb reloads nothing, and the command word ends where a word ends, at a blank, a line end or the end
+ * of the text, so a word that goes on past it, through a no-break space or a form feed, is not it. Each word
  * may be spelled as the lexer reads it (5.1.1), with quote marks anywhere in it and any character escaped, and
  * the path before `etcdctl` may hold any text the lexer keeps in one word, quoted or escaped blanks and quoted
  * line breaks among it. A line join may stand before the blanks between two words and another after them, so
@@ -1478,12 +1487,12 @@ const LEASE_WRITE = [
  * `shouldRefreshSchema` compiles it with `i` alone, so `^` is the start of the whole buffer.
  */
 export const ETCD_SCHEMA_REFRESH_PATTERN = [
-  String.raw`^(?:${BLANK_LINES}#[^\n]*\n)*${BLANK_LINES}`,
+  String.raw`^(?:${BLANK_LINES}${COMMENT_LINE})*${BLANK_LINES}`,
   `(?:[$%]${WORD_GAP})?`,
   `(?:${spelledWord("env")}${WORD_GAP})?`,
   `(?:ETCDCTL_API=${QUOTES}${spelledFrom("3")}${WORD_GAP})*`,
   `(?:${PATH_TO_ETCDCTL}?${QUOTES}${spelledFrom("etcdctl")}${WORD_GAP})?`,
   `(?:${COMMAND_TIMEOUT})*`,
   `(?:${["put", "del", "txn"].map(spelledWord).join("|")}|${LEASE_WRITE})`,
-  String.raw`(?=(?:${LINE_JOIN})?(?:\s|$))`,
+  String.raw`(?=(?:${LINE_JOIN})?(?:[ \t\r\n]|$))`,
 ].join("");
