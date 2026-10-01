@@ -19,6 +19,9 @@ import { ETCD_READ_BOUNDS } from "@/lib/db/providers/keyvalue/etcd/execute";
 import { assessCommand } from "@/lib/db/providers/keyvalue/etcd/guard";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { declaredLevels } from "@/lib/db/object-kinds";
 
 // ============================================================================
 // Helpers
@@ -1553,6 +1556,207 @@ describe("etcd tree click (#1089)", () => {
     expect(success[0]).toMatchObject({ kind: "get", key: etcdBytes("/a\rb/"), prefix: true, fromKey: false });
     expect(success[0]?.kind === "get" ? success[0].limit : "not a get").toBeUndefined();
     expect(assessCommand(command).class).toBe("read");
+  });
+});
+
+describe("etcd tree click on a group this connection reads in part (#1089 4.7)", () => {
+  test("reads the first piece the listing names, and writes each further piece as a commented read", () => {
+    const readRanges = [{ key: "/config/a" }, { prefix: "/config/b/" }, { start: "/config/c", end: "/config/e" }];
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], { readRanges });
+    expect(text).toBe(
+      [
+        "get /config/a --limit=50",
+        "",
+        "# get /config/b/ --prefix --limit=50",
+        "",
+        "# get /config/c /config/e --limit=50",
+      ].join("\n"),
+    );
+    // What runs is the first piece alone: the other pieces are comment lines.
+    expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes("/config/a"), prefix: false, limit: 50 });
+    // The control: the same group with no pieces reads its whole prefix.
+    expect(generateTableQuery(["/config/*"], etcdCaps, [], {})).toBe("get /config/ --prefix --limit=50");
+  });
+
+  test("a piece that begins with - is written after --, and one holding a carriage return through a txn", () => {
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], {
+      readRanges: [{ start: "-a", end: "-b" }, { key: "/config/a\rb" }],
+    });
+    expect(text).toBe(["get --limit=50 -- -a -b", "", "# txn", "#", '# get "/config/a\\rb"', "#", "#"].join("\n"));
+    expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes("-a"), rangeEnd: etcdBytes("-b") });
+  });
+
+  test("a first piece holding a carriage return is a closed txn, so the commented piece below it stays a comment", () => {
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], {
+      readRanges: [{ prefix: "/config/a\r/" }, { key: "/config/b" }],
+    });
+    expect(text).toBe(["txn", "", 'get "/config/a\\r/" --prefix', "", "", "# get /config/b --limit=50"].join("\n"));
+    const command = etcdCommand(text);
+    expect(command.kind === "txn" ? [command.success.length, command.failure.length] : []).toEqual([1, 0]);
+  });
+
+  test("a group whose every readable piece is bounded by a key that is not UTF-8 text gets a note and no read", () => {
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], { readRanges: [] });
+    expect(text).toBe(
+      '# No read is written for "/config/*": each part of it this connection may read starts or ends at a key that is not UTF-8 text.',
+    );
+    expect(text.split("\n").every((line) => line.startsWith("#"))).toBe(true);
+  });
+});
+
+describe("etcd Generate Command (#1089 6.4)", () => {
+  test("opens the click's read on its first line and every other form as a comment below it", () => {
+    const text = generateSelectQuery(["/app/config/*"], [], etcdCaps);
+    expect(text).toBe(
+      [
+        "get /app/config/ --prefix --limit=50",
+        "",
+        "# put /app/config/example value",
+        "",
+        "# del /app/config/example",
+        "",
+        "# watch /app/config/ --prefix",
+        "",
+        "# txn",
+        '# create("/app/config/example") = "0"',
+        "#",
+        "# put /app/config/example value",
+        "#",
+        "# get /app/config/example",
+      ].join("\n"),
+    );
+    // Running the whole buffer runs the read, so a write needs an edit first.
+    const command = etcdCommand(text);
+    expect(command).toMatchObject({ kind: "get", key: etcdBytes("/app/config/"), prefix: true, limit: 50 });
+    expect(assessCommand(command).class).toBe("read");
+    // The control: the same call on a JSON engine with no dialect is the MongoDB `find` an etcd connection
+    // would have been handed without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateSelectQuery(["/app/config/*"], [], mongodb))).toMatchObject({ operation: "find" });
+  });
+
+  test("a group's columns never reach the text: they are the fixed shape of a get row", () => {
+    expect(generateSelectQuery(["/app/config/*"], sampleColumns, etcdCaps)).toBe(
+      generateSelectQuery(["/app/config/*"], [], etcdCaps),
+    );
+  });
+
+  test("on a read-only connection it writes the click's read alone, with its pieces, and no other form (E6)", () => {
+    const scope = { readRanges: [{ key: "/config/a" }, { prefix: "/config/b/" }], readOnly: true };
+    const text = generateSelectQuery(["/config/*"], [], etcdCaps, scope);
+    expect(text).toBe(generateTableQuery(["/config/*"], etcdCaps, [], scope));
+    expect(text).toBe(["get /config/a --limit=50", "", "# get /config/b/ --prefix --limit=50"].join("\n"));
+    // The control: the same group on a read-write connection carries the other forms.
+    expect(generateSelectQuery(["/config/*"], [], etcdCaps, { ...scope, readOnly: false })).toContain(
+      "# put /config/example value",
+    );
+    expect(generateSelectQuery(["/config/*"], [], etcdCaps, { readOnly: true })).toBe(
+      "get /config/ --prefix --limit=50",
+    );
+  });
+
+  test("for a user who is not root, the first line reads the readable piece and the forms follow the pieces", () => {
+    const text = generateSelectQuery(["/config/*"], [], etcdCaps, {
+      readRanges: [{ key: "/config/a" }, { prefix: "/config/b/" }],
+    });
+    expect(text.split("\n").slice(0, 5)).toEqual([
+      "get /config/a --limit=50",
+      "",
+      "# get /config/b/ --prefix --limit=50",
+      "",
+      "# put /config/example value",
+    ]);
+  });
+
+  test("a prefix that begins with - writes no watch, which no spelling of it parses, and puts its keys after --", () => {
+    const text = generateSelectQuery(["-app/*"], [], etcdCaps);
+    expect(text).toBe(
+      [
+        "get --prefix --limit=50 -- -app/",
+        "",
+        "# put -- -app/example value",
+        "",
+        "# del -- -app/example",
+        "",
+        "# txn",
+        '# create("-app/example") = "0"',
+        "#",
+        "# put -- -app/example value",
+        "#",
+        "# get -- -app/example",
+      ].join("\n"),
+    );
+    expect(text).not.toContain("watch");
+  });
+
+  test("a prefix holding a carriage return reads through a txn and writes the txn template alone among the forms", () => {
+    const text = generateSelectQuery(["/a\rb/*"], [], etcdCaps);
+    expect(text).toBe(
+      [
+        "txn",
+        "",
+        'get "/a\\rb/" --prefix',
+        "",
+        "",
+        "# txn",
+        '# create("/a\\rb/example") = "0"',
+        "#",
+        '# put "/a\\rb/example" value',
+        "#",
+        '# get "/a\\rb/example"',
+      ].join("\n"),
+    );
+  });
+
+  test("a group with no piece to read writes the note, then the other forms, on a read-write connection", () => {
+    const text = generateSelectQuery(["/config/*"], [], etcdCaps, { readRanges: [] });
+    expect(text.split("\n")[0]).toStartWith("# No read is written for");
+    expect(text).toContain("# put /config/example value");
+  });
+});
+
+/**
+ * The optional last argument is read by the etcd arms alone (#1089, section 3.3; R12 UX-10 and CIC-10): every
+ * other shipped engine's text is the same with it and without it, from each provider's own declaration.
+ */
+describe("the generator scope moves no other engine's text (#1089)", () => {
+  const scope = { readRanges: [{ key: "k" }, { prefix: "p/" }], readOnly: true };
+  test.each(SHIPPED_DATABASE_TYPES.filter((type) => type !== "etcd"))("%s", async (type) => {
+    const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+    const path = [...declaredLevels(capabilities).map((level) => `${level.id}_0`), "orders"];
+    expect(generateTableQuery(path, capabilities, sampleColumns, scope)).toBe(
+      generateTableQuery(path, capabilities, sampleColumns),
+    );
+    expect(generateSelectQuery(path, sampleColumns, capabilities, scope)).toBe(
+      generateSelectQuery(path, sampleColumns, capabilities),
+    );
+  });
+
+  test("the census covers every shipped engine but etcd, whose text the scope does move", () => {
+    expect(SHIPPED_DATABASE_TYPES).toContain("etcd");
+    expect(generateTableQuery(["/config/*"], etcdCaps, [], scope)).not.toBe(
+      generateTableQuery(["/config/*"], etcdCaps),
+    );
+  });
+});
+
+/**
+ * The helpers with no etcd arm, on an etcd connection (#1089, section 3.3), pinned rather than given one: each
+ * answers the JSON arm's spelling, the name as it is, and no caller an etcd connection reaches sends what they
+ * answer to etcd. `POST /api/db/profile` refuses the dialect before its SQL branch (tests/api/db/profile.test.ts),
+ * both row menus withhold Generate Test Data and Count on a group, and no etcd kind declares row writes, so the
+ * import dialog offers none. `generateCountQuery` answers `null` before its JSON arm, because `offersCountQuery`
+ * refuses a declared dialect (the `etcd` row of tests/unit/lib/table-count.test.ts).
+ */
+describe("quoteIdentifier, quoteObjectPath and generateCountQuery on an etcd path (#1089)", () => {
+  test("answer a group's name as it is, where the SQL arm would quote it, and write no count", () => {
+    expect(quoteIdentifier("/app/config/*", etcdCaps)).toBe("/app/config/*");
+    // An etcd path is one segment, the group, so the join is the group itself (R-13).
+    expect(quoteObjectPath(["/app/config/*"], etcdCaps)).toBe("/app/config/*");
+    expect(generators.generateCountQuery(["/app/config/*"], etcdCaps)).toBeNull();
+    // The control: the SQL helper quotes the same name, so the answers above are the JSON arm's.
+    expect(quoteIdentifier("/app/config/*", makeCaps())).toBe('"/app/config/*"');
+    expect(quoteObjectPath(["/app/config/*"], makeCaps())).toBe('"/app/config/*"');
   });
 });
 

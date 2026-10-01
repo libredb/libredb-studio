@@ -12,6 +12,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 
 // Helper to create a minimal connection
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
@@ -1398,6 +1399,104 @@ describe("useTabManager on a PromQL connection (#1085)", () => {
     expect(newTab.type).toBe("promql");
     expect(newTab.query.split("\n").at(-1)).toBe("http_requests_total");
     expect(newTab.query).not.toContain("SELECT");
+  });
+});
+
+// ============================================================================
+// etcd: a group's readable pieces and the connection's mode reach the generators (#1089 6.4)
+// ============================================================================
+
+describe("useTabManager on an etcd connection (#1089)", () => {
+  // The real provider's declaration; nothing is connected, and its constructor opens nothing (#1089 3.1).
+  const etcdProvider = new EtcdProvider(makeConnection({ type: "etcd", port: 2379, database: undefined }));
+  const etcdMetadata: ProviderMetadata = {
+    capabilities: etcdProvider.getCapabilities(),
+    labels: etcdProvider.getLabels(),
+  };
+
+  // A group a reader who is not root may read only part of, as the tree lists it: its pieces ride on the entry.
+  const etcdSchema: DetailedObject[] = [
+    {
+      name: "/config/*",
+      kind: "prefix",
+      path: ["/config/*"],
+      columns: [{ name: "key", type: "bytes", nullable: false, isPrimary: true }],
+      indexes: [],
+      readRanges: [{ key: "/config/a" }, { prefix: "/config/b/" }],
+    },
+    { name: "/app/*", kind: "prefix", path: ["/app/*"], columns: [], indexes: [] },
+  ];
+
+  const hookFor = (connection: DatabaseConnection) =>
+    renderHook(() => useTabManager({ activeConnection: connection, metadata: etcdMetadata, schema: etcdSchema }));
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("a tree click reads the first piece this connection may read, and runs it with the preview option", () => {
+    const executeFn = mock(() => {});
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379 }));
+
+    act(() => {
+      result.current.handleTableClick(["/config/*"], executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.name).toBe("/config/*");
+    expect(newTab.query).toBe(["get /config/a --limit=50", "", "# get /config/b/ --prefix --limit=50"].join("\n"));
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(executeFn).toHaveBeenCalledWith(newTab.query, newTab.id, false, { limit: PREVIEW_PAGE_SIZE });
+        resolve();
+      }, 150);
+    });
+  });
+
+  test("a group this connection reads whole is read whole", () => {
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379 }));
+
+    act(() => {
+      result.current.handleTableClick(
+        ["/app/*"],
+        mock(() => {}),
+      );
+    });
+
+    expect(result.current.tabs[1].query).toBe("get /app/ --prefix --limit=50");
+  });
+
+  test("Generate Command writes the read and, on a read-write connection, the other forms below it", () => {
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379 }));
+
+    act(() => {
+      result.current.handleGenerateSelect(["/config/*"]);
+    });
+
+    const query = result.current.tabs[1].query;
+    expect(result.current.tabs[1].name).toBe("Query: /config/*");
+    expect(query.split("\n")[0]).toBe("get /config/a --limit=50");
+    expect(query).toContain("# get /config/b/ --prefix --limit=50");
+    expect(query).toContain("# put /config/example value");
+  });
+
+  test("Generate Command on a read-only connection writes the read alone (#1089 E6)", () => {
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379, readOnly: true }));
+
+    act(() => {
+      result.current.handleGenerateSelect(["/config/*"]);
+    });
+    act(() => {
+      result.current.handleTableClick(
+        ["/config/*"],
+        mock(() => {}),
+      );
+    });
+
+    // The click's read and its pieces, and nothing that writes: the same text the click opens.
+    expect(result.current.tabs[1].query).toBe(result.current.tabs[2].query);
+    expect(result.current.tabs[1].query).not.toContain("put ");
   });
 });
 

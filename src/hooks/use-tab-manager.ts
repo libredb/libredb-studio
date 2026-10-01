@@ -463,8 +463,9 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       // type-aware, and the sampled key type lives on the schema node's `type` column (#427).
       const table = schema.find((t) => pathKey(t.path) === key);
       const columns = columnsOverride ?? table?.columns ?? [];
+      // A group's readable pieces ride on its schema entry, and only the etcd arm reads them (#1089 4.7).
       const newQuery = capabilities
-        ? generateTableQuery(path, capabilities, columns)
+        ? generateTableQuery(path, capabilities, columns, { readRanges: table?.readRanges })
         : `SELECT * FROM ${path.join(".")};`;
 
       const newId = newLocalId();
@@ -505,8 +506,11 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       const table = schema.find((t) => pathKey(t.path) === key);
       const columns = table?.columns || [];
 
+      // The group's readable pieces and the connection's own mode, which only the etcd arm reads (#1089 6.4):
+      // on a read-only connection Generate Command writes the read alone.
+      const scope = { readRanges: table?.readRanges, readOnly: activeConnection?.readOnly === true };
       const newQuery = capabilities
-        ? generateSelectQuery(path, columns, capabilities)
+        ? generateSelectQuery(path, columns, capabilities, scope)
         : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${path.join(".")}\nWHERE 1=1\nLIMIT 100;`;
 
       const tabType = resolveTabType(capabilities);
@@ -525,7 +529,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       ]);
       setActiveTabId(newId);
     },
-    [metadata, schema],
+    [activeConnection, metadata, schema],
   );
 
   const handleGenerateCount = useCallback(

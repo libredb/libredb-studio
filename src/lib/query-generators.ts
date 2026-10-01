@@ -1,8 +1,8 @@
 import { declaredLevels } from "@/lib/db/object-kinds";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
-import { quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
+import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
-import { offersCountQuery, type ProviderCapabilities } from "@/lib/db/types";
+import { type ObjectReadRange, offersCountQuery, type ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
 /** Couchbase management port, the capability signal for the SQL++ dialect. */
@@ -249,6 +249,10 @@ function etcdGroupPrefix(name: string): string {
 /** The rows a generated etcd read asks for: the preview page the other arms read (#1089 6.4). */
 const ETCD_READ_LIMIT_FLAG = "--limit=50";
 
+/** The sample key's last segment and the sample value of Generate Command's write forms (#1089 6.4). */
+const ETCD_SAMPLE_NAME = "example";
+const ETCD_SAMPLE_VALUE = "value";
+
 /**
  * Whether a word holds a carriage return, which has no spelling on the etcd command line: the editor ends
  * a line at it, and the lexer's `quoteWord` throws for one. A read that names one is written as a txn
@@ -257,34 +261,122 @@ const ETCD_READ_LIMIT_FLAG = "--limit=50";
 const holdsCarriageReturn = (word: string): boolean => word.includes("\r");
 
 /**
- * One etcd request: the command, then the keys through `quote`, the word rule of the place the request
- * lands, then the flags; or, where a key begins with `-`, the flags, `--` and the keys, because etcdctl
- * reads a word that begins with `-` as a flag (#1089 6.4, R11 ETCD-6).
+ * One etcd request: the command, then its arguments through `quote`, the word rule of the place the
+ * request lands, then the flags; or, where an argument begins with `-`, the flags, `--` and the arguments,
+ * because etcdctl reads a word that begins with `-` as a flag (#1089 6.4, R11 ETCD-6).
  */
 function etcdRequest(
   command: string,
-  keys: readonly string[],
+  args: readonly string[],
   flags: readonly string[],
-  quote: (key: string) => string,
+  quote: (word: string) => string,
 ): string {
-  const words = keys.map(quote);
-  const dashed = keys.some((key) => key.startsWith("-"));
+  const words = args.map(quote);
+  const dashed = args.some((arg) => arg.startsWith("-"));
   return [command, ...(dashed ? [...flags, "--", ...words] : [...words, ...flags])].join(" ");
 }
 
-/** A key as a txn request word: bare when it is safe text, else Go-quoted (lexer.ts `quoteTxnWord`). */
-const etcdTxnWord = (key: string): string => quoteTxnWord(encodeKey(key));
+/** A word of a txn request: bare when it is safe text, else Go-quoted (lexer.ts `quoteTxnWord`). */
+const etcdTxnWord = (word: string): string => quoteTxnWord(encodeKey(word));
+
+/** A piece of a group's range as a get names it: its keys, and `--prefix` for a prefix (#1089 4.7). */
+function etcdPieceGet(piece: ObjectReadRange): { readonly keys: readonly string[]; readonly flags: readonly string[] } {
+  if ("key" in piece) return { keys: [piece.key], flags: [] };
+  if ("prefix" in piece) return { keys: [piece.prefix], flags: ["--prefix"] };
+  return { keys: [piece.start, piece.end], flags: [] };
+}
 
 /**
- * A read of the keys under `prefix` (#1089 6.4): `get <prefix> --prefix --limit=50` on the command line,
- * or, for a prefix holding a carriage return, a txn whose success list holds the Go-quoted get with no
- * `--limit`, since the provider sends a txn's ranged get with its own page size (#1089 5.1.4).
+ * The read of one piece (#1089 6.4): a get on the command line with the preview's `--limit`, or, where a
+ * key holds a carriage return, a txn whose success list holds the Go-quoted get with no `--limit`, since
+ * the provider sends a txn's ranged get with its own page size (#1089 5.1.4). The txn closes its success
+ * and failure lists with a blank line each, so no line below it is read as one of its requests.
  */
-function etcdPrefixRead(prefix: string): string {
-  if (holdsCarriageReturn(prefix)) {
-    return ["txn", "", etcdRequest("get", [prefix], ["--prefix"], etcdTxnWord), "", ""].join("\n");
+function etcdRead(piece: ObjectReadRange): string {
+  const { keys, flags } = etcdPieceGet(piece);
+  if (keys.some(holdsCarriageReturn)) {
+    return ["txn", "", etcdRequest("get", keys, flags, etcdTxnWord), "", ""].join("\n");
   }
-  return etcdRequest("get", [prefix], ["--prefix", ETCD_READ_LIMIT_FLAG], quoteWord);
+  return etcdRequest("get", keys, [...flags, ETCD_READ_LIMIT_FLAG], quoteWord);
+}
+
+/**
+ * A form written as comment lines (#1089 6.4): every physical line behind `# `, and a blank one as `#`, so a
+ * form that spans lines, a quoted key holding a newline or a txn, is commented on each of them and never
+ * leaves a runnable remainder.
+ */
+function etcdCommented(form: string): string {
+  return form
+    .split("\n")
+    .map((line) => (line === "" ? "#" : `# ${line}`))
+    .join("\n");
+}
+
+/**
+ * Blocks a blank line apart; a block that ends in a line break, the closed txn of `etcdRead`, already ends
+ * on a blank line, so it takes one line break more.
+ */
+function etcdBlocks(blocks: readonly string[]): string {
+  return blocks.reduce((text, block) => `${text}${text.endsWith("\n") ? "\n" : "\n\n"}${block}`);
+}
+
+/**
+ * What a tree click on an etcd group runs (#1089 6.4, 4.7): the read of the first piece this connection may
+ * read, the whole prefix where the listing named none, and each further piece as a commented read below it.
+ * A group whose every readable piece starts or ends at a key that is not UTF-8 text lists no piece
+ * (keyvalue/etcd/objects.ts `groupReadRanges`), and gets a note and no read.
+ */
+function etcdReadText(tableName: string, scope: GeneratorScope | undefined): string {
+  const [first, ...rest] = scope?.readRanges ?? [{ prefix: etcdGroupPrefix(tableName) }];
+  if (first === undefined) {
+    return `# No read is written for ${commentName(tableName)}: each part of it this connection may read starts or ends at a key that is not UTF-8 text.`;
+  }
+  return etcdBlocks([etcdRead(first), ...rest.map((piece) => etcdCommented(etcdRead(piece)))]);
+}
+
+/**
+ * The txn template of Generate Command (#1089 6.4): create the key where it does not exist, else read it.
+ * The compare's key is Go-quoted, as etcdctl's compare reads it, and each request word takes the txn rule.
+ */
+function etcdTxnTemplate(key: string): string {
+  return [
+    "txn",
+    `create(${quoteGoString(encodeKey(key))}) = "0"`,
+    "",
+    etcdRequest("put", [key, ETCD_SAMPLE_VALUE], [], etcdTxnWord),
+    "",
+    etcdRequest("get", [key], [], etcdTxnWord),
+  ].join("\n");
+}
+
+/**
+ * Generate Command's other forms (#1089 6.4), each on a sample key under the group's prefix: a put, a
+ * del, a watch of the prefix and the txn template. A prefix holding a carriage return has no command-line
+ * spelling, so the txn template, which spells it, is its one form. A prefix that begins with `-` gets no
+ * watch: on `watch`, a `--` introduces the command etcdctl runs for each event, so no watch of such a
+ * prefix parses.
+ */
+function etcdOtherForms(prefix: string): readonly string[] {
+  const key = `${prefix}${ETCD_SAMPLE_NAME}`;
+  const template = etcdTxnTemplate(key);
+  if (holdsCarriageReturn(prefix)) return [template];
+  return [
+    etcdRequest("put", [key, ETCD_SAMPLE_VALUE], [], quoteWord),
+    etcdRequest("del", [key], [], quoteWord),
+    ...(prefix.startsWith("-") ? [] : [etcdRequest("watch", [prefix], ["--prefix"], quoteWord)]),
+    template,
+  ];
+}
+
+/**
+ * Generate Command on an etcd group (#1089 6.4): the click's read, then the other forms as comments, so
+ * running the whole buffer runs the read and a write needs an edit first. On a read-only connection it is
+ * the read alone, with its pieces, and no form that writes (E6).
+ */
+function etcdCommandText(tableName: string, scope: GeneratorScope | undefined): string {
+  const read = etcdReadText(tableName, scope);
+  if (scope?.readOnly === true) return read;
+  return etcdBlocks([read, ...etcdOtherForms(etcdGroupPrefix(tableName)).map(etcdCommented)]);
 }
 
 /** A concrete example JSON scalar for a catalog column type (LibreDB column
@@ -478,6 +570,18 @@ function libredbNewlineNote(base: string): string | null {
 }
 
 /**
+ * What only the etcd arms of the two generators read (#1089, sections 3.3, 4.7 and 6.4), handed over by
+ * `useTabManager` from the schema entry and the active connection. Every other arm ignores it, so no other
+ * engine's text moves with it.
+ */
+export interface GeneratorScope {
+  /** The pieces of a group's range this connection may read, `DatabaseObject.readRanges`, where they do not cover it. */
+  readonly readRanges?: readonly ObjectReadRange[];
+  /** The active connection's public `readOnly`: Generate Command then writes the read alone (#1089 E6). */
+  readonly readOnly?: boolean;
+}
+
+/**
  * The statement behind "Select Top 50", the one a CLICK on a tree row runs (#789).
  *
  * It takes the object's PATH, because that is what addresses an object; `name` is what
@@ -501,11 +605,15 @@ function libredbNewlineNote(base: string): string | null {
  *
  * The PromQL branch writes the metric's selector and no bound at all (#1085): PromQL has no row
  * bound to write, and the provider caps the series it returns (#1085, section 5.4).
+ *
+ * `scope` is read by the etcd arm alone (#1089): a group's `readRanges`, so a user who is not root
+ * reads the first piece of the group they may read, and not the whole group etcd would refuse.
  */
 export function generateTableQuery(
   path: readonly string[],
   capabilities: ProviderCapabilities,
   columns?: readonly ColumnSchema[],
+  scope?: GeneratorScope,
 ): string {
   const tableName = objectSegment(path);
   // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL
@@ -537,9 +645,10 @@ export function generateTableQuery(
   }
   // etcd reads a group through an etcdctl command, not a MongoDB document: without this arm a tree
   // click would auto-execute a `find` the provider refuses (#1089, section 6.4). A row is one group,
-  // so the click reads its prefix, bounded by the command's own `--limit`.
+  // so the click reads its prefix, or the first piece of it this connection may read, bounded by the
+  // command's own `--limit`.
   if (capabilities.queryDialect === "etcd") {
-    return etcdPrefixRead(etcdGroupPrefix(tableName));
+    return etcdReadText(tableName, scope);
   }
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify(
@@ -686,11 +795,16 @@ function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): s
  * The PromQL branch is the exception, for the tree click's reason: PromQL has no bound to write,
  * so the text is the metric's selector, with the two range forms that widen it written as
  * comments above it (#1085).
+ *
+ * The etcd branch keeps the click's bound, the command's own `--limit`, and writes its other forms as
+ * comments below the read (#1089). `scope` is read by that branch alone: a group's `readRanges`, as
+ * for the click, and the connection's `readOnly`, under which it writes the read alone.
  */
 export function generateSelectQuery(
   path: readonly string[],
   columns: readonly ColumnSchema[],
   capabilities: ProviderCapabilities,
+  scope?: GeneratorScope,
 ): string {
   const tableName = objectSegment(path);
   // LibreDB: emit an explanatory cheatsheet — a use-case comment above each
@@ -712,6 +826,11 @@ export function generateSelectQuery(
   // the request, so none is written; the name goes through JSON.stringify with the rest.
   if (capabilities.queryDialect === "kafka") {
     return JSON.stringify({ topic: tableName, partition: 0, from: "earliest", limit: 50 }, null, 2);
+  }
+  // etcd (#1089, section 6.4): one runnable read on the first line, the click's, and the other forms as
+  // comments below it. A group's columns are the fixed shape of a get row, so none reaches the text.
+  if (capabilities.queryDialect === "etcd") {
+    return etcdCommandText(tableName, scope);
   }
   if (capabilities.queryLanguage === "json") {
     const projection: Record<string, number> = {};
