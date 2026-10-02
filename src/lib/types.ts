@@ -95,12 +95,22 @@ export type DatabaseType =
   // address plus TLS and an optional SASL credential, `saslMechanism` below naming how `user` and
   // `password` are checked; the client learns every other broker from the cluster's metadata.
   | "kafka"
+
   // etcd (#1089). A key-value store read and written over its gRPC API, the second member of the
   // `keyvalue/` family beside Redis. Its editor text is a subset of etcdctl's command line, so it
   // declares `queryLanguage: "json"` with a `queryDialect` of its own, as Redis does for its commands.
   // The connection is one endpoint plus TLS and an optional password; a client certificate names the
   // user where etcd's RBAC is on, and `readOnly` below is a mode its provider enforces.
-  | "etcd";
+  | "etcd"
+
+  // openGauss (#815). A PostgreSQL-wire engine whose authentication is its own: requests
+  // 10 and 11 mean SHA256 and MD5_SHA256 where PostgreSQL's mean SASL and its continuation,
+  // so the stock driver answers the wrong handshake ("Only mechanism(s) SCRAM-SHA-256 are
+  // supported") before a single query is sent. That handshake is code - and engines derived
+  // from openGauss share it, Huawei GaussDB and Vastbase among them - which is why this is
+  // a shipped type-id rather than a relative of `postgres`: its provider extends
+  // PostgresProvider and swaps only the authentication.
+  | "opengauss";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

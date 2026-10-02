@@ -53,9 +53,9 @@ export interface AgentEstimatingExplain {
 export type AgentComposedSqlDenyCode =
   /**
    * This dialect has no verified composition. `CATALOG_COMPOSERS` is the list, and it
-   * is the four engines of `AGENT_EXECUTION_ENGINES`: PostgreSQL, SQLite, DuckDB and
-   * SQL Server. Anything else is refused rather than served a statement nobody ran
-   * against that engine's catalog.
+   * is the five engines of `AGENT_EXECUTION_ENGINES`: PostgreSQL, SQLite, DuckDB, SQL
+   * Server and openGauss. Anything else is refused rather than served a statement
+   * nobody ran against that engine's catalog.
    */
   | "UNSUPPORTED_DIALECT"
   /** Blank, over-long, or carrying a character that cannot be safely quoted. */
@@ -553,6 +553,80 @@ function composePostgresStatistics(selector: AgentCatalogSelector): string {
 }
 
 /**
+ * openGauss's relation read (#815): the same inventory as PostgreSQL's, expanded
+ * without LATERAL and without `WITH ORDINALITY`.
+ *
+ * All three constructs the PostgreSQL composition leans on are refused by this
+ * engine's grammar, measured on 5.0.0: `WITH ORDINALITY` - "syntax error at or
+ * near \"WITH ORDINALITY\"", the multi-array `unnest` - "function unnest(integer[],
+ * integer[]) does not exist", and `LATERAL` itself - a syntax error even when
+ * uncorrelated ("at or near \"SELECT\""), with its implicit form (an SRF
+ * comma-joined against another table's column) answering "invalid reference to
+ * FROM-clause entry". What the engine does support is a set-returning function in
+ * a subquery's SELECT list over that subquery's OWN table, so the key pairing is
+ * expanded in a plain subquery over `pg_constraint`, joined back on `oid`, and the
+ * two key arrays are paired by SUBSCRIPT. `conkey` keeps its 1-based lower bound
+ * here exactly as on PostgreSQL (measured: `array_lower(conkey, 1)` = 1), which is
+ * what `c.conkey[k.ord]` relies on. Verified live against a composite foreign key:
+ * both of its pairs came back, in key order.
+ */
+function composeOpenGaussRelations(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT rn.nspname AS table_schema, rel.relname AS table_name, att.attname AS column_name, " +
+    "fn.nspname AS referenced_schema, frel.relname AS referenced_table, fatt.attname AS referenced_column " +
+    "FROM pg_constraint c " +
+    "JOIN pg_class rel ON rel.oid = c.conrelid " +
+    "JOIN pg_namespace rn ON rn.oid = rel.relnamespace " +
+    "JOIN pg_class frel ON frel.oid = c.confrelid " +
+    "JOIN pg_namespace fn ON fn.oid = frel.relnamespace " +
+    "JOIN (SELECT c0.oid AS c_oid, generate_subscripts(c0.conkey, 1) AS ord FROM pg_constraint c0) k " +
+    "ON k.c_oid = c.oid " +
+    "JOIN pg_attribute att ON att.attrelid = c.conrelid AND att.attnum = c.conkey[k.ord] " +
+    "JOIN pg_attribute fatt ON fatt.attrelid = c.confrelid AND fatt.attnum = c.confkey[k.ord] " +
+    "WHERE c.contype = 'f' AND " +
+    postgresSchemaExclusion("rn.nspname") +
+    ` AND ${postgresRelationExclusion("rn.nspname", "rel.relname")}` +
+    equalsClause("rn.nspname", selector.schema, "schema", "opengauss") +
+    equalsClause("rel.relname", selector.table, "table", "opengauss") +
+    " ORDER BY rn.nspname, rel.relname, k.ord"
+  );
+}
+
+/**
+ * openGauss's index read (#815): every key position as its own row, like the
+ * PostgreSQL read, expanded the way this engine can (the three refusals that
+ * forced the rewrite are on `composeOpenGaussRelations`).
+ *
+ * The subscript range differs from what PostgreSQL's `WITH ORDINALITY` yields:
+ * `indkey` is an `int2vector` whose lower bound is 0 here (measured on 5.0.0:
+ * `array_lower(indkey, 1)` = 0 and `generate_subscripts` yields 0..n-1), while
+ * `pg_get_indexdef`'s column number is 1-based - so the column it is asked for is
+ * `k.ord + 1` while the attribute lookup addresses `indkey[k.ord]`. Verified live
+ * against an expression index: `lower(name)`, named by `pg_get_indexdef`, came
+ * back as the first key and the plain `id` column second - the pair of facts this
+ * rewrite could otherwise get wrong silently.
+ */
+function composeOpenGaussIndexes(selector: AgentCatalogSelector): string {
+  return (
+    "SELECT n.nspname AS table_schema, t.relname AS table_name, i.relname AS index_name, " +
+    "ix.indisunique AS is_unique, ix.indisprimary AS is_primary, " +
+    "COALESCE(att.attname, pg_get_indexdef(ix.indexrelid, (k.ord + 1)::int, true)) AS column_name " +
+    "FROM pg_index ix " +
+    "JOIN pg_class t ON t.oid = ix.indrelid " +
+    "JOIN pg_class i ON i.oid = ix.indexrelid " +
+    "JOIN pg_namespace n ON n.oid = t.relnamespace " +
+    "JOIN (SELECT ix0.indexrelid AS ix_oid, generate_subscripts(ix0.indkey, 1) AS ord FROM pg_index ix0) k " +
+    "ON k.ix_oid = ix.indexrelid " +
+    "LEFT JOIN pg_attribute att ON att.attrelid = t.oid AND att.attnum = ix.indkey[k.ord] " +
+    `WHERE ${postgresSchemaExclusion("n.nspname")}` +
+    ` AND ${postgresRelationExclusion("n.nspname", "t.relname")}` +
+    equalsClause("n.nspname", selector.schema, "schema", "opengauss") +
+    equalsClause("t.relname", selector.table, "table", "opengauss") +
+    " ORDER BY n.nspname, t.relname, i.relname, k.ord"
+  );
+}
+
+/**
  * SQLite serves one schema, and a selector naming another is refused rather than
  * quietly read as `main`.
  */
@@ -970,6 +1044,17 @@ const CATALOG_COMPOSERS: Partial<
     indexes: composePostgresIndexes,
     statistics: composePostgresStatistics,
   },
+  // openGauss (#815): PostgreSQL's composition behind a different authentication
+  // handshake. The column and statistics reads ARE PostgreSQL's own (verified live on
+  // 5.0.0, with a table and a never-analysed table in the fixture); the relation and
+  // index reads are this engine's rewrites of the two forms its grammar has no rule
+  // for - each function carries its own measurements.
+  opengauss: {
+    columns: composePostgresCatalog,
+    relations: composeOpenGaussRelations,
+    indexes: composeOpenGaussIndexes,
+    statistics: composePostgresStatistics,
+  },
   sqlite: {
     columns: composeSqliteCatalog,
     relations: composeSqliteCatalog,
@@ -1019,8 +1104,10 @@ export function composeStatisticsAvailabilityProbe(dialect: DatabaseType): strin
 /**
  * The dialect's estimating EXPLAIN prefix. Every form here DESCRIBES without running:
  * PostgreSQL's `EXPLAIN` executes only with `ANALYZE`, SQLite's `EXPLAIN QUERY PLAN`
- * reports the plan the compiler produced, and DuckDB's `EXPLAIN (FORMAT JSON)` answers
- * the physical plan without touching a row.
+ * reports the plan the compiler produced, DuckDB's `EXPLAIN (FORMAT JSON)` answers
+ * the physical plan without touching a row, and openGauss (#815) shares PostgreSQL's
+ * spelling verbatim - measured on 5.0.0, `EXPLAIN (FORMAT JSON) SELECT 1` answered a
+ * plan and ran nothing.
  *
  * DuckDB's executing form is not merely unhelpful, it is a hazard: measured on v1.5.5,
  * `EXPLAIN ANALYZE` RUNS the statement (a probe table went from 0 rows to 1), and its
@@ -1030,6 +1117,7 @@ export function composeStatisticsAvailabilityProbe(dialect: DatabaseType): strin
  */
 const ESTIMATING_EXPLAIN_PREFIX: Partial<Record<DatabaseType, string>> = {
   postgres: "EXPLAIN (FORMAT JSON)",
+  opengauss: "EXPLAIN (FORMAT JSON)",
   sqlite: "EXPLAIN QUERY PLAN",
   duckdb: "EXPLAIN (FORMAT JSON)",
 };

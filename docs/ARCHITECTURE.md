@@ -117,6 +117,7 @@ classDiagram
     BaseDatabaseProvider <|-- LibreDBProvider
 
     SQLBaseProvider <|-- PostgresProvider
+    PostgresProvider <|-- OpenGaussProvider
     SQLBaseProvider <|-- MySQLProvider
     SQLBaseProvider <|-- SQLiteProvider
     SQLBaseProvider <|-- OracleProvider
@@ -138,6 +139,8 @@ Each provider implements:
 Adding a new database type requires: **1 provider class** + **1 entry in `db-ui-config.ts`**.
 
 `CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and declares its SQL-ness through `queryLanguage: 'sql'` instead. Being reached over HTTP is **not** the reason — `ClickHouseProvider`, `DruidProvider` and `TrinoProvider` add no driver either, and all three extend `SQLBaseProvider`, because double-quoted identifiers are correct in each dialect. Each driver-free provider is a directory rather than a single file, with its wire format behind a transport seam that provider logic never bypasses. Trino inherits everything except the limiter: its grammar is `[ OFFSET count ] [ LIMIT count ]` and only that way round, so `prepareQuery()` transposes the clause the shared limiter emits. See [`docs/providers/couchbase.md`](providers/couchbase.md), [`clickhouse.md`](providers/clickhouse.md), [`druid.md`](providers/druid.md) and [`trino.md`](providers/trino.md).
+
+`OpenGaussProvider` is the first provider to extend ANOTHER provider rather than a base class: its engine speaks the PostgreSQL wire but authenticates with requests 10 and 11, which PostgreSQL numbers as SASL and its continuation, so everything behind the handshake is inherited and only the pool config (a socket that answers those two requests, `src/lib/db/providers/sql/opengauss-socket.ts`) and the engine name are overridden. See [`docs/providers/opengauss.md`](providers/opengauss.md).
 
 ## 4. Key Architectural Patterns
 

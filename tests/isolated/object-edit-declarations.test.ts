@@ -1,7 +1,8 @@
 /**
  * The fleet census of object EDIT declarations (#789 Phase 3).
  *
- * WHY THIS FILE EXISTS. Phase 3 makes four (type-id, kind) pairs editable and leaves every other
+ * WHY THIS FILE EXISTS. Phase 3 makes four (type-id, kind) pairs editable - six since openGauss
+ * inherited the PostgreSQL pair (#815), seven once etcd added its key (#1089) - and leaves every other
  * type-id declaring nothing, and both halves are claims about the BUILD. The expectation they
  * are measured against is `tests/helpers/object-edit-expectation.ts`, committed in wave 1 before
  * any provider declared anything and transcribed from the design's day-one table. It was never
@@ -114,7 +115,7 @@ const ROOT = path.resolve(import.meta.dir, "../..");
 const EDIT_SECTION_HEADING = /^#{1,6} .*Object edit \(#789\)/m;
 
 describe("the fleet census of object edit declarations", () => {
-  test("exactly five (type-id, kind) pairs declare acceptsSourceEdits", async () => {
+  test("exactly seven (type-id, kind) pairs declare acceptsSourceEdits", async () => {
     const measured: string[] = [];
     for (const type of EDIT_CENSUS_TYPES) {
       const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);

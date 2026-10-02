@@ -376,6 +376,12 @@ describe("hashRunIsAmbiguous", () => {
  */
 const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   postgres: "established",
+  // All five facts probed over the wire on 5.0.0, each mirroring the probe quoted on
+  // `POSTGRES_GRAMMAR`/`DUCKDB_GRAMMAR`, and none has diverged from PostgreSQL's (#815):
+  // `#` is code, `[1,2][1]` is refused while `(ARRAY[1,2])[1]` answers 1, the nested
+  // comment run continues, `q'[x]'` is `type "q" does not exist`, and `//` is an
+  // operator (`integer // integer` has no implementation).
+  opengauss: "established",
   mysql: "established",
   sqlite: "established",
   // Re-measured over Hrana rather than inherited from the row above: all four facts
@@ -436,6 +442,9 @@ describe("every database type has a recorded grammar decision", () => {
 
 const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   postgres: true,
+  // SQL, and the statement text is what the editor sends: the provider extends
+  // PostgresProvider, which extends SQLBaseProvider (#815).
+  opengauss: true,
   mysql: true,
   sqlite: true,
   libsql: true,

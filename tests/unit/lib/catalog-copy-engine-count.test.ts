@@ -86,6 +86,14 @@ const NUMERAL_WORDS: Record<string, number> = {
   twenty: 20,
 };
 
+/** The engine count spelled as a word, derived from NUMERAL_WORDS rather than written
+ * out, so this file does not have to be edited again when an engine is added. */
+function numeralWord(count: number): string {
+  const word = Object.entries(NUMERAL_WORDS).find(([, n]) => n === count)?.[0];
+  if (word === undefined) throw new Error(`no numeral word for ${count}`);
+  return word[0].toUpperCase() + word.slice(1);
+}
+
 /**
  * Only "N engines" and "N database engines" count. Any other qualifier narrows the noun
  * to a subset of the product - "the two search engines accept no mutation" is a true
@@ -257,7 +265,7 @@ describe("the gate fails the copy it exists to catch", () => {
 
   test("an English numeral is read as well as a digit", () => {
     expect(engineCountProblems("Query fourteen engines from your browser.", "fixture")).toHaveLength(1);
-    expect(engineCountProblems(`Nineteen database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
+    expect(engineCountProblems(`${numeralWord(expected)} database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
   });
 
   test("a deliberately abridged list is checked on its numeral only", () => {

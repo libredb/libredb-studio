@@ -71,6 +71,7 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   couchbase: unconnected("couchbase"),
   prometheus: unconnected("prometheus"),
   kafka: unconnected("kafka"),
+  opengauss: unconnected("opengauss"),
   // No field beyond UNCONNECTED (#1089 3.1): the provider validates nothing in its constructor, so its
   // declarations answer for this connection whatever it holds.
   etcd: unconnected("etcd"),

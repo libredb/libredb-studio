@@ -28,12 +28,13 @@ Three properties frame everything below, and each of them is load-bearing rather
   ([`tools.ts`](../src/lib/agent/tools.ts)) is its only production call site, and the editor's
   `/api/db/query` reaches the provider directly in `POST()`
   ([`query/route.ts`](../src/app/api/db/query/route.ts)).
-- **Agent mode requires PostgreSQL, SQLite, DuckDB or SQL Server — except the `operations` workflow,
+- **Agent mode requires PostgreSQL, SQLite, DuckDB, SQL Server or openGauss — except the `operations` workflow,
   which runs anywhere.** They are the only providers implementing `queryReadOnly`:
   [`postgres.ts`](../src/lib/db/providers/sql/postgres.ts),
   [`sqlite.ts`](../src/lib/db/providers/sql/sqlite.ts),
-  [`duckdb/index.ts`](../src/lib/db/providers/sql/duckdb/index.ts) and
-  [`mssql.ts`](../src/lib/db/providers/sql/mssql.ts), so on any other engine an
+  [`duckdb/index.ts`](../src/lib/db/providers/sql/duckdb/index.ts),
+  [`mssql.ts`](../src/lib/db/providers/sql/mssql.ts) and
+  [`opengauss.ts`](../src/lib/db/providers/sql/opengauss.ts), so on any other engine an
   agent-mode run whose workflow sends a statement is
   **refused when it is started**: `POST /api/agent/runs` answers `400` with the posture's own
   paragraph before a run id exists or a model turn is spent (#512). The provider factory's gate sits
@@ -1107,8 +1108,8 @@ storage pressure — and it is the one workflow that is **not** built on the rea
 | `inspect_operations`, `recommend_change`, `compose_report` | `inspect_schema`, `run_read_query`, `inspect_plan`, `profile_table`, `compare_plans` |
 
 **Everything it leaves out is left out for one reason: those tools send SQL.** All three read-class
-tools reach the database through `provider.queryReadOnly`, which only PostgreSQL, SQLite, DuckDB and
-SQL Server implement, so offering any of them here would reintroduce — tool by tool — the exact engine
+tools reach the database through `provider.queryReadOnly`, which only PostgreSQL, SQLite, DuckDB,
+SQL Server and openGauss implement, so offering any of them here would reintroduce — tool by tool — the exact engine
 restriction this workflow exists to escape. `compare_plans` is left out because it names two
 `inspect_plan` artifacts this run cannot produce: a tool that could only ever refuse is worse than
 no tool.
@@ -2560,6 +2561,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect: five of the twenty
 ├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the twenty
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings

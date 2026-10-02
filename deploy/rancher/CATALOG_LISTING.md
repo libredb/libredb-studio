@@ -15,7 +15,7 @@ The import takes the page title from `appVersion` and the chart version from `ve
 Edits here do not propagate automatically — SUSE owns the page, so any change has to be mailed to the partner contact.
 What gets mailed is `pcsc-listing.html` beside this file, not the sections below: the page template holds at most 1494 characters including the list markup, and `tests/unit/pcsc-listing.test.ts` keeps that file under it.
 
-> **Accuracy gate: engine count.** The wording below says nineteen engines. That is true only
+> **Accuracy gate: engine count.** The wording below says twenty engines. That is true only
 > from the release that carries **etcd** ([#1089](https://github.com/libredb/libredb-studio/issues/1089)), which followed Apache Kafka; eighteen is true of a release that carries **Apache Kafka** ([#1088](https://github.com/libredb/libredb-studio/issues/1088)) and not etcd, if one is cut, which followed Prometheus; seventeen is true of a release that carries **Prometheus** ([#1085](https://github.com/libredb/libredb-studio/issues/1085)) and not Kafka, if one is cut,
 > which followed DuckDB; sixteen was true from the release that carried **DuckDB**
 > ([#424](https://github.com/libredb/libredb-studio/issues/424)), which followed libSQL, and fourteen from **0.13.0** onwards, the release that carried
@@ -101,7 +101,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > names. Read the number from `SHIPPED` when a tag carries it, and see BACKLOG D39 - nothing
 > counts these lists, which is why three PRs in a row have corrected them by hand.
 > The AUR package is one ahead as CapRover and Railway are: `packaging/aur/PKGBUILD` and its `.SRCINFO` pin `pkgver=0.17.0`, whose payload has eighteen engines and no etcd, and say nineteen from the merge of #1089, because `tests/unit/lib/catalog-copy-engine-count.test.ts` counts the `pkgdesc` line on `main` too.
-> Its first import is a hand push of those files (`packaging/aur/README.md`, Releases), so one made from `main` after that merge lists 0.17.0 as nineteen engines: push it before the merge, or render the `PKGBUILD` with `scripts/render-aur-pkgbuild.mjs` for the release that carries etcd, regenerate `.SRCINFO` from that render with `makepkg --printsrcinfo > .SRCINFO`, since the script writes the `PKGBUILD` alone, and push both.
+> Its first import is a hand push of those files (`packaging/aur/README.md`, Releases), so one made from `main` after that merge lists 0.17.0 as twenty engines: push it before the merge, or render the `PKGBUILD` with `scripts/render-aur-pkgbuild.mjs` for the release that carries etcd, regenerate `.SRCINFO` from that render with `makepkg --printsrcinfo > .SRCINFO`, since the script writes the `PKGBUILD` alone, and push both.
 > `packaging/winget`, `packaging/chocolatey` and `packaging/homebrew` carry **no number** in
 > their summaries - nothing regenerates them from the registry, so any digit there is stale the
 > day the next engine lands (issue #445) - but their exhaustive descriptions still name every
@@ -133,14 +133,14 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 LibreDB Studio is an MIT-licensed, AI-assisted open source SQL IDE that connects to
 PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
 ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra,
-Prometheus, Apache Kafka and etcd directly from the browser.
+Prometheus, Apache Kafka, openGauss and etcd directly from the browser.
 
 ## Long description
 
 LibreDB Studio brings a full SQL IDE to Rancher-managed Kubernetes clusters: browse
 schemas and run queries across PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB,
 MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino,
-Apache Cassandra, Prometheus, Apache Kafka and etcd from a single web interface, with no desktop
+Apache Cassandra, Prometheus, Apache Kafka, openGauss and etcd from a single web interface, with no desktop
 client to install. Editing
 data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL,
 Oracle, SQL Server, SQLite, libSQL and DuckDB, table creation on those seven and Trino, and
@@ -165,9 +165,9 @@ versions are documented and validated for every release.
 
 ## Key features (bullet form, if the catalog template asks for them)
 
-- Nineteen database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
+- Twenty database engines in one browser-based IDE: PostgreSQL, MySQL, Oracle,
   SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
-  Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd
+  Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, openGauss and etcd
 - One-click install from the Rancher Apps catalog — deployable with default values,
   zero configuration required
 - Optional AI assistance (Gemini, OpenAI, or a self-hosted model; off by default):
@@ -191,7 +191,7 @@ partner contact rather than sending them one at a time.
 |---|---|---|
 | Version | LibreDB Studio 0.9.44 | 0.13.5 when this row was written, with the release link pointing at <https://github.com/libredb/libredb-studio/releases/tag/0.13.5>; resolved by the weekly import, which carries 0.16.2 as of 2026-09-23 (the note of that date below) |
 | Key features | "Seven database engines" | sixteen while the page carries a release before Prometheus, 0.16.2 as of 2026-09-23, seventeen from a release that carries Prometheus (#1085) and not Kafka, eighteen from a release that carries Apache Kafka (#1088) and not etcd, and nineteen, the wording in this file, from the release that carries etcd (#1089) |
-| Short and long description | the pre-0.11.0 revision, which names seven engines and an AI that writes SQL from natural language | until the page carries the release with Prometheus, the sixteen-engine body at 06a4cb11 (`git show 06a4cb11:deploy/rancher/pcsc-listing.html`); from a release with Prometheus and not Kafka, the seventeen-engine body at 8dfdfcce; from a release with Kafka and not etcd, the eighteen-engine body at 2ddb99c9; from the release with etcd, `pcsc-listing.html` as it stands, nineteen engines. No natural-language-to-SQL claim either way: that feature was removed from the product |
+| Short and long description | the pre-0.11.0 revision, which names seven engines and an AI that writes SQL from natural language | until the page carries the release with Prometheus, the sixteen-engine body at 06a4cb11 (`git show 06a4cb11:deploy/rancher/pcsc-listing.html`); from a release with Prometheus and not Kafka, the seventeen-engine body at 8dfdfcce; from a release with Kafka and not etcd, the eighteen-engine body at 2ddb99c9; from the release with etcd, `pcsc-listing.html` as it stands, twenty engines. No natural-language-to-SQL claim either way: that feature was removed from the product |
 | Hardware Architecture | x86-64 | x86-64 and Arm64 (`ghcr.io/libredb/libredb-studio` is linux/amd64 + linux/arm64) |
 
 Two open questions for the same mail: whether the version field can track the latest

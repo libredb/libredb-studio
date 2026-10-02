@@ -641,9 +641,11 @@ describe("createDatabaseProvider", () => {
       if (declared === true) declaringTypes.push(type);
     }
 
-    // The positive half, pinned by name: exactly four providers hold a transaction
-    // session, so a fifth (or a lost one) fails here and not only in the loop above.
-    expect(declaringTypes.sort()).toEqual(["mssql", "mysql", "oracle", "postgres"]);
+    // The positive half, pinned by name: exactly five providers hold a transaction
+    // session, so a sixth (or a lost one) fails here and not only in the loop above.
+    // openGauss is the fifth and holds PostgreSQL's (#815): the same engine behind a
+    // different authentication handshake, so nothing about transactions changes.
+    expect(declaringTypes.sort()).toEqual(["mssql", "mysql", "opengauss", "oracle", "postgres"]);
   });
 });
 

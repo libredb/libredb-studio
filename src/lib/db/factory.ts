@@ -252,6 +252,12 @@ export async function createDatabaseProvider(
       return new KafkaProvider(connection, options);
     }
 
+    // The PostgreSQL wire with authentication of its own (#815) - dynamically imported
+    case "opengauss": {
+      const { OpenGaussProvider } = await import("./providers/sql/opengauss");
+      return new OpenGaussProvider(connection, options, execution);
+    }
+
     // Embedded databases - dynamically imported
     case "libredb": {
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
@@ -263,7 +269,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, prometheus, kafka, opengauss, etcd, libredb`,
         connection.type,
       );
   }
@@ -687,8 +693,8 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
  * statements, so it is served only where the engine itself can bound one, and only
- * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB
- * and SQL Server (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB,
+ * SQL Server and openGauss (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

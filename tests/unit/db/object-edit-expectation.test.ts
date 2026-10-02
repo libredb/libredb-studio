@@ -15,11 +15,11 @@ describe("the Phase 3 census expectation", () => {
     expect([...declaring, ...abstaining].sort()).toEqual([...EDIT_CENSUS_TYPES].map(String).sort());
   });
 
-  test("the set is five pairs on four engines, etcd's key the fifth (#1089)", () => {
-    expect(EXPECTED_EDITABLE_KINDS.length).toBe(5);
-    expect(new Set(EXPECTED_EDITABLE_KINDS.map(([type]) => type)).size).toBe(4);
+  test("the set is seven pairs on five engines, etcd's key and openGauss's two the rest (#1089, #815)", () => {
+    expect(EXPECTED_EDITABLE_KINDS.length).toBe(7);
+    expect(new Set(EXPECTED_EDITABLE_KINDS.map(([type]) => type)).size).toBe(5);
     expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(16);
-    expect(EDIT_CENSUS_TYPES.length).toBe(20);
+    expect(EDIT_CENSUS_TYPES.length).toBe(21);
   });
 
   test("no pair is written twice", () => {

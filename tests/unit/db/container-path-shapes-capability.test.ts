@@ -29,6 +29,8 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   Record<DatabaseType, NonNullable<ProviderCapabilities["containerPathShapes"]> | "absent">
 > = Object.freeze({
   postgres: "exact",
+  // The PostgreSQL provider's value, inherited with the rest (#815).
+  opengauss: "exact",
   mysql: "exact",
   sqlite: "exact",
   libsql: "exact",
@@ -108,6 +110,18 @@ function unknownTypeIds(files: readonly string[]): Array<[string, string]> {
     .filter(([, name]) => !(TYPES as readonly string[]).includes(name));
 }
 
+/**
+ * Providers that declare a container-path value WITHOUT calling `assertContainerPathShape`
+ * themselves, paired with the caller whose check gives it to them.
+ *
+ * openGauss is the first provider to extend another provider rather than a base class
+ * (#815): the check and the declaration are inherited together with the rest of the
+ * PostgreSQL path, so its file never spells the call and the scan cannot see it. The pair
+ * is checked both ways in the test below - the parent must be a scanned caller and the
+ * child's file must really extend its provider - so it cannot go stale in silence.
+ */
+const INHERITED_CHECK: ReadonlyArray<readonly [child: string, parent: string]> = [["opengauss", "postgres"]];
+
 describe("the declaration follows the check (#1147)", () => {
   test("a caller in a layout the census cannot map is named with the name it mapped to", () => {
     const providers = path.join(SRC, "lib/db/providers");
@@ -132,9 +146,16 @@ describe("the declaration follows the check (#1147)", () => {
     );
     expect(unknownTypeIds(callerFiles)).toEqual([]);
     const callers = callerFiles.map(providerTypeId).sort();
+    const inherited = INHERITED_CHECK.map(([child, parent]) => {
+      expect(callers).toContain(parent);
+      const childFile = path.join(SRC, "lib/db/providers/sql", `${child}.ts`);
+      const parentClass = `${parent.charAt(0).toUpperCase()}${parent.slice(1)}Provider`;
+      expect(fs.readFileSync(childFile, "utf8")).toContain(`extends ${parentClass}`);
+      return child;
+    }).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
     expect(callers).toHaveLength(15);
-    expect(callers).toEqual(declaring);
+    expect([...callers, ...inherited].sort()).toEqual(declaring);
   });
 });
 

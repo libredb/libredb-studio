@@ -71,6 +71,12 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
   // once a gate-4 probe has measured one, never because the protocol answers.
   kafka: true,
+  // openGauss (#815): its own provider, doc page and integration test. Not a relative below,
+  // and the distinction is the point: it needs CODE. Its authentication requests 10 and 11 are
+  // SHA256 and MD5_SHA256 where PostgreSQL's are the SASL pair, so the stock driver answers the
+  // wrong handshake before a query is sent - which is also why the engines derived from it
+  // (Huawei GaussDB, Vastbase among them) share this id rather than each getting a row there.
+  opengauss: true,
   // etcd (#1089): its own provider, doc and integration test, and the second member of the `keyvalue/`
   // family. kine and Xline speak etcd's API and are recorded below as relatives only once a gate-4
   // probe has measured each, never because the API answers.
@@ -125,6 +131,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   prometheus: true,
   // A cluster the user already runs, reached over the Kafka protocol.
   kafka: true,
+  // A server the user already runs, reached over the PostgreSQL wire (#815).
+  opengauss: true,
   // A cluster the user already runs, reached over etcd's gRPC API.
   etcd: true,
   // The one false entry. SQLite is a file rather than a server and is still
@@ -186,6 +194,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   kafka: false,
   // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
   // and maintenance operation before any request while the mode holds.
+  // openGauss is a full read/write engine, the PostgreSQL wire with its own handshake
+  // rather than a different surface (#815).
+  opengauss: false,
   etcd: true,
   libredb: false,
 });
@@ -222,6 +233,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   kafka: true,
   // The one engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and
   // a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  // openGauss speaks the same PostgreSQL MCP surface, only its handshake differs (#815).
+  opengauss: true,
   etcd: false,
   libredb: true,
 });

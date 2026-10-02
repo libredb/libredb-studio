@@ -1,11 +1,11 @@
 # LibreDB Studio
 
-LibreDB Studio is an MIT-licensed, AI-assisted open source SQL IDE that connects to nineteen database engines directly from the browser.
+LibreDB Studio is an MIT-licensed, AI-assisted open source SQL IDE that connects to twenty database engines directly from the browser.
 
 Use cases:
 
 * Browser-based database management
-  * Browse schemas and run queries across nineteen engines: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka and etcd. Editing data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL and DuckDB, and everywhere else the controls are reported as unsupported rather than offered and then failed.
+  * Browse schemas and run queries across twenty engines: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, openGauss and etcd. Editing data follows the engine rather than the IDE: inline row editing on PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL and DuckDB, and everywhere else the controls are reported as unsupported rather than offered and then failed.
 * AI-assisted querying
   * An optional AI assistant (bring your own key: Gemini, OpenAI, or a local model) explains a query in plain English from the engine's own EXPLAIN plan, on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid and Trino. It also runs a read-only investigation agent on PostgreSQL, SQLite, DuckDB and SQL Server that never writes: the database, not the IDE, is what refuses writes and DDL. It stays off unless you configure a provider.
 * Self-hosted data

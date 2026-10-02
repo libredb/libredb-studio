@@ -235,7 +235,7 @@ first day.
 `sqlite.ts` implements `queryReadOnly` by setting `query_only` and verifying the readback, per
 statement — that is what refuses `VACUUM INTO '<path>'` from a read-only handle. libSQL has no such
 lever: the pragma is refused on both deployments. So this provider implements **no** `queryReadOnly`,
-and the agent read-only profile stays PostgreSQL, SQLite, DuckDB and SQL Server.
+and the agent read-only profile stays PostgreSQL, SQLite, DuckDB, SQL Server and openGauss.
 
 That is a gap with an engine-side answer when it is wanted: Turso mints **read-only tokens**
 (`turso db tokens create --read-only`) and the API can `block_writes` on a database. Both are

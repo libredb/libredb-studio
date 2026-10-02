@@ -14,8 +14,8 @@ It is off by default.
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
     It works on every engine but etcd: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
   - `run_read_query` runs one read-only statement: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
-    Runs on PostgreSQL, SQLite, DuckDB and SQL Server; other engines refuse it, so use inspect_schema there.
-- Read-only is the database's own enforcement, not a filter over SQL text: `run_read_query` takes the connection under Studio's agent read-only execution profile and runs through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, and SQL Server by verifying the principal cannot write.
+    Runs on PostgreSQL, SQLite, DuckDB, SQL Server and openGauss; other engines refuse it, so use inspect_schema there.
+- Read-only is the database's own enforcement, not a filter over SQL text: `run_read_query` takes the connection under Studio's agent read-only execution profile and runs through the provider's read-only statement path, which PostgreSQL and openGauss enforce with a read-only transaction, SQLite and DuckDB with a read-only open, and SQL Server by verifying the principal cannot write.
   A statement check runs first as defence in depth.
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.
 
@@ -93,8 +93,8 @@ A SQLite seed's `database` is an absolute path on the machine running Studio, an
 The built-in sample connections are never visible to an MCP client.
 An empty `list_connections` answer means no connection is opted in for your token's role: an operator adds `mcp: true` to a seed connection.
 
-`run_read_query` refuses a PostgreSQL or SQL Server connection whose own login could do more than read, so an opted-in seed for those engines needs a least-privilege principal.
-On PostgreSQL the seed's role must not be a superuser and must not hold `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`.
+`run_read_query` refuses a PostgreSQL, openGauss or SQL Server connection whose own login could do more than read, so an opted-in seed for those engines needs a least-privilege principal.
+On PostgreSQL the seed's role must not be a superuser and must not hold `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`. On openGauss it must be neither a superuser nor a system administrator.
 On SQL Server the login must hold no fixed server role, neither `CONTROL SERVER` nor `ADMINISTER BULK OPERATIONS`, and none of `db_owner`, `db_accessadmin`, `db_securityadmin`, `db_ddladmin`, `db_backupoperator` or `db_datawriter`, and it must be granted `SHOWPLAN`.
 A seed entry cannot carry a separate agent credential, so the fix is the seed's own login; `inspect_schema` has no such requirement.
 

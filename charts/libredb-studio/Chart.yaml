@@ -1,6 +1,6 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting nineteen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka and etcd
+description: Web-based SQL IDE for cloud-native teams supporting twenty engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka and openGauss and etcd
 type: application
 version: 0.1.73
 appVersion: "0.17.0"

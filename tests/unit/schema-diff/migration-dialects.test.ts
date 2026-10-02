@@ -15,6 +15,9 @@ function diff(table: Partial<TableDiff>): SchemaDiff {
 // silently inherit PostgreSQL's statements. Null means there is no table DDL.
 const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   postgres: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
+  // Both statements were run against a live 5.0.0 server and accepted (#815); the row
+  // is what the PostgreSQL arm emits, measured rather than assumed.
+  opengauss: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
   mysql: ["ADD COLUMN `extra` integer;", "DROP COLUMN `old`;"],
   mssql: ["ADD [extra] integer;", "DROP COLUMN [old];"],
   oracle: ['ADD ("extra" integer);', 'DROP COLUMN "old";'],

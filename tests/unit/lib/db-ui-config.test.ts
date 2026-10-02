@@ -39,6 +39,7 @@ const ALL_TYPES: DatabaseType[] = [
   "duckdb",
   "prometheus",
   "kafka",
+  "opengauss",
   "etcd",
 ];
 
@@ -375,15 +376,32 @@ describe("db-ui-config", () => {
       return match[1].replace(/\/index$/, "");
     };
 
-    const providerSource = (type: DatabaseType): string => {
-      const base = path.join(ROOT, "src/lib/db/providers", moduleForType(type));
-      const files = existsSync(`${base}.ts`)
-        ? [`${base}.ts`]
-        : readdirSync(base, { recursive: true, encoding: "utf8" })
-            .map((entry) => path.join(base, entry))
-            .filter((entry) => entry.endsWith(".ts"));
-      const source = files.map((file) => readFileSync(file, "utf8")).join("\n");
-      return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    /**
+     * Every module the factory names for `type`, PLUS the provider its class extends when
+     * that base is another type-id's - openGauss extends `PostgresProvider` (#815), and the
+     * fields its PostgreSQL path reads are as much part of the written connection as the
+     * ones its own file spells. A base class (`SQLBaseProvider`, the search ids' shared
+     * `SearchProvider`) lowercases to no type-id and stops the walk, as does a type already
+     * visited.
+     */
+    const providerSource = (type: DatabaseType, visited: ReadonlySet<DatabaseType> = new Set()): string => {
+      const readModule = (module: string): string => {
+        const base = path.join(ROOT, "src/lib/db/providers", module);
+        const files = existsSync(`${base}.ts`)
+          ? [`${base}.ts`]
+          : readdirSync(base, { recursive: true, encoding: "utf8" })
+              .map((entry) => path.join(base, entry))
+              .filter((entry) => entry.endsWith(".ts"));
+        return files.map((file) => readFileSync(file, "utf8")).join("\n");
+      };
+      const source = readModule(moduleForType(type))
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      const baseName = /extends\s+(\w+?)Provider\b/.exec(source)?.[1]?.toLowerCase();
+      if (baseName === undefined || !(ALL_TYPES as readonly string[]).includes(baseName)) return source;
+      const parent = baseName as DatabaseType;
+      if (visited.has(parent)) return source;
+      return `${source}\n${providerSource(parent, new Set([...visited, type]))}`;
     };
 
     test("the factory names a readable module for every type", () => {
@@ -626,6 +644,11 @@ describe("db-showcase", () => {
         // a Kubernetes control plane keeps its state in, met beside the databases rather than as one of them.
         "etcd",
         "libsql",
+        // Behind libSQL and ahead of the embedded store (#815): the newest name on the
+        // page, and the one a reader outside the banking and public-sector installations
+        // openGauss is built for meets here for the first time - but it is a database
+        // somebody already runs, not a product of ours.
+        "opengauss",
         "libredb",
       ]);
     });

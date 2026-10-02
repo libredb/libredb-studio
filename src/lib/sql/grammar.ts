@@ -192,6 +192,32 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // syntax error. `SELECT 1 AS a // note` is "syntax error at or near \"//\"".
   doubleSlashComment: false,
 };
+
+/**
+ * openGauss 5.0.0, every fact probed over the wire against a live server, each probe
+ * mirroring the one quoted on `POSTGRES_GRAMMAR` (the engine is a PostgreSQL 9.2 fork,
+ * and no fact has diverged). A separate object from `POSTGRES_GRAMMAR` rather than a
+ * shared one, for the reason the DuckDB row gives: sharing would say the two move
+ * together, and a fork is free to move.
+ */
+const OPENGAUSS_GRAMMAR: SqlGrammar = {
+  // CODE: `SELECT 1 AS a # note` is `syntax error at or near "#"`, so the rest of the
+  // line is not hidden.
+  hash: "code",
+  // A SUBSCRIPT, not a name quote: `(ARRAY[1,2])[1]` answers 1 while bare `[1,2][1]`
+  // is a syntax error, so the brackets index an array rather than quote a name.
+  bracket: "subscript",
+  // NESTING: the same run the DuckDB row's probe describes runs here too - the inner
+  // closer did not end the comment.
+  blockComment: "nesting",
+  // `SELECT q'[x]' AS a` is `type "q" does not exist` - the `q` was read as a type
+  // name, so the form is not in the grammar.
+  alternateQuoting: false,
+  // `SELECT 1 // 2` is `operator does not exist: integer // integer`, and
+  // `SELECT 1 AS a // note` is `syntax error at or near "//"`: an operator, not a
+  // comment.
+  doubleSlashComment: false,
+};
 /**
  * DuckDB, every fact measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4.
  *
@@ -564,6 +590,7 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   mysql: MYSQL_GRAMMAR,
   clickhouse: CLICKHOUSE_GRAMMAR,
   postgres: POSTGRES_GRAMMAR,
+  opengauss: OPENGAUSS_GRAMMAR,
   oracle: ORACLE_GRAMMAR,
   mssql: MSSQL_GRAMMAR,
   sqlite: SQLITE_GRAMMAR,

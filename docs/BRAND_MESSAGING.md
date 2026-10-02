@@ -84,8 +84,9 @@ This is the sharpest of the three. It is the one claim no competitor can current
 
 - **Audience:** teams running more than one kind of database, and the engineers who join them.
 - **Pain:** four databases, four clients, four sets of credentials, and a connection-string hunt for anyone new.
-- **Promise:** nineteen engines in one interface, with the same exploration everywhere, and ER diagrams, schema diff and monitoring wherever the engine has something to show. (Not "across all of them": a search cluster declares no foreign keys, so its ER diagram has no edges, and item 4 below forbids the sentence that hides that.)
-- **Proof:** nineteen providers, each with its own reference document under `docs/providers/`.
+- **Promise:** twenty engines in one interface, with the same exploration everywhere, and ER diagrams, schema diff and monitoring wherever the engine has something to show. (Not "across all of them": a search cluster declares no foreign keys, so its ER diagram has no edges, and item 4 below forbids the sentence that hides that.)
+- **Proof:** twenty type-ids served by eighteen provider modules, each with its own reference document under `docs/providers/`.
+- **Proof:** twenty providers, each with its own reference document under `docs/providers/`.
 - **Difference:** CloudBeaver Community bundles 18 driver modules and every one of them is SQL. MongoDB and Redis are not among them.
 
 The claim here is the span, never the count. See the honesty limits.
@@ -124,7 +125,8 @@ Facts drift. Provider counts, channel counts and competitor editions all change,
 
 | Claim | Evidence | Source | Verified |
 | :--- | :--- | :--- | :--- |
-| Nineteen database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd. A twentieth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id: read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-09-23 |
+| Twenty database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, openGauss. A twentieth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id: read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-09-23 |
+| Twenty database engines | One reference document per engine: PostgreSQL, MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd. A twentieth, `libredb.md`, is the embedded provider and is not an external engine. The count is derived, not written: `SHIPPED` in `src/lib/db/compatibility.ts` is an exhaustive record over `DatabaseType`, so the compiler refuses a missing id: read the count from there, minus `libredb` | `docs/providers/`, `src/lib/db/compatibility.ts` | 2026-09-23 |
 | Published as an embeddable npm package | `"name": "@libredb/studio"`, version 0.16.1 | `package.json` | 2026-09-19 |
 | MIT licensed | "MIT License / Copyright (c) 2025 LibreDB" | `LICENSE` | 2026-08-07 |
 | 42 distribution channels, 34 live | "42 channels · 34 live · 7 pending · 1 deprecated" | `docs/CHANNELS.md` | 2026-10-01 |
@@ -223,7 +225,7 @@ An engineer speaking to an engineer.
 - Claim plus proof. Never adjective plus adjective.
 - No emoji. No exclamation marks.
 - Competitors are never disparaged by name. A comparison is a table with sources, and the reader draws the conclusion.
-- Prefer the concrete number to the impressive word. "Nineteen engines" beats "extensive database support".
+- Prefer the concrete number to the impressive word. "Twenty engines" beats "extensive database support".
 - Say the limitation out loud. Stating scope precisely is what makes the rest of the claims credible to this audience.
 - Product terms stay in English in every language. LibreDB Studio, not a translated variant.
 

@@ -1152,6 +1152,77 @@ describe("the composers are reachable, which is the defect that put this file he
   });
 });
 
+describe("composeCatalogRead — the openGauss arms (#815)", () => {
+  /**
+   * openGauss answers the same catalogs behind a different authentication handshake, and
+   * the two reads whose PostgreSQL form leans on constructs its grammar refuses were
+   * rewritten for it. What each assertion pins is a fact measured on a live
+   * `opengauss/opengauss:5.0.0`: `WITH ORDINALITY`, the multi-array `unnest` and
+   * `LATERAL` are all refused there ("syntax error at or near \"WITH ORDINALITY\"",
+   * "function unnest(integer[], integer[]) does not exist", and a plain syntax error
+   * even uncorrelated), `generate_subscripts` over a subquery's own table is not,
+   * `conkey` keeps PostgreSQL's 1-based lower bound while `indkey` is 0-based, and a
+   * two-key index whose first key is an expression (`lower(name)`, then a plain `id`)
+   * came back in key order with the expression named by `pg_get_indexdef`.
+   */
+  test("relations pair the composite key by subscript, expanded without LATERAL", () => {
+    const sql = composeCatalogRead("opengauss", { kind: "relations" });
+
+    expect(sql).toContain(
+      "JOIN (SELECT c0.oid AS c_oid, generate_subscripts(c0.conkey, 1) AS ord FROM pg_constraint c0) k ON k.c_oid = c.oid",
+    );
+    expect(sql).toContain("att.attnum = c.conkey[k.ord]");
+    expect(sql).toContain("fatt.attnum = c.confkey[k.ord]");
+    expect(sql).not.toContain("WITH ORDINALITY");
+    expect(sql).not.toContain("LATERAL");
+  });
+
+  test("indexes read indkey through native subscripts and a 1-based column number", () => {
+    const sql = composeCatalogRead("opengauss", { kind: "indexes" });
+
+    expect(sql).toContain("generate_subscripts(ix0.indkey, 1)");
+    expect(sql).toContain("pg_get_indexdef(ix.indexrelid, (k.ord + 1)::int, true)");
+    expect(sql).toContain("att.attnum = ix.indkey[k.ord]");
+    expect(sql).not.toContain("WITH ORDINALITY");
+    expect(sql).not.toContain("LATERAL");
+  });
+
+  test("columns and statistics are PostgreSQL's own text, because they were measured to answer", () => {
+    expect(composeCatalogRead("opengauss", { kind: "columns" })).toBe(
+      composeCatalogRead("postgres", { kind: "columns" }),
+    );
+    expect(composeCatalogRead("opengauss", { kind: "statistics" })).toBe(
+      composeCatalogRead("postgres", { kind: "statistics" }),
+    );
+    expect(composeStatisticsAvailabilityProbe("opengauss")).toBeNull();
+    expect(composeEstimatingExplain("opengauss", "SELECT 1").sql).toBe("EXPLAIN (FORMAT JSON) SELECT 1");
+  });
+
+  test("each rewrite is its parent composition, character for character, with only the expansion replaced", () => {
+    expect(composeCatalogRead("opengauss", { kind: "relations", schema: "app" })).toBe(
+      composeCatalogRead("postgres", { kind: "relations", schema: "app" })
+        .replace(
+          "JOIN LATERAL unnest(c.conkey, c.confkey) WITH ORDINALITY AS k(attnum, fattnum, ord) ON true ",
+          "JOIN (SELECT c0.oid AS c_oid, generate_subscripts(c0.conkey, 1) AS ord FROM pg_constraint c0) k ON k.c_oid = c.oid ",
+        )
+        .replace("att.attnum = k.attnum", "att.attnum = c.conkey[k.ord]")
+        .replace("fatt.attnum = k.fattnum", "fatt.attnum = c.confkey[k.ord]"),
+    );
+    expect(composeCatalogRead("opengauss", { kind: "indexes", table: "orders" })).toBe(
+      composeCatalogRead("postgres", { kind: "indexes", table: "orders" })
+        .replace(
+          "JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true ",
+          "JOIN (SELECT ix0.indexrelid AS ix_oid, generate_subscripts(ix0.indkey, 1) AS ord FROM pg_index ix0) k ON k.ix_oid = ix.indexrelid ",
+        )
+        .replace("att.attnum = k.attnum", "att.attnum = ix.indkey[k.ord]")
+        .replace(
+          "pg_get_indexdef(ix.indexrelid, k.ord::int, true)",
+          "pg_get_indexdef(ix.indexrelid, (k.ord + 1)::int, true)",
+        ),
+    );
+  });
+});
+
 /**
  * The kind, selected by the statement rather than bought with a fourth read (#789).
  *
