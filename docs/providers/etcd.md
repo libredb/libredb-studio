@@ -424,6 +424,7 @@ A read-only connection offers none of the three.
 
 `queryLanguage: "json"` with `queryDialect: "etcd"`, `tablesAreDerivedGroupings: true`, `containerLevels: []`, `defaultPort: 2379`, `enforcesReadOnly: true`, and `false` for explain, table creation, transactions, inline row edits, result pagination, external query limiting, connection strings and foreign keys.
 A key-prefix row is labelled "Key Prefix", its rows "Key", its read "Get Keys" and its generator "Generate Command"; a click on a group runs `get <group> --prefix --limit=50`, and Generate Command writes that read with the other forms commented below it, or the read alone on a read-only connection.
+A group whose prefix holds a carriage return, a line separator (U+2028) or a paragraph separator (U+2029), which the editor does not keep as the command line spells them, is read through a `txn` whose `get` names the prefix in Go quoting, and Generate Command's one other form for it is the commented `txn` template.
 
 ## 10. Error handling
 
