@@ -290,6 +290,7 @@ etcd also grants a lease id a client chose, a negative one included, which `leas
 A watch runs for its window, `--command-timeout` when given, else 5 seconds, and the window's cap is the connection's query timeout less `ETCD_READ_BOUNDS.watchMarginMs`: a `--command-timeout` above the cap is refused, naming it, a default window longer than the cap is shortened to it and its warning says so, and a query timeout at or below the margin leaves no window, so a watch is refused.
 A watch ends early at the row limit or the byte budget, and its end is one warning naming the range, the window and the cause.
 A compaction, a permission refusal or a server cancellation ends the watch as an error, never as a quiet window; the stream is always cancelled when the watch ends.
+A watch etcd refuses with one of the three answers of section 4.2 is created once more after the one sign-in; when its window closes before that sign-in answers, it ends with etcd's refusal, since it watched nothing, while a cancel or the query timeout met then still reads as a cancel or a timeout.
 A live watch panel is filed as U56.
 
 ### 5.4 Bounds
