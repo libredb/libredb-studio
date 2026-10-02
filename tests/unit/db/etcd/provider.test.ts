@@ -1002,7 +1002,8 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     const disabled = client.calls.length;
     expect((await provider.countObjects([])).prefix).toEqual({ count: everyGroup });
     expect(methods(client, disabled)[0]).toBe("authStatus");
-    expect(methods(client, disabled)).toEqual(expect.not.arrayContaining(["userGet", "roleGet"]));
+    expect(methods(client, disabled)).not.toContain("userGet");
+    expect(methods(client, disabled)).not.toContain("roleGet");
     // Every key is writable as well, so the reader's grant of READ alone on /config/a no longer refuses its edit.
     const built = await provider.buildObjectEdit({ ...REQUEST, path: ["/config/a"], text: "omega" });
     expect(built.built).toBe(true);
