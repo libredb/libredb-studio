@@ -404,6 +404,7 @@ The pattern box takes a prefix, not a glob: `/app/*` walks `/app/` and never `/a
 The total is the exact count of the keys the walk covers at its revision, and for a user who is not root, of the keys under the ranges it may read.
 A key that is not UTF-8 is left out and counted on one line, because a key decoded with replacement characters would address another key.
 Scan all stops after 10,000 keys, and a key left out counts toward that cap as a named key does, because etcd read it and it took its room on the page.
+Scan all also ends once the panel holds 10,000 keys, which a Load more can bring about before the walk reaches its cap, because the keys a Load more brings do not count toward it.
 Activating a key opens its Source tab; a compaction between pages asks to start the walk again, and so does a page that would read other ranges than the walk's first page, after the grants were read again (section 4.7) or under another prefix.
 The embedded workspace ships no Keys panel; a key is read there with a typed `get`.
 
