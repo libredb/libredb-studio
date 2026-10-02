@@ -151,7 +151,7 @@ Prometheus 和 MongoDB、Redis 一样完全不是 SQL：它通过 Prometheus HTT
   <br/><em>连接 PostgreSQL、MySQL、Oracle、SQL Server、MongoDB、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Cassandra、Redis、SQLite、DuckDB、libSQL、Prometheus 或 Apache Kafka，支持 SSL/TLS 与 SSH 隧道（Kafka 支持 TLS，不支持隧道）。</em>
 </p>
 
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/libredb/libredb-studio)
+[![Ask DeepWiki](.github/assets/deepwiki-badge.svg)](https://deepwiki.com/libredb/libredb-studio)
 
 ## 核心能力
 
