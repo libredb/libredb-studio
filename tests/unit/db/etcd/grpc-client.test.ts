@@ -3297,13 +3297,22 @@ describe("over grpc-js: deadlines, aborts, the receive cap and etcd's words (spe
   test("a deadline after the send is a deadline, naming the peer the request reached", async () => {
     // A bare HTTP/2 listener that takes the request and never answers: a gRPC server would time the deadline too and
     // could word the status first, as a bare "Deadline exceeded", so only the client's own timer is left to fire.
+    // macOS reports the client's close to the listener's socket as a read ECONNRESET after the test has moved on, so
+    // the listener's sessions and their sockets take their errors here and are destroyed before it closes.
     const silent = http2.createServer();
+    const sessions = new Set<http2.ServerHttp2Session>();
+    silent.on("session", (session) => {
+      sessions.add(session);
+      session.on("error", () => undefined);
+      session.socket.on("error", () => undefined);
+    });
     silent.on("stream", () => undefined);
     await new Promise<void>((resolve) => silent.listen(0, "127.0.0.1", resolve));
     const silentPort = (silent.address() as AddressInfo).port;
     const client = await createGrpcEtcdClient(at(silentPort, { callTimeoutMs: 300 }));
     const error = await failure(client.range({ key: bytes("/app/cfg"), limit: 1 }, options));
     await client.close();
+    for (const session of sessions) session.destroy();
     silent.close();
     expect(error).toMatchObject({ category: "deadline-exceeded", grpcCode: 4 });
     expect((error as EtcdError).detail).toMatch(
@@ -3497,7 +3506,13 @@ describe("over grpc-js: sockets and names that answer nothing (spec 5.6)", () =>
       await client.close();
       closing.close();
       expect({ close, error }).toMatchObject({ close, error: { category: "not-connected", grpcCode: 14 } });
-      expect((error as EtcdError).detail).toBe(plaintextPort);
+      // macOS reports the close as a reset where Linux reports the TLS socket's own words (CI's macos-latest runner,
+      // 2026-10-02); the category and the sentence below are the same on both.
+      expect((error as EtcdError).detail).toBe(
+        process.platform === "darwin"
+          ? "No connection established. Last error: Error: read ECONNRESET. Resolution note: "
+          : plaintextPort,
+      );
       expect((error as EtcdError).tlsFailure).toBeUndefined();
       expect(toProviderError(error, tlsContext).message).toStartWith(
         "No etcd answered a TLS connection at etcd.test:2379: check the host, the port, the SSL mode and the tunnel.",

@@ -1012,9 +1012,9 @@ const CASES: readonly CaseDefinition[] = [
       // Node reports the reset as the read's ECONNRESET, as the connect's when it arrives before the child's loop sees
       // the connect complete, or, when the session closes first, as Bun always does (measured under Node 24.14.0: 7 runs
       // in 8 read ECONNRESET; the connect's in 6 runs in 12 right after a case that ends a socket at close(), in none
-      // of 12 otherwise).
+      // of 12 otherwise). Bun on macOS reports it as the read's ECONNRESET too (CI's macos-latest runner, 2026-10-02).
       text:
-        runtime === "node"
+        runtime === "node" || process.platform === "darwin"
           ? /Last error: (?:read ECONNRESET|Error: connect ECONNRESET|Failed to connect)/
           : /Last error: Failed to connect/,
       sentence: noPlaintextAnswer(`127.0.0.1:${ports.resetting}`),
