@@ -86,9 +86,18 @@ interface RawFailure {
   readonly details: string;
 }
 
-/** What one attempt came to; `closedAt` is when the adapter's close() returned, where spec E16's checks start. */
+/**
+ * What one attempt came to; `startedAt` is when its client was built, and `closedAt` when the adapter's close()
+ * returned, where spec E16's checks start.
+ */
 type HandshakeOutcome =
-  | { readonly name: string; readonly outcome: "connected"; readonly target: string; readonly closedAt?: number }
+  | {
+      readonly name: string;
+      readonly outcome: "connected";
+      readonly target: string;
+      readonly startedAt?: number;
+      readonly closedAt?: number;
+    }
   | { readonly name: string; readonly outcome: "refused"; readonly errorClass: string; readonly message: string }
   | {
       readonly name: string;
@@ -102,6 +111,7 @@ type HandshakeOutcome =
       readonly grpcCode?: number;
       readonly errorClass?: string;
       readonly message?: string;
+      readonly startedAt?: number;
       readonly closedAt?: number;
     };
 
@@ -184,6 +194,7 @@ async function runCases(deps: RunnerDeps, cases: readonly HandshakeCase[]): Prom
     };
     let client: Awaited<ReturnType<RunnerDeps["createGrpcEtcdClient"]>> | undefined;
     let outcome: HandshakeOutcome;
+    const startedAt = Date.now();
     try {
       // oxlint-disable-next-line no-await-in-loop -- one connection at a time, so each listener's count is its case's alone.
       client = await deps.createGrpcEtcdClient(options, {}, recording);
@@ -217,7 +228,7 @@ async function runCases(deps: RunnerDeps, cases: readonly HandshakeCase[]): Prom
       // oxlint-disable-next-line no-await-in-loop -- the channel closes before the next case dials.
       await client?.close();
     }
-    outcomes.push({ ...outcome, closedAt: Date.now() });
+    outcomes.push({ ...outcome, startedAt, closedAt: Date.now() });
   }
   return outcomes;
 }
@@ -1190,16 +1201,24 @@ function expectListeners(run: Run | undefined): void {
 const GRPC_INITIAL_BACKOFF_MS = 1000;
 
 /**
- * Spec E16: what the reset case's listener accepted after the case's close() returned, read once twice grpc-js's
- * initial backoff has passed, longer than a subchannel left in TRANSIENT_FAILURE waits before it dials again. Each
- * accept is given as its delay after the close.
+ * Spec E16: what the reset case's listener accepted after the case's close() returned, beyond the case's own dial,
+ * read once twice grpc-js's initial backoff has passed, longer than a subchannel left in TRANSIENT_FAILURE waits before
+ * it dials again. Each accept is given as its delay after the close. The case's own dial can be accepted after the
+ * close: on Windows the client meets the reset during its connect, before the listener's process runs its accept, and
+ * the Node child's close then returns first (CI's windows-latest runner, run 36976931119, an accept 1 ms after the
+ * close and none before it).
  */
 async function acceptsAfterClose(outcome: HandshakeOutcome | undefined): Promise<number[]> {
+  const startedAt = outcome !== undefined && "startedAt" in outcome ? outcome.startedAt : undefined;
   const closedAt = outcome !== undefined && "closedAt" in outcome ? outcome.closedAt : undefined;
-  if (closedAt === undefined) throw new Error(`The case "${RESET_ON_ACCEPT}" did not report when its client closed`);
+  if (startedAt === undefined || closedAt === undefined)
+    throw new Error(`The case "${RESET_ON_ACCEPT}" did not report when its client was built and closed`);
   const until = closedAt + 2 * GRPC_INITIAL_BACKOFF_MS;
   await Bun.sleep(Math.max(0, until - Date.now()));
-  return acceptedAt.resetting.filter((time) => time > closedAt && time <= until).map((time) => time - closedAt);
+  const accepted = acceptedAt.resetting.filter((time) => time >= startedAt && time <= until);
+  const before = accepted.filter((time) => time <= closedAt).length;
+  const after = accepted.filter((time) => time > closedAt);
+  return (before === 0 ? after.slice(1) : after).map((time) => time - closedAt);
 }
 
 /**
