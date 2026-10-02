@@ -32,6 +32,7 @@ import {
   ETCD_RENEWAL_ANSWERS_NOT_APPLIED,
   type EtcdErrorConnection,
   type EtcdErrorContext,
+  EtcdUnsentStatus,
   etcdWords,
   isUserNameEmpty,
   leaseNotFoundError,
@@ -290,6 +291,34 @@ describe("toEtcdError: the call's own abort, told apart by the signal's reason (
   test("a CANCELLED answer under a signal that did not abort is not the caller's cancel", () => {
     const timedOut = new AbortController();
     expect(toEtcdError(grpc(1, "Cancelled on client"), timedOut.signal).category).toBe("cancelled-elsewhere");
+  });
+
+  /** grpc-js's CANCELLED for a call it never gave a transport, as the adapter's transport raises it. */
+  const unsent = () =>
+    new EtcdUnsentStatus({ code: 1, details: "Cancelled on client", message: "1 CANCELLED: Cancelled on client" });
+
+  test("its timeout's CANCELLED on a call grpc-js never gave a transport is a failure to connect, for a read and a write: the request never left", async () => {
+    const timedOut = new AbortController();
+    timedOut.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    const mapped = toEtcdError(unsent(), timedOut.signal);
+    expect(mapped).toMatchObject({ category: "not-connected", detail: "Cancelled on client", grpcCode: 1 });
+    const provided = [read("get"), write("del")].map((context) => toProviderError(mapped, context));
+    for (const each of provided) {
+      expect(each).toBeInstanceOf(ConnectionError);
+      expect(each.message).toBe(
+        "No etcd answered a plaintext connection at etcd.test:2379. If this etcd serves TLS (kubeadm and k3s always do), choose an SSL mode under SSL / TLS; otherwise check the host, the port and the tunnel. (Cancelled on client)",
+      );
+    }
+    for (const response of await Promise.all(provided.map(respond))) {
+      expect(response).toMatchObject({ status: 503, body: { retryable: true } });
+    }
+  });
+
+  test("the caller's own cancel of a call grpc-js never gave a transport stays a cancel (spec 5.5)", () => {
+    const cancelled = new AbortController();
+    cancelled.abort();
+    const mapped = toEtcdError(unsent(), cancelled.signal);
+    expect(mapped).toMatchObject({ category: "cancelled", detail: "Cancelled on client", grpcCode: 1 });
   });
 });
 

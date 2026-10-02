@@ -44,14 +44,20 @@ import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot } from "@/lib/agent/types";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  QueryCancelledError,
+  QueryError,
+} from "@/lib/db/errors";
 import { containerDepth, enumerableKinds } from "@/lib/db/object-kinds";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { EtcdMember, EtcdPermission, EtcdStatus } from "@/lib/db/providers/keyvalue/etcd/client";
-import { createGrpcEtcdClient } from "@/lib/db/providers/keyvalue/etcd/grpc-client";
+import { createGrpcEtcdClient, grpcWireTransport } from "@/lib/db/providers/keyvalue/etcd/grpc-client";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { groupLabel, prefixGroups } from "@/lib/db/providers/keyvalue/etcd/keys";
 import type {
@@ -995,4 +1001,108 @@ describe("E1 and E2 refuse before the factory and before any socket (spec 3.1, E
       await Promise.all([local.close(), noFactory.close()]);
     }
   });
+});
+
+// ============================================================================
+// A channel that never answers SETTINGS (spec 5.6)
+// ============================================================================
+
+describe("a channel that never answers SETTINGS: a call the query timeout ends before it had a connection never left (spec 5.6)", () => {
+  const QUERY_TIMEOUT = 300;
+
+  /** A local listener that accepts and never writes a byte, so grpc-js never receives the HTTP/2 SETTINGS. */
+  async function silentListener() {
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((socket) => {
+      sockets.add(socket);
+      socket.on("error", () => undefined);
+      socket.on("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as net.AddressInfo;
+    return {
+      port,
+      close: () =>
+        new Promise<void>((resolve) => {
+          for (const socket of sockets) socket.destroy();
+          server.close(() => resolve());
+        }),
+    };
+  }
+
+  /**
+   * A provider connected through `port`: its connect sequence (AuthStatus, then Status, with authentication off) is
+   * answered from the `etcd` captures, and every call after it goes over the real gRPC transport to the silent
+   * listener, where it waits for its LB pick. The adapter's deadline is set far past the query timeout, so each call
+   * ends by the provider's own signal, as it does in production, where that signal starts before the adapter's
+   * deadline of the same length and so ends first (the review measured it in 9 runs of 10).
+   */
+  async function connectedOverSilence(port: number): Promise<EtcdProvider> {
+    const captured = clusterWire();
+    const provider = new EtcdProvider({ ...ETCD, port }, { queryTimeout: QUERY_TIMEOUT }, {}, (options, hooks) =>
+      createGrpcEtcdClient({ ...options, callTimeoutMs: 60_000 }, hooks, (channelOptions) => {
+        const recorded = captured.transport(channelOptions);
+        const wire = grpcWireTransport(channelOptions);
+        const connectStep = (rpc: string) => rpc === "Auth/AuthStatus" || rpc === "Maintenance/Status";
+        return {
+          unary: (rpc, request, call) =>
+            connectStep(rpc) ? recorded.unary(rpc, request, call) : wire.unary(rpc, request, call),
+          stream: (rpc, call) => wire.stream(rpc, call),
+          close: () => {
+            recorded.close();
+            wire.close();
+          },
+        };
+      }),
+    );
+    await provider.connect();
+    return provider;
+  }
+
+  const noAnswer = (port: number) =>
+    `No etcd answered a plaintext connection at 127.0.0.1:${port}. If this etcd serves TLS (kubeadm and k3s always do), choose an SSL mode under SSL / TLS; otherwise check the host, the port and the tunnel. (Cancelled on client)`;
+
+  test.each([
+    ["a typed read", (provider: EtcdProvider) => provider.query("get /app/cfg")],
+    ["a walk", (provider: EtcdProvider) => provider.listObjects([], "prefix")],
+    ["a typed write, one DeleteRange", (provider: EtcdProvider) => provider.query("del /app/ --prefix")],
+    [
+      "a keep-alive, a write on a stream",
+      (provider: EtcdProvider) => provider.query("lease keep-alive --once 694d77aa9e38260f"),
+    ],
+  ])(
+    "%s is a failure to connect, never a deadline or a write that may have been applied",
+    async (_label, run) => {
+      const silent = await silentListener();
+      const provider = await connectedOverSilence(silent.port);
+      try {
+        const refused = await failure(run(provider));
+        expect({ name: refused.name, message: refused.message }).toEqual({
+          name: "ConnectionError",
+          message: noAnswer(silent.port),
+        });
+        expect(refused).toBeInstanceOf(ConnectionError);
+      } finally {
+        await provider.disconnect();
+        await silent.close();
+      }
+    },
+    10_000,
+  );
+
+  test("a read the user cancels while it waits for its connection stays the user's cancel (spec 5.5)", async () => {
+    const silent = await silentListener();
+    const provider = await connectedOverSilence(silent.port);
+    try {
+      const pending = failure(provider.query("get /app/cfg", undefined, "waiting"));
+      await Bun.sleep(50);
+      expect(await provider.cancelQuery("waiting")).toBe(true);
+      const cancelled = await pending;
+      expect(cancelled).toBeInstanceOf(QueryCancelledError);
+      expect(cancelled.message).toBe("The get was cancelled.");
+    } finally {
+      await provider.disconnect();
+      await silent.close();
+    }
+  }, 10_000);
 });

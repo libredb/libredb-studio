@@ -348,9 +348,8 @@ export class EtcdProvider extends BaseDatabaseProvider {
    * step 4's roles. A member whose Status names no leader refuses the connection at once (4.7).
    *
    * Each step is one call, and its deadline is the gRPC deadline the adapter sets on every call, the same query
-   * timeout (spec 5.3), with no timer of the provider's own: only that deadline says whether the call was still
-   * waiting for its connection, a connection error (spec 5.6), and a timer of the same length, started first,
-   * would cancel the call before it, which grpc-js reports as "Cancelled on client" either way.
+   * timeout (spec 5.3), with no timer of the provider's own: grpc-js words that deadline by whether the call was
+   * still waiting for its connection, a connection error (spec 5.6).
    */
   private async openSession(
     client: EtcdClient,

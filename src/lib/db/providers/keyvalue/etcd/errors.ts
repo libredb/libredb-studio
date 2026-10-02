@@ -210,9 +210,27 @@ function isGrpcStatus(error: unknown): error is { readonly code: number; readonl
 }
 
 /**
+ * grpc-js's failure of a call that its own signal ended before grpc-js gave it a transport, so its request never left
+ * the client. grpc-js words that cancel "Cancelled on client" whether or not the request had left, so the transport
+ * raises this in its place (grpc-client.ts `callFailure`), with grpc-js's code, text and message.
+ */
+export class EtcdUnsentStatus extends Error {
+  declare readonly code: number;
+  declare readonly details: string;
+  constructor(status: { readonly code: number; readonly details: string; readonly message: string }) {
+    super(status.message);
+    this.name = "EtcdUnsentStatus";
+    this.code = status.code;
+    this.details = status.details;
+  }
+}
+
+/**
  * The adapter's half. `signal` is the call's own: grpc-js reports the call's abort by timeout and
  * by `cancelQuery` alike as CANCELLED "Cancelled on client" (R07, `07-MEASUREMENTS-grpc.md` near
- * 1727), so the signal's reason tells them apart.
+ * 1727), so the signal's reason tells them apart. A timeout that ended a call grpc-js never gave a
+ * transport (`EtcdUnsentStatus`) is a failure to connect, as grpc-js's pre-send deadline texts are,
+ * because the request never left (spec 5.6); a cancel stays the caller's whether it left or not.
  */
 export function toEtcdError(error: unknown, signal?: AbortSignal): EtcdError {
   if (error instanceof EtcdError) return error;
@@ -221,6 +239,7 @@ export function toEtcdError(error: unknown, signal?: AbortSignal): EtcdError {
     const timedOut = (signal.reason as { name?: unknown } | undefined)?.name === "TimeoutError";
     const detail = isGrpcStatus(error) ? error.details : (error as Error).message;
     const code = isGrpcStatus(error) ? error.code : undefined;
+    if (timedOut && error instanceof EtcdUnsentStatus) return new EtcdError("not-connected", detail, code);
     return new EtcdError(timedOut ? "deadline-exceeded" : "cancelled", detail, code);
   }
   if (isGrpcStatus(error)) return classifyStatus(error.code, error.details);

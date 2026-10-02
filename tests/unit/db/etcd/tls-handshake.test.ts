@@ -68,6 +68,8 @@ type HandshakeCase =
       readonly timeoutMs: number;
       /** The client closes in the turn of its call, before grpc-js has handed the endpoint's address on (spec E16). */
       readonly closeInTurn?: boolean;
+      /** The call's own signal times out after this many milliseconds, as the provider's query timeout does; none when absent. */
+      readonly signalMs?: number;
     }
   | {
       readonly name: string;
@@ -185,7 +187,9 @@ async function runCases(deps: RunnerDeps, cases: readonly HandshakeCase[]): Prom
     try {
       // oxlint-disable-next-line no-await-in-loop -- one connection at a time, so each listener's count is its case's alone.
       client = await deps.createGrpcEtcdClient(options, {}, recording);
-      const call = { signal: new AbortController().signal };
+      const call = {
+        signal: item.signalMs === undefined ? new AbortController().signal : AbortSignal.timeout(item.signalMs),
+      };
       // A close in the turn of the call comes before grpc-js's resolver hands an IP address on, which it does in a
       // setImmediate, so the call ends as closed and the closed channel must dial nothing for it (spec E16).
       // oxlint-disable-next-line no-await-in-loop -- the case's one call, on the channel it just opened.
@@ -616,6 +620,7 @@ function adapterCase(
     readonly farEnd?: { readonly host: string; readonly port: number };
     readonly timeoutMs?: number;
     readonly closeInTurn?: boolean;
+    readonly signalMs?: number;
   } = {},
 ): CaseDefinition {
   return {
@@ -628,6 +633,7 @@ function adapterCase(
       ...(extra.farEnd === undefined ? {} : { farEnd: extra.farEnd }),
       timeoutMs: extra.timeoutMs ?? TIMEOUT_MS,
       ...(extra.closeInTurn === undefined ? {} : { closeInTurn: extra.closeInTurn }),
+      ...(extra.signalMs === undefined ? {} : { signalMs: extra.signalMs }),
     }),
     expected,
   };
@@ -660,6 +666,8 @@ const SILENT_TLS = "a TLS listener that never answers the handshake is a connect
 const SETTINGSLESS_TLS =
   "a TLS listener that completes the handshake and never sends SETTINGS is a connect timeout: the request never left";
 const RESET_ON_ACCEPT = "a socket reset on accept is a failure to connect";
+const TIMED_OUT_UNPICKED =
+  "a call its own signal times out while it waits for a connection is a connect failure, never a deadline: the request never left";
 const CLOSED_IN_TURN =
   "a client closed in the turn of its first call, before grpc-js hands the IP address on, ends the call as closed";
 
@@ -955,6 +963,20 @@ const CASES: readonly CaseDefinition[] = [
       sentence: noPlaintextAnswer(`127.0.0.1:${ports.silent}`),
     }),
     { timeoutMs: 500 },
+  ),
+  // The provider's query timeout starts before the adapter's deadline of the same length, so it usually ends first; a
+  // deadline far past it makes that the only end, and grpc-js words its cancel the same whether the request left or not.
+  adapterCase(
+    TIMED_OUT_UNPICKED,
+    (ports) => direct("127.0.0.1", ports.silent),
+    (ports) => () => ({
+      outcome: "failed",
+      category: "not-connected",
+      grpcCode: 1,
+      text: /^Cancelled on client$/,
+      sentence: noPlaintextAnswer(`127.0.0.1:${ports.silent}`),
+    }),
+    { timeoutMs: TIMEOUT_MS, signalMs: 300 },
   ),
   adapterCase(
     SETTINGSLESS_TLS,

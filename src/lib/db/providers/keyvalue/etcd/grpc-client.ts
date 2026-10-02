@@ -28,6 +28,7 @@ import {
   credentials,
   type experimental,
   Metadata,
+  type ServiceError,
   type VerifyOptions,
 } from "@grpc/grpc-js";
 import { fromJSON, type MethodDefinition, type ServiceDefinition } from "@grpc/proto-loader";
@@ -64,7 +65,7 @@ import {
   type EtcdWatchRequest,
 } from "./client";
 import type { EtcdConnectionOptions, EtcdTlsOptions } from "./connection-options";
-import { cancelReasonToEtcdError, toEtcdError, writeNotApplied } from "./errors";
+import { cancelReasonToEtcdError, EtcdUnsentStatus, toEtcdError, writeNotApplied } from "./errors";
 import { INT64_MAX, INT64_MIN, UINT64_MAX } from "./keys";
 import { ETCD_DESCRIPTOR } from "./proto/descriptor";
 
@@ -173,7 +174,10 @@ export interface EtcdWireCall {
   readonly metadata: Readonly<Record<string, string>>;
   /** The gRPC deadline: the call's start plus `callTimeoutMs` (spec 5.3). */
   readonly deadline: Date;
-  /** The call's own signal; its abort is `call.cancel()`. */
+  /**
+   * The call's own signal; its abort is `call.cancel()`, raised as `EtcdUnsentStatus` by `grpcWireTransport` when
+   * grpc-js had not yet given the call a transport (spec 5.6).
+   */
   readonly signal: AbortSignal;
 }
 
@@ -728,8 +732,36 @@ function cancelOnAbort(signal: AbortSignal, cancel: () => void): () => void {
   return () => signal.removeEventListener("abort", cancel);
 }
 
+/**
+ * Spec 5.6: whether grpc-js gave a call a transport. grpc-js 1.14.5 asks a call's credentials for its metadata only once
+ * a pick has handed it a connected subchannel, right before it opens the call's stream (`LoadBalancingCall.doPick`,
+ * load-balancing-call.ts near 183), so a call never asked was still waiting for name resolution, its metadata filters or
+ * its LB pick, and its request never left; a call asked is read as one whose request may have left. These credentials
+ * add no metadata and only note that ask.
+ */
+function pickNotice(): { readonly credentials: CallCredentials; readonly picked: () => boolean } {
+  let picked = false;
+  return {
+    credentials: credentials.createFromMetadataGenerator((_options, callback) => {
+      picked = true;
+      callback(null, new Metadata());
+    }),
+    picked: () => picked,
+  };
+}
+
+/**
+ * The failure a call raises: grpc-js's own, or `EtcdUnsentStatus` for a call its own signal ended before grpc-js gave
+ * it a transport, which grpc-js words as it words a cancel after the send, so that errors.ts reads the request as
+ * never sent (spec 5.6).
+ */
+function callFailure(error: ServiceError, signal: AbortSignal, picked: boolean): Error {
+  return signal.aborted && !picked ? new EtcdUnsentStatus(error) : error;
+}
+
 function unaryCall(client: Client, rpc: EtcdUnaryRpc, request: object, call: EtcdWireCall): Promise<object> {
   const method = wireMethod(rpc);
+  const pick = pickNotice();
   return new Promise<object>((resolve, reject) => {
     // grpc-js answers after this function returns, so the listener's removal is in place by then.
     let release: () => void = () => undefined;
@@ -739,10 +771,10 @@ function unaryCall(client: Client, rpc: EtcdUnaryRpc, request: object, call: Etc
       method.responseDeserialize,
       request,
       metadataOf(call),
-      { deadline: call.deadline },
+      { deadline: call.deadline, credentials: pick.credentials },
       (error, value) => {
         release();
-        if (error) reject(error);
+        if (error) reject(callFailure(error, call.signal, pick.picked()));
         else resolve(value as object);
       },
     );
@@ -756,12 +788,13 @@ function unaryCall(client: Client, rpc: EtcdUnaryRpc, request: object, call: Etc
  */
 function openStream(client: Client, rpc: EtcdStreamRpc, call: EtcdWireCall, open: Set<EtcdWireStream>): EtcdWireStream {
   const method = wireMethod(rpc);
+  const pick = pickNotice();
   const duplex: ClientDuplexStream<object, object> = client.makeBidiStreamRequest(
     method.path,
     method.requestSerialize,
     method.responseDeserialize,
     metadataOf(call),
-    { deadline: call.deadline },
+    { deadline: call.deadline, credentials: pick.credentials },
   );
   const received: object[] = [];
   const waiting: Array<{
@@ -780,9 +813,10 @@ function openStream(client: Client, rpc: EtcdStreamRpc, call: EtcdWireCall, open
     for (const reader of waiting.splice(0)) reader.resolve(undefined);
   });
   // grpc-js emits a failed call's error before its end, so a reader meets the error, never a clean end.
-  duplex.on("error", (error: unknown) => {
-    failure = { error };
-    for (const reader of waiting.splice(0)) reader.reject(error);
+  duplex.on("error", (error: ServiceError) => {
+    const raised = callFailure(error, call.signal, pick.picked());
+    failure = { error: raised };
+    for (const reader of waiting.splice(0)) reader.reject(raised);
   });
   const release = cancelOnAbort(call.signal, () => duplex.cancel());
   const stream: EtcdWireStream = {
