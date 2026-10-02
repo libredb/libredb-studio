@@ -3506,13 +3506,14 @@ describe("over grpc-js: sockets and names that answer nothing (spec 5.6)", () =>
       await client.close();
       closing.close();
       expect({ close, error }).toMatchObject({ close, error: { category: "not-connected", grpcCode: 14 } });
-      // macOS reports the close as a reset where Linux reports the TLS socket's own words (CI's macos-latest runner,
-      // 2026-10-02); the category and the sentence below are the same on both.
-      expect((error as EtcdError).detail).toBe(
+      // macOS reports the close either as Linux does, in the TLS socket's own words, or as a reset, from one run to the
+      // next (CI's macos-latest runner, runs 36974185341 and 36974955592 on 2026-10-02); the category and the sentence
+      // below are the same either way.
+      const texts =
         process.platform === "darwin"
-          ? "No connection established. Last error: Error: read ECONNRESET. Resolution note: "
-          : plaintextPort,
-      );
+          ? [plaintextPort, "No connection established. Last error: Error: read ECONNRESET. Resolution note: "]
+          : [plaintextPort];
+      expect(texts).toContain((error as EtcdError).detail);
       expect((error as EtcdError).tlsFailure).toBeUndefined();
       expect(toProviderError(error, tlsContext).message).toStartWith(
         "No etcd answered a TLS connection at etcd.test:2379: check the host, the port, the SSL mode and the tunnel.",
