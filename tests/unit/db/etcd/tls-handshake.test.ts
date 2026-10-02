@@ -727,16 +727,16 @@ const CASES: readonly CaseDefinition[] = [
       tls: false,
       timeoutMs: TIMEOUT_MS,
     }),
-    // Windows dials the Unix socket by that path too, and refuses the connect there (CI's windows-latest runner,
-    // 2026-10-02): the path in its text is what shows grpc-js read no port.
-    expected: (ports) =>
-      process.platform === "win32"
-        ? () => ({
+    // On Windows Bun connects there as elsewhere, and Node dials the Unix socket by that path too but is refused the
+    // connect with EACCES (CI's windows-latest runner, 2026-10-02): the path in its text shows grpc-js read no port.
+    expected: (ports) => (runtime) =>
+      process.platform === "win32" && runtime === "node"
+        ? {
             outcome: "failed",
             grpcCode: 14,
             text: new RegExp(`Last error: Error: connect EACCES ${ports.unixName}\\. `),
-          })
-        : connected(),
+          }
+        : { outcome: "connected" },
   },
   // -- spec E5: the chain
   adapterCase(
@@ -1171,7 +1171,9 @@ function expectListeners(run: Run | undefined): void {
   expect(run.seenWhileUndialled).toEqual(Object.fromEntries(Object.keys(counts).map((name) => [name, 0])));
   // The controls: the same `::1` listener saw both spellings of the host, and the Unix socket saw grpc-js's dial.
   expect(run.seenWhileDialled.loopback6).toBeGreaterThanOrEqual(2);
-  if (process.platform !== "win32") expect(run.seenWhileDialled.unix).toBeGreaterThanOrEqual(1);
+  // Node on Windows is refused that connect (the E1 control's case), so only the other runs are asked for the dial.
+  if (process.platform !== "win32" || run.version === undefined)
+    expect(run.seenWhileDialled.unix).toBeGreaterThanOrEqual(1);
   // The controls of spec E16's checks: each listener whose peer never answers was dialled, the settingsless one through
   // a completed handshake.
   expect(run.seenWhileDialled.silent).toBeGreaterThanOrEqual(1);
