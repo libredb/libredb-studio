@@ -1602,6 +1602,29 @@ describe("etcd tree click on a group this connection reads in part (#1089 4.7)",
     );
     expect(text.split("\n").every((line) => line.startsWith("#"))).toBe(true);
   });
+
+  /**
+   * JSON quoting, which names the group in the note, keeps a line or paragraph separator raw, and Monaco offers to
+   * remove either from the text the moment it lands, after which the note would name another group; so the note
+   * writes each as its escape, as the forms' Go quoting does (#1089 6.4).
+   */
+  test.each([
+    ["a line separator", "/ls\u2028here/*", '"/ls\\u2028here/*"'],
+    ["a paragraph separator", "/ps\u2029here/*", '"/ps\\u2029here/*"'],
+    ["a carriage return", "/cr\rhere/*", '"/cr\\rhere/*"'],
+  ])(
+    "the note for such a group whose name holds %s spells it as an escape, in the click and Generate Command",
+    (_label, group, quoted) => {
+      const note = `# No read is written for ${quoted}: each part of it this connection may read starts or ends at a key that is not UTF-8 text.`;
+      expect(generateTableQuery([group], etcdCaps, [], { readRanges: [] })).toBe(note);
+      expect(generateSelectQuery([group], [], etcdCaps, { readRanges: [], readOnly: true })).toBe(note);
+      const generated = generateSelectQuery([group], [], etcdCaps, { readRanges: [] });
+      expect(generated.split("\n")[0]).toBe(note);
+      expect(generated).not.toMatch(/[\r\u2028\u2029]/);
+      // The quoted name reads back as the group's own.
+      expect(JSON.parse(quoted)).toBe(group);
+    },
+  );
 });
 
 describe("etcd Generate Command (#1089 6.4)", () => {

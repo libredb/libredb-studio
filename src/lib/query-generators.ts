@@ -264,6 +264,14 @@ const ETCD_SAMPLE_VALUE = "value";
 const holdsUnkeptCharacter = (word: string): boolean => /[\r\u2028\u2029]/.test(word);
 
 /**
+ * A group's name as an etcd note names it: `commentName`'s JSON quoting, with a line or paragraph separator,
+ * which JSON leaves raw and the editor does not keep (`holdsUnkeptCharacter`), written as its `\u` escape, which
+ * JSON reads back as the same character (#1089 6.4).
+ */
+const etcdCommentName = (name: string): string =>
+  commentName(name).replace(/[\u2028\u2029]/g, (char) => `\\u${char.charCodeAt(0).toString(16)}`);
+
+/**
  * One etcd request: the command, then its arguments through `quote`, the word rule of the place the
  * request lands, then the flags; or, where an argument begins with `-`, the flags, `--` and the arguments,
  * because etcdctl reads a word that begins with `-` as a flag (#1089 6.4, R11 ETCD-6).
@@ -333,7 +341,7 @@ function etcdBlocks(blocks: readonly string[]): string {
 function etcdReadText(tableName: string, scope: GeneratorScope | undefined): string {
   const [first, ...rest] = scope?.readRanges ?? [{ prefix: etcdGroupPrefix(tableName) }];
   if (first === undefined) {
-    return `# No read is written for ${commentName(tableName)}: each part of it this connection may read starts or ends at a key that is not UTF-8 text.`;
+    return `# No read is written for ${etcdCommentName(tableName)}: each part of it this connection may read starts or ends at a key that is not UTF-8 text.`;
   }
   return etcdBlocks([etcdRead(first), ...rest.map((piece) => etcdCommented(etcdRead(piece)))]);
 }
