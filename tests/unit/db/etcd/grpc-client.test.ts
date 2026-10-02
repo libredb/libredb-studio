@@ -3507,10 +3507,10 @@ describe("over grpc-js: sockets and names that answer nothing (spec 5.6)", () =>
       closing.close();
       expect({ close, error }).toMatchObject({ close, error: { category: "not-connected", grpcCode: 14 } });
       // macOS reports the close either as Linux does, in the TLS socket's own words, or as a reset, from one run to the
-      // next (CI's macos-latest runner, runs 36974185341 and 36974955592 on 2026-10-02); the category and the sentence
-      // below are the same either way.
+      // next (CI's macos-latest runner, runs 36974185341 and 36974955592 on 2026-10-02), and Windows as a reset (its
+      // windows-latest runner, run 36974955592); the category and the sentence below are the same either way.
       const texts =
-        process.platform === "darwin"
+        process.platform === "darwin" || process.platform === "win32"
           ? [plaintextPort, "No connection established. Last error: Error: read ECONNRESET. Resolution note: "]
           : [plaintextPort];
       expect(texts).toContain((error as EtcdError).detail);

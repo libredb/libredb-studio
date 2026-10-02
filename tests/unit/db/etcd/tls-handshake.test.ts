@@ -727,7 +727,16 @@ const CASES: readonly CaseDefinition[] = [
       tls: false,
       timeoutMs: TIMEOUT_MS,
     }),
-    expected: () => connected(),
+    // Windows dials the Unix socket by that path too, and refuses the connect there (CI's windows-latest runner,
+    // 2026-10-02): the path in its text is what shows grpc-js read no port.
+    expected: (ports) =>
+      process.platform === "win32"
+        ? () => ({
+            outcome: "failed",
+            grpcCode: 14,
+            text: new RegExp(`Last error: Error: connect EACCES ${ports.unixName}\\. `),
+          })
+        : connected(),
   },
   // -- spec E5: the chain
   adapterCase(
@@ -1012,9 +1021,10 @@ const CASES: readonly CaseDefinition[] = [
       // Node reports the reset as the read's ECONNRESET, as the connect's when it arrives before the child's loop sees
       // the connect complete, or, when the session closes first, as Bun always does (measured under Node 24.14.0: 7 runs
       // in 8 read ECONNRESET; the connect's in 6 runs in 12 right after a case that ends a socket at close(), in none
-      // of 12 otherwise). Bun on macOS reports it as the read's ECONNRESET too (CI's macos-latest runner, 2026-10-02).
+      // of 12 otherwise). Bun on macOS and on Windows reports it as Node does (CI's macos-latest and windows-latest
+      // runners, 2026-10-02).
       text:
-        runtime === "node" || process.platform === "darwin"
+        runtime === "node" || process.platform === "darwin" || process.platform === "win32"
           ? /Last error: (?:read ECONNRESET|Error: connect ECONNRESET|Failed to connect)/
           : /Last error: Failed to connect/,
       sentence: noPlaintextAnswer(`127.0.0.1:${ports.resetting}`),
@@ -1161,7 +1171,7 @@ function expectListeners(run: Run | undefined): void {
   expect(run.seenWhileUndialled).toEqual(Object.fromEntries(Object.keys(counts).map((name) => [name, 0])));
   // The controls: the same `::1` listener saw both spellings of the host, and the Unix socket saw grpc-js's dial.
   expect(run.seenWhileDialled.loopback6).toBeGreaterThanOrEqual(2);
-  expect(run.seenWhileDialled.unix).toBeGreaterThanOrEqual(1);
+  if (process.platform !== "win32") expect(run.seenWhileDialled.unix).toBeGreaterThanOrEqual(1);
   // The controls of spec E16's checks: each listener whose peer never answers was dialled, the settingsless one through
   // a completed handshake.
   expect(run.seenWhileDialled.silent).toBeGreaterThanOrEqual(1);

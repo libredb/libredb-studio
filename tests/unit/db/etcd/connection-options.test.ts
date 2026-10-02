@@ -983,7 +983,8 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
     const trusted = read("etcd-ca-trusted.crt");
     // The premises: the block is etcd-ca's certificate in the trust form, which X509Certificate reads,
     // and Bun verifies nothing with it, while Node reads it with its trust settings.
-    expect(trusted.startsWith("-----BEGIN TRUSTED CERTIFICATE-----\n")).toBe(true);
+    // OpenSSL writes the file with the platform's line ending, CRLF on Windows.
+    expect(trusted).toMatch(/^-----BEGIN TRUSTED CERTIFICATE-----\r?\n/);
     expect(new X509Certificate(trusted).subject).toBe("CN=etcd-ca");
     expect(await verifies(trusted)).toBe(false);
     // Beside a plain certificate too, before it or after it, since Bun would read the plain one alone.
