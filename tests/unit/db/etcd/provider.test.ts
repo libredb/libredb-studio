@@ -660,8 +660,8 @@ describe("the connect sequence (spec 6.1)", () => {
   });
 
   /**
-   * etcd below 3.7 as measured on 3.6.0 and 3.6.6 with --client-cert-auth: AuthStatus and Status answer the root
-   * role alone, whatever the credential, a caller etcd reads no user for meets "user name is empty", and UserGet
+   * etcd below 3.7 as measured on 3.6.0 and 3.6.6 with --client-cert-auth and authentication on: AuthStatus and
+   * Status answer the root role alone, whatever the credential, a caller etcd reads no user for meets "user name is empty", and UserGet
    * answers a user about itself. `seen` is the user etcd reads from the credential, or undefined for none.
    */
   function etcd36(seen: { readonly user: string; readonly root: boolean } | undefined): FakeEtcdClient {
@@ -721,7 +721,7 @@ describe("the connect sequence (spec 6.1)", () => {
       "AuthenticationError: etcd did not read the client certificate: the server must run with --client-cert-auth. (etcd: user name is empty)",
     ],
   ] as const)(
-    "below 3.7, where AuthStatus and Status answer root alone, no session connects without an auth revision: %s (spec 4.7, 6.1)",
+    "below 3.7 with authentication on, where AuthStatus and Status answer root alone, no session connects without an auth revision: %s (spec 4.7, 6.1)",
     async (_label, mode, seen, calls, owed) => {
       const client = etcd36(seen);
       const { provider } = build(mode === "certificate" ? CERTIFICATE_CONNECTION : PASSWORD_CONNECTION, client);

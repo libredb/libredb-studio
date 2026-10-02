@@ -128,9 +128,9 @@ interface EtcdSession {
   grants: EtcdGrants;
   /**
    * The AuthStatus answer the grants were taken under (spec 4.7): whether authentication was on, and the auth
-   * store's revision. Every session holds one, on an etcd below 3.7 too, which answers AuthStatus and Status to
-   * the root role alone, whatever the credential: with authentication on, a session there signs in as root, and
-   * a user who is not root is refused at connect.
+   * store's revision. Every session holds one, on an etcd below 3.7 too, which with authentication on answers
+   * AuthStatus and Status to the root role alone, whatever the credential: a session there signs in as root, and
+   * a user who is not root is refused at connect. With authentication off it answers both to every caller.
    */
   authStatus: EtcdAuthStatus;
 }

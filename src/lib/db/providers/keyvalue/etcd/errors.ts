@@ -629,8 +629,9 @@ const USER_NAME_EMPTY = "etcdserver: user name is empty";
 
 /**
  * etcd's InvalidArgument "user name is empty". Step 2 of the connect sequence reads it as
- * authentication on: below 3.7 `AuthStatus` needs a token, and 3.7 is the release that answers it
- * without one (spec 6.1). Code and message together, as every row of this table is read.
+ * authentication on: below 3.7 `AuthStatus` answers the root role alone, so a caller etcd reads no user
+ * for meets this answer, and 3.7 is the release that answers it without authentication (spec 6.1). Code
+ * and message together, as every row of this table is read.
  */
 export function isUserNameEmpty(error: unknown): boolean {
   return error instanceof EtcdError && error.grpcCode === INVALID_ARGUMENT && error.detail === USER_NAME_EMPTY;

@@ -33,8 +33,9 @@ interface CountPiece {
 
 /**
  * errors.ts's facts for one read of this module, as objects.ts states them for every surface: a context
- * that carries a principal names what the user may read, whatever its grants read (spec 4.7, 5.6), by how
- * many ranges where `rangesCounted` says the agent reads the refusal too (E13).
+ * its principal scopes, one not marked `unscoped`, names what the user may read, whatever its grants read
+ * (spec 4.7, 5.6), by how many ranges where `rangesCounted` says the agent reads the refusal too (E13); a
+ * root or authentication-off context carries its principal and names nothing.
  */
 function readContext(
   context: EtcdSurfaceContext,
