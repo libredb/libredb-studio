@@ -93,11 +93,17 @@ export interface EtcdSurfaceContext {
   /** What it may write (spec 4.7, the edit offer). */
   readonly writable: AccessScope;
   /**
-   * The etcd user this connection signs in as: carried whenever auth is on and the user does not hold root
-   * (spec 4.7), whatever its grants read, and never otherwise. A context that carries it is scoped, so the
-   * prefix count, the error table's may-read list (5.6) and the refusals of 4.3 name this user.
+   * The etcd user this connection signs in as, carried wherever the connection names one, root included, so the
+   * refusals of 4.3 and 7.2 name it whatever the grants read when they were last read (spec 4.7). A context that
+   * carries it is scoped unless `unscoped` says otherwise, so the prefix count and the error table's may-read
+   * list (5.6) name this user too.
    */
   readonly principal?: { readonly name: string; readonly via: "password" | "certificate" };
+  /**
+   * Set where a context that reads every key carries a principal that no grant scopes: the grants as last read
+   * are root's, or authentication is off (spec 4.7), so nothing names what the user may read.
+   */
+  readonly unscoped?: true;
   readonly readOnly?: ReadOnlySource;
   readonly signal: AbortSignal;
   readonly now: () => number;
@@ -222,10 +228,9 @@ const METADATA_NOT_EDITED = "etcd keeps a key's metadata itself: only its value 
 const VALUE_NOT_TEXT = "The value is not UTF-8 text, so it is shown as base64 and is not edited here.";
 
 /**
- * The etcd user a scoped sentence names. The provider carries the principal whenever auth is on and the
- * user does not hold root (spec 4.7), the one case in which a scope of ranges exists or etcd refuses a
- * listing for want of root, so a context that reaches here without one was built wrong by the provider:
- * a defect, raised rather than worded around.
+ * The etcd user a sentence names. The provider carries the principal wherever the connection names one
+ * (spec 4.7), so a scope of ranges, or a refusal etcd gives a listing for want of root, that reaches here
+ * without one was built wrong by the provider: a defect, raised rather than worded around.
  */
 function scopedUser(context: EtcdSurfaceContext): string {
   if (context.principal === undefined) {
@@ -238,11 +243,13 @@ function scopedUser(context: EtcdSurfaceContext): string {
 
 /**
  * The etcd user whose grants scope this context, or undefined for one no grants scope (spec 4.7): a
- * principal scopes it even when its grants read every key, and a scope of ranges without one raises
- * `scopedUser`'s defect.
+ * principal scopes it even when its grants read every key, unless the context says it is `unscoped`, and a
+ * scope of ranges is always a user's, so one without a principal raises `scopedUser`'s defect.
  */
 function scopedBy(context: EtcdSurfaceContext): string | undefined {
-  if (context.principal === undefined && context.readable.kind === "all") return undefined;
+  if (context.readable.kind === "all" && (context.principal === undefined || context.unscoped === true)) {
+    return undefined;
+  }
   return scopedUser(context);
 }
 

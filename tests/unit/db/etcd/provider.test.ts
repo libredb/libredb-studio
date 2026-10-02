@@ -1552,6 +1552,69 @@ describe("who a surface names (spec 4.7)", () => {
     hooks[0].onAuthStoreChanged?.();
     expect((await provider.countObjects([])).prefix).toEqual({ count: everyGroup });
   });
+
+  /** A surface's answer, or its refusal's class and words. */
+  const answerOf = (pending: Promise<unknown>) =>
+    pending.then(
+      () => "answered",
+      (error: unknown) => (error instanceof Error ? `${error.constructor.name}: ${error.message}` : String(error)),
+    );
+
+  test("a user who lost the root role since the grants were read is named where etcd refuses it, before any walk reads them again: the users and roles listings and maintenance (spec 4.3, 4.7, 7.2)", async () => {
+    let root = true;
+    let authRevision = "5";
+    const asRoot = <T>(answer: T) => (root ? Promise.resolve(answer) : Promise.reject(denied()));
+    const client = readerClient({
+      ...UNREFUSED,
+      authStatus: async () => ({ enabled: true, authRevision }),
+      userGet: async () => (root ? ["root"] : ["reader"]),
+      userList: () => asRoot(["reader", "root"]),
+      roleList: () => asRoot(["reader", "root"]),
+      compact: () => asRoot(undefined),
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    // An admin revoked root from the reader; the next thing opened is the Users folder, and no walk ran since.
+    root = false;
+    authRevision = "6";
+    expect(await answerOf(provider.listObjects([], "user"))).toBe(
+      "QueryError: Listing users needs the etcd root role, which reader does not hold (etcd: permission denied)",
+    );
+    expect(await answerOf(provider.listObjects([], "role"))).toBe(
+      "QueryError: Listing roles needs the etcd root role, which reader does not hold (etcd: permission denied)",
+    );
+    expect(await answerOf(provider.runMaintenance("compact"))).toBe(
+      "QueryError: Compaction, defragmentation and alarm disarm need the etcd root role; this connection signs in as reader. (etcd: permission denied)",
+    );
+  });
+
+  test("a certificate session that connected with authentication off is named where etcd refuses it once an admin turns authentication on (spec 4.3, 4.7)", async () => {
+    let enabled = false;
+    const asRoot = <T>(answer: T) => (enabled ? Promise.reject(denied()) : Promise.resolve(answer));
+    const client = etcdClient({
+      authStatus: async () => ({ enabled, authRevision: "2" }),
+      range: (request, options) => keySpaceRange(KEYS, enabled ? READER_PERMISSIONS : undefined)(request, options),
+      userList: () => asRoot(["cert-only", "root"]),
+      roleList: () => asRoot(["root"]),
+      leaseLeases: () => asRoot({ header: KEY_SPACE_HEADER, ids: [] }),
+    });
+    const { provider } = await connected(CERTIFICATE_CONNECTION, client);
+    enabled = true;
+    const counts = await provider.countObjects([]);
+    expect(counts.user).toEqual({
+      unavailable: "Listing users needs the etcd root role, which cert-only does not hold (etcd: permission denied)",
+    });
+    expect(counts.role).toEqual({
+      unavailable: "Listing roles needs the etcd root role, which cert-only does not hold (etcd: permission denied)",
+    });
+    // Its grants were never read, so no range is named: etcd's refusal is the whole answer (spec 4.7).
+    expect(counts.prefix).toEqual({
+      unavailable:
+        "etcd refused the Key Prefixes listing: this connection's etcd user is not granted all of it. (etcd: permission denied)",
+    });
+    expect(await answerOf(provider.listObjects([], "user"))).toBe(
+      "QueryError: Listing users needs the etcd root role, which cert-only does not hold (etcd: permission denied)",
+    );
+  });
 });
 
 /**

@@ -110,8 +110,8 @@ type EtcdGrants =
   | { readonly state: "refused"; readonly refusal: Error };
 
 /**
- * Root, or authentication off: every key, and no user a surface names. Told apart by identity: the grants
- * of a user who is not root and may read every key are another object, and that user is named (spec 4.7).
+ * Root, or authentication off: every key, and no grant that scopes a surface. Told apart by identity: the
+ * grants of a user who is not root and may read every key are another object, and they scope it (spec 4.7).
  */
 const EVERY_KEY: EtcdGrants = { state: "read", readable: { kind: "all" }, writable: { kind: "all" } };
 
@@ -521,22 +521,24 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * The client and the context of one surface call over `grants`: its own deadline, and the user they scope
-   * (spec 3.5).
+   * The client and the context of one surface call over `grants`: its own deadline, the user the connection signs
+   * in as, and whether the grants scope it (spec 3.5, 4.7).
    */
   private surfaceOver(session: EtcdSession, grants: EtcdGrants): SurfaceCall {
     const scopes = grants.state === "read" ? grants : { readable: NO_KEY, writable: NO_KEY };
     const { principal, readOnly } = session.options;
-    // Named whenever authentication is on and the user does not hold root, whatever its grants read, a
-    // refused read of them included, and never otherwise (spec 4.7): EVERY_KEY is root's and auth off's.
-    const named = grants === EVERY_KEY ? undefined : principal;
     return {
       client: session.client,
       grants,
       context: {
         readable: scopes.readable,
         writable: scopes.writable,
-        ...(named === undefined ? {} : { principal: named }),
+        // Named wherever the connection names a user, root included, since grants last read as root's can be
+        // stale and etcd's refusal of a listing or of maintenance then names who signs in (spec 4.3, 7.2).
+        // EVERY_KEY, root's and auth off's, scopes nothing; any other grants scope the user, a refused read of
+        // them included (spec 4.7).
+        ...(principal === undefined ? {} : { principal }),
+        ...(grants === EVERY_KEY ? { unscoped: true as const } : {}),
         ...(readOnly === undefined ? {} : { readOnly }),
         signal: this.callSignal(),
         now: () => Date.now(),

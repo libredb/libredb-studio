@@ -638,6 +638,36 @@ describe("the permission-aware walk (spec 4.7, plan Review Focus 5)", () => {
     expect((counts.prefix as { unavailable: string }).unavailable).toContain("etcd user reader may read: every key.");
   });
 
+  test("a context marked unscoped carries its principal for etcd's refusals and names no scope, unless it holds ranges (spec 4.3, 4.7)", async () => {
+    // As the provider builds it over grants last read as root's, which the user may have lost since.
+    const root = surface({ principal: { name: "ops", via: "password" }, unscoped: true });
+    const refused = surfaceClient(KEYS, {
+      range: async () => Promise.reject(DENIED()),
+      userList: async () => Promise.reject(DENIED()),
+      roleList: async () => Promise.reject(DENIED()),
+    }).client;
+    const counts = await countEtcdObjects(refused, root);
+    expect(counts.user).toEqual({
+      unavailable: "Listing users needs the etcd root role, which ops does not hold (etcd: permission denied)",
+    });
+    expect(counts.role).toEqual({
+      unavailable: "Listing roles needs the etcd root role, which ops does not hold (etcd: permission denied)",
+    });
+    expect(counts.prefix).toEqual({
+      unavailable:
+        "etcd refused the Key Prefixes listing: this connection's etcd user is not granted all of it. (etcd: permission denied)",
+    });
+    expect((await countEtcdObjects(surfaceClient(KEYS).client, root)).prefix).toEqual({
+      count: prefixGroups(KEYS.map(enc)).groups.length,
+    });
+    expect(surfaceErrorContext(root, "get")).toEqual({ command: "get", write: false, connection: CONNECTION });
+    // A scope of ranges is always a user's: the mark never hides one.
+    const grants = [grantPrefix("read", "/app/")];
+    expect(surfaceErrorContext({ ...reader(grants), unscoped: true }, "get")).toMatchObject({
+      readable: { user: "reader", ranges: describeScope(readableScope(grants)) },
+    });
+  });
+
   test("a walk a bound stopped under a scope names both, the bound and then the ranges (spec 4.3, 4.7)", async () => {
     const grants = [grantPrefix("read", "/g/")];
     const keys = Array.from({ length: ETCD_GROUP_CAP + 1 }, (_unused, index) => `/g/${pad(index)}/k`);
