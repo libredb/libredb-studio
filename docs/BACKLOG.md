@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D138, U17 · 82
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U66 · 53
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U67 · 54
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -3052,6 +3052,19 @@ Found while adding the Read-only toggle for the etcd provider (#1089), and measu
 Not fixed there: the no-scan choice is not part of the etcd work.
 
 **Done when:** the dialog suite renders the box ticked, clicks it once, and expects `setSkipObjectScan` called with `false`, in the shape of the Read-only toggle's test.
+
+### U67. Every engine but etcd writes a line or paragraph separator raw into the text of the click and of Generate Select
+
+`generateTableQuery` and `generateSelectQuery` in `src/lib/query-generators.ts` write an object name that holds U+2028 or U+2029 with the character itself on every shipped engine but etcd, whose arm writes such a key through a txn's Go quoting instead (`holdsUnkeptCharacter`).
+Monaco 0.57 defaults `unusualLineTerminators` to `prompt` and `src/components/QueryEditor.tsx` sets no other value, so the moment such a text lands the editor offers to remove the separators, and accepting leaves lines that name another object.
+Runnable lines are among them: Redis's `DEL` line for the key `a`, U+2028, `b` reads `DEL "ab"` once the separator is removed, which deletes the key `ab` when run, and a SQL click becomes `SELECT * FROM public."ab";`.
+LibreDB's `get`, `put` and `delete` lines write the key bare, and `tokenize` in `src/lib/db/providers/embedded/libredb.ts` splits a line at any white space outside quotes, U+2028 and U+2029 included, so those lines name another key even when the offer is declined.
+Measured 2026-10-02 over each shipped engine's census declaration: the click and the Generate Select text of an object named `a`, U+2028, `b`, and of one with U+2029 in its place, hold the separator raw on all nineteen engines but etcd; `origin/main`'s generators handle neither character either.
+
+Found by the etcd review (#1089), after the etcd arm was made to keep both characters out of its text.
+Not fixed there: the other engines' arms are outside the etcd PR, and so is the editor's option, which applies to every engine.
+
+**Done when:** each arm keeps U+2028 and U+2029 out of both texts, with an escape its grammar reads back as the same character, quoting where its words split at white space, or a `#` note in place of a line it cannot spell, and a test over every shipped engine's declaration finds neither character raw in either text.
 
 ## Dependencies
 
