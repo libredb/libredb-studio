@@ -759,10 +759,8 @@ missing and asking the one question that would unblock it. That marker is a conv
 distinguishable.
 
 The server reads that block out of the closing prose (`src/lib/agent/plan-statement.ts`) and records it as a **`plan-statement-drafted`** event carrying the SQL, the connection's dialect, the editor language the drive's capabilities resolve to, whether the statement is read-only, and what the identifier check found; the language is what tints the statement on the answer card, which the rail renders without capabilities (#1089).
-It is its own event kind rather than
-`statement-drafted` because that kind promises a `stepId` tying a draft to a tool invocation, and a
-toolless run has none. Recording it closed the deferral that had the rail reading a plan's SQL out of
-a markdown fence rather than out of the ledger.
+It is its own event kind rather than `statement-drafted` because that kind promises a `stepId` tying a draft to a tool invocation, and a toolless run has none.
+Recording it closed the deferral that had the rail reading a plan's SQL out of a markdown fence rather than out of the ledger.
 
 The server's reader and the browser's renderer have to agree about which block is a statement, and
 both dimensions of that agreement are now enforced rather than asserted: the CommonMark fence rule
