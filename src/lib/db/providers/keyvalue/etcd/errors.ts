@@ -600,6 +600,21 @@ export function watchEndError(end: EtcdWatchEnd, context: EtcdErrorContext): Err
 }
 
 /**
+ * A failure the adapter raised for a watch whose window had closed (spec 5.3). The adapter raises the window's timeout
+ * only for a watch whose create etcd never answered, as a member that went silent with its connection open leaves it,
+ * so that watch watched nothing: a read's deadline, the window's and not the query timeout's, and never a quiet window
+ * (plan Review Focus 3). Any other failure is the table's own.
+ */
+export function watchWindowError(error: unknown, windowMs: number, context: EtcdErrorContext): Error {
+  if (!(error instanceof EtcdError) || error.category !== "deadline-exceeded") return toProviderError(error, context);
+  return new TimeoutError(
+    `etcd did not answer the watch's create within its window of ${windowMs.toLocaleString("en-US")} ms: nothing was watched.${answered(error.detail)}`,
+    PROVIDER,
+    windowMs,
+  );
+}
+
+/**
  * The steps of the connect sequence whose refusal is worded here (spec 6.1): "authenticate" words
  * step 1's "authentication is not enabled"; "credential-required" is step 3's local refusal, which
  * no etcd answer carries; "certificate-user" words step 4's "user name not found" with the Common

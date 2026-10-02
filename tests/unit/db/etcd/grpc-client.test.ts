@@ -3091,6 +3091,67 @@ describe("over grpc-js: the wire both ways", () => {
     }
   }, 20_000);
 
+  test("a window that closes before etcd answered the watch's create is a deadline, never a quiet window; once etcd answered it, the window is the quiet one, and a cancel stays a cancel (spec 5.3, Review Focus 3)", async () => {
+    const creates: string[] = [];
+    const { server, port } = await serve({
+      Watch: {
+        Watch: ((call) => {
+          call.on("data", (message: { readonly create_request: { readonly key: Buffer } }) => {
+            const key = textOf(message.create_request.key);
+            creates.push(key);
+            // etcd answers every create before any event. This member takes the create of /silent/ and never answers
+            // it, as a member that went silent with its connection open leaves a watch, and answers /quiet/'s, then
+            // stays silent.
+            if (key === "/quiet/") call.write({ header: HEADER, created: true });
+          });
+        }) satisfies Bidi,
+      },
+    });
+    // The created answers the adapter read, so the window on /quiet/ closes only once its create was answered.
+    let answered = 0;
+    const client = await createGrpcEtcdClient(at(port), {}, (connection) => {
+      const channel = grpcWireTransport(connection);
+      return {
+        ...channel,
+        stream: (rpc, call) => {
+          const stream = channel.stream(rpc, call);
+          return {
+            ...stream,
+            read: async () => {
+              const message = await stream.read();
+              if ((message as { readonly created?: boolean } | undefined)?.created === true) answered++;
+              return message;
+            },
+          };
+        },
+      };
+    });
+    /** A watch of `key` whose signal aborts with `reason`, a cancel when none, once `ready` holds; its end or its error. */
+    const watchUntil = async (key: string, ready: () => boolean, reason?: unknown): Promise<unknown> => {
+      const window = new AbortController();
+      const watching = client.watch({ key: bytes(key) }, () => "continue", { signal: window.signal });
+      await eventually(ready);
+      window.abort(reason);
+      return watching.catch((error: unknown) => error);
+    };
+    const closed = new DOMException("The watch window closed", "TimeoutError");
+    try {
+      // The create reached the member, so the stream had a transport: the window's deadline, never the failure to
+      // connect of a stream that never had one.
+      expect(await watchUntil("/silent/", () => creates.length === 1, closed)).toMatchObject({
+        category: "deadline-exceeded",
+        detail: "Cancelled on client",
+        grpcCode: 1,
+      });
+      expect(await watchUntil("/quiet/", () => answered === 1, closed)).toEqual({ reason: "aborted" });
+      expect(await watchUntil("/silent/", () => creates.length === 3)).toEqual({ reason: "aborted" });
+      expect(creates).toEqual(["/silent/", "/quiet/", "/silent/"]);
+    } finally {
+      await client.close();
+      server.forceShutdown();
+    }
+  }, 20_000);
+
   test("a keep-alive: one request, one answer, and the stream cancelled", async () => {
     const received: unknown[] = [];
     let cancelled = false;

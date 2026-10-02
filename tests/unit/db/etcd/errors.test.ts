@@ -39,6 +39,7 @@ import {
   toEtcdError,
   toProviderError,
   watchEndError,
+  watchWindowError,
   writeNotApplied,
 } from "@/lib/db/providers/keyvalue/etcd/errors";
 import { etcdFixture } from "../../../helpers/etcd-fixtures";
@@ -1131,6 +1132,27 @@ describe("watchEndError: how a watch ended (spec 5.3)", () => {
     expect(mapped).toBeInstanceOf(QueryError);
     expect(mapped?.message).toContain("(etcd: watch canceled)");
     expect(mapped?.message).toBe("The watch was cancelled before etcd answered. (etcd: watch canceled)");
+  });
+});
+
+describe("watchWindowError: a watch whose window closed (spec 5.3, plan Review Focus 3)", () => {
+  test("a deadline, which the adapter raises only before etcd answered the create, is the window's: nothing was watched", async () => {
+    const closed = new AbortController();
+    closed.abort(new DOMException("The watch window closed", "TimeoutError"));
+    const mapped = watchWindowError(toEtcdError(grpc(1, "Cancelled on client"), closed.signal), 800, read("watch"));
+    expect(mapped).toBeInstanceOf(TimeoutError);
+    expect(mapped.message).toBe(
+      "etcd did not answer the watch's create within its window of 800 ms: nothing was watched. (Cancelled on client)",
+    );
+    expect((mapped as TimeoutError).timeout).toBe(800);
+    expect(await respond(mapped)).toMatchObject({ status: 408, body: { retryable: true } });
+  });
+
+  test("any other failure is the table's own, a stream that never had a transport among them", () => {
+    const unsent = new EtcdError("not-connected", "Cancelled on client", 1);
+    const mapped = watchWindowError(unsent, 800, read("watch"));
+    expect(mapped).toBeInstanceOf(ConnectionError);
+    expect(mapped.message).toBe(toProviderError(unsent, read("watch")).message);
   });
 });
 

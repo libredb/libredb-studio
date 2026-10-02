@@ -1007,12 +1007,16 @@ export async function createGrpcEtcdClient(
     if (signal.aborted) return { end: { reason: "aborted" } };
     const sentWith = token;
     const stream = channel.stream("Watch/Watch", wireCall("Watch/Watch", {}, signal));
+    // Whether etcd answered this leg's create, which it does before any event: a window that closes before that
+    // answer watched nothing (spec 5.3).
+    let created = false;
     try {
       stream.write(watchRequest(request, cursor.startRevision));
       for (;;) {
         // oxlint-disable-next-line no-await-in-loop -- a watch answers one response after another, in order.
-        const response = await readWatch(stream, signal);
+        const response = await readWatch(stream, signal, created);
         if (response === "aborted") return { end: { reason: "aborted" } };
+        if (response.created) created = true;
         // A watch created again starts after the revision this one was created at, or after the last revision it
         // delivered, so no event is missed or arrives twice. etcd refuses a create in-band in its created answer,
         // created and canceled together, so that revision is read before the refusal is (SRC
@@ -1248,15 +1252,21 @@ function answeredLocally(rpc: EtcdWireRpc, request: object): boolean {
   return [...txn.success, ...txn.failure].every((op) => op.request_range?.serializable === true);
 }
 
-async function readWatch(stream: EtcdWireStream, signal: AbortSignal): Promise<WireWatchResponse | "aborted"> {
+async function readWatch(
+  stream: EtcdWireStream,
+  signal: AbortSignal,
+  created: boolean,
+): Promise<WireWatchResponse | "aborted"> {
   let message: object | undefined;
   try {
     message = await stream.read();
   } catch (error) {
-    // The call's own signal ended a stream that had a transport: the caller's cancel or its window. Anything else,
-    // a stream that never had one included, ends the watch as an error naming the cause, never as a quiet window
-    // (spec 5.3, 5.6).
-    if (signal.aborted && !(error instanceof EtcdUnsentStatus)) return "aborted";
+    // The call's own signal ended a stream that had a transport: the caller's cancel, or its window once etcd answered
+    // the create. A window that closed before that answer watched nothing, so it is raised as the read's deadline it
+    // is, and anything else, a stream that never had a transport included, ends the watch as an error naming the
+    // cause, never as a quiet window (spec 5.3, 5.6).
+    const timedOut = (signal.reason as { readonly name?: unknown } | undefined)?.name === "TimeoutError";
+    if (signal.aborted && !(error instanceof EtcdUnsentStatus) && (created || !timedOut)) return "aborted";
     throw toEtcdError(error, signal);
   }
   if (message === undefined)

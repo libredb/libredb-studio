@@ -10,13 +10,21 @@
  *
  * How the watch ended is always said. A closed window, the row limit and the byte budget are the
  * outcome, which results.ts words as its one warning; a compaction, a cancellation etcd sent in
- * band, a stream that failed and the caller's own cancel or deadline are errors, never a quiet
- * window, and the events read before them are not shown as a complete window (spec 5.3, plan Review
- * Focus 3). The adapter ends the stream with `call.cancel()` on every one of these ends (plan C1,
- * spec E16); this loop releases its timer and its listener on the caller's signal in a `finally`.
+ * band, a stream that failed, a window that closed before etcd answered the watch's create, and the
+ * caller's own cancel or deadline are errors, never a quiet window, and the events read before them
+ * are not shown as a complete window (spec 5.3, plan Review Focus 3). The adapter ends the stream
+ * with `call.cancel()` on every one of these ends (plan C1, spec E16); this loop releases its timer
+ * and its listener on the caller's signal in a `finally`.
  */
 import type { EtcdClient, EtcdWatchBatch, EtcdWatchEnd, EtcdWatchEvent, EtcdWatchRequest } from "./client";
-import { type EtcdErrorConnection, type EtcdErrorContext, toEtcdError, toProviderError, watchEndError } from "./errors";
+import {
+  type EtcdErrorConnection,
+  type EtcdErrorContext,
+  toEtcdError,
+  toProviderError,
+  watchEndError,
+  watchWindowError,
+} from "./errors";
 import type { WatchOutcome } from "./results";
 
 /** The bytes one event holds against the byte budget: its key and value, and its previous value (spec 5.4). */
@@ -62,7 +70,8 @@ export async function runBoundedWatch(
   signal.addEventListener("abort", forward, { once: true });
   const opened = context.now();
   // The window ends the stream as a timeout, so a stream grpc-js never gave a transport is raised as the failure to
-  // connect a get's query timeout raises, never answered as a quiet window (spec 5.3, 5.6).
+  // connect a get's query timeout raises, and one whose create etcd never answered as the window's deadline, since it
+  // watched nothing: neither is answered as a quiet window (spec 5.3, 5.6).
   const releaseWindow = context.setTimer(bounds.windowMs, () => {
     endedBy ??= "window";
     watching.abort(new DOMException("The watch window closed", "TimeoutError"));
@@ -102,7 +111,8 @@ export async function runBoundedWatch(
   try {
     end = await client.watch(request, onBatch, { signal: watching.signal });
   } catch (error) {
-    throw toProviderError(error, failure);
+    // Once the window has closed, a deadline the adapter raises is the window's, met before etcd answered the create.
+    throw endedBy === "window" ? watchWindowError(error, bounds.windowMs, failure) : toProviderError(error, failure);
   } finally {
     releaseWindow();
     signal.removeEventListener("abort", forward);

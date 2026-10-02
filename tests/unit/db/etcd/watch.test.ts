@@ -2,7 +2,8 @@
  * The bounded watch (spec 5.3), through the shared fake client (plan C12), whose `watch` behaves as
  * the adapter's does by the seam's contract (plan C1): it hands each batch to the loop's
  * callback, settles "stopped" when the callback answers stop, settles "aborted" when the call's
- * signal aborts, and otherwise settles with the end etcd sent or rejects with the stream's failure.
+ * signal aborts once etcd answered the create, rejects as a deadline when a timeout comes first,
+ * and otherwise settles with the end etcd sent or rejects with the stream's failure.
  * The window's clock is injected, so no test waits on a real timer.
  */
 import { describe, expect, spyOn, test } from "bun:test";
@@ -116,6 +117,21 @@ function renewingWatch(cancelReason: string): EtcdClient["watch"] {
     );
 }
 const EXPIRED_TOKEN = "rpc error: code = Unauthenticated desc = etcdserver: invalid auth token";
+
+/**
+ * The adapter's watch on a stream whose create etcd never answered, as a member that went silent with its connection
+ * open leaves it (spec 5.3): a timeout of the call's signal rejects as the deadline the adapter raises for it, since
+ * nothing was watched, and any other abort settles "aborted", the caller's own cancel (plan C1).
+ */
+const unansweredWatch: EtcdClient["watch"] = (_request, _callback, options: EtcdCallOptions) =>
+  new Promise<EtcdWatchEnd>((resolve, reject) => {
+    const { signal } = options;
+    const end = () =>
+      (signal.reason as { readonly name?: unknown }).name === "TimeoutError"
+        ? reject(new EtcdError("deadline-exceeded", "Cancelled on client", 1))
+        : resolve({ reason: "aborted" });
+    signal.addEventListener("abort", end, { once: true });
+  });
 
 async function failure(pending: Promise<unknown>): Promise<Error> {
   try {
@@ -325,6 +341,38 @@ describe("how a watch ends as an error (spec 5.3, plan Review Focus 3)", () => {
       "etcd did not accept this connection's sign-in for the watch: connect again. (etcd: invalid auth token)",
     );
   });
+
+  test("a window that closes before etcd answered the watch's create is the window's deadline, since nothing was watched, never a quiet window", async () => {
+    const { context, timers } = harness();
+    const pending = runBoundedWatch(createFakeEtcdClient({ watch: unansweredWatch }), REQUEST, BOUNDS, context);
+    timers[0].fn();
+    const error = await failure(pending);
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect(error.message).toBe(
+      "etcd did not answer the watch's create within its window of 5,000 ms: nothing was watched. (Cancelled on client)",
+    );
+    expect((error as TimeoutError).timeout).toBe(5_000);
+  });
+
+  test.each([
+    ["cancelQuery", undefined, QueryCancelledError, "The watch was cancelled."],
+    [
+      "the query timeout",
+      new DOMException("The operation timed out.", "TimeoutError"),
+      TimeoutError,
+      "The watch reached its deadline of 60,000 ms. (Cancelled on client)",
+    ],
+  ] as const)(
+    "%s before etcd answered the watch's create ends it as the caller's own, never as the window's deadline (spec 5.6)",
+    async (_label, reason, expected, message) => {
+      const { context, controller } = harness();
+      const pending = runBoundedWatch(createFakeEtcdClient({ watch: unansweredWatch }), REQUEST, BOUNDS, context);
+      controller.abort(reason);
+      const error = await failure(pending);
+      expect(error).toBeInstanceOf(expected);
+      expect(error.message).toBe(message);
+    },
+  );
 
   test.each([
     ["cancelQuery", undefined, QueryCancelledError, "The watch was cancelled."],
