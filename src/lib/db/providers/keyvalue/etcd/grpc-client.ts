@@ -558,7 +558,7 @@ export const grpcWireTransport: EtcdWireTransport = (options) => {
  * enforces 5 s between pings and refuses one with no call open (`--grpc-keepalive-min-time`, `PermitWithoutStream:
  * false`, SRC `etcd__server_embed_etcd.go` near 777-781), answering either with a too_many_pings GOAWAY, so the
  * interval is twice that minimum and `grpc.keepalive_permit_without_calls` stays off; the timeout is etcdctl's own
- * `--keepalive-timeout` default (SRC `etcdctl__ctlv3__ctl.go` near 37).
+ * `--keepalive-timeout` default (SRC `review-lens-etcd/etcdctl__ctlv3__ctl.go` near 37).
  */
 export function channelOptions(options: EtcdConnectionOptions): ChannelOptions {
   return {
