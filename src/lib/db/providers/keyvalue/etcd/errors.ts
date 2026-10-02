@@ -270,7 +270,8 @@ export function cancelReasonToEtcdError(cancelReason: string): EtcdError {
 
 /**
  * The renewal answers of spec E4 that KE12 measured as leaving a write unapplied, in etcd's words: a
- * write that met one is on 4.5's closed list, so the adapter sends it once more after its one renewal.
+ * write that met one is on 4.5's closed list, so the adapter sends it once more after its one renewal
+ * succeeds, unless the write's own signal has aborted by then.
  */
 export const ETCD_RENEWAL_ANSWERS_NOT_APPLIED: ReadonlySet<string> = new Set([
   // Measured by Task 22 on 2026-10-01 (KE12, etcd 3.7.2 on etcd-auth-password): a value edit's Txn that met
@@ -313,7 +314,10 @@ export interface EtcdErrorConnection {
   readonly port: number;
   /** Absent on a plaintext channel. `serverName` is the identity the certificate is checked against (spec E5). */
   readonly tls?: { readonly serverName: string; readonly clientCertificate: boolean };
-  /** False under Bun, whose failed TLS connections carry no cause (spec E5, R07). */
+  /**
+   * False under Bun, where a handshake the server refused carries no cause, while a chain, name or not-TLS failure is
+   * named (spec E5, R07).
+   */
   readonly runtimeReportsTlsCause: boolean;
   /** The channel's maximum receive size `M` (spec 5.4, KE4). */
   readonly receiveCapBytes: number;
@@ -497,9 +501,12 @@ export function toProviderError(error: unknown, context: EtcdErrorContext): Erro
         ? unknownOutcome(error, `The ${command} was cancelled after it was sent.`)
         : new QueryError(`The ${command} was cancelled before etcd answered.${answered(error.detail)}`, PROVIDER);
     case "unauthenticated":
-      // Raised by the adapter only after its one renewal (spec E4). A write meeting one is an unknown
-      // outcome unless KE12 showed, answer by answer, that such a write was not applied; one that was
-      // not is raised after its one retry, as a read's is.
+      // Raised by the adapter once it has started its one renewal, or at once on a connection with no
+      // password, which has no token to renew (spec E4). A write meeting one is an unknown outcome
+      // unless KE12 showed, answer by answer, that such a write was not applied; one that was not is
+      // raised with its own answer, either after its one retry meets such an answer again or, with no
+      // retry, when its renewal fails with an answer outside 4.5's closed list or its own abort ends
+      // the wait (grpc-client.ts `bounded`).
       return context.write && !writeNotApplied(error)
         ? unknownOutcome(error, `etcd did not accept this connection's sign-in for the ${command}.`)
         : new AuthenticationError(
