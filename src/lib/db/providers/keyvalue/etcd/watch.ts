@@ -61,9 +61,11 @@ export async function runBoundedWatch(
   const forward = () => watching.abort(signal.reason);
   signal.addEventListener("abort", forward, { once: true });
   const opened = context.now();
+  // The window ends the stream as a timeout, so a stream grpc-js never gave a transport is raised as the failure to
+  // connect a get's query timeout raises, never answered as a quiet window (spec 5.3, 5.6).
   const releaseWindow = context.setTimer(bounds.windowMs, () => {
     endedBy ??= "window";
-    watching.abort();
+    watching.abort(new DOMException("The watch window closed", "TimeoutError"));
   });
 
   const onBatch = (batch: EtcdWatchBatch): "continue" | "stop" => {

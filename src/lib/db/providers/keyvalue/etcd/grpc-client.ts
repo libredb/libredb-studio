@@ -1253,9 +1253,10 @@ async function readWatch(stream: EtcdWireStream, signal: AbortSignal): Promise<W
   try {
     message = await stream.read();
   } catch (error) {
-    // The call's own signal ended it: the caller's cancel or its window. Anything else ends the watch as an error
-    // naming the cause, never as a quiet window (spec 5.3).
-    if (signal.aborted) return "aborted";
+    // The call's own signal ended a stream that had a transport: the caller's cancel or its window. Anything else,
+    // a stream that never had one included, ends the watch as an error naming the cause, never as a quiet window
+    // (spec 5.3, 5.6).
+    if (signal.aborted && !(error instanceof EtcdUnsentStatus)) return "aborted";
     throw toEtcdError(error, signal);
   }
   if (message === undefined)

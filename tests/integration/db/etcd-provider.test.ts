@@ -1035,11 +1035,12 @@ describe("a channel that never answers SETTINGS: a call the query timeout ends b
    * answered from the `etcd` captures, and every call after it goes over the real gRPC transport to the silent
    * listener, where it waits for its LB pick. The adapter's deadline is set far past the query timeout, so each call
    * ends by the provider's own signal, as it does in production, where that signal starts before the adapter's
-   * deadline of the same length and so ends first (the review measured it in 9 runs of 10).
+   * deadline of the same length and so ends first (the review measured it in 9 runs of 10). A watch needs a query
+   * timeout above the watch margin to have a window at all.
    */
-  async function connectedOverSilence(port: number): Promise<EtcdProvider> {
+  async function connectedOverSilence(port: number, queryTimeout = QUERY_TIMEOUT): Promise<EtcdProvider> {
     const captured = clusterWire();
-    const provider = new EtcdProvider({ ...ETCD, port }, { queryTimeout: QUERY_TIMEOUT }, {}, (options, hooks) =>
+    const provider = new EtcdProvider({ ...ETCD, port }, { queryTimeout }, {}, (options, hooks) =>
       createGrpcEtcdClient({ ...options, callTimeoutMs: 60_000 }, hooks, (channelOptions) => {
         const recorded = captured.transport(channelOptions);
         const wire = grpcWireTransport(channelOptions);
@@ -1089,6 +1090,36 @@ describe("a channel that never answers SETTINGS: a call the query timeout ends b
     },
     10_000,
   );
+
+  test("a typed watch whose window closes before its stream had a connection is a failure to connect, never a quiet window (spec 5.3)", async () => {
+    const silent = await silentListener();
+    const provider = await connectedOverSilence(silent.port, 3_000);
+    try {
+      const refused = await failure(provider.query("watch /app/ --prefix --command-timeout=300ms"));
+      expect({ name: refused.name, message: refused.message }).toEqual({
+        name: "ConnectionError",
+        message: noAnswer(silent.port),
+      });
+    } finally {
+      await provider.disconnect();
+      await silent.close();
+    }
+  }, 10_000);
+
+  test("a watch the user cancels while it waits for its connection stays the user's cancel (spec 5.5)", async () => {
+    const silent = await silentListener();
+    const provider = await connectedOverSilence(silent.port, 3_000);
+    try {
+      const pending = failure(provider.query("watch /app/ --prefix --command-timeout=1s", undefined, "watching"));
+      await Bun.sleep(50);
+      expect(await provider.cancelQuery("watching")).toBe(true);
+      const cancelled = await pending;
+      expect(cancelled).toBeInstanceOf(QueryCancelledError);
+    } finally {
+      await provider.disconnect();
+      await silent.close();
+    }
+  }, 10_000);
 
   test("a read the user cancels while it waits for its connection stays the user's cancel (spec 5.5)", async () => {
     const silent = await silentListener();
