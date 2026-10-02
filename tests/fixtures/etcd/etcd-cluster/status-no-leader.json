@@ -1,0 +1,64 @@
+{
+  "$captured": {
+    "service": "etcd-cluster",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "4743283766027114114",
+    "memberId": "14609290428206289688",
+    "date": "2026-09-30T16:30:10.999Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Maintenance/Status",
+    "surface": "status of member 1 with members 2 and 3 stopped, without hasleader",
+    "request": {},
+    "match": {},
+    "metadata": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "errors": [
+      "etcdserver: no leader"
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "4743283766027114114"
+      },
+      "member_id": {
+        "$int64": "14609290428206289688"
+      },
+      "revision": {
+        "$int64": "45"
+      },
+      "raft_term": {
+        "$int64": "5"
+      }
+    },
+    "version": "3.7.2",
+    "dbSize": {
+      "$int64": "643072"
+    },
+    "leader": {
+      "$int64": "0"
+    },
+    "raftIndex": {
+      "$int64": "1270"
+    },
+    "raftTerm": {
+      "$int64": "5"
+    },
+    "raftAppliedIndex": {
+      "$int64": "1270"
+    },
+    "dbSizeInUse": {
+      "$int64": "344064"
+    },
+    "isLearner": false,
+    "storageVersion": "3.7.0",
+    "dbSizeQuota": {
+      "$int64": "2147483648"
+    },
+    "downgradeInfo": {
+      "enabled": false,
+      "targetVersion": ""
+    }
+  }
+}

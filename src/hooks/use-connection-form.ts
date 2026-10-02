@@ -14,6 +14,7 @@ import {
 import { getDBConfig, offersSshTunnel } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { newLocalId } from "@/lib/ids";
+import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 
 /**
  * Whether this editor OWNS a connection field or merely carries it.
@@ -67,6 +68,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   // The checkbox owns it, so unticking it has to CLEAR it. `preserved` would make the
   // box unticked on screen while the saved connection still skipped its scan.
   skipObjectScan: "edited",
+  // The checkbox owns it, so unticking it has to CLEAR it (#1089): `preserved` would leave the box
+  // unticked on screen while the saved connection went on refusing writes.
+  readOnly: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",
@@ -164,6 +168,9 @@ export const CONNECTION_FORM_DEFAULTS = {
   // A leftover choice would open the next connection with no object list and no
   // explanation, which reads as an engine that answered nothing.
   skipObjectScan: false,
+  // A leftover mode would make the next connection, on an engine whose provider enforces it, refuse
+  // every write with nobody having asked it to.
+  readOnly: false,
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -226,6 +233,19 @@ function degradedSentence(result: TestOutcome): string {
  */
 type TestResultTone = "success" | "warning" | "error";
 
+/**
+ * Whether the connection dialog draws the Read-only toggle (#1089): only where the engine's provider
+ * enforces the mode (`enforced`, the engine's `READ_ONLY_ENFORCED` entry), and never on a copy of a
+ * seed. A seed copy keeps `id: "seed:<id>"`, and the server re-resolves that id from the operator's
+ * file and discards the copy's fields, so a toggle there would change nothing it claims to.
+ */
+export function offersReadOnlyToggle(
+  enforced: boolean,
+  editConnection: DatabaseConnection | null | undefined,
+): boolean {
+  return enforced && editConnection?.seedId === undefined;
+}
+
 export function useConnectionForm({ isOpen, onConnect, editConnection, onTestConnection }: UseConnectionFormProps) {
   const D = CONNECTION_FORM_DEFAULTS;
   const [type, setType] = useState<DatabaseType>(D.type);
@@ -283,6 +303,13 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    * and is not behind the Advanced accordion.
    */
   const [skipObjectScan, setSkipObjectScan] = useState(D.skipObjectScan);
+  /**
+   * Refuse every write on this connection (#1089). Drawn only where `offersReadOnlyToggle` says so, and
+   * written by `buildConnection` only where the engine's provider enforces it, so a type switch with
+   * the box ticked cannot produce a connection the factory refuses while the box that clears it is
+   * hidden.
+   */
+  const [readOnly, setReadOnly] = useState(D.readOnly);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -325,6 +352,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     apiKeySecret: setApiKeySecret,
     saslMechanism: setSaslMechanism,
     skipObjectScan: setSkipObjectScan,
+    readOnly: setReadOnly,
     showSSH: setShowSSH,
     sshEnabled: setSSHEnabled,
     sshHost: setSSHHost,
@@ -423,6 +451,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // show an unticked box, or the previously edited connection's choice is saved onto
       // it and the catalog silently stops being read.
       setSkipObjectScan(editConnection.skipObjectScan === true);
+      // Overwritten, not set only when true, for the no-scan choice's reason: a connection that is not
+      // read-only must show an unticked box, or the last one edited is saved onto it.
+      setReadOnly(editConnection.readOnly === true);
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -566,6 +597,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Written only when it says something, like every other optional field here: a
       // stored `false` is noise on every connection ever saved.
       ...(skipObjectScan ? { skipObjectScan } : {}),
+      // Only for an engine whose provider enforces it (#1089), the rule the tunnel follows above: a type
+      // switch keeps the box's state, and the factory refuses `readOnly: true` on every other engine.
+      // Written only when true, like the no-scan choice: `false` and absent are one mode.
+      ...(readOnly && READ_ONLY_ENFORCED[type] ? { readOnly: true } : {}),
     };
   }, [
     sslMode,
@@ -601,6 +636,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     apiKeySecret,
     saslMechanism,
     skipObjectScan,
+    readOnly,
   ]);
 
   /**
@@ -867,11 +903,13 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "duckdb",
     "prometheus",
     "kafka",
+    "etcd",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
   });
+  const readOnlyOffered = offersReadOnlyToggle(READ_ONLY_ENFORCED[type], editConnection);
 
   return {
     // Connection fields
@@ -941,6 +979,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setSaslMechanism,
     skipObjectScan,
     setSkipObjectScan,
+    readOnly,
+    setReadOnly,
 
     // SSH Tunnel
     showSSH,
@@ -969,5 +1009,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
     // Derived data
     dbTypes,
+    readOnlyOffered,
   };
 }

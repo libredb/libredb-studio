@@ -132,6 +132,7 @@ const mockSetAuthSource = mock(() => {});
 const mockSetApiKeyId = mock(() => {});
 const mockSetApiKeySecret = mock(() => {});
 const mockSetSkipObjectScan = mock(() => {});
+const mockSetReadOnly = mock(() => {});
 const mockSetSaslMechanism = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
@@ -146,6 +147,9 @@ function getDefaultForm() {
     setQueryTimeout: mockSetQueryTimeout,
     skipObjectScan: false,
     setSkipObjectScan: mockSetSkipObjectScan,
+    readOnly: false,
+    setReadOnly: mockSetReadOnly,
+    readOnlyOffered: false,
     host: "localhost",
     setHost: mockSetHost,
     port: "5432",
@@ -261,6 +265,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   opensearch: ["host", "port", "user", "password"],
   prometheus: ["host", "port", "user", "password"],
   kafka: ["host", "port", "saslMechanism", "user", "password"],
+  etcd: ["host", "port", "user", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -298,6 +303,15 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       ],
     },
     showSshTunnel: false,
+  },
+  // Mirrored from the real entry (#1089 6.1); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  etcd: {
+    fieldHints: {
+      host: "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS.",
+      user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
+      password:
+        "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
+    },
   },
 };
 
@@ -384,6 +398,7 @@ describe("ConnectionModal", () => {
     mockSetShowPasteInput.mockClear();
     mockSetShowSSL.mockClear();
     mockSetSaslMechanism.mockClear();
+    mockSetReadOnly.mockClear();
     mockHandleTestConnection.mockClear();
     mockHandleConnect.mockClear();
   });
@@ -424,6 +439,41 @@ describe("ConnectionModal", () => {
     mockFormOverrides = { isEditMode: true, skipObjectScan: true };
     const { getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
     expect((getByLabelText("Do not read the object list on connect") as HTMLInputElement).checked).toBe(true);
+  });
+
+  // #1089: the read-only mode is offered only where the form says so, which is an engine whose
+  // provider enforces it and never a copy of a seed. tests/hooks/use-connection-form.test.ts pins where
+  // that is, so the dialog is exercised here through the form's answer alone.
+  test("draws no Read-only toggle where the form does not offer one", () => {
+    const { queryByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Read-only")).toBeNull();
+  });
+
+  test("offers the Read-only toggle where the form does, says what it refuses, and forwards it", () => {
+    mockFormOverrides = { readOnlyOffered: true };
+    const { getByLabelText, getByText, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const box = getByLabelText("Read-only") as HTMLInputElement;
+
+    expect(box.checked).toBe(false);
+    expect(box.getAttribute("aria-describedby")).toBe("readOnly-hint");
+    expect(
+      getByText(
+        "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
+      ).id,
+    ).toBe("readOnly-hint");
+
+    fireEvent.click(box);
+    expect(mockSetReadOnly).toHaveBeenCalledWith(true);
+
+    mockFormOverrides = { readOnlyOffered: true, readOnly: true };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect((getByLabelText("Read-only") as HTMLInputElement).checked).toBe(true);
+
+    // The untick is forwarded too: the hint says the mode can be turned off here, and a handler
+    // that forwarded a constant true would pass the tick above on its own.
+    mockSetReadOnly.mockClear();
+    fireEvent.click(getByLabelText("Read-only"));
+    expect(mockSetReadOnly).toHaveBeenCalledWith(false);
   });
 
   test("shows the saved query timeout when editing", () => {
@@ -1400,6 +1450,7 @@ describe("ConnectionModal", () => {
         { ...CREDENTIALS_ONLY, saslMechanism: "SASL mechanism" },
         { saslMechanism: "PLAIN and SCRAM require TLS" },
       ],
+      ["etcd", "etcd", {}, CREDENTIALS_ONLY, MOCK_FIELD_COPY.etcd.fieldHints ?? {}],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
       ["libredb", "libredb", {}, FILE_PATH, {}],
@@ -1483,6 +1534,7 @@ describe("ConnectionModal", () => {
         labelsFor("host", "user", "password", "saslMechanism"),
         ["host", "port", "user", "password", "saslMechanism"],
       ],
+      ["etcd", "etcd", {}, labelsFor("host", "user", "password"), ["host", "port", "user", "password"]],
       ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
     ];
 

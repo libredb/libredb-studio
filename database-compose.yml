@@ -1151,6 +1151,353 @@ services:
           memory: 1G
     memswap_limit: 1G
 
+  # ---------------------------------------------------------------------------------------
+  # etcd (the etcd provider). One member is the default fixture, seeded by a one-shot sidecar
+  # through etcd's own gRPC gateway. Two more fixtures sit behind profiles: `etcd-cluster`,
+  # three members for member list, a leader change, one member's defragmentation, a stopped
+  # member and a lost quorum; and `etcd-auth`, two TLS servers with RBAC on, one reading client
+  # certificates and one taking passwords only. The scripts, the seeded keys, the users and the
+  # certificates are described in docker/etcd/README.md.
+  # ---------------------------------------------------------------------------------------
+  etcd:
+    # Pinned to the exact build the provider is verified against, by tag and by digest: the
+    # error texts, the gateway's answers and the captures under tests/fixtures/etcd are claims
+    # about 3.7.2, not about etcd in general. The image is distroless: etcd, etcdctl and
+    # etcdutl, and no shell, so every command below is an exec form.
+    image: gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3
+    container_name: libredb-etcd
+    restart: unless-stopped
+    # Its own member name and cluster token, as every etcd fixture here: two single-member
+    # servers started with the defaults answer with the same cluster and member ids, and a
+    # capture must say which server answered it. The advertised client URL is the host's, the
+    # address `member list` shows. No data volume: removing the container resets the fixture.
+    command:
+      - /usr/local/bin/etcd
+      - --name=libredb-etcd
+      - --initial-cluster-token=libredb-etcd
+      - --initial-cluster=libredb-etcd=http://etcd:2380
+      - --initial-advertise-peer-urls=http://etcd:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --data-dir=/var/lib/etcd/data
+    ports:
+      # Loopback only, as the postgres service's.
+      - "127.0.0.1:2379:2379"
+    environment:
+      # The Go runtime collects before it reaches the container's bound below, rather than being
+      # killed there.
+      GOMEMLIMIT: 900MiB
+    healthcheck: &etcd-health
+      # etcdctl's own check: a linearizable read, so it passes only once the member has a leader
+      # and commits. A Go binary, not a JVM: a probe costs milliseconds.
+      test: ["CMD", "etcdctl", "endpoint", "health", "--command-timeout=3s"]
+      start_period: 60s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    # Bounded at the maintainer's request, as the Kafka fixtures are; no swap past it. Measured
+    # 12 to 15 MiB with the seed. 1G rather than the other servers' 512M, because this is the
+    # server the key-prefix walk and the read bounds are measured on, over a far larger fixture
+    # of the measurement's own, and etcd builds a whole Range answer in memory.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    memswap_limit: 1G
+
+  etcd-seed:
+    # One-shot seed through the gateway (docker/etcd/seed.sh), which carries a key or a value
+    # as base64 of its exact bytes. Idempotent, so it may run again on a seeded server.
+    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    container_name: libredb-etcd-seed
+    restart: "no"
+    depends_on:
+      etcd:
+        condition: service_healthy
+    volumes:
+      - ./docker/etcd:/etcd:ro
+    entrypoint: ["sh", "/etcd/seed.sh", "http://etcd:2379"]
+    <<: &etcd-one-shot-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "0.5"
+            memory: 64M
+      memswap_limit: 64M
+
+  # -- etcd, three-member cluster ---------------------------------------------
+
+  etcd-cluster-1:
+    # Three members of one cluster, published on one port at three loopback addresses, so a
+    # hosts entry naming all three reaches every member by one name (failover by name); inside
+    # the compose network the three share the alias etcd-cluster for the same purpose, where the
+    # host cannot bind the addresses. Profile-gated: start it, then seed it, with
+    #   docker compose -f database-compose.yml --profile etcd-cluster up -d --wait \
+    #     etcd-cluster-1 etcd-cluster-2 etcd-cluster-3
+    #   docker compose -f database-compose.yml --profile etcd-cluster up -d etcd-cluster-seed
+    image: gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3
+    container_name: libredb-etcd-cluster-1
+    profiles: ["etcd-cluster"]
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=libredb-etcd-cluster-1
+      - --initial-cluster-token=libredb-etcd-cluster
+      - --initial-cluster=libredb-etcd-cluster-1=http://etcd-cluster-1:2380,libredb-etcd-cluster-2=http://etcd-cluster-2:2380,libredb-etcd-cluster-3=http://etcd-cluster-3:2380
+      - --initial-advertise-peer-urls=http://etcd-cluster-1:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.2:2379
+      - --data-dir=/var/lib/etcd/data
+    ports:
+      - "127.0.0.2:2379:2379"
+    networks: &etcd-cluster-alias
+      default:
+        aliases: ["etcd-cluster"]
+    environment: &etcd-member-env
+      GOMEMLIMIT: 450MiB
+    # The etcd service's probe: a member without a leader turns unhealthy, which is the state a
+    # lost quorum is meant to show.
+    healthcheck: *etcd-health
+    # Measured 15 to 17 MiB per member with the replicated seed; one core each.
+    <<: &etcd-member-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "1"
+            memory: 512M
+      memswap_limit: 512M
+
+  etcd-cluster-2:
+    image: gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3
+    container_name: libredb-etcd-cluster-2
+    profiles: ["etcd-cluster"]
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=libredb-etcd-cluster-2
+      - --initial-cluster-token=libredb-etcd-cluster
+      - --initial-cluster=libredb-etcd-cluster-1=http://etcd-cluster-1:2380,libredb-etcd-cluster-2=http://etcd-cluster-2:2380,libredb-etcd-cluster-3=http://etcd-cluster-3:2380
+      - --initial-advertise-peer-urls=http://etcd-cluster-2:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.3:2379
+      - --data-dir=/var/lib/etcd/data
+    ports:
+      - "127.0.0.3:2379:2379"
+    networks: *etcd-cluster-alias
+    environment: *etcd-member-env
+    healthcheck: *etcd-health
+    <<: *etcd-member-limits
+
+  etcd-cluster-3:
+    image: gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3
+    container_name: libredb-etcd-cluster-3
+    profiles: ["etcd-cluster"]
+    restart: unless-stopped
+    command:
+      - /usr/local/bin/etcd
+      - --name=libredb-etcd-cluster-3
+      - --initial-cluster-token=libredb-etcd-cluster
+      - --initial-cluster=libredb-etcd-cluster-1=http://etcd-cluster-1:2380,libredb-etcd-cluster-2=http://etcd-cluster-2:2380,libredb-etcd-cluster-3=http://etcd-cluster-3:2380
+      - --initial-advertise-peer-urls=http://etcd-cluster-3:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://127.0.0.4:2379
+      - --data-dir=/var/lib/etcd/data
+    ports:
+      - "127.0.0.4:2379:2379"
+    networks: *etcd-cluster-alias
+    environment: *etcd-member-env
+    healthcheck: *etcd-health
+    <<: *etcd-member-limits
+
+  etcd-cluster-seed:
+    # The same seed as etcd-seed, written once through the first member; raft replicates it.
+    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    container_name: libredb-etcd-cluster-seed
+    profiles: ["etcd-cluster"]
+    restart: "no"
+    depends_on:
+      etcd-cluster-1:
+        condition: service_healthy
+      etcd-cluster-2:
+        condition: service_healthy
+      etcd-cluster-3:
+        condition: service_healthy
+    volumes:
+      - ./docker/etcd:/etcd:ro
+    entrypoint: ["sh", "/etcd/seed.sh", "http://etcd-cluster-1:2379"]
+    <<: *etcd-one-shot-limits
+
+  # -- etcd, TLS with RBAC on --------------------------------------------------
+
+  etcd-auth-certs:
+    # Generates a throwaway CA, the servers' certificate, the users' client certificates and
+    # the users' passwords into a named volume at first start (docker/etcd/certs.sh), so no
+    # private key and no password is ever committed.
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-etcd-auth-certs
+    profiles: ["etcd-auth"]
+    restart: "no"
+    volumes:
+      - etcd-auth-certs:/certs
+      - ./docker/etcd:/etcd:ro
+    entrypoint: ["sh", "/etcd/certs.sh", "/certs"]
+    <<: *etcd-one-shot-limits
+
+  etcd-auth:
+    # TLS with --client-cert-auth: every client presents a certificate from the fixture's CA,
+    # and with RBAC on its Common Name is the etcd user when no token is sent. The token TTL is
+    # 10 seconds of disuse, so an expired token is met live. RBAC is turned on after start by
+    # etcd-auth-init. Profile-gated, with etcd-auth-password: start both, then seed them, with
+    #   docker compose -f database-compose.yml --profile etcd-auth up -d --wait \
+    #     etcd-auth etcd-auth-password
+    #   docker compose -f database-compose.yml --profile etcd-auth up -d \
+    #     etcd-auth-init etcd-auth-password-init
+    image: gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3
+    container_name: libredb-etcd-auth
+    profiles: ["etcd-auth"]
+    restart: unless-stopped
+    depends_on:
+      etcd-auth-certs:
+        condition: service_completed_successfully
+    command:
+      - /usr/local/bin/etcd
+      - --name=libredb-etcd-auth
+      - --initial-cluster-token=libredb-etcd-auth
+      - --initial-cluster=libredb-etcd-auth=http://etcd-auth:2380
+      - --initial-advertise-peer-urls=http://etcd-auth:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=https://0.0.0.0:2379
+      - --advertise-client-urls=https://localhost:12379
+      - --cert-file=/certs/server.crt
+      - --key-file=/certs/server.key
+      - --trusted-ca-file=/certs/ca.pem
+      - --client-cert-auth
+      - --auth-token=simple
+      - --auth-token-ttl=10
+      - --data-dir=/var/lib/etcd/data
+    ports:
+      # 12379 on the host, so the three fixtures can run at once; the provider's default port
+      # stays 2379.
+      - "127.0.0.1:12379:2379"
+    volumes:
+      - etcd-auth-certs:/certs:ro
+    environment: *etcd-member-env
+    healthcheck:
+      # `auth status` answers with RBAC on or off and needs no credential, and it is a raft
+      # request, so it passes only once the member has a leader; `endpoint health` fails
+      # as soon as RBAC is on (etcdserver: user name is empty). The certificate is
+      # unknown-user's, whose Common Name is no etcd user.
+      test:
+        - CMD
+        - etcdctl
+        - --endpoints=https://127.0.0.1:2379
+        - --cacert=/certs/ca.pem
+        - --cert=/certs/unknown-user.crt
+        - --key=/certs/unknown-user.key
+        - --command-timeout=3s
+        - auth
+        - status
+      start_period: 60s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    # The cluster members' bound; measured 18 to 19 MiB with the seed and RBAC.
+    <<: *etcd-member-limits
+
+  etcd-auth-init:
+    # The seed, then RBAC (docker/etcd/rbac.sh), over TLS with the one certificate that has
+    # no Common Name, which etcd's gateway still accepts once RBAC is on (docker/etcd/certs.sh).
+    # Idempotent: a second run signs in with root's password first.
+    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    container_name: libredb-etcd-auth-init
+    profiles: ["etcd-auth"]
+    restart: "no"
+    depends_on:
+      etcd-auth:
+        condition: service_healthy
+    volumes:
+      - etcd-auth-certs:/certs:ro
+      - ./docker/etcd:/etcd:ro
+    environment:
+      ETCD_TLS: "--cacert /certs/ca.pem --cert /certs/gateway-client.crt --key /certs/gateway-client.key"
+      ETCD_PASSWORD_DIR: /certs
+    entrypoint: ["sh", "-c", "sh /etcd/seed.sh https://etcd-auth:2379 && sh /etcd/rbac.sh https://etcd-auth:2379"]
+    <<: *etcd-one-shot-limits
+
+  etcd-auth-password:
+    # The same server without --client-cert-auth: TLS that the client verifies and a password,
+    # the most common production shape, which --client-cert-auth would rule out, because it
+    # applies to every client listener. The same users, roles and token TTL.
+    image: gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3
+    container_name: libredb-etcd-auth-password
+    profiles: ["etcd-auth"]
+    restart: unless-stopped
+    depends_on:
+      etcd-auth-certs:
+        condition: service_completed_successfully
+    command:
+      - /usr/local/bin/etcd
+      - --name=libredb-etcd-auth-password
+      - --initial-cluster-token=libredb-etcd-auth-password
+      - --initial-cluster=libredb-etcd-auth-password=http://etcd-auth-password:2380
+      - --initial-advertise-peer-urls=http://etcd-auth-password:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=https://0.0.0.0:2379
+      - --advertise-client-urls=https://localhost:12479
+      - --cert-file=/certs/server.crt
+      - --key-file=/certs/server.key
+      - --auth-token=simple
+      - --auth-token-ttl=10
+      - --data-dir=/var/lib/etcd/data
+    ports:
+      - "127.0.0.1:12479:2379"
+    volumes:
+      - etcd-auth-certs:/certs:ro
+    environment: *etcd-member-env
+    # The etcd-auth service's probe, with no client certificate, which this server never asks for.
+    healthcheck:
+      test:
+        - CMD
+        - etcdctl
+        - --endpoints=https://127.0.0.1:2379
+        - --cacert=/certs/ca.pem
+        - --command-timeout=3s
+        - auth
+        - status
+      start_period: 60s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    # The cluster members' bound; measured 18 to 19 MiB with the seed and RBAC.
+    <<: *etcd-member-limits
+
+  etcd-auth-password-init:
+    # etcd-auth-init for the password server: the CA only, since this server asks for no
+    # client certificate.
+    image: alpine/curl:8.21.0@sha256:a1c44bab54d88e18ea9a6a4ecefab7f2d230b968567b78960fcaff8d51b7f067
+    container_name: libredb-etcd-auth-password-init
+    profiles: ["etcd-auth"]
+    restart: "no"
+    depends_on:
+      etcd-auth-password:
+        condition: service_healthy
+    volumes:
+      - etcd-auth-certs:/certs:ro
+      - ./docker/etcd:/etcd:ro
+    environment:
+      ETCD_TLS: "--cacert /certs/ca.pem"
+      ETCD_PASSWORD_DIR: /certs
+    entrypoint: ["sh", "-c", "sh /etcd/seed.sh https://etcd-auth-password:2379 && sh /etcd/rbac.sh https://etcd-auth-password:2379"]
+    <<: *etcd-one-shot-limits
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #
@@ -1769,11 +2116,13 @@ services:
     memswap_limit: 1536M
 
 volumes:
-  # Named volumes for Druid and for kafka-auth's certificates only. Druid is the one service
-  # here whose processes must share state (deep storage) and whose task history is worth
-  # surviving a restart; kafka-auth-certs hands the generated CA and broker certificate from
-  # the one-shot kafka-auth-certs service to the broker. Everything else uses the image's own
-  # anonymous volumes.
+  # Named volumes for Druid and for the certificates of kafka-auth and the etcd auth fixtures
+  # only. Druid is the one service here whose processes must share state (deep storage) and
+  # whose task history is worth surviving a restart; kafka-auth-certs hands the generated CA and
+  # broker certificate from the one-shot kafka-auth-certs service to the broker, and
+  # etcd-auth-certs the generated certificates and passwords from etcd-auth-certs to the two
+  # etcd auth servers and their init one-shots. Everything else uses the image's own anonymous
+  # volumes.
   #
   # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
   # that write or read segments. A `down -v` resets the cluster to empty.
@@ -1784,3 +2133,4 @@ volumes:
   druid_broker_var: {}
   druid_router_var: {}
   kafka-auth-certs: {}
+  etcd-auth-certs: {}

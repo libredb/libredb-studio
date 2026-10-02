@@ -7,8 +7,11 @@ import {
   type ContainerPathShapeEngine,
   containerDepth,
   declaredKinds,
+  enumerableKinds,
   findKind,
+  keyBrowserKind,
   kindAcceptsRowWrites,
+  kindCountIsListing,
   relationKindIds,
   isCountSampled,
   isCountUnavailable,
@@ -91,6 +94,66 @@ describe("declaredKinds", () => {
   });
 });
 
+/**
+ * A kind only the Keys panel enumerates (#1089 3.4). etcd declares one, `key`, because the Source tab
+ * and the guarded edit need a declared kind, while a folder, an inventory listing or a line of plan
+ * mode's prompt per key would put key names where the tree and the agent read them. So the kind leaves
+ * every walk over all kinds and still resolves by id.
+ */
+describe("enumerableKinds and keyBrowserKind", () => {
+  const withKeyBrowser = {
+    ...base,
+    containerLevels: [],
+    keyScan: { defaultCount: 500, maxCount: 1000 },
+    objectKinds: [
+      { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+      {
+        id: "key",
+        role: "config",
+        label: "Key",
+        labelPlural: "Keys",
+        enumeratedBy: "key-browser",
+        hasSource: true,
+        sourceLanguage: "json",
+        acceptsSourceEdits: true,
+      },
+      {
+        id: "member",
+        role: "config",
+        label: "Member",
+        labelPlural: "Members",
+        hasSource: true,
+        sourceLanguage: "json",
+      },
+    ],
+  } as unknown as ProviderCapabilities;
+  const engine = { displayName: "A key-value engine", type: "redis" } as const;
+
+  test("with no enumeratedBy anywhere, every declared kind is enumerable, in declaration order", () => {
+    expect(enumerableKinds(withKinds).map((kind) => kind.id)).toEqual(["table", "view", "procedure"]);
+    expect(enumerableKinds(base)).toEqual([]);
+  });
+
+  test("a kind the Keys panel enumerates leaves the enumerable kinds and stays among the declared ones", () => {
+    expect(enumerableKinds(withKeyBrowser).map((kind) => kind.id)).toEqual(["prefix", "member"]);
+    expect(declaredKinds(withKeyBrowser).map((kind) => kind.id)).toEqual(["prefix", "key", "member"]);
+  });
+
+  test("keyBrowserKind names that one kind, and is undefined on every engine that declares none", () => {
+    expect(keyBrowserKind(withKeyBrowser)?.id).toBe("key");
+    expect(keyBrowserKind(withKinds)).toBeUndefined();
+    expect(keyBrowserKind(base)).toBeUndefined();
+  });
+
+  test("the kind still resolves by id, so its Source tab and both edit routes reach it", () => {
+    expect(findKind(withKeyBrowser, "key")?.enumeratedBy).toBe("key-browser");
+    expect(kindHasSource(withKeyBrowser, "key")).toBe(true);
+    expect(kindAcceptsSourceEdits(withKeyBrowser, "key")).toBe(true);
+    expect(requireSourceKind(withKeyBrowser, "key", engine).sourceLanguage).toBe("json");
+    expect(requireEditableKind(withKeyBrowser, "key", engine).id).toBe("key");
+  });
+});
+
 describe("kindAcceptsRowWrites", () => {
   test("an absent flag reads as false, so an undeclared kind is never an import target", () => {
     expect(kindAcceptsRowWrites(withKinds, "view")).toBe(false);
@@ -153,6 +216,30 @@ describe("isCountSampled", () => {
     // Narrowing is the point: a caller holding the union cannot reach `sampledFrom` at all
     // until the predicate has answered, which is what keeps the renderer honest.
     expect(isCountSampled(count) ? count.sampledFrom : "").toBe("the first 1,000 keys of one SCAN walk");
+  });
+});
+
+/**
+ * A kind whose count and listing are one read (#1089 3.4, 4.7), which etcd's leases, users and roles
+ * are: the count IS the listing's length, so a refused count is a refused listing.
+ */
+describe("kindCountIsListing", () => {
+  const withListingCounts = {
+    ...base,
+    objectKinds: [
+      { id: "member", role: "config", label: "Member", labelPlural: "Members" },
+      { id: "user", role: "config", label: "User", labelPlural: "Users", countIsListing: true },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  test("only an explicit true says the count and the listing are one read", () => {
+    expect(kindCountIsListing(withListingCounts, "user")).toBe(true);
+    expect(kindCountIsListing(withListingCounts, "member")).toBe(false);
+  });
+
+  test("a kind this engine does not declare is not assumed to be one", () => {
+    expect(kindCountIsListing(withListingCounts, "role")).toBe(false);
+    expect(kindCountIsListing(base, "user")).toBe(false);
   });
 });
 

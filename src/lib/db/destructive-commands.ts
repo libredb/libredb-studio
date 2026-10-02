@@ -1,4 +1,10 @@
+import type { TypedConfirmationAsk } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
+import {
+  ETCD_DESTRUCTIVE_OPERATIONS,
+  etcdTypedConfirmation,
+  readEtcdOperations,
+} from "@/lib/db/providers/keyvalue/etcd/guard";
 
 /**
  * The confirmation gate's vocabulary for the engines whose query text is NOT SQL.
@@ -241,9 +247,29 @@ interface DestructiveVocabulary {
    * expression can start with a metric name the server's data chooses, `update`,
    * `delete` and `drop` are legal names, and read as SQL the tree's own selector for
    * such a metric is a write. A Kafka read request names its topic, which can carry
-   * any of those names too, in text that can only ever read that topic.
+   * any of those names too, in text that can only ever read that topic. An etcd command
+   * names its keys, which can be spelled like any SQL keyword, and `guard.ts` reads it with
+   * the parser the provider runs, so what asks and what runs are one parse (#1089).
    */
   readonly decidesAlone: boolean;
+  /**
+   * What a statement this row asks about makes the person type before it runs, or undefined where the one-click
+   * dialog is the whole confirmation (#1089, section 5.5).
+   *
+   * Absent means one click for every statement the row asks about. `QuerySafetyDialog` reads it through
+   * `vocabularyTypedConfirmation`, for a statement the gate already stopped, and draws the shared typed field for
+   * the answer: the text itself, or the connection's name with every target listed.
+   */
+  readonly typedConfirmation?: (text: string) => TypedConfirmationAsk | undefined;
+  /**
+   * False keeps this row's statements from the AI safety analysis: the confirmation gate then posts nothing to
+   * `/api/ai/query-safety` and calls no adapter in its place (#1089, E10).
+   *
+   * Absent means the gate sends the statement, as it does for every engine today. A row declares `false` where the
+   * text carries what a write stores, as an etcd `put` carries its value, which must not leave the deployment
+   * through the gate.
+   */
+  readonly safetyAnalysis?: false;
 }
 
 /**
@@ -393,6 +419,18 @@ const readKafkaOperations: OperationReader = () => [];
  * gate reads; a row would be a second, weaker opinion about the same text.
  */
 export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseType, DestructiveVocabulary>>> = {
+  etcd: {
+    operations: ETCD_DESTRUCTIVE_OPERATIONS,
+    // The provider's own parser, read by guard.ts, so what asks and what runs are one parse (#1089 5.5). Text
+    // it refuses names nothing, where every other reader answers "could not tell": the provider refuses that
+    // text before any request, so a prompt would ask about a command that cannot run.
+    read: readEtcdOperations,
+    decidesAlone: true,
+    // A range delete and a lease revoke are typed; everything else that asks takes one click (#1089 5.5).
+    typedConfirmation: etcdTypedConfirmation,
+    // A put's value is part of the statement, so no etcd statement is posted for an AI analysis (#1089 E10).
+    safetyAnalysis: false,
+  },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
   mongodb: { operations: MONGODB_DESTRUCTIVE_OPERATIONS, read: readMongodbOperations, decidesAlone: false },
   prometheus: { operations: PROMETHEUS_DESTRUCTIVE_OPERATIONS, read: readPrometheusOperations, decidesAlone: true },
@@ -423,4 +461,30 @@ export function isDestructiveNonSqlQuery(query: string, databaseType?: DatabaseT
   const named = facts.read(query);
   if (named === undefined) return true;
   return named.some((name) => facts.operations.has(name));
+}
+
+/**
+ * What this statement asks the person to type before it runs, or undefined where the gate's one click is the whole
+ * confirmation (#1089, section 5.5).
+ *
+ * Undefined for every type with no row, including no type at all, and for every row that declares no
+ * `typedConfirmation`. The text reaches the row as it was written.
+ */
+export function vocabularyTypedConfirmation(
+  databaseType: DatabaseType | undefined,
+  text: string,
+): TypedConfirmationAsk | undefined {
+  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  return facts?.typedConfirmation?.(text);
+}
+
+/**
+ * Whether the confirmation gate may post this type's statements to the AI safety analysis (#1089, E10).
+ *
+ * True for every type with no row, including no type at all, and for every row that does not declare
+ * `safetyAnalysis: false`, which is what the gate did for every engine before the field existed.
+ */
+export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
+  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  return facts?.safetyAnalysis !== false;
 }

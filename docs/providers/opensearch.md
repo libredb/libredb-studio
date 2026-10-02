@@ -462,7 +462,7 @@ shared parser could round-trip), and **`http://` / `https://` are already claime
 `connection-string-parser.ts` is therefore **not touched** by this provider. The consequence is
 recorded rather than hidden — pasting `http://localhost:9201` selects ClickHouse — and the
 connection-form hook's unparseable-string message deliberately omits both search ids
-([`use-connection-form.ts:376`](../../src/hooks/use-connection-form.ts)).
+(`handlePasteConnectionString` in [`use-connection-form.ts`](../../src/hooks/use-connection-form.ts)).
 
 ### 4.3 TLS
 

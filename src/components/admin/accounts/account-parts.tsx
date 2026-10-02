@@ -79,16 +79,6 @@ export function MonoEmail({ value }: { value: string }) {
   return <span className="font-mono break-all text-fg">{value}</span>;
 }
 
-/** A refusal shown next to the control that caused it. */
-export function FormError({ message }: { message: string | null }) {
-  if (!message) return null;
-  return (
-    <p role="alert" className="text-sm text-danger">
-      {message}
-    </p>
-  );
-}
-
 export function formatCreated(createdAt: string): string {
   const date = new Date(createdAt);
   if (Number.isNaN(date.getTime())) return "";

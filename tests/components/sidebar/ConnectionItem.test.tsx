@@ -491,4 +491,43 @@ describe("ConnectionItem", () => {
       expect(onDelete).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe("the read-only marker (#1089)", () => {
+    const title = "Writes, value edits and maintenance are refused on this connection";
+
+    test("a read-only connection carries the marker, titled with what it refuses", () => {
+      const { getByText } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, readOnly: true }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(getByText("Read-only").getAttribute("title")).toBe(title);
+    });
+
+    test("a managed read-only seed shows it beside the managed lock", () => {
+      const { getByText, getByTestId } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, managed: true, seedId: "prod", readOnly: true }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(getByText("Read-only").parentElement).toBe(getByTestId("managed-lock-prod").parentElement);
+    });
+
+    test("a connection that is not read-only carries none", () => {
+      const props = { isActive: false, onSelect: defaultOnSelect, onDelete: defaultOnDelete };
+      const view = render(<ConnectionItem connection={mockPostgresConnection} {...props} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(<ConnectionItem connection={{ ...mockPostgresConnection, readOnly: false }} {...props} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+    });
+  });
 });

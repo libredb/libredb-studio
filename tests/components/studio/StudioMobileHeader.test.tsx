@@ -455,4 +455,26 @@ describe("StudioMobileHeader", () => {
     expect(control).not.toBeNull();
     expect(control!.closest('[role="menuitem"]')).toBeNull();
   });
+
+  describe("the read-only marker (#1089)", () => {
+    test("renders beside the connection selector, titled with what it refuses", () => {
+      const { getByText } = render(<StudioMobileHeader {...defaults} activeConnection={{ ...conn, readOnly: true }} />);
+      const marker = getByText("Read-only");
+
+      expect(marker.getAttribute("title")).toBe("Writes, value edits and maintenance are refused on this connection");
+      // Row 1 reads the selector, the marker, then the Online badge.
+      expect(marker.nextElementSibling).toBe(getByText("Online"));
+    });
+
+    test("renders nothing for a read-write connection or for no connection", () => {
+      const view = render(<StudioMobileHeader {...defaults} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(<StudioMobileHeader {...defaults} activeConnection={{ ...conn, readOnly: false }} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(<StudioMobileHeader {...defaults} activeConnection={null} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+    });
+  });
 });

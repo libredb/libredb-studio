@@ -428,4 +428,29 @@ describe("StudioDesktopHeader", () => {
       expect(header?.className).toContain("md:flex");
     });
   });
+
+  describe("the read-only marker (#1089)", () => {
+    test("renders beside the active connection's name, titled with what it refuses", () => {
+      const { getByText } = render(
+        <StudioDesktopHeader {...defaultProps} activeConnection={{ ...baseConnection, readOnly: true }} />,
+      );
+      const marker = getByText("Read-only");
+
+      expect(marker.getAttribute("title")).toBe("Writes, value edits and maintenance are refused on this connection");
+      expect(marker.parentElement?.querySelector("h1")?.textContent).toBe("staging-db");
+    });
+
+    test("renders nothing for a read-write connection or for no connection", () => {
+      const view = render(<StudioDesktopHeader {...defaultProps} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(
+        <StudioDesktopHeader {...defaultProps} activeConnection={{ ...baseConnection, readOnly: false }} />,
+      );
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(<StudioDesktopHeader {...defaultProps} activeConnection={null} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+    });
+  });
 });

@@ -32,6 +32,7 @@ import type {
   ObjectEditPosition,
   ObjectEditPreimage,
   ObjectEditStep,
+  ObjectEditUnit,
 } from "@/lib/db/types";
 import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 
@@ -106,6 +107,19 @@ function counted(value: number): string {
 /** The step whose bytes the diff's right side shows: the payload on the command arm. */
 function previewedStep(plan: ObjectEditPlan): ObjectEditStep {
   return plan.unit.medium === "command" ? plan.unit.payload : plan.unit.steps[0];
+}
+
+/**
+ * The command arm's one line, in the order the apply sends it: the verb, the tokens before the
+ * payload, the payload by its label and length, and the tokens after it (etcd spec 3.4, 4.5).
+ *
+ * An absent `payloadLabel` reads "library code" and an absent or empty `trailing` adds nothing,
+ * not even a space, so a unit that sets neither, which Redis's is, draws the line it always has.
+ */
+function commandSummary(unit: Extract<ObjectEditUnit, { readonly medium: "command" }>): string {
+  const summary = `${unit.name} ${unit.arguments.join(" ")} <${unit.payloadLabel ?? "library code"}, ${counted(unit.payload.text.length)} characters>`;
+  const trailing = unit.trailing ?? [];
+  return trailing.length === 0 ? summary : `${summary} ${trailing.join(" ")}`;
 }
 
 /**
@@ -631,7 +645,7 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
                 className="whitespace-pre-wrap break-words text-xs text-brand/80"
                 data-testid="object-source-apply-payload"
               >
-                {`${plan.unit.name} ${plan.unit.arguments.join(" ")} <library code, ${counted(plan.unit.payload.text.length)} characters>`}
+                {commandSummary(plan.unit)}
               </pre>
             </div>
           )}

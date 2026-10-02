@@ -29,7 +29,7 @@ import {
 import { AgentRail } from "@/components/agent/AgentRail";
 import { DatabaseConnection, type ColumnSchema, SavedQuery } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
-import { findKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
+import { findKind, keyBrowserKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
 import { httpSourceApplier, ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
 import { ChunkBoundary, ViewLoading } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
@@ -920,12 +920,27 @@ export default function Studio() {
    * database is what answered `(nil)` for a key that had just been listed, which is why the number
    * is handed over. `null` is the panel saying "the engine's own session database" - nothing to
    * override - so that activation is the call it has always been.
+   *
+   * A DECLARED KEY KIND OPENS THE KEY'S SOURCE TAB INSTEAD (spec 4.6). An engine whose key kind is
+   * `enumeratedBy: "key-browser"` (`keyBrowserKind`) shows a key's value and metadata through the
+   * object surface, addressed by the key alone, so nothing is generated and nothing runs where the
+   * call below would write a read and execute it. The same refusal comes first, because this opens a
+   * tab too and ends in `setActiveTabId` (D82). Redis declares no such kind and keeps the call below.
+   * STABLE, and read at call time (X5), as `openTabFor` is: the metadata and the apply latch it reads
+   * change while the sidebar it is handed to is memoized.
    */
-  const onOpenKey = useCallback(
-    (key: string, type: string | null, database?: number | null) =>
-      openTabFor([key], type === null ? [] : [{ name: "type", type, nullable: false, isPrimary: false }], database),
-    [openTabFor],
-  );
+  const onOpenKey = useStableCallback((key: string, type: string | null, database?: number | null) => {
+    const keyKind = metadata === null ? undefined : keyBrowserKind(metadata.capabilities);
+    if (keyKind === undefined) {
+      openTabFor([key], type === null ? [] : [{ name: "type", type, nullable: false, isPrimary: false }], database);
+      return;
+    }
+    if (applyInFlight) {
+      refuseWhileApplying();
+      return;
+    }
+    openSourceTab({ path: [key], kind: keyKind.id, name: key });
+  });
 
   /**
    * A row activated in the object tree (#789).
@@ -934,8 +949,9 @@ export default function Studio() {
    * query and EXECUTES it, so handing it a routine or a trigger would run
    * `SELECT * FROM order_total(integer) LIMIT 50` against the database. The old flat
    * explorer could not reach that state because it only ever listed relations; the tree
-   * lists every declared kind, so the gate is what keeps a click on a function from
-   * being a failed statement in the reader's history.
+   * lists every kind the object surface enumerates (`enumerableKinds`: every declared kind
+   * but one only the Keys panel enumerates, such as etcd's `key`), so the gate is what keeps
+   * a click on a function from being a failed statement in the reader's history.
    *
    * The PATH and not the name. `name` is the label and `path` is the address (standing
    * ruling 2), and the generator now takes segments, so an object outside the session
@@ -1537,6 +1553,7 @@ export default function Studio() {
         query={queryExec.safetyCheckQuery || ""}
         schemaContext={conn.schemaContext}
         databaseType={conn.activeConnection?.type}
+        connectionName={conn.activeConnection?.name}
         onClose={() => queryExec.setSafetyCheckQuery(null)}
         onProceed={() => {
           if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);

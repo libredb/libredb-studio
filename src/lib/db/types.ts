@@ -95,7 +95,27 @@ export interface HealthInfo {
 // Maintenance Operations
 // ============================================================================
 
+/**
+ * The six maintenance operations of the engines that shipped before etcd, the type each of their providers'
+ * own `runMaintenance` dispatches on.
+ *
+ * Kept to these six (#1089, section 7.2): `MongoDBProvider.runMaintenance` ends its work in a `switch` over
+ * exactly these members with no `default`, so a seventh member here makes that method's result possibly
+ * undefined to the compiler, and the etcd work edits no other provider's file. Every operation a provider may
+ * declare and be asked to run is `MaintenanceOperation`.
+ */
 export type MaintenanceType = "vacuum" | "analyze" | "reindex" | "kill" | "optimize" | "check";
+
+/**
+ * Every maintenance operation a provider may declare in `maintenanceOperations` and be asked to run through
+ * `runMaintenance`: the six of `MaintenanceType`, and etcd's three.
+ *
+ * `compact`, `defragment` and `disarm` are etcd's history compaction, member defragmentation and alarm disarm
+ * (#1089, section 7.2), operations of their own rather than `vacuum` and `optimize` under other words: a reused
+ * `vacuum` is audited as VACUUM and read by the monitoring Tables tab's vacuum column, and `optimize` has no global
+ * card, so a defragmentation declared as it would have had no control at all.
+ */
+export type MaintenanceOperation = MaintenanceType | "compact" | "defragment" | "disarm";
 
 export interface MaintenanceResult {
   success: boolean;
@@ -131,6 +151,24 @@ export interface MaintenanceOperationSpec {
   perEntity: boolean;
   /** Runs with no target at all, over the whole database. */
   global: boolean;
+  /**
+   * The heading of this operation's own card in the Operations tab's Global Operations section (#1089, section 7.2).
+   *
+   * Declaring it IS the request for that card: the tab draws one card, with `label` on its button, this heading and
+   * `description` as its body, for every operation `maintenanceControl` offers globally with a title, and withholds
+   * the card it would otherwise draw for the operation from `ProviderLabels`. Absent keeps the operation on the
+   * tab's own cards, which is every provider that shipped before the field existed.
+   */
+  title?: string;
+  /** The body of this operation's card, and of its typed dialog when it asks for one (#1089, section 7.2). */
+  description?: string;
+  /**
+   * `"typed"`: the operation's card asks for the connection's name, typed exactly, before it sends anything
+   * (#1089, section 7.2). Honoured on a declared card only, so a spec that asks declares `title`, `description`
+   * and `perEntity: false`: no per-row control asks, and the typed dialog takes its title and body from those two
+   * fields. `tests/unit/db/maintenance-confirmation-capability.test.ts` holds every shipped provider to that.
+   */
+  confirmation?: "typed";
 }
 
 /** Where a surface wants to put a control: on one row, or on a whole-database card. */
@@ -147,12 +185,17 @@ export type MaintenancePlacement = "perEntity" | "global";
  * `maintenanceOperationSpecs` - a provider that declares no spec is offered in both
  * placements under the caller's own wording, which is what both surfaces did before
  * #U9.
+ *
+ * A spec's card fields, `title`, `description` and `confirmation`, travel with the answer
+ * only where the spec declares them, for the Operations tab's declared cards (#1089,
+ * section 7.2): a spec that declares none answers exactly what it answered before they
+ * existed.
  */
 export function maintenanceControl(
   capabilities: ProviderCapabilities | undefined,
-  type: MaintenanceType,
+  type: MaintenanceOperation,
   placement: MaintenancePlacement,
-): { offered: boolean; label?: string } {
+): { offered: boolean; label?: string; title?: string; description?: string; confirmation?: "typed" } {
   // Unknown capabilities are not a permission: `/api/db/provider-meta` answers with
   // nothing both while it is in flight and when it failed, and failing open there
   // puts the dead buttons back on exactly the connections the #272/#282 gates exist
@@ -166,8 +209,25 @@ export function maintenanceControl(
     return { offered: true };
   }
 
-  return { offered: spec[placement], label: spec.label };
+  return {
+    offered: spec[placement],
+    label: spec.label,
+    ...(spec.title === undefined ? {} : { title: spec.title }),
+    ...(spec.description === undefined ? {} : { description: spec.description }),
+    ...(spec.confirmation === undefined ? {} : { confirmation: spec.confirmation }),
+  };
 }
+
+/**
+ * What a typed confirmation asks the person to type (#1089, section 5.5): a text, such as the key prefix a range
+ * delete names, or the connection's name, with every target the statement reaches listed beside the field.
+ *
+ * Answered by a confirmation-gate vocabulary's `typedConfirmation` (`src/lib/db/destructive-commands.ts`) and drawn
+ * by `QuerySafetyDialog`. Not published: `src/exports/types.ts` does not name it.
+ */
+export type TypedConfirmationAsk =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "connection-name"; readonly targets: readonly string[] };
 
 /**
  * Whether column profiling may be offered for this engine: the one gate both row menus
@@ -177,9 +237,10 @@ export function maintenanceControl(
  *
  * The route writes exactly two statement shapes: SQL aggregates, and a MongoDB `aggregate`
  * document with a `$sample` stage. So profiling is offered for `"sql"`, and for `"json"` only
- * when no `queryDialect` says the JSON is some other grammar. Redis, LibreDB and Kafka declare
+ * when no `queryDialect` says the JSON is some other grammar. Redis, LibreDB, Kafka and etcd declare
  * `"json"` with a dialect of their own, a Kafka read request being JSON of this product's own
- * schema (#1088), and `"promql"` is not JSON at all; before this gate the route sent Redis,
+ * schema (#1088) and an etcd command a line of etcdctl's (#1089), and `"promql"` is not JSON at all;
+ * before this gate the route sent Redis,
  * LibreDB and Prometheus the MongoDB document, which only MongoDB reads (#1085).
  *
  * Unknown capabilities are not a permission, for the reason `maintenanceControl` gives:
@@ -208,10 +269,14 @@ export function offersColumnProfiling(capabilities: ProviderCapabilities | undef
  * written over them reject the rows a read returns, a `Date` for a timestamp that arrives as an ISO
  * string and a record type for a value that arrives as text, base64 or a Confluent schema label.
  *
+ * The `"etcd"` dialect is refused by the same arm (#1089, section 3.3): a key-prefix group's columns are
+ * the fixed shape of a `get` row, and a model written over them is not a record an application stores in
+ * a key-value store.
+ *
  * Unknown capabilities are not a permission, as for `offersColumnProfiling`.
  */
 export function offersCodeGeneration(capabilities: ProviderCapabilities | undefined): boolean {
-  if (capabilities?.queryDialect === "kafka") return false;
+  if (capabilities?.queryDialect === "kafka" || capabilities?.queryDialect === "etcd") return false;
   return capabilities?.queryLanguage === "sql" || capabilities?.queryLanguage === "json";
 }
 
@@ -225,7 +290,8 @@ export function offersCodeGeneration(capabilities: ProviderCapabilities | undefi
  * `offersColumnProfiling` does, so that a dialect declared on a SQL engine later refuses the
  * action until somebody writes its count. Redis and LibreDB have no count
  * statement in their command grammars, Kafka's read request reads a topic's messages and counts
- * none (#1088), and `"promql"` is not offered it either: `count()` in
+ * none (#1088), etcd declares a dialect and derived groupings both, either of which withholds it
+ * (#1089), and `"promql"` is not offered it either: `count()` in
  * PromQL counts series at an instant, which is not the row count this action promises.
  *
  * A derived grouping is refused on top of the language, because a Redis `user:*` row is a
@@ -296,6 +362,13 @@ export type ContainerLevels =
  * The declaration is STATIC, like `objectKinds` and for a related reason: it states what the
  * PROVIDER can do, not what the connected server answered. A Redis-wire relative that
  * refuses `SCAN` would be a different provider, not a different capability.
+ *
+ * THE WALK'S SHAPE IS DECLARED TOO, in four optional fields read only through `keyScanShape` below
+ * (spec 3.4): which string separates a key's segments, how the cursor is spelled, what the pattern
+ * is, and what the total counts. An absent field is Redis's walk, the one this interface described
+ * before the fields existed, so a declaration written then still means what it meant. etcd declares
+ * all four: a `/` convention, a cursor only it can read, a literal prefix rather than a glob, and a
+ * total that counts the range the walk covers.
  */
 export interface KeyScanCapability {
   /** Batch size used when the caller names none. */
@@ -306,16 +379,74 @@ export interface KeyScanCapability {
    * nothing, which is a wrong answer about what a batch is. The caller can ask again.
    */
   readonly maxCount: number;
+  /**
+   * What separates one segment of a key from the next in the panel's tree, and in the prefix a
+   * folder stands for. Absent reads `":"`, Redis's convention; etcd's is `"/"`.
+   */
+  readonly separator?: string;
+  /**
+   * How the cursor is spelled. Absent reads `"decimal"`, a run of digits the route shape-checks, as a
+   * Redis cursor is; `"opaque"` is a string only the provider that wrote it can read, which the route
+   * passes through untouched. `"0"` starts and ends a walk under both.
+   */
+  readonly cursor?: "decimal" | "opaque";
+  /**
+   * What `KeyScanOptions.pattern` is. Absent reads `"glob"`, a `MATCH` pattern whose prefix half the
+   * panel escapes; `"prefix"` is the literal bytes every walked key begins with, unescaped, untrimmed
+   * and with no `*`.
+   */
+  readonly pattern?: "glob" | "prefix";
+  /**
+   * What `KeyScanPage.total` counts. Absent reads `"database"`, the engine's own count of the database
+   * walked; `"walk"` is the exact count of the keys this walk covers at its pinned revision.
+   */
+  readonly totalScope?: "database" | "walk";
+}
+
+/**
+ * A key-space walk's shape with every field present: what `keyScanShape` answers for a declaration.
+ *
+ * A TYPE OF ITS OWN SO A READER HOLDS THE ANSWER AND NOT THE QUESTION. A panel that read
+ * `capability.separator ?? ":"` in one place and `capability.separator` in another would draw one key
+ * space two ways; a reader handed this has no default left to forget.
+ */
+export interface KeyScanShape {
+  readonly separator: string;
+  readonly cursor: "decimal" | "opaque";
+  readonly pattern: "glob" | "prefix";
+  readonly totalScope: "database" | "walk";
+}
+
+/**
+ * The one reader of `KeyScanCapability`'s four optional fields (spec 3.4).
+ *
+ * An absent field is today's walk, `":"`, `"decimal"`, `"glob"` and `"database"`: the compatibility
+ * rule `maintenanceControl` states for the optional `maintenanceOperationSpecs`, which is why Redis's
+ * declaration, naming none of the four, keeps its panel as it was.
+ */
+export function keyScanShape(capability: KeyScanCapability): KeyScanShape {
+  return {
+    separator: capability.separator ?? ":",
+    cursor: capability.cursor ?? "decimal",
+    pattern: capability.pattern ?? "glob",
+    totalScope: capability.totalScope ?? "database",
+  };
 }
 
 export interface KeyScanOptions {
-  /** The cursor the previous page answered with; `"0"` starts a walk. */
+  /** The cursor the previous page answered with, in the declaration's `cursor` spelling; `"0"` starts a walk. */
   readonly cursor: string;
-  /** A `MATCH` pattern, or omitted for every key. */
+  /**
+   * The walk's pattern in the declaration's `pattern` shape, or omitted for every key: a `MATCH` glob
+   * under `"glob"`, and under `"prefix"` the literal prefix every walked key begins with.
+   */
   readonly pattern?: string;
   /** Batch size, within `[1, maxCount]`. */
   readonly count: number;
-  /** Which numbered database to walk, for an engine that has more than one. */
+  /**
+   * Which numbered database to walk, for an engine that declares a container level to name. An engine
+   * that declares none walks one key space, and both key routes refuse the field for it (spec 3.4).
+   */
   readonly database?: number;
 }
 
@@ -344,15 +475,19 @@ export interface KeyScanPage {
    */
   readonly types: Readonly<Record<string, string>>;
   /**
-   * The engine's own count of the keys in the database being walked — what a progress
-   * indicator divides by.
+   * What a progress indicator divides by, in the scope the declaration's `totalScope` names (spec 4.6).
    *
-   * SERVER-WIDE, NOT THE WALK'S OWN TOTAL, which is why it looks like a naive field. A
-   * `SCAN` cursor says nothing about how much is left, so no denominator can be computed
-   * from the batches a caller has already seen; this is the one number the engine publishes
-   * (`DBSIZE`, which is O(1)). On a clustered deployment it is the LOCAL node's key count,
-   * because `DBSIZE` has no cluster-wide form and `SCAN` walks one node's slots — a panel
-   * drawing 2000/6355 there is showing a fraction of one node and not of the cluster.
+   * UNDER `"database"`, THE ABSENT DEFAULT, IT IS SERVER-WIDE AND NOT THE WALK'S OWN TOTAL, which is
+   * why it looks like a naive field. A `SCAN` cursor says nothing about how much is left, so no
+   * denominator can be computed from the batches a caller has already seen; this is the one number the
+   * engine publishes (`DBSIZE`, which is O(1)). On a clustered deployment it is the LOCAL node's key
+   * count, because `DBSIZE` has no cluster-wide form and `SCAN` walks one node's slots: a panel drawing
+   * 2000/6355 there is showing a fraction of one node and not of the cluster.
+   *
+   * UNDER `"walk"` IT IS THE EXACT COUNT OF THE KEYS THIS WALK COVERS at the revision its pages are
+   * pinned to: the pattern's prefix range, or the whole key space, and for a caller whose grants are
+   * narrower, the keys of the ranges it may read (spec 4.7). Every page answers it, and a panel replaces
+   * its total with each page's.
    */
   readonly total: number;
   /**
@@ -363,6 +498,15 @@ export interface KeyScanPage {
    * does not say it is clustered, which is the ordinary server.
    */
   readonly clustered?: boolean;
+  /**
+   * Keys this page read and left out, and why: present only when it left any out (spec 4.6).
+   *
+   * A KEY IS LEFT OUT WHEN NO NAME A ROW COULD CARRY ADDRESSES IT. etcd keys are bytes, and one that
+   * is not UTF-8 text, decoded with replacement characters, would name a different key, so it is
+   * counted here rather than listed; a typed read shows it in base64. `reason` is the provider's own
+   * words. Redis's pages never carry it.
+   */
+  readonly skipped?: { readonly count: number; readonly reason: string };
 }
 
 export interface ProviderCapabilities {
@@ -382,7 +526,9 @@ export interface ProviderCapabilities {
    */
   queryLanguage: "sql" | "json" | "promql";
   /**
-   * Optional client-side query dialect, and only ever a kind of JSON. `queryLanguage`
+   * Optional client-side query dialect, declared only beside `queryLanguage: "json"`, where it
+   * names the grammar the editor text really is: JSON of this product's own schema (Kafka) or a
+   * command line (Redis, LibreDB, etcd), for which `"json"` means only "not SQL". `queryLanguage`
    * says SQL, JSON or PromQL; for a `"json"` provider the query generators otherwise
    * assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
@@ -398,8 +544,12 @@ export interface ProviderCapabilities {
    * the member lands with an explicit arm in every reader of either field, or with a test pinning
    * that the branch it falls into is right for Kafka. Widening this published union breaks a
    * consumer's exhaustive switch over it, which ships with a release note, as `queryLanguage`'s did.
+   *
+   * `"etcd"` is the etcd provider's (#1089): its editor text is a subset of etcdctl's command line,
+   * read by the provider's own parser. It landed the way Kafka's did: an explicit arm in every reader
+   * of either field, or a test pinning that the branch it falls into is right for etcd.
    */
-  queryDialect?: "libredb" | "redis" | "kafka";
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).
@@ -559,10 +709,30 @@ export interface ProviderCapabilities {
    * `CLAUDE.md`.
    */
   singleWriterFile?: boolean;
-  supportsMaintenance: boolean;
-  maintenanceOperations: MaintenanceType[];
   /**
-   * Per-operation targeting for the operations above, keyed by `MaintenanceType`.
+   * True when this engine's provider refuses every write before any request while the connection's
+   * `readOnly` is true, or while it was opened with `ProviderExecutionContext.readOnly`, naming the
+   * read-only mode in the refusal (#1089).
+   *
+   * A mode a provider ignores would be a promise nobody keeps: the connection would be listed as
+   * read-only and send its writes. So `readOnly: true` is accepted only where this holds, and refused
+   * everywhere else: by the seed schema at load, by `assertReadOnlyHonoured` in
+   * `src/lib/db/factory.ts` before anything is built or dialled, and by the connection form, which
+   * draws its toggle only here. All three read `READ_ONLY_ENFORCED` in `src/lib/db/compatibility.ts`
+   * rather than this field, because each decides before a provider exists, and
+   * `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration
+   * for every shipped type-id.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`
+   * (`src/exports/types.ts`): a required field added after the fact stops every external implementer
+   * compiling. Only the literal `true` is declared, so an absent flag reads as "a read-only connection
+   * is refused here", the answer for every engine whose provider does not refuse writes itself.
+   */
+  readonly enforcesReadOnly?: true;
+  supportsMaintenance: boolean;
+  maintenanceOperations: MaintenanceOperation[];
+  /**
+   * Per-operation targeting for the operations above, keyed by `MaintenanceOperation`.
    *
    * Optional for the published-interface reason `supportsInlineRowEdit` records
    * (`src/exports/types.ts`): a required field added after the fact stops every
@@ -570,7 +740,7 @@ export interface ProviderCapabilities {
    * alone", which is what both maintenance surfaces did before #U9 - so an
    * implementation that declares nothing here behaves exactly as it did.
    */
-  maintenanceOperationSpecs?: Partial<Record<MaintenanceType, MaintenanceOperationSpec>>;
+  maintenanceOperationSpecs?: Partial<Record<MaintenanceOperation, MaintenanceOperationSpec>>;
   supportsConnectionString: boolean;
   defaultPort: number | null;
   /**
@@ -676,7 +846,9 @@ export interface ProviderCapabilities {
    *
    * A kind that is absent from this list is a different fact from a kind that is
    * declared and holds nothing, which is what `KindCount` carries. Read this through
-   * `declaredKinds()` in `src/lib/db/object-kinds.ts`.
+   * `declaredKinds()` in `src/lib/db/object-kinds.ts`, and walk it through
+   * `enumerableKinds()` there, which leaves out a kind only the Keys panel enumerates
+   * (`ObjectKindSpec.enumeratedBy`, #1089 3.4).
    *
    * Optional for the same published-interface reason as `containerLevels` above.
    *
@@ -1072,8 +1244,13 @@ export interface DatabaseProvider {
    * bolted on. `listObjects` is finite by definition and answers a whole folder; this answers
    * one batch of a walk with no end until the cursor returns `"0"`, and the CALLER holds the
    * position between two calls. Nothing is retained on the provider side, so a page is a round
-   * trip rather than a session, and a cursor arriving after a reconnect is still valid: it is
-   * a position in a hash table, not a handle.
+   * trip rather than a session, and a cursor arriving after a reconnect is still valid: it is a
+   * position, not a handle, spelled as the declaration's `cursor` says. Under `"decimal"` (Redis)
+   * it is a position in a hash table. Under `"opaque"` it is a string only the provider that
+   * wrote it can read, and the engine can overtake it between two pages: etcd's cursor carries
+   * the revision its walk is pinned to, and once a compaction passes that revision the next page
+   * answers the compacted error, which the panel reports with the instruction to start again
+   * (spec 4.6).
    *
    * The optional shape follows `endOpenQueryTransaction`: an engine with no key space of its
    * own has nothing truthful to implement here. `keyScan` is the declaration a route checks
@@ -1265,7 +1442,9 @@ export interface DatabaseProvider {
 
   /**
    * Run maintenance operations
-   * @param type - Type of maintenance operation
+   * @param type - Type of maintenance operation. A provider's own implementation may take the narrower
+   * `MaintenanceType` when it runs none of etcd's three: `POST /api/db/maintenance` hands a provider only an
+   * operation its `maintenanceOperations` declares.
    * @param target - Optional target (table name or process ID)
    * @param container - Optional namespace the target lives in. What a container means is
    * per-engine and the provider decides: a schema for PostgreSQL, DuckDB and SQL Server, a
@@ -1273,7 +1452,7 @@ export interface DatabaseProvider {
    * the attached database for SQLite and libSQL. Providers that cannot act on one ignore it
    * rather than guessing a dialect from the target string.
    */
-  runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult>;
+  runMaintenance(type: MaintenanceOperation, target?: string, container?: string): Promise<MaintenanceResult>;
 
   /**
    * Validate provider configuration
@@ -1395,6 +1574,28 @@ export interface DatabaseOverview {
    */
   databaseSizeBytes?: number;
   tableCount: number;
+  /**
+   * Present only when `tableCount` may be a FLOOR: the provider's own sentence for what it counted,
+   * phrased to follow "counted from", the discipline `KindCount.sampledFrom` carries (etcd spec
+   * 7.1).
+   *
+   * `tableCount` is required, so it has no way to spell "at least" on its own, and omitting it
+   * would render as 0. etcd is the case: a user who is not root counts only the ranges it may
+   * read, so the number is real and bounded, and this names the ranges, whatever they cover, so a
+   * reader granted every key is told the same (etcd spec 4.7). The Overview's Tables card then
+   * draws `N+` with "At least N: counted from <sentence>", the words the object tree's floor badge
+   * uses. Absent means `tableCount` is the whole count, which every other engine answers, so its
+   * card renders as it always has.
+   *
+   * The sentence may name those ranges, and so a key, because no model is handed an overview: its
+   * readers are the monitoring dashboard and the fleet-health route, which takes only
+   * `databaseSizeBytes` (etcd spec E13).
+   *
+   * ADDITIVE ON PURPOSE, for the reason `KindCount`'s fourth state is: this type reaches package
+   * users through `DatabaseProvider.getOverview`, and a consumer that has not heard of the field
+   * still reads a true, only imprecise, number.
+   */
+  tableCountSampledFrom?: string;
   indexCount: number;
 }
 
@@ -1711,6 +1912,34 @@ export interface ObjectKindSpec {
    * both.
    */
   readonly acceptsRowWrites?: boolean;
+  /**
+   * Who enumerates the objects of THIS KIND (#1089 3.4).
+   *
+   * Absent: the object surface does, so the kind draws a folder in the tree, is counted and
+   * listed, and is walked by the `inventory` and `search` routes and by the agent's grounding
+   * read. `"key-browser"`: only the Keys panel does, a page at a time, so the kind draws no folder
+   * and no walk over all kinds lists it, while `findKind` still resolves it for the Source tab and
+   * both edit routes. etcd's `key` is the case: a folder or an inventory entry per key would put
+   * every key name in the tree and in plan mode's prompt.
+   *
+   * Read through `enumerableKinds()` and `keyBrowserKind()` in `src/lib/db/object-kinds.ts`, never
+   * inline. A provider that declares it leaves the kind out of `countObjects` and refuses it by
+   * name in `listObjects`, and `tests/isolated/object-source-declarations.test.ts` refuses a second
+   * such kind, one without `hasSource` and one on capabilities without `keyScan`.
+   */
+  readonly enumeratedBy?: "key-browser";
+  /**
+   * Whether the count and the listing of THIS KIND are one read, so a refused count is a refused
+   * listing (#1089 3.4, 4.7).
+   *
+   * Absent reads as false; read through `kindCountIsListing()`. The agent's grounding walk is its
+   * reader: for such a kind whose count answered `{ unavailable }` it sends no listing, which would
+   * meet the same refusal and lose the whole capture, and carries the sentence as
+   * `AgentInventoryKind.unavailable` instead. etcd's `lease`, `user` and `role` declare it, because a
+   * user who is not root may list none of them. A kind that declares nothing is walked exactly as
+   * before, a refused count and all.
+   */
+  readonly countIsListing?: true;
 }
 
 /** One container level. Zero, one or two of these; the engine says which. */
@@ -1739,6 +1968,19 @@ export interface Container {
    */
   readonly isSessionDefault?: boolean;
 }
+
+/**
+ * One piece of an object's key range that this connection may read: a single key, every key
+ * under a prefix, or every key from `start` up to but not including `end`, the three shapes an
+ * etcd grant reads as (etcd spec 3.4, 4.7).
+ *
+ * Keys are the engine's own text, never escaped or quoted here, so a reader that writes one into
+ * a command quotes it for the place it lands.
+ */
+export type ObjectReadRange =
+  | { readonly key: string }
+  | { readonly prefix: string }
+  | { readonly start: string; readonly end: string };
 
 /**
  * One object. `path` ADDRESSES it and `name` LABELS it, and they are allowed to differ.
@@ -1802,6 +2044,25 @@ export interface DatabaseObject {
   /** Relations only, and only where the engine counts. */
   readonly rowCount?: number;
   readonly sizeBytes?: number;
+  /**
+   * The pieces of this object's range the connection may read, PRESENT ONLY WHERE THEY DO NOT
+   * COVER IT (etcd spec 3.4, 4.7).
+   *
+   * Absent means the connection may read the whole object, which is the answer of every engine
+   * whose grants never split one. etcd's are the case this exists for: etcd refuses a whole range
+   * the caller's grants do not cover, so a user who is not root, granted one key of a prefix
+   * group, would meet a permission error on the group's own generated read. The tree click's read
+   * and Generate Command are written in the browser from the listed object alone
+   * (`generateTableQuery` and `generateSelectQuery` in `src/lib/query-generators.ts`), so the
+   * pieces travel with it, and the generated read addresses the first piece rather than the group.
+   *
+   * A piece can be a single key, which makes this the one field of a listed object that may name
+   * one, so it is for those two generators and nothing else: the object tree draws no row, badge
+   * or title from it, the agent's inventory walk copies no such field, and `schemaContextOf` in
+   * `src/lib/db/detailed-object.ts` leaves it out of the schema the AI panels are handed (etcd
+   * spec E13).
+   */
+  readonly readRanges?: readonly ObjectReadRange[];
 }
 
 /**
@@ -2092,6 +2353,11 @@ export interface ObjectEditStep {
  * statement, whose reply is the library name the server read out of the shebang. Rendering that
  * as pseudo-SQL would be a lie about what runs, and `medium` is what stops the preview pane
  * having to guess.
+ *
+ * The command arm's last two fields are OPTIONAL and additive, so a unit that sets neither, which
+ * Redis's is, keeps its wire shape and its preview byte for byte. etcd's value edit is the case
+ * that needs them (etcd spec 3.4, 4.5): one `Txn` whose failure branch reads the key back, so a
+ * literal read follows the payload, and whose payload is a key's value and not library code.
  */
 export type ObjectEditUnit =
   | { readonly medium: "statement"; readonly steps: readonly [ObjectEditStep, ...ObjectEditStep[]] }
@@ -2103,6 +2369,16 @@ export type ObjectEditUnit =
       readonly arguments: readonly string[];
       /** The one argument carrying the user's text. */
       readonly payload: ObjectEditStep;
+      /**
+       * The literal tokens after the payload, sent with the rest: etcd's ["get", "/app/cfg"].
+       * Absent, or empty, means none.
+       */
+      readonly trailing?: readonly string[];
+      /**
+       * What the payload is, for the preview's summary line: etcd's "value". It is never sent.
+       * Absent reads "library code", the words the summary used before the field existed.
+       */
+      readonly payloadLabel?: string;
     };
 
 /**

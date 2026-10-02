@@ -31,9 +31,16 @@ describe("fenceTagEngine", () => {
       "duckdb",
       "prometheus",
       "kafka",
+      "etcd",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
+  });
+
+  test("etcd has no alias: the shell tags name no engine, and etcdctl is not registered (#1089)", () => {
+    // `null` is fenceTagEngine's "names no engine", the answer an untagged fence and `sql` get.
+    for (const tag of ["sh", "bash", "shell", "etcdctl"]) expect(fenceTagEngine(tag)).toBeNull();
+    expect(fenceTagEngine("etcd")).toBe("etcd");
   });
 
   test("an alias names the engine it is an alias for", () => {

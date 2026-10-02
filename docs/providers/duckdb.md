@@ -1031,7 +1031,8 @@ panel reads as an empty database, which is a claim about the user's data.
 
 ## 8. Maintenance
 
-Six members exist in the closed `MaintenanceType` union. DuckDB can honestly offer three.
+Nine members exist in the closed `MaintenanceOperation` union, the six of `MaintenanceType` and etcd's three.
+DuckDB can honestly offer three.
 
 | Operation | Offered | Statement / reason |
 |---|---|---|
@@ -1041,6 +1042,9 @@ Six members exist in the closed `MaintenanceType` union. DuckDB can honestly off
 | `reindex` | withheld | `Parser Error: syntax error at or near "REINDEX"` — the statement does not exist |
 | `check` | withheld | `PRAGMA integrity_check` → `Catalog Error: Pragma Function with name integrity_check does not exist!` |
 | `kill` | withheld | There is no session to kill (§3.7) |
+| `compact` | withheld | etcd's history compaction; DuckDB has no revision history |
+| `defragment` | withheld | etcd's member defragmentation; `CHECKPOINT` is `optimize` above |
+| `disarm` | withheld | etcd's alarms; DuckDB raises none |
 
 `PRAGMA optimize` was probed too and does **not** exist
 (`Catalog Error: Pragma Function with name optimize does not exist!`) — which is why `optimize` maps

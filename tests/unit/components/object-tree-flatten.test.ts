@@ -962,6 +962,68 @@ describe("TreeRow trailing slot", () => {
     expect(withFailure.querySelector('[data-testid="tree-row-unavailable"]')).toBeNull();
   });
 
+  test("a sentence and the row's name split the room 60/40, and each takes what the other leaves", () => {
+    // etcd's reader, as Task 27 saw it: the Leases folder carries a refusal many times its name's
+    // width, and the two shared the row's shrinking in proportion to their widths, so the name read
+    // "Le...". A 40% cap on the sentence kept the name whole but cut every sentence wider than 40%
+    // of the row, even where the row had room for it. The split does neither: each starts from its
+    // share of the row, grows into what the other leaves, and stops at its own text, so a sentence
+    // is cut only where the two do not fit. happy-dom lays nothing out, so the classes are what this
+    // can read, as the flat explorer's column list pins its own cap.
+    const refusal = "Listing leases needs READ on every leased key in the cluster (etcd: permission denied)";
+    const tokens = (element: Element | null) => element?.className.split(" ") ?? [];
+    const nameShare = ["grow", "basis-[60%]", "max-w-max", "truncate"];
+    const sentenceShare = ["ml-auto", "min-w-0", "grow", "basis-[40%]", "max-w-max", "truncate"];
+    const folder = flattenTree(
+      stateOf({
+        kinds: [{ id: "lease", role: "config", label: "Lease", labelPlural: "Leases" }],
+        containerDepth: 0,
+        containers: [],
+        expanded: new Set<string>(),
+        counts: { "": { lease: { unavailable: refusal } } },
+        objects: {},
+      }),
+    ).find((row) => row.kind === "folder");
+    if (folder === undefined) throw new Error("the walk emitted no folder row to draw");
+
+    const refused = drawRow({ row: folder });
+    const name = refused.querySelector('[data-testid="tree-row-label"]');
+    expect(name?.textContent).toBe("Leases");
+    expect(tokens(name)).toEqual(expect.arrayContaining(nameShare));
+    const sentence = refused.querySelector('[data-testid="tree-row-unavailable"]');
+    expect(sentence?.getAttribute("title")).toBe(refusal);
+    expect(tokens(sentence)).toEqual(expect.arrayContaining(sentenceShare));
+    expect(tokens(sentence)).not.toContain("max-w-[40%]");
+
+    // A failure takes the same slot from the refusal, so it splits the row the same way.
+    const failed = drawRow({ row: folder, failure: { message: refusal } });
+    expect(tokens(failed.querySelector('[data-testid="tree-row-label"]'))).toEqual(expect.arrayContaining(nameShare));
+    const failure = failed.querySelector('[data-testid="tree-row-failure"]');
+    expect(tokens(failure)).toEqual(expect.arrayContaining(sentenceShare));
+    expect(tokens(failure)).not.toContain("max-w-[40%]");
+
+    // A failure alone splits the row too, and it is the common case: a describe that failed, or a 429,
+    // on an object row that carries no refusal, so the failure is the row's only sentence.
+    const failedAlone = drawRow({
+      row: openOrdersRow({}),
+      object: ordersObject,
+      failure: { message: "Too many requests. Try again in 41 seconds." },
+    });
+    expect(failedAlone.querySelector('[data-testid="tree-row-unavailable"]')).toBeNull();
+    expect(tokens(failedAlone.querySelector('[data-testid="tree-row-label"]'))).toEqual(
+      expect.arrayContaining(nameShare),
+    );
+    expect(tokens(failedAlone.querySelector('[data-testid="tree-row-failure"]'))).toEqual(
+      expect.arrayContaining(sentenceShare),
+    );
+
+    // The control: a row with no sentence draws its name exactly as before, so an object's count and
+    // a column's type share the row with it as they always have.
+    const counted = drawRow({ row: openOrdersRow({}), object: ordersObject });
+    expect(counted.querySelector('[data-testid="tree-row-count"]')).not.toBeNull();
+    expect(counted.querySelector('[data-testid="tree-row-label"]')?.className).toBe("truncate");
+  });
+
   test("the twisty is not a tab stop, on the very row that holds the tree's one", () => {
     // The roving tabindex is the whole keyboard design: ArrowRight and ArrowLeft open and close a
     // row, so a focusable twisty would add a second tab stop to every mounted object row and a
@@ -978,5 +1040,44 @@ describe("TreeRow trailing slot", () => {
     expect(host.querySelector('[role="treeitem"]')?.getAttribute("tabindex")).toBe("0");
     expect(host.querySelector('[data-testid="tree-row-menu-trigger"]')?.getAttribute("tabindex")).toBe("0");
     expect(host.querySelector('[data-testid="tree-row-twisty"]')?.getAttribute("tabindex")).toBe("-1");
+  });
+});
+
+/**
+ * A group's readable ranges reach no tree row (etcd spec 3.4, E13).
+ *
+ * `DatabaseObject.readRanges` names the pieces of a group a user who is not root may read, and a
+ * piece can be a single key, so it is the one field of a listed object that may name a key. It
+ * travels with the object for the two browser-side generators alone: the walk builds its rows from
+ * the fields it names, and the drawn row reads `status` and `rowCount` off the object, so neither
+ * the model, the label, the badge nor any title carries a range.
+ */
+describe("a listed object's readable ranges", () => {
+  const scoped: DatabaseObject = {
+    path: ["/config/*"],
+    name: "/config/*",
+    kind: "table",
+    readRanges: [{ key: "grant-key-a" }, { prefix: "grant-prefix-b/" }, { start: "grant-start-c", end: "grant-end-d" }],
+  };
+
+  test("reach neither the rows the walk builds nor the row drawn from the object", () => {
+    const rows = flattenTree(
+      stateOf({
+        kinds,
+        containerDepth: 0,
+        containers: [],
+        expanded: new Set(["table"]),
+        counts: { "": { table: { count: 1, sampledFrom: "the 2 ranges etcd user reader may read" } } },
+        objects: { table: [scoped] },
+      }),
+    );
+    const row = rows.find((candidate) => candidate.kind === "object");
+    if (row === undefined) throw new Error("the walk emitted no object row to draw");
+    expect(JSON.stringify(rows)).not.toContain("grant-");
+    const host = drawRow({ row, object: scoped });
+    expect(host.innerHTML).not.toContain("grant-");
+    // The control: the same instrument reads the row's own label, so an absence above is an
+    // absence and not a row that drew nothing at all.
+    expect(host.textContent).toContain("/config/*");
   });
 });

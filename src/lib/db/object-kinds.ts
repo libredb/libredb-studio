@@ -31,12 +31,48 @@ export function containerDepth(capabilities: ProviderCapabilities): 0 | 1 | 2 {
   return 0;
 }
 
+/**
+ * Every kind the provider declared, in declaration order, a kind only the Keys panel enumerates
+ * included: `findKind` resolves through it, and the Source tab and both edit routes need that kind.
+ * A reader that walks all kinds reads `enumerableKinds()` below instead (#1089 3.4).
+ */
 export function declaredKinds(capabilities: ProviderCapabilities): readonly ObjectKindSpec[] {
   return capabilities.objectKinds ?? [];
 }
 
 export function findKind(capabilities: ProviderCapabilities, id: string): ObjectKindSpec | undefined {
   return declaredKinds(capabilities).find((kind) => kind.id === id);
+}
+
+/**
+ * The declared kinds the OBJECT SURFACE enumerates: every declared kind that carries no
+ * `enumeratedBy`, in declaration order (#1089 3.4).
+ *
+ * Every reader that walks all kinds reads this and never `declaredKinds`: the tree's folders
+ * (`use-tree-nodes.ts`), the default of `resolveKinds` for the `inventory` and `search` routes, the
+ * agent's grounding walk (`readObjectInventoryForGrounding`), and the conformance helper's count
+ * guards. A kind only the Keys panel enumerates stays DECLARED and `findKind` keeps resolving it,
+ * because `kindHasSource`, `kindAcceptsSourceEdits`, `requireSourceKind` and `requireEditableKind`
+ * resolve through `findKind` and the key's Source tab and both edit routes need them. What it never
+ * gets is a folder, an inventory listing or a line of plan mode's prompt, any of which would put key
+ * names where the tree and the agent read them.
+ */
+export function enumerableKinds(capabilities: ProviderCapabilities): readonly ObjectKindSpec[] {
+  return declaredKinds(capabilities).filter((kind) => kind.enumeratedBy === undefined);
+}
+
+/**
+ * The one kind only the Keys panel enumerates, or undefined on every engine that declares none
+ * (#1089 3.4, 4.6).
+ *
+ * It is what the Keys panel's activation reads to open a key's Source tab instead of running a
+ * generated read; Redis declares no such kind and keeps its generated read. It answers the FIRST
+ * such kind, and on a declaration the census admits that is the only one:
+ * `tests/isolated/object-source-declarations.test.ts` refuses a second, one without `hasSource` and
+ * one on capabilities without `keyScan`.
+ */
+export function keyBrowserKind(capabilities: ProviderCapabilities): ObjectKindSpec | undefined {
+  return declaredKinds(capabilities).find((kind) => kind.enumeratedBy === "key-browser");
 }
 
 /**
@@ -301,6 +337,20 @@ export function isCountUnavailable(count: KindCount): count is { readonly unavai
  */
 export function isCountSampled(count: KindCount): count is { readonly count: number; readonly sampledFrom: string } {
   return "sampledFrom" in count;
+}
+
+/**
+ * Whether THIS KIND's count and listing are one read, so a refused count is a refused listing
+ * (#1089 3.4, 4.7).
+ *
+ * Absent and undeclared both read as false, and the name says the scope, for the reason
+ * `kindAcceptsRowWrites` gives. The agent's grounding walk is the one reader: for such a kind whose
+ * count answered `{ unavailable }` it sends no listing, which would only meet the same refusal and
+ * end the whole capture, and carries the sentence as `AgentInventoryKind.unavailable` instead. A kind
+ * that declares nothing is walked exactly as before, a refused count and all.
+ */
+export function kindCountIsListing(capabilities: ProviderCapabilities, id: string): boolean {
+  return findKind(capabilities, id)?.countIsListing === true;
 }
 
 /**

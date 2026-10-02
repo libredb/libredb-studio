@@ -54,15 +54,19 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   // the message log a cloud-native team runs beside its databases, as well known to that
   // evaluator as Prometheus and met the same way, beside the databases rather than as one of them.
   kafka: 16,
-  // Behind Kafka and ahead of the embedded store: libSQL is the newest name on this
-  // page and the one an evaluator is least likely to have met, but it is a product
-  // name (Turso's server) rather than our own, so it goes ahead of `libredb`.
-  libsql: 17,
+  // Behind Kafka and ahead of libSQL (#1089), for the reason the two before it sit where they do: the
+  // store a Kubernetes control plane keeps its state in, known to the same evaluator and met beside the
+  // databases rather than as one of them.
+  etcd: 17,
+  // Behind etcd and ahead of the embedded store: libSQL is the name on this page an
+  // evaluator is least likely to have met, but it is a product name (Turso's server)
+  // rather than our own, so it goes ahead of `libredb`.
+  libsql: 18,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 18,
+  libredb: 19,
 };
 
 /**

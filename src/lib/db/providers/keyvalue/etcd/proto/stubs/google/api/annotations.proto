@@ -1,0 +1,6 @@
+// Stand-in for google/api/annotations.proto, which etcd's rpc.proto imports for grpc-gateway's HTTP annotations.
+// Only grpc-gateway's code generator reads those options and a gRPC client never does, so this file declares
+// the package and nothing else. See README.md at the root of this proto directory.
+syntax = "proto3";
+
+package google.api;

@@ -18,8 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { PublicAccount } from "@/lib/local-accounts";
-import { FormError, MonoEmail, passkeyPhrase } from "./account-parts";
-import { TypedConfirmDialog } from "./typed-confirm-dialog";
+import { FormError, TypedConfirmDialog } from "@/components/typed-confirm";
+import { MonoEmail, passkeyPhrase } from "./account-parts";
 import { PASSWORD_MIN_LENGTH, type AccountAction, type AccountsController, type NewAccount } from "./use-accounts";
 
 /**
@@ -379,6 +379,7 @@ export function useAccountActions(controller: AccountsController) {
         title={copy.title}
         description={copy.description(<MonoEmail value={account.email} />, controller.isMe(account), account)}
         expected={account.email}
+        match="case-insensitive"
         confirmLabel={copy.confirm}
         destructive={copy.destructive}
         onConfirm={() => controller.run(account, action)}

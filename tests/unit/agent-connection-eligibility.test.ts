@@ -151,6 +151,16 @@ describe("which connection a run may be started on", () => {
     expect(startableId(renamed, loaded(server))).toBe("seed:sales");
   });
 
+  // #1089. The mode says what a connection may DO, not which database it reaches or as whom, so a
+  // copy differing only in it still reaches the seed's database with the seed's credentials, and a run
+  // started on the seed's id runs under the seed's own mode.
+  test("a copy differing only in its read-only mode is startable by the seed id", () => {
+    const server = descriptor();
+
+    expect(startableId(browserCopy(server, { readOnly: true }), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { readOnly: false }), loaded(server))).toBe("seed:sales");
+  });
+
   // B37. A seed list that was never read is not an empty seed list. Deciding
   // "browser-only" from it states a conclusion about the SERVER's copy that nothing
   // measured — and it is wrong for exactly the connections this application seeds itself.
@@ -338,6 +348,15 @@ describe("which database a connection would be read from", () => {
     expect(connectionResolutionKey({ ...base, id: "c2" })).toBe(same);
     expect(connectionResolutionKey({ ...base, createdAt: new Date(1) })).toBe(same);
     expect(connectionResolutionKey({ ...base, color: "red", group: "prod", environment: "production" })).toBe(same);
+  });
+
+  test("the read-only mode does not move the key (#1089)", () => {
+    // What a connection may do is not which database a read reaches: a panel keyed on this must not
+    // read again because the mode was switched.
+    const same = connectionResolutionKey(base);
+
+    expect(connectionResolutionKey({ ...base, readOnly: true })).toBe(same);
+    expect(connectionResolutionKey({ ...base, readOnly: false })).toBe(same);
   });
 
   test("a field that moves the database moves the key", () => {

@@ -4,9 +4,10 @@ import {
   objectAtPath,
   relationObjects,
   rowWritableObjects,
+  schemaContextOf,
   type DetailedObject,
 } from "@/lib/db/detailed-object";
-import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseObject, ObjectDetail, ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 
 /**
  * A provider that declares the three shapes the filters have to tell apart: a table that
@@ -135,6 +136,75 @@ describe("detailedObjects", () => {
     expect(counted.size).toBe("2 KB");
     expect("rowCount" in silent).toBe(false);
     expect("size" in silent).toBe(false);
+  });
+
+  /**
+   * A group's readable ranges (etcd spec 3.4, 4.7). The two browser-side generators read them off
+   * the schema entry this join builds, so the provider's own array is carried, and the key is left
+   * out entirely where the provider set none, which is every object whose range the connection may
+   * read whole.
+   */
+  test("a listed object's readable ranges are carried as the provider's own array, and absent where it set none", () => {
+    const ranges: readonly ObjectReadRange[] = [
+      { key: "/config/a" },
+      { prefix: "/config/b/" },
+      { start: "/config/c", end: "/config/d" },
+    ];
+    const [scoped, whole] = detailedObjects(
+      [{ ...listed("prefix", "/config/*"), readRanges: ranges }, listed("prefix", "/app/*")],
+      [],
+    );
+    expect(scoped.readRanges).toBe(ranges);
+    expect(Object.hasOwn(whole, "readRanges")).toBe(false);
+  });
+});
+
+/**
+ * The schema as the AI panels are handed it (etcd spec 3.4, E13).
+ *
+ * `detailedObjects` carries a group's readable ranges for the two generators, and those ranges are
+ * the connection's own grants, which can name a key. `schemaContext` is posted to the model by the
+ * AI panels, so it is the schema with the ranges left out, and nothing else changed: every engine
+ * that sets no range gets the bytes `JSON.stringify` always gave it.
+ */
+describe("schemaContextOf", () => {
+  test("is the schema's JSON, byte for byte, where no object carries readable ranges", () => {
+    const schema = detailedObjects(
+      [{ name: "orders", kind: "table", path: ["app", "orders"], rowCount: 12, sizeBytes: 2048 }],
+      [
+        {
+          path: ["app", "orders"],
+          columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+          indexes: [{ name: "pk", columns: ["id"], unique: true }],
+          foreignKeys: [],
+        },
+      ],
+    );
+    expect(schemaContextOf(schema)).toBe(JSON.stringify(schema));
+  });
+
+  test("leaves every readable range out, and keeps every other field of the object", () => {
+    const schema = detailedObjects(
+      [
+        {
+          name: "/config/*",
+          kind: "prefix",
+          path: ["/config/*"],
+          readRanges: [
+            { key: "grant-key-a" },
+            { prefix: "grant-prefix-b/" },
+            { start: "grant-start-c", end: "grant-end-d" },
+          ],
+        },
+      ],
+      [],
+    );
+    const context = schemaContextOf(schema);
+    expect(context).not.toContain("grant-");
+    expect(context).not.toContain("readRanges");
+    expect(JSON.parse(context)).toEqual([
+      { name: "/config/*", kind: "prefix", path: ["/config/*"], columns: [], indexes: [], foreignKeys: [] },
+    ]);
   });
 });
 

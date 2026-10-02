@@ -94,7 +94,13 @@ export type DatabaseType =
   // `queryLanguage: "json"` with a `queryDialect` of its own. The connection is one bootstrap
   // address plus TLS and an optional SASL credential, `saslMechanism` below naming how `user` and
   // `password` are checked; the client learns every other broker from the cluster's metadata.
-  | "kafka";
+  | "kafka"
+  // etcd (#1089). A key-value store read and written over its gRPC API, the second member of the
+  // `keyvalue/` family beside Redis. Its editor text is a subset of etcdctl's command line, so it
+  // declares `queryLanguage: "json"` with a `queryDialect` of its own, as Redis does for its commands.
+  // The connection is one endpoint plus TLS and an optional password; a client certificate names the
+  // user where etcd's RBAC is on, and `readOnly` below is a mode its provider enforces.
+  | "etcd";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -136,7 +142,9 @@ export const ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
  * `verify-ca` checks the chain and `verify-full` also the server name. That split is honoured
  * only where the driver exposes the name check on its own - Oracle's `sslServerDNMatch` is
  * the one that does; the Node TLS drivers cannot separate the two, so both land on
- * `rejectUnauthorized: true` there and each provider doc says so.
+ * `rejectUnauthorized: true` there and each provider doc says so. etcd's gRPC adapter could
+ * separate them and checks the name in both all the same, by decision, so that one mode means
+ * one thing across engines (#1089 E5).
  *
  * Adding a member here widens a published type (src/exports/types.ts), so every switch and
  * lookup table over SSLMode has to answer for it: the providers listed above, the seed schema
@@ -296,6 +304,29 @@ export interface DatabaseConnection {
    * Oracle owner, and the flag follows the one that hurts.
    */
   skipObjectScan?: boolean;
+  /**
+   * Refuse every write on this connection, before any request (#1089): the provider answers a write
+   * command, an object edit and a maintenance operation with a refusal that names the read-only mode
+   * and where it was set, and sends nothing.
+   *
+   * Accepted only on an engine whose provider enforces it, which `READ_ONLY_ENFORCED` in
+   * `src/lib/db/compatibility.ts` records and a census holds equal to
+   * `ProviderCapabilities.enforcesReadOnly`. On any other engine `true` is refused, by the seed schema
+   * at load and by `assertReadOnlyHonoured` in `src/lib/db/factory.ts` before anything is built or
+   * dialled, because a mode the provider ignores would list the connection as read-only and send its
+   * writes. A value that is not a boolean is refused on every engine.
+   *
+   * What it binds depends on who holds the credentials. On a managed seed it is the operator's rule:
+   * the server re-resolves a `seed:` id from the operator's file and discards what the caller sent,
+   * and the seed schema refuses the field on a seed that is not managed. On a connection of the user's
+   * own it is a safety rail the user can turn off.
+   *
+   * `false` and absent are one mode, and the form writes nothing for `false`. It is the fourth part of
+   * `providerCacheKey`, so a read-only and a read-write connection never share a cached provider, and
+   * part of no identity digest (`connectionFingerprint`, `credentialDigest`, `connectionIdentity`),
+   * because it changes neither the server a connection reaches, nor as whom, nor which database.
+   */
+  readOnly?: boolean;
   managed?: boolean; // true = admin-controlled, read-only in UI
   seedId?: string; // stable reference to seed config ID
   agentUser?: string; // optional least-privilege role for the agent read-only execution profile (#328)
@@ -573,7 +604,7 @@ export interface QueryTab {
    */
   runError?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka";
+  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka" | "etcd";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

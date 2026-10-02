@@ -89,6 +89,8 @@ describe("quoteLiteral", () => {
     // A Kafka read request is JSON of its own dialect (#1088), and no SQL statement is built for
     // it either.
     expect(quoteLiteral("a\\b", "kafka")).toBe("'a\\b'");
+    // Nor for an etcdctl command (#1089).
+    expect(quoteLiteral("a\\b", "etcd")).toBe("'a\\b'");
     expect(quoteLiteral("O'Brien", "kafka")).toBe("'O''Brien'");
   });
 
@@ -158,6 +160,8 @@ describe("positionalPlaceholder", () => {
     expect(positionalPlaceholder("prometheus", 1)).toBeNull();
     // Nor does a Kafka read request: the provider refuses bound params outright (#1088 5.1).
     expect(positionalPlaceholder("kafka", 1)).toBeNull();
+    // Nor an etcdctl command: the provider refuses bound params outright (#1089 5.4).
+    expect(positionalPlaceholder("etcd", 1)).toBeNull();
   });
 });
 

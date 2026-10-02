@@ -73,7 +73,8 @@ src/lib/db/
 │   │       ├── keyspace.ts     #   display name <-> backtick-quoted keyspace path
 │   │       └── introspect.ts   #   system:* catalogs + INFER
 │   ├── keyvalue/               # Key-Value Providers
-│   │   └── redis.ts            # Redis Strategy
+│   │   ├── redis.ts            # Redis Strategy
+│   │   └── etcd/               # etcd Strategy (client.ts, grpc-client.ts, lexer.ts, commands.ts, objects.ts, ... index.ts)
 │   ├── timeseries/             # Time-Series Providers
 │   │   └── prometheus/         # Prometheus Strategy (PromQL over the Prometheus HTTP API, no driver)
 │   │       ├── index.ts        #   PrometheusProvider: lifecycle and composition only
@@ -130,6 +131,7 @@ BaseDatabaseProvider (abstract)
 ├── RedisProvider ──────────────────────────┤ Key-Value Store
 ├── PrometheusProvider ─────────────────────┤ Time series (PromQL over HTTP)
 ├── KafkaProvider ──────────────────────────┤ Stream (JSON read requests over the Kafka protocol)
+├── EtcdProvider ───────────────────────────┤ Key-Value Store (etcdctl commands over gRPC)
 └── LibreDBProvider ────────────────────────┘ Embedded (key-value)
 ```
 
@@ -187,7 +189,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Nineteen type-ids are supported by eighteen provider modules: `elasticsearch` and `opensearch` share
+Twenty type-ids are supported by nineteen provider modules: `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -213,6 +215,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Apache Cassandra | `cassandra` | SQL-shaped (CQL, wide-column) | [providers/cassandra.md](./providers/cassandra.md) |
 | Prometheus | `prometheus` | Time series (PromQL over HTTP, read-only) | [providers/prometheus.md](./providers/prometheus.md) |
 | Apache Kafka | `kafka` | Stream (JSON read requests over the Kafka protocol, read-only) | [providers/kafka.md](./providers/kafka.md) |
+| etcd | `etcd` | Key-Value (etcdctl commands over gRPC) | [providers/etcd.md](./providers/etcd.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -242,7 +245,7 @@ interface DatabaseProvider {
   getHealth(): Promise<HealthInfo>;
 
   // Maintenance operations
-  runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult>;
+  runMaintenance(type: MaintenanceOperation, target?: string, container?: string): Promise<MaintenanceResult>;
 
   // Validation
   validate(): void;
@@ -316,6 +319,9 @@ examples live in their prime docs:
   [providers/mongodb.md](./providers/mongodb.md) and the
   [`API_DOCS.md` MongoDB Query Format](./API_DOCS.md) section.
 - **Redis** (plain command or `{command, args}`): [providers/redis.md](./providers/redis.md).
+- **Prometheus** (a PromQL expression): [providers/prometheus.md](./providers/prometheus.md).
+- **Apache Kafka** (a JSON read request): [providers/kafka.md](./providers/kafka.md).
+- **etcd** (one etcdctl command): [providers/etcd.md](./providers/etcd.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
 takes ordinary SQL in the `sql` field and inherits the SQL editor and the shared limiter.
@@ -392,7 +398,7 @@ Provider-specific behaviour — pooling model, SSL/encryption, pagination, monit
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
-Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, or LibreDB.
+Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

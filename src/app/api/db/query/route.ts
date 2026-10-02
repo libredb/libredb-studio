@@ -5,6 +5,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
+import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
@@ -112,12 +113,30 @@ export async function POST(req: NextRequest) {
        * request that was never valid, and a reachable one was connected only to be refused.
        */
       const declared = await createDatabaseProvider(connection);
-      if (declared.getCapabilities().keyScan === undefined) {
+      const capabilities = declared.getCapabilities();
+      if (capabilities.keyScan === undefined) {
         return NextResponse.json(
           {
             error:
               `${connection.type} declares no key-space walk: "database" names the database a ` +
               `key was walked in, and only an engine that needs such a name accepts it`,
+          },
+          { status: 400 },
+        );
+      }
+      /*
+       * AND ONLY WHERE THERE IS A DATABASE TO NAME (spec 3.4). A walk declared with no container level
+       * is one key space per connection (etcd), so a number here names nothing the engine has. It is
+       * refused from the same unconnected declaration, before `getOrCreateProvider`, so no provider, SSH
+       * forward or channel is opened or cached for it; `containerDepth` is the rule the Keys panel
+       * applies before it sends one at all.
+       */
+      if (containerDepth(capabilities) === 0) {
+        return NextResponse.json(
+          {
+            error:
+              `${connection.type} walks one key space and declares no database level: "database" names the ` +
+              `numbered database a key was walked in, and this engine has none to name`,
           },
           { status: 400 },
         );

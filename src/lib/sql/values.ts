@@ -65,14 +65,15 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // filtering check, which is only possible if the backslash did not escape the
   // quote that closed the literal.
   cassandra: "standard",
-  // These four declare `queryLanguage: "json"`, so no statement is ever built for
+  // These five declare `queryLanguage: "json"`, so no statement is ever built for
   // them to read. What a generator emits for such a connection is portable SQL
   // meant to run elsewhere, and the standard form is the only thing it can claim.
   mongodb: "standard",
   redis: "standard",
   libredb: "standard",
   kafka: "standard",
-  // PromQL, not SQL (#1085): the same reading as the four above. A PromQL string
+  etcd: "standard",
+  // PromQL, not SQL (#1085): the same reading as the five above. A PromQL string
   // escapes with a backslash, but that is not a SQL literal and nothing here builds one.
   prometheus: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the
@@ -215,7 +216,7 @@ export function unquoteLiteral(text: string, dialect: DatabaseType | undefined):
  *
  * `null` is where this repo knows there is no positional form to spell: ClickHouse
  * binds named parameters only and its provider refuses positional ones outright,
- * and MongoDB, Redis, Kafka and the embedded engine declare `queryLanguage: "json"`, so
+ * and MongoDB, Redis, Kafka, etcd and the embedded engine declare `queryLanguage: "json"`, so
  * no SQL statement binds anything for them. It is the signal to quote the value
  * with `quoteLiteral` instead — never to emit a placeholder nothing will bind.
  *

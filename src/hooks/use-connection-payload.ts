@@ -94,6 +94,10 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // copies of a seed differing only here reach the same database with the same
   // credentials, so a run may still be started on the seed's id.
   skipObjectScan: "cosmetic",
+  // What the connection may DO, not which database it reaches or as whom (#1089): two copies of a
+  // seed differing only here reach the same database with the same credentials, so a run may still be
+  // started on the seed's id, where the seed's own mode applies.
+  readOnly: "cosmetic",
   type: "resolution",
   host: "resolution",
   port: "resolution",

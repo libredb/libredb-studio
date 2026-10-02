@@ -47,9 +47,10 @@ import {
  *    product made. It gets the amber `not checked` chip and the two existing sentences
  *    instead.
  *  - **A statement is tinted by the engine's language**, the ladder `tab-language.ts`
- *    walks. Where no capabilities are to hand it falls back to what the LEDGER says the
- *    guard could read, never to SQL: a Mongo aggregation painted as SQL is the same
- *    overstatement #414 removed from the sentences beside it.
+ *    walks. Where no capabilities are to hand it reads the language the LEDGER recorded
+ *    with the draft, and in a ledger written before that, what the guard could read,
+ *    never SQL by default: a Mongo aggregation painted as SQL is the same overstatement
+ *    #414 removed from the sentences beside it.
  *
  * What it deliberately does NOT do is offer a control for something this build cannot
  * perform. A refusal names no "capture more schema" button and a failure's retry appears
@@ -62,8 +63,10 @@ export interface AnswerCardProps {
   readonly timeline: AgentRunTimeline;
   /**
    * The engine's capabilities, for the statement block's language. `null` or absent is
-   * the honest state while nothing has answered for the connection — and it is read as
-   * "unknown", never as SQL.
+   * the honest state while nothing has answered for the connection, and the card then
+   * reads the language the LEDGER recorded with the draft (#1089). In a ledger written
+   * before that, it reads the guard's reach: "sql" where the SQL guard could read the
+   * draft and "unknown" where it could not. It never defaults to SQL.
    */
   readonly capabilities?: ProviderCapabilities | null;
   /** Puts a statement into the host's editor. Absent hosts are offered no control. */
@@ -109,7 +112,7 @@ const STATUS_TONES: Readonly<Record<AgentRunStatus, string>> = Object.freeze({
  * `"unknown"` is this surface having nothing to go on, which is a different state from
  * every engine in the ladder and must not collapse into the first of them.
  */
-type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "unknown";
+type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "unknown";
 
 /**
  * Identity, never status. The rail spends amber on "nobody established this", rose on a
@@ -121,6 +124,9 @@ type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "unkn
  * amber, and a PromQL draft is always shown beside the amber "not checked" chip, because no
  * guard here reads PromQL (`validatePlanStatement` declines it, so `guardReading` answers
  * `unexamined`).
+ *
+ * etcd takes sky (#1089), the light blue of its own mark, between SQL's blue and JSON's cyan and
+ * neither of them: its command line is no SQL and no JSON, and no guard here reads it either.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -128,6 +134,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   redis: "border-hue-fuchsia/40",
   libredb: "border-hue-violet/40",
   promql: "border-hue-indigo/40",
+  etcd: "border-hue-sky/40",
   unknown: "border-hairline-strong",
 });
 
@@ -138,17 +145,20 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
  * `resolveTabType` answers `"sql"` for absent capabilities, which is right for a tab
  * (something has to be typed into) and wrong here: it would paint a Mongo aggregation as
  * SQL on every render before `/api/db/provider-meta` answers, and on every render after
- * one that failed. What the ledger recorded instead is whether the SQL guard could read
- * this draft at all — a fact about the run rather than about the connection as it stands
- * now, which is the same reason the inventory noun is read off the capture entry.
+ * one that failed. What the ledger recorded instead is the language the server resolved
+ * from the run's own capabilities when it recorded the draft (#1089), and, in a ledger
+ * written before that, whether the SQL guard could read this draft at all. Both are facts
+ * about the run rather than about the connection as it stands now, which is the same
+ * reason the inventory noun is read off the capture entry.
  */
 function statementLanguage(
   capabilities: ProviderCapabilities | null | undefined,
-  guardApplicable: boolean,
+  draft: AgentPlanStatementView,
 ): StatementLanguage {
   if (capabilities !== null && capabilities !== undefined)
     return editorLanguageForTabType(resolveTabType(capabilities));
-  return guardApplicable ? "sql" : "unknown";
+  if (draft.language !== undefined) return draft.language;
+  return draft.guardApplicable ? "sql" : "unknown";
 }
 
 /**
@@ -502,7 +512,7 @@ export const AnswerCard = memo(function AnswerCard({
         <PlanAnswer
           draft={drafted}
           rationale={timeline.items.find((item) => item.planStatementRecorded === true)?.prose}
-          language={statementLanguage(capabilities, drafted.guardApplicable)}
+          language={statementLanguage(capabilities, drafted)}
           capture={timeline.capture}
           onApplyStatement={onApplyStatement}
         />

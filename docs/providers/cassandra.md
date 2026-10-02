@@ -1138,7 +1138,7 @@ onto, because the protocol has no cancellation at all
 ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)).
 
 `TRUNCATE` is the tempting one and is deliberately not wired: it is a data-loss operation, it is not
-one of the six `MaintenanceType` values, and a user who wants it can type it.
+one of the nine `MaintenanceOperation` values, and a user who wants it can type it.
 
 The two label triads are rewritten anyway — the cards do not render, but the inherited copy would
 promise a user that this panel updates planner statistics and reclaims space.

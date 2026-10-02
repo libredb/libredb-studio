@@ -1143,6 +1143,12 @@ describe("StudioWorkspace", () => {
     expect(capturedQueryEditorProps.language).toBe("redis");
   });
 
+  test("editor language is etcd for etcd tabs (#1089)", () => {
+    tabMgrOverride = { currentTab: { ...baseTab, type: "etcd" } };
+    renderWorkspace();
+    expect(capturedQueryEditorProps.language).toBe("etcd");
+  });
+
   // =========================================================================
   // Provider metadata wiring (#427)
   // =========================================================================
@@ -1393,6 +1399,17 @@ describe("StudioWorkspace", () => {
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0].type).toBe("destructive");
     expect(result.recommendation).toContain("Review this query");
+  });
+
+  test("safety dialog is handed the active connection's name, which a typed confirmation of it asks for (#1089)", () => {
+    renderWorkspace();
+    expect(capturedSafetyDialogProps.connectionName).toBe("TestPG");
+  });
+
+  test("safety dialog is handed no connection name without an active connection", () => {
+    connAdapterOverride = { activeConnection: null };
+    renderWorkspace();
+    expect(capturedSafetyDialogProps.connectionName).toBeUndefined();
   });
 
   // =========================================================================

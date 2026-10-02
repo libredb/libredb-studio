@@ -422,6 +422,8 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   prometheus: "default",
   // A JSON read request, not SQL (#1088): no SQL grammar is established for it, and none is read.
   kafka: "default",
+  // An etcdctl command, not SQL (#1089): no SQL grammar is established for it, and none is read.
+  etcd: "default",
 };
 
 describe("every database type has a recorded grammar decision", () => {
@@ -472,6 +474,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // A Kafka read request is one JSON object, not SQL text: its strings escape with a backslash,
   // which a SQL span reader cannot follow either (#1088).
   kafka: false,
+  // An etcdctl command line is not SQL text: `commands.ts` reads its words by the shell's rules and a txn
+  // body by etcdctl's, neither of which a SQL span reader follows (#1089).
+  etcd: false,
 };
 
 describe("readsSqlText", () => {

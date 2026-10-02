@@ -46,6 +46,7 @@ export type {
   ContainerLevelSpec,
   Container,
   DatabaseObject,
+  ObjectReadRange,
   KindCount,
   ObjectDetail,
   ObjectDetailBatch,

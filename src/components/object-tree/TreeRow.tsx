@@ -195,6 +195,9 @@ export function TreeRow({
   const Icon = row.kind === "column" ? null : ROW_ICONS[row.kind];
   const isPrimaryColumn = row.column?.isPrimary === true;
   const showsTwisty = row.kind === "object" && row.expanded !== undefined && onToggle !== undefined;
+  // The trailing slot draws a sentence, the failure or the refusal, and the name then shares the
+  // row's room with it (the slot comment below says how).
+  const sentenceShown = failure !== undefined || row.unavailable !== undefined;
   return (
     <div
       role="treeitem"
@@ -286,7 +289,12 @@ export function TreeRow({
       ) : (
         <Icon aria-hidden="true" strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
       )}
-      <span id={rowNameId("label", row.id)} data-testid="tree-row-label" className="truncate">
+      {/* Beside a sentence the name takes its 60% share of the room, as the slot comment below says. */}
+      <span
+        id={rowNameId("label", row.id)}
+        data-testid="tree-row-label"
+        className={sentenceShown ? "grow basis-[60%] max-w-max truncate" : "truncate"}
+      >
         {row.label}
       </span>
       {isPrimaryColumn && (
@@ -381,13 +389,32 @@ export function TreeRow({
         reachable only when the stored answer was EMPTY, so there are no column rows under this
         one either way. And this is the rule the count one block below already follows, one step
         further on: the slot carries one report, and the rest stand down.
+
+        THE NAME AND THE SENTENCE SPLIT THE ROOM 60/40, and each takes what the other leaves.
+        Each starts from its share (`basis-[60%]` on the name, `basis-[40%]` here), grows into
+        room the other does not use, and stops at its own text (`grow max-w-max`). So the two
+        are cut only where they do not fit, and then each keeps about its share of the room
+        left to them, or all of itself where that is less. About, because flex weighs each one's
+        shrinking by its basis less its padding, and the sentence's `pl-2` comes off its weight,
+        so where both are cut the name keeps less than 60%. Two layouts stood here before. Both
+        truncating from their own widths shared the shrinking in proportion to those widths, so
+        a refusal many times a folder's name cut it to two letters: etcd's reader saw `Le...`,
+        `U...` and `R...` for Leases, Users and Roles (#1089). A 40% cap on the sentence then
+        kept the name whole but cut any sentence wider than 40% of the row, on every engine,
+        even where the row had room for it. Neither side has a floor, so nothing pushes the row
+        past its width: a folder's badge and an object's status take their room first, and the
+        two split what is left. Computed with the Flexbox algorithm over Geist's advance widths
+        rather than measured in a browser: at the 15% minimum sidebar of a 1366-wide screen, a
+        top-level folder leaves the two 105px, so a name of up to 61px stays whole beside any
+        sentence, and on a depth-2 object a 238px name beside a 168px sentence keeps 47px to the
+        sentence's 34px. The whole sentence stays in the title and in the row's name.
       */}
       {row.unavailable !== undefined && failure === undefined && (
         <span
           id={rowNameId("unavailable", row.id)}
           data-testid="tree-row-unavailable"
           title={row.unavailable}
-          className="ml-auto truncate pl-2 text-[10px] text-warning"
+          className="ml-auto min-w-0 grow basis-[40%] max-w-max truncate pl-2 text-[10px] text-warning"
         >
           {row.unavailable}
         </span>
@@ -398,7 +425,7 @@ export function TreeRow({
           id={rowNameId("failure", row.id)}
           data-testid="tree-row-failure"
           title={failure.message}
-          className="ml-auto truncate pl-2 text-[10px] text-destructive"
+          className="ml-auto min-w-0 grow basis-[40%] max-w-max truncate pl-2 text-[10px] text-destructive"
         >
           {failure.message}
         </span>

@@ -52,7 +52,7 @@
  * PROFILE is the one that has no kind-level
  * declaration behind it - profiling needs an ADDRESSABLE object, while every other relation
  * action here needs only a pattern - so it reads the same engine-wide flag the flat menu
- * read. Exactly two providers set it, `keyvalue/redis.ts` and `embedded/libredb.ts`, and it
+ * read. Exactly three providers set it, `keyvalue/redis.ts`, `keyvalue/etcd/index.ts` and `embedded/libredb.ts`, and it
  * is read `=== true` here for the reason its own docblock gives: absent means ordinary
  * objects. Standing ruling 4 against #789 Tasks 20 and 23.
  */

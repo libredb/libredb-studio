@@ -71,6 +71,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
   // once a gate-4 probe has measured one, never because the protocol answers.
   kafka: true,
+  // etcd (#1089): its own provider, doc and integration test, and the second member of the `keyvalue/`
+  // family. kine and Xline speak etcd's API and are recorded below as relatives only once a gate-4
+  // probe has measured each, never because the API answers.
+  etcd: true,
   libredb: true,
 });
 
@@ -121,6 +125,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   prometheus: true,
   // A cluster the user already runs, reached over the Kafka protocol.
   kafka: true,
+  // A cluster the user already runs, reached over etcd's gRPC API.
+  etcd: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -132,8 +138,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
  *
  * Also the DENOMINATOR the outward-facing catalog copy is counted against:
  * `tests/unit/lib/catalog-copy-engine-count.test.ts` compares this length with every
- * numeral qualifying "engines" in nine storefront files, which until #D47 were only ever
- * corrected by somebody noticing.
+ * numeral qualifying "engines" in each storefront file its `COPY_FILES` lists, which until
+ * #D47 were only ever corrected by somebody noticing.
  */
 export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
   SHIPPED_DATABASE_TYPES.filter((type) => EXTERNAL[type]),
@@ -143,6 +149,82 @@ export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
 export function isExternalDatabaseType(type: DatabaseType): boolean {
   return EXTERNAL[type] === true;
 }
+
+/**
+ * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
+ * object edit and maintenance operation before any request while the connection's `readOnly` is true
+ * (#1089). The static answer `ProviderCapabilities.enforcesReadOnly` gives once a provider is built.
+ *
+ * Static because every reader decides before a provider exists: the seed schema refuses
+ * `readOnly: true` at load where this answers false, `assertReadOnlyHonoured` in
+ * `src/lib/db/factory.ts` refuses it before anything is built or dialled, and the connection form
+ * draws its toggle, and writes the field, only where this answers true. Refused rather than ignored,
+ * because a mode an engine ignores lists a connection as read-only and sends its writes.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to
+ * what that engine's provider declares, so the two cannot drift. Frozen like the records above it.
+ */
+export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
+  postgres: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
+  // and maintenance operation before any request while the mode holds.
+  etcd: true,
+  libredb: false,
+});
+
+/**
+ * Which shipped engines a seed connection may expose to MCP clients (#246): the seed schema refuses
+ * `mcp: true` at load on an engine where this answers false, naming the engine, so an opt-in the
+ * product does not honour fails the file instead of listing a connection. Static for the reason
+ * `READ_ONLY_ENFORCED` is: the seed file is validated before any provider exists.
+ *
+ * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
+ * its entry answers false, and that entry lands with the provider's registration, which the compiler
+ * forces. Every other engine answers true. An exhaustive Record for the reason `EXTERNAL` gives, so a
+ * new type-id cannot join without someone answering, and frozen like the records above it.
+ */
+export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  libsql: true,
+  duckdb: true,
+  oracle: true,
+  mssql: true,
+  clickhouse: true,
+  druid: true,
+  trino: true,
+  cassandra: true,
+  elasticsearch: true,
+  opensearch: true,
+  mongodb: true,
+  couchbase: true,
+  redis: true,
+  prometheus: true,
+  kafka: true,
+  // The one engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and
+  // a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  etcd: false,
+  libredb: true,
+});
 
 /**
  * How much of the product works against a wire-compatible engine.

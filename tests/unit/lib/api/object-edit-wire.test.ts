@@ -886,3 +886,125 @@ describe("the wire module's import closure stays free of the server", () => {
     ]);
   });
 });
+
+/**
+ * The command arm's two optional fields (etcd spec 3.4, 4.5).
+ *
+ * etcd's value edit is one `Txn` whose failure branch reads the key back, so its unit carries
+ * literal tokens AFTER the payload, `trailing`, and names its payload for the preview's summary,
+ * `payloadLabel`, which the dialog otherwise calls "library code". Both are optional, so Redis's
+ * unit, which sets neither, is the shape it has always been, and each is held to the rules the
+ * arm's other strings are: `trailing` to `arguments`' rule, `payloadLabel` to `name`'s.
+ */
+describe("isObjectEditUnitShape, the command arm's trailing tokens and payload label", () => {
+  const VALUE = '{"feature":true}';
+  const commandUnit = (extra: Record<string, unknown> = {}) => ({
+    medium: "command",
+    name: "txn",
+    arguments: ['mod("/app/cfg") = "7"', "put", "--ignore-lease", "/app/cfg"],
+    payload: { text: VALUE, language: "json", segments: [{ from: "user", start: 0, end: VALUE.length }] },
+    ...extra,
+  });
+
+  test("accepts both fields absent, both present, and each on its own", () => {
+    expect(isObjectEditUnitShape(commandUnit())).toBe(true);
+    expect(isObjectEditUnitShape(commandUnit({ trailing: ["get", "/app/cfg"], payloadLabel: "value" }))).toBe(true);
+    expect(isObjectEditUnitShape(commandUnit({ trailing: ["get", "/app/cfg"] }))).toBe(true);
+    expect(isObjectEditUnitShape(commandUnit({ payloadLabel: "value" }))).toBe(true);
+    // No tokens is a string array too, as an empty `arguments` is.
+    expect(isObjectEditUnitShape(commandUnit({ trailing: [] }))).toBe(true);
+  });
+
+  test("refuses trailing tokens that are not a string array", () => {
+    expect(isObjectEditUnitShape(commandUnit({ trailing: ["get", 7] }))).toBe(false);
+    expect(isObjectEditUnitShape(commandUnit({ trailing: [null] }))).toBe(false);
+    expect(isObjectEditUnitShape(commandUnit({ trailing: "get /app/cfg" }))).toBe(false);
+    // Present with nothing in it is not absent: the key is the fact, as every optional field here reads it.
+    expect(isObjectEditUnitShape(commandUnit({ trailing: undefined }))).toBe(false);
+  });
+
+  test("refuses a payload label that says nothing", () => {
+    expect(isObjectEditUnitShape(commandUnit({ payloadLabel: "" }))).toBe(false);
+    expect(isObjectEditUnitShape(commandUnit({ payloadLabel: "   " }))).toBe(false);
+    expect(isObjectEditUnitShape(commandUnit({ payloadLabel: 5 }))).toBe(false);
+    expect(isObjectEditUnitShape(commandUnit({ payloadLabel: undefined }))).toBe(false);
+  });
+
+  test("bounds the label and each trailing token as it bounds the name and each argument", () => {
+    expect(isObjectEditUnitShape(commandUnit({ payloadLabel: PROSE_AT_LIMIT }))).toBe(true);
+    expect(isObjectEditUnitShape(commandUnit({ payloadLabel: PROSE_OVER_LIMIT }))).toBe(false);
+    expect(isObjectEditUnitShape(commandUnit({ trailing: [PROSE_AT_LIMIT] }))).toBe(true);
+    expect(isObjectEditUnitShape(commandUnit({ trailing: [PROSE_OVER_LIMIT] }))).toBe(false);
+  });
+
+  test("counts the trailing tokens in the executable text the unit is bounded by", () => {
+    // `planExecutableLength` is what bounds the unit, so a trailing token is sent text like any
+    // argument: a unit exactly at the ceiling is refused once one trailing character is added.
+    const overhead = "txn".length + ['mod("/app/cfg") = "7"', "put", "--ignore-lease", "/app/cfg"].join("").length;
+    const payloadLength = EDIT_BODY_BYTE_LIMIT - overhead;
+    const atTheCeiling = commandUnit({
+      payload: {
+        text: "x".repeat(payloadLength),
+        language: "json",
+        segments: [{ from: "user", start: 0, end: payloadLength }],
+      },
+    });
+    expect(isObjectEditUnitShape(atTheCeiling)).toBe(true);
+    expect(isObjectEditUnitShape({ ...atTheCeiling, trailing: [] })).toBe(true);
+    expect(isObjectEditUnitShape({ ...atTheCeiling, trailing: ["x"] })).toBe(false);
+  });
+});
+
+/**
+ * A hole in a string array is not a string, and a predicate answers rather than throws.
+ *
+ * JSON cannot express a hole, so every population here is built by index assignment, the way a
+ * provider's `buildObjectEdit` can build its unit in memory. MEASURED at e7674ec8: a hole in
+ * `trailing` or in `arguments` passed the element check, because `Array.prototype.every` skips a
+ * hole, and `planExecutableLength`, which spreads both arrays and so reads a hole as `undefined`,
+ * then threw a TypeError out of the three predicates that read a unit.
+ * `POST /api/db/objects/edit-plan` answered 500 where it narrows a provider's answer precisely to
+ * say 400 "the build answered a plan this server cannot read as a plan". A throw inside
+ * `expect(...)` fails the test, so each refusal below also pins that nothing is thrown.
+ */
+describe("a hole in a string array is not a string", () => {
+  const VALUE = '{"feature":true}';
+  const PAYLOAD = { text: VALUE, language: "json", segments: [{ from: "user", start: 0, end: VALUE.length }] };
+  const commandWith = (tokens: { readonly arguments: readonly string[]; readonly trailing?: readonly string[] }) => ({
+    medium: "command",
+    name: "txn",
+    payload: PAYLOAD,
+    ...tokens,
+  });
+  const withHole = (first: string, third: string): string[] => {
+    const tokens = [first];
+    tokens[2] = third;
+    return tokens;
+  };
+  const planOf = (unit: unknown) => ({ ...PLAN, unit });
+  const buildOf = (unit: unknown) => ({ built: true, plan: planOf(unit), preimage: { text: VALUE, language: "json" } });
+
+  test("refuses trailing tokens with a hole, in every predicate that reads a unit", () => {
+    const unit = commandWith({ arguments: ["put"], trailing: withHole("get", "/app/cfg") });
+    expect(isObjectEditUnitShape(unit)).toBe(false);
+    expect(isObjectEditPlanShape(planOf(unit))).toBe(false);
+    expect(isObjectEditBuildResponseShape(buildOf(unit))).toBe(false);
+    // The control: the same length written densely is a string array, so the hole is the refusal.
+    const dense = commandWith({ arguments: ["put"], trailing: ["get", "--", "/app/cfg"] });
+    expect(isObjectEditUnitShape(dense)).toBe(true);
+    expect(isObjectEditBuildResponseShape(buildOf(dense))).toBe(true);
+  });
+
+  test("refuses argument tokens with a hole, which the check accepted before the trailing tokens existed", () => {
+    const unit = commandWith({ arguments: withHole("put", "/app/cfg") });
+    expect(isObjectEditUnitShape(unit)).toBe(false);
+    expect(isObjectEditPlanShape(planOf(unit))).toBe(false);
+    expect(isObjectEditBuildResponseShape(buildOf(unit))).toBe(false);
+    expect(isObjectEditUnitShape(commandWith({ arguments: ["put", "--ignore-lease", "/app/cfg"] }))).toBe(true);
+  });
+
+  test("refuses a plan whose path has a hole, since the path is held by the same rule", () => {
+    expect(isObjectEditPlanShape({ ...PLAN, path: withHole("app", "f(integer)") })).toBe(false);
+    expect(isObjectEditPlanShape({ ...PLAN, path: ["app", "public", "f(integer)"] })).toBe(true);
+  });
+});

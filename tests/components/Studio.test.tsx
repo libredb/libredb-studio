@@ -952,9 +952,10 @@ describe("Studio", () => {
   });
 
   /**
-   * The tree lists every declared kind, and the click EXECUTES what it generates, so a
-   * routine reaching `handleTableClick` would run `SELECT * FROM order_total(integer)`
-   * against the database. The gate reads the kind's declared ROLE, never its id.
+   * The tree lists every kind the object surface enumerates (`enumerableKinds`), and the
+   * click EXECUTES what it generates, so a routine reaching `handleTableClick` would run
+   * `SELECT * FROM order_total(integer)` against the database. The gate reads the kind's
+   * declared ROLE, never its id.
    */
   // The gate reads `role`, not the kind id: a view is a relation on every engine that
   // declares one, and `kind === "table"` would refuse it while passing the two tests
@@ -1053,6 +1054,99 @@ describe("Studio", () => {
     // unknown branch, and the editor opens on `TYPE <key>` — a command that reports what the key is
     // rather than opening a read nobody chose.
     expect(mockHandleTableClick).toHaveBeenCalledWith(["videobackend:login:refreshToken:1"], mockExecuteQuery, []);
+  });
+
+  /**
+   * A key activated where the engine declares a key kind (spec 4.6).
+   *
+   * etcd's `key` kind is `enumeratedBy: "key-browser"`: its value and metadata are read through the
+   * object surface, so activating a key opens that kind's Source tab, addressed by the key alone, and
+   * generates and runs nothing. Review Focus 1: every key a path strains reaches the tab as its string.
+   */
+  test("a key activated where the engine declares a key kind opens its Source tab and runs nothing", () => {
+    const mockOpenSourceTab = mock((_object: DatabaseObject) => {});
+    tabMgrOverride = { openSourceTab: mockOpenSourceTab };
+    capabilitiesOverride = {
+      objectKinds: [
+        { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+        {
+          id: "key",
+          role: "config",
+          label: "Key",
+          labelPlural: "Keys",
+          enumeratedBy: "key-browser",
+          hasSource: true,
+          sourceLanguage: "json",
+        },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void;
+    const keys = [
+      "/app/cfg",
+      "/a//b",
+      "/app/",
+      "/",
+      "/sp ace/k",
+      "/q'uo\"te/k",
+      "/nl\nx/k",
+      "/#h/k",
+      "/$d/k",
+      "/-lead/k",
+      "-top",
+      "plain",
+      // A space at either end is a byte of the key, and a trimmed address would open a different key.
+      " /lead-space",
+      "/trail-space ",
+    ];
+
+    for (const key of keys) act(() => fn(key, null, null));
+
+    expect(mockOpenSourceTab.mock.calls.map((call) => call[0])).toEqual(
+      keys.map((key) => ({ path: [key], kind: "key", name: key })),
+    );
+    expect(mockHandleTableClick).not.toHaveBeenCalled();
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("the Source tab a key opens is addressed by the declared kind's own id", () => {
+    // The id is the declaration's, read through `keyBrowserKind`: an engine whose key-browser kind is
+    // called something else has its keys opened under that name, never under a literal "key".
+    const mockOpenSourceTab = mock((_object: DatabaseObject) => {});
+    tabMgrOverride = { openSourceTab: mockOpenSourceTab };
+    capabilitiesOverride = {
+      objectKinds: [
+        {
+          id: "entry",
+          role: "config",
+          label: "Entry",
+          labelPlural: "Entries",
+          enumeratedBy: "key-browser",
+          hasSource: true,
+          sourceLanguage: "json",
+        },
+      ],
+    };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void;
+
+    act(() => fn("/app/cfg", null, null));
+
+    expect(mockOpenSourceTab.mock.calls.map((call) => call[0])).toEqual([
+      { path: ["/app/cfg"], kind: "entry", name: "/app/cfg" },
+    ]);
+  });
+
+  test("before the metadata read answers, a key activation keeps the read it has always opened", () => {
+    metadataOverride = { metadata: null };
+    render(<Studio />);
+    const fn = capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void;
+
+    act(() => fn("report:daily", "string", null));
+
+    expect(mockHandleTableClick).toHaveBeenCalledWith(["report:daily"], mockExecuteQuery, [
+      { name: "type", type: "string", nullable: false, isPrimary: false },
+    ]);
   });
 
   // --- objectActions: the row menu's six, restored (U22, #789) ---
@@ -2077,6 +2171,17 @@ describe("Studio", () => {
     expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users");
   });
 
+  test("QuerySafetyDialog is handed the active connection's name, which a typed confirmation of it asks for (#1089)", () => {
+    connMgrOverride = { activeConnection: pgConn };
+    render(<Studio />);
+    expect(capturedSafetyDialogProps.connectionName).toBe("TestPG");
+  });
+
+  test("QuerySafetyDialog is handed no connection name while no connection is active", () => {
+    render(<Studio />);
+    expect(capturedSafetyDialogProps.connectionName).toBeUndefined();
+  });
+
   // --- Connection-change effect ---
   test("connection-change effect resets state and fetches schema", () => {
     connMgrOverride = { activeConnection: pgConn };
@@ -2293,6 +2398,19 @@ describe("Studio", () => {
       { id: "tab-1", name: "Query 1", query: "GET k", result: null, isExecuting: false, type: "sql" },
     ]);
     expect(result[0].type).toBe("redis");
+  });
+
+  test("connection-change effect retypes tabs to etcd when the provider declares that dialect (#1089)", () => {
+    // etcd declares queryLanguage "json" too, with a dialect of its own, so the ladder's etcd rung sits
+    // above the json rung and the tab is not retyped to mongodb.
+    connMgrOverride = { activeConnection: pgConn };
+    capabilitiesOverride = { queryLanguage: "json", queryDialect: "etcd" };
+    render(<Studio />);
+    const updater = (mockSetTabs.mock.calls[0] as unknown[])[0] as (prev: unknown[]) => Array<{ type: string }>;
+    const result = updater([
+      { id: "tab-1", name: "Query 1", query: "get /app/ --prefix", result: null, isExecuting: false, type: "sql" },
+    ]);
+    expect(result[0].type).toBe("etcd");
   });
 
   // --- exportResults sql-ddl type mapping ---

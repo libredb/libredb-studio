@@ -6,9 +6,9 @@ import { defineConfig, devices } from "@playwright/test";
 // that port is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
-// offline-editor.spec.ts and kafka-provider.spec.ts get a second server process on its own port -
-// see the projects and the webServer array below for why. Override with E2E_OFFLINE_PORT under the
-// same collision circumstances as E2E_PORT.
+// offline-editor.spec.ts, kafka-provider.spec.ts and etcd-provider.spec.ts get a second server
+// process on its own port - see the projects and the webServer array below for why. Override with
+// E2E_OFFLINE_PORT under the same collision circumstances as E2E_PORT.
 const offlinePort = Number(process.env.E2E_OFFLINE_PORT ?? 3010);
 
 // passkey.spec.ts gets a third server process: see the chromium-passkey project for why.
@@ -51,9 +51,9 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      // offline-editor.spec.ts and kafka-provider.spec.ts run under their own projects below,
-      // against the second server, and passkey.spec.ts against the third.
-      testIgnore: /(?:offline-editor|base-path|kafka-provider|passkey)\.spec\.ts/,
+      // offline-editor.spec.ts, kafka-provider.spec.ts and etcd-provider.spec.ts run under their own
+      // projects below, against the second server, and passkey.spec.ts against the third.
+      testIgnore: /(?:offline-editor|base-path|kafka-provider|etcd-provider|passkey)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -77,10 +77,18 @@ export default defineConfig({
       // bucket, and on the shared server it met the budget the specs before it had spent: CI run
       // 36263561882 answered its refusal check "Too many requests. Try again in 38 seconds." on all
       // three attempts. It runs against the second server for the reason offline-editor.spec.ts
-      // does; the two specs together stay far below that bucket's 120 requests a minute.
+      // does; the specs on that server together stay far below that bucket's 120 requests a minute.
       name: "chromium-kafka",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /kafka-provider\.spec\.ts/,
+    },
+    {
+      // etcd-provider.spec.ts drives Test Connection too, so it takes the second server for the reason
+      // kafka-provider.spec.ts does; the three specs together stay far below that bucket's 120
+      // requests a minute.
+      name: "chromium-etcd",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /etcd-provider\.spec\.ts/,
     },
     {
       // Passkeys need an account registry, so this server runs in store mode (STORAGE_PROVIDER=sqlite)

@@ -1,0 +1,98 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.384Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: the prefix /tenant-a/: the custom-prefix stand-in of spec 9",
+    "request": {
+      "key": {
+        "$bytes": "L3RlbmFudC1hLw=="
+      },
+      "range_end": {
+        "$bytes": "L3RlbmFudC1hMA=="
+      },
+      "limit": {
+        "$int64": "500"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L3RlbmFudC1hLw=="
+      },
+      "range_end": {
+        "$bytes": "L3RlbmFudC1hMA=="
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L3RlbmFudC1hL2NvbmZpZ21hcHMvZGVmYXVsdC9jbQ=="
+        },
+        "create_revision": {
+          "$int64": "33"
+        },
+        "mod_revision": {
+          "$int64": "33"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "azhzAAoPCgJ2MRIJQ29uZmlnTWFwEhQKBAoCY20SDAoEbW9kZRIEYmx1ZRoAIgA="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3RlbmFudC1hL2NvbmZpZ21hcHMvZGVmYXVsdC9jbS1lbmNyeXB0ZWQ="
+        },
+        "create_revision": {
+          "$int64": "34"
+        },
+        "mod_revision": {
+          "$int64": "34"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "azhzOmVuYzphZXNjYmM6djE6a2V5MToAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHw=="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "67"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "2"
+    }
+  }
+}

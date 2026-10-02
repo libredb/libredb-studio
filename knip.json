@@ -21,7 +21,7 @@
   ],
   "ignoreBinaries": [
     "genhtml",
-    "gh"
+    "ss"
   ],
   "ignoreExportsUsedInFile": {
     "interface": true,

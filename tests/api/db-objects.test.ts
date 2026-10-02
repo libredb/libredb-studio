@@ -1658,6 +1658,121 @@ describe("POST /api/db/objects/inventory", () => {
 });
 
 // ============================================================================
+// a kind only the Keys panel enumerates (#1089 3.4)
+// ============================================================================
+
+describe("a kind the Keys panel enumerates, on the inventory and search routes", () => {
+  const PREFIX_KIND: ObjectKindSpec = {
+    id: "prefix",
+    role: "relation",
+    label: "Key Prefix",
+    labelPlural: "Key Prefixes",
+  };
+  const KEY_KIND: ObjectKindSpec = {
+    id: "key",
+    role: "config",
+    label: "Key",
+    labelPlural: "Keys",
+    enumeratedBy: "key-browser",
+    hasSource: true,
+    sourceLanguage: "json",
+  };
+  const REFUSAL =
+    'redis enumerates the kind "key" in the Keys panel alone, so no inventory or search lists it; browse it in the Keys panel';
+
+  /**
+   * No container level, a prefix kind and a key kind, and a `listObjects` that THROWS for the key kind,
+   * as a provider declaring it refuses it by name: a route that walked it would answer that error
+   * rather than the prefix groups, which is how each test below tells a kind left out from one listed.
+   */
+  function keyValueProvider() {
+    const listObjects = mock(async (_container: readonly string[], kind: string) => {
+      if (kind === "key") throw new QueryError('the kind "key" is listed by the Keys panel', "redis");
+      return [object(["/app/*"], "prefix")];
+    });
+    activeProvider = objectProvider({
+      type: "redis",
+      containerLevels: [],
+      objectKinds: [PREFIX_KIND, KEY_KIND],
+      listObjects,
+    });
+    return listObjects;
+  }
+
+  test("an inventory that names no kinds answers the other kinds and never lists it", async () => {
+    const listObjects = keyValueProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection } }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect((await parseResponseJSON<{ objects: DatabaseObject[] }>(response)).objects).toEqual([
+      { path: ["/app/*"], name: "/app/*", kind: "prefix" },
+    ]);
+    expect(listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
+  });
+
+  test("a search that names no kinds answers the other kinds and never lists it", async () => {
+    const listObjects = keyValueProvider();
+
+    const response = await searchRoute.POST(
+      createMockRequest("/api/db/objects/search", { method: "POST", body: { connection, term: "app" } }) as never,
+    );
+
+    expect(response.status).toBe(200);
+    expect((await parseResponseJSON<DatabaseObject[]>(response)).map((found) => found.path)).toEqual([["/app/*"]]);
+    expect(listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
+  });
+
+  test("an inventory naming it is a 400 that points at the Keys panel, and lists nothing", async () => {
+    const listObjects = keyValueProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", { method: "POST", body: { connection, kinds: ["key"] } }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({ error: REFUSAL });
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+
+  test("a search naming it beside another kind is the same 400, and lists nothing", async () => {
+    const listObjects = keyValueProvider();
+
+    const response = await searchRoute.POST(
+      createMockRequest("/api/db/objects/search", {
+        method: "POST",
+        body: { connection, term: "app", kinds: ["prefix", "key"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(response)).error).toBe(REFUSAL);
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+
+  // The ORDER of the two refusals, pinned: a kind the engine never declared is a claim about the
+  // engine, and telling the caller it lives in the Keys panel would name a kind that does not exist.
+  test("a kind the engine does not declare is still refused as undeclared, never pointed at the Keys panel", async () => {
+    const listObjects = keyValueProvider();
+
+    const response = await inventoryRoute.POST(
+      createMockRequest("/api/db/objects/inventory", {
+        method: "POST",
+        body: { connection, kinds: ["value"] },
+      }) as never,
+    );
+
+    expect(response.status).toBe(400);
+    expect(await parseResponseJSON<Record<string, unknown>>(response)).toEqual({
+      error: 'redis declares no object kind "value"',
+    });
+    expect(listObjects).toHaveBeenCalledTimes(0);
+  });
+});
+
+// ============================================================================
 // source
 // ============================================================================
 

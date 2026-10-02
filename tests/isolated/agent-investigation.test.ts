@@ -29,6 +29,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
 import { LLMAuthError, LLMStreamError } from "@/lib/llm/types";
@@ -1562,6 +1563,35 @@ describe("planning mode runs no statement of the user's", () => {
         expect(rules).toContain("not keys of the request");
         // The label adds to the contract rather than replacing it: the neutral opening comes first.
         expect(rules.indexOf("own query language")).toBeLessThan(rules.indexOf("Write it in the JSON read request"));
+        // The SQL arm's opening and its SQL-only name rule, neither of which may also be present.
+        expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
+        expect(rules).not.toContain("and no column name that is not in that inventory");
+      });
+
+      /*
+        #1089: etcd declares `"json"` too, so it takes the same neutral arm, and the one fact about how its
+        statement is written is its provider's `statementLanguage` label, stated verbatim after that arm's
+        opening (spec 6.3): one etcdctl command per run, the reads plan mode drafts, the prefix rule, two
+        read examples, and that every write is the user's to type. The labels are the ones the provider ships.
+      */
+      test("an etcd engine is told its etcdctl subset, after the neutral contract (#1089)", async () => {
+        const labels = new EtcdProvider({
+          id: "etcd-plan",
+          name: "etcd",
+          type: "etcd",
+          host: "127.0.0.1",
+          port: 2379,
+          createdAt: new Date(0),
+        }).getLabels();
+        const { rules } = await planOnProvider("json", labels);
+
+        expect(rules).toContain("database's own query language");
+        expect(rules).toContain(`Write it in ${labels.statementLanguage}.`);
+        expect(rules).toContain("exactly one command per run");
+        expect(rules).toContain("get /app/config/ --prefix --limit=50");
+        expect(rules).toContain("is typed by the user in the editor and never drafted");
+        // The label adds to the contract rather than replacing it: the neutral opening comes first.
+        expect(rules.indexOf("own query language")).toBeLessThan(rules.indexOf("the etcdctl command this editor runs"));
         // The SQL arm's opening and its SQL-only name rule, neither of which may also be present.
         expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
         expect(rules).not.toContain("and no column name that is not in that inventory");

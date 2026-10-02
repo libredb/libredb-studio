@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { createPrivateKey, generateKeyPairSync } from "node:crypto";
+import { mergeDefaults } from "@/lib/seed/connection-filter";
 import {
   resolveConnectionCredentials,
   resolveAllCredentials,
@@ -97,5 +99,126 @@ describe("credential-resolver", () => {
     const conn = { ...baseConn, id: "plain", password: "hardcoded_secret" };
     const resolved = resolveConnectionCredentials(conn);
     expect(resolved.password).toBe("hardcoded_secret");
+  });
+});
+
+/**
+ * The TLS material under `ssl` (#1089). On a Kubernetes control-plane etcd the node's client
+ * certificate and key are the only credential, and the chart mounts the seed file from a ConfigMap, so
+ * `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey` resolve through `${ENV}` as the top-level fields
+ * do: the ConfigMap then holds references, and a Secret the values.
+ */
+describe("credential-resolver: the TLS material under ssl (#1089)", () => {
+  type SeedSsl = NonNullable<SeedConnection["ssl"]>;
+  const withSsl = (ssl: SeedSsl): SeedConnection => ({ ...baseConn, id: "cluster", ssl });
+  const messageOf = (run: () => unknown): string => {
+    try {
+      run();
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return "(nothing thrown)";
+  };
+
+  afterEach(() => {
+    delete process.env.SEED_TLS_MATERIAL;
+    delete process.env.ETCD_CA;
+    delete process.env.ETCD_CLIENT_CERT;
+    delete process.env.ETCD_CLIENT_KEY;
+  });
+
+  it.each(["caCert", "clientCert", "clientKey"] as const)(
+    "resolves ${VAR} in ssl.%s and keeps the rest of the ssl object",
+    (field) => {
+      process.env.SEED_TLS_MATERIAL = `resolved ${field}`;
+      const ssl: SeedSsl = { mode: "verify-full", rejectUnauthorized: true };
+      ssl[field] = "${SEED_TLS_MATERIAL}";
+      const expected: SeedSsl = { mode: "verify-full", rejectUnauthorized: true };
+      expected[field] = `resolved ${field}`;
+
+      expect(resolveConnectionCredentials(withSsl(ssl)).ssl).toStrictEqual(expected);
+    },
+  );
+
+  it("resolves the three together, the way one Secret carries them", () => {
+    process.env.ETCD_CA = "CA-CERTIFICATE";
+    process.env.ETCD_CLIENT_CERT = "CLIENT-CERTIFICATE";
+    process.env.ETCD_CLIENT_KEY = "CLIENT-KEY";
+    const resolved = resolveConnectionCredentials(
+      withSsl({
+        mode: "verify-full",
+        caCert: "${ETCD_CA}",
+        clientCert: "${ETCD_CLIENT_CERT}",
+        clientKey: "${ETCD_CLIENT_KEY}",
+      }),
+    );
+
+    expect(resolved.ssl).toStrictEqual({
+      mode: "verify-full",
+      caCert: "CA-CERTIFICATE",
+      clientCert: "CLIENT-CERTIFICATE",
+      clientKey: "CLIENT-KEY",
+    });
+  });
+
+  it("carries a multi-line PKCS#8 key through the reference byte for byte", () => {
+    const { privateKey } = generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    // Vacuity: a value on one line would prove nothing about the line breaks.
+    expect(privateKey.split("\n").length).toBeGreaterThan(20);
+    process.env.ETCD_CLIENT_KEY = privateKey;
+
+    const clientKey = resolveConnectionCredentials(withSsl({ mode: "verify-full", clientKey: "${ETCD_CLIENT_KEY}" }))
+      .ssl?.clientKey;
+
+    expect(clientKey).toBe(privateKey);
+    // Still the key: node reads it back as the same PKCS#8 key.
+    expect(createPrivateKey(clientKey ?? "").export({ type: "pkcs8", format: "pem" })).toBe(privateKey);
+  });
+
+  it("names ssl.clientKey, and no value, when the variable it references is unset", () => {
+    process.env.ETCD_CA = "CA-CERTIFICATE-CANARY";
+    const conn = withSsl({ mode: "verify-full", caCert: "${ETCD_CA}", clientKey: "${ETCD_CLIENT_KEY}" });
+
+    expect(messageOf(() => resolveConnectionCredentials(conn))).toBe(
+      'Environment variable ETCD_CLIENT_KEY is not defined (required by seed connection "cluster" field "ssl.clientKey")',
+    );
+  });
+
+  it("leaves a connection with no ssl object unchanged", () => {
+    expect(resolveConnectionCredentials(baseConn)).toStrictEqual(baseConn);
+  });
+
+  it("leaves an ssl object that holds no reference unchanged", () => {
+    const conn = withSsl({
+      mode: "verify-ca",
+      rejectUnauthorized: true,
+      caCert: "CA-PEM",
+      clientCert: "CERT-PEM",
+      clientKey: "KEY-PEM",
+    });
+
+    expect(resolveConnectionCredentials(conn)).toStrictEqual(conn);
+  });
+
+  it("never writes into the ssl object a connection shares with defaults.ssl", () => {
+    // A connection with no ssl of its own takes the one defaults.ssl object (mergeDefaults), and the
+    // parsed seed file is cached, so a write into it would put a resolved key into the cached file.
+    process.env.ETCD_CLIENT_KEY = "CLIENT-KEY";
+    const defaults = { ssl: { mode: "verify-full" as const, clientKey: "${ETCD_CLIENT_KEY}" } };
+    const merged = [
+      { ...baseConn, id: "first" },
+      { ...baseConn, id: "second" },
+    ].map((conn) => mergeDefaults(conn, defaults));
+    // The premise: one object, shared.
+    expect(merged[0].ssl).toBe(merged[1].ssl);
+
+    const resolved = resolveAllCredentials(merged);
+
+    expect(resolved.map((conn) => conn.ssl?.clientKey)).toEqual(["CLIENT-KEY", "CLIENT-KEY"]);
+    expect(defaults.ssl).toStrictEqual({ mode: "verify-full", clientKey: "${ETCD_CLIENT_KEY}" });
   });
 });

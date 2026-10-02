@@ -21,12 +21,12 @@
  * in keys, and the panel says so in its own words when a walk stops on it — a cap nobody can see is
  * the defect that sentence exists to prevent.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DatabaseConnection } from "@/lib/types";
-import type { KeyScanCapability, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
+import { keyScanShape, type KeyScanCapability, type KeyScanOptions, type KeyScanPage } from "@/lib/db/types";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { appFetch } from "@/lib/config/base-path";
-import { isUnderPrefix, KEY_SEPARATOR, pathKey, prefixPattern } from "./tree";
+import { isUnderPrefix, pathKey, pathPattern } from "./tree";
 
 /**
  * How many keys one `Scan all` may walk before it stops and says it did.
@@ -34,6 +34,10 @@ import { isUnderPrefix, KEY_SEPARATOR, pathKey, prefixPattern } from "./tree";
  * Ten thousand is a client-side budget and not an engine limit: at the default batch of 500 it is
  * twenty round trips, which is a gesture a person will wait for and a load a server will answer. A
  * key space larger than this is one where the right answer is "narrow the pattern".
+ *
+ * A key a page LEFT OUT counts as one it named (spec 4.6): the server read it and it took its room on
+ * the page, so a walk of keys that are not UTF-8 text spends this budget as a walk of named keys does.
+ * Counted by names alone, such a prefix would be read whole by a gesture that says it stops here.
  */
 export const SCAN_ALL_MAX_KEYS = 10_000;
 
@@ -63,7 +67,11 @@ export interface KeyScanResult {
   readonly keys: readonly string[];
   /** Keys the walk has been handed, repeats included. */
   readonly scanned: number;
-  /** The server's own key count for the database, or null before the first page answers. */
+  /**
+   * The page's `total`, in the scope the declaration's `totalScope` names, or null before the first
+   * page answers: the server's own key count for the database under `"database"` (Redis), and the exact
+   * count of the keys this walk covers at its pinned revision under `"walk"` (etcd, spec 4.6).
+   */
   readonly total: number | null;
   /**
    * Whether the answers describe ONE NODE of a clustered deployment.
@@ -82,6 +90,16 @@ export interface KeyScanResult {
    * beside a type that is still on its way.
    */
   readonly types: ReadonlyMap<string, string>;
+  /**
+   * The keys the walk's pages left out, added up across the global walk's pages, or null while none
+   * was (spec 4.6).
+   *
+   * A page leaves out a key it cannot give a name: on etcd, one that is not UTF-8 text, because a name
+   * decoded with replacement characters would address a different key. The reason is the provider's,
+   * from the latest page that left one out. A prefix's Load more adds nothing here, for the reason it
+   * adds nothing to `scanned`: its pages overlap the global walk's.
+   */
+  readonly skipped: { readonly count: number; readonly reason: string } | null;
   /** True while one page is in flight. */
   readonly busy: boolean;
   /** True while a `Scan all` is running, so the panel can offer `Stop` rather than a second press. */
@@ -114,9 +132,15 @@ export interface KeyScanResult {
 }
 
 export interface KeyScanControls {
-  /** Take one more batch from wherever the walk stands. */
-  readonly scanMore: () => Promise<void>;
-  /** Page until the walk is spent, the cap is reached, someone presses Stop, or a page fails. */
+  /**
+   * Take one more batch from wherever the walk stands. Resolves false when it asked for none: the
+   * tree is full, the walk is spent, or a page of this walk is already in flight.
+   */
+  readonly scanMore: () => Promise<boolean>;
+  /**
+   * Page until the walk is spent, the cap is reached, the tree is full, someone presses Stop, or a
+   * page fails.
+   */
   readonly scanAll: () => Promise<void>;
   /**
    * Take one more batch of the walk scoped to ONE PREFIX, for the row under an open folder.
@@ -135,7 +159,10 @@ export interface KeyScanControls {
 export function useKeyScan(options: {
   readonly connection: DatabaseConnection;
   readonly capability: KeyScanCapability;
-  /** A `MATCH` pattern, or `""` for every key. */
+  /**
+   * The walk's pattern as the route takes it, or `""` for every key: a `MATCH` glob under a `glob`
+   * declaration, and the literal prefix every walked key begins with under a `prefix` one.
+   */
   readonly pattern: string;
   /**
    * Which numbered database to walk, for an engine that has more than one.
@@ -149,6 +176,11 @@ export function useKeyScan(options: {
   readonly database?: number;
 }): KeyScanResult & KeyScanControls {
   const { connection, capability, pattern, database } = options;
+  /**
+   * The walk's shape, read once through the one helper (spec 3.4): the separator a Load more joins its
+   * prefix with, the pattern it builds, and the word the Scan all sentence uses.
+   */
+  const shape = useMemo(() => keyScanShape(capability), [capability]);
 
   const [keys, setKeys] = useState<readonly string[]>([]);
   const [scanned, setScanned] = useState(0);
@@ -163,6 +195,7 @@ export function useKeyScan(options: {
   const [nodeLoading, setNodeLoading] = useState<ReadonlySet<string>>(new Set());
   const [nodeAdded, setNodeAdded] = useState<ReadonlyMap<string, number>>(new Map());
   const [types, setTypes] = useState<ReadonlyMap<string, string>>(new Map());
+  const [skipped, setSkipped] = useState<{ readonly count: number; readonly reason: string } | null>(null);
 
   /*
    * Refs, not state, and the reason is the loop rather than performance. `scanAll` takes several
@@ -194,6 +227,9 @@ export function useKeyScan(options: {
   const stopped = useRef(false);
   const spent = useRef(false);
   const scannedKeys = useRef(0);
+  // The pages' skipped keys, added up in a ref for the reason `scannedKeys` is: `scanAll` takes
+  // several pages inside one commit, and each must add to what the last one wrote.
+  const skippedKeys = useRef<{ readonly count: number; readonly reason: string } | null>(null);
   const failure = useRef<string | null>(null);
   const alive = useRef(true);
   /*
@@ -270,6 +306,8 @@ export function useKeyScan(options: {
         // deployment's shape, and a panel that drew "clustered: false" there would be claiming a
         // plain server from a refusal.
         clustered: body.clustered,
+        // Passed through as it came: `scanMore` adds it up and `loadMoreUnder` leaves it alone (spec 4.6).
+        skipped: body.skipped,
       };
     },
     [connection, database],
@@ -308,7 +346,7 @@ export function useKeyScan(options: {
     setTypes(new Map(knownTypes.current));
   }, []);
 
-  const scanMore = useCallback(async (): Promise<void> => {
+  const scanMore = useCallback(async (): Promise<boolean> => {
     // One page at a time PER WALK. Two in flight for the same walk would both read the same cursor
     // and both advance from it, so the second answer would overwrite the position the first one
     // earned and the walk would skip whatever lay between them. A spent walk is refused for the same
@@ -316,8 +354,8 @@ export function useKeyScan(options: {
     const mine = walk.current;
     // A tree that is FULL cannot be given anything, so this walk would buy a page to drop it: the
     // panel's own sentence is what the reader should be reading instead of a request in flight.
-    if (walked.current.size >= HELD_KEY_LIMIT) return;
-    if (spent.current || pageInFlight.current === mine) return;
+    if (walked.current.size >= HELD_KEY_LIMIT) return false;
+    if (spent.current || pageInFlight.current === mine) return false;
     pageInFlight.current = mine;
     setBusy(true);
 
@@ -326,10 +364,22 @@ export function useKeyScan(options: {
       // The walk this page belongs to may have been thrown away while it was in the air, and a
       // discarded walk's answer is not an answer to the current one: it would land keys from a
       // database or a pattern nobody is looking at any more, beside a cursor from that walk.
-      if (!alive.current || mine !== walk.current) return;
+      if (!alive.current || mine !== walk.current) return true;
       cursor.current = page.cursor;
       scannedKeys.current += page.keys.length;
       failure.current = null;
+      /*
+       * What the page LEFT OUT, added up across the global walk's pages (spec 4.6). A page that left
+       * nothing out, with no `skipped` or with a count of 0, changes nothing, so the panel draws no
+       * line for it.
+       */
+      if (page.skipped !== undefined && page.skipped.count > 0) {
+        skippedKeys.current = {
+          count: (skippedKeys.current?.count ?? 0) + page.skipped.count,
+          reason: page.skipped.reason,
+        };
+        setSkipped(skippedKeys.current);
+      }
       const fresh = absorb(page.keys);
       absorbTypes(page);
       setKeys((previous) => (fresh.length === 0 ? previous : [...previous, ...fresh]));
@@ -347,7 +397,7 @@ export function useKeyScan(options: {
       // A failure from an abandoned walk is dropped for the reason its answer would be: it describes
       // a read the panel has already replaced, and reporting it would put a sentence about the old
       // walk on the new one.
-      if (!alive.current || mine !== walk.current) return;
+      if (!alive.current || mine !== walk.current) return true;
       // The cursor is deliberately NOT advanced on a failure. The position already held is the
       // last one the server acknowledged, so retrying re-asks the batch that failed rather than
       // skipping it.
@@ -361,6 +411,7 @@ export function useKeyScan(options: {
       if (pageInFlight.current === mine) pageInFlight.current = null;
       if (alive.current && mine === walk.current) setBusy(false);
     }
+    return true;
   }, [absorb, absorbTypes, capability, pattern, readPageAt]);
 
   const scanAll = useCallback(async (): Promise<void> => {
@@ -384,17 +435,25 @@ export function useKeyScan(options: {
      * makes "stopped" and "hit the cap" ordered rather than racing in a `finally`.
      */
     let reason: string | null = null;
-    // NO HELD-LIMIT CHECK HERE, and the absence is deliberate rather than an oversight: held keys are
-    // a SUBSET of handed ones (`absorb` only ever adds what a page handed), so a tree at the held
-    // limit always has a walk at the gesture's own limit, and this condition trips before any exit
-    // that check could provide. Adding it would be a branch no reader can reach, which this
-    // repository's coverage gate is right to refuse - the bound's sentence is the panel's, drawn from
-    // the tree's size, and it is shown whether or not a `Scan all` ever ran.
     while (!stopped.current && !spent.current && failure.current === null) {
-      await scanMore();
-      if (scannedKeys.current >= SCAN_ALL_MAX_KEYS && !spent.current) {
+      // oxlint-disable-next-line no-await-in-loop -- each page starts at the cursor the last one wrote.
+      const asked = await scanMore();
+      /*
+       * A REFUSAL ENDS THE LOOP. Asked again, `scanMore` would refuse again, and awaiting a promise
+       * that has already resolved never yields to the event loop: no page, no render and no Stop
+       * press would run, and the tab would freeze. The refusal the panel's Scan all meets is the FULL
+       * TREE. A Load more fills the tree with keys the walk does not count, so the tree can reach
+       * `HELD_KEY_LIMIT` while the walk is short of its cap and its cursor is live. The limit's
+       * sentence is the panel's, drawn from the tree's size, so this exit adds none of its own.
+       */
+      if (!asked) break;
+      // The keys the walk was handed and the keys its pages left out: see `SCAN_ALL_MAX_KEYS`.
+      const walkedKeys = scannedKeys.current + (skippedKeys.current?.count ?? 0);
+      if (walkedKeys >= SCAN_ALL_MAX_KEYS && !spent.current) {
         const limit = SCAN_ALL_MAX_KEYS.toLocaleString("en-US");
-        reason = `Stopped after ${limit} keys. Narrow the pattern to walk a smaller key space.`;
+        // The word for what narrows a walk follows the declaration: a prefix, or a `MATCH` pattern.
+        const narrow = shape.pattern === "prefix" ? "prefix" : "pattern";
+        reason = `Stopped after ${limit} keys. Narrow the ${narrow} to walk a smaller key space.`;
         break;
       }
     }
@@ -405,7 +464,7 @@ export function useKeyScan(options: {
     // Applied after the cap's sentence rather than instead of it, so a Stop pressed in the same turn
     // is what a reader sees: the two are ordered, not merged.
     if (stopped.current) setStoppedBy("Stopped.");
-  }, [scanMore]);
+  }, [scanMore, shape]);
 
   /**
    * One page of a walk scoped to ONE PREFIX, for the Load more row under an open folder.
@@ -413,9 +472,11 @@ export function useKeyScan(options: {
    * WHY THIS EXISTS AT ALL. The global walk is a SAMPLE of the keyspace, so a prefix's contents in the
    * tree are whatever that sample happened to include — and a deep prefix can be entirely absent from
    * a thousand keys of a million. A scoped walk asks the server about that prefix directly, which is
-   * the only way to answer "is there more under here" truthfully. It is also why the answer is not free:
-   * `MATCH` is applied per batch server-side and is not indexed, so this costs the server a full pass
-   * over the keyspace, exactly as the global walk's every page does.
+   * the only way to answer "is there more under here" truthfully. It is also why, under a `glob`
+   * declaration, the answer is not free: `MATCH` is applied per batch server-side and is not indexed,
+   * so this costs the server a full pass over the keyspace, exactly as the global walk's every page
+   * does. Under a `prefix` declaration the server reads the prefix's own byte range, a page at a time
+   * (spec 4.6).
    *
    * IT RUNS ONE WALK PER PREFIX AND KEEPS ITS CURSOR, so pressing Load more twice continues that
    * prefix rather than restarting it. `nodeCursor` is the authority and the state below is its mirror
@@ -428,7 +489,8 @@ export function useKeyScan(options: {
    * that refuses is not a reason to end the walk somebody started at the database level.
    *
    * THE ANSWER IS FILTERED, because `MATCH` is a glob with no escape and a real key segment can
-   * contain `*` or `[`. See `isUnderPrefix`.
+   * contain `*` or `[`, and a prefix walk's answer is held to the prefix's segments the same way. See
+   * `isUnderPrefix`.
    */
   const loadMoreUnder = useCallback(
     async (path: readonly string[]): Promise<void> => {
@@ -451,16 +513,21 @@ export function useKeyScan(options: {
 
       try {
         /*
-         * THE PATTERN COMES FROM `prefixPattern`, so the prefix half is escaped and the glob is
-         * not — and so that this walk and the row menu's handover cannot drift: a real key segment
-         * can contain a glob metacharacter (`a[b:1` groups to a prefix holding `[`), and an
-         * unescaped one opens a character class matching a different set of keys entirely. The
-         * asymmetry runs the other way in the filter below: `isUnderPrefix` compares REAL key names,
-         * so it stays unescaped, because a key that genuinely contains `*` would be corrupted by it.
+         * THE PATTERN COMES FROM `pathPattern`, in the walk's declared shape and from the folder's PATH.
+         * Under `glob` it is `prefixPattern` over the joined name, the helper the row menu's handover
+         * builds its own pattern with, so the two cannot drift: the prefix half is escaped and the glob
+         * is not, because a real key segment can contain a glob metacharacter (`a[b:1` groups to a
+         * prefix holding `[`), and an unescaped one opens a character class matching a different set of
+         * keys entirely. Under `prefix` it is the path's name and its separator, `/apisix/` for the
+         * folder `["", "apisix"]` and `/` for the root row (spec 4.6), with nothing read out of the
+         * name, so a folder whose last segment is `*` is walked over its own range and not over the
+         * range of the folder above it. The asymmetry runs the other way in the filter below:
+         * `isUnderPrefix` compares REAL key names, so it stays unescaped, because a key that genuinely
+         * contains `*` would be corrupted by it.
          */
         const page = await readPageAt(
           nodeCursor.current.get(key) ?? "0",
-          prefixPattern(path.join(KEY_SEPARATOR)),
+          pathPattern(path, shape),
           /*
            * THE LARGEST BATCH THE ENGINE DECLARES, where the global walk takes the default.
            *
@@ -476,7 +543,7 @@ export function useKeyScan(options: {
         nodeCursor.current.set(key, page.cursor);
         setNodeCursors(new Map(nodeCursor.current));
 
-        const fresh = absorb(page.keys.filter((name) => isUnderPrefix(name, path)));
+        const fresh = absorb(page.keys.filter((name) => isUnderPrefix(name, path, shape)));
         absorbTypes(page);
         setKeys((previous) => (fresh.length === 0 ? previous : [...previous, ...fresh]));
         // Recorded whatever the answer: a page that added nothing is the case this number exists to
@@ -500,7 +567,7 @@ export function useKeyScan(options: {
         }
       }
     },
-    [absorb, absorbTypes, capability, readPageAt],
+    [absorb, absorbTypes, capability, readPageAt, shape],
   );
 
   const stop = useCallback((): void => {
@@ -518,6 +585,7 @@ export function useKeyScan(options: {
     cursor.current = "0";
     spent.current = false;
     scannedKeys.current = 0;
+    skippedKeys.current = null;
     failure.current = null;
     // Every prefix's walk goes with the global one: the keys they brought are about to leave the
     // tree, and a cursor left standing would answer the NEXT walk's Load more with keys from this one.
@@ -527,6 +595,7 @@ export function useKeyScan(options: {
     knownTypes.current.clear();
     setKeys([]);
     setScanned(0);
+    setSkipped(null);
     setTotal(null);
     setClustered(undefined);
     setExhausted(false);
@@ -543,6 +612,7 @@ export function useKeyScan(options: {
     scanned,
     total,
     clustered,
+    skipped,
     types,
     busy,
     scanningAll,

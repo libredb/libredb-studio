@@ -14,7 +14,7 @@ import {
   type DatabaseConnection,
   type QueryResult,
   type HealthInfo,
-  type MaintenanceType,
+  type MaintenanceOperation,
   type MaintenanceResult,
   type ProviderOptions,
   type PoolConfig,
@@ -182,7 +182,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
 
   public abstract getHealth(): Promise<HealthInfo>;
   public abstract runMaintenance(
-    type: MaintenanceType,
+    type: MaintenanceOperation,
     target?: string,
     container?: string,
   ): Promise<MaintenanceResult>;

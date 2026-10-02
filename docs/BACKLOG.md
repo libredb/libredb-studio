@@ -28,20 +28,20 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D129, U17 · 73
+- [Drivers and connections](#drivers-and-connections) — D1-D139, U17 · 83
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U54 · 41
-- [Dependencies](#dependencies) — P1–P5 · 5
-- [Documentation](#documentation) — DOC3-DOC8 · 5
-- [Release pipeline](#release-pipeline) — REL1–REL4 · 4
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U71 · 58
+- [Dependencies](#dependencies) — P1-P6 · 6
+- [Documentation](#documentation) — DOC3-DOC9 · 6
+- [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B91 · 32
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B92 · 33
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -344,6 +344,7 @@ Found 2026-08-27 in the #511 review (issue #424, Phase 5). Not libSQL's - libSQL
 fifth of five instances of one gap, and the fix already exists in the codebase.
 Amended 2026-09-23: the fix now exists twice, and the second copy is deliberate.
 Amended 2026-09-25: the mapping now exists three times, the third in the Kafka provider (#1088), deliberate for the same reason.
+Amended 2026-09-30: the mapping now exists four times, the fourth in the etcd provider (#1089), `connection-options.ts`, deliberate for the same reason; like Kafka's it is a mapping only, over grpc-js's own TLS, and it adds the IP-identity rule of the etcd design's E5.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -1424,12 +1425,12 @@ the provider as a non-owner role rather than asserting the statement text.
 ### D103. `noAbstainingKinds` is enforced over the expectation's kinds, not the provider's declarations
 
 `assertColumnDeclarations` builds `abstained` by walking `listings`
-(`tests/helpers/object-surface-conformance.ts:595-603`), and `listings` holds only the kinds the
-expectation gave a non-zero `want` (`:307-335`). The field's own docblock (`:195-200`) defines it
+(`tests/helpers/object-surface-conformance.ts:618-626`), and `listings` holds only the kinds the
+expectation gave a non-zero `want` (`:330-358`). The field's own docblock (`:201-208`) defines it
 over something else: "This provider declares `hasColumns` on EVERY kind it has". A provider that
 declares one kind without `hasColumns` and whose fixture happens to hold none of that kind is
 therefore indistinguishable, to the guard, from a provider that has no abstaining kind at all, and
-the refusal at `:643` tells the author to set a flag whose stated meaning that provider's own
+the refusal at `:666` tells the author to set a flag whose stated meaning that provider's own
 declarations contradict.
 
 It is worse than one wrong direction, and the control that shows it is the one worth keeping.
@@ -1667,6 +1668,7 @@ Measured 2026-09-24 through the real tunnel client, factory and providers, again
 MSSQL, MongoDB, Redis, Cassandra and Oracle were read, not measured; MySQL and Oracle pass `verify-ca`, because that mode does not check the name there.
 It fails closed, so no identity check is skipped, but it leaves a tunnel user who needs a working connection with `require`, which encrypts without verifying.
 Over a tunnel the HTTP providers also send no SNI and a `Host` of `127.0.0.1:<local port>`, so a reverse proxy that routes by either can send the request elsewhere; that was observed as the headers sent, not measured against a proxy.
+Amended 2026-09-30: the etcd provider (#1089) checks a tunnelled connection's certificate against `TUNNEL_FAR_END`, as the server name for a DNS name and through `checkServerIdentity` for an address, so the sentence above that nothing reads `TUNNEL_FAR_END` for TLS no longer holds; every other driver still verifies `127.0.0.1`.
 
 Found 2026-09-24 while checking the Prometheus provider's TLS path after #1104.
 Not fixed there: the rewrite and every driver's TLS options are shared by all engines.
@@ -1854,7 +1856,7 @@ Not fixed there: the change is to the adapter's log-dir read, whose error table 
 
 ### D126. Concurrent first acquisitions of one connection and profile each open a provider
 
-`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:715-812`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:809`).
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:773-873`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:869`).
 Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
 The editor and agent paths reach this function the same way.
 `/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
@@ -1863,7 +1865,7 @@ The editor and agent paths reach this function the same way.
 
 ### D127. Two seed-loading paths drop a connection without telling the caller
 
-`resolveAllCredentials` skips a seed whose credentials fail to resolve and only logs it (`src/lib/seed/credential-resolver.ts:89-99`).
+`resolveAllCredentials` skips a seed whose credentials fail to resolve and only logs it (`src/lib/seed/credential-resolver.ts:133-143`).
 The built-in samples are left out on a filesystem error by an empty `catch` (`src/lib/seed/index.ts:57-59`, `:68-70`).
 Both reach the caller as a shorter list with no reason: `GET /api/connections/managed` and MCP's `list_connections` show fewer connections and say nothing.
 
@@ -1871,7 +1873,7 @@ Both reach the caller as a shorter list with no reason: `GET /api/connections/ma
 
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
-`queryReadOnly` takes no signal (`src/lib/db/types.ts:951`), and `cancelQuery` cannot find its statement.
+`queryReadOnly` takes no signal (`DatabaseProvider.queryReadOnly` in `src/lib/db/types.ts`), and `cancelQuery` cannot find its statement.
 When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, and on SQLite while blocking the process (A1).
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
@@ -1891,6 +1893,107 @@ Measured on 2026-09-27, on `main` at ef1748e3:
 Do it after #1148 has merged, in a PR of its own, and not alongside another architectural change: the owner asked for the two to stay apart.
 
 **Done when:** which object-path shapes an engine accepts is part of its declaration, read through one kernel reader in the way `acceptedContainerShapes()` reads `containerPathShapes`; `attachedSegment` is gone from `ObjectPathShapeEngine`; the three local `shapeList` object-path sentences go through the shared renderer; the object routes refuse a path the engine does not accept by the same reader, before the provider is called; and every provider refusal sentence stays byte-identical.
+
+### D130. A Kubernetes protobuf value is withheld and never decoded
+
+The etcd provider withholds a value that begins with the Kubernetes protobuf envelope `k8s\x00`, labelled with the `apiVersion` and `kind` of its `runtime.Unknown` header (`withheldLabel` in `src/lib/db/providers/keyvalue/etcd/values.ts`), and never reads the object's fields (#1089, spec section 2).
+So a Pod, a ConfigMap or a Deployment stored in etcd is shown as "Kubernetes protobuf (v1, Pod), 1,204 bytes", which is safe and tells an operator nothing about the object.
+Decoding needs the Kubernetes API types for every stored kind, a dependency set this PR did not take on.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec section 2).
+
+**Done when:** a Kubernetes protobuf value that is not a Secret is decoded behind the withheld label, on demand, with the Secret rule of spec E9 unchanged, and a test over `tests/fixtures/etcd/`'s Pod envelope shows its decoded fields and no Secret's.
+
+### D131. An etcd connection names one endpoint, so a cluster without a DNS name that resolves to its members has no failover
+
+The etcd connection has one Host and one Port (`buildEtcdConnectionOptions` in `src/lib/db/providers/keyvalue/etcd/connection-options.ts`); grpc-js's `pick_first` fails over across the addresses one name resolves to, which the etcd live check measures (KE13), but a cluster addressed by member IPs has no such name.
+etcdctl takes `--endpoints` as a list.
+A list field needs a new connection field through the whole checklist of `docs/ADDING_A_PROVIDER.md`, which the etcd PR did not open.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec 6.1).
+
+**Done when:** an etcd connection can name several endpoints, the channel fails over across them, E3's rule that Studio dials only configured endpoints holds for each, and a live check stops the answering member and the next call is answered by another.
+
+### D132. grpc-js sends an IP-literal target as the TLS server name, which Node 25 and later and Bun refuse
+
+`@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
+The etcd provider works around it with a server-name override that is not an IP and a `checkServerIdentity` that verifies the IP (spec E5), which depends on grpc-js internals and is why grpc-js is pinned exactly.
+No open grpc-node issue covers it; the closed #1919 is about `0.0.0.0`.
+An upstream issue is drafted in the etcd PR's final report and is posted only with the maintainer's approval.
+
+Found 2026-09-30 by the client measurement of the etcd design (R07, M6).
+
+**Done when:** grpc-node answers the issue with a release that sends no IP as the server name, the etcd provider drops its override for an IP identity, and `tests/unit/db/etcd/tls-handshake.test.ts` still passes on Node 24, Node 26 and Bun.
+
+### D133. Application secret roots in etcd are shown by default
+
+The etcd provider withholds Kubernetes secrets by prefix and by envelope (spec E9), and nothing else: Apache APISIX's `ssls`, `secrets`, `credentials` and `consumers` roots hold private keys and credentials as they were sent unless APISIX's own data encryption is configured, and the provider shows them.
+Measured in the design's landscape review (R09 7.1) against APISIX's documented layout; read, not driven against a live APISIX.
+
+Found 2026-09-30 while designing the etcd provider (#1089).
+
+**Done when:** a declared list of application secret roots, APISIX's four among them, is withheld by default with a label naming the application, a connection can opt out per root, and a test over each root shows the label and no value byte.
+
+### D134. A write under an application's coordination prefix is not warned about
+
+Patroni's `leader`, `failover` and `sync` keys, Vitess's topology and Calico's IPAM blocks live in etcd, and a hand write there can fail over a database or corrupt a network (R09 7.3); the etcd provider refuses only the Kubernetes prefixes (spec E8) and asks nothing more for these.
+
+Found 2026-09-30 while designing the etcd provider (#1089).
+
+**Done when:** a declared list of advisory prefixes makes a write that meets one ask for a typed confirmation naming the application, never a refusal, and a test drives a `put` under Patroni's `leader` through the confirmation gate.
+
+### D135. kine and Xline are not registered as etcd relatives
+
+kine, the k3s default datastore, implements a subset of the etcd API and refuses `DeleteRange`, serializable and sorted reads and lease listing, registers no Auth service, answers `LeaseGrant` with an id equal to the TTL and accepts four `txn` shapes; Xline claims full compatibility, answered every read and lease call measured, and refuses `Defragment` (R09 3.8, section 4).
+Neither is refused by the etcd provider, and neither is claimed.
+
+Found 2026-09-30 while designing the etcd provider (spec section 8).
+
+**Done when:** each has its own gate-4 probe against a live instance, answering the questions of the etcd design's section 8, and a `WIRE_COMPATIBLE_ENGINES` entry at the tier it measured, or a recorded refusal.
+
+### D136. `MongoDBProvider.runMaintenance` checks its operation with a set lookup the compiler does not read
+
+`runMaintenance` in `src/lib/db/providers/document/mongodb.ts` refuses an unknown operation with `SUPPORTED_MAINTENANCE_TYPES.has(type)`, a `ReadonlySet<MaintenanceType>` lookup that narrows nothing, and then ends its work in a `switch` over the six members of `MaintenanceType` with no `default`.
+So the set and the `switch` are two hand-kept lists of one union, and a seventh member makes the method's result possibly undefined to the compiler instead of failing at the lookup.
+That is why `MaintenanceType` stayed at six when etcd added `compact`, `defragment` and `disarm`: they went into a union of their own, `MaintenanceOperation` in `src/lib/db/types.ts`, whose docblock records the reason.
+
+Found 2026-09-30 while widening the maintenance operations for the etcd provider (#1089, section 7.2).
+Not fixed there: the etcd work edits no other provider's file.
+
+**Done when:** the MongoDB dispatch is exhaustive by construction, a `switch` whose `default` asserts `never` or a record keyed by the operation, the set is gone, and a unit test drives an unknown operation to its refusal.
+
+### D137. A connection's query timeout is checked on the server for etcd alone
+
+`createDatabaseProvider` in `src/lib/db/factory.ts` hands `options.queryTimeout ?? connection.queryTimeout` to the provider as it came, and the `BaseDatabaseProvider` constructor in `src/lib/db/base-provider.ts` keeps it, so only the etcd provider refuses a query timeout that is not a whole number of milliseconds from 1 to 2147483647, at connect.
+The connection dialog checks the field (`validateQueryTimeout` in `src/hooks/use-connection-form.ts`), but an inline connection posted to `POST /api/db/query`, and a caller of the published `createDatabaseProvider` or `getOrCreateProvider`, reach every other engine with any value.
+Measured 2026-10-01 under Bun against a listener that never answers: a ClickHouse connection with 2147483648 had no answer after 4,000 ms, 0 and 1.5 timed out within 2 ms, and `"abc"` failed with "Failed to connect to ClickHouse: Value NaN is outside the range [0, 9007199254740991]", while etcd refused all four with "Query timeout must be a whole number between 1 and 2147483647 milliseconds."
+Under Node 24.14.0 and 26.7.0 (the image runs Node 26.10.0), 2147483648 raised `TimeoutOverflowWarning` and timed out within 3 ms, and 1.5 and `"abc"` failed with Node's own `delay` argument errors, worded as a failed connection.
+
+Found while building the etcd provider (#1089), which checks the field itself, and measured again by its review.
+Not fixed there: the factory and the base constructor serve every engine.
+
+**Done when:** a query timeout outside whole milliseconds from 1 to 2147483647 is refused for every engine before a provider is built, and a unit test drives 0, 1.5, 2147483648 and a string through `createDatabaseProvider` to that refusal.
+
+### D138. A forward the SSH bastion refuses reaches the provider as a connection that closed
+
+The `forwardOut` callback in `createSSHTunnel` (`src/lib/ssh/tunnel.ts`) ends the local socket when the bastion refuses the channel, `if (err) { socket.end(); return; }`, and records the error nowhere, so the provider behind the tunnel meets a connection that closed and words it as a failure of its own.
+Measured 2026-10-01 through the real tunnel, factory and error mapping against an in-process ssh2 bastion that answers `CHANNEL_OPEN_FAILURE`: ssh2 handed the callback "(SSH) Channel open failure: Connection refused", "Name or service not known" or "open failed", and the user read "No etcd answered a plaintext connection at" the far end, or under TLS that no TLS connection was established, "Connection terminated unexpectedly" on PostgreSQL and "Connection lost: The server closed the connection." on MySQL.
+The sharpest case is a bastion with forwarding disabled in front of a healthy plaintext etcd: the user is told that no etcd answered and is pointed at TLS first.
+
+Found while building the etcd provider (#1089), whose connection sentences name the tunnel among the things to check, and measured again by its review.
+Not fixed there: the tunnel serves every engine.
+
+**Done when:** a refused forward reaches the caller as a connection error that names the bastion's refusal and the far end, on every tunnelled provider, and a test through an in-process ssh2 bastion that refuses the channel pins it.
+
+### D139. A SQLite DDL statement reports the row count of the write before it
+
+`SQLiteProvider.query` (`src/lib/db/providers/sql/sqlite.ts`) answers a statement that returns no rows with `rowCount: result.rows.length || result.changes`, and `changes` is the driver's `run()` answer, which SQLite does not reset for a statement that changes no row: a `CREATE TABLE` or `DROP TABLE` reports the count of the last `INSERT`, `UPDATE` or `DELETE` on that connection.
+Measured 2026-10-02 in the etcd branch's regression pass, the same on `origin/main` 82c729f7: after a `DELETE` of 2 rows, a `CREATE TABLE` in the editor answered "2 rows", and on a fresh connection it answered 0 (`t28/compare.md`, `t28/branch/editor.json`).
+
+Found by the etcd provider's regression pass on SQLite (#1089), which changes no SQL provider.
+Not fixed there: the SQLite provider is outside that PR.
+
+**Done when:** a statement that changes no row reports no changed rows on both SQLite drivers, read from the statement itself rather than the connection's last count, and a test runs a `DELETE` then a `CREATE TABLE` on one connection and pins the second answer.
 
 ## Value interpolation
 
@@ -2227,6 +2330,7 @@ MSSQL and MongoDB declare `check` as globally runnable and MySQL declares `optim
 `ProviderLabels` has only the `analyzeGlobal*` and `vacuumGlobal*` triads, so a global card can only be
 rendered where the provider's `vacuumActionOperation` happens to redirect the vacuum slot to it. MySQL
 gets an Optimize card that way; MSSQL's and MongoDB's `check` gets nothing.
+Amended 2026-09-30: the Operations tab now draws a declared card for an operation whose `MaintenanceOperationSpec` carries a `title` and a `description` (#1089), so a global operation gets a card by declaring them; DuckDB's optimize and the global check of SQL Server, SQLite, libSQL and MySQL stay withheld until each provider declares them after a live run, and MongoDB's check leaves this entry, because `src/lib/db/providers/document/mongodb.ts` declares it `global: false`.
 
 Deliberately not fixed with U9 (2026-08-25): inventing card copy for five providers without measuring
 what each statement actually does is the generic mapping #427 reverted. What is needed first is the
@@ -2464,8 +2568,8 @@ constant, and a bounded batch and a single read land in one cache shape rather t
 ### U32. A catalog change that lands during an in-flight read is dropped, and the pre-DDL answer stays
 
 `run` refuses a read whose key is already in flight
-(`src/components/object-tree/use-tree-nodes.ts:517`) and `refresh` issues its reads without waiting
-for anything (`:696`), so a `refreshToken` bump that arrives while a read is still open issues
+(`src/components/object-tree/use-tree-nodes.ts:519`) and `refresh` issues its reads without waiting
+for anything (`:698`), so a `refreshToken` bump that arrives while a read is still open issues
 nothing for that slot.
 The answer that lands is the one asked for before the DDL statement ran, `store` writes it as the
 row's current state, and nothing re-issues until the next bump.
@@ -2618,6 +2722,7 @@ Read from the bundle, not yet seen in a browser.
 
 Found 2026-09-23 while writing `registerPromqlLanguage` on the `redis-language.ts` template for #1085 (section 3.2); the template works for PromQL only because the bundle ships no `promql` id.
 Not fixed in #1085: registering Redis differently changes how every Redis tab is highlighted, which is not that PR's to change.
+Amended 2026-09-30: the etcd language registers an id the bundle does not ship, `etcd`, which `tests/isolated/monaco-language-ids.test.ts` pins, the shape this entry's fix takes.
 
 `grep -rn 'getLanguages().some' src/lib/editor/redis-language.ts` returns exactly one hit, that early return, and the bundle's own registration of the id is what `tests/isolated/monaco-language-ids.test.ts` asserts.
 
@@ -2731,6 +2836,10 @@ Three surfaces report whether a connection works, and none of them says it was r
 Seen 2026-09-23 in the #1085 browser pass on a Prometheus connection with a wrong password: `/api/v1/status/buildinfo` answered HTTP 401, and the desktop header read "Slow", the admin fleet "timeout" and the mobile header "Online", while the object panel showed the refusal itself.
 None of it is engine-specific: the three lines predate #1085 and none of them reads the connection's type, so every engine takes the same paths.
 
+Measured again 2026-10-02 in the etcd agent pass: a run over 19 key prefixes, 1 member and 2 leases recorded `tableCount` 22 and read "22 key prefixes read" on the answer card, and the prompt header says "22 key prefix(s)" (`t27/outcomes.md`).
+The count is `snapshot.objects.length` named with `noun.singular` near lines 1448 and 1528 of `src/lib/agent/context-snapshot.ts`, and `tableCount` named with `noun.plural` near line 429 of `src/components/agent/AnswerCard.tsx` and 948 and 1368 of `src/components/agent/timeline.ts`.
+`origin/main` has the same code, and its providers declare extra inventory kinds too (Druid lookups, Cassandra types, ClickHouse dictionaries, MSSQL synonyms), read from the code and not measured there.
+
 Found 2026-09-23 by the #1085 browser pass.
 Not fixed in #1085: the three components serve every engine, and that PR changes no shared surface's behaviour for the engines it does not add.
 
@@ -2837,6 +2946,189 @@ Found 2026-09-26 by the PR #1070 live check.
 Not fixed in #1070: the PR does not touch the agent rail.
 
 **Done when:** a connection switch either closes the consent step or keeps it with the rail header naming the step's connection, the rail stops showing the previous connection's run after the switch, and a component test pins both across a connection change.
+
+### U55. The editor path writes no audit event for a write statement on any engine
+
+`POST /api/db/query` runs a `put`, an `UPDATE` or a `DEL` and records no audit event, on every engine; only the object-edit apply route and the maintenance route audit (`src/app/api/db/objects/edit-apply/route.ts`, `src/app/api/db/maintenance/route.ts`).
+The etcd provider states it as a limit (`docs/providers/etcd.md`, section 13), and the maintainer decided on 2026-09-30 to file it as product-wide work rather than add it for one engine.
+
+Found 2026-09-30 while designing the etcd provider (#1089).
+
+**Done when:** a statement the confirmation gate classifies as a write writes one audit event with the connection, the actor and the classification, never the statement's values, on every engine, and a route test drives one write per engine family.
+
+### U56. A watch is bounded, and there is no live panel for streamed results
+
+The etcd `watch` runs for a window and answers its events as one result (`runBoundedWatch` in `src/lib/db/providers/keyvalue/etcd/watch.ts`), because the query route answers once; a Kafka tail and Redis `SUBSCRIBE` need the same streamed panel.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec 5.3).
+
+**Done when:** a result panel shows events as they arrive over a streamed route, with a stop control and a bound, and the etcd watch, a Kafka tail and a Redis `SUBSCRIBE` each drive it in a component test.
+
+### U57. The confirmation gate posts Redis and MongoDB write statements, values included, to the model provider
+
+`QuerySafetyDialog` posts every dangerous statement it shows to `/api/ai/query-safety` (`src/components/QuerySafetyDialog.tsx`), so a Redis `SET` or a MongoDB update leaves the deployment with its values when a model is configured.
+The etcd row of the destructive vocabulary declares `safetyAnalysis: false` and posts nothing (spec E10); the other engines were not changed by the etcd PR.
+Reproduce: open the dialog for a Redis `DEL user:1` with a model configured and watch the network tab for the POST.
+
+Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
+
+**Done when:** a vocabulary row can decline the model analysis, the Redis and MongoDB rows decide whether they do, and a component test shows no request to the AI route for a declining row.
+
+### U58. TablesTab's Vacuum summary card reads 0 and "OK" on an engine that declares no vacuum
+
+`vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card counts the tables whose `bloatRatio` passes 10 as if the engine had a vacuum.
+Nine engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, SQL Server, ClickHouse, Trino, Redis and Couchbase today, and etcd after the etcd PR.
+All but MySQL publish no `bloatRatio`, so their card shows 0 with a green "OK" wherever the tab has table statistics to read; Redis answers none, so its card reads that only while its database is empty, and N/A once the database holds a key.
+MySQL's `bloatRatio` is `DATA_FREE` as a percentage of the table's data and index bytes, so its card counts the tables past 10 percent under the Vacuum title, a count the fix takes off the card too.
+Reproduce: render `TablesTab` with the capabilities `POST /api/db/provider-meta` serves for libSQL, Oracle or SQL Server and the statistics of one table, or open the Tables tab on one of them over a database that holds a table, and read the Vacuum card.
+
+Found 2026-09-30 while designing the etcd provider (R11 ARCH-3); its engine list was measured again on 2026-10-01 by the etcd review, from each provider's capabilities and table statistics.
+
+**Done when:** `vacuumStateKnown` requires `vacuumSupported`, the card is absent or says the engine has no vacuum, and a component test pins it for an engine without one.
+
+### U59. Redis's command unit borrows the default payload wording of the preview
+
+`ApplyPreviewDialog.tsx` writes "library code" for a command unit that sets no `payloadLabel`, which is Redis's word, while etcd's unit sets `payloadLabel: "value"`; Redis's own declaration in `src/lib/db/providers/keyvalue/redis.ts` was left alone by the etcd PR's isolation rule.
+
+Found 2026-09-30 while designing the etcd provider (R11 CF-3).
+
+**Done when:** Redis's unit declares `payloadLabel: "library code"`, the dialog's default is a neutral word, and the Redis preview pin in `tests/components/object-source/ApplyPreviewDialog.test.tsx` stays byte-identical.
+
+### U60. The connection form sends a client certificate the current SSL mode does not draw
+
+The TLS panel draws the client certificate only in `verify-ca` and `verify-full`, and a certificate typed there stays in the form state and is sent after a switch to `require` or `verify-system` (`src/hooks/use-connection-form.ts`), so an etcd connection signs in as a Common Name the user cannot see.
+Reproduce with a hook test: type a client certificate under `verify-full`, switch to `require`, build the connection, and read `ssl.clientCert`.
+
+Found 2026-09-30 while designing the etcd provider (R12 UX-8).
+
+**Done when:** a mode that draws no client certificate sends none, or draws what it sends, and a hook test pins the switch.
+
+### U61. The editor's cancel discards the cancel route's answer, so a write etcd applied is shown as cancelled
+
+`use-query-execution.ts` aborts its own request, posts the cancel and shows the statement as cancelled whatever the route answers (`cancelQuery` and the cancellation branch of the run's error handling), so a write the engine had applied, for which the etcd provider's `cancelQuery` answers `false`, is shown as cancelled.
+The etcd provider states it as a limit (`docs/providers/etcd.md`, section 13).
+
+Found 2026-09-30 while designing the etcd provider (R12 CF-11).
+
+**Done when:** a cancel whose route answer is `cancelled: false` says that the statement may have run, and a hook test pins both answers.
+
+### U62. The object-edit wire checks answer for an array with a hole in it
+
+The shape checks of `src/lib/api/object-edit-wire.ts` walk steps, segments, session pins, consequences and lost consequences with `Array.prototype.every`, which skips a hole.
+Measured 2026-09-30 with `isObjectEditUnitShape`: a statement unit whose one step's `segments` is `[{ from: "provider", text: "AB" }, <hole>]` throws a `TypeError` from `spansTheText` instead of answering false, and a unit whose `steps` is a valid step followed by a hole answers true.
+JSON never carries a hole, so a request body cannot reach it; an in-memory caller can.
+
+Found 2026-09-30 while extending the command unit for the etcd provider (#1089).
+Not fixed there: the checks belong to every engine's edit path.
+
+**Done when:** each of those checks walks its array the way `isBoundedTextList` in the same file does, a hole answers false, and a unit test holds a hole in each of the five arrays.
+
+### U63. The key browser carries three lint warnings
+
+`bunx eslint src/components/key-browser/KeyBrowser.tsx` reports three warnings.
+`react-hooks/exhaustive-deps`: `databaseRow` is a new object on every render, so the `useMemo` that reads it recomputes the panel's rows on every render.
+`jsx-a11y/role-has-required-aria-props`, twice: both `role="treeitem"` rows carry no `aria-selected`, so a screen reader cannot tell which key is open.
+
+Found 2026-09-30 while generalising the key browser for the etcd provider (#1089).
+Not fixed there: neither changes what the etcd work needed from the panel.
+
+**Done when:** `databaseRow` is memoised, both tree rows state `aria-selected`, the file lints clean, and a component test reads `aria-selected` on the open key's row.
+
+### U64. The tab manager's deferred preview runs are never cleared
+
+`handleTableClick` in `src/hooks/use-tab-manager.ts` schedules the preview query with `setTimeout(..., 100)` on two paths, the fresh tab and the rerun of a failed one, and keeps no handle to either.
+A shell that unmounts within those 100 ms still calls `executeQuery` for a tab that no longer exists.
+
+Found 2026-09-30 while reviewing the tree click for the etcd provider (#1089).
+Not fixed there: the hook serves every engine.
+
+**Done when:** the pending timers live in a ref that an unmount effect clears, and a hook test unmounts inside the window and sees no query run.
+
+### U65. Redis's Load more under a folder whose last segment is `*` walks its parent folder's pattern
+
+`pathPattern` in `src/components/key-browser/tree.ts` builds a folder's Load more pattern under `keyScan.pattern: "glob"` with `prefixPattern` over the joined name, which reads a last segment of `*` as the folder mark, so the folder `["a", "*"]` sends `MATCH a:*`, the pattern of its parent `["a"]`, where a pattern built from the path is `a:\*:*`.
+Rows are never wrong, because `isUnderPrefix` keeps only the folder's keys, but the walk is the parent's.
+Measured 2026-10-01: over the keys `a:*:x`, `a:b:1`, `a:c:2` and `a:d`, `MATCH a:*` covers all four and the folder holds `a:*:x` alone; Redis, Valkey and KeyDB spend `COUNT` on keys before the match filters them, so each press sends back up to 1,000 of the parent's keys and asks a `TYPE` for each, and DragonflyDB and Garnet spend it on matched keys, so the folder takes as many presses as its parent.
+The function's docblock states this, and `tests/unit/components/key-browser-tree.test.ts` pins `pathPattern(["a", "*"])` as `a:*`; the Keys panel sent the same pattern before the etcd work.
+
+Found while generalising the key browser for the etcd provider (#1089), and measured again by its review.
+Not fixed there: the etcd design keeps Redis's glob pattern unchanged.
+
+**Done when:** the glob arm builds its pattern from the path, `escapeGlob` of the joined name followed by the separator and `*`, so `["a", "*"]` sends `a:\*:*`, and the pin in the tree's unit test moves with it.
+
+### U66. No test clears the no-scan checkbox
+
+The connection dialog forwards its "Do not read the object list on connect" checkbox (#765) with `onChange={(e) => setSkipObjectScan(e.target.checked)}` in `src/components/ConnectionModal.tsx`, and `tests/components/ConnectionModal.test.tsx` only clicks it unticked and expects `true`, then checks that a saved choice draws it ticked.
+Measured 2026-10-01: with that handler rewritten in memory to forward `true` always, both dialog suites still pass, 121 of 121, while the real dialog's box then stays ticked after its first click where the committed one alternates, so a connection's no-scan choice could not be cleared and no test would say so.
+The Read-only toggle beside it has had its untick test since the etcd PR.
+
+Found while adding the Read-only toggle for the etcd provider (#1089), and measured again by its review.
+Not fixed there: the no-scan choice is not part of the etcd work.
+
+**Done when:** the dialog suite renders the box ticked, clicks it once, and expects `setSkipObjectScan` called with `false`, in the shape of the Read-only toggle's test.
+
+### U67. Every engine but etcd writes a line or paragraph separator raw into the text of the click and of Generate Select
+
+`generateTableQuery` and `generateSelectQuery` in `src/lib/query-generators.ts` write an object name that holds U+2028 or U+2029 with the character itself on every shipped engine but etcd, whose arm writes such a key through a txn's Go quoting instead (`holdsUnkeptCharacter`).
+Monaco 0.57 defaults `unusualLineTerminators` to `prompt` and `src/components/QueryEditor.tsx` sets no other value, so the moment such a text lands the editor offers to remove the separators, and accepting leaves lines that name another object.
+Runnable lines are among them: Redis's `DEL` line for the key `a`, U+2028, `b` reads `DEL "ab"` once the separator is removed, which deletes the key `ab` when run, and a SQL click becomes `SELECT * FROM public."ab";`.
+LibreDB's `get`, `put` and `delete` lines write the key bare, and `tokenize` in `src/lib/db/providers/embedded/libredb.ts` splits a line at any white space outside quotes, U+2028 and U+2029 included, so those lines name another key even when the offer is declined, as they do for a plain space (U68).
+Measured 2026-10-02 over each shipped engine's census declaration: the click and the Generate Select text of an object named `a`, U+2028, `b`, and of one with U+2029 in its place, hold the separator raw on all nineteen engines but etcd; `origin/main`'s generators handle neither character either.
+
+Found by the etcd review (#1089), after the etcd arm was made to keep both characters out of its text.
+Not fixed there: the other engines' arms are outside the etcd PR, and so is the editor's option, which applies to every engine.
+
+**Done when:** each arm keeps U+2028 and U+2029 out of both texts, with an escape its grammar reads back as the same character, quoting where its words split at white space, or a `#` note in place of a line it cannot spell, and a test over every shipped engine's declaration finds neither character raw in either text.
+
+### U68. LibreDB's click and Generate Select write a key bare, so a line for a key that holds white space or a quote mark does not reach that key
+
+The LibreDB arm of `generateTableQuery` and `libredbCheatsheet` in `src/lib/query-generators.ts` write the key or prefix bare into their `prefix`, `get`, `put` and `delete` lines.
+`tokenize` in `src/lib/db/providers/embedded/libredb.ts` splits a line at any white space outside quotes and reads `'` and `"` as quoting, which it removes, so those lines name another key or none, and a click on a tree row runs the line it writes.
+It needs neither U67's unusual character nor its dialog: a plain space is enough.
+Measured 2026-10-02 through the generators and the provider's `query` on a scratch store holding the keys `a b` and `a`: the click `get a b` shows the value of `a`, `put a b example` sets `a` to `b example`, and `delete a b` deletes `a` while `a b` stays.
+A tab, a no-break space or U+3000 in place of the space does the same.
+The lines for a key named `"a"`, its quotes part of the name, read, overwrite and delete `a` as well, and every line for a key named `it's` is refused as an unmatched quote.
+The click on the group `my users:*` runs `prefix my users:`, which lists the keys `my` and `myx` beside the group's own, and the group's `get`, `put` and `delete` lines name the key `my`.
+`origin/main` writes the same lines and splits them the same way.
+
+Found by the etcd review (#1089), while measuring the LibreDB lines of U67.
+Not fixed there: LibreDB's arms and its provider are outside the etcd PR.
+
+**Done when:** the generated `prefix`, `get`, `put` and `delete` lines quote a key or prefix that holds white space or a quote mark, or write a `#` note in place of a line they cannot spell, so `tokenize` reads each back as that one key, and a test runs each line against a store holding a key with a space and one with a quote mark, each beside the key its bare line names, and finds that the line reaches its own key and leaves the other as it was.
+
+### U69. The result export menu offers SQL INSERT and DDL for every engine, etcd included
+
+`RESULT_FORMATS` in `src/components/studio/BottomPanel.tsx` lists "SQL INSERT" (`sql-insert`) and "DDL (CREATE TABLE)" (`sql-ddl`) beside CSV and JSON, and both menus map over the whole list with no gate, so every engine's result offers them.
+Neither means anything for a result that is not a table of rows in a SQL database, and the file they write says so.
+Measured 2026-10-02 in the etcd browser pass: an etcd result of three keys exported as SQL INSERT writes `INSERT INTO table_name ("key", "value", "value_encoding", "create_revision", "mod_revision", "version", "lease") VALUES ('/app/a/b', 'nested', 'text', '13', '13', '1', NULL);` for each row, a statement for a table that does not exist (`t26/export-app.sql-insert`, `t26/shots/t26-18-export-menu.png`).
+`origin/main` has the same list and the same ungated menus, so every non-SQL engine there offers them too.
+
+Found by the etcd browser pass (#1089).
+Not fixed there: the menu serves every engine and the etcd PR adds no capability to it.
+
+**Done when:** the provider declares whether SQL INSERT and DDL apply to its results, the two entries show only when it does, and a test renders the menu for an engine that declares neither and for one that declares both.
+
+### U70. Admin Overview's Fleet Status prints "timeout" for any endpoint that errored
+
+`OverviewTab` in `src/components/admin/tabs/OverviewTab.tsx` prints "timeout" for a fleet row whose `item.status === "error"` and the latency otherwise (near line 775), so a refused credential, an unreachable host and a real timeout all read "timeout".
+Measured 2026-10-02 in the etcd browser pass: an etcd connection whose user is refused by the server shows "timeout" in Fleet Status (`t26/outcomes.md`, the Fleet line).
+`origin/main` has the same line.
+
+Found by the etcd browser pass (#1089).
+Not fixed there: the row is shared by every engine and its health payload is not part of the etcd work.
+
+**Done when:** the row shows the error's own category or message, with a test that renders a refusal and a timeout and expects two different texts.
+
+### U71. Monitoring's Tables tab draws the SQL columns for etcd
+
+`src/components/monitoring/tabs/TablesTab.tsx` draws Size, Index, Bloat and Vacuum for every engine, and its header card reads "Vacuum 0" when nothing needs one, so an etcd connection, which has none of the four, gets all of them.
+Measured 2026-10-02 in the etcd browser pass: the tab for etcd shows Size N/A, an Index column, a Bloat column and the Vacuum card with 0 (`t26/shots/t26-26-tables.png`).
+The tab is shared by every engine, and etcd reaches it on this branch; the same columns are drawn on `origin/main` for every engine there.
+
+Found by the etcd browser pass (#1089).
+Not fixed there: the tab's columns are not declared per provider anywhere, and adding that is a change to every engine's tab.
+
+**Done when:** the provider declares which table-stat columns it fills, as other capability-driven surfaces do, the tab draws only those, and a test renders it for an engine that fills none of the four.
 
 ## Dependencies
 
@@ -2959,6 +3251,15 @@ so in `CLAUDE.md`, which today says nothing about it, or sweep the orphans and t
 `calendar.tsx` went. Until then every Dependabot major on one of those packages costs a review for a
 component nothing renders. Reproduce the list with a per-file importer count over `src/components/ui/`.
 
+### P6. knip reports a configuration hint on every run
+
+`bun run knip` exits 0 and prints "Configuration hints (1)": `.css  knip.json  Compiled extension excluded by project (imports not followed)`.
+knip does not follow a `.css` import, so a stylesheet imported only for its side effect is neither a dependency nor an unused file to it, and the hint is printed on every run of the required check, where a new hint is easy to miss beside it.
+
+Found 2026-09-30 by the etcd PR's knip run (#1089), which removed the other hint, `gh` in `ignoreBinaries`, after measuring that no script needs it.
+
+**Done when:** `knip.json` either declares a compiler for `.css` or states that the project's stylesheets are out of scope in a form knip accepts, and `bun run knip` prints no configuration hint.
+
 ## Documentation
 
 ### DOC3. Six channel listings carry corrected copy that nobody has resubmitted
@@ -3041,6 +3342,8 @@ It edits none of these files, and it leaves as they were these fleet counts in c
 - `src/lib/agent/schema-stats.ts`, the no-statistics docblock: "on the twelve type-ids whose inventory comes from their own provider", which are seventeen now.
 - `tests/unit/db/duckdb/seam-guard.test.ts`, the header: "the fourteen engines that are not DuckDB".
 - `e2e/login.spec.ts` and `tests/components/LoginPage.test.tsx`: "forty named products" and the "twenty-six" relatives, written for the gap each test closes and true of the registry then.
+Amended 2026-09-30: the Redis doc drift recorded by the etcd design (R01 9.6) belongs here too, because the etcd PR edits another provider's doc only where a surface it changed moves what that doc says, which are the `MaintenanceOperation` count of `cassandra.md`, the same count in `duckdb.md` and the three withheld rows its maintenance table gains for etcd's operations, and the citation of the paste handler in `elasticsearch.md` and `opensearch.md`, and no surface it changed moves `redis.md`.
+The drift, in `docs/providers/redis.md`: its Driver row says `ioredis` `^5.9.2` where `package.json` holds `^5.11.1`, it says key-prefix groups sort by descending key count where the provider sorts them by path, it names `maxScan = 1000` where the constant is `KEY_SCAN_LIMIT` in `src/lib/db/providers/keyvalue/redis.ts`, and it calls `listObjects` and `describeObjects` with a `table` kind Redis does not declare.
 
 Found 2026-09-23 by the #1085 review.
 Not fixed in #1085: that PR edits another provider's doc only where a shared surface it changed alters what the doc describes, and no count here is about such a surface; the four comments sit in other providers' directories, which it does not edit, so their mirrors stay with them to change together.
@@ -3103,6 +3406,16 @@ and the citations present at that commit all resolve. The test needs one case pe
 accept, a single line, a range and a comma pair, and one negative that fails when an anchor moves.
 
 ---
+
+### DOC9. Two tables of the README and the provider index count a fleet that has since grown
+
+`README.md`'s "Test Architecture" table (and its `README_zh.md` peer) counts 24 integration files where `tests/integration/` holds 36, and lists 13 of the providers; `docs/providers/README.md`'s in-network port table stops at Trino, with no Cassandra, Prometheus, Kafka or etcd.
+`find tests/integration -name '*.test.ts' | wc -l` gives the first count.
+
+Found 2026-09-30 while re-deriving the etcd PR's numerals (reconciliation N-76).
+Not fixed there: completing each table needs facts that PR did not measure, and neither gains an etcd row alone.
+
+**Done when:** both tables are re-derived from the tree, each with a test or a comment naming the command that derives it.
 
 ## Release pipeline
 
@@ -3217,6 +3530,41 @@ out. Its floor assertion needs the same treatment as the citation scan's.
 `git ls-files` and intersecting, so a working tree with local drafts under `docs/` or `deploy/`
 gives the same verdict as a clean checkout. Each scan's own floor assertion stays, so a broken
 enumeration still fails loudly rather than passing vacuously.
+
+### REL5. Fourteen scripts do nothing and exit 0 when run through a symlinked checkout
+
+Each of `scripts/*.mjs` that runs as a command compares `path.resolve(process.argv[1])` with `fileURLToPath(import.meta.url)`; through a symlinked checkout Node keeps the link in `argv[1]` and resolves `import.meta.url` to the real file, so the comparison fails and the script exits 0 without running.
+`sync-chart-version.mjs`, `generate-channel-showcase.mjs`, `readme-check.mjs` and `security-check.mjs` are the drift guards of the required check (`chart:check`, `channels:showcase:check`, `readme:check` and `security:check` in `.github/workflows/ci.yml`), and `distribution-check.mjs` is the guard of the separate Distribution Check workflow, so a guard run that way passes silently.
+Measured 2026-09-30 by the etcd PR's descriptor generator, which compares real paths on both sides instead (`scripts/generate-etcd-descriptor.mjs`); `grep -rl 'path.resolve(process.argv' scripts` returns exactly 14 hits.
+
+Not fixed there: the etcd PR touches no other script.
+
+**Done when:** every command script decides that it runs as the program by comparing real paths, as `generate-etcd-descriptor.mjs` does, and one test runs a drift guard through a symlinked checkout and sees it check.
+
+### REL6. Five dynamic file reads make Turbopack trace the whole repository into the server output
+
+`bun run build` prints "Turbopack build encountered 5 warnings", each "Dynamic filesystem access causes tracing of the whole project", at `resolveAgentLedgerDirectory` in `src/lib/agent/config.ts`, `getDatabasePath` in `src/lib/db/providers/sql/duckdb/index.ts` and in `src/lib/db/providers/sql/sqlite.ts`, `loadConfig` in `src/lib/seed/config-loader.ts` and `kubernetesLogin` in `src/lib/seed/vault-client.ts`.
+The trace of `/api/db/query` then lists 2,662 project files outside `node_modules` and `.next`, `src/`, `tests/`, `operator/`, `research/` and `docs/` among them, and `scripts/lib/prune-standalone-payload.sh` removes only what its deny-list names, so a payload built from the committed tree still carries `operator/`, `CONTRIBUTORS.md` and the seven translated READMEs into the release tarball the `npx` launcher downloads.
+Measured 2026-10-01 on a build of the committed tree: marking the five calls `/*turbopackIgnore: true*/` in a scratch copy removed all five warnings and cut that trace to one project file, `seed-assets/sqlite/employee.db`.
+The warnings are printed on every run of the required check, where a sixth is easy to miss; `main`'s CI prints the same five.
+
+Found while building the etcd provider (#1089), whose diff touches none of the five files, and measured again by its review.
+Not fixed there: none of the five is an etcd file.
+
+**Done when:** `bun run build` prints no tracing warning, because each of the five reads tells Turbopack what it reaches or is marked as outside the trace, and a payload built from the committed tree holds at its root only what the server runs, `LICENSE` and `README.md`.
+
+### REL7. A local E2E run spends the shared account's query budget
+
+`playwright.config.ts` signs nearly every spec in as `user@libredb.org` against one server process, whose "query" bucket in `src/lib/api/rate-limit.ts` (120 requests a minute by default, `RATE_LIMIT_QUERY_MAX`) every db-reaching route draws from.
+CI runs Playwright with one worker and two retries, while a local run takes half the cores as workers and retries nothing, so a fast machine spends the budget in the middle of the suite.
+Measured 2026-10-01 on main 4b6aae8e and on the etcd branch alike: `CI=1 bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium --repeat-each=5 --retries=0` failed 3 of its 40 runs on each side, `object-edit.spec.ts:621` reading "The source read failed. Too many requests. Try again in 41 seconds.", `:585` timing out after the same refusal, and `security-headers.spec.ts:41` drawing no PNG button on the ERD within 30 s; 4 more did not run, because a failure stops the rest of `object-edit.spec.ts`'s serial group.
+One pass of the suite in CI mode saw `security-headers.spec.ts:41` and `object-edit.spec.ts:621` fail once each and pass on a retry, and a pass with the local defaults failed 7 tests on "Too many requests" in the page.
+The comments in `playwright.config.ts` and `e2e/offline-editor.spec.ts` record the same cause, and three specs, `offline-editor.spec.ts`, `kafka-provider.spec.ts` and `etcd-provider.spec.ts`, were moved to a second server process for it.
+
+Found while running every local gate for the etcd provider (#1089).
+Not fixed there: the E2E harness is not part of the etcd work, and the fix is a choice about the limiter's test configuration.
+
+**Done when:** the E2E servers get a query budget sized for the suite, through `RATE_LIMIT_QUERY_MAX` in their `webServer` env as the passkey server sets `RATE_LIMIT_LOGIN_MAX`, or each spec signs in as an account of its own, and the repeated command above passes all 40 of its runs locally.
 
 ## Chart configuration surface
 
@@ -4245,6 +4593,7 @@ A Redis-wire relative that refuses `FUNCTION LIST` (KeyDB, DragonflyDB, Garnet) 
 
 Found 2026-09-24 while checking the VictoriaMetrics relative after #1104.
 Not fixed there: both rules of the walk are documented decisions (the `walkObjectInventory` docblock), so changing either is a ruling rather than a fix.
+Amended 2026-09-30: the etcd provider's `lease`, `user` and `role` kinds are exempt by declaring `countIsListing` (#1089), so plan mode grounds a user who is not root; the general ruling stays open.
 
 **Done when:** a ruling chooses between recording a refused kind in the inventory, with the engine's sentence, while keeping the kinds that were read, and keeping the whole-capture refusal with a message that names the refused kind rather than an unreachable server; and a test drives the walk over a provider whose one kind's listing throws.
 
@@ -4283,6 +4632,18 @@ The same page's request path has no body-size limit either - a 2 MB JSON-RPC bod
 Found 2026-09-28 while testing MCP end to end on macOS.
 Not fixed in #1192: that branch is the agent's measurement path and touches nothing under `src/lib/mcp/`, and a size limit is a ruling about the route's contract rather than a snippet correction.
 **Done when:** the OpenCode snippet uses the key that client reads, with a test asserting each client's snippet against that client's documented shape, and the MCP route rejects a body past a stated bound with a refusal that names it.
+
+### B92. Plan mode on etcd drafts a read of a whole prefix group the connection can only partly read
+
+`captureContextSnapshot` in `src/lib/agent/context-snapshot.ts` marks a prefix group `partlyReadable` and writes a note and a "(partly readable)" mark into the prompt, and `src/lib/agent/investigation.ts` records `plan-statement-drafted` with no check of the draft against that mark.
+Spec E13 keeps the readable key's name out of the prompt, so the model has only the note to follow, and it does not.
+Measured 2026-10-02 in the etcd agent pass: with `/config/*` marked partly readable (the user may read `/app/` and `/config/a`), `gemini-3.5-flash-lite` drafted `etcdctl get /config/ --prefix` in 4 of 4 runs, and etcd refused it when run: "etcd refused the get on /config/ (prefix): this connection's etcd user is not granted all of it." (`t27/outcomes.md`, `t27/ledger-2.json`, `t27/prompt-2.txt`, `t27/shots/t27-11-run-2.png`).
+This is not on `origin/main`: the etcd provider is new.
+
+Found by the etcd agent pass (#1089).
+Not fixed there: a model's choice is not something the snapshot can force, and the check below is its own change.
+
+**Done when:** a server-side check flags a drafted read over a whole partly readable group, by the group's name only so E13 holds, and the answer card shows the flag, with a test that a draft over `/config/` is flagged while one over `/app/` is not.
 
 ## Passkey deferrals (#785)
 

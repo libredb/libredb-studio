@@ -58,7 +58,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -68,7 +68,7 @@ connections:
     group: "Data Team"        # Group label in sidebar
     color: "#10B981"          # Hex color for environment badge
     roles: ["admin"]          # Who can see this connection
-    managed: true             # Read-only in UI (default from `defaults`)
+    managed: true             # Admin-controlled: not editable in the UI (default from `defaults`)
     ssl:
       mode: require
       rejectUnauthorized: true
@@ -173,23 +173,29 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | — | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp` is refused here (see [MCP opt-in](#mcp-opt-in)) |
+| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp` and `readOnly` are refused here (see [MCP opt-in](#mcp-opt-in)) |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
 | `connections[].schema` | No | — | Trino session schema, used to resolve unqualified table names inside the configured catalog |
 | `connections[].user` | No | — | Username |
 | `connections[].password` | No | — | Password (use `${ENV_VAR}` syntax) |
+| `connections[].apiKeyId` | No | - | Elasticsearch only (#708): the API key's id, paired with `apiKeySecret` and preferred over `user` and `password` when both are set; every other engine refuses the pair when the file loads. Resolved like `password` |
+| `connections[].apiKeySecret` | No | - | Elasticsearch only (#708): the API key's secret, paired with `apiKeyId`; use `${ENV_VAR}` syntax |
+| `connections[].ssl.caCert` | No | absent | The CA certificate as PEM, or a `${ENV_VAR}` or `${vault:...}` reference that resolves to it, so a Kubernetes Secret can carry it into the environment ([providers/etcd.md](providers/etcd.md), section 12) |
+| `connections[].ssl.clientCert` | No | absent | The client certificate as PEM, or a reference, resolved like `password` |
+| `connections[].ssl.clientKey` | No | absent | The client key as PEM, or a reference; an unset reference skips the connection naming `ssl.clientKey`. Never inline a private key in a ConfigMap |
 | `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid and Trino have no URI form this build parses — those connections need `host` and are addressed by host and port only |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
-| `connections[].managed` | No | from defaults | `true` = read-only, `false` = editable copy |
+| `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
+| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
@@ -199,7 +205,7 @@ connections:
 | `connections[].localDataCenter` | No¹ | — | Cassandra local data centre (`datacenter1`). ¹Optional in the schema because no other engine has it, and **required by the Cassandra provider**: the driver refuses to connect without one |
 | `connections[].saslMechanism` | No | - | Kafka: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`, absent meaning none; `user` and `password` are sent only with a mechanism, and only over TLS. It takes a literal name: it is neither a credential nor an address, so a `${ENV}` or `${vault:...}` reference in it is refused when the file loads, naming the field, because the file is validated before any reference is resolved |
 | `connections[].authSource` | No | — | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error |
-| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd connection refuses `mcp: true` when the file loads: MCP is not offered for it |
 
 ### MCP opt-in
 
@@ -208,6 +214,48 @@ The opt-in is per connection: `defaults.mcp` is refused, because a default would
 The built-in sample connections never carry it, so they are never visible to an MCP client.
 A value that is not a boolean fails the whole file, as any invalid field does: `GET /api/connections/managed` then answers 500 with its named reason, and every MCP tool answers that the connection configuration could not be read.
 With no seed file, or with no entry that opts in for the token's role, `list_connections` answers an empty list.
+
+### A read-only cluster for everyone
+
+`readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
+etcd's is the one that does today ([providers/etcd.md](providers/etcd.md), section 3.4), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
+
+```yaml
+version: "1"
+connections:
+  - id: "cluster-read"
+    name: "Cluster"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    user: "reader"
+    password: "${ETCD_READER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${ETCD_CA}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "cluster-write"
+    name: "Cluster (write)"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    user: "writer"
+    password: "${ETCD_WRITER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${ETCD_CA}"
+    roles: ["admin"]
+    managed: true
+```
+
+`managed: true` is written out on both, although it is the default, because a connection's own value overrides a file-wide `defaults.managed: false`.
+The load refuses `readOnly: true` on a connection that is not managed: an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose `readOnly` can be cleared.
+`readOnly` is set per connection and never in `defaults`, which the load refuses, so a later connection in the file never inherits it.
+The mode is a boundary only where etcd authenticates the client with a secret only the seeds hold, a password or a client certificate: on an etcd that authenticates nobody, a `user` who knows the address can reach it with a connection of their own.
+A read-only connection shows a Read-only marker beside its name in the sidebar and in the editor header.
 
 ---
 
@@ -220,7 +268,7 @@ connections:
   - id: "prod-db"
     password: "${PROD_DB_PASSWORD}"        # Resolved from process.env at runtime
     connectionString: "${MONGO_URI}"       # Also works for connection strings
-    user: "${DB_USER}"                     # Any field can use ${} syntax
+    user: "${DB_USER}"                     # Any resolvable field below can use ${} syntax
 ```
 
 **How it works:**
@@ -229,7 +277,7 @@ connections:
 3. If an env var is undefined, that connection is **skipped** (others continue working)
 4. Plaintext passwords trigger a warning log (but still work)
 
-**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`
+**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
 
 ### Vault References
 
@@ -246,7 +294,8 @@ The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after
 
 **Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
 
-Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`). A reference with no `#key` fails when the connection is opened.
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
+A reference with no `#key` fails when the connection is opened.
 
 A Vault reference is read lazily, one connection at a time:
 
@@ -517,6 +566,8 @@ extraEnvFrom:
 | Invalid YAML/JSON | Endpoint returns 500. Error logged with details. |
 | Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
+| `readOnly: true` on a connection whose type does not enforce it, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
+| `mcp: true` on an etcd connection | The whole file fails like any invalid config, and the error names `mcp` and `etcd` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged. |
 | `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |

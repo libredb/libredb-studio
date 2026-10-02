@@ -406,7 +406,7 @@ describe("buildResultExport — a binary value in a statement", () => {
     // No statement is ever built for these to read: MongoDB, Redis, Kafka and the embedded store
     // declare `queryLanguage: "json"` and Prometheus declares `"promql"` (#1085, #1088), so the
     // export can claim only the portable form, as `values.ts` does for their literals.
-    for (const dialect of ["mongodb", "redis", "libredb", "prometheus", "kafka"] as const) {
+    for (const dialect of ["mongodb", "redis", "libredb", "prometheus", "kafka", "etcd"] as const) {
       const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect }));
 
       expect(file.content).toContain("VALUES (X'0102deadbeef');");
@@ -865,6 +865,7 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
       "couchbase",
       "prometheus",
       "kafka",
+      "etcd",
     ] as const) {
       expect(ddl({ c: "VARCHAR2" }, dialect)).toContain(" TEXT\n");
       expect(ddl({ c: "BINARY_DOUBLE" }, dialect)).toContain(" DOUBLE PRECISION\n");

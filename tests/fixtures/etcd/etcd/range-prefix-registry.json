@@ -1,0 +1,178 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.382Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: the prefix /registry/: the Kubernetes-shaped subtree of spec 9",
+    "request": {
+      "key": {
+        "$bytes": "L3JlZ2lzdHJ5Lw=="
+      },
+      "range_end": {
+        "$bytes": "L3JlZ2lzdHJ5MA=="
+      },
+      "limit": {
+        "$int64": "500"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L3JlZ2lzdHJ5Lw=="
+      },
+      "range_end": {
+        "$bytes": "L3JlZ2lzdHJ5MA=="
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2Nib3IuZXhhbXBsZS5jb20vZ2FkZ2V0cy9kZWZhdWx0L2cx"
+        },
+        "create_revision": {
+          "$int64": "29"
+        },
+        "mod_revision": {
+          "$int64": "29"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "2dn3omphcGlWZXJzaW9uc2Nib3IuZXhhbXBsZS5jb20vdjFka2luZGZHYWRnZXQ="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2NvbmZpZ21hcHMvZGVmYXVsdC9lbmNyeXB0ZWQ="
+        },
+        "create_revision": {
+          "$int64": "28"
+        },
+        "mod_revision": {
+          "$int64": "28"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "azhzOmVuYzphZXNjYmM6djE6a2V5MToAAQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHw=="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2V2ZW50cy9kZWZhdWx0L25naW54LjE="
+        },
+        "create_revision": {
+          "$int64": "25"
+        },
+        "mod_revision": {
+          "$int64": "25"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "eyJraW5kIjoiRXZlbnQiLCJyZWFzb24iOiJTY2hlZHVsZWQifQ=="
+        },
+        "lease": {
+          "$int64": "7587863092875085001"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2V4YW1wbGUuY29tL3dpZGdldHMvZGVmYXVsdC93MQ=="
+        },
+        "create_revision": {
+          "$int64": "30"
+        },
+        "mod_revision": {
+          "$int64": "30"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "eyJhcGlWZXJzaW9uIjoiZXhhbXBsZS5jb20vdjEiLCJraW5kIjoiV2lkZ2V0IiwibWV0YWRhdGEiOnsibmFtZSI6IncxIiwibmFtZXNwYWNlIjoiZGVmYXVsdCJ9LCJzcGVjIjp7InNpemUiOjN9fQ=="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L3BvZHMvZGVmYXVsdC9uZ2lueA=="
+        },
+        "create_revision": {
+          "$int64": "26"
+        },
+        "mod_revision": {
+          "$int64": "26"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "azhzAAoJCgJ2MRIDUG9kEgkKBwoFbmdpbngaACIA"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L3NlY3JldHMvZGVmYXVsdC9kYi1jcmVkcw=="
+        },
+        "create_revision": {
+          "$int64": "27"
+        },
+        "mod_revision": {
+          "$int64": "27"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "azhzAAoMCgJ2MRIGU2VjcmV0EjAKCgoIZGItY3JlZHMSIgoIcGFzc3dvcmQSFmxpYnJlZGItZml4dHVyZS1zZWNyZXQaACIA"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "67"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "6"
+    }
+  }
+}

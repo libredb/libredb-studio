@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "service": "etcd-auth",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "none",
+    "memberId": "none",
+    "date": "2026-09-30T16:30:12.650Z",
+    "runtime": "node 24.14.0",
+    "rpc": "Maintenance/Status",
+    "surface": "status over TLS with no client certificate",
+    "request": {},
+    "match": {},
+    "metadata": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "14 UNAVAILABLE: No connection established. Last error: 00E2B0A3E7700000:error:0A00045C:SSL routines:ssl3_read_bytes:tlsv13 alert certificate required:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 116\n (2026-09-30T16:30:12.650Z). Resolution note: ",
+    "code": 14,
+    "details": "No connection established. Last error: 00E2B0A3E7700000:error:0A00045C:SSL routines:ssl3_read_bytes:tlsv13 alert certificate required:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 116\n (2026-09-30T16:30:12.650Z). Resolution note: "
+  }
+}

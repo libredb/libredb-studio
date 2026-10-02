@@ -1,0 +1,42 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:58.899Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "KV/Range",
+    "surface": "range: /history/counter at its create revision, compacted",
+    "request": {
+      "key": {
+        "$bytes": "L2hpc3RvcnkvY291bnRlcg=="
+      },
+      "limit": {
+        "$int64": "1"
+      },
+      "revision": {
+        "$int64": "20"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2hpc3RvcnkvY291bnRlcg=="
+      },
+      "revision": {
+        "$int64": "20"
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "11 OUT_OF_RANGE: etcdserver: mvcc: required revision has been compacted",
+    "code": 11,
+    "details": "etcdserver: mvcc: required revision has been compacted"
+  }
+}

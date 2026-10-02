@@ -11,9 +11,16 @@ import {
   AlertDialogDescription,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { TypedConfirmField } from "@/components/typed-confirm";
 import { useReturnFocus } from "@/hooks/use-return-focus";
 import { cn } from "@/lib/utils";
-import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
+import {
+  isDestructiveNonSqlQuery,
+  vocabularyDecidesAlone,
+  vocabularySendsToModel,
+  vocabularyTypedConfirmation,
+} from "@/lib/db/destructive-commands";
+import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
@@ -40,6 +47,12 @@ interface QuerySafetyDialogProps {
   query: string;
   schemaContext: string;
   databaseType?: string;
+  /**
+   * The name of the connection the statement is about to run on, which a typed confirmation of the connection asks
+   * for (#1089, section 5.5). Optional because this dialog is published: a caller that passes none, or an empty one,
+   * gets a refusal in place of the typed field and a disabled Proceed button, never a throw.
+   */
+  connectionName?: string;
   onClose: () => void;
   onProceed: () => void;
   /** Optional API adapter: when provided, bypasses the built-in /api/ai/query-safety fetch. */
@@ -57,6 +70,30 @@ function parseSafetyResponse(text: string): SafetyAnalysis | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Said in place of the typed field when the vocabulary asks for the connection's name and the caller gave none, or
+ * an empty one (#1089, section 5.5).
+ */
+const MISSING_CONNECTION_NAME =
+  "This statement is confirmed by typing the connection's name, which this editor did not provide, so it cannot run from here.";
+
+/**
+ * Said where the vocabulary keeps the statement from the AI analysis, beside the dialog's own local sentence
+ * (#1089, E10): the classification that opened this dialog is the editor's, and nothing was sent to be judged.
+ */
+const LOCAL_CLASSIFICATION =
+  "This editor checked the statement itself: statements for this engine are not sent to an AI provider for a risk analysis.";
+
+/**
+ * The text a typed ask is compared with: the ask's own text, or the connection's name, or undefined where the ask is
+ * the name and there is none to type, which the dialog answers with MISSING_CONNECTION_NAME.
+ */
+function typedConfirmationText(ask: TypedConfirmationAsk, connectionName: string | undefined): string | undefined {
+  if (ask.type === "text") return ask.text;
+  // An empty name is no name: an exact comparison would let an empty field confirm it.
+  return connectionName === "" ? undefined : connectionName;
 }
 
 const RISK_CONFIG = {
@@ -102,6 +139,7 @@ export function QuerySafetyDialog({
   query,
   schemaContext,
   databaseType,
+  connectionName,
   onClose,
   onProceed,
   onAnalyzeSafety,
@@ -110,6 +148,9 @@ export function QuerySafetyDialog({
   const [analysis, setAnalysis] = useState<SafetyAnalysis | null>(null);
   const [rawResponse, setRawResponse] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Whether the typed confirmation's field matches (#1089, section 5.5). The field reports it when it mounts and on
+  // every change, so each opening starts from false: the field's own state lives inside the dialog content.
+  const [typedMatches, setTypedMatches] = useState(false);
   // Radix hands focus back only to an AlertDialogTrigger, and the editor opens this dialog without
   // one, so the dialog keeps what had focus when it opened and puts focus back there on close.
   const returnFocus = useReturnFocus();
@@ -135,6 +176,19 @@ export function QuerySafetyDialog({
     // that reads fine is the false alarm this notice exists to avoid.
     return readsSqlText(type) && hasUnterminatedSpan(query, resolveSqlGrammar(type));
   }, [query, databaseType]);
+
+  // What this engine's vocabulary asks the person to type before the statement runs, read from the table the gate
+  // that opened this dialog read, so the two cannot disagree about a statement (#1089, section 5.5).
+  const typedAsk = useMemo(
+    () => vocabularyTypedConfirmation(databaseType as DatabaseType | undefined, query),
+    [query, databaseType],
+  );
+  const typedExpected = typedAsk === undefined ? undefined : typedConfirmationText(typedAsk, connectionName);
+  // Proceed waits for the analysis and for an exact match, and a refusal in place of the field is never a match,
+  // whatever was typed before it replaced the field.
+  const proceedBlocked = isAnalyzing || (typedAsk !== undefined && (typedExpected === undefined || !typedMatches));
+  // False keeps the statement on this device (#1089, E10).
+  const sendsToModel = vocabularySendsToModel(databaseType as DatabaseType | undefined);
 
   // Declared above the effect that calls it: react-compiler
   // (react-hooks/immutability) rejects reading a `const` binding from a position
@@ -207,7 +261,8 @@ export function QuerySafetyDialog({
   };
 
   useEffect(() => {
-    if (isOpen && query) {
+    // A vocabulary that keeps its statements on this device posts nothing and calls no adapter (#1089, E10).
+    if (isOpen && query && sendsToModel) {
       analyzeQuery();
     }
     return () => {
@@ -216,7 +271,7 @@ export function QuerySafetyDialog({
       setError(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, query]);
+  }, [isOpen, query, sendsToModel]);
 
   const risk = analysis ? RISK_CONFIG[analysis.riskLevel] || RISK_CONFIG.medium : null;
   const RiskIcon = risk?.icon || ShieldAlert;
@@ -274,6 +329,8 @@ export function QuerySafetyDialog({
               </div>
             </div>
           )}
+
+          {!sendsToModel && <p className="mb-3 text-xs text-fg-tertiary">{LOCAL_CLASSIFICATION}</p>}
 
           {isAnalyzing && (
             <div className="flex items-center justify-center gap-2 py-8 text-fg-muted">
@@ -352,19 +409,53 @@ export function QuerySafetyDialog({
           )}
         </div>
 
+        {/*
+          The typed confirmation the vocabulary asks for (#1089, section 5.5), right above the Proceed button it holds
+          disabled until the typed value matches exactly. The field keeps what was typed in its own state, inside this
+          content, which unmounts on close, so every opening starts empty; it is keyed by the text it compares with,
+          so a new ask starts empty too.
+        */}
+        {typedAsk !== undefined && (
+          <div className="px-5 py-3 border-t border-hairline space-y-3">
+            {typedAsk.type === "connection-name" && (
+              <div>
+                <p className="text-xs text-fg-muted">Targets</p>
+                <ul className="mt-1 space-y-0.5">
+                  {typedAsk.targets.map((target, index) => (
+                    // oxlint-disable-next-line react/no-array-index-key -- the ask's own fixed list, never reordered, and a target may repeat.
+                    <li key={index} className="text-xs font-mono text-fg-secondary whitespace-pre-wrap break-all">
+                      {target}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {typedExpected === undefined ? (
+              <p className="text-xs text-danger">{MISSING_CONNECTION_NAME}</p>
+            ) : (
+              <TypedConfirmField
+                key={typedExpected}
+                expected={typedExpected}
+                match="exact"
+                onMatchChange={setTypedMatches}
+              />
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-hairline bg-surface">
           <AlertDialogCancel className="h-auto border-0 bg-fill px-4 py-2 text-xs font-medium text-fg-tertiary shadow-none transition-colors hover:bg-fill-strong dark:bg-fill dark:hover:bg-fill-strong hover:text-fg-tertiary rounded-lg">
             <span>Cancel</span>
           </AlertDialogCancel>
           <button
             onClick={onProceed}
-            disabled={isAnalyzing}
+            disabled={proceedBlocked}
             className={cn(
               "px-4 py-2 rounded-lg text-white text-xs font-medium transition-colors flex items-center gap-1.5",
               analysis?.riskLevel === "critical" || analysis?.riskLevel === "high"
                 ? "bg-danger-solid hover:bg-danger-solid-hover"
                 : "bg-brand-solid hover:bg-brand-solid-hover",
-              isAnalyzing && "opacity-50 cursor-not-allowed",
+              proceedBlocked && "opacity-50 cursor-not-allowed",
             )}
           >
             <Play strokeWidth={1.5} className="w-3 h-3 fill-current" />
@@ -471,19 +562,21 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   //
   // Only where the text IS SQL, though. Both execution paths ask about whatever is
   // in the editor, so this predicate is handed MongoDB documents, Redis commands, PromQL
-  // expressions and Kafka read requests as well, and an escaped quote that a SQL span reader cannot
-  // resolve closes perfectly in the grammar those are written in. For MongoDB and
+  // expressions, Kafka read requests and etcdctl commands as well, and an escaped quote that a SQL
+  // span reader cannot resolve closes perfectly in the grammar those are written in. For MongoDB and
   // Redis the keyword tests below still run: narrowing this rule is not switching the
   // gate off.
   if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
 
   // A type whose own vocabulary is the whole answer is not read as SQL at all, and
-  // PromQL and Kafka are those types. A PromQL expression can start with a metric name the
+  // PromQL, Kafka and etcd are those types. A PromQL expression can start with a metric name the
   // server's data chooses, `update`, `delete` and `drop` are legal names, and the keyword
   // test below read the tree's own selector for such a metric as a write, about text that
   // only ever reaches a query endpoint that cannot write (#1085, section 2); a Kafka read
   // request names a topic, which can carry those names too, and can only read it (#1088,
-  // section 2). Which types decide alone is a fact of the same table, not a type test here.
+  // section 2); an etcd command names keys, which can be spelled like any SQL keyword, and the
+  // etcd provider's guard.ts reads it with the parser the provider runs (#1089, section 5.5).
+  // Which types decide alone is a fact of the same table, not a type test here.
   if (vocabularyDecidesAlone(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
 
   if (writesUnderGrammar(query, grammar)) return true;

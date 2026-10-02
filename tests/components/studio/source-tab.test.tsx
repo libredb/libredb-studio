@@ -371,6 +371,7 @@ mock.module("@/components/ui/resizable", () => ({
 }));
 
 const { default: Studio } = await import("@/components/Studio");
+const { PREVIEW_PAGE_SIZE } = await import("@/hooks/use-tab-manager");
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -512,6 +513,20 @@ function iconOf(element: HTMLElement): string {
 
 function tabNames(): string[] {
   return screen.getAllByRole("tab").map((tab) => tab.textContent ?? "");
+}
+
+/**
+ * Resolves once the data preview that opening a relation's tab schedules has run.
+ *
+ * `handleTableClick` runs the new tab's statement on a 100 ms timer that nothing clears, and
+ * `mockExecuteQuery` is one mock for the whole file, so a test that ends first hands its run to
+ * whichever test is on when the timer fires. A test that opens a data tab waits here for its own.
+ * The wait is ORDERED rather than timed: this timer is set after that one with a longer delay, so
+ * it fires after it however starved the process is, and a count read after it is final. The hook's
+ * own suite waits for the same run the same way (`settle` in `tests/hooks/use-tab-manager.test.ts`).
+ */
+function afterPreviewRuns(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 150));
 }
 
 beforeEach(() => {
@@ -983,6 +998,24 @@ describe("activation splits by what the row IS", () => {
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "orders", "order_summary"]));
     // Neither opened a Source tab, and neither read the source route.
     expect(sourceReads).toEqual([]);
+
+    /*
+     * And both RAN, each on the tab it opened: the half of this test's name nothing asserted.
+     *
+     * MEASURED before the wait existed: these two runs were still pending when this test ended,
+     * and with this file pinned to one core beside three, six or ten busy loops they fired inside
+     * the key browser's "nothing runs" below, which failed 39 runs in 40. The wait is what keeps
+     * them this test's.
+     */
+    await afterPreviewRuns();
+    const [, ordersTab, viewTab] = screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-tab-id"));
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+    expect(mockExecuteQuery).toHaveBeenNthCalledWith(1, "SELECT * FROM app.orders;", ordersTab, false, {
+      limit: PREVIEW_PAGE_SIZE,
+    });
+    expect(mockExecuteQuery).toHaveBeenNthCalledWith(2, "SELECT * FROM app.order_summary;", viewTab, false, {
+      limit: PREVIEW_PAGE_SIZE,
+    });
   });
 
   test("a kind with neither a data preview nor a source still does nothing", async () => {
@@ -997,6 +1030,79 @@ describe("activation splits by what the row IS", () => {
     act(() => activate({ path: ["app", "mystery"], name: "mystery", kind: "not-declared" }));
     expect(tabNames()).toEqual(["Query 1"]);
     expect(sourceReads).toEqual([]);
+  });
+});
+
+/**
+ * Keys-panel activation on an engine that declares a key kind (spec 4.6).
+ *
+ * What is real here is what `tests/components/Studio.test.tsx` stubs: the tab manager, the pane and the
+ * source route. The key's tab is the declared kind's Source tab, addressed by the key alone, and
+ * nothing runs; and it is refused while an apply is in flight, as every gesture that opens a tab is
+ * (D82, the last describe of this file).
+ */
+const KEY_KIND = {
+  id: "key",
+  role: "config",
+  label: "Key",
+  labelPlural: "Keys",
+  enumeratedBy: "key-browser",
+  hasSource: true,
+  sourceLanguage: "json",
+};
+const ETCD_SCAN = {
+  defaultCount: 500,
+  maxCount: 1000,
+  separator: "/",
+  cursor: "opaque",
+  pattern: "prefix",
+  totalScope: "walk",
+};
+const KEY_DOCUMENT = {
+  path: ["/app/cfg"],
+  kind: "key",
+  parts: [
+    { id: "value", label: "Value", text: '{"mode":"on"}', language: "json", form: "complete", origin: "rendered" },
+  ],
+};
+
+/** A key activated in the key browser, as the sidebar hands it to this shell. */
+function openKey(key: string): void {
+  (capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void)(
+    key,
+    null,
+    null,
+  );
+}
+
+describe("a key activated in the key browser opens its Source tab", () => {
+  beforeEach(() => {
+    capabilitiesOverride = { objectKinds: [...KINDS, KEY_KIND], keyScan: ETCD_SCAN };
+    buildMetadata();
+    sourceAnswer = { status: 200, body: KEY_DOCUMENT };
+  });
+
+  test("the key's value is read into a Source tab named after it, and nothing runs", async () => {
+    render(<Studio />);
+    act(() => openKey("/app/cfg"));
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]));
+    await waitFor(() => expect(sourceReads).toEqual([{ path: ["/app/cfg"], kind: "key" }]));
+    await waitFor(() =>
+      expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe('{"mode":"on"}'),
+    );
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("a second activation of the same key focuses its tab instead of reading again", async () => {
+    render(<Studio />);
+    act(() => openKey("/app/cfg"));
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]));
+
+    act(() => openKey("/app/cfg"));
+
+    expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]);
+    await waitFor(() => expect(sourceReads).toHaveLength(1));
   });
 });
 
@@ -1585,5 +1691,42 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     openTableFromPalette();
 
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
+    // The table's preview ran too, and waiting for it keeps that run this test's (`afterPreviewRuns`).
+    await afterPreviewRuns();
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+  });
+
+  test("a key activated in the key browser is refused in the same window, and opens once the answer is on screen", async () => {
+    /*
+     * The third door into this window (spec 4.6). On an engine that declares a key kind, a key's
+     * activation opens that kind's Source tab, which ends in `setActiveTabId` exactly as a table's
+     * activation does, and so would unmount the pane the dialog lives in with the statement sent.
+     */
+    capabilitiesOverride = { objectKinds: [...KINDS, KEY_KIND], keyScan: ETCD_SCAN };
+    buildMetadata();
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    act(() => openKey("/app/cfg"));
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    // The control: the refusal is the apply window, not "a key cannot be opened from a Source tab".
+    act(() => openKey("/app/cfg"));
+    await waitFor(() =>
+      expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "Source: /app/cfg"]),
+    );
   });
 });

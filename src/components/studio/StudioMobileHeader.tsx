@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
+import { ReadOnlyMarker } from "@/components/read-only-marker";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
@@ -177,6 +178,7 @@ export const StudioMobileHeader = React.memo(function StudioMobileHeader({
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {activeConnection?.readOnly === true && <ReadOnlyMarker />}
           {activeConnection && (
             <span className="text-xs text-success font-medium px-1.5 py-0.5 rounded bg-success-tint/10">Online</span>
           )}

@@ -292,6 +292,18 @@ describe("the drafted statement is read out of the closing prose", () => {
   });
 
   /*
+    #1089. An etcd run fences its command as ```etcd, the connection's type-id, and that block is its
+    deliverable; the shell tags a model might write instead name no engine (fence-tags.ts).
+  */
+  test("a command fenced as etcd is the deliverable of an etcd run, and of no other engine's", () => {
+    const command = "get /app/config/ --prefix --limit=50";
+    const etcd = ["```etcd", command, "```"].join("\n");
+
+    expect(readPlanStatement(etcd, "etcd")).toEqual({ kind: "statement", sql: command, tag: "etcd" });
+    expect(readPlanStatement(etcd, "redis")).toEqual({ kind: "absent" });
+  });
+
+  /*
     A run that refused and also pasted an illustrative block has not drafted a
     deliverable, and offering that block to the editor as the answer would be exactly
     the mislabelling this event exists to prevent.
@@ -628,6 +640,21 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
       guardApplicable: true,
       guardViolation: "NO_STATEMENT",
     });
+  });
+
+  test("an etcd command is declined the same way: it is no SQL, and the reader speaks SQL (#1089)", () => {
+    // etcd declares `queryLanguage: "json"`, so the language alone answers not-applicable, whatever the
+    // command's words: a key named like a SQL verb is read by nothing here.
+    const COMMAND = "get /delete/from/users --prefix --limit=50";
+
+    expect(validatePlanStatement(COMMAND, INVENTORY, "json")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(COMMAND, null, "json").identifiers).toEqual({ kind: "not-applicable" });
+    // The control: the same text on a SQL engine is judged.
+    expect(validatePlanStatement(COMMAND, INVENTORY, "sql").guardApplicable).toBe(true);
   });
 });
 

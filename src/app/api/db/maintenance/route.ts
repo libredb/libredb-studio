@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOrCreateProvider, type MaintenanceType } from "@/lib/db";
+import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: `Maintenance operations not supported for this database` }, { status: 400 });
     }
 
-    if (!capabilities.maintenanceOperations.includes(type as MaintenanceType)) {
+    if (!capabilities.maintenanceOperations.includes(type as MaintenanceOperation)) {
       return NextResponse.json(
         {
           error: `Operation '${type}' not supported for this database. Supported: ${capabilities.maintenanceOperations.join(", ")}`,
@@ -96,8 +96,8 @@ export async function POST(request: Request) {
     // the existing "operation not supported" 400 unreachable for exactly the four providers
     // whose vacuum wording names something else.
     const placement: MaintenancePlacement = target ? "perEntity" : "global";
-    const perEntityControl = maintenanceControl(capabilities, type as MaintenanceType, "perEntity");
-    const globalControl = maintenanceControl(capabilities, type as MaintenanceType, "global");
+    const perEntityControl = maintenanceControl(capabilities, type as MaintenanceOperation, "perEntity");
+    const globalControl = maintenanceControl(capabilities, type as MaintenanceOperation, "global");
     const requestedControl = placement === "perEntity" ? perEntityControl : globalControl;
 
     if (!requestedControl.offered && (perEntityControl.offered || globalControl.offered)) {
@@ -119,8 +119,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ error }, { status: 400 });
     }
 
+    // The fields every row of this run shares, built once so the completed row and the thrown row
+    // cannot disagree about which operation was run against what.
+    const auditFields = {
+      type: type === "kill" ? "kill_session" : "maintenance",
+      action: type.toUpperCase(),
+      target: target || "all",
+      // The container the request named, omitted when it named none. `app.orders` and
+      // `public.orders` recorded identically while this row carried only `target`, and an
+      // operator reconstructing what was done to a database could not tell the two apart
+      // (#1091 review). Optional on the EVENT the way `reason` and `bucket` are, so a
+      // whole-database row does not grow a field claiming a container it never had.
+      container: requestedContainer,
+      connectionName: connection.name || connection.database || "unknown",
+      user: guard.session.username || "admin",
+    } as const;
+
     const startTime = Date.now();
-    const result = await provider.runMaintenance(type, target, requestedContainer);
+    let result: Awaited<ReturnType<typeof provider.runMaintenance>>;
+    try {
+      result = await provider.runMaintenance(type, target, requestedContainer);
+    } catch (error) {
+      // A run that THREW is still a run: it may have reached the engine before it failed, and
+      // until #1091's review recorded the gap (R04 G8) it left no row at all. The row takes the
+      // closed reason `maintenance_execution_failed` and never the thrown message, which
+      // `emitAuditEvent`'s docblock forbids by name. It is isolated for the same reason as the
+      // completed row below: a broken sink must not replace the operation's own failure with its
+      // own, so the caller reads exactly what the thrown error maps to, as it did before this row.
+      try {
+        emitAuditEvent({
+          ...auditFields,
+          result: "failure",
+          reason: "maintenance_execution_failed",
+          duration: Date.now() - startTime,
+        });
+      } catch (auditError) {
+        logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
+      }
+      throw error;
+    }
     const duration = Date.now() - startTime;
 
     // Isolated in its own try/catch: runMaintenance() above has already succeeded and its result
@@ -129,17 +166,7 @@ export async function POST(request: Request) {
     // catch below is for failures of the operation itself, not for failures to record it.
     try {
       emitAuditEvent({
-        type: type === "kill" ? "kill_session" : "maintenance",
-        action: type.toUpperCase(),
-        target: target || "all",
-        // The container the request named, omitted when it named none. `app.orders` and
-        // `public.orders` recorded identically while this row carried only `target`, and an
-        // operator reconstructing what was done to a database could not tell the two apart
-        // (#1091 review). Optional on the EVENT the way `reason` and `bucket` are, so a
-        // whole-database row does not grow a field claiming a container it never had.
-        container: requestedContainer,
-        connectionName: connection.name || connection.database || "unknown",
-        user: guard.session.username || "admin",
+        ...auditFields,
         // The engine's verdict, not the request's. `runMaintenance` resolving is only the
         // statement having reached the engine: since 2026-08-25 MySQL and Oracle read the
         // server's own answer, so `success: false` on a 200 is the ordinary reply for a

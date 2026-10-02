@@ -1,0 +1,62 @@
+{
+  "$captured": {
+    "service": "etcd-cluster",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "4743283766027114114",
+    "memberId": "8857620542826090066",
+    "date": "2026-09-30T16:29:59.128Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Maintenance/Status",
+    "surface": "status of a follower",
+    "request": {},
+    "match": {},
+    "metadata": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "errors": [],
+    "header": {
+      "cluster_id": {
+        "$int64": "4743283766027114114"
+      },
+      "member_id": {
+        "$int64": "8857620542826090066"
+      },
+      "revision": {
+        "$int64": "43"
+      },
+      "raft_term": {
+        "$int64": "5"
+      }
+    },
+    "version": "3.7.2",
+    "dbSize": {
+      "$int64": "339968"
+    },
+    "leader": {
+      "$int64": "14609290428206289688"
+    },
+    "raftIndex": {
+      "$int64": "1261"
+    },
+    "raftTerm": {
+      "$int64": "5"
+    },
+    "raftAppliedIndex": {
+      "$int64": "1261"
+    },
+    "dbSizeInUse": {
+      "$int64": "339968"
+    },
+    "isLearner": false,
+    "storageVersion": "3.7.0",
+    "dbSizeQuota": {
+      "$int64": "2147483648"
+    },
+    "downgradeInfo": {
+      "enabled": false,
+      "targetVersion": ""
+    }
+  }
+}

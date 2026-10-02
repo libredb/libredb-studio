@@ -1,0 +1,78 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.413Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: /libredb-evidence/history at its create revision, the first of its three versions",
+    "request": {
+      "key": {
+        "$bytes": "L2xpYnJlZGItZXZpZGVuY2UvaGlzdG9yeQ=="
+      },
+      "limit": {
+        "$int64": "1"
+      },
+      "revision": {
+        "$int64": "68"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2xpYnJlZGItZXZpZGVuY2UvaGlzdG9yeQ=="
+      },
+      "revision": {
+        "$int64": "68"
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L2xpYnJlZGItZXZpZGVuY2UvaGlzdG9yeQ=="
+        },
+        "create_revision": {
+          "$int64": "68"
+        },
+        "mod_revision": {
+          "$int64": "68"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "MQ=="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "70"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "1"
+    }
+  }
+}

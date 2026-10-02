@@ -24,13 +24,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Apache Cassandra | `cassandra` | SQL (wide-column) | `cassandra-driver` (pure JS) | SQL-shaped (CQL) | [cassandra.md](./cassandra.md) |
 | Prometheus | `prometheus` | Time series | none (HTTP: the Prometheus HTTP API, `/api/v1/*`) | PromQL | [prometheus.md](./prometheus.md) |
 | Apache Kafka | `kafka` | Stream | `@platformatic/kafka` (pure TypeScript) | JSON (a read request) | [kafka.md](./kafka.md) |
+| etcd | `etcd` | Key-Value | `@grpc/grpc-js` (pure JavaScript, gRPC) | etcdctl commands (a subset) | [etcd.md](./etcd.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Prometheus and Kafka are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Prometheus, Kafka and etcd are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
@@ -252,9 +253,10 @@ grid. Each row was verified against the running container on 2026-08-19, and the
 block asks for (twice those differ; see the notes).
 The Prometheus row and the `prometheus-auth` note below were verified against the running containers on 2026-09-23, by the capture `tests/fixtures/prometheus/README.md` records.
 The Apache Kafka row and the `kafka-auth` and `kafka-cluster` notes below were verified against the running containers on 2026-09-24, by the capture `tests/fixtures/kafka/README.md` records.
+The etcd row and the etcd fixtures note below were verified against the running containers on 2026-09-30, by the capture `tests/fixtures/etcd/README.md` records.
 
-Start the eighteen always-on services with a plain `docker compose -f database-compose.yml up -d`:
-fifteen engine containers plus the one-shot `couchbase-init`, `trino-init` and `kafka-init` seed sidecars; the `Profile` column names
+Start the twenty always-on services with a plain `docker compose -f database-compose.yml up -d`:
+sixteen engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init` and `etcd-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -276,13 +278,14 @@ provider's integration pass.
 | Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
 | Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | *none* |
 | Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
+| etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | *none* |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
 *none* means leave the field empty. It is never a default that happens to be blank: Druid loads no
 security extension in a default install, both search services run with their security plugin off, the
 `trino` service runs with authentication disabled, and the `redis` service sets no `requirepass`
-(verified: `CONFIG GET requirepass` answers empty). **Never put a password on a plain-HTTP Trino
+(verified: `CONFIG GET requirepass` answers empty), and the `etcd` service runs with RBAC off. **Never put a password on a plain-HTTP Trino
 connection**: the coordinator answers `401 Password not allowed for insecure authentication` even
 with authentication off, so a password breaks a connection that works without one
 ([trino.md §4.3](./trino.md#43-tls-and-the-password-rule)).
@@ -296,6 +299,11 @@ The plain `prometheus` service on 9090 takes no credential at all ([prometheus.m
 `kafka-cluster` is three nodes: start it with `docker compose -f database-compose.yml --profile kafka-cluster up -d` and connect to `localhost:9192`, from which the client learns the other two at 9193 and 9194.
 `kafka-auth` is TLS with SCRAM-SHA-512 and an authorizer: start it with `docker compose -f database-compose.yml --profile kafka-auth up -d kafka-auth`, create the principal `reader` with a password of your choice as the service's comment in `database-compose.yml` shows, copy its CA out of the container, and connect to port `19094` with SASL mechanism `SCRAM-SHA-512`, TLS `verify-full` and that CA.
 `reader` holds no ACL, so it sees an empty cluster and is refused the cluster reads, which is what the fixture is for ([kafka.md §6.1](./kafka.md#listing-counting-and-scale)).
+
+**etcd has three more fixtures behind two profiles, and the plain `etcd` service takes no credential and no TLS.**
+`etcd` is seeded by its `etcd-seed` one-shot; `etcd-cluster` is three members on `127.0.0.2`, `127.0.0.3` and `127.0.0.4`, port 2379 (profile `etcd-cluster`), and `etcd-auth` (port 12379, TLS with client certificates) and `etcd-auth-password` (port 12479, TLS with a password) run with RBAC on (profile `etcd-auth`).
+Their certificates and passwords are generated into a volume at first start and never committed; [`docker/etcd/README.md`](../../docker/etcd/README.md) says how to start and seed each, how to copy the certificates out, and what every seeded key is for.
+The user `reader` may read the prefix `/app/` and the key `/config/a` only, which is what the auth fixtures are for ([etcd.md, section 4.7](./etcd.md#47-a-user-who-is-not-root)).
 
 **Cassandra needs one field this table has no column for, and will not connect without it.** `Local
 Data Center` must be `datacenter1` - a stock single node names its own data centre that, and the

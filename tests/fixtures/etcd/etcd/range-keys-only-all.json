@@ -1,0 +1,740 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.386Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: the whole key space, keys only, limit 500",
+    "request": {
+      "key": {
+        "$bytes": "AA=="
+      },
+      "range_end": {
+        "$bytes": "AA=="
+      },
+      "limit": {
+        "$int64": "500"
+      },
+      "keys_only": true
+    },
+    "match": {
+      "key": {
+        "$bytes": "AA=="
+      },
+      "range_end": {
+        "$bytes": "AA=="
+      },
+      "keys_only": true
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L2FwaXNpeC9jb25zdW1lcnMvamFjaw=="
+        },
+        "create_revision": {
+          "$int64": "3"
+        },
+        "mod_revision": {
+          "$int64": "3"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2FwaXNpeC9wbHVnaW5z"
+        },
+        "create_revision": {
+          "$int64": "4"
+        },
+        "mod_revision": {
+          "$int64": "4"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2FwaXNpeC9yb3V0ZXMvMQ=="
+        },
+        "create_revision": {
+          "$int64": "2"
+        },
+        "mod_revision": {
+          "$int64": "2"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2FwcC9hL2I="
+        },
+        "create_revision": {
+          "$int64": "13"
+        },
+        "mod_revision": {
+          "$int64": "13"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2FwcC9jZmc="
+        },
+        "create_revision": {
+          "$int64": "12"
+        },
+        "mod_revision": {
+          "$int64": "12"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2FwcC94L3k="
+        },
+        "create_revision": {
+          "$int64": "14"
+        },
+        "mod_revision": {
+          "$int64": "14"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2Jpbi9vay94"
+        },
+        "create_revision": {
+          "$int64": "35"
+        },
+        "mod_revision": {
+          "$int64": "35"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2Jpbi///i94"
+        },
+        "create_revision": {
+          "$int64": "36"
+        },
+        "mod_revision": {
+          "$int64": "36"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2NvbmZpZy9h"
+        },
+        "create_revision": {
+          "$int64": "10"
+        },
+        "mod_revision": {
+          "$int64": "10"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2NvbmZpZy9i"
+        },
+        "create_revision": {
+          "$int64": "11"
+        },
+        "mod_revision": {
+          "$int64": "11"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2ZlYXR1cmUtZmxhZw=="
+        },
+        "create_revision": {
+          "$int64": "8"
+        },
+        "mod_revision": {
+          "$int64": "8"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2hpc3RvcnkvY291bnRlcg=="
+        },
+        "create_revision": {
+          "$int64": "20"
+        },
+        "mod_revision": {
+          "$int64": "22"
+        },
+        "version": {
+          "$int64": "3"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2xlYXNlcy9zZXNzaW9uLTE="
+        },
+        "create_revision": {
+          "$int64": "23"
+        },
+        "mod_revision": {
+          "$int64": "23"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2xlYXNlcy9zZXNzaW9uLTI="
+        },
+        "create_revision": {
+          "$int64": "24"
+        },
+        "mod_revision": {
+          "$int64": "24"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2Nib3IuZXhhbXBsZS5jb20vZ2FkZ2V0cy9kZWZhdWx0L2cx"
+        },
+        "create_revision": {
+          "$int64": "29"
+        },
+        "mod_revision": {
+          "$int64": "29"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2NvbmZpZ21hcHMvZGVmYXVsdC9lbmNyeXB0ZWQ="
+        },
+        "create_revision": {
+          "$int64": "28"
+        },
+        "mod_revision": {
+          "$int64": "28"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2V2ZW50cy9kZWZhdWx0L25naW54LjE="
+        },
+        "create_revision": {
+          "$int64": "25"
+        },
+        "mod_revision": {
+          "$int64": "25"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L2V4YW1wbGUuY29tL3dpZGdldHMvZGVmYXVsdC93MQ=="
+        },
+        "create_revision": {
+          "$int64": "30"
+        },
+        "mod_revision": {
+          "$int64": "30"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L3BvZHMvZGVmYXVsdC9uZ2lueA=="
+        },
+        "create_revision": {
+          "$int64": "26"
+        },
+        "mod_revision": {
+          "$int64": "26"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3JlZ2lzdHJ5L3NlY3JldHMvZGVmYXVsdC9kYi1jcmVkcw=="
+        },
+        "create_revision": {
+          "$int64": "27"
+        },
+        "mod_revision": {
+          "$int64": "27"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3NlcnZpY2UvYmF0bWFuL2NvbmZpZw=="
+        },
+        "create_revision": {
+          "$int64": "6"
+        },
+        "mod_revision": {
+          "$int64": "6"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3NlcnZpY2UvYmF0bWFuL2xlYWRlcg=="
+        },
+        "create_revision": {
+          "$int64": "5"
+        },
+        "mod_revision": {
+          "$int64": "5"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3NreWRucy9sb2NhbC9leGFtcGxlL3d3dw=="
+        },
+        "create_revision": {
+          "$int64": "7"
+        },
+        "mod_revision": {
+          "$int64": "7"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3RlbmFudC1hL2NvbmZpZ21hcHMvZGVmYXVsdC9jbQ=="
+        },
+        "create_revision": {
+          "$int64": "33"
+        },
+        "mod_revision": {
+          "$int64": "33"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3RlbmFudC1hL2NvbmZpZ21hcHMvZGVmYXVsdC9jbS1lbmNyeXB0ZWQ="
+        },
+        "create_revision": {
+          "$int64": "34"
+        },
+        "mod_revision": {
+          "$int64": "34"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9lbXB0eQ=="
+        },
+        "create_revision": {
+          "$int64": "17"
+        },
+        "mod_revision": {
+          "$int64": "17"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9rZXkt//4="
+        },
+        "create_revision": {
+          "$int64": "19"
+        },
+        "mod_revision": {
+          "$int64": "19"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9sYXJnZQ=="
+        },
+        "create_revision": {
+          "$int64": "16"
+        },
+        "mod_revision": {
+          "$int64": "16"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9ub3QtdXRmOA=="
+        },
+        "create_revision": {
+          "$int64": "15"
+        },
+        "mod_revision": {
+          "$int64": "15"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy93aGl0ZXNwYWNl"
+        },
+        "create_revision": {
+          "$int64": "18"
+        },
+        "mod_revision": {
+          "$int64": "18"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L//+L3g="
+        },
+        "create_revision": {
+          "$int64": "37"
+        },
+        "mod_revision": {
+          "$int64": "37"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "Y29tcGFjdF9yZXZfa2V5"
+        },
+        "create_revision": {
+          "$int64": "32"
+        },
+        "mod_revision": {
+          "$int64": "32"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "cGxhaW4="
+        },
+        "create_revision": {
+          "$int64": "9"
+        },
+        "mod_revision": {
+          "$int64": "9"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "cmVnaXN0cnkvc2VjcmV0cy9kZWZhdWx0L2xlZ2FjeQ=="
+        },
+        "create_revision": {
+          "$int64": "31"
+        },
+        "mod_revision": {
+          "$int64": "31"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "67"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "34"
+    }
+  }
+}

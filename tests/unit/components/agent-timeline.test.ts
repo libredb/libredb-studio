@@ -551,6 +551,32 @@ describe("foldLedgerEntries", () => {
     });
 
     /*
+      The language the server resolved from the run's capabilities when it recorded the draft
+      (#1089). The rail renders the card with no capabilities, so this is the one fact that tints
+      an etcd draft in etcd's accent rather than the neutral one, and the fold carries it as
+      recorded. A ledger written before the field existed carries none, and the fold adds none.
+    */
+    test("the card is handed the editor language the server recorded with the draft", () => {
+      const item = drafted(
+        event({
+          kind: "event",
+          event: {
+            kind: "plan-statement-drafted",
+            atMs: 8,
+            sql: "get /config/ --prefix",
+            dialect: "etcd",
+            language: "etcd",
+            readOnly: false,
+            guardApplicable: false,
+            identifiers: { kind: "not-applicable" },
+          },
+        }),
+      );
+
+      expect(item?.planStatement?.language).toBe("etcd");
+    });
+
+    /*
       Item 7: the statement itself has to REACH the surface, or the card cannot show
       it. The fold carries the ledger's own record — the text, the guard's verdict and
       what the identifier check found — rather than a rendering of it, because the

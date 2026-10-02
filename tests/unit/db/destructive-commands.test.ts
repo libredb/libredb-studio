@@ -1,11 +1,17 @@
-import { describe, test, expect } from "bun:test";
+import { afterEach, describe, test, expect } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
   isDestructiveNonSqlQuery,
   vocabularyDecidesAlone,
+  vocabularySendsToModel,
+  vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
+import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
+import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { readsSqlText } from "@/lib/sql/grammar";
+import type { DatabaseType } from "@/lib/types";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 
 // The facts behind the confirmation gate for the engines whose query text is not
 // SQL. The gate itself (`isDangerousQuery`) is tested in
@@ -288,8 +294,12 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus and kafka and for no other type", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual(["prometheus", "kafka"]);
+  test("is true for prometheus, kafka and etcd and for no other type", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
+      "prometheus",
+      "kafka",
+      "etcd",
+    ]);
   });
 
   test("is false with no type at all", () => {
@@ -298,8 +308,14 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the four types whose text is not SQL", () => {
-    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual(["kafka", "mongodb", "prometheus", "redis"]);
+  test("carries a row for exactly the five types whose text is not SQL", () => {
+    expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
+      "etcd",
+      "kafka",
+      "mongodb",
+      "prometheus",
+      "redis",
+    ]);
   });
 
   test("names no Kafka operation, because a read request has none to name", () => {
@@ -325,5 +341,154 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
     for (const absent of ["drop", "dropCollection", "dropDatabase", "createIndex", "renameCollection"]) {
       expect(operations?.has(absent)).toBe(false);
     }
+  });
+});
+
+// The two fields a row declares for the dialog rather than for the gate's yes or no (#1089, section 5.5 and E10).
+// These tests install a row of their own under a key no DatabaseType spells, and remove it after each test, so each
+// rule is pinned apart from any engine's grammar. etcd's row, the one shipped row that declares both fields, is
+// pinned as well: its typed confirmation with its own commands in describe("the etcd row") below, and its
+// safetyAnalysis: false by the etcd test of describe("vocabularySendsToModel").
+
+describe("vocabularyTypedConfirmation", () => {
+  let remove: () => void = () => {};
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  test.each<[DatabaseType, string]>([
+    ["postgres", "DROP TABLE users"],
+    ["redis", "FLUSHALL"],
+    ["mongodb", '{"collection":"users","operation":"deleteMany","filter":{}}'],
+    ["prometheus", "up"],
+    ["kafka", '{"topic": "orders"}'],
+  ])(
+    "asks for nothing to be typed on %s, whose row declares no typed confirmation or which has no row",
+    (type, text) => {
+      expect(vocabularyTypedConfirmation(type, text)).toBeUndefined();
+    },
+  );
+
+  test("asks for nothing to be typed with no type at all", () => {
+    expect(vocabularyTypedConfirmation(undefined, "FLUSHALL")).toBeUndefined();
+  });
+
+  test("hands a row's answer through as the row gave it, either shape, and nothing where the row asks nothing", () => {
+    // Each answer carries whitespace a reader could be tempted to tidy, and ` /App/ ` is not `/App/` to etcd: the
+    // reader hands on the row's own objects, the very ones, untouched (#1089, section 5.5).
+    const prefixAsk: TypedConfirmationAsk = { type: "text", text: " /App/ " };
+    const everyKeyAsk: TypedConfirmationAsk = { type: "connection-name", targets: [" every key "] };
+    const seen: string[] = [];
+    remove = installStandInVocabulary({
+      typedConfirmation: (text): TypedConfirmationAsk | undefined => {
+        seen.push(text);
+        if (text === 'wipe-prefix " /App/ "') return prefixAsk;
+        if (text === "wipe-all") return everyKeyAsk;
+        return undefined;
+      },
+    });
+
+    const prefix = vocabularyTypedConfirmation(STAND_IN_TYPE, 'wipe-prefix " /App/ "');
+    expect(prefix).toBe(prefixAsk);
+    // Against a fresh literal as well, since an answer trimmed in place is still the same object.
+    expect(prefix).toEqual({ type: "text", text: " /App/ " });
+    const everyKey = vocabularyTypedConfirmation(STAND_IN_TYPE, "wipe-all");
+    expect(everyKey).toBe(everyKeyAsk);
+    expect(everyKey).toEqual({ type: "connection-name", targets: [" every key "] });
+    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, "get /App/")).toBeUndefined();
+    // Whitespace around the text is the row's to read: trimmed, this would be the wipe-all ask above.
+    expect(vocabularyTypedConfirmation(STAND_IN_TYPE, " wipe-all\n")).toBeUndefined();
+    // The text reaches the row as written: no trim, no case folding.
+    expect(seen).toEqual(['wipe-prefix " /App/ "', "wipe-all", "get /App/", " wipe-all\n"]);
+  });
+});
+
+describe("vocabularySendsToModel", () => {
+  let remove: () => void = () => {};
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
+  // values included, on this deployment (#1089 E10).
+  test("keeps etcd's statements from the AI analysis, and no other shipped type's", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual(["etcd"]);
+  });
+
+  test("sends with no type at all", () => {
+    expect(vocabularySendsToModel()).toBe(true);
+  });
+
+  test("keeps a row's statements on this device where it declares safetyAnalysis: false, and only there", () => {
+    remove = installStandInVocabulary({ safetyAnalysis: false });
+    expect(vocabularySendsToModel(STAND_IN_TYPE)).toBe(false);
+    remove();
+
+    remove = installStandInVocabulary({});
+    expect(vocabularySendsToModel(STAND_IN_TYPE)).toBe(true);
+  });
+});
+
+/**
+ * etcd's row (#1089, section 5.5 and E10), read by `guard.ts` over the provider's own parser, so what runs and
+ * what asks are one parse. The Gate column of 5.1.3: reads never ask, `lease grant` and `lease keep-alive` ask
+ * nothing, a single-key write asks one click, a range delete asks for its prefix or start key, a `lease revoke`
+ * for its lease, and a delete of every key or a txn with more than one destructive target for the name.
+ */
+describe("the etcd row", () => {
+  test.each([
+    ["a read", "get /app/ --prefix"],
+    ["a read of a key spelled like a SQL write", "get /update/drop --prefix"],
+    ["a watch", "watch /app/ --prefix"],
+    ["a lease grant, which destroys nothing", "lease grant 60"],
+    ["a keep-alive, which destroys nothing", "lease keep-alive --once 694d8147df1dc4c8"],
+    ["a txn of reads", 'txn\nmod("/app/cfg") > "0"\n\nget /app/cfg\n\n'],
+    ["text the parser refuses, which will not run", "compaction 5"],
+    ["an empty buffer", ""],
+  ])("asks nothing for %s", (_label, text) => {
+    expect(isDestructiveNonSqlQuery(text, "etcd")).toBe(false);
+    expect(vocabularyTypedConfirmation("etcd", text)).toBeUndefined();
+  });
+
+  test.each([
+    ["a put", "put /app/cfg value"],
+    ["a single-key del", "del /app/cfg"],
+    ["a txn that writes", 'txn\nmod("/app/cfg") > "0"\n\nput /app/cfg v\n\n'],
+    ["a txn of two single-key dels", "txn\n\ndel /app/a\ndel /app/b\n\n"],
+  ])("asks one click for %s, and no typed text", (_label, text) => {
+    expect(isDestructiveNonSqlQuery(text, "etcd")).toBe(true);
+    expect(vocabularyTypedConfirmation("etcd", text)).toBeUndefined();
+  });
+
+  test.each([
+    ["a prefix delete, the prefix", "del /App/ --prefix", { type: "text", text: "/App/" }],
+    ["a from-key delete, the start key", "del /app/a --from-key", { type: "text", text: "/app/a" }],
+    ["a lease revoke, the lease id", "lease revoke 694d8147df1dc4c8", { type: "text", text: "694d8147df1dc4c8" }],
+  ] as const)("asks for typed text for %s", (_label, text, ask) => {
+    expect(isDestructiveNonSqlQuery(text, "etcd")).toBe(true);
+    expect(vocabularyTypedConfirmation("etcd", text)).toEqual(ask);
+  });
+
+  test("a delete of every key, and a txn with two destructive targets, ask for the connection's name", () => {
+    expect(vocabularyTypedConfirmation("etcd", "del '' --prefix")).toEqual({
+      type: "connection-name",
+      targets: ["every key"],
+    });
+    const two = "txn\n\ndel /app/ --prefix\ndel /cfg/ --prefix\n\n";
+    const ask = vocabularyTypedConfirmation("etcd", two);
+    expect(ask?.type).toBe("connection-name");
+    expect(ask).toEqual(etcdTypedConfirmation(two));
+    expect(ask?.type === "connection-name" ? ask.targets : []).toHaveLength(2);
+  });
+
+  test("the row decides alone, so no SQL keyword test reads an etcd key", () => {
+    expect(vocabularyDecidesAlone("etcd")).toBe(true);
+    // Read as SQL, the key names below are a DELETE and a DROP; read as etcdctl, they are keys a get reads.
+    expect(isDestructiveNonSqlQuery("get DELETE FROM users", "etcd")).toBe(false);
+    expect(isDestructiveNonSqlQuery("get /drop/table --prefix", "etcd")).toBe(false);
   });
 });

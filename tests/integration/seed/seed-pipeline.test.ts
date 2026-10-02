@@ -21,6 +21,7 @@ describe("seed pipeline integration", () => {
     delete process.env.GOOD_PASSWORD;
     delete process.env.TEST_KAFKA_PASSWORD;
     delete process.env.TEST_KAFKA_MECHANISM;
+    delete process.env.TEST_READ_ONLY;
   });
 
   it("full pipeline: load -> resolve -> filter (admin)", async () => {
@@ -125,6 +126,23 @@ describe("seed pipeline integration", () => {
 
     await expect(getManagedConnections(["admin"])).rejects.toThrow(
       /^Invalid seed config: connections\.0\.saslMechanism: /,
+    );
+  });
+
+  it("a seeded read-only mode written as an environment reference refuses the file, naming the field", async () => {
+    // The mode names no credential and no address, so no reference is resolved in it (#1089), and the
+    // file is validated before anything is resolved: the refusal names the field.
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "readonly-reference.yaml");
+    process.env.TEST_READ_ONLY = "true";
+
+    await expect(getManagedConnections(["admin"])).rejects.toThrow(/^Invalid seed config: connections\.0\.readOnly: /);
+  });
+
+  it("a read-only mode in defaults refuses the file, naming the per-connection rule", async () => {
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "readonly-defaults.yaml");
+
+    await expect(getManagedConnections(["admin"])).rejects.toThrow(
+      "Invalid seed config: defaults.readOnly: readOnly is set per connection and never in defaults: add readOnly: true to each seed connection that must refuse writes",
     );
   });
 });

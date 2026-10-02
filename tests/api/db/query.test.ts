@@ -23,6 +23,7 @@ import {
   isRetryableError,
   mapDatabaseError,
 } from "@/lib/db/errors";
+import type { DatabaseConnection } from "@/lib/types";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -105,6 +106,9 @@ mock.module("@/lib/db", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/query/route");
+// The real check the factory runs first (#1089). This file replaces `@/lib/db`, the route's own import,
+// and not `@/lib/db/factory`, so the test below can run the real refusal inside the replaced factory.
+const { assertReadOnlyHonoured } = await import("@/lib/db/factory");
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -313,6 +317,34 @@ describe("POST /api/db/query", () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("required");
+  });
+
+  // #1089. The factory refuses a readOnly the engine cannot keep before it builds anything, and this
+  // route answers that refusal as the configuration error it is. The replaced factory runs the real
+  // check on the connection the route resolved, so a route that dropped or rewrote the field on the way
+  // would fail here too.
+  test("an inline read-only connection on an engine that does not enforce the mode answers 400 and runs nothing", async () => {
+    mockCreateDatabaseProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
+      assertReadOnlyHonoured(args[0] as DatabaseConnection);
+      return mockProvider;
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: { ...validConnection, readOnly: true }, sql: "SELECT * FROM users" },
+    });
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toBe(
+      "readOnly: true is refused for postgres: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.",
+    );
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+    expect(mockProvider.query).not.toHaveBeenCalled();
   });
 
   test("returns 400 for QueryError", async () => {
@@ -1181,6 +1213,9 @@ describe("POST /api/db/query — the database a run reads", () => {
     // answer is injected for this request, exactly as the real provider declares it.
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockReturnValueOnce({
       keyScan: { defaultCount: 500, maxCount: 1000 },
+      // Redis's own container level beside its walk: the field is taken only where there is a database
+      // to name (spec 3.4).
+      containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
     });
 
     const res = await POST(
@@ -1217,6 +1252,49 @@ describe("POST /api/db/query — the database a run reads", () => {
     // Refused from the declaration alone: an unreachable Postgres answered 503 here while the gate
     // ran after the connect, which reported a network fault for a request that was never valid.
     expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(1);
+    expect(openedConnections()).toHaveLength(0);
+  });
+
+  test("refuses a database on an engine that walks one key space, without connecting", async () => {
+    // The walk declared and no container level to name, because one connection is one key space: etcd's
+    // declaration, and the same declaration with the level left out rather than empty (spec 3.4, 4.1).
+    const shapes = [
+      {
+        keyScan: {
+          defaultCount: 500,
+          maxCount: 1000,
+          separator: "/",
+          cursor: "opaque",
+          pattern: "prefix",
+          totalScope: "walk",
+        },
+        containerLevels: [],
+      },
+      { keyScan: { defaultCount: 500, maxCount: 1000 } },
+    ];
+
+    for (const capabilities of shapes) {
+      (mockProvider.getCapabilities as ReturnType<typeof mock>).mockReturnValueOnce(capabilities);
+      const res = await POST(
+        createMockRequest("/api/db/query", {
+          method: "POST",
+          body: {
+            connection: { id: "etcd-1", name: "etcd", type: "etcd", host: "127.0.0.1", port: 2379 },
+            sql: "get /app/cfg",
+            database: 0,
+          },
+        }) as never,
+      );
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe(
+        'etcd walks one key space and declares no database level: "database" names the numbered database a key was walked in, and this engine has none to name',
+      );
+    }
+    // Decided from the unconnected declaration, so no provider, SSH forward or channel was opened or
+    // cached for a value the engine refuses.
+    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(2);
     expect(openedConnections()).toHaveLength(0);
   });
 
