@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D138, U17 · 82
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U68 · 55
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U71 · 58
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B91 · 32
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B92 · 33
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -2826,6 +2826,10 @@ Three surfaces report whether a connection works, and none of them says it was r
 Seen 2026-09-23 in the #1085 browser pass on a Prometheus connection with a wrong password: `/api/v1/status/buildinfo` answered HTTP 401, and the desktop header read "Slow", the admin fleet "timeout" and the mobile header "Online", while the object panel showed the refusal itself.
 None of it is engine-specific: the three lines predate #1085 and none of them reads the connection's type, so every engine takes the same paths.
 
+Measured again 2026-10-02 in the etcd agent pass: a run over 19 key prefixes, 1 member and 2 leases recorded `tableCount` 22 and read "22 key prefixes read" on the answer card, and the prompt header says "22 key prefix(s)" (`t27/outcomes.md`).
+The count is `snapshot.objects.length` named with `noun.singular` near lines 1448 and 1528 of `src/lib/agent/context-snapshot.ts`, and `tableCount` named with `noun.plural` near line 429 of `src/components/agent/AnswerCard.tsx` and 948 and 1368 of `src/components/agent/timeline.ts`.
+`origin/main` has the same code, and its providers declare extra inventory kinds too (Druid lookups, Cassandra types, ClickHouse dictionaries, MSSQL synonyms), read from the code and not measured there.
+
 Found 2026-09-23 by the #1085 browser pass.
 Not fixed in #1085: the three components serve every engine, and that PR changes no shared surface's behaviour for the engines it does not add.
 
@@ -3081,6 +3085,40 @@ Found by the etcd review (#1089), while measuring the LibreDB lines of U67.
 Not fixed there: LibreDB's arms and its provider are outside the etcd PR.
 
 **Done when:** the generated `prefix`, `get`, `put` and `delete` lines quote a key or prefix that holds white space or a quote mark, or write a `#` note in place of a line they cannot spell, so `tokenize` reads each back as that one key, and a test runs each line against a store holding a key with a space and one with a quote mark, each beside the key its bare line names, and finds that the line reaches its own key and leaves the other as it was.
+
+### U69. The result export menu offers SQL INSERT and DDL for every engine, etcd included
+
+`RESULT_FORMATS` in `src/components/studio/BottomPanel.tsx` lists "SQL INSERT" (`sql-insert`) and "DDL (CREATE TABLE)" (`sql-ddl`) beside CSV and JSON, and both menus map over the whole list with no gate, so every engine's result offers them.
+Neither means anything for a result that is not a table of rows in a SQL database, and the file they write says so.
+Measured 2026-10-02 in the etcd browser pass: an etcd result of three keys exported as SQL INSERT writes `INSERT INTO table_name ("key", "value", "value_encoding", "create_revision", "mod_revision", "version", "lease") VALUES ('/app/a/b', 'nested', 'text', '13', '13', '1', NULL);` for each row, a statement for a table that does not exist (`t26/export-app.sql-insert`, `t26/shots/t26-18-export-menu.png`).
+`origin/main` has the same list and the same ungated menus, so every non-SQL engine there offers them too.
+
+Found by the etcd browser pass (#1089).
+Not fixed there: the menu serves every engine and the etcd PR adds no capability to it.
+
+**Done when:** the provider declares whether SQL INSERT and DDL apply to its results, the two entries show only when it does, and a test renders the menu for an engine that declares neither and for one that declares both.
+
+### U70. Admin Overview's Fleet Status prints "timeout" for any endpoint that errored
+
+`OverviewTab` in `src/components/admin/tabs/OverviewTab.tsx` prints "timeout" for a fleet row whose `item.status === "error"` and the latency otherwise (near line 775), so a refused credential, an unreachable host and a real timeout all read "timeout".
+Measured 2026-10-02 in the etcd browser pass: an etcd connection whose user is refused by the server shows "timeout" in Fleet Status (`t26/outcomes.md`, the Fleet line).
+`origin/main` has the same line.
+
+Found by the etcd browser pass (#1089).
+Not fixed there: the row is shared by every engine and its health payload is not part of the etcd work.
+
+**Done when:** the row shows the error's own category or message, with a test that renders a refusal and a timeout and expects two different texts.
+
+### U71. Monitoring's Tables tab draws the SQL columns for etcd
+
+`src/components/monitoring/tabs/TablesTab.tsx` draws Size, Index, Bloat and Vacuum for every engine, and its header card reads "Vacuum 0" when nothing needs one, so an etcd connection, which has none of the four, gets all of them.
+Measured 2026-10-02 in the etcd browser pass: the tab for etcd shows Size N/A, an Index column, a Bloat column and the Vacuum card with 0 (`t26/shots/t26-26-tables.png`).
+The tab is shared by every engine, and etcd reaches it on this branch; the same columns are drawn on `origin/main` for every engine there.
+
+Found by the etcd browser pass (#1089).
+Not fixed there: the tab's columns are not declared per provider anywhere, and adding that is a change to every engine's tab.
+
+**Done when:** the provider declares which table-stat columns it fills, as other capability-driven surfaces do, the tab draws only those, and a test renders it for an engine that fills none of the four.
 
 ## Dependencies
 
@@ -4584,6 +4622,18 @@ The same page's request path has no body-size limit either - a 2 MB JSON-RPC bod
 Found 2026-09-28 while testing MCP end to end on macOS.
 Not fixed in #1192: that branch is the agent's measurement path and touches nothing under `src/lib/mcp/`, and a size limit is a ruling about the route's contract rather than a snippet correction.
 **Done when:** the OpenCode snippet uses the key that client reads, with a test asserting each client's snippet against that client's documented shape, and the MCP route rejects a body past a stated bound with a refusal that names it.
+
+### B92. Plan mode on etcd drafts a read of a whole prefix group the connection can only partly read
+
+`captureContextSnapshot` in `src/lib/agent/context-snapshot.ts` marks a prefix group `partlyReadable` and writes a note and a "(partly readable)" mark into the prompt, and `src/lib/agent/investigation.ts` records `plan-statement-drafted` with no check of the draft against that mark.
+Spec E13 keeps the readable key's name out of the prompt, so the model has only the note to follow, and it does not.
+Measured 2026-10-02 in the etcd agent pass: with `/config/*` marked partly readable (the user may read `/app/` and `/config/a`), `gemini-3.5-flash-lite` drafted `etcdctl get /config/ --prefix` in 4 of 4 runs, and etcd refused it when run: "etcd refused the get on /config/ (prefix): this connection's etcd user is not granted all of it." (`t27/outcomes.md`, `t27/ledger-2.json`, `t27/prompt-2.txt`, `t27/shots/t27-11-run-2.png`).
+This is not on `origin/main`: the etcd provider is new.
+
+Found by the etcd agent pass (#1089).
+Not fixed there: a model's choice is not something the snapshot can force, and the check below is its own change.
+
+**Done when:** a server-side check flags a drafted read over a whole partly readable group, by the group's name only so E13 holds, and the answer card shows the flag, with a test that a draft over `/config/` is flagged while one over `/app/` is not.
 
 ## Passkey deferrals (#785)
 
