@@ -509,8 +509,9 @@ sentence saying the inventory is incomplete and naming the limit. A kind whose c
 `sampledFrom`, Redis key groupings from one bounded `SCAN` and LibreDB keyspaces from a bounded key
 walk, is reported as a FLOOR ("at least what is shown"), and a kind on an engine declaring
 `tablesAreDerivedGroupings` is named as groupings this server derived rather than objects anybody
-named, so no command can be addressed to one. An absence the model was not told about is read as an
-absence in the database, which is #414 in one sentence.
+named, so no command can be addressed to one.
+An object whose listing carried `readRanges`, an etcd group the user's grants read only in part, is marked partly readable beside its name, naming none of those ranges, and a note tells the model that a read of the whole object is refused and is not to be drafted or run (#1089 4.7).
+An absence the model was not told about is read as an absence in the database, which is #414 in one sentence.
 
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
 PostgreSQL costs three and SQLite two. No object method takes a budget on any provider, so the call is
