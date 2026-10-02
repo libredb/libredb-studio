@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D139, U17 · 83
+- [Drivers and connections](#drivers-and-connections) — D1-D138, U17 · 82
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U66 · 53
@@ -1984,18 +1984,6 @@ Found while building the etcd provider (#1089), whose connection sentences name 
 Not fixed there: the tunnel serves every engine.
 
 **Done when:** a refused forward reaches the caller as a connection error that names the bastion's refusal and the far end, on every tunnelled provider, and a test through an in-process ssh2 bastion that refuses the channel pins it.
-
-### D139. An etcd call whose deadline is met before its request leaves Studio is reported as a timeout, not a connection error
-
-`EtcdProvider` in `src/lib/db/providers/keyvalue/etcd/index.ts` bounds a typed command (`query`, through `AbortSignal.any` with `callSignal()`), every surface (`surfaceOver`) and a walk's read of the grants (`readGrantsAgain`) with `AbortSignal.timeout(queryTimeout)`, which starts before the adapter sets the gRPC deadline of the same length on the call (`wireCall` in `grpc-client.ts`).
-So a call still waiting for its connection, as against an endpoint that accepts and never answers or one whose SYNs are dropped, is cancelled by Studio's timer first, grpc-js reports "Cancelled on client", and `toEtcdError` in `errors.ts` reads a cancel whose signal timed out as `deadline-exceeded`, never as the `not-connected` that gRPC's own deadline, naming "Waiting for LB pick", is read as.
-A read then answers "The get reached its deadline of N ms." and a write "The write may have been applied", where the request never left Studio and provider doc section 10 calls such a failure a connection error; the connect steps start no timer of their own (`openSession`), so Test Connection reports a connection error for the same endpoint.
-Measured 2026-10-02 through the real `EtcdProvider` over `tests/helpers/etcd-fake-client.ts`, each call ending as grpc-js ends one that never got its pick: `get /a` and the Members listing answered `TimeoutError` "(Cancelled on client)", and `del /x/ --prefix` "The write may have been applied", in 10 of 10 runs each.
-
-Found by the etcd provider's review (#1089, round 2), after the connect steps were fixed the same way.
-Not fixed there: it needs the adapter to mark the abort of a call that never left, and `toEtcdError` to read that mark as `not-connected` even when the signal's reason is a timeout.
-
-**Done when:** a typed command's, a surface's and a walk's call that never left Studio answers a connection error at its deadline, a write among them without the sentence that it may have been applied, and provider tests over a call that never gets its pick pin all three.
 
 ## Value interpolation
 
