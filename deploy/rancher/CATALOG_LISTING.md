@@ -101,7 +101,7 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > names. Read the number from `SHIPPED` when a tag carries it, and see BACKLOG D39 - nothing
 > counts these lists, which is why three PRs in a row have corrected them by hand.
 > The AUR package is one ahead as CapRover and Railway are: `packaging/aur/PKGBUILD` and its `.SRCINFO` pin `pkgver=0.17.0`, whose payload has eighteen engines and no etcd, and say nineteen from the merge of #1089, because `tests/unit/lib/catalog-copy-engine-count.test.ts` counts the `pkgdesc` line on `main` too.
-> Its first import is a hand push of those files (`packaging/aur/README.md`, Releases), so one made from `main` after that merge lists 0.17.0 as nineteen engines: push it before the merge, or render the files with `scripts/render-aur-pkgbuild.mjs` for the release that carries etcd.
+> Its first import is a hand push of those files (`packaging/aur/README.md`, Releases), so one made from `main` after that merge lists 0.17.0 as nineteen engines: push it before the merge, or render the `PKGBUILD` with `scripts/render-aur-pkgbuild.mjs` for the release that carries etcd, regenerate `.SRCINFO` from that render with `makepkg --printsrcinfo > .SRCINFO`, since the script writes the `PKGBUILD` alone, and push both.
 > `packaging/winget`, `packaging/chocolatey` and `packaging/homebrew` carry **no number** in
 > their summaries - nothing regenerates them from the registry, so any digit there is stale the
 > day the next engine lands (issue #445) - but their exhaustive descriptions still name every
