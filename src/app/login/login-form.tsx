@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch, withBasePath } from "@/lib/config/base-path";
-import { Suspense, useState, useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -52,7 +52,13 @@ interface LoginFormProps {
   passkey: PasskeySignInOffer | null;
 }
 
-function LoginFormInner({ authProvider, passkey }: LoginFormProps) {
+/**
+ * No Suspense boundary wraps this form. The page renders on every request (`force-dynamic`), where `useSearchParams`
+ * reads the request on the server without suspending, so a boundary bought nothing; and React outlined its large
+ * content into a hidden segment that a script moves into place, which on a loaded CI runner left the hidden copy beside
+ * the form the client had drawn, two `input#email` (Functional Smoke, run 37022597426).
+ */
+export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
   const isOIDC = authProvider === "oidc";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -495,13 +501,5 @@ function LoginFormInner({ authProvider, passkey }: LoginFormProps) {
         </div>
       </div>
     </div>
-  );
-}
-
-export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
-  return (
-    <Suspense>
-      <LoginFormInner authProvider={authProvider} passkey={passkey} />
-    </Suspense>
   );
 }
