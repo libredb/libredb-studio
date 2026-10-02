@@ -429,6 +429,7 @@ A group whose prefix holds a carriage return, a line separator (U+2028) or a par
 ## 10. Error handling
 
 A failure before the request left Studio is a connection error; "etcdserver: no leader" is a lost quorum with nothing applied; a write that met a failure after it was sent says that it may have been applied and that the key should be read again before the command is run again; a read's deadline is a timeout; a permission refusal names the command, the range and what the user may read, "etcd user reader may read: /app/ (prefix), /config/a"; and every other answer is etcd's own words after Studio's.
+The tree's Key Prefixes listing and the Tables tab's per-group counts, whose refusals the agent reads as well, name what the user may read as every key or as how many ranges instead, "etcd user reader may read: 2 ranges", and the listing names no range it asked for, because each is one of the user's grants and may be a single key.
 The token, the password and a value never reach an error.
 A key is named in every message as etcdctl's command line takes it: bare when it reads back as itself, shell-quoted otherwise, and in Go's `%q` form when it holds bytes that are not UTF-8 or a rune Go's `%q` escapes, such as a control character, a bidi override or a zero-width space.
 A lease id past the largest int64, or written with a sign, is refused before any request.
