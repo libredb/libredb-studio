@@ -726,29 +726,53 @@ describe("E13: key names stay in the Keys panel and the Source tab", () => {
     }
   });
 
-  test("as the reader granted one key, once an admin revokes its prefix grant, that key's name is in no refusal the agent or the tree reads", async () => {
-    // The provider holds the grants it read at connect, and reads them again only when a renewal meets a
-    // stale auth revision (spec 4.7), so after the revoke etcd refuses the walk of /app/ the provider still makes.
+  test("as the reader granted one key, once an admin revokes its prefix grant, the next walk reads the grants again and lists what remains, and that key's name is in nothing the agent or the tree reads", async () => {
+    // BUILT as etcd records a revoke, which commits a new auth revision: AuthStatus answers etcd-auth/auth-status-on
+    // with only its authRevision raised by one, RoleGet answers etcd-auth/role-get-reader without its /app/
+    // permission, and a Range of /app/ meets the captured refusal, since etcd checks the grants as they stand.
     let revoked = false;
     const appRevoked = (request: WireRangeRequest) =>
       readerMayRead(request) && !(revoked && intervalOf(request).start.toString().startsWith("/app/"));
-    const { provider } = await connected(READER, readerWire({ "KV/Range": always(servedRange(appRevoked)) }));
+    const status = etcdFixture<{ readonly authRevision: string }>("etcd-auth/auth-status-on");
+    const role = etcdFixture<{ readonly perm: ReadonlyArray<{ readonly key: Buffer }> }>("etcd-auth/role-get-reader");
+    const wire = readerWire({
+      "KV/Range": always(servedRange(appRevoked)),
+      "Auth/AuthStatus": always(() =>
+        revoked ? { ...status, authRevision: String(BigInt(status.authRevision) + BigInt(1)) } : status,
+      ),
+      "Auth/RoleGet": always(() =>
+        revoked ? { ...role, perm: role.perm.filter((perm) => !perm.key.toString().startsWith("/app/")) } : role,
+      ),
+    });
+    const { provider } = await connected(READER, wire);
     revoked = true;
+    const revokedAt = wire.calls.length;
+    // Every walk reads AuthStatus first, so the moved revision has the grants read again before any key (spec 4.7).
     const capture = await captureContextSnapshot(agentContext(provider, READER));
-    expect(capture.kind).toBe("unavailable");
+    expect(capture.kind).toBe("captured");
     expect(JSON.stringify(capture)).not.toContain("/config/a");
     const rows = await treeOf(provider);
-    const folder = rows.find((row) => row.kindId === "prefix");
-    expect(folder?.unavailable).toContain("etcd refused the Key Prefixes listing");
+    expect(rows.filter((row) => row.kind === "object" && row.kindId === "prefix").map((row) => row.label)).toEqual([
+      "/config/*",
+    ]);
     for (const row of rows) {
-      expect([row.label, row.badge ?? "", row.badgeTitle ?? "", row.unavailable ?? ""].join(" ")).not.toContain(
+      expect([row.id, row.label, row.badge ?? "", row.badgeTitle ?? "", row.unavailable ?? ""].join(" ")).not.toContain(
         "/config/a",
       );
     }
     // The agent's inspect_operations reads the Tables panel's statistics through getTableStats.
-    const stats = await failure(provider.getTableStats());
-    expect(stats).toBeInstanceOf(QueryError);
-    expect(stats.message).not.toContain("/config/a");
+    const stats = await provider.getTableStats();
+    expect(stats.map((stat) => [stat.tableName, stat.rowCount])).toEqual([["/config/*", 1]]);
+    // The first walk after the revoke read the grants again, and no read asked etcd for the revoked prefix.
+    const after = wire.calls.slice(revokedAt);
+    expect(after.filter((call) => call.rpc === "Auth/RoleGet")).toHaveLength(1);
+    const asked = after.filter((call) => call.rpc === "KV/Range");
+    expect(asked.length).toBeGreaterThan(0);
+    for (const call of asked) {
+      expect(Buffer.from((call.request as WireRangeRequest).key ?? new Uint8Array()).toString()).not.toStartWith(
+        "/app/",
+      );
+    }
   });
 });
 
