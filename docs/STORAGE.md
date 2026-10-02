@@ -843,7 +843,7 @@ This part describes the internals of the storage abstraction layer: design goals
 
 ### 3.1 Collections
 
-All application state is organized into **12 collections**, each stored as a JSON blob:
+All application state is organized into **13 collections**, each stored as a JSON blob:
 
 | Collection | Type | Description | Max Items |
 |-----------|------|-------------|-----------|
@@ -1252,7 +1252,7 @@ When a user first enables server mode (or a new user logs in for the first time)
 1. Hook detects serverMode = true
 2. Checks localStorage('libredb_server_migrated') flag
 3. If not migrated:
-   a. Reads whichever of the 12 collections exist in localStorage (a fresh browser with none simply sets the flag and skips)
+   a. Reads whichever of the 13 collections exist in localStorage (a fresh browser with none simply sets the flag and skips)
    b. POST /api/storage/migrate with the collected payload
    c. Server calls provider.mergeData() — upserts each collection as a whole blob in one transaction
    d. Sets 'libredb_server_migrated' flag in localStorage

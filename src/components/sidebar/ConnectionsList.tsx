@@ -61,7 +61,7 @@ function SectionHeader({
   actions?: React.ReactNode;
 }) {
   const text = (
-    <span className="text-xs font-medium text-muted-foreground">
+    <span className="min-w-0 truncate text-xs font-medium text-muted-foreground" title={label}>
       {label}
       {count !== undefined && <span className="ml-1.5 font-normal text-muted-foreground/60">{count}</span>}
     </span>
@@ -70,7 +70,7 @@ function SectionHeader({
     <div className="px-3 mb-2 flex items-center justify-between">
       {onToggle ? (
         <button
-          className="flex items-center gap-1 rounded hover:text-foreground"
+          className="flex min-w-0 items-center gap-1 rounded hover:text-foreground"
           aria-expanded={!collapsed}
           aria-label={`${label} group`}
           onClick={onToggle}
@@ -85,7 +85,7 @@ function SectionHeader({
       ) : (
         text
       )}
-      <div className="h-[1px] flex-1 bg-border/30 ml-3" />
+      <div className="h-[1px] flex-1 shrink-0 min-w-4 bg-border/30 ml-3" />
       {actions}
     </div>
   );
