@@ -1570,15 +1570,24 @@ describe("the refresh pattern, held to the parser (spec 5.1.1, 5.1.2, 6.2)", () 
       "put\u00a0/etcdctl get /a",
       "del\f/etcdctl member list",
       "put\u2028/etcdctl get /a",
-      // A text for each fragment of the pattern that a weaker one would misread: a double-quoted path holding a line
-      // break or an escaped quote, an escaped = after --command-timeout, a line join before a comment line, a line
-      // join right after the command word, and a command word that a path to etcdctl goes on from.
+      // A text for each of these fragments of the pattern, which a pattern without it would misread: a double-quoted
+      // path holding a line break or an escaped quote, an escaped = after --command-timeout, a line join before a
+      // comment line, a line join right after the command word, a command word that a path to etcdctl goes on from,
+      // a command word followed by a CR, as a txn typed on Windows is (Monaco 0.57 ends a line there with a CRLF), by
+      // a tab or by the end of the text, the % prompt CoreDNS's etcd plugin README writes, a second ETCDCTL_API=3,
+      // and two quote marks side by side.
       '"/opt/my\ntools/etcdctl" put /a b',
       '"/opt/a\\"b/etcdctl" put /a b',
       "--command-timeout\\=5s put /a b",
       "\\\n# c\nput /a b",
       "put\\\n /a b",
       "put/etcdctl get /a",
+      'txn\r\nmod("/a") > "0"\r\n\r\nput /a b\r\n\r\n',
+      "put\t/a b",
+      "txn",
+      `% etcdctl put /skydns/arpa/in-addr/10/0/0/127 '{"host":"reverse.skydns.local."}'`,
+      "ETCDCTL_API=3 ETCDCTL_API=3 put /a b",
+      '""put /a b',
       // The same spellings around a command that writes nothing, and a key named like a verb.
       "etcdctl \\\nget /app/del",
       "'get' /app/put",
