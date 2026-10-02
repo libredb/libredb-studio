@@ -39,7 +39,7 @@ It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only 
 | `grpc-client.ts` | The one gRPC channel, its credentials, the token and its renewal, the `hasleader` table, deadlines and aborts |
 | `proto/` | The vendored etcd v3.7.2 protos and the descriptor generated from them by `scripts/generate-etcd-descriptor.mjs` |
 | `connection-options.ts` | The connection to options, with the endpoint, credential and TLS checks |
-| `lexer.ts`, `commands.ts` | Every quoting rule, and the etcdctl subset as a declared table |
+| `lexer.ts`, `commands.ts` | Every quoting rule, the `schemaRefreshPattern` that reloads the tree after a write, built from those rules, and the etcdctl subset as a declared table |
 | `keys.ts`, `permissions.ts`, `guard.ts` | Byte ranges, the protected set, the prefix-group rule, the readable and writable scopes, and the command classes |
 | `values.ts`, `results.ts`, `write-policy.ts` | Value classes, result shapes, and the read-only and Kubernetes decisions |
 | `execute.ts`, `watch.ts` | One command within its bounds, and the bounded watch |
