@@ -61,7 +61,7 @@ import {
   type EtcdConnectionOptions,
   etcdErrorConnection,
 } from "./connection-options";
-import { applyEtcdValueEdit, buildEtcdValueEdit } from "./edit";
+import { applyEtcdValueEdit, buildEtcdValueEdit, refuseValueEditBeforeRead } from "./edit";
 import {
   connectStepError,
   type EtcdConnectStep,
@@ -72,7 +72,7 @@ import {
 } from "./errors";
 import { ETCD_READ_BOUNDS, executeCommand } from "./execute";
 import { createGrpcEtcdClient } from "./grpc-client";
-import { ETCD_KEY_SCAN, scanEtcdKeysPage } from "./key-scan";
+import { ETCD_KEY_SCAN, readKeyScanOptions, scanEtcdKeysPage } from "./key-scan";
 import { ETCD_LABELS } from "./labels";
 import { ETCD_SCHEMA_REFRESH_PATTERN } from "./lexer";
 import { ETCD_MAINTENANCE_OPERATIONS, ETCD_MAINTENANCE_SPECS, runEtcdMaintenance } from "./maintenance";
@@ -83,6 +83,7 @@ import {
   describeEtcdObjects,
   ETCD_OBJECT_KINDS,
   type EtcdSurfaceContext,
+  keyOfSourcePath,
   listEtcdObjects,
   readEtcdObjectSource,
 } from "./objects";
@@ -91,11 +92,17 @@ import { commandResult } from "./results";
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
 
-/** The kind that groups keys (spec 4.1): the one the grants scope, and whose names end in `*`. */
+/**
+ * The kind that groups keys (spec 4.1): the one the grants scope, whose names end in `*`, and whose listing is
+ * the one listing that walks keys (spec 4.7).
+ */
 const GROUP_KIND = "prefix";
 
-/** The two kinds whose reads walk keys, the only reads a user's grants scope (spec 4.7). */
-const KEY_READING_KINDS: ReadonlySet<string> = new Set([GROUP_KIND, "key"]);
+/**
+ * One key (spec 4.1): its source is the one source that reads a key (spec 4.7), and it is listed by the Keys
+ * panel alone, so its listing walks nothing and is refused by name with no request (spec 4.3).
+ */
+const KEY_KIND = "key";
 
 /** What this connection may read and write (spec 4.7), or the refusal met reading its grants. */
 type EtcdGrants =
@@ -615,7 +622,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     requireRoot(container);
-    const walks = KEY_READING_KINDS.has(kind);
+    const walks = kind === GROUP_KIND;
     const { client, grants, context } = walks ? await this.walkSurface() : this.standingSurface();
     if (walks) requireKeysReadable(grants);
     return listEtcdObjects(client, context, kind);
@@ -638,13 +645,17 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
-    const walks = KEY_READING_KINDS.has(kind);
+    const walks = kind === KEY_KIND;
+    // A path that names no key is refused before the walk reads the grants, so it sends nothing (spec 4.4, 5.6).
+    if (walks) keyOfSourcePath(path);
     const { client, grants, context } = walks ? await this.walkSurface() : this.standingSurface();
     if (walks) requireKeysReadable(grants);
     return readEtcdObjectSource(client, context, path, kind, limit);
   }
 
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
+    // The options are read before the walk reads the grants, so a refusal they meet sends nothing (spec 4.6, 5.6).
+    readKeyScanOptions(options);
     const { client, grants, context } = await this.walkSurface();
     requireKeysReadable(grants);
     return scanEtcdKeysPage(client, context, options);
@@ -653,12 +664,14 @@ export class EtcdProvider extends BaseDatabaseProvider {
   /**
    * The stamp is the composition root's (spec 4.5): the fingerprint both edit routes compare with the
    * connection they resolved, a fresh id the apply's audit files it under, and the time, as Redis stamps.
-   * A read-only connection's build is refused by E6 before the edit module reads anything, so it reads no
-   * grant, nor the auth store's revision, before that refusal.
+   * A refusal the build gives with no read, a read-only connection's (E6) and a protected key's (E8) among
+   * them, is given before the walk reads the grants, so it sends nothing, the auth store's revision included.
    */
   public async buildObjectEdit(request: ObjectEditRequest): Promise<ObjectEditBuild> {
     const session = this.requireSession();
-    const grants = session.options.readOnly === undefined ? await this.walkGrants(session) : session.grants;
+    const refused = refuseValueEditBeforeRead(session.options, request);
+    if (refused !== undefined) return refused;
+    const grants = await this.walkGrants(session);
     requireKeysReadable(grants);
     const { client, context } = this.surfaceOver(session, grants);
     return buildEtcdValueEdit(client, context, request, {

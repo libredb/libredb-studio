@@ -150,20 +150,15 @@ function languageOf(view: ValueView): string {
 }
 
 /**
- * Reads the key once and issues the plan, or refuses (spec 4.5). The refusals that need no read send
- * nothing: read-only mode (E6), a part other than the value, and a protected key (E8). A read etcd
- * refuses is raised in 5.6's words, as a Redis build raises one, because it leaves nothing to plan
- * against, and a key etcd no longer holds is a `QueryError` naming the key. After the read the
- * refusals follow 4.5's order, the order the Source tab gives its reason in (objects.ts): a withheld,
- * empty, non-UTF-8 or whitespace-only value (4.4), a key outside the writable union (4.7), a value
- * past the edit bound, and an unchanged text.
+ * The build's answer where it needs no read (spec 4.5): read-only mode (E6), a part other than the value and
+ * a protected key (E8) are refused, and a request that names another kind or no key is raised, each before
+ * any request; undefined where the build goes on to read the key. The provider asks it before its walk reads
+ * the grants, so none of these sends a request (spec 5.6).
  */
-export async function buildEtcdValueEdit(
-  client: Pick<EtcdClient, "range">,
-  context: EtcdSurfaceContext,
+export function refuseValueEditBeforeRead(
+  context: Pick<EtcdSurfaceContext, "readOnly">,
   request: ObjectEditRequest,
-  stamp: EtcdEditPlanStamp,
-): Promise<ObjectEditBuild> {
+): ObjectEditBuild | undefined {
   const readOnly = refuseReadOnly(context);
   if (readOnly !== undefined) return refuse("privilege", readOnly.message);
   if (request.kind !== "key") {
@@ -172,7 +167,26 @@ export async function buildEtcdValueEdit(
   const key = keyOf(request.path);
   if (request.partId !== VALUE_PART) return refuse("unsupported", METADATA_NOT_EDITED);
   const protectedKey = refuseBeforeSend(assessCommand(valueEditCommand(key)), context);
-  if (protectedKey !== undefined) return refuse("unsupported", protectedKey.message);
+  return protectedKey === undefined ? undefined : refuse("unsupported", protectedKey.message);
+}
+
+/**
+ * Reads the key once and issues the plan, or refuses (spec 4.5). The refusals that need no read send
+ * nothing (`refuseValueEditBeforeRead`). A read etcd refuses is raised in 5.6's words, as a Redis build
+ * raises one, because it leaves nothing to plan against, and a key etcd no longer holds is a `QueryError`
+ * naming the key. After the read the refusals follow 4.5's order, the order the Source tab gives its
+ * reason in (objects.ts): a withheld, empty, non-UTF-8 or whitespace-only value (4.4), a key outside the
+ * writable union (4.7), a value past the edit bound, and an unchanged text.
+ */
+export async function buildEtcdValueEdit(
+  client: Pick<EtcdClient, "range">,
+  context: EtcdSurfaceContext,
+  request: ObjectEditRequest,
+  stamp: EtcdEditPlanStamp,
+): Promise<ObjectEditBuild> {
+  const refused = refuseValueEditBeforeRead(context, request);
+  if (refused !== undefined) return refused;
+  const key = keyOf(request.path);
 
   // The key as a person types it back, the one way every sentence names a key (spec 5.5, 5.6).
   const shown = typedKey(key, "command-line");

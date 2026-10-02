@@ -207,12 +207,21 @@ async function fill(
   }
 }
 
-/** One page of the Keys panel's walk (spec 4.6, 4.7); every refusal is raised before any request. */
-export async function scanEtcdKeysPage(
-  client: Pick<EtcdClient, "range">,
-  context: EtcdSurfaceContext,
-  options: KeyScanOptions,
-): Promise<KeyScanPage> {
+/** What a page asks for, read from its options before any request (spec 4.6). */
+interface PageRequest {
+  /** "start", or a cursor this provider wrote. */
+  readonly cursor: NonNullable<ReturnType<typeof decodeScanCursor>>;
+  /** The range the pattern names, before the grants clip it (spec 4.7). */
+  readonly range: EtcdByteRange;
+}
+
+/**
+ * A page's options as the walk reads them, each refusal that needs neither a request nor the grants raised here
+ * (spec 4.6, 5.6, R11 CF-18): a `database`, a `count` outside its bounds, a cursor this provider did not write,
+ * and a prefix that is not text. The provider reads them before its walk reads the grants, so none of these
+ * refusals sends a request.
+ */
+export function readKeyScanOptions(options: KeyScanOptions): PageRequest {
   if (options.database !== undefined) {
     throw new DatabaseConfigError(
       'etcd walks one key space and has no numbered database, so "database" names nothing: leave it out.',
@@ -229,7 +238,17 @@ export async function scanEtcdKeysPage(
   if (cursor === undefined) {
     throw new DatabaseConfigError("This cursor was not written by the etcd provider: start the walk again.", PROVIDER);
   }
-  const pieces = clipToScope(walkedRange(options.pattern), context.readable);
+  return { cursor, range: walkedRange(options.pattern) };
+}
+
+/** One page of the Keys panel's walk (spec 4.6, 4.7); every refusal is raised before any request. */
+export async function scanEtcdKeysPage(
+  client: Pick<EtcdClient, "range">,
+  context: EtcdSurfaceContext,
+  options: KeyScanOptions,
+): Promise<KeyScanPage> {
+  const { cursor, range } = readKeyScanOptions(options);
+  const pieces = clipToScope(range, context.readable);
   const digest = piecesDigest(pieces);
 
   if (cursor !== "start") {

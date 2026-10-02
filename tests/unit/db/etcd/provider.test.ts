@@ -1299,6 +1299,96 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect([readOnlyClient.calls.length, writerClient.calls.length]).toEqual(marks);
   });
 
+  test("a walk's own refusal that needs no request is given before the walk reads AuthStatus, so it sends nothing and a lost quorum never stands in for it (spec 4.3, 4.6, 5.6, E8)", async () => {
+    let quorum = true;
+    const client = readerClient({
+      authStatus: async () => {
+        if (!quorum) throw new EtcdError("no-leader", "etcdserver: no leader", 14);
+        return { enabled: true, authRevision: "5" };
+      },
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    quorum = false;
+    const twin = readerClient();
+    const context = contextFor(PASSWORD_CONNECTION, READER_PERMISSIONS);
+    // A refusal reads no stamp, so any stamp stands in.
+    const stamp: EtcdEditPlanStamp = { type: "etcd", connectionFingerprint: "", planId: "", issuedAt: "" };
+    const protectedKey = { ...REQUEST, path: ["/registry/pods/default/nginx"] };
+    const metadata = { ...REQUEST, partId: "metadata" };
+    const refusals: ReadonlyArray<
+      readonly [
+        string,
+        (provider: EtcdProvider) => Promise<unknown>,
+        (client: FakeEtcdClient, context: EtcdSurfaceContext) => Promise<unknown>,
+      ]
+    > = [
+      [
+        "a Keys panel page that names a database",
+        (p) => p.scanKeysPage({ cursor: "0", count: 10, database: 0 }),
+        (c, x) => scanEtcdKeysPage(c, x, { cursor: "0", count: 10, database: 0 }),
+      ],
+      [
+        "a Keys panel page of no keys",
+        (p) => p.scanKeysPage({ cursor: "0", count: 0 }),
+        (c, x) => scanEtcdKeysPage(c, x, { cursor: "0", count: 0 }),
+      ],
+      [
+        "a cursor the provider did not write",
+        (p) => p.scanKeysPage({ cursor: "12", count: 10 }),
+        (c, x) => scanEtcdKeysPage(c, x, { cursor: "12", count: 10 }),
+      ],
+      [
+        "a prefix that is not text",
+        (p) => p.scanKeysPage({ cursor: "0", count: 10, pattern: "/app/\uD800" }),
+        (c, x) => scanEtcdKeysPage(c, x, { cursor: "0", count: 10, pattern: "/app/\uD800" }),
+      ],
+      ["the listing of the key kind", (p) => p.listObjects([], "key"), (c, x) => listEtcdObjects(c, x, "key")],
+      [
+        "the source of an empty key",
+        (p) => p.readObjectSource([""], "key"),
+        (c, x) => readEtcdObjectSource(c, x, [""], "key"),
+      ],
+      [
+        "the source of a key path of two segments",
+        (p) => p.readObjectSource(["/app", "cfg"], "key"),
+        (c, x) => readEtcdObjectSource(c, x, ["/app", "cfg"], "key"),
+      ],
+      [
+        "the source of a group",
+        (p) => p.readObjectSource(["/app/*"], "prefix"),
+        (c, x) => readEtcdObjectSource(c, x, ["/app/*"], "prefix"),
+      ],
+      [
+        "the build of a protected key's value edit (E8)",
+        (p) => p.buildObjectEdit(protectedKey),
+        (c, x) => buildEtcdValueEdit(c, x, protectedKey, stamp),
+      ],
+      [
+        "the build of an edit of a key's metadata",
+        (p) => p.buildObjectEdit(metadata),
+        (c, x) => buildEtcdValueEdit(c, x, metadata, stamp),
+      ],
+    ];
+    const outcome = (pending: Promise<unknown>) =>
+      pending.then(
+        (answer) => ({ answer }),
+        (error: unknown) => ({ error: error instanceof Error ? `${error.constructor.name}: ${error.message}` : error }),
+      );
+    const answers: unknown[] = [];
+    for (const [name, surface] of refusals) {
+      const mark = client.calls.length;
+      // oxlint-disable-next-line no-await-in-loop -- one refusal at a time, so each one's calls are its own.
+      const answered = await outcome(surface(provider));
+      answers.push({ name, answered, calls: methods(client, mark) });
+    }
+    const owed = await Promise.all(
+      refusals.map(async ([name, , module]) => ({ name, answered: await outcome(module(twin, context)), calls: [] })),
+    );
+    expect(answers).toEqual(owed);
+    // The modules' own refusals send nothing either: each is a refusal, never an answer read from etcd.
+    expect(twin.calls).toEqual([]);
+  });
+
   test("after an auth-store change, a surface that walks no key answers over the grants as they stand: the members, the health and the storage (spec 4.7, 7.1)", async () => {
     const answers = { now: true };
     const client = failingGrants(answers);

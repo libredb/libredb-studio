@@ -731,6 +731,16 @@ function exactKey(text: string): EtcdBytes {
   return key;
 }
 
+/**
+ * The key a key's Source tab reads: its path is one segment whose text reads back as exactly the key's bytes,
+ * or it is refused before any request (spec 4.4, 4.6). The provider reads it before its walk reads the grants,
+ * so a path that names no key sends no request (spec 5.6).
+ */
+export function keyOfSourcePath(path: readonly string[]): EtcdBytes {
+  requireKindPath(path, "key");
+  return exactKey(path[0]);
+}
+
 function valuePart(
   key: EtcdBytes,
   view: ValueView,
@@ -801,7 +811,7 @@ async function keySource(
   limit: number | undefined,
 ): Promise<ObjectSourceDocument> {
   const text = path[0];
-  const key = exactKey(text);
+  const key = keyOfSourcePath(path);
   // The key as a person types it back (keys.ts `typedKey`), the one way every sentence names a key (spec 5.5, 5.6).
   const shown = typedKey(key, "command-line");
   const answer = await surfaceRead(
