@@ -562,9 +562,11 @@ export class EtcdProvider extends BaseDatabaseProvider {
   /**
    * One typed command, sent as written over the grants as they stand (spec 4.7): nothing is read before its own
    * requests, so a command that needs no leader, a serializable get among them, still answers during a lost quorum
-   * after an auth-store change, and E6's and E8's refusals, which executeCommand gives first, send nothing. The
-   * grants only word a refusal etcd gives, which names what the user may read as they were last read, as a surface
-   * that walks no key does (`standingSurface`), until the next walk reads them again.
+   * after an auth-store change. executeCommand gives E6's refusal and E8's prefix and key half first, with no
+   * request; E8's lease half reads the lease's keys first, with one LeaseTimeToLive with keys, and its content rule
+   * reads the command's single-key write targets first, so those refusals follow that read (spec E8). The grants
+   * only word a refusal etcd gives, which names what the user may read as they were last read, as a surface that
+   * walks no key does (`standingSurface`), until the next walk reads them again.
    */
   public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     // An etcdctl command has no binding, and dropping the values would run another command than the one
