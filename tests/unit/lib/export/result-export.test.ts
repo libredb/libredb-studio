@@ -1058,6 +1058,17 @@ describe("buildResultExport - Oracle date and timestamp literals", () => {
       // A DATE has no fraction, so a fraction is not a DATE's text.
       expect(oracle({ at: "DATE" }, "2026-09-01 10:30:00.5")).toContain(`VALUES ('2026-09-01 10:30:00.5');`);
     });
+
+    // The text goes into TO_DATE / TO_TIMESTAMP unquoted, so the match has to cover the
+    // whole cell: a valid wall clock with anything before or after it is ordinary text.
+    test("leaves a wall clock with text before or after it quoted and escaped", () => {
+      expect(oracle({ at: "DATE" }, "2026-09-01 10:30:00'); DROP TABLE x; --")).toContain(
+        `VALUES ('2026-09-01 10:30:00''); DROP TABLE x; --');`,
+      );
+      expect(oracle({ at: "TIMESTAMP" }, "x'); DROP TABLE x; -- 2026-09-01 10:30:00")).toContain(
+        `VALUES ('x''); DROP TABLE x; -- 2026-09-01 10:30:00');`,
+      );
+    });
   });
 });
 
