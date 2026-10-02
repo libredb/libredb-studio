@@ -111,7 +111,10 @@ export interface ExecutionBounds {
   readonly firstPageSize: number;
   /** The ceiling a get's page size grows to (KE4). */
   readonly maxPageSize: number;
-  /** B: the bytes of the keys and values one result holds (spec 5.4, KE4). */
+  /**
+   * B: the bytes of the keys and values a get or a watch holds; a txn's reads are bounded in its request instead
+   * (spec 5.1.4, 5.4, KE4).
+   */
   readonly byteBudget: number;
   /** C: the characters one cell holds, which results.ts cuts at (spec 5.2, KE4). */
   readonly cellLimit: number;
