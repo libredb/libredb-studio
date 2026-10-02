@@ -326,6 +326,19 @@ describe("failures between pages (plan Review Focus 2 and 3)", () => {
     expect(error.message).toContain("A compaction overtook this walk of the keys: etcd compacted revision 100,");
   });
 
+  test("a page that says more keys follow and holds none is refused in words, as the prefix walk refuses one", async () => {
+    const space = etcdWalkSpace(["/app/1", "/app/2", "/app/3"]);
+    const client = createFakeEtcdClient({
+      range: async (request) => ({ ...(await space.range(request)), kvs: [], more: true }),
+    });
+    const cursor = encodeScanCursor(enc("/app/1"), "100", "5", APP_WALK);
+    const error = await scanEtcdKeysPage(client, surface(), { cursor, count: 2, pattern: "/app/" }).catch(
+      (caught) => caught,
+    );
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error.message).toBe("A keys_only page that says more keys follow holds at least one key");
+  });
+
   test("a member that stopped is a connection failure, never a partial page", async () => {
     const client = createFakeEtcdClient({
       range: async () => Promise.reject(new EtcdError("unavailable", "etcdserver: server stopped", 14)),

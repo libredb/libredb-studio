@@ -187,6 +187,10 @@ async function fill(
       else keys.push(name);
     }
     if (answer.more) {
+      // The cursor goes on after the page's last key, so a page that says more follow and holds none has no place to
+      // go on from (keys.ts stepPrefixWalk refuses the same answer).
+      if (answer.kvs.length === 0)
+        throw new RangeError("A keys_only page that says more keys follow holds at least one key");
       const last = answer.kvs[answer.kvs.length - 1].key;
       return page(keys, skipped, encodeScanCursor(after(last), walk.revision, walk.total, walk.digest), walk.total);
     }
