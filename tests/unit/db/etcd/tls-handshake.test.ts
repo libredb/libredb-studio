@@ -536,10 +536,14 @@ beforeAll(async () => {
   // afterAll, which stops s_server and removes the temporary directory.
 }, 30_000);
 
-afterAll(() => {
+// Windows refuses to remove a directory a live process runs in (EBUSY), and s_server runs in this one, so each process
+// has exited before the directory goes (CI's windows-latest runner, main c12bc1b6, run 37015764149).
+afterAll(async () => {
   for (const server of servers) server.forceShutdown();
+  for (const socket of held.keys()) socket.destroy();
   for (const listener of sockets) listener.close();
   for (const child of processes) child.kill();
+  await Promise.all(processes.map((child) => child.exited));
   rmSync(dir, { recursive: true, force: true });
 });
 
