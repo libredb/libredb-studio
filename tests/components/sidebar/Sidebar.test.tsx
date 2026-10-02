@@ -8,6 +8,7 @@ let capturedFavoriteIds: unknown;
 let capturedToggleFavoriteHandler: unknown;
 let capturedConnectionOrder: unknown;
 let capturedReorderHandler: unknown;
+let capturedGroupProps: Record<string, unknown> = {};
 /** The row menu's Browse Keys item, as the tree received it from the sidebar. */
 let capturedBrowseKeys: ((object: { name: string; path: readonly string[] }) => void) | undefined;
 
@@ -19,6 +20,7 @@ mock.module("@/components/sidebar/ConnectionsList", () => ({
     capturedToggleFavoriteHandler = props.onToggleFavoriteConnection;
     capturedConnectionOrder = props.connectionOrder;
     capturedReorderHandler = props.onReorderConnections;
+    capturedGroupProps = props;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     const connections = props.connections as Array<Record<string, unknown>> | undefined;
@@ -427,6 +429,24 @@ describe("Sidebar", () => {
 
     expect(capturedConnectionOrder).toBe(connectionOrder);
     expect(capturedReorderHandler).toBe(onReorderConnections);
+  });
+
+  test("passes the connection groups and every group callback through to ConnectionsList (#1170)", () => {
+    const groupProps = {
+      connectionGroups: [{ id: "g1", name: "Prod", collapsed: false, connectionIds: [] }],
+      onCreateGroup: mock(() => "g1" as string | null),
+      onRenameGroup: mock(() => {}),
+      onDeleteGroup: mock(() => {}),
+      onToggleGroupCollapsed: mock(() => {}),
+      onMoveConnectionToGroup: mock(() => {}),
+    };
+    const props = createDefaultProps(groupProps);
+
+    render(<Sidebar {...props} />);
+
+    for (const [name, value] of Object.entries(groupProps)) {
+      expect(capturedGroupProps[name]).toBe(value);
+    }
   });
 
   /**

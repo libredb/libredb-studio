@@ -9,7 +9,7 @@ import { type AuditEvent } from "../audit";
 import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "../data-masking";
 import { DEFAULT_THRESHOLDS, type ThresholdConfig } from "../monitoring-thresholds";
 import { readJSON, writeJSON, readString, writeString, remove } from "./local-storage";
-import type { StorageCollection } from "./types";
+import type { ConnectionGroup, StorageCollection } from "./types";
 
 const MAX_HISTORY_ITEMS = 500;
 const MAX_SNAPSHOTS = 50;
@@ -95,6 +95,16 @@ export const storage = {
       writeJSON("connection_order", nextOrder);
       dispatchChange("connection_order", nextOrder);
     }
+
+    const groups = storage.getConnectionGroups();
+    if (groups.some((group) => group.connectionIds.includes(id))) {
+      const nextGroups = groups.map((group) => ({
+        ...group,
+        connectionIds: group.connectionIds.filter((memberId) => memberId !== id),
+      }));
+      writeJSON("connection_groups", nextGroups);
+      dispatchChange("connection_groups", nextGroups);
+    }
   },
 
   getFavoriteConnectionIds: (): string[] => {
@@ -118,6 +128,16 @@ export const storage = {
   setConnectionOrder: (order: string[]) => {
     writeJSON("connection_order", order);
     dispatchChange("connection_order", order);
+  },
+
+  getConnectionGroups: (): ConnectionGroup[] => {
+    return readJSON<ConnectionGroup[]>("connection_groups") ?? [];
+  },
+
+  /** Replaces the persisted groups wholesale — callers hand over the full ordered list. */
+  setConnectionGroups: (groups: ConnectionGroup[]) => {
+    writeJSON("connection_groups", groups);
+    dispatchChange("connection_groups", groups);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════

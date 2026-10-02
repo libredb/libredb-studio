@@ -349,7 +349,7 @@ describe("ConnectionsList", () => {
       ).toBeTruthy();
     });
 
-    test("a favorited connection renders once, under Favorites, not duplicated under Connections", () => {
+    test("a favorited connection renders under Favorites and stays under Connections: the star is a mark (#1170)", () => {
       const { container } = render(
         <ConnectionsList
           connections={[mockPostgresConnection, mockMySQLConnection]}
@@ -363,7 +363,7 @@ describe("ConnectionsList", () => {
       );
 
       const matches = Array.from(container.querySelectorAll("span")).filter((el) => el.textContent === "Test MySQL");
-      expect(matches.length).toBe(1);
+      expect(matches.length).toBe(2);
     });
 
     test("non-favorited connections keep rendering under Connections", () => {
@@ -404,7 +404,7 @@ describe("ConnectionsList", () => {
     });
 
     test("a favorited connection's star toggle is labeled to remove it", () => {
-      const { getByLabelText } = render(
+      const { getAllByLabelText } = render(
         <ConnectionsList
           connections={[mockPostgresConnection]}
           activeConnection={null}
@@ -416,7 +416,8 @@ describe("ConnectionsList", () => {
         />,
       );
 
-      fireEvent.click(getByLabelText("Remove from favorites"));
+      // The row renders under Favorites and under Connections, and both stars say the same.
+      fireEvent.click(getAllByLabelText("Remove from favorites")[0]);
 
       expect(defaultOnToggleFavorite).toHaveBeenCalledWith(mockPostgresConnection.id);
     });
@@ -437,7 +438,7 @@ describe("ConnectionsList", () => {
       expect(queryByText("No database connections established yet.")).toBeNull();
     });
 
-    test("hides the Connections section entirely when every connection is favorited", () => {
+    test("keeps the Connections section when every connection is favorited, since a star is a mark", () => {
       const { queryByText } = render(
         <ConnectionsList
           connections={[mockPostgresConnection, mockMySQLConnection]}
@@ -450,8 +451,7 @@ describe("ConnectionsList", () => {
         />,
       );
 
-      // Both are under Favorites; the "Connections" header has nothing left to sit above.
-      expect(queryByText("Connections")).toBeNull();
+      expect(queryByText("Connections")).not.toBeNull();
     });
 
     test("keeps the Connections section when at least one connection is not favorited", () => {
@@ -670,10 +670,13 @@ describe("ConnectionsList", () => {
           [mockSQLiteConnection.id, mockMySQLConnection.id, mockPostgresConnection.id],
         );
 
+        // Favorites (SQLite, PostgreSQL) first, then every connection in the saved order.
         const names = itemNames(container);
         expect(names[0]).toContain(mockSQLiteConnection.name);
         expect(names[1]).toContain("Test PostgreSQL");
-        expect(names[2]).toContain("Test MySQL");
+        expect(names[2]).toContain(mockSQLiteConnection.name);
+        expect(names[3]).toContain("Test MySQL");
+        expect(names[4]).toContain("Test PostgreSQL");
       });
 
       test("a drop inside the Favorites section persists the new order", () => {
@@ -719,11 +722,12 @@ describe("ConnectionsList", () => {
       });
 
       test("no drag handle on a connection that is alone in its section", () => {
-        const { queryByTestId } = renderWithFavorites([mockPostgresConnection.id]);
+        const { queryAllByTestId } = renderWithFavorites([mockPostgresConnection.id]);
 
-        expect(queryByTestId(`drag-handle-${mockPostgresConnection.id}`)).toBeNull();
-        expect(queryByTestId(`drag-handle-${mockMySQLConnection.id}`)).not.toBeNull();
-        expect(queryByTestId(`drag-handle-${mockSQLiteConnection.id}`)).not.toBeNull();
+        // PostgreSQL renders twice; only its Connections copy has company, so only that one has a handle.
+        expect(queryAllByTestId(`drag-handle-${mockPostgresConnection.id}`)).toHaveLength(1);
+        expect(queryAllByTestId(`drag-handle-${mockMySQLConnection.id}`)).toHaveLength(1);
+        expect(queryAllByTestId(`drag-handle-${mockSQLiteConnection.id}`)).toHaveLength(1);
       });
     });
   });

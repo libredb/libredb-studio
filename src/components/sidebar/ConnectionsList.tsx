@@ -1,8 +1,18 @@
 import React, { useCallback, useState } from "react";
+import { ChevronDown, ChevronRight, FolderPlus, MoreHorizontal } from "lucide-react";
 import { DatabaseConnection } from "@/lib/types";
 import { applyConnectionOrder } from "@/lib/connection-order";
+import { buildConnectionSections, type ConnectionSection } from "@/lib/connection-groups";
+import type { ConnectionGroup } from "@/lib/storage/types";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ConnectionItem } from "./ConnectionItem";
+import { GroupNameDialog } from "./GroupNameDialog";
 
 interface ConnectionsListProps {
   connections: DatabaseConnection[];
@@ -18,22 +28,67 @@ interface ConnectionsListProps {
   connectionOrder?: string[];
   /** Persists a new full order after a drag-and-drop completes. */
   onReorderConnections?: (order: string[]) => void;
+  /**
+   * The user's own sections (#1170). Group management is on only for the callbacks a parent
+   * hands over: with none, the panel is the flat Connections list it always was.
+   */
+  connectionGroups?: ConnectionGroup[];
+  /** Returns the new group's id, or null when the name was blank. */
+  onCreateGroup?: (name: string) => string | null;
+  onRenameGroup?: (id: string, name: string) => void;
+  onDeleteGroup?: (id: string) => void;
+  onToggleGroupCollapsed?: (id: string) => void;
+  /** Files a connection under a group; null means Ungrouped. */
+  onMoveConnectionToGroup?: (connectionId: string, groupId: string | null) => void;
   onAddConnection: () => void;
 }
 
+type NameDialog = { mode: "create"; moveConnectionId?: string } | { mode: "rename"; groupId: string; name: string };
+
 /** Section header matching the "Connections" label + divider style already used below. */
-function SectionHeader({ label }: { label: string }) {
+function SectionHeader({
+  label,
+  count,
+  collapsed,
+  onToggle,
+  actions,
+}: {
+  label: string;
+  count?: number;
+  /** Defined only for a collapsible section. */
+  collapsed?: boolean;
+  onToggle?: () => void;
+  actions?: React.ReactNode;
+}) {
+  const text = (
+    <span className="text-xs font-medium text-muted-foreground">
+      {label}
+      {count !== undefined && <span className="ml-1.5 font-normal text-muted-foreground/60">{count}</span>}
+    </span>
+  );
   return (
     <div className="px-3 mb-2 flex items-center justify-between">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      {onToggle ? (
+        <button
+          className="flex items-center gap-1 rounded hover:text-foreground"
+          aria-expanded={!collapsed}
+          aria-label={`${label} group`}
+          onClick={onToggle}
+        >
+          {collapsed ? (
+            <ChevronRight strokeWidth={1.5} className="w-3 h-3 text-muted-foreground" />
+          ) : (
+            <ChevronDown strokeWidth={1.5} className="w-3 h-3 text-muted-foreground" />
+          )}
+          {text}
+        </button>
+      ) : (
+        text
+      )}
       <div className="h-[1px] flex-1 bg-border/30 ml-3" />
+      {actions}
     </div>
   );
-}
-
-/** Whether two connections render in the same section: both favorited, or neither. */
-function inSameSection(favoriteConnectionIds: Set<string> | undefined, a: string, b: string): boolean {
-  return (favoriteConnectionIds?.has(a) ?? false) === (favoriteConnectionIds?.has(b) ?? false);
 }
 
 export const ConnectionsList = React.memo(function ConnectionsList({
@@ -47,33 +102,38 @@ export const ConnectionsList = React.memo(function ConnectionsList({
   onToggleFavoriteConnection,
   connectionOrder,
   onReorderConnections,
+  connectionGroups,
+  onCreateGroup,
+  onRenameGroup,
+  onDeleteGroup,
+  onToggleGroupCollapsed,
+  onMoveConnectionToGroup,
   onAddConnection,
 }: ConnectionsListProps) {
   const ordered = applyConnectionOrder(connections, connectionOrder ?? []);
   const reorderable = onReorderConnections !== undefined;
-
-  // Favorited connections render together, above the rest. Both sections are cut from the
-  // one saved order, so each keeps the user's order within itself.
-  const favorites = favoriteConnectionIds?.size ? ordered.filter((conn) => favoriteConnectionIds.has(conn.id)) : [];
-  const rest = favoriteConnectionIds?.size ? ordered.filter((conn) => !favoriteConnectionIds.has(conn.id)) : ordered;
+  const groups = connectionGroups ?? [];
+  const sections = buildConnectionSections(ordered, groups, favoriteConnectionIds ?? new Set());
+  const groupOf = (connectionId: string) => groups.find((g) => g.connectionIds.includes(connectionId))?.id ?? null;
 
   // Drag state lives here, not in ConnectionItem: a drop needs the full ordered list to
-  // compute the new order, and only this component holds it.
-  const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  // compute the new order, and only this component holds it. A starred row renders in two
+  // sections, so a row is identified by its section too, or both copies would highlight.
+  const [dragged, setDragged] = useState<{ sectionKey: string; id: string } | null>(null);
+  const [dragOver, setDragOver] = useState<{ sectionKey: string; id: string } | null>(null);
+  const [nameDialog, setNameDialog] = useState<NameDialog | null>(null);
 
   const clearDragState = useCallback(() => {
-    setDraggedId(null);
-    setDragOverId(null);
+    setDragged(null);
+    setDragOver(null);
   }, []);
 
-  const handleDrop = (targetId: string) => {
-    // A drop across the Favorites/Connections boundary is ignored. The dragged row stays in
-    // its own section either way, so accepting it would only change the saved order in a way
-    // nothing on screen shows.
-    if (draggedId !== null && draggedId !== targetId && inSameSection(favoriteConnectionIds, draggedId, targetId)) {
+  const handleDrop = (sectionKey: string, targetId: string) => {
+    // A drop across sections is ignored. The dragged row stays in its own section either way,
+    // so accepting it would only change the saved order in a way nothing on screen shows.
+    if (dragged !== null && dragged.sectionKey === sectionKey && dragged.id !== targetId) {
       const ids = ordered.map((c) => c.id);
-      const fromIndex = ids.indexOf(draggedId);
+      const fromIndex = ids.indexOf(dragged.id);
       const toIndex = ids.indexOf(targetId);
       if (fromIndex !== -1 && toIndex !== -1) {
         const reordered = [...ids];
@@ -85,7 +145,9 @@ export const ConnectionsList = React.memo(function ConnectionsList({
     clearDragState();
   };
 
-  const renderItem = (conn: DatabaseConnection, section: DatabaseConnection[]) => (
+  const groupsManaged = onMoveConnectionToGroup !== undefined;
+
+  const renderItem = (conn: DatabaseConnection, section: ConnectionSection) => (
     <ConnectionItem
       key={conn.id}
       connection={conn}
@@ -96,49 +158,131 @@ export const ConnectionsList = React.memo(function ConnectionsList({
       onDuplicate={onDuplicateConnection}
       isFavorite={favoriteConnectionIds?.has(conn.id) ?? false}
       onToggleFavorite={onToggleFavoriteConnection}
-      draggable={reorderable && section.length > 1}
-      isDragging={draggedId === conn.id}
-      isDragOver={
-        dragOverId === conn.id &&
-        draggedId !== null &&
-        draggedId !== conn.id &&
-        inSameSection(favoriteConnectionIds, draggedId, conn.id)
+      groups={groupsManaged ? groups : undefined}
+      currentGroupId={groupOf(conn.id)}
+      onMoveToGroup={onMoveConnectionToGroup}
+      onMoveToNewGroup={
+        groupsManaged && onCreateGroup ? (id) => setNameDialog({ mode: "create", moveConnectionId: id }) : undefined
       }
-      onDragStart={() => setDraggedId(conn.id)}
-      onDragEnter={() => setDragOverId(conn.id)}
+      draggable={reorderable && section.connections.length > 1}
+      isDragging={dragged?.sectionKey === section.key && dragged.id === conn.id}
+      isDragOver={
+        dragOver?.sectionKey === section.key &&
+        dragOver.id === conn.id &&
+        dragged !== null &&
+        dragged.sectionKey === section.key &&
+        dragged.id !== conn.id
+      }
+      onDragStart={() => setDragged({ sectionKey: section.key, id: conn.id })}
+      onDragEnter={() => setDragOver({ sectionKey: section.key, id: conn.id })}
       onDragEnd={clearDragState}
-      onDrop={() => handleDrop(conn.id)}
+      onDrop={() => handleDrop(section.key, conn.id)}
     />
+  );
+
+  // The "New group" button sits on the first section that is not Favorites, so it is always
+  // reachable: that is the Connections section until a group exists, and the first group after.
+  const newGroupHost = sections.find((section) => section.kind !== "favorites")?.key;
+
+  const renderActions = (section: ConnectionSection) => (
+    <>
+      {onCreateGroup && section.key === newGroupHost && (
+        <button
+          className="ml-2 p-1 rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          aria-label="New group"
+          title="New group"
+          onClick={() => setNameDialog({ mode: "create" })}
+        >
+          <FolderPlus strokeWidth={1.5} className="w-3 h-3" />
+        </button>
+      )}
+      {section.kind === "group" && (onRenameGroup || onDeleteGroup) && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="ml-1 p-1 rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label={`Options for ${section.label}`}
+            >
+              <MoreHorizontal strokeWidth={1.5} className="w-3 h-3" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {onRenameGroup && (
+              <DropdownMenuItem
+                onSelect={() => setNameDialog({ mode: "rename", groupId: section.groupId!, name: section.label })}
+              >
+                Rename
+              </DropdownMenuItem>
+            )}
+            {onDeleteGroup && (
+              <DropdownMenuItem onSelect={() => onDeleteGroup(section.groupId!)}>Delete group</DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </>
   );
 
   return (
     <>
-      {favorites.length > 0 && (
-        <section className="mb-4">
-          <SectionHeader label="Favorites" />
-          <div className="space-y-0.5">{favorites.map((conn) => renderItem(conn, favorites))}</div>
+      {sections.map((section) => (
+        <section key={section.key} className="mb-4 last:mb-0">
+          <SectionHeader
+            label={section.label}
+            count={section.kind === "connections" ? undefined : section.connections.length}
+            collapsed={section.kind === "group" ? section.collapsed : undefined}
+            onToggle={
+              section.kind === "group" && onToggleGroupCollapsed
+                ? () => onToggleGroupCollapsed(section.groupId!)
+                : undefined
+            }
+            actions={renderActions(section)}
+          />
+
+          {!(section.kind === "group" && section.collapsed) && (
+            <div className="space-y-0.5">
+              {section.kind === "connections" && connections.length === 0 ? (
+                <div className="px-3 py-6 text-center border border-dashed border-border/50 rounded-lg mx-2">
+                  <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
+                    No database connections established yet.
+                  </p>
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAddConnection}>
+                    Add Connection
+                  </Button>
+                </div>
+              ) : (
+                section.connections.map((conn) => renderItem(conn, section))
+              )}
+            </div>
+          )}
         </section>
+      ))}
+
+      {nameDialog?.mode === "create" && onCreateGroup && (
+        <GroupNameDialog
+          title="New group"
+          submitLabel="Create"
+          onClose={() => setNameDialog(null)}
+          onSubmit={(name) => {
+            const id = onCreateGroup(name);
+            if (id !== null && nameDialog.moveConnectionId !== undefined) {
+              onMoveConnectionToGroup?.(nameDialog.moveConnectionId, id);
+            }
+            setNameDialog(null);
+          }}
+        />
       )}
-
-      {(rest.length > 0 || connections.length === 0) && (
-        <section>
-          <SectionHeader label="Connections" />
-
-          <div className="space-y-0.5">
-            {connections.length === 0 ? (
-              <div className="px-3 py-6 text-center border border-dashed border-border/50 rounded-lg mx-2">
-                <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
-                  No database connections established yet.
-                </p>
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={onAddConnection}>
-                  Add Connection
-                </Button>
-              </div>
-            ) : (
-              rest.map((conn) => renderItem(conn, rest))
-            )}
-          </div>
-        </section>
+      {nameDialog?.mode === "rename" && onRenameGroup && (
+        <GroupNameDialog
+          title="Rename group"
+          submitLabel="Rename"
+          initialName={nameDialog.name}
+          onClose={() => setNameDialog(null)}
+          onSubmit={(name) => {
+            onRenameGroup(nameDialog.groupId, name);
+            setNameDialog(null);
+          }}
+        />
       )}
     </>
   );

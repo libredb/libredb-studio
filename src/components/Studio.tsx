@@ -54,6 +54,7 @@ import { useAgentPrefill } from "@/components/agent/use-agent-prefill";
 import { useToast } from "@/hooks/use-toast";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 import { useConnectionOrder } from "@/hooks/use-connection-order";
+import { useConnectionGroups } from "@/hooks/use-connection-groups";
 import { useAuth } from "@/hooks/use-auth";
 import { useConnectionManager } from "@/hooks/use-connection-manager";
 import { useTabManager } from "@/hooks/use-tab-manager";
@@ -132,6 +133,15 @@ export default function Studio() {
   const { metadata, error: metadataError, retry: retryMetadata } = useProviderMetadata(conn.activeConnection);
   const { favoriteIds, toggleFavorite } = useFavoriteConnections(storageReady);
   const { order: connectionOrder, setOrder: setConnectionOrder } = useConnectionOrder(storageReady);
+  const { groups: connectionGroups, ...groupActions } = useConnectionGroups(storageReady);
+  const connectionGroupProps = {
+    connectionGroups,
+    onCreateGroup: groupActions.createGroup,
+    onRenameGroup: groupActions.renameGroup,
+    onDeleteGroup: groupActions.deleteGroup,
+    onToggleGroupCollapsed: groupActions.toggleCollapsed,
+    onMoveConnectionToGroup: groupActions.moveConnection,
+  };
 
   // 3. Tab Manager
   const tabMgr = useTabManager({
@@ -1110,6 +1120,7 @@ export default function Studio() {
                 onToggleFavoriteConnection={toggleFavorite}
                 connectionOrder={connectionOrder}
                 onReorderConnections={setConnectionOrder}
+                {...connectionGroupProps}
                 onAddConnection={handleAddConnection}
                 onObjectClick={onObjectClick}
                 onOpenKey={onOpenKey}
@@ -1227,6 +1238,7 @@ export default function Studio() {
                     onToggleFavoriteConnection={toggleFavorite}
                     connectionOrder={connectionOrder}
                     onReorderConnections={setConnectionOrder}
+                    {...connectionGroupProps}
                     onAddConnection={() => setIsConnectionModalOpen(true)}
                   />
                 </div>

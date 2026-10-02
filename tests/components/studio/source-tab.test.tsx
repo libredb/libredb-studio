@@ -265,6 +265,8 @@ mock.module("@/lib/storage", () => ({
     toggleFavoriteConnection: () => [] as string[],
     getConnectionOrder: () => [] as string[],
     setConnectionOrder: () => {},
+    getConnectionGroups: () => [] as unknown[],
+    setConnectionGroups: () => {},
   },
 }));
 

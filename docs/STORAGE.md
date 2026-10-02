@@ -759,7 +759,7 @@ CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_chal
 | Column | Type | Description |
 |--------|------|-------------|
 | `user_id` | TEXT | User's email from JWT token (e.g., `admin@libredb.org`) |
-| `collection` | TEXT | Data category: `connections`, `history`, `saved_queries`, `schema_snapshots`, `saved_charts`, `active_connection_id`, `audit_log`, `masking_config`, `threshold_config`, `dismissed_seeds`, `favorite_connections`, `connection_order` |
+| `collection` | TEXT | Data category: `connections`, `history`, `saved_queries`, `schema_snapshots`, `saved_charts`, `active_connection_id`, `audit_log`, `masking_config`, `threshold_config`, `dismissed_seeds`, `favorite_connections`, `connection_order`, `connection_groups` |
 | `data` | TEXT | JSON-serialized collection data |
 | `updated_at` | TEXT / TIMESTAMPTZ | Last modification timestamp |
 
@@ -859,6 +859,7 @@ All application state is organized into **12 collections**, each stored as a JSO
 | `dismissed_seeds` | `string[]` | Seed IDs the user dismissed (deleted a `managed: false` seed copy) so it is not re-added | — |
 | `favorite_connections` | `string[]` | Connection ids the user has starred | — |
 | `connection_order` | `string[]` | Connection ids in the user's custom drag order | — |
+| `connection_groups` | `ConnectionGroup[]` | The user's own sections in the Connections panel, in display order: `{ id, name, collapsed, connectionIds }` | — |
 
 **A snapshot taken before the object model has no kind and no path.** `schema_snapshots` holds what
 the schema list held when the snapshot was taken, and a live reading now always carries an object's
@@ -937,6 +938,7 @@ threshold_config  → libredb_threshold_config
 dismissed_seeds   → libredb_dismissed_seeds
 favorite_connections → libredb_favorite_connections
 connection_order  → libredb_connection_order
+connection_groups → libredb_connection_groups
 ```
 
 ---

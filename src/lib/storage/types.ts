@@ -38,6 +38,22 @@ export interface StorageData {
    * is most likely to have reordered.
    */
   connection_order: string[];
+  /**
+   * The user's own sections in the Connections panel (#1170), in display order. Kept out of
+   * `DatabaseConnection` for the same reason as `favorite_connections` and `connection_order`:
+   * a `managed:true` connection is replaced from the server on every load, so a group field on
+   * the record would be discarded for exactly the seeded connections users most want to file.
+   * Membership is a preference, not part of the connection. A connection is in at most one
+   * group; one in none is "Ungrouped".
+   */
+  connection_groups: ConnectionGroup[];
+}
+
+export interface ConnectionGroup {
+  id: string;
+  name: string;
+  collapsed: boolean;
+  connectionIds: string[];
 }
 
 /** Collection names that can be synced to server storage */
@@ -57,6 +73,7 @@ export const STORAGE_COLLECTIONS: StorageCollection[] = [
   "dismissed_seeds",
   "favorite_connections",
   "connection_order",
+  "connection_groups",
 ];
 
 /**

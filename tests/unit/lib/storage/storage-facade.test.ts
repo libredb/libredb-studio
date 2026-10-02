@@ -337,4 +337,77 @@ describe("storage facade: connection order", () => {
     expect(collections).toContain("connection_order");
     window.removeEventListener("libredb-storage-change", handler);
   });
+
+  // ── connection_groups (#1170) ────────────────────────────────────────────
+  const group = (id: string, connectionIds: string[], collapsed = false) => ({
+    id,
+    name: `Group ${id}`,
+    collapsed,
+    connectionIds,
+  });
+
+  test("getConnectionGroups is empty until something is persisted", () => {
+    expect(storage.getConnectionGroups()).toEqual([]);
+  });
+
+  test("setConnectionGroups persists the ordered group list and replaces the previous one", () => {
+    storage.setConnectionGroups([group("g1", ["conn-1"])]);
+    storage.setConnectionGroups([group("g2", ["conn-2"], true), group("g1", ["conn-1"])]);
+    expect(storage.getConnectionGroups()).toEqual([group("g2", ["conn-2"], true), group("g1", ["conn-1"])]);
+  });
+
+  test("setConnectionGroups dispatches libredb-storage-change with collection connection_groups", () => {
+    let captured: CustomEvent | null = null;
+    const handler = (e: Event) => {
+      captured = e as CustomEvent;
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.setConnectionGroups([group("g1", ["conn-1"])]);
+
+    window.removeEventListener("libredb-storage-change", handler);
+    expect(captured).not.toBeNull();
+    expect((captured as unknown as CustomEvent).detail.collection).toBe("connection_groups");
+    expect((captured as unknown as CustomEvent).detail.data).toEqual([group("g1", ["conn-1"])]);
+  });
+
+  test("deleteConnection prunes the deleted id out of every group and keeps the groups", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.setConnectionGroups([group("g1", ["conn-1", "conn-2"]), group("g2", ["conn-1"]), group("g3", ["conn-3"])]);
+
+    storage.deleteConnection("conn-1");
+
+    expect(storage.getConnectionGroups()).toEqual([group("g1", ["conn-2"]), group("g2", []), group("g3", ["conn-3"])]);
+  });
+
+  test("deleteConnection leaves connection_groups alone, and silent, when the id is in no group", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.setConnectionGroups([group("g1", ["conn-2"])]);
+    const collections: string[] = [];
+    const handler = (e: Event) => {
+      collections.push((e as CustomEvent).detail.collection);
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.deleteConnection("conn-1");
+
+    window.removeEventListener("libredb-storage-change", handler);
+    expect(storage.getConnectionGroups()).toEqual([group("g1", ["conn-2"])]);
+    expect(collections).not.toContain("connection_groups");
+  });
+
+  test("deleteConnection dispatches a connection_groups change when the id was grouped", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    storage.setConnectionGroups([group("g1", ["conn-1"])]);
+    const collections: string[] = [];
+    const handler = (e: Event) => {
+      collections.push((e as CustomEvent).detail.collection);
+    };
+    window.addEventListener("libredb-storage-change", handler);
+
+    storage.deleteConnection("conn-1");
+
+    window.removeEventListener("libredb-storage-change", handler);
+    expect(collections).toContain("connection_groups");
+  });
 });

@@ -14,6 +14,7 @@ import { GitHubRepoLink } from "@/components/github-repo-link";
 import { getAppVersion } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
 import { ConnectionsList } from "./ConnectionsList";
+import type { ConnectionGroup } from "@/lib/storage/types";
 
 interface SidebarProps {
   connections: DatabaseConnection[];
@@ -28,6 +29,13 @@ interface SidebarProps {
   /** The user's saved custom order (#748). Absent means reordering is not wired up. */
   connectionOrder?: string[];
   onReorderConnections?: (order: string[]) => void;
+  /** The user's own connection groups (#1170) and the callbacks that manage them; see `ConnectionsList`. */
+  connectionGroups?: ConnectionGroup[];
+  onCreateGroup?: (name: string) => string | null;
+  onRenameGroup?: (id: string, name: string) => void;
+  onDeleteGroup?: (id: string) => void;
+  onToggleGroupCollapsed?: (id: string) => void;
+  onMoveConnectionToGroup?: (connectionId: string, groupId: string | null) => void;
   onAddConnection: () => void;
   /** A row the reader activated, handed over whole: path, kind and the fields the tree loaded. */
   onObjectClick?: (object: DatabaseObject) => void;
@@ -105,6 +113,12 @@ export const Sidebar = React.memo(function Sidebar({
   onToggleFavoriteConnection,
   connectionOrder,
   onReorderConnections,
+  connectionGroups,
+  onCreateGroup,
+  onRenameGroup,
+  onDeleteGroup,
+  onToggleGroupCollapsed,
+  onMoveConnectionToGroup,
   onAddConnection,
   onObjectClick,
   onShowDiagram,
@@ -273,6 +287,12 @@ export const Sidebar = React.memo(function Sidebar({
           onToggleFavoriteConnection={onToggleFavoriteConnection}
           connectionOrder={connectionOrder}
           onReorderConnections={onReorderConnections}
+          connectionGroups={connectionGroups}
+          onCreateGroup={onCreateGroup}
+          onRenameGroup={onRenameGroup}
+          onDeleteGroup={onDeleteGroup}
+          onToggleGroupCollapsed={onToggleGroupCollapsed}
+          onMoveConnectionToGroup={onMoveConnectionToGroup}
           onAddConnection={onAddConnection}
         />
       </ScrollArea>

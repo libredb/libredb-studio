@@ -91,6 +91,8 @@ const mockStorageGetFavoriteConnectionIds = mock(() => [] as string[]);
 const mockStorageToggleFavoriteConnection = mock(() => [] as string[]);
 const mockStorageGetConnectionOrder = mock(() => [] as string[]);
 const mockStorageSetConnectionOrder = mock(() => {});
+const mockStorageGetConnectionGroups = mock(() => [] as unknown[]);
+const mockStorageSetConnectionGroups = mock((_groups: unknown[]) => {});
 // Data Masking
 const mockSaveMaskingConfig = mock(() => {});
 // URL (for export tests)
@@ -264,6 +266,8 @@ mock.module("@/lib/storage", () => ({
     toggleFavoriteConnection: mockStorageToggleFavoriteConnection,
     getConnectionOrder: mockStorageGetConnectionOrder,
     setConnectionOrder: mockStorageSetConnectionOrder,
+    getConnectionGroups: mockStorageGetConnectionGroups,
+    setConnectionGroups: mockStorageSetConnectionGroups,
   },
 }));
 
@@ -616,6 +620,9 @@ describe("Studio", () => {
     mockStorageGetConnectionOrder.mockClear();
     mockStorageGetConnectionOrder.mockReturnValue([]);
     mockStorageSetConnectionOrder.mockClear();
+    mockStorageGetConnectionGroups.mockClear();
+    mockStorageGetConnectionGroups.mockReturnValue([]);
+    mockStorageSetConnectionGroups.mockClear();
     mockSaveMaskingConfig.mockClear();
     // Set rather than restored: one test turns masking on, and `mockRestore` in bun
     // drops the implementation entirely instead of returning it to this default.
@@ -1299,6 +1306,48 @@ describe("Studio", () => {
       act(() => (props.onReorderConnections as (order: string[]) => void)(["conn-2", "conn-1"]));
 
       expect(mockStorageSetConnectionOrder).toHaveBeenCalledWith(["conn-2", "conn-1"]);
+    },
+  );
+
+  test("loads connection groups from storage and forwards them to Sidebar", () => {
+    const groups = [{ id: "g1", name: "Prod", collapsed: false, connectionIds: ["conn-1"] }];
+    mockStorageGetConnectionGroups.mockReturnValue(groups);
+
+    render(<Studio />);
+
+    expect(capturedSidebarProps.connectionGroups).toEqual(groups);
+  });
+
+  test.each(["desktop", "mobile"] as const)(
+    "group actions (%s) write through storage.setConnectionGroups",
+    (surface) => {
+      mockStorageGetConnectionGroups.mockReturnValue([
+        { id: "g1", name: "Prod", collapsed: false, connectionIds: ["conn-1"] },
+      ]);
+      render(<Studio />);
+      if (surface === "mobile") {
+        act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+      }
+      const props = surface === "mobile" ? capturedConnectionsListProps : capturedSidebarProps;
+      const lastWrite = () =>
+        mockStorageSetConnectionGroups.mock.calls[mockStorageSetConnectionGroups.mock.calls.length - 1][0];
+
+      act(() => (props.onToggleGroupCollapsed as (id: string) => void)("g1"));
+      expect(lastWrite()).toEqual([{ id: "g1", name: "Prod", collapsed: true, connectionIds: ["conn-1"] }]);
+
+      act(() => (props.onRenameGroup as (id: string, name: string) => void)("g1", "Live"));
+      expect((lastWrite() as { name: string }[])[0].name).toBe("Live");
+
+      act(() => (props.onMoveConnectionToGroup as (id: string, groupId: string | null) => void)("conn-1", null));
+      expect((lastWrite() as { connectionIds: string[] }[])[0].connectionIds).toEqual([]);
+
+      act(() => (props.onDeleteGroup as (id: string) => void)("g1"));
+      expect(lastWrite()).toEqual([]);
+
+      act(() => {
+        (props.onCreateGroup as (name: string) => string | null)("Staging");
+      });
+      expect((lastWrite() as { name: string }[]).map((g) => g.name)).toContain("Staging");
     },
   );
 

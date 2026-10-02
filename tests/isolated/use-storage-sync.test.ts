@@ -23,6 +23,7 @@ const mockStorage = {
   getDismissedSeeds: mock(() => ["seed-1"]),
   getFavoriteConnectionIds: mock(() => ["fav-1"]),
   getConnectionOrder: mock(() => ["c1"]),
+  getConnectionGroups: mock(() => [{ id: "g1", name: "Prod", collapsed: false, connectionIds: ["c1"] }]),
 };
 
 const ALL_COLLECTIONS = [
@@ -38,6 +39,7 @@ const ALL_COLLECTIONS = [
   "dismissed_seeds",
   "favorite_connections",
   "connection_order",
+  "connection_groups",
 ];
 
 mock.module("@/lib/storage", () => ({
@@ -295,6 +297,7 @@ describe("useStorageSync", () => {
       expect(mockStorage.getDismissedSeeds).toHaveBeenCalled();
       expect(mockStorage.getFavoriteConnectionIds).toHaveBeenCalled();
       expect(mockStorage.getConnectionOrder).toHaveBeenCalled();
+      expect(mockStorage.getConnectionGroups).toHaveBeenCalled();
     });
   });
 
@@ -418,6 +421,24 @@ describe("useStorageSync", () => {
       const stored = localStorage.getItem("libredb_connection_order");
       expect(stored).not.toBeNull();
       expect(JSON.parse(stored!)).toEqual(["c2", "c1"]);
+    });
+
+    test("writes connection_groups to localStorage on pull", async () => {
+      localStorage.setItem("libredb_server_migrated", "true");
+      const groups = [{ id: "g1", name: "Prod", collapsed: true, connectionIds: ["c1"] }];
+      setupServerMode({
+        "/api/storage": { ok: true, status: 200, json: { connection_groups: groups } },
+      });
+
+      const { result } = renderHook(() => useStorageSync());
+
+      await waitFor(() => {
+        expect(result.current.lastSyncedAt).not.toBeNull();
+      });
+
+      const stored = localStorage.getItem("libredb_connection_groups");
+      expect(stored).not.toBeNull();
+      expect(JSON.parse(stored!)).toEqual(groups);
     });
 
     test("removes active_connection_id from localStorage when server returns null", async () => {
