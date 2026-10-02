@@ -61,9 +61,11 @@ function SectionHeader({
   actions?: React.ReactNode;
 }) {
   const text = (
-    <span className="min-w-0 truncate text-xs font-medium text-muted-foreground" title={label}>
-      {label}
-      {count !== undefined && <span className="ml-1.5 font-normal text-muted-foreground/60">{count}</span>}
+    <span className="flex min-w-0 text-xs font-medium text-muted-foreground">
+      <span className="truncate" title={label}>
+        {label}
+      </span>
+      {count !== undefined && <span className="ml-1.5 shrink-0 font-normal text-muted-foreground/60">{count}</span>}
     </span>
   );
   return (
@@ -76,9 +78,9 @@ function SectionHeader({
           onClick={onToggle}
         >
           {collapsed ? (
-            <ChevronRight strokeWidth={1.5} className="w-3 h-3 text-muted-foreground" />
+            <ChevronRight strokeWidth={1.5} className="w-3 h-3 shrink-0 text-muted-foreground" />
           ) : (
-            <ChevronDown strokeWidth={1.5} className="w-3 h-3 text-muted-foreground" />
+            <ChevronDown strokeWidth={1.5} className="w-3 h-3 shrink-0 text-muted-foreground" />
           )}
           {text}
         </button>

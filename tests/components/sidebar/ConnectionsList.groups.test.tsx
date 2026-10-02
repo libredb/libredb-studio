@@ -134,6 +134,22 @@ describe("ConnectionsList groups (#1170)", () => {
     expect(screen.queryByText(my.name)).not.toBeNull();
   });
 
+  test("a long group name truncates the name alone: the count and the chevron do not shrink", () => {
+    const long = "Production EU West replicas and the reporting warehouse cluster";
+    renderList({ connectionGroups: [{ ...group("a", [pg.id]), name: long }] });
+    const header = screen.getByLabelText(`${long} group`);
+
+    const name = screen.getByTitle(long);
+    expect(name.textContent).toBe(long);
+    expect(name.className).toContain("truncate");
+
+    const count = Array.from(header.querySelectorAll("span")).find((el) => el.textContent === "1")!;
+    expect(name.contains(count)).toBe(false);
+    expect(count.className).toContain("shrink-0");
+
+    expect(header.querySelector("svg")!.getAttribute("class")).toContain("shrink-0");
+  });
+
   test("clicking a group header asks to toggle that group", () => {
     renderList({ connectionGroups: [group("a", [pg.id])] });
     fireEvent.click(screen.getByLabelText("Group a group"));
