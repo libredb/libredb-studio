@@ -214,7 +214,8 @@ etcd refuses a whole range the caller's grants do not cover, so the walks of the
 A group keeps the ranges it may read, and every read Studio generates for it reads those ranges and no other bytes; the counts say which scope they cover.
 Listing leases needs READ on every leased key in the cluster, and listing users and roles needs the root role, so those folders carry etcd's refusal as a note instead of a list.
 etcd lists no permission for the root role, which may read and write every key, so the result of `role get root` carries the warning "The root role may read and write every key, whatever permissions etcd lists for it.", and the root role's Source tab heads its permissions with the same words.
-A grant an admin changes is seen from the first call that meets etcd's "revision of auth store is old", after which the grants are read again before the next call that uses them; a value edit's apply sends nothing before its one transaction, so it leaves that read to the next call.
+Every walk that reads keys (the prefix groups and their count, a key's Source tab, a Keys panel page, the overview, the Tables tab, and a value edit's build on a read-write connection) reads `AuthStatus` first, and reads the grants again when the auth store's revision has moved since they were read, or when a call has met etcd's "revision of auth store is old" since, so a grant an admin changes is seen from the next such walk, whatever token etcd issues.
+Typed commands and the surfaces that walk no key (the member, lease, user and role listings and their Source tabs, health, the Storage tab, the maintenance cards and a value edit's apply) send nothing before their own requests and use the grants as they were last read, so a refusal they meet after such a change can name a range the user has lost, or leave out one it gained, until the next walk.
 
 ## 5. Query interface
 
