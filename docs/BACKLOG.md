@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D138, U17 · 82
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U67 · 54
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U68 · 55
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -3058,13 +3058,29 @@ Not fixed there: the no-scan choice is not part of the etcd work.
 `generateTableQuery` and `generateSelectQuery` in `src/lib/query-generators.ts` write an object name that holds U+2028 or U+2029 with the character itself on every shipped engine but etcd, whose arm writes such a key through a txn's Go quoting instead (`holdsUnkeptCharacter`).
 Monaco 0.57 defaults `unusualLineTerminators` to `prompt` and `src/components/QueryEditor.tsx` sets no other value, so the moment such a text lands the editor offers to remove the separators, and accepting leaves lines that name another object.
 Runnable lines are among them: Redis's `DEL` line for the key `a`, U+2028, `b` reads `DEL "ab"` once the separator is removed, which deletes the key `ab` when run, and a SQL click becomes `SELECT * FROM public."ab";`.
-LibreDB's `get`, `put` and `delete` lines write the key bare, and `tokenize` in `src/lib/db/providers/embedded/libredb.ts` splits a line at any white space outside quotes, U+2028 and U+2029 included, so those lines name another key even when the offer is declined.
+LibreDB's `get`, `put` and `delete` lines write the key bare, and `tokenize` in `src/lib/db/providers/embedded/libredb.ts` splits a line at any white space outside quotes, U+2028 and U+2029 included, so those lines name another key even when the offer is declined, as they do for a plain space (U68).
 Measured 2026-10-02 over each shipped engine's census declaration: the click and the Generate Select text of an object named `a`, U+2028, `b`, and of one with U+2029 in its place, hold the separator raw on all nineteen engines but etcd; `origin/main`'s generators handle neither character either.
 
 Found by the etcd review (#1089), after the etcd arm was made to keep both characters out of its text.
 Not fixed there: the other engines' arms are outside the etcd PR, and so is the editor's option, which applies to every engine.
 
 **Done when:** each arm keeps U+2028 and U+2029 out of both texts, with an escape its grammar reads back as the same character, quoting where its words split at white space, or a `#` note in place of a line it cannot spell, and a test over every shipped engine's declaration finds neither character raw in either text.
+
+### U68. LibreDB's click and Generate Select write a key bare, so a line for a key that holds white space or a quote mark does not reach that key
+
+The LibreDB arm of `generateTableQuery` and `libredbCheatsheet` in `src/lib/query-generators.ts` write the key or prefix bare into their `prefix`, `get`, `put` and `delete` lines.
+`tokenize` in `src/lib/db/providers/embedded/libredb.ts` splits a line at any white space outside quotes and reads `'` and `"` as quoting, which it removes, so those lines name another key or none, and a click on a tree row runs the line it writes.
+It needs neither U67's unusual character nor its dialog: a plain space is enough.
+Measured 2026-10-02 through the generators and the provider's `query` on a scratch store holding the keys `a b` and `a`: the click `get a b` shows the value of `a`, `put a b example` sets `a` to `b example`, and `delete a b` deletes `a` while `a b` stays.
+A tab, a no-break space or U+3000 in place of the space does the same.
+The lines for a key named `"a"`, its quotes part of the name, read, overwrite and delete `a` as well, and every line for a key named `it's` is refused as an unmatched quote.
+The click on the group `my users:*` runs `prefix my users:`, which lists the keys `my` and `myx` beside the group's own, and the group's `get`, `put` and `delete` lines name the key `my`.
+`origin/main` writes the same lines and splits them the same way.
+
+Found by the etcd review (#1089), while measuring the LibreDB lines of U67.
+Not fixed there: LibreDB's arms and its provider are outside the etcd PR.
+
+**Done when:** the generated `prefix`, `get`, `put` and `delete` lines quote a key or prefix that holds white space or a quote mark, or write a `#` note in place of a line they cannot spell, so `tokenize` reads each back as that one key, and a test runs each line against a store holding a key with a space and one with a quote mark, each beside the key its bare line names, and finds that the line reaches its own key and leaves the other as it was.
 
 ## Dependencies
 
