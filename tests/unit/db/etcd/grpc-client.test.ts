@@ -36,6 +36,7 @@ import {
   type sendUnaryData,
 } from "@grpc/grpc-js";
 import { fromJSON } from "@grpc/proto-loader";
+import { QueryError } from "@/lib/db/errors";
 import {
   type EtcdCallOptions,
   type EtcdClient,
@@ -3282,6 +3283,39 @@ describe("over grpc-js: deadlines, aborts, the receive cap and etcd's words (spe
       expect(cancelledOnServer).toBe(2);
     } finally {
       await client.close();
+    }
+  }, 10_000);
+
+  test("a keep-alive whose stream reached the server before its own timeout ended it is a deadline, and a write that may have been applied: the request left", async () => {
+    let streams = 0;
+    const received: unknown[] = [];
+    const { server: silent, port: silentPort } = await serve({
+      Lease: {
+        // Takes the stream and its request, and never answers.
+        LeaseKeepAlive: ((call) => {
+          streams++;
+          call.on("data", (message: Record<string, unknown>) => received.push(message));
+        }) satisfies Bidi,
+      },
+      Maintenance: { Status: answering(MINIMAL["Maintenance/Status"]) },
+    });
+    const client = await createGrpcEtcdClient(at(silentPort));
+    try {
+      // One answered call connects the channel first, so grpc-js gives the keep-alive's stream a transport at once,
+      // long before the stream's own signal times out.
+      await client.status(options);
+      const error = await failure(client.leaseKeepAliveOnce("1", { signal: AbortSignal.timeout(300) }));
+      expect(error).toMatchObject({ category: "deadline-exceeded", detail: "Cancelled on client", grpcCode: 1 });
+      const provided = toProviderError(error, context("lease keep-alive", true));
+      expect(provided).toBeInstanceOf(QueryError);
+      expect(provided.message).toBe(
+        "The lease keep-alive reached its deadline before etcd answered. (Cancelled on client) The write may have been applied: read the key again before you run the command again.",
+      );
+      expect(streams).toBe(1);
+      expect(received).toEqual([{ ID: "1" }]);
+    } finally {
+      await client.close();
+      silent.forceShutdown();
     }
   }, 10_000);
 
