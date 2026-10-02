@@ -298,7 +298,7 @@ mode cannot fall through to the trusting branch unnoticed.
 
 See the [non-Azure trust caveat](#15-known-limitations--future-work).
 
-### 4.4 Connection-string nuance ⚠️
+### 4.4 Connection-string nuance
 
 `getCapabilities().supportsConnectionString` is `true` and the UI parser accepts both `mssql://` and
 `sqlserver://` URLs — but it **decomposes them into discrete fields** (`host`/`port`/`user`/`password`/
@@ -358,7 +358,7 @@ A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
 for that id; otherwise it calls `request.cancel()` and returns `true` as long as that call doesn't
 throw — it does **not** confirm the cancellation actually took effect. Exposed via `POST /api/db/cancel`.
 
-### 5.3 Data-type & parameter handling ⚠️
+### 5.3 Data-type & parameter handling
 
 - **Parameters are bound without an explicit SQL type.** `query()` calls
   `request.input(\`p${i+1}\`, value)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) and
@@ -488,7 +488,7 @@ The cost while it stands: an abandoned transaction holds its locks until the con
 
 ## 7. Schema introspection
 
-Five bulk queries grouped in memory (see [§3.3](#33-five-query-schema-introspection-cross-schema)):
+Five bulk queries grouped in memory (see [§3.3](#33-schema-introspection-cross-schema)):
 
 | Data | Source |
 |------|--------|
