@@ -16,6 +16,17 @@ test.describe("Login Flow", () => {
     await expect(page.locator('button:has-text("Sign in")').first()).toBeVisible();
   });
 
+  test("the sign-in form arrives in the page's first HTML, never in a streamed segment a script moves later", async ({
+    request,
+  }) => {
+    // React outlined the form's Suspense boundary into a hidden S:0 segment that a script moves into place; on a loaded
+    // CI runner the client drew the form first and the hidden copy stayed, so the page held two input#email (Functional
+    // Smoke, run 37022597426, a strict-mode locator refused to choose).
+    const html = await (await request.get("/login")).text();
+    expect(html).not.toMatch(/<div hidden id="S:\d+">/);
+    expect(html.match(/id="email"/g)).toHaveLength(1);
+  });
+
   test("admin login redirects to /admin", async ({ page }) => {
     await page.locator('input[type="email"]').fill("admin@libredb.org");
     await page.locator('input[type="password"]').fill("test-admin");
