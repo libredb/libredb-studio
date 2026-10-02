@@ -541,7 +541,8 @@ function negativeLeasesLeftOut(left: number): string {
 async function readLeases(client: EtcdObjectClient, context: EtcdSurfaceContext): Promise<Reading> {
   const answer = await refusableListing(() => client.leaseLeases({ signal: context.signal }), context, "lease");
   const addressed = answer.ids.filter((id) => fromHexId(leaseHexId(id)) === id);
-  const ids = addressed.map(leaseHexId).sort();
+  // Code-unit order, as Array.prototype.sort's default orders them, written out so no locale reorders a hex digit.
+  const ids = addressed.map(leaseHexId).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const left = answer.ids.length - addressed.length;
   return {
     rows: ids.map((id) => ({ path: [id], name: id, kind: "lease" })),

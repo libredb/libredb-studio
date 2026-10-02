@@ -843,11 +843,22 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
     server?.close();
   });
 
+  /** OpenSSL's verify codes for a chain the CA text does not complete, as Node and Bun name them. */
+  const CHAIN_REFUSALS = new Set([
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "UNABLE_TO_GET_ISSUER_CERT",
+    "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "CERT_SIGNATURE_FAILURE",
+  ]);
+
   /**
    * Whether the runtime running this file verifies that server's certificate with this CA text, over a
    * handshake: the premise of a CA refusal, since createSecureContext throws for some texts the runtime
    * cannot read and takes others in silence, reading no certificate from them. A text it throws for
-   * verifies nothing.
+   * verifies nothing. The handshake verifies as a client does, and only a refusal of the certificate's chain
+   * answers false: any other failure, a name the certificate does not hold included, fails the test.
    */
   function verifies(ca: string): Promise<boolean> {
     try {
@@ -856,14 +867,14 @@ describe("E5 and 6.1: the CA and the client key are read as PEM, before any chan
       return Promise.resolve(false);
     }
     return new Promise((resolve, reject) => {
-      const socket = connect(
-        { host: "127.0.0.1", port, servername: "etcd.test", ca, rejectUnauthorized: false },
-        () => {
-          resolve(socket.authorized);
-          socket.destroy();
-        },
-      );
-      socket.on("error", reject);
+      const socket = connect({ host: "127.0.0.1", port, servername: "etcd.test", ca }, () => {
+        resolve(true);
+        socket.destroy();
+      });
+      socket.on("error", (error: NodeJS.ErrnoException) => {
+        if (CHAIN_REFUSALS.has(error.code ?? "")) resolve(false);
+        else reject(error);
+      });
     });
   }
 

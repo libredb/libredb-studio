@@ -35,7 +35,7 @@
  * each measurement as one `MEASURE {json}` line.
  */
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -730,7 +730,7 @@ async function unusualGrants(fixture: Fixture): Promise<void> {
       [["libredb-live-rf5d", [{ type: "READ", key: new Uint8Array([0]), rangeEnd: new Uint8Array([0]) }]]],
     ],
   ];
-  const password = createHash("sha256").update(cert("root.password")).update("rf5").digest("hex").slice(0, 24);
+  const password = randomBytes(12).toString("hex");
   try {
     for (const [user, roles] of users) {
       // oxlint-disable-next-line no-await-in-loop -- the checks run one at a time against a live server, in order, so each snapshot and socket census sees one step.
@@ -885,7 +885,7 @@ async function unusualGrants(fixture: Fixture): Promise<void> {
 async function tokenEvents(fixture: Fixture): Promise<void> {
   const gateway = await rootGateway(fixture);
   const user = "libredb-live-rf3";
-  const password = createHash("sha256").update(cert("root.password")).update("rf3").digest("hex").slice(0, 24);
+  const password = randomBytes(12).toString("hex");
   await gatewayRoleWith(gateway, user, [{ type: "READWRITE", ...prefixRange(SCRATCH_PREFIX) }]);
   await gatewayUserWith(gateway, user, password, [user]);
   await gatewayPutMany(gateway, [
@@ -943,7 +943,7 @@ async function tokenEvents(fixture: Fixture): Promise<void> {
 /** KE12: for each renewal answer of E4, whether a write that met it was applied, read back as root. */
 async function ke12(fixture: Fixture): Promise<void> {
   const gateway = await rootGateway(fixture);
-  const password = createHash("sha256").update(cert("root.password")).update("ke12").digest("hex").slice(0, 24);
+  const password = randomBytes(12).toString("hex");
   const writer = "libredb-live-ke12";
   await gatewayRoleWith(gateway, writer, [{ type: "READWRITE", ...prefixRange(SCRATCH_PREFIX) }]);
   await gatewayUserWith(gateway, writer, password, [writer]);
