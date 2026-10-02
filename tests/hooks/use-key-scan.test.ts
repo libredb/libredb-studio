@@ -65,6 +65,46 @@ function page(keys: string[], cursor: string, total = 31, types: Record<string, 
   return { json: { keys, cursor, total, types } };
 }
 
+/**
+ * A key space larger than every bound the hook keeps: each page hands back a full batch of keys no
+ * page has named before, under the pattern it was asked for, and a cursor that is never `"0"`.
+ */
+function endlessKeys(name: (pattern: string, index: number) => string) {
+  const served = new Map<string, number>();
+  return async (req: Request): Promise<MockFetchResponse> => {
+    const body = (await req.json()) as { pattern?: string; count: number };
+    const pattern = body.pattern ?? "";
+    const from = served.get(pattern) ?? 0;
+    served.set(pattern, from + body.count);
+    const keys = Array.from({ length: body.count }, (_, offset) => name(pattern, from + offset));
+    return page(keys, String(from + body.count), 1_000_000);
+  };
+}
+
+/**
+ * Whether a run ends on its own, counted in microtask turns rather than in time.
+ *
+ * A loop that awaits a promise that has already resolved never hands the thread back, so no timer
+ * fires while it runs, a test's own timeout included, and a test that waited for it would hang the
+ * suite rather than fail. The watchdog's turns are taken on the same microtask queue, so they keep
+ * passing while such a loop spins. Whichever ends first answers; then `stop` sets the flag the loop
+ * reads between pages, which ends it either way.
+ */
+async function endsUnaided(run: () => Promise<void>, stop: () => void): Promise<boolean> {
+  const running = run().then(() => true);
+  const watchdog = (async () => {
+    for (let turn = 0; turn < 10_000; turn += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one turn of the microtask queue is the unit this counts in.
+      await Promise.resolve();
+    }
+    return false;
+  })();
+  const unaided = await Promise.race([running, watchdog]);
+  stop();
+  await running;
+  return unaided;
+}
+
 describe("useKeyScan", () => {
   afterEach(() => {
     restoreGlobalFetch();
@@ -275,7 +315,7 @@ describe("useKeyScan", () => {
     });
     const { result } = hook();
 
-    let first: Promise<void> = Promise.resolve();
+    let first: Promise<unknown> = Promise.resolve();
     act(() => {
       first = result.current.scanMore();
     });
@@ -552,7 +592,7 @@ describe("useKeyScan", () => {
     });
 
     const first = hook();
-    let ok: Promise<void> = Promise.resolve();
+    let ok: Promise<unknown> = Promise.resolve();
     act(() => {
       ok = first.result.current.scanMore();
     });
@@ -568,7 +608,7 @@ describe("useKeyScan", () => {
 
     mode = "fail";
     const second = hook();
-    let bad: Promise<void> = Promise.resolve();
+    let bad: Promise<unknown> = Promise.resolve();
     act(() => {
       bad = second.result.current.scanMore();
     });
@@ -622,7 +662,7 @@ describe("useKeyScan", () => {
       });
       const { result } = hook();
 
-      let stale: Promise<void> = Promise.resolve();
+      let stale: Promise<unknown> = Promise.resolve();
       act(() => {
         stale = result.current.scanMore();
       });
@@ -661,7 +701,7 @@ describe("useKeyScan", () => {
       });
       const { result } = hook();
 
-      let stale: Promise<void> = Promise.resolve();
+      let stale: Promise<unknown> = Promise.resolve();
       act(() => {
         stale = result.current.scanMore();
       });
@@ -1093,6 +1133,48 @@ describe("the held-key limit", () => {
     expect(fetchMock.mock.calls.length).toBe(1);
     expect(result.current.nodeCursors.size).toBe(0);
   });
+
+  /**
+   * Load more fills the tree AHEAD of the walk: its keys join the tree and not the walk's count, so
+   * the tree can reach the limit while the walk is short of Scan all's cap and its cursor is live.
+   * A Scan all pressed then has nothing it may take, and it must end there rather than ask a full
+   * tree for a page forever, a loop that never yields and that no Stop press could reach.
+   */
+  test("ends a Scan all at the limit when Load more filled the tree ahead of the walk", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": endlessKeys((pattern, index) => (pattern === "" ? `top:${index}` : `app:${index}`)),
+    });
+    const { result } = hook();
+
+    // The first page, as the panel takes it, then nine presses of Load more under `app`: 9,500 keys
+    // held against a walk that has counted 500, so the panel still offers Scan all.
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    for (let press = 0; press < 9; press += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each press continues the prefix's walk from the cursor the last one wrote.
+      await act(async () => {
+        await result.current.loadMoreUnder(["app"]);
+      });
+    }
+    expect(result.current.keys.length).toBe(9_500);
+    expect(result.current.scanned).toBe(500);
+    const asked = fetchMock.mock.calls.length;
+
+    let unaided = false;
+    await act(async () => {
+      unaided = await endsUnaided(result.current.scanAll, result.current.stop);
+    });
+
+    expect(unaided).toBe(true);
+    // One page filled the tree, and nothing was asked for after it.
+    expect(fetchMock.mock.calls.length).toBe(asked + 1);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT);
+    expect(result.current.scanningAll).toBe(false);
+    expect(result.current.exhausted).toBe(false);
+    // The limit's sentence is the panel's, drawn from the tree's size, so Scan all adds none of its own.
+    expect(result.current.stoppedBy).toBeNull();
+  });
 });
 
 /**
@@ -1357,5 +1439,44 @@ describe("a walk in a declared shape", () => {
     expect(result.current.scanned).toBe(200);
     expect(result.current.skipped).toEqual({ count: 9_800, reason: REASON });
     expect(result.current.stoppedBy).toBe("Stopped after 10,000 keys. Narrow the prefix to walk a smaller key space.");
+  });
+
+  /**
+   * The held limit's end of a Scan all, reached the way a prefix panel reaches it: the root row's
+   * Load more reads `/` while the walk covers one prefix, so its keys are ones the walk never counts,
+   * and one press is enough for the walk to fill the tree short of its cap.
+   */
+  test("ends a Scan all at the held limit when the root row's Load more read keys outside the prefix", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": endlessKeys((pattern, index) =>
+        pattern === "/registry/pods/" ? `/registry/pods/${index}` : `/registry/configmaps/${index}`,
+      ),
+    });
+    const { result } = renderHook(() =>
+      useKeyScan({ connection: CONNECTION, capability: ETCD_SCAN, pattern: "/registry/pods/" }),
+    );
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder([""]);
+    });
+    expect(result.current.keys.length).toBe(1_500);
+    const asked = fetchMock.mock.calls.length;
+
+    let unaided = false;
+    await act(async () => {
+      unaided = await endsUnaided(result.current.scanAll, result.current.stop);
+    });
+
+    expect(unaided).toBe(true);
+    // Seventeen pages of the prefix fill the tree with 9,000 keys walked, short of the cap, and
+    // nothing is asked for after them.
+    expect(fetchMock.mock.calls.length).toBe(asked + 17);
+    expect(result.current.scanned).toBe(9_000);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT);
+    expect(result.current.scanningAll).toBe(false);
+    expect(result.current.stoppedBy).toBeNull();
   });
 });

@@ -132,9 +132,15 @@ export interface KeyScanResult {
 }
 
 export interface KeyScanControls {
-  /** Take one more batch from wherever the walk stands. */
-  readonly scanMore: () => Promise<void>;
-  /** Page until the walk is spent, the cap is reached, someone presses Stop, or a page fails. */
+  /**
+   * Take one more batch from wherever the walk stands. Resolves false when it asked for none: the
+   * tree is full, the walk is spent, or a page of this walk is already in flight.
+   */
+  readonly scanMore: () => Promise<boolean>;
+  /**
+   * Page until the walk is spent, the cap is reached, the tree is full, someone presses Stop, or a
+   * page fails.
+   */
   readonly scanAll: () => Promise<void>;
   /**
    * Take one more batch of the walk scoped to ONE PREFIX, for the row under an open folder.
@@ -340,7 +346,7 @@ export function useKeyScan(options: {
     setTypes(new Map(knownTypes.current));
   }, []);
 
-  const scanMore = useCallback(async (): Promise<void> => {
+  const scanMore = useCallback(async (): Promise<boolean> => {
     // One page at a time PER WALK. Two in flight for the same walk would both read the same cursor
     // and both advance from it, so the second answer would overwrite the position the first one
     // earned and the walk would skip whatever lay between them. A spent walk is refused for the same
@@ -348,8 +354,8 @@ export function useKeyScan(options: {
     const mine = walk.current;
     // A tree that is FULL cannot be given anything, so this walk would buy a page to drop it: the
     // panel's own sentence is what the reader should be reading instead of a request in flight.
-    if (walked.current.size >= HELD_KEY_LIMIT) return;
-    if (spent.current || pageInFlight.current === mine) return;
+    if (walked.current.size >= HELD_KEY_LIMIT) return false;
+    if (spent.current || pageInFlight.current === mine) return false;
     pageInFlight.current = mine;
     setBusy(true);
 
@@ -358,7 +364,7 @@ export function useKeyScan(options: {
       // The walk this page belongs to may have been thrown away while it was in the air, and a
       // discarded walk's answer is not an answer to the current one: it would land keys from a
       // database or a pattern nobody is looking at any more, beside a cursor from that walk.
-      if (!alive.current || mine !== walk.current) return;
+      if (!alive.current || mine !== walk.current) return true;
       cursor.current = page.cursor;
       scannedKeys.current += page.keys.length;
       failure.current = null;
@@ -391,7 +397,7 @@ export function useKeyScan(options: {
       // A failure from an abandoned walk is dropped for the reason its answer would be: it describes
       // a read the panel has already replaced, and reporting it would put a sentence about the old
       // walk on the new one.
-      if (!alive.current || mine !== walk.current) return;
+      if (!alive.current || mine !== walk.current) return true;
       // The cursor is deliberately NOT advanced on a failure. The position already held is the
       // last one the server acknowledged, so retrying re-asks the batch that failed rather than
       // skipping it.
@@ -405,6 +411,7 @@ export function useKeyScan(options: {
       if (pageInFlight.current === mine) pageInFlight.current = null;
       if (alive.current && mine === walk.current) setBusy(false);
     }
+    return true;
   }, [absorb, absorbTypes, capability, pattern, readPageAt]);
 
   const scanAll = useCallback(async (): Promise<void> => {
@@ -428,15 +435,18 @@ export function useKeyScan(options: {
      * makes "stopped" and "hit the cap" ordered rather than racing in a `finally`.
      */
     let reason: string | null = null;
-    // NO HELD-LIMIT CHECK HERE, and the absence is deliberate rather than an oversight: held keys are
-    // a SUBSET of handed ones (`absorb` only ever adds what a page handed), so a tree at the held
-    // limit always has a walk at the gesture's own limit, and this condition trips before any exit
-    // that check could provide. Adding it would be a branch no reader can reach, which this
-    // repository's coverage gate is right to refuse - the bound's sentence is the panel's, drawn from
-    // the tree's size, and it is shown whether or not a `Scan all` ever ran.
     while (!stopped.current && !spent.current && failure.current === null) {
       // oxlint-disable-next-line no-await-in-loop -- each page starts at the cursor the last one wrote.
-      await scanMore();
+      const asked = await scanMore();
+      /*
+       * A REFUSAL ENDS THE LOOP. Asked again, `scanMore` would refuse again, and awaiting a promise
+       * that has already resolved never yields to the event loop: no page, no render and no Stop
+       * press would run, and the tab would freeze. The refusal the panel's Scan all meets is the FULL
+       * TREE. A Load more fills the tree with keys the walk does not count, so the tree can reach
+       * `HELD_KEY_LIMIT` while the walk is short of its cap and its cursor is live. The limit's
+       * sentence is the panel's, drawn from the tree's size, so this exit adds none of its own.
+       */
+      if (!asked) break;
       // The keys the walk was handed and the keys its pages left out: see `SCAN_ALL_MAX_KEYS`.
       const walkedKeys = scannedKeys.current + (skippedKeys.current?.count ?? 0);
       if (walkedKeys >= SCAN_ALL_MAX_KEYS && !spent.current) {
