@@ -1558,6 +1558,13 @@ describe("the refresh pattern, held to the parser (spec 5.1.1, 5.1.2, 6.2)", () 
       '"./etcdctl" put /a b',
       "/usr/local/bin/'etcdctl' del /a",
       "'--command-timeout'=5s put /a b",
+      // Empty quote pairs, which quote nothing, before or after the prompt and inside the name of an assignment, so
+      // the word is still a prompt or an assignment.
+      "''$ put /a b",
+      "%'' put /a b",
+      "env ETCDCTL_A''PI=3 etcdctl del /a",
+      "env ''ETCDCTL_API=3 etcdctl lease revoke 694d77aa9e38260f",
+      'ETCDCTL_API""=3 del /a',
       // A comment line that a lone CR ends, as the lexer ends a line at a CRLF, a CR or an LF.
       "# a comment\rput /a b",
       "# c\rdel /a",

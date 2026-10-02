@@ -1420,6 +1420,18 @@ const COMMENT_LINE = String.raw`#[^\r\n]*${LINE_END}`;
 /** Quote marks, which a word may hold anywhere: the lexer removes them and keeps the text they quote (spec 5.1.1). */
 const QUOTES = `['"]*`;
 
+/**
+ * Empty quote pairs, which the lexer removes and which quote nothing, so a word that holds them is still a prompt or
+ * an assignment, where a quoted or escaped character makes it neither (`readLeadWord`, spec 5.1.1, 5.1.2).
+ */
+const EMPTY_QUOTES = `(?:''|"")*`;
+
+/** A prompt, `$` or `%`, with empty quote pairs before and after it (spec 5.1.2). */
+const PROMPT = `${EMPTY_QUOTES}[$%]${EMPTY_QUOTES}`;
+
+/** `ETCDCTL_API=` as an assignment begins, unquoted, with empty quote pairs before each of its characters (5.1.2). */
+const ASSIGNMENT_NAME = [..."ETCDCTL_API="].map((char) => `${EMPTY_QUOTES}${char}`).join("");
+
 /** The blanks between two words of the command line, with a line join before them, after them or both. */
 const WORD_GAP = String.raw`(?:${LINE_JOIN})?[ \t]+(?:${LINE_JOIN}[ \t]*)?`;
 
@@ -1480,15 +1492,17 @@ const LEASE_WRITE = [
  * Anchored to the command word the parser reads (spec 6.2): past the blank and comment lines before it, each
  * ending at a CRLF, a CR or an LF, the leading tokens of spec 5.1.2 and `--command-timeout`, so a key named
  * like a verb reloads nothing, and the command word ends where a word ends, at a blank, a line end or the end
- * of the text, so a word that goes on past it, through a no-break space or a form feed, is not it. Each word
- * may be spelled as the lexer reads it (5.1.1), with quote marks anywhere in it and any character escaped, and
- * the path before `etcdctl` may hold any text the lexer keeps in one word, quoted or escaped blanks and quoted
- * line breaks among it. A line join may stand before the blanks between two words and another after them, so
- * the documented multi-line forms reload the tree. Not read: a line join inside a word, two joins side by side,
- * and a join after a second run of blanks. Patterns that read them took JavaScriptCore, the engine of Bun and
- * Safari, 6.8 s on 20,000 joins in one gap and 38 s on 80,000 assignments (measured 2026-10-01), where this one
- * decides each in under 0.25 s. A CRLF has one reading (`LINE_END`), so 80,000 CRLF comment lines above a read
- * take it 45 ms in JavaScriptCore, where a pattern that also read their CR as a line end of its own took 2.7 s
+ * of the text, so a word that goes on past it, through a no-break space or a form feed, is not it. The prompt and
+ * an assignment up to its `=` may hold empty quote pairs, which quote nothing, and no other quoting, since a quoted
+ * or escaped character there makes the word no prompt and no assignment (5.1.2); every other word may be spelled
+ * as the lexer reads it (5.1.1), with quote marks anywhere in it and any character escaped, and the path before
+ * `etcdctl` may hold any text the lexer keeps in one word, quoted or escaped blanks and quoted line breaks among
+ * it. A line join may stand before the blanks between two words and another after them, so the documented
+ * multi-line forms reload the tree. Not read: a line join inside a word, two joins side by side, and a join after
+ * a second run of blanks. Patterns that read them took JavaScriptCore, the engine of Bun and Safari, 6.8 s on
+ * 20,000 joins in one gap and 38 s on 80,000 assignments (measured 2026-10-01), where this one decides each in
+ * under 0.3 s (measured 2026-10-02). A CRLF has one reading (`LINE_END`), so 80,000 CRLF comment lines above a read
+ * take it 51 ms in JavaScriptCore, where a pattern that also read their CR as a line end of its own took 2.7 s
  * there and 43 s in V8 on 26 of them (measured 2026-10-02). One reading goes the other way: a path whose quoted
  * text itself holds etcdctl and a write command, such as '/etcdctl put /x/etcdctl', reloads the tree whatever
  * command follows it.
@@ -1496,9 +1510,9 @@ const LEASE_WRITE = [
  */
 export const ETCD_SCHEMA_REFRESH_PATTERN = [
   String.raw`^(?:${BLANK_LINES}${COMMENT_LINE})*${BLANK_LINES}`,
-  `(?:[$%]${WORD_GAP})?`,
+  `(?:${PROMPT}${WORD_GAP})?`,
   `(?:${spelledWord("env")}${WORD_GAP})?`,
-  `(?:ETCDCTL_API=${QUOTES}${spelledFrom("3")}${WORD_GAP})*`,
+  `(?:${ASSIGNMENT_NAME}${QUOTES}${spelledFrom("3")}${WORD_GAP})*`,
   `(?:${PATH_TO_ETCDCTL}?${QUOTES}${spelledFrom("etcdctl")}${WORD_GAP})?`,
   `(?:${COMMAND_TIMEOUT})*`,
   `(?:${["put", "del", "txn"].map(spelledWord).join("|")}|${LEASE_WRITE})`,
