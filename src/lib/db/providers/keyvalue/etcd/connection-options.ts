@@ -205,8 +205,8 @@ export function buildEtcdConnectionOptions(
 /**
  * The facts errors.ts words its sentences with (C9): the configured endpoint, never the tunnel's local
  * forward; the TLS identity the certificate is checked against, the IP itself for an IP identity; the
- * runtime, since Bun's failed TLS connections carry no cause (spec E5, R07); M and the timeout. A
- * caller whose call runs under a shorter deadline replaces `timeoutMs` with it.
+ * runtime, since under Bun a handshake the server refused carries no cause (spec E5, R07); M and the
+ * timeout. A caller whose call runs under a shorter deadline replaces `timeoutMs` with it.
  */
 export function etcdErrorConnection(options: EtcdConnectionOptions): EtcdErrorConnection {
   const { tls } = options;
