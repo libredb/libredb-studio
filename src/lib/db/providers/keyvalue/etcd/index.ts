@@ -53,7 +53,7 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
-import { type EtcdClient, type EtcdClientFactory, EtcdError, type EtcdPermission } from "./client";
+import { type EtcdAuthStatus, type EtcdClient, type EtcdClientFactory, EtcdError, type EtcdPermission } from "./client";
 import { type EtcdParseLimits, parseEtcdCommand } from "./commands";
 import {
   buildEtcdConnectionOptions,
@@ -123,15 +123,16 @@ interface EtcdSession {
   readonly client: EtcdClient;
   readonly options: EtcdConnectionOptions;
   readonly errors: EtcdErrorConnection;
-  /** The etcd user the grants belong to; absent where authentication is off. */
+  /** The etcd user the grants belong to; absent where authentication was off at connect. */
   readonly user?: string;
   grants: EtcdGrants;
   /**
-   * The auth store's revision AuthStatus answered before the grants were read (spec 4.7); absent where it
-   * answered none, an etcd below 3.7 reading "user name is empty" for an AuthStatus without a token, so that
-   * certificate session reads its grants again on each walk that reads keys, with no AuthStatus (`readGrantsAgain`).
+   * The AuthStatus answer the grants were taken under (spec 4.7): whether authentication was on, and the auth
+   * store's revision; absent where it answered none, an etcd below 3.7 reading "user name is empty" for an
+   * AuthStatus without a token, so that certificate session reads its grants again on each walk that reads keys,
+   * with no AuthStatus (`readGrantsAgain`).
    */
-  authRevision?: string;
+  authStatus?: EtcdAuthStatus;
 }
 
 /** A query in flight under the caller's id, so cancelQuery reaches it (spec 5.5). */
@@ -210,15 +211,18 @@ async function readGrants(
   }
 }
 
-/** The auth store's revision as AuthStatus answers it now (spec 4.7), a failure raised as the read of the grants. */
-async function readAuthRevision(
+/**
+ * AuthStatus as it answers now (spec 4.7), whether authentication is on and the auth store's revision, a
+ * failure raised as the read of the grants.
+ */
+async function readAuthStatus(
   client: EtcdClient,
   user: string,
   errors: EtcdErrorConnection,
   signal: AbortSignal,
-): Promise<string> {
+): Promise<EtcdAuthStatus> {
   try {
-    return (await client.authStatus({ signal })).authRevision;
+    return await client.authStatus({ signal });
   } catch (error) {
     throw toProviderError(error, grantsContext(user, errors));
   }
@@ -374,12 +378,12 @@ export class EtcdProvider extends BaseDatabaseProvider {
       });
     }
     let enabled: boolean | undefined;
-    let authRevision: string | undefined;
+    let authStatus: EtcdAuthStatus | undefined;
     let roles: readonly string[] | undefined;
     if (auth.kind !== "password") {
       enabled = await client.authStatus({ signal: signal() }).then(
         (status) => {
-          authRevision = status.authRevision;
+          authStatus = status;
           return status.enabled;
         },
         (error: unknown) => {
@@ -406,7 +410,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
     if (enabled === undefined) {
       enabled = await client.authStatus({ signal: signal() }).then(
         (answer) => {
-          authRevision = answer.authRevision;
+          authStatus = answer;
           return answer.enabled;
         },
         (error: unknown) => {
@@ -422,7 +426,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
       errors,
       ...(user === undefined ? {} : { user }),
       grants,
-      ...(authRevision === undefined ? {} : { authRevision }),
+      ...(authStatus === undefined ? {} : { authStatus }),
     };
   }
 
@@ -433,12 +437,16 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * The grants a walk that reads keys runs under (spec 4.7): AuthStatus first, and the grants read again when
-   * the auth store's revision is not the one they were read under. etcd checks its default simple token at the
-   * auth store's revision as it stands, so no call made after an auth change meets "revision of auth store is
-   * old" and reaches the adapter's hook, and the revision is what tells the walk; where authentication is off
-   * there is no grant to read. A certificate session on an etcd below 3.7 has no revision to compare, since its
-   * AuthStatus needs a token it never holds, so each of its walks reads UserGet and RoleGet again, with no AuthStatus.
+   * The grants a walk that reads keys runs under (spec 4.7): AuthStatus first, then every key where an admin has
+   * turned authentication off, as a connect with it off reads them, or the user's grants read again where it is
+   * on and its answer is not the one they were taken under. etcd checks its default simple token at the auth
+   * store's revision as it stands, so no call made after an auth change meets "revision of auth store is old"
+   * and reaches the adapter's hook, and AuthStatus is what tells the walk: its `enabled` as well as its revision,
+   * since an auth enable moves no revision. The one session that reads nothing before its walks is one that
+   * connected with authentication off, which has no user whose grants to read: if an admin turns authentication
+   * on, etcd's own refusal answers its walks until it connects again. A certificate session on an etcd below 3.7
+   * has no revision to compare, since its AuthStatus needs a token it never holds, so each of its walks reads
+   * UserGet and RoleGet again, with no AuthStatus.
    */
   private async walkGrants(session: EtcdSession): Promise<EtcdGrants> {
     if (this.pendingGrants !== undefined) return this.pendingGrants;
@@ -447,10 +455,11 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * AuthStatus, then UserGet and RoleGet unless its revision is the one the grants were read under and the
-   * adapter reported no change since; the grants read and the revision read before them replace the ones kept.
-   * A session with no revision reads UserGet and RoleGet alone, every time. Walks that start together share the
-   * one read.
+   * AuthStatus, then the grants its answer calls for: the ones kept where it is the answer they were taken under
+   * and the adapter reported no change since, every key with no read where authentication is off, and else
+   * UserGet and RoleGet read again. The grants and the answer they were taken under replace the ones kept. A
+   * session with no AuthStatus answer reads UserGet and RoleGet alone, every time. Walks that start together
+   * share the one read.
    */
   private readGrantsAgain(session: EtcdSession, user: string): Promise<EtcdGrants> {
     const signal = () => this.callSignal();
@@ -468,13 +477,22 @@ export class EtcdProvider extends BaseDatabaseProvider {
         },
       );
     };
+    const kept = session.authStatus;
     const reading = (
-      session.authRevision === undefined
+      kept === undefined
         ? replace()
-        : readAuthRevision(session.client, user, session.errors, signal()).then((revision) => {
-            if (!this.grantsStale && revision === session.authRevision) return session.grants;
+        : readAuthStatus(session.client, user, session.errors, signal()).then((status) => {
+            const unchanged = status.enabled === kept.enabled && status.authRevision === kept.authRevision;
+            if (!this.grantsStale && unchanged) return session.grants;
+            if (!status.enabled) {
+              // etcd checks no grant with authentication off, so there is none to read (spec 4.7).
+              this.grantsStale = false;
+              session.grants = EVERY_KEY;
+              session.authStatus = status;
+              return EVERY_KEY;
+            }
             return replace().then((grants) => {
-              session.authRevision = revision;
+              session.authStatus = status;
               return grants;
             });
           })

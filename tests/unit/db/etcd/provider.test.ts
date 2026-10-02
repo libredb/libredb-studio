@@ -910,6 +910,65 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect(methods(client, again).filter((method) => method !== "range")).toEqual(["authStatus"]);
   });
 
+  test("once an admin turns authentication off, the next walk reads every key, as a connect with it off does, and no grant; turned on again, the grants are read again (spec 4.7)", async () => {
+    let enabled = true;
+    let authRevision = "5";
+    // A group outside the reader's grants, so the key space it walks with authentication off is wider.
+    const keys: readonly KeySpaceEntry[] = [...KEYS, { key: "/secret/x/y", value: "hidden" }];
+    // With authentication off etcd checks no grant and admits every caller to root's listings (IsAdminPermitted).
+    const whileOn = <T>(answer: T) => (enabled ? Promise.reject(denied()) : Promise.resolve(answer));
+    const client = readerClient({
+      authStatus: async () => ({ enabled, authRevision }),
+      range: (request, options) => keySpaceRange(keys, enabled ? READER_PERMISSIONS : undefined)(request, options),
+      userList: () => whileOn(["reader", "root"]),
+      roleList: () => whileOn(["reader", "root"]),
+      leaseLeases: () => whileOn({ header: KEY_SPACE_HEADER, ids: [] }),
+    });
+    const { provider } = await connected(PASSWORD_CONNECTION, client);
+    const everyGroup = visibleGroups(keys.map((entry) => entry.key)).length;
+
+    // auth disable: etcd commits a new auth revision (AuthDisable's commitRevision) and serves every key.
+    enabled = false;
+    authRevision = "6";
+    const disabled = client.calls.length;
+    expect((await provider.countObjects([])).prefix).toEqual({ count: everyGroup });
+    expect(methods(client, disabled)[0]).toBe("authStatus");
+    expect(methods(client, disabled)).toEqual(expect.not.arrayContaining(["userGet", "roleGet"]));
+    // Every key is writable as well, so the reader's grant of READ alone on /config/a no longer refuses its edit.
+    const built = await provider.buildObjectEdit({ ...REQUEST, path: ["/config/a"], text: "omega" });
+    expect(built.built).toBe(true);
+    const kept = client.calls.length;
+    expect(await listed(provider)).toEqual(visibleGroups(keys.map((entry) => entry.key)));
+    expect(methods(client, kept).filter((method) => method !== "range")).toEqual(["authStatus"]);
+
+    // auth enable commits no revision, so only AuthStatus's enabled tells the walk to read the grants again.
+    enabled = true;
+    const reenabled = client.calls.length;
+    expect((await provider.countObjects([])).prefix).toEqual({
+      count: visibleGroups(["/app/a/b", "/app/cfg", "/app/x/y", "/config/a"]).length,
+      sampledFrom: "the 2 ranges etcd user reader may read",
+    });
+    expect(methods(client, reenabled).slice(0, 3)).toEqual(["authStatus", "userGet", "roleGet"]);
+  });
+
+  test("a session that connected with authentication off reads nothing before its walks, so once an admin turns authentication on, etcd's own refusal answers them (spec 4.7)", async () => {
+    let enabled = false;
+    const client = etcdClient({
+      authStatus: async () => ({ enabled, authRevision: "2" }),
+      range: (request, options) => keySpaceRange(KEYS, enabled ? READER_PERMISSIONS : undefined)(request, options),
+    });
+    const { provider } = await connected(CERTIFICATE_CONNECTION, client);
+    enabled = true;
+    const mark = client.calls.length;
+    await expect(provider.listObjects([], "prefix")).rejects.toThrow(
+      new QueryError(
+        "etcd refused the Key Prefixes listing: this connection's etcd user is not granted all of it. (etcd: permission denied)",
+        "etcd",
+      ),
+    );
+    expect(methods(client, mark)).toEqual(["range"]);
+  });
+
   test("a renewal that met the stale auth revision narrows the next walk to the grants read again", async () => {
     let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
     const client = readerClient({ roleGet: async () => permissions, range: keySpaceRange(KEYS, READER_PERMISSIONS) });
