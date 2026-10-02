@@ -659,15 +659,84 @@ describe("the connect sequence (spec 6.1)", () => {
     expect(methods(client, mark).filter((method) => method !== "range")).toEqual(["authStatus"]);
   });
 
-  test("step 4 below 3.7: 'user name is empty' at step 2 is authentication on, so the Common Name is read", async () => {
-    const client = readerClient({
-      authStatus: async () => {
-        throw nameEmpty();
+  /**
+   * etcd below 3.7 as measured on 3.6.0 and 3.6.6 with --client-cert-auth: AuthStatus and Status answer the root
+   * role alone, whatever the credential, a caller etcd reads no user for meets "user name is empty", and UserGet
+   * answers a user about itself. `seen` is the user etcd reads from the credential, or undefined for none.
+   */
+  function etcd36(seen: { readonly user: string; readonly root: boolean } | undefined): FakeEtcdClient {
+    const asRoot = <T>(answer: T): Promise<T> => {
+      if (seen === undefined) return Promise.reject(nameEmpty());
+      return seen.root ? Promise.resolve(answer) : Promise.reject(denied());
+    };
+    return readerClient({
+      authStatus: () => asRoot({ enabled: true, authRevision: "8" }),
+      status: () => asRoot(STATUS),
+      userGet: async (name) => {
+        if (seen === undefined) throw nameEmpty();
+        if (name !== seen.user) throw denied();
+        return seen.root ? ["root"] : ["reader"];
       },
+      // etcd checks no grant for root.
+      ...(seen?.root === true ? { range: keySpaceRange(KEYS) } : {}),
     });
-    await connected(CERTIFICATE_CONNECTION, client);
-    expect(methods(client)).toEqual(["authStatus", "userGet", "status", "roleGet"]);
-  });
+  }
+
+  const ROOT_SEEN = (user: string) => ({ user, root: true });
+  const READER_SEEN = (user: string) => ({ user, root: false });
+  test.each([
+    [
+      "a client certificate of root connects",
+      "certificate",
+      ROOT_SEEN("cert-only"),
+      ["authStatus", "userGet", "status"],
+      undefined,
+    ],
+    [
+      "a password of root connects",
+      "password",
+      ROOT_SEEN("reader"),
+      ["authenticate", "status", "authStatus", "userGet"],
+      undefined,
+    ],
+    [
+      "a client certificate of a user who is not root is refused at the auth status",
+      "certificate",
+      READER_SEEN("cert-only"),
+      ["authStatus", "close"],
+      "QueryError: etcd refused the auth status: this connection's etcd user is not granted all of it. (etcd: permission denied)",
+    ],
+    [
+      "a password of a user who is not root is refused at the endpoint status",
+      "password",
+      READER_SEEN("reader"),
+      ["authenticate", "status", "close"],
+      "QueryError: etcd refused the endpoint status: this connection's etcd user is not granted all of it. (etcd: permission denied)",
+    ],
+    [
+      "a client certificate etcd does not read is refused at the user get",
+      "certificate",
+      undefined,
+      ["authStatus", "userGet", "close"],
+      "AuthenticationError: etcd did not read the client certificate: the server must run with --client-cert-auth. (etcd: user name is empty)",
+    ],
+  ] as const)(
+    "below 3.7, where AuthStatus and Status answer root alone, no session connects without an auth revision: %s (spec 4.7, 6.1)",
+    async (_label, mode, seen, calls, owed) => {
+      const client = etcd36(seen);
+      const { provider } = build(mode === "certificate" ? CERTIFICATE_CONNECTION : PASSWORD_CONNECTION, client);
+      const refused = await provider.connect().then(
+        () => undefined,
+        (error: unknown) => (error instanceof Error ? `${error.constructor.name}: ${error.message}` : String(error)),
+      );
+      expect({ refused, calls: methods(client) }).toEqual({ refused: owed, calls: [...calls] });
+      if (refused !== undefined) return;
+      // A session that connected holds AuthStatus's revision, so its walk reads AuthStatus first (spec 4.7).
+      const mark = client.calls.length;
+      await provider.listObjects([], "prefix");
+      expect(methods(client, mark)[0]).toBe("authStatus");
+    },
+  );
 
   test("step 4: a Common Name that holds root reads no role", async () => {
     const client = readerClient({ userGet: async () => ["root"] });
@@ -999,86 +1068,7 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect(methods(client).filter((method) => method === "userGet")).toHaveLength(1);
   });
 
-  /** What etcd answers root, and refuses a user who is not root: the users, roles and leases listings. */
-  const ROOT_LISTINGS: Partial<EtcdClient> = {
-    userList: async () => ["cert-only"],
-    roleList: async () => ["root"],
-    leaseLeases: async () => ({ header: KEY_SPACE_HEADER, ids: [] }),
-  };
-
-  /** A certificate user's roles, the grant reads each of its walks makes, and the listings etcd answers it. */
-  const BELOW_37_USERS: ReadonlyArray<
-    readonly [
-      label: string,
-      roles: readonly string[],
-      grantReads: ReadonlyArray<keyof EtcdClient>,
-      listings: Partial<EtcdClient>,
-    ]
-  > = [
-    ["a user who is not root", ["reader"], ["userGet", "roleGet"], {}],
-    ["a user who holds root", ["root"], ["userGet"], ROOT_LISTINGS],
-  ];
-
-  test.each(BELOW_37_USERS)(
-    "a certificate session below 3.7, whose AuthStatus needs a token, has no auth revision, so each walk that reads keys reads the grants again and never AuthStatus: %s (spec 4.7, 6.1)",
-    async (_label, roles, grantReads, listings) => {
-      let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
-      const client = readerClient({
-        ...listings,
-        // Below 3.7, AuthStatus without a token answers "user name is empty" (spec 6.1 step 2), now as at connect.
-        authStatus: async () => {
-          throw nameEmpty();
-        },
-        userGet: async () => [...roles],
-        roleGet: async () => permissions,
-        range: (request, options) =>
-          keySpaceRange(KEYS, roles.includes("root") ? undefined : permissions)(request, options),
-      });
-      const { provider } = await connected(CERTIFICATE_CONNECTION, client);
-      const walks: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
-        ["the prefix groups", () => provider.listObjects([], "prefix")],
-        ["the count", () => provider.countObjects([])],
-        ["a key's source", () => provider.readObjectSource(["/app/cfg"], "key")],
-        ["a Keys panel page", () => provider.scanKeysPage({ cursor: "0", count: 10 })],
-        ["the overview", () => provider.getOverview()],
-        ["the Tables panel", () => provider.getTableStats()],
-      ];
-      for (const [walk, run] of walks) {
-        const mark = client.calls.length;
-        // oxlint-disable-next-line no-await-in-loop -- one walk at a time, so each one's calls are its own.
-        const answered = await run().then(
-          () => "answered",
-          (error: unknown) => String(error),
-        );
-        expect({ walk, answered }).toEqual({ walk, answered: "answered" });
-        expect({ walk, first: methods(client, mark).slice(0, grantReads.length) }).toEqual({
-          walk,
-          first: [...grantReads],
-        });
-        expect({ walk, calls: methods(client, mark) }).toEqual({
-          walk,
-          calls: expect.not.arrayContaining(["authStatus"]),
-        });
-      }
-      const counted = (await provider.countObjects([])).prefix;
-      if (roles.includes("root")) {
-        expect(counted).toEqual({ count: prefixGroups(KEYS.map((entry) => encode(entry.key))).groups.length });
-        return;
-      }
-      expect(counted).toEqual({
-        count: visibleGroups(["/app/a/b", "/app/cfg", "/app/x/y", "/config/a"]).length,
-        sampledFrom: "the 2 ranges etcd user cert-only may read",
-      });
-      // An admin took the prefix away and granted another key: the next walk reads them.
-      permissions = [
-        { type: "read", key: encode("/config/a") },
-        { type: "read", key: encode("/config/b") },
-      ];
-      expect(await listed(provider)).toEqual(visibleGroups(["/config/a", "/config/b"]));
-    },
-  );
-
-  test("a session that has an auth revision raises an AuthStatus its walk meets refused, 'user name is empty' among them: only a session that never had one reads the grants without it (spec 4.7)", async () => {
+  test("a walk raises an AuthStatus it meets refused, 'user name is empty' among them, as the read of the grants (spec 4.7)", async () => {
     let refuse = false;
     const client = readerClient({
       authStatus: async () => {

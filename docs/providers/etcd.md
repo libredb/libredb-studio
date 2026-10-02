@@ -207,6 +207,7 @@ An SSH tunnel is supported, because etcd advertises no address the client follow
 ### 4.6 Server versions
 
 etcd 3.7 is tested and claimed; `Status.version` is read at connect and shown, and nothing is refused by version, so a feature an older server lacks fails in that server's own words.
+A user who is not root cannot connect to an etcd below 3.7, which answers `AuthStatus` and `Status` to the root role alone, and the connect fails in etcd's permission denied (section 4.7).
 The Storage tab reads the version too: a server before 3.6 sends no storage quota, and 3.6.0 to 3.6.5 send one left at its default as 0, so a 0 from 3.6 or later is read as the 2 GiB default (section 7).
 Kubernetes distributions ship older etcd: k3s v1.35.5 embeds etcd 3.6.7, below the nested-transaction RBAC fix of 3.6.9 and the open-ended watch fix of 3.6.14 and 3.7.1.
 
@@ -220,7 +221,8 @@ etcd lists no permission for the root role, which may read and write every key, 
 Every walk that reads keys (the prefix groups and their count, a key's Source tab, a Keys panel page, the overview, the Tables tab, and a value edit's build on a read-write connection) reads `AuthStatus` first, and reads the grants again when the auth store's revision has moved since they were read, when authentication has been turned back on, or when a call has met etcd's "revision of auth store is old" since, so a grant an admin changes is seen from the next such walk, whatever token etcd issues.
 Where an admin has turned authentication off, the walk reads every key, as a connection made with authentication off does, and reads no grant.
 A connection made while authentication was off has no user whose grants to read, so it reads nothing before its walks: if an admin turns authentication on, etcd's own refusal answers its walks until it connects again.
-A connection that signs in with its client certificate to an etcd below 3.7 has no auth store revision to compare, because that etcd refuses an `AuthStatus` sent without a token and such a connection holds none, so each of its walks reads the grants again with `UserGet` and `RoleGet` and sends no `AuthStatus`.
+An etcd below 3.7 answers `AuthStatus` and `Status` to the root role alone, whatever the credential (measured on 3.6.0 and 3.6.6), so a connection there that signs in as root reads `AuthStatus` before each walk, as on 3.7.
+A user who is not root cannot connect to such an etcd: a client certificate is refused with "etcd refused the auth status: this connection's etcd user is not granted all of it. (etcd: permission denied)", and a password with the same sentence naming "the endpoint status".
 Typed commands and the surfaces that walk no key (the member, lease, user and role listings and their Source tabs, health, the Storage tab, the maintenance cards and a value edit's apply) send nothing before their own requests and use the grants as they were last read, so a refusal they meet after such a change can name a range the user has lost, or leave out one it gained, until the next walk.
 
 ## 5. Query interface

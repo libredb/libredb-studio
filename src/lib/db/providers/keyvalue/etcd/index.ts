@@ -128,11 +128,11 @@ interface EtcdSession {
   grants: EtcdGrants;
   /**
    * The AuthStatus answer the grants were taken under (spec 4.7): whether authentication was on, and the auth
-   * store's revision; absent where it answered none, an etcd below 3.7 reading "user name is empty" for an
-   * AuthStatus without a token, so that certificate session reads its grants again on each walk that reads keys,
-   * with no AuthStatus (`readGrantsAgain`).
+   * store's revision. Every session holds one, on an etcd below 3.7 too, which answers AuthStatus and Status to
+   * the root role alone, whatever the credential: with authentication on, a session there signs in as root, and
+   * a user who is not root is refused at connect.
    */
-  authStatus?: EtcdAuthStatus;
+  authStatus: EtcdAuthStatus;
 }
 
 /** A query in flight under the caller's id, so cancelQuery reaches it (spec 5.5). */
@@ -355,8 +355,8 @@ export class EtcdProvider extends BaseDatabaseProvider {
    * The connect sequence of spec 6.1, each step with its own sentence, then the reads of 4.7. The steps run
    * in the order 6.1 numbers them: a password signs in first (1); with no password, AuthStatus runs without
    * a token (2); authentication on with no credential is refused before any other call (3); in certificate
-   * mode the Common Name's user is read (4); then Status, and the grants (5), reusing step 2's AuthStatus and
-   * step 4's roles. A member whose Status names no leader refuses the connection at once (4.7).
+   * mode the Common Name's user is read (4); then Status, AuthStatus unless step 2 answered it, and the grants
+   * (5), reusing step 4's roles. A member whose Status names no leader refuses the connection at once (4.7).
    *
    * Each step is one call, and its deadline is the gRPC deadline the adapter sets on every call, the same query
    * timeout (spec 5.3), with no timer of the provider's own: grpc-js words that deadline by whether the call was
@@ -377,20 +377,15 @@ export class EtcdProvider extends BaseDatabaseProvider {
         throw stepError("authenticate", error, step("sign-in"));
       });
     }
-    let enabled: boolean | undefined;
     let authStatus: EtcdAuthStatus | undefined;
     let roles: readonly string[] | undefined;
     if (auth.kind !== "password") {
-      enabled = await client.authStatus({ signal: signal() }).then(
-        (status) => {
-          authStatus = status;
-          return status.enabled;
-        },
-        (error: unknown) => {
-          if (isUserNameEmpty(error)) return true;
-          throw toProviderError(error, step("auth status"));
-        },
-      );
+      // Below 3.7, "user name is empty" here means authentication is on, and answers no revision (spec 6.1).
+      authStatus = await client.authStatus({ signal: signal() }).catch((error: unknown) => {
+        if (isUserNameEmpty(error)) return undefined;
+        throw toProviderError(error, step("auth status"));
+      });
+      const enabled = authStatus?.enabled ?? true;
       if (enabled && principal === undefined) throw connectStepError("credential-required", undefined, step("sign-in"));
       if (enabled && principal !== undefined) {
         roles = await client.userGet(principal.name, { signal: signal() }).catch((error: unknown) => {
@@ -407,27 +402,15 @@ export class EtcdProvider extends BaseDatabaseProvider {
         step("endpoint status"),
       );
     }
-    if (enabled === undefined) {
-      enabled = await client.authStatus({ signal: signal() }).then(
-        (answer) => {
-          authStatus = answer;
-          return answer.enabled;
-        },
-        (error: unknown) => {
-          throw toProviderError(error, step("auth status"));
-        },
-      );
+    // The grants are taken under an AuthStatus answer: step 2's, or one read now, a password's included (spec 4.7).
+    if (authStatus === undefined) {
+      authStatus = await client.authStatus({ signal: signal() }).catch((error: unknown) => {
+        throw toProviderError(error, step("auth status"));
+      });
     }
-    const user = enabled ? principal?.name : undefined;
+    const user = authStatus.enabled ? principal?.name : undefined;
     const grants = user === undefined ? EVERY_KEY : await readGrants(client, user, roles, errors, signal);
-    return {
-      client,
-      options,
-      errors,
-      ...(user === undefined ? {} : { user }),
-      grants,
-      ...(authStatus === undefined ? {} : { authStatus }),
-    };
+    return { client, options, errors, ...(user === undefined ? {} : { user }), grants, authStatus };
   }
 
   private requireSession(): EtcdSession {
@@ -444,9 +427,9 @@ export class EtcdProvider extends BaseDatabaseProvider {
    * and reaches the adapter's hook, and AuthStatus is what tells the walk: its `enabled` as well as its revision,
    * since an auth enable moves no revision. The one session that reads nothing before its walks is one that
    * connected with authentication off, which has no user whose grants to read: if an admin turns authentication
-   * on, etcd's own refusal answers its walks until it connects again. A certificate session on an etcd below 3.7
-   * has no revision to compare, since its AuthStatus needs a token it never holds, so each of its walks reads
-   * UserGet and RoleGet again, with no AuthStatus.
+   * on, etcd's own refusal answers its walks until it connects again. Every other session holds an AuthStatus
+   * answer to compare, on an etcd below 3.7 too, where only root connects with authentication on
+   * (`EtcdSession.authStatus`).
    */
   private async walkGrants(session: EtcdSession): Promise<EtcdGrants> {
     if (this.pendingGrants !== undefined) return this.pendingGrants;
@@ -457,9 +440,8 @@ export class EtcdProvider extends BaseDatabaseProvider {
   /**
    * AuthStatus, then the grants its answer calls for: the ones kept where it is the answer they were taken under
    * and the adapter reported no change since, every key with no read where authentication is off, and else
-   * UserGet and RoleGet read again. The grants and the answer they were taken under replace the ones kept. A
-   * session with no AuthStatus answer reads UserGet and RoleGet alone, every time. Walks that start together
-   * share the one read.
+   * UserGet and RoleGet read again. The grants and the answer they were taken under replace the ones kept. Walks
+   * that start together share the one read.
    */
   private readGrantsAgain(session: EtcdSession, user: string): Promise<EtcdGrants> {
     const signal = () => this.callSignal();
@@ -477,28 +459,26 @@ export class EtcdProvider extends BaseDatabaseProvider {
         },
       );
     };
-    const kept = session.authStatus;
-    const reading = (
-      kept === undefined
-        ? replace()
-        : readAuthStatus(session.client, user, session.errors, signal()).then((status) => {
-            const unchanged = status.enabled === kept.enabled && status.authRevision === kept.authRevision;
-            if (!this.grantsStale && unchanged) return session.grants;
-            if (!status.enabled) {
-              // etcd checks no grant with authentication off, so there is none to read (spec 4.7).
-              this.grantsStale = false;
-              session.grants = EVERY_KEY;
-              session.authStatus = status;
-              return EVERY_KEY;
-            }
-            return replace().then((grants) => {
-              session.authStatus = status;
-              return grants;
-            });
-          })
-    ).finally(() => {
-      this.pendingGrants = undefined;
-    });
+    const reading = readAuthStatus(session.client, user, session.errors, signal())
+      .then((status) => {
+        const kept = session.authStatus;
+        const unchanged = status.enabled === kept.enabled && status.authRevision === kept.authRevision;
+        if (!this.grantsStale && unchanged) return session.grants;
+        if (!status.enabled) {
+          // etcd checks no grant with authentication off, so there is none to read (spec 4.7).
+          this.grantsStale = false;
+          session.grants = EVERY_KEY;
+          session.authStatus = status;
+          return EVERY_KEY;
+        }
+        return replace().then((grants) => {
+          session.authStatus = status;
+          return grants;
+        });
+      })
+      .finally(() => {
+        this.pendingGrants = undefined;
+      });
     this.pendingGrants = reading;
     return reading;
   }
