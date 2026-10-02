@@ -196,7 +196,7 @@ etcd's own plaintext port is not such a port: it closes the connection on a TLS 
 
 A connection names one endpoint, and Studio dials that endpoint, or the local end of its tunnel, and nothing else: the client URLs `member list` shows are data and are never dialled, and `--cluster` is refused.
 A DNS name that resolves to several members reaches the next one when the first fails, through grpc-js's `pick_first` policy.
-A member that stops answering without closing its connection, such as a lost host, a partition or a frozen VM, is found by an HTTP/2 keepalive ping sent every 10 seconds while a call is open: a ping unanswered for 6 seconds drops the connection and fails that call, and the next command reaches the next member of such a name.
+A member that stops answering without closing its connection, such as a lost host, a partition or a frozen VM, is found by an HTTP/2 keepalive ping sent every 10 seconds while a call is open: a ping unanswered for 6 seconds drops the connection and fails that call, a watch whose window closes first ends as section 5.3 says, and the next command reaches the next member of such a name.
 Every call carries etcd's `hasleader` metadata except the calls a member answers from its own state (`Status`, `Defragment`, `LeaseLeases`, a serializable `MemberList`, a serializable `Range`, and a read-only `txn` of serializable gets), so a call that needs the leader fails at once during a lost quorum instead of waiting seven seconds.
 A connection whose member has no leader is refused at once with the lost-quorum error, so the provider never connects in a degraded state, and only a provider connected before the loss goes on answering the calls a member answers from its own state.
 
@@ -297,6 +297,7 @@ etcd also grants a lease id a client chose, a negative one included, which `leas
 A watch runs for its window, `--command-timeout` when given, else 5 seconds, and the window's cap is the connection's query timeout less `ETCD_READ_BOUNDS.watchMarginMs`: a `--command-timeout` above the cap is refused, naming it, a default window longer than the cap is shortened to it and its warning says so, and a query timeout at or below the margin leaves no window, so a watch is refused.
 A watch ends early at the row limit or the byte budget, and its end is one warning naming the range, the window and the cause.
 A compaction, a permission refusal or a server cancellation ends the watch as an error, never as a quiet window; the stream is always cancelled when the watch ends.
+A watch whose window closes before etcd has answered its create, as on a member that went silent with its connection open, ends as a timeout that names the window and says nothing was watched, never as a quiet window; a cancel before that answer still reads as a cancel.
 A watch etcd refuses with one of the three answers of section 4.2 is created once more after the one sign-in; when its window closes before that sign-in answers, it ends with etcd's refusal, since it watched nothing, while a cancel or the query timeout met then still reads as a cancel or a timeout.
 A live watch panel is filed as U56.
 
@@ -508,6 +509,7 @@ kube-apiserver compacts etcd every 5 minutes, so Compact history is for a NOSPAC
 - A connection names one endpoint; a list of endpoints with failover is filed as D131.
 - A Kubernetes protobuf value is withheld, never decoded; decoding it behind the label is filed as D130.
 - The watch is bounded; a live watch panel is filed as U56.
+- A watch whose member goes silent after etcd answered its create, with the connection left open, reports a quiet window, since nothing on the client tells a silent member from a quiet key range; a window that runs on for about 16 seconds after the member went silent lets the keepalive drop the connection (a ping every 10 seconds, unanswered for 6) and ends the watch as an error.
 - The connection dialog sends a client certificate the current SSL mode no longer draws, filed as U60.
 
 ## 14. References

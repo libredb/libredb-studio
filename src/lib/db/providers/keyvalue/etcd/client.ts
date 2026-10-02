@@ -230,7 +230,8 @@ export interface EtcdClient {
   /**
    * Opens one watch, calls `onBatch` for every response and every fragment that carries events, in
    * order, and settles when `onBatch` answers "stop", the signal aborts, or the server cancels; a
-   * signal that aborts while the token is renewed after the server cancelled the watch in band
+   * signal that aborts as a timeout before etcd answered the create rejects as a deadline instead,
+   * since nothing was watched; a signal that aborts while the token is renewed after the server cancelled the watch in band
    * (spec E4) settles with that cancellation, since no watch was created again. It always ends the
    * stream with `call.cancel()` before it settles (spec 5.3).
    */
