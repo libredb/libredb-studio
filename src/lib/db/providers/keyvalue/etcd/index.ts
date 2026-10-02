@@ -121,7 +121,8 @@ interface EtcdSession {
   grants: EtcdGrants;
   /**
    * The auth store's revision AuthStatus answered before the grants were read (spec 4.7); absent where it
-   * answered none, an etcd below 3.7 reading "user name is empty" for an AuthStatus without a token.
+   * answered none, an etcd below 3.7 reading "user name is empty" for an AuthStatus without a token, so that
+   * certificate session reads its grants again on each walk that reads keys, with no AuthStatus (`readGrantsAgain`).
    */
   authRevision?: string;
 }
@@ -430,7 +431,8 @@ export class EtcdProvider extends BaseDatabaseProvider {
    * the auth store's revision is not the one they were read under. etcd checks its default simple token at the
    * auth store's revision as it stands, so no call made after an auth change meets "revision of auth store is
    * old" and reaches the adapter's hook, and the revision is what tells the walk; where authentication is off
-   * there is no grant to read.
+   * there is no grant to read. A certificate session on an etcd below 3.7 has no revision to compare, since its
+   * AuthStatus needs a token it never holds, so each of its walks reads UserGet and RoleGet again, with no AuthStatus.
    */
   private async walkGrants(session: EtcdSession): Promise<EtcdGrants> {
     if (this.pendingGrants !== undefined) return this.pendingGrants;
@@ -441,30 +443,38 @@ export class EtcdProvider extends BaseDatabaseProvider {
   /**
    * AuthStatus, then UserGet and RoleGet unless its revision is the one the grants were read under and the
    * adapter reported no change since; the grants read and the revision read before them replace the ones kept.
-   * Walks that start together share the one read.
+   * A session with no revision reads UserGet and RoleGet alone, every time. Walks that start together share the
+   * one read.
    */
   private readGrantsAgain(session: EtcdSession, user: string): Promise<EtcdGrants> {
     const signal = () => this.callSignal();
-    const reading = readAuthRevision(session.client, user, session.errors, signal())
-      .then((revision) => {
-        if (!this.grantsStale && revision === session.authRevision) return session.grants;
-        this.grantsStale = false;
-        return readGrants(session.client, user, undefined, session.errors, signal).then(
-          (grants) => {
-            session.grants = grants;
-            session.authRevision = revision;
-            return grants;
-          },
-          (error: unknown) => {
-            // Read again at the next walk: the change it would have read has not been read yet.
-            this.grantsStale = true;
-            throw error;
-          },
-        );
-      })
-      .finally(() => {
-        this.pendingGrants = undefined;
-      });
+    const replace = (): Promise<EtcdGrants> => {
+      this.grantsStale = false;
+      return readGrants(session.client, user, undefined, session.errors, signal).then(
+        (grants) => {
+          session.grants = grants;
+          return grants;
+        },
+        (error: unknown) => {
+          // Read again at the next walk: the change it would have read has not been read yet.
+          this.grantsStale = true;
+          throw error;
+        },
+      );
+    };
+    const reading = (
+      session.authRevision === undefined
+        ? replace()
+        : readAuthRevision(session.client, user, session.errors, signal()).then((revision) => {
+            if (!this.grantsStale && revision === session.authRevision) return session.grants;
+            return replace().then((grants) => {
+              session.authRevision = revision;
+              return grants;
+            });
+          })
+    ).finally(() => {
+      this.pendingGrants = undefined;
+    });
     this.pendingGrants = reading;
     return reading;
   }

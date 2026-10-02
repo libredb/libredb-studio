@@ -940,6 +940,105 @@ describe("the grants after an auth-store change (spec 4.7, R13 D10)", () => {
     expect(methods(client).filter((method) => method === "userGet")).toHaveLength(1);
   });
 
+  /** What etcd answers root, and refuses a user who is not root: the users, roles and leases listings. */
+  const ROOT_LISTINGS: Partial<EtcdClient> = {
+    userList: async () => ["cert-only"],
+    roleList: async () => ["root"],
+    leaseLeases: async () => ({ header: KEY_SPACE_HEADER, ids: [] }),
+  };
+
+  /** A certificate user's roles, the grant reads each of its walks makes, and the listings etcd answers it. */
+  const BELOW_37_USERS: ReadonlyArray<
+    readonly [
+      label: string,
+      roles: readonly string[],
+      grantReads: ReadonlyArray<keyof EtcdClient>,
+      listings: Partial<EtcdClient>,
+    ]
+  > = [
+    ["a user who is not root", ["reader"], ["userGet", "roleGet"], {}],
+    ["a user who holds root", ["root"], ["userGet"], ROOT_LISTINGS],
+  ];
+
+  test.each(BELOW_37_USERS)(
+    "a certificate session below 3.7, whose AuthStatus needs a token, has no auth revision, so each walk that reads keys reads the grants again and never AuthStatus: %s (spec 4.7, 6.1)",
+    async (_label, roles, grantReads, listings) => {
+      let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
+      const client = readerClient({
+        ...listings,
+        // Below 3.7, AuthStatus without a token answers "user name is empty" (spec 6.1 step 2), now as at connect.
+        authStatus: async () => {
+          throw nameEmpty();
+        },
+        userGet: async () => [...roles],
+        roleGet: async () => permissions,
+        range: (request, options) =>
+          keySpaceRange(KEYS, roles.includes("root") ? undefined : permissions)(request, options),
+      });
+      const { provider } = await connected(CERTIFICATE_CONNECTION, client);
+      const walks: ReadonlyArray<readonly [string, () => Promise<unknown>]> = [
+        ["the prefix groups", () => provider.listObjects([], "prefix")],
+        ["the count", () => provider.countObjects([])],
+        ["a key's source", () => provider.readObjectSource(["/app/cfg"], "key")],
+        ["a Keys panel page", () => provider.scanKeysPage({ cursor: "0", count: 10 })],
+        ["the overview", () => provider.getOverview()],
+        ["the Tables panel", () => provider.getTableStats()],
+      ];
+      for (const [walk, run] of walks) {
+        const mark = client.calls.length;
+        // oxlint-disable-next-line no-await-in-loop -- one walk at a time, so each one's calls are its own.
+        const answered = await run().then(
+          () => "answered",
+          (error: unknown) => String(error),
+        );
+        expect({ walk, answered }).toEqual({ walk, answered: "answered" });
+        expect({ walk, first: methods(client, mark).slice(0, grantReads.length) }).toEqual({
+          walk,
+          first: [...grantReads],
+        });
+        expect({ walk, calls: methods(client, mark) }).toEqual({
+          walk,
+          calls: expect.not.arrayContaining(["authStatus"]),
+        });
+      }
+      const counted = (await provider.countObjects([])).prefix;
+      if (roles.includes("root")) {
+        expect(counted).toEqual({ count: prefixGroups(KEYS.map((entry) => encode(entry.key))).groups.length });
+        return;
+      }
+      expect(counted).toEqual({
+        count: visibleGroups(["/app/a/b", "/app/cfg", "/app/x/y", "/config/a"]).length,
+        sampledFrom: "the 2 ranges etcd user cert-only may read",
+      });
+      // An admin took the prefix away and granted another key: the next walk reads them.
+      permissions = [
+        { type: "read", key: encode("/config/a") },
+        { type: "read", key: encode("/config/b") },
+      ];
+      expect(await listed(provider)).toEqual(visibleGroups(["/config/a", "/config/b"]));
+    },
+  );
+
+  test("a session that has an auth revision raises an AuthStatus its walk meets refused, 'user name is empty' among them: only a session that never had one reads the grants without it (spec 4.7)", async () => {
+    let refuse = false;
+    const client = readerClient({
+      authStatus: async () => {
+        if (refuse) throw nameEmpty();
+        return { enabled: true, authRevision: "5" };
+      },
+    });
+    const { provider } = await connected(CERTIFICATE_CONNECTION, client);
+    refuse = true;
+    const mark = client.calls.length;
+    await expect(provider.listObjects([], "prefix")).rejects.toThrow(
+      new AuthenticationError(
+        "etcd did not accept this connection's sign-in for the read of etcd user cert-only's grants: connect again. (etcd: user name is empty)",
+        "etcd",
+      ),
+    );
+    expect(methods(client, mark)).toEqual(["authStatus"]);
+  });
+
   test("surfaces that start together share one read of the grants, and each walks the grants it read", async () => {
     let permissions: readonly EtcdPermission[] = READER_PERMISSIONS;
     const client = readerClient({ roleGet: async () => permissions, range: keySpaceRange(KEYS, READER_PERMISSIONS) });
