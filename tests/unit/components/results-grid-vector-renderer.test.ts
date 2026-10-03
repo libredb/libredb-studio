@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { classifyValue } from "@/components/results-grid/renderers/classify";
 import type { RenderContext } from "@/components/results-grid/renderers/types";
 import { isVectorCell, vectorRenderer } from "@/components/results-grid/renderers/vector";
 import type { SparseEncoding, VectorColumn, VectorDType, VectorKind } from "@/lib/db/vector/types";
@@ -315,4 +316,23 @@ test("the Qdrant cells hold a two-row integral multivector, and its copy writes 
   const text = copy(twoRow.cell, context("multi", twoRow.dtype));
   expect(numbersIn(text).every((token) => token.includes("."))).toBe(true);
   expect(JSON.parse(text)).toEqual(twoRow.cell);
+});
+
+describe("classification over both engines' expected cells", () => {
+  test("every cell of a declared column is a vector, and a cell the engine left empty is null", () => {
+    for (const engine of ["milvus", "qdrant"] as const) {
+      for (const cell of expectedCells(engine)) {
+        const expected = cell.cell === null ? "null" : "vector";
+        expect(classifyValue(cell.cell, { vector: columnOf(cell, engine) }), where(cell)).toBe(expected);
+      }
+    }
+  });
+
+  test("without the declaration every one of those cells is the JSON it was", () => {
+    for (const engine of ["milvus", "qdrant"] as const) {
+      for (const cell of expectedCells(engine).filter((entry) => entry.cell !== null)) {
+        expect(classifyValue(cell.cell), where(cell)).toBe("json");
+      }
+    }
+  });
 });

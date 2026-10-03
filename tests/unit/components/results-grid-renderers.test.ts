@@ -7,7 +7,9 @@ import { jsonRenderer } from "@/components/results-grid/renderers/json";
 import { nullRenderer } from "@/components/results-grid/renderers/null";
 import { scalarRenderer } from "@/components/results-grid/renderers/scalar";
 import { binaryRenderer } from "@/components/results-grid/renderers/binary";
-import type { ValueKind } from "@/components/results-grid/renderers/types";
+import { vectorRenderer } from "@/components/results-grid/renderers/vector";
+import type { RenderContext, ValueKind } from "@/components/results-grid/renderers/types";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 
 // =============================================================================
 // classifyValue — value-shape classification (#96)
@@ -71,6 +73,41 @@ describe("classifyValue", () => {
     expect(classifyValue("[1, 2")).toBe("scalar");
     expect(classifyValue("plain text with { braces }")).toBe("scalar");
   });
+
+  test("a vector-shaped value without its column's declaration stays json, as it always was", () => {
+    expect(classifyValue([0.1, 0.2])).toBe("json");
+    expect(
+      classifyValue([
+        [1, 2],
+        [3, 4],
+      ]),
+    ).toBe("json");
+    expect(classifyValue({ indices: [1], values: [0.5] })).toBe("json");
+    expect(classifyValue({ "3": 0.5 })).toBe("json");
+  });
+
+  test("a declared vector column classifies a value of its shape as vector", () => {
+    const dense: RenderContext = { vector: { kind: "dense", dtype: "float32", dimension: 2 } };
+    const multi: RenderContext = { vector: { kind: "multi", dtype: "float32", dimension: 2 } };
+    const sparse: RenderContext = {
+      vector: { kind: "sparse", dtype: "float32", dimension: null, sparseEncoding: "indices-values" },
+    };
+    expect(classifyValue([0.1, 0.2], dense)).toBe("vector");
+    expect(classifyValue([[1, 2]], multi)).toBe("vector");
+    expect(classifyValue({ indices: [1], values: [0.5] }, sparse)).toBe("vector");
+  });
+
+  test("a declared column whose value is not of its shape keeps that shape's own kind", () => {
+    // A masked cell and a pending edit hold text, and a host may hand JSON as a string: each renders as itself.
+    const dense: RenderContext = { vector: { kind: "dense", dtype: "float32", dimension: 2 } };
+    expect(classifyValue("***", dense)).toBe("scalar");
+    expect(classifyValue("[0.1,0.2]", dense)).toBe("json");
+    expect(classifyValue({ a: 1 }, dense)).toBe("json");
+    expect(classifyValue([Number.POSITIVE_INFINITY], dense)).toBe("json");
+    expect(classifyValue({ type: "Buffer", data: [1, 2] }, dense)).toBe("binary");
+    expect(classifyValue(null, dense)).toBe("null");
+    expect(classifyValue(undefined, dense)).toBe("null");
+  });
 });
 
 // =============================================================================
@@ -83,14 +120,15 @@ describe("getRenderer", () => {
     expect(getRenderer("scalar")).toBe(scalarRenderer);
     expect(getRenderer("json")).toBe(jsonRenderer);
     expect(getRenderer("binary")).toBe(binaryRenderer);
+    expect(getRenderer("vector")).toBe(vectorRenderer);
   });
 
   test("falls back to the scalar renderer for an unregistered kind", () => {
-    expect(getRenderer("vector" as ValueKind)).toBe(scalarRenderer);
+    expect(getRenderer("matrix" as ValueKind)).toBe(scalarRenderer);
   });
 
   test("every renderer declares the kind it is registered under", () => {
-    for (const kind of ["null", "scalar", "json", "binary"] as const) {
+    for (const kind of ["null", "scalar", "json", "binary", "vector"] as const) {
       expect(getRenderer(kind).kind).toBe(kind);
     }
   });
@@ -229,16 +267,43 @@ describe("renderDetail", () => {
 // =============================================================================
 
 describe("rendering layer is provider-agnostic", () => {
-  test("no connection-type identifiers in the renderer modules or the formatter", () => {
-    // Anchored to this file rather than to process.cwd(), so the scan is correct whoever launches it.
-    const root = resolve(import.meta.dir, "../../..");
-    const renderersDir = join(root, "src/components/results-grid/renderers");
+  // Anchored to this file rather than to process.cwd(), so the scan is correct whoever launches it.
+  const root = resolve(import.meta.dir, "../../..");
+  const renderersDir = join(root, "src/components/results-grid/renderers");
+
+  test("no connection-type identifier in the renderer modules or the formatter", () => {
     const sources = readdirSync(renderersDir).map((f) => join(renderersDir, f));
     sources.push(join(root, "src/components/results-grid/utils.ts"));
 
-    const providerTypeIds = /\b(postgres|mysql|sqlite|oracle|mssql|mongodb|redis|libredb)\b/i;
+    // Every DatabaseType member, read from the exhaustive SHIPPED record rather than listed here, so a type-id
+    // added later is forbidden the day it lands.
+    const providerTypeIds = new RegExp(`\\b(${SHIPPED_DATABASE_TYPES.join("|")})\\b`, "i");
     for (const file of sources) {
       expect(readFileSync(file, "utf8")).not.toMatch(providerTypeIds);
+    }
+  });
+
+  test("the vector renderer names no engine, vendor path, or native type or metric spelling", () => {
+    const text = readFileSync(join(renderersDir, "vector.ts"), "utf8");
+    const spellings = [
+      /\bmilvus\b/i,
+      /\bqdrant\b/i,
+      /\bzilliz\b/i,
+      /\/v2\/vectordb\//,
+      /collections\/\{/,
+      /\bFloatVector\b/,
+      /\bSparseFloatVector\b/,
+      /\bFloat16Vector\b/,
+      /\bBFloat16Vector\b/,
+      /\bInt8Vector\b/,
+      /\bBinaryVector\b/,
+      /\bCOSINE\b/,
+      /\bEuclid\b/,
+      /\bHNSW\b/,
+      /\bAUTOINDEX\b/,
+    ];
+    for (const spelling of spellings) {
+      expect(text).not.toMatch(spelling);
     }
   });
 });
