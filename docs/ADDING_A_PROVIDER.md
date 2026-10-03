@@ -387,7 +387,7 @@ An operation that runs on one object, and that an admin should see described bef
   Implement `previewMaintenance(type, path)` with it: `path` is the object's address, container levels then the object; the method reads only, checks that the object exists, raises a `QueryError` naming what is missing, and answers a `MaintenancePreview` whose `refusal`, when set, withholds the confirm button.
 - Implement `engineUser()` when the engine has a principal to name: the maintenance route writes it on every audit row, as `engine_user` on the stdout line, so it is a user name and never any part of a secret.
 
-`tests/unit/db/maintenance-surface-census.test.ts` pins what every shipped provider offers today, and that none declares any of this; a provider that adds such an operation updates its row there in the same change.
+`tests/unit/db/maintenance-surface-census.test.ts` pins what every shipped provider offers today, and that only Milvus declares any of this; a provider that adds such an operation updates its row there in the same change.
 
 ### What the base class gives you for free
 

@@ -1031,7 +1031,7 @@ Whether the object exists is the provider's to say: its `previewMaintenance` rai
 - `preview: true` makes the control's dialog read this route and show the preview before it offers the confirm button; the provider implements the optional `DatabaseProvider.previewMaintenance(type, path)`.
   A preview belongs to the per-row control, so it is declared beside `perEntity: true`, and this route answers no preview for a spec that offers no row.
 
-No shipped provider declares any of these yet.
+Milvus is the one shipped provider that declares them: Load and Release per collection, each with a preview, and Release confirmed by the collection's exact name.
 
 #### Container paths on the object routes
 
