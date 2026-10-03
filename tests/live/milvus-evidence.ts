@@ -8,8 +8,9 @@
  * again in a Node child process, and a row whose two answers differ is written twice, as <name>.bun.json and
  * <name>.node.json.
  *
- * It writes only what it owns: a collection and an alias under PREFIX, created at the start and dropped at the end, and
- * `mutate()` refuses any other name before the wire. It never loads, releases, flushes or writes a seeded object.
+ * It writes only what it owns: a collection and an alias under PREFIX on `milvus`, and on `milvus-tls`, which no seed
+ * writes, a loaded empty collection for the TLS port's waiting queries, all created at the start and dropped at the
+ * end; `mutate()` refuses any other name before the wire. It never loads, releases, flushes or writes a seeded object.
  *
  * Run by hand, never by `bun run test` (tests/runner/discover.ts excludes tests/live/):
  *   bun tests/live/milvus-evidence.ts --secrets <dir> --certs <dir> [--only <name,...>]
@@ -52,6 +53,8 @@ const PORTS: Readonly<Record<Service, number>> = { milvus: 19530, "milvus-tls": 
 const PREFIX = "libredb_evidence_";
 const OWN_COLLECTION = `${PREFIX}load`;
 const OWN_ALIAS = `${PREFIX}alias`;
+/** The loaded empty collection on milvus-tls that its waiting queries wait on: that server holds no seeded data. */
+const TLS_WAIT_COLLECTION = `${PREFIX}wait`;
 /** Milvus's documented default root credential (docker/milvus/README.md): no compose file sets it. */
 const ROOT_CREDENTIAL = { user: "root", password: "Milvus" } as const;
 /** A stand-in for the refused sign-in, never a realistic value. */
@@ -315,16 +318,21 @@ function column(answer: Record<string, unknown>, field: string): string[] {
 // -- requests -------------------------------------------------------------------------------------------------------
 
 const ROOT_CONN: Conn = { service: "milvus", user: "root" };
+const TLS_ROOT_CONN: Conn = { service: "milvus-tls", user: "root", tls: {} };
 const own = { db_name: "default", collection_name: OWN_COLLECTION };
+const tlsWait = { db_name: "default", collection_name: TLS_WAIT_COLLECTION };
 
-/** A Query that waits on a guarantee timestamp two minutes ahead, so its deadline fires first (R41 M6). */
-function waitingQuery(): object {
+/**
+ * A Query that waits on a guarantee timestamp two minutes ahead, so its deadline fires first (R41 M6): on `milvus`
+ * over the seeded docs_int64, on `milvus-tls` over the harness's own loaded empty collection.
+ */
+function waitingQuery(service: Service = "milvus"): object {
   const ahead = (BigInt(Date.now() + 120_000) * BigInt(262_144)).toString();
   return {
     db_name: "default",
-    collection_name: "docs_int64",
-    expr: "seq >= 0",
-    output_fields: ["seq"],
+    collection_name: service === "milvus" ? "docs_int64" : TLS_WAIT_COLLECTION,
+    expr: service === "milvus" ? "seq >= 0" : "id >= 0",
+    output_fields: [service === "milvus" ? "seq" : "id"],
     query_params: keyValues({ limit: "1" }),
     guarantee_timestamp: ahead,
     consistency_level: "Customized",
@@ -464,14 +472,14 @@ function deadlineShape(name: string, service: Service, observed: (measured: Meas
     rpc: "Query",
     user: "root",
     surface: "a Query waiting on a guarantee timestamp two minutes ahead, with a 3 s deadline",
-    request: waitingQuery(),
+    request: waitingQuery(service),
     bothRuntimes: true,
     expect: "fail",
     run: async () => {
       const seen: unknown[] = [];
       for (let attempt = 0; attempt < 16; attempt++) {
         // oxlint-disable-next-line no-await-in-loop -- one waiting call at a time, until the shape appears.
-        const measured = await call(conn, "Query", waitingQuery(), { deadlineMs: 3000 });
+        const measured = await call(conn, "Query", waitingQuery(service), { deadlineMs: 3000 });
         if (observed(measured)) return measured;
         seen.push(measured.payload);
       }
@@ -852,7 +860,7 @@ function catalog(): Capture[] {
       "milvus-tls",
       "Query",
       "a waiting Query on a channel pinging every second, with pings while idle",
-      waitingQuery(),
+      waitingQuery("milvus-tls"),
       () =>
         call(
           {
@@ -862,7 +870,7 @@ function catalog(): Capture[] {
             options: { "grpc.keepalive_time_ms": 1000, "grpc.keepalive_permit_without_calls": 1 },
           },
           "Query",
-          waitingQuery(),
+          waitingQuery("milvus-tls"),
           { deadlineMs: 30_000 },
         ),
     ),
@@ -909,10 +917,16 @@ function catalog(): Capture[] {
 // -- its own objects ------------------------------------------------------------------------------------------------
 
 /** Every write the harness makes; a target outside PREFIX is refused before the wire. */
-async function mutate(rpc: string, target: string, request: object, tolerate = false): Promise<void> {
+async function mutate(
+  rpc: string,
+  target: string,
+  request: object,
+  tolerate = false,
+  conn: Conn = ROOT_CONN,
+): Promise<void> {
   if (!target.startsWith(PREFIX))
     throw new Error(`${rpc} would write ${target}, outside ${PREFIX}: refused before the wire`);
-  const answer = await rawCall(ROOT_CONN, rpc, request).catch((error: unknown) => {
+  const answer = await rawCall(conn, rpc, request).catch((error: unknown) => {
     if (tolerate) return undefined;
     throw error;
   });
@@ -921,10 +935,10 @@ async function mutate(rpc: string, target: string, request: object, tolerate = f
   }
 }
 
-function schemaBytes(): Buffer {
+function schemaBytes(name: string): Buffer {
   const type = TYPES.lookupType("milvus.proto.schema.CollectionSchema");
   const schema = type.fromObject({
-    name: OWN_COLLECTION,
+    name,
     fields: [
       { name: "id", is_primary_key: true, data_type: "Int64" },
       { name: "vec", data_type: "FloatVector", type_params: [{ key: "dim", value: "2" }] },
@@ -937,18 +951,43 @@ async function tearDown(): Promise<void> {
   await mutate("DropAlias", OWN_ALIAS, { db_name: "default", alias: OWN_ALIAS }, true);
   await mutate("ReleaseCollection", OWN_COLLECTION, own, true);
   await mutate("DropCollection", OWN_COLLECTION, own, true);
+  await mutate("ReleaseCollection", TLS_WAIT_COLLECTION, tlsWait, true, TLS_ROOT_CONN);
+  await mutate("DropCollection", TLS_WAIT_COLLECTION, tlsWait, true, TLS_ROOT_CONN);
+}
+
+const FLAT_INDEX = {
+  field_name: "vec",
+  index_name: "vec",
+  extra_params: keyValues({ index_type: "FLAT", metric_type: "L2", params: "{}" }),
+};
+
+/** The TLS server's waiting collection, empty, indexed and loaded, so a Query on it waits on its timestamp. */
+async function setUpTlsWait(): Promise<void> {
+  await mutate(
+    "CreateCollection",
+    TLS_WAIT_COLLECTION,
+    { ...tlsWait, schema: schemaBytes(TLS_WAIT_COLLECTION), shards_num: 1 },
+    false,
+    TLS_ROOT_CONN,
+  );
+  await mutate("CreateIndex", TLS_WAIT_COLLECTION, { ...tlsWait, ...FLAT_INDEX }, false, TLS_ROOT_CONN);
+  await mutate("LoadCollection", TLS_WAIT_COLLECTION, tlsWait, false, TLS_ROOT_CONN);
+  for (let waited = 0; waited < 60_000; waited += 1000) {
+    // oxlint-disable-next-line no-await-in-loop -- a poll: each read waits for the one before it.
+    const progress = await must(TLS_ROOT_CONN, "GetLoadingProgress", tlsWait);
+    if (progress.progress === "100") return;
+    // oxlint-disable-next-line no-await-in-loop -- the poll's interval.
+    await sleep(1000);
+  }
+  throw new Error(`${TLS_WAIT_COLLECTION} on milvus-tls did not load within 60 s`);
 }
 
 async function setUp(): Promise<void> {
   await tearDown();
-  await mutate("CreateCollection", OWN_COLLECTION, { ...own, schema: schemaBytes(), shards_num: 1 });
-  await mutate("CreateIndex", OWN_COLLECTION, {
-    ...own,
-    field_name: "vec",
-    index_name: "vec",
-    extra_params: keyValues({ index_type: "FLAT", metric_type: "L2", params: "{}" }),
-  });
+  await mutate("CreateCollection", OWN_COLLECTION, { ...own, schema: schemaBytes(OWN_COLLECTION), shards_num: 1 });
+  await mutate("CreateIndex", OWN_COLLECTION, { ...own, ...FLAT_INDEX });
   await mutate("CreateAlias", OWN_ALIAS, { ...own, alias: OWN_ALIAS });
+  await setUpTlsWait();
 }
 
 // -- writing --------------------------------------------------------------------------------------------------------
