@@ -1017,6 +1017,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "etcd",
     "db2",
     "neo4j",
+    "qdrant",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

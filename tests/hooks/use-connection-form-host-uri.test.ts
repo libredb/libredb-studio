@@ -6,7 +6,7 @@ import { renderHook, act } from "@testing-library/react";
 import { useConnectionForm } from "@/hooks/use-connection-form";
 import type { DatabaseConnection } from "@/lib/types";
 import { declareHostUri } from "../helpers/synthetic-host-uri";
-import { credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import {
   declareCredentialWarnings,
   SYNTHETIC_PAIR,
@@ -16,8 +16,8 @@ import {
 /**
  * The Host box of an engine that declares `hostAcceptsUri`, through the real form hook and the real
  * `DB_UI_CONFIG`: unlike tests/hooks/use-connection-form.test.ts, nothing here mocks `@/lib/db-ui-config`,
- * because the declaration is read from the real table. No shipped entry declares it, so each test declares it on
- * the etcd entry for its own duration.
+ * because the declaration is read from the real table. Qdrant is the one shipped entry that declares it; the
+ * synthetic cases declare it on the etcd entry for their own duration, so they read as before.
  */
 
 const restores: (() => void)[] = [];
@@ -318,5 +318,56 @@ describe("useConnectionForm: the declared credential warning", () => {
     act(() => result.current.setUser("root"));
     act(() => result.current.setPassword(SYNTHETIC_PASSWORD));
     expect(result.current.credentialWarning).toBeUndefined();
+  });
+});
+
+describe("useConnectionForm: the real qdrant row (vector-family spec 3.12, 6.2)", () => {
+  const TEST_PASSWORD = "password";
+
+  test("the real qdrant row splits a pasted address in the Host box and keeps the port as typed", () => {
+    const { result } = renderForm();
+    act(() => result.current.setType("qdrant"));
+    act(() => result.current.setHost("http://localhost:6333", "insertFromPaste"));
+    expect([result.current.type, result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "qdrant",
+      "localhost",
+      "6333",
+      "disable",
+    ]);
+    act(() => result.current.setHost("https://xyz-example.cloud.example.com:443", "insertFromPaste"));
+    expect([result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "xyz-example.cloud.example.com",
+      "443",
+      "verify-system",
+    ]);
+  });
+
+  test("the real qdrant row warns for a JWT that declares no expiry, before Test Connection", () => {
+    const jwt = CREDENTIAL_WARNINGS.qdrant?.find((entry) => entry.kind === "jwt");
+    if (jwt?.kind !== "jwt") throw new Error("the qdrant record declares no jwt entry");
+    const b64url = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const token = `${b64url({ alg: "HS256" })}.${b64url({ access: "r" })}.c2ln`;
+    const { result, onTestConnection } = renderForm();
+    act(() => result.current.setType("qdrant"));
+    act(() => result.current.setPassword(token));
+    expect(result.current.credentialWarning).toBe(`Credential warning: ${jwt.message}`);
+    expect(onTestConnection).not.toHaveBeenCalled();
+  });
+
+  test("a user typed for another engine is neither saved nor tested on a Qdrant connection", async () => {
+    const { result, onConnect, onTestConnection } = renderForm();
+    act(() => result.current.setUser("root"));
+    act(() => result.current.setType("qdrant"));
+    act(() => result.current.setHost("127.0.0.1"));
+    act(() => result.current.setPassword(TEST_PASSWORD));
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onTestConnection.mock.calls[0][0].user).toBeUndefined();
+    expect(onConnect.mock.calls[0][0].user).toBeUndefined();
+    expect(onConnect.mock.calls[0][0].database).toBeUndefined();
   });
 });

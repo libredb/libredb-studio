@@ -273,6 +273,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   kafka: ["host", "port", "saslMechanism", "user", "password"],
   etcd: ["host", "port", "user", "password"],
   db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  qdrant: ["host", "port", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -333,6 +334,15 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
     fieldHints: { database: "Leave empty to use the server's home database." },
     readOnlyHint:
       "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+  },
+  // Mirrored from the real entry (vector-family spec 6.2); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  qdrant: {
+    fieldLabels: { password: "API key or JWT" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as http://localhost:6333, which is split into Host and Port. Studio dials this REST port only, never Qdrant's gRPC port 6334 or its cluster port 6335.",
+      password:
+        "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice.",
+    },
   },
 };
 
@@ -1516,6 +1526,14 @@ describe("ConnectionModal", () => {
         { saslMechanism: "PLAIN and SCRAM require TLS" },
       ],
       ["etcd", "etcd", {}, CREDENTIALS_ONLY, MOCK_FIELD_COPY.etcd.fieldHints ?? {}],
+      // No User box and no Database box: Qdrant has neither (vector-family spec 6.2).
+      [
+        "qdrant",
+        "qdrant",
+        {},
+        { host: "Host & Instance", password: "API key or JWT" },
+        MOCK_FIELD_COPY.qdrant.fieldHints ?? {},
+      ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
       ["libredb", "libredb", {}, FILE_PATH, {}],

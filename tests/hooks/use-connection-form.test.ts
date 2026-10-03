@@ -18,6 +18,7 @@ const DEFAULT_PORTS: Record<string, string> = {
   kafka: "9092",
   mssql: "1433",
   etcd: "2379",
+  qdrant: "6333",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -46,6 +47,8 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   etcd: ["host", "port", "user", "password"],
   // The consent to a cleartext password is a field of Db2's own (#786).
   db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  // No User and no Database: Qdrant has neither, and the key or JWT is the password (vector-family spec 6.2).
+  qdrant: ["host", "port", "password"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -1633,6 +1636,7 @@ describe("useConnectionForm", () => {
     kafka: true,
     etcd: true,
     neo4j: true,
+    qdrant: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

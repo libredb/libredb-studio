@@ -51,6 +51,7 @@ const ALL_TYPES: DatabaseType[] = [
   "kafka",
   "etcd",
   "neo4j",
+  "qdrant",
 ];
 
 describe("db-ui-config", () => {
@@ -409,11 +410,31 @@ describe("db-ui-config", () => {
       for (const type of ALL_TYPES) expect(providerSource(type).length).toBeGreaterThan(200);
     });
 
+    /**
+     * A field a provider reads only to refuse it, which the dialog therefore must not offer: Qdrant has no user
+     * name, and its provider refuses a non-empty `config.user` naming the field before any socket (vector-family
+     * spec 4.4), pinned in tests/unit/db/qdrant/credential-record.test.ts. Listed by name, so the read stays visible.
+     */
+    const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
+      user: ["qdrant"],
+      database: [],
+    };
+
+    test("every field read only to refuse it is really read and really not offered", () => {
+      for (const [field, types] of Object.entries(READ_ONLY_TO_REFUSE)) {
+        for (const type of types) {
+          expect(new RegExp(`config\\.${field}\\b`).test(providerSource(type))).toBe(true);
+          expect(getDBConfig(type).connectionFields).not.toContain(field);
+        }
+      }
+    });
+
     test.each(["user", "database"] as const)("a provider that reads config.%s is given it", (field) => {
       const diverging = ALL_TYPES.filter(
         (type) =>
+          !READ_ONLY_TO_REFUSE[field].includes(type) &&
           new RegExp(`config\\.${field}\\b`).test(providerSource(type)) !==
-          getDBConfig(type).connectionFields.includes(field),
+            getDBConfig(type).connectionFields.includes(field),
       );
       expect(diverging).toEqual([]);
     });
@@ -596,11 +617,35 @@ describe("declared connection-field copy (#1085)", () => {
     expect(connectionFieldHint(empty, "password")).toBeUndefined();
   });
 
-  test("only db2, prometheus, kafka, etcd and neo4j declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("qdrant declares its port, no Database box, no User field, API key or JWT, the hints and the Host box addresses (vector-family spec 6.2)", () => {
+    const qdrant = getDBConfig("qdrant");
+    expect(qdrant).toMatchObject({
+      label: "Qdrant",
+      color: "text-hue-rose-alt",
+      defaultPort: "6333",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "password"],
+    });
+    // The SSL panel and the SSH tunnel are both offered, the tunnel's far end being the TLS identity (vector-family spec 4.4).
+    expect(qdrant.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("qdrant")).toBe(true);
+    expect(takesConnectionField("qdrant", "user")).toBe(false);
+    expect(takesConnectionField("qdrant", "database")).toBe(false);
+    expect(qdrant.fieldLabels).toEqual({ password: "API key or JWT" });
+    expect(qdrant.fieldHints).toEqual({
+      host: "A name or address, or a pasted http:// or https:// address such as http://localhost:6333, which is split into Host and Port. Studio dials this REST port only, never Qdrant's gRPC port 6334 or its cluster port 6335.",
+      password:
+        "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice.",
+    });
+    expect(hostUriSchemes("qdrant")).toEqual(["http", "https"]);
+    expect(qdrant.credentialWarnings).toBe(CREDENTIAL_WARNINGS.qdrant);
+  });
+
+  test("only db2, prometheus, kafka, etcd, neo4j and qdrant declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["db2", "prometheus", "kafka", "etcd", "neo4j"]);
+    expect(declared).toEqual(["db2", "prometheus", "kafka", "etcd", "neo4j", "qdrant"]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
@@ -695,6 +740,9 @@ describe("db-showcase", () => {
         // Behind Kafka and ahead of libSQL (#1089), for the reason the two before it sit where they do: the store
         // a Kubernetes control plane keeps its state in, met beside the databases rather than as one of them.
         "etcd",
+        // Behind etcd and ahead of libSQL (vector-family spec 10.3): the vector database a team runs beside its
+        // databases, met beside them rather than as one of them, as the three before it are.
+        "qdrant",
         "libsql",
         "libredb",
       ]);
@@ -721,8 +769,8 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("no shipped type declares hostAcceptsUri yet, so every Host box takes a host alone", () => {
-    expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([]);
+  test("only qdrant declares hostAcceptsUri, so every other Host box takes a host alone", () => {
+    expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual(["qdrant"]);
   });
 
   test("hostUriSchemes reads an entry's declaration, and only that entry's", () => {

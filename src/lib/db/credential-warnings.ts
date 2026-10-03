@@ -27,8 +27,30 @@ export type CredentialWarning =
     }
   | { readonly kind: "no-secret"; readonly message: string };
 
-/** Each connection type's declared warnings. No shipped type declares one yet; each provider adds its own row. */
-export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>> = {};
+/**
+ * Each connection type's declared warnings. A provider adds its own row; Qdrant's is the first.
+ *
+ * Qdrant (vector-family spec 3.12 and 4.4): a JWT is a credential the dialog can read without asking the
+ * server, so a token that declares no expiry, manage access, or no access claim at all warns before Test
+ * Connection; an opaque key is never probed. A server without `service.api_key`, its default, accepts any key or
+ * none, so a read-only seed without a key promises a boundary the server does not keep and is refused.
+ */
+export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>> = {
+  qdrant: [
+    {
+      kind: "jwt",
+      noExp: true,
+      access: ["m", "absent"],
+      message:
+        "This token declares no expiry, or manage access to the whole server, so it stays valid, and as powerful, until the server's key changes. Prefer a read-only or collection-scoped key with an expiry.",
+    },
+    {
+      kind: "no-secret",
+      message:
+        "A Qdrant server without an API key, its default, accepts any key or none, so a read-only seed without a key promises a boundary the server does not keep.",
+    },
+  ],
+};
 
 interface Credential {
   readonly user?: string;

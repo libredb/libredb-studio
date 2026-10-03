@@ -22,6 +22,7 @@ import {
   EtcdIcon,
   Db2Icon,
   Neo4jIcon,
+  QdrantIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -465,6 +466,30 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // The dialog's own sentence says the mode can be turned off, which is false here (spec A7).
     readOnlyHint:
       "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+  },
+  qdrant: {
+    // A mark drawn for Studio, never the vendor's logo (vector-family spec 10.3).
+    icon: QdrantIcon,
+    // Qdrant's own mark is a crimson. `hue-rose` is Redis's; its `-alt` step is a second identity only because it
+    // clears the separation test, which is why `rose` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts
+    // with this entry, as `fuchsia` did with Neo4j's.
+    color: "text-hue-rose-alt",
+    label: "Qdrant",
+    // The REST port. 6334 is gRPC and 6335 the cluster's internal port, neither of which the provider dials (vector-family spec 4.4).
+    defaultPort: "6333",
+    // The connection-string box reads http:// and https:// as ClickHouse, so the vendor's address belongs in the
+    // Host box, which splits it (hostAcceptsUri below, vector-family spec 3.12).
+    showConnectionStringToggle: false,
+    // No Database box: Qdrant has no container level. No User field: Qdrant has no user name, and the provider
+    // refuses a non-empty one from a seed or the API naming the field (vector-family spec 4.4). The key or JWT is the password.
+    connectionFields: ["host", "port", "password"],
+    fieldLabels: { password: "API key or JWT" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as http://localhost:6333, which is split into Host and Port. Studio dials this REST port only, never Qdrant's gRPC port 6334 or its cluster port 6335.",
+      password:
+        "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice.",
+    },
+    hostAcceptsUri: ["http", "https"],
   },
   libredb: {
     icon: LibreDBIcon,

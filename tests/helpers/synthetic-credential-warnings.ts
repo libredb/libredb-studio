@@ -2,9 +2,10 @@ import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * Synthetic declarations: no shipped type declares a credential warning in this release, so each test declares
- * one on a real type for its own duration. `etcd` carries the pair and no-secret cases because it is the one
- * type whose provider enforces `readOnly`, so a read-only seed of it reaches the credential check at all.
+ * Synthetic declarations: Qdrant declares the one shipped record (src/lib/db/credential-warnings.ts), and each test
+ * here declares a synthetic one on another real type for its own duration, so the mechanism is exercised apart from
+ * any provider's data. `etcd` carries the pair and no-secret cases because its provider enforces `readOnly`, so a
+ * read-only seed of it reaches the credential check at all.
  */
 /**
  * The synthetic pair's password: a named stand-in, as every new test fixture in this repository uses, and never a
