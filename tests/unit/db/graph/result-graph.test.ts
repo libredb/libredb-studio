@@ -286,6 +286,27 @@ describe("buildResultGraph: masking hook", () => {
     expect(a.properties.email).toBe("alice@example.com");
   });
 
+  test("the hook is told every column the element was found under, in the order they were met", () => {
+    const seen: string[] = [];
+    const record = (key: string, value: unknown, columns: readonly string[]) => {
+      seen.push(`${key}:${columns.join(",")}`);
+      return value;
+    };
+    const rows = [{ x: b, y: [b, bc], z: c }, { x: c }];
+    buildResultGraph(rows, ["x", "y", "z"], { maxNodes: 300, mask: record });
+    expect(seen).toEqual(["name:x,y", "title:z,x"]);
+    const relationshipColumns: string[] = [];
+    const role = rel("r:bc", "n:b", "n:c", "ACTED_IN", { role: "Hanna" });
+    buildResultGraph([{ p: path([b, c], [role]), r: role }], ["p", "r"], {
+      maxNodes: 300,
+      mask: (key, value, columns) => {
+        relationshipColumns.push(columns.join(","));
+        return value;
+      },
+    });
+    expect(relationshipColumns).toEqual(["p", "p", "p,r"]);
+  });
+
   test("without a hook the properties are the returned ones", () => {
     const graph = buildResultGraph([{ a }], ["a"], { maxNodes: 300 });
     expect(graph.nodes[0].value.properties.email).toBe("alice@example.com");

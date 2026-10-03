@@ -21,18 +21,23 @@ export const MAX_GRAPH_NODES = 300;
 /**
  * The masking hook for `buildResultGraph`, or none when masking is not in force.
  *
- * The grid's rule, applied per property instead of per column: a key the config
- * flags is masked with the grid's masker, and a missing value stays missing. A
- * node's properties sit inside one cell, so without this the graph would show
- * what the grid hides.
+ * The grid's rule, both halves of it. The grid masks a whole cell when its column
+ * name is flagged, so every property of an element found under such a column is
+ * masked with that column's pattern (the first flagged one, in the order met).
+ * Elsewhere the rule applies per property: a node's properties sit inside one
+ * cell, so a key the config flags is masked with the grid's masker. A missing
+ * value stays missing. Labels, type and elementId are not properties and stay.
  */
 export function graphMask(config: MaskingConfig, inForce: boolean): ResultGraphOptions["mask"] {
   if (!inForce) return undefined;
   const patterns = new Map<string, MaskingPattern | undefined>();
-  return (key, value) => {
+  const patternOf = (name: string) => {
+    if (!patterns.has(name)) patterns.set(name, detectSensitiveColumnsFromConfig([name], config).get(name));
+    return patterns.get(name);
+  };
+  return (key, value, columns) => {
     if (value === null || value === undefined) return value;
-    if (!patterns.has(key)) patterns.set(key, detectSensitiveColumnsFromConfig([key], config).get(key));
-    const pattern = patterns.get(key);
+    const pattern = columns.map(patternOf).find((found) => found !== undefined) ?? patternOf(key);
     return pattern ? maskValueByPattern(value, pattern) : value;
   };
 }

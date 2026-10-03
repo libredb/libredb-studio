@@ -15,7 +15,7 @@ import { GraphView } from "@/components/results-graph/GraphView";
 import { type Core, type CytoscapeFactory, loadCytoscape } from "@/components/results-graph/cytoscape-host";
 import { ChunkBoundary } from "@/components/LazyView";
 import { chartTheme } from "@/lib/charts/palette";
-import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "@/lib/data-masking";
+import { DEFAULT_MASKING_CONFIG, type MaskingConfig, maskingInForce } from "@/lib/data-masking";
 import type { GraphNodeJson, GraphRelationshipJson } from "@/lib/db/graph/values";
 import type { QueryResult } from "@/lib/types";
 
@@ -260,6 +260,61 @@ describe("GraphView: masking, exactly the grid's rule", () => {
     const { cy } = await mount({ result, maskingConfig: DEFAULT_MASKING_CONFIG, maskingEnabled: true });
     expect(cy.$id("n:9").data("caption")).not.toContain("carol@example.com");
     expect(cy.$id("n:9").data("caption")).toContain("*");
+  });
+
+  test("a node under a column the grid masks by name never shows a raw property anywhere", async () => {
+    const owner = node("7", ["Account"], { name: "Dana", city: "Izmir" });
+    const result = resultOf([{ email: owner }]);
+    const { cy, container, getByRole } = await mount({
+      result,
+      maskingConfig: DEFAULT_MASKING_CONFIG,
+      maskingEnabled: true,
+    });
+    act(() => {
+      cy.$id("n:7").emit("tap");
+    });
+    fireEvent.click(getByRole("button", { name: "Export JSON" }));
+    const exported = await h.saved[0].blob.text();
+    const drawn = JSON.stringify(cy.elements().map((element) => element.data()));
+    for (const surface of [container.textContent ?? "", exported, drawn]) {
+      expect(surface).not.toContain("Dana");
+      expect(surface).not.toContain("Izmir");
+    }
+    // Labels and the elementId are not cell values the grid hides; they stay.
+    expect(within(getByRole("region", { name: "Inspector" })).getAllByText("Account")).not.toHaveLength(0);
+    expect(JSON.parse(exported).nodes[0].elementId).toBe("7");
+  });
+
+  test("masks exactly when the grid's maskingInForce does, over every role and switch state", async () => {
+    const raw = "carol@example.com";
+    const result = resultOf([{ n: node("9", ["User"], { email: raw }) }]);
+    const outcomes = new Set<boolean>();
+    for (const userRole of ["admin", "user", undefined]) {
+      for (const canToggle of [true, false]) {
+        for (const enabled of [true, false]) {
+          for (const maskingEnabled of [true, false, undefined]) {
+            const maskingConfig: MaskingConfig = {
+              ...DEFAULT_MASKING_CONFIG,
+              enabled,
+              roleSettings: { ...DEFAULT_MASKING_CONFIG.roleSettings, user: { canToggle, canReveal: false } },
+            };
+            const expected = maskingInForce(userRole, maskingConfig, maskingEnabled);
+            outcomes.add(expected);
+            h = harness();
+            const { cy, unmount } = await mount({ result, userRole, maskingConfig, maskingEnabled });
+            expect({
+              userRole,
+              canToggle,
+              enabled,
+              maskingEnabled,
+              masked: cy.$id("n:9").data("caption") !== raw,
+            }).toEqual({ userRole, canToggle, enabled, maskingEnabled, masked: expected });
+            unmount();
+          }
+        }
+      }
+    }
+    expect(outcomes).toEqual(new Set([true, false]));
   });
 
   test("the shell's switch turns it off, as it does for the grid", async () => {

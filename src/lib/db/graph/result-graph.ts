@@ -13,8 +13,9 @@
  * holds. Labels take colour slots in order of first appearance among drawn nodes,
  * and a node wears its first label's slot.
  *
- * The `mask` hook sees every property of every drawn element before a caption is
- * chosen, so a masked value never reaches a caption, the inspector or an export.
+ * The `mask` hook sees every property of every drawn element, with every column
+ * the element was found under, before a caption is chosen, so a masked value never
+ * reaches a caption, the inspector or an export.
  *
  * Pure and browser-safe: no import beyond `values.ts`, no I/O, no canvas library.
  */
@@ -50,8 +51,12 @@ export interface ResultGraph {
 
 export interface ResultGraphOptions {
   readonly maxNodes: number;
-  /** Returns the value to show for one property; called for every property of every drawn element. */
-  readonly mask?: (key: string, value: unknown) => unknown;
+  /**
+   * Returns the value to show for one property; called for every property of every
+   * drawn element, with the columns the element was found under in the order they
+   * were met, so a column the grid masks by name can mask the whole element.
+   */
+  readonly mask?: (key: string, value: unknown, columns: readonly string[]) => unknown;
 }
 
 const CAPTION_LENGTH = 24;
@@ -91,10 +96,11 @@ function* graphValuesIn(cell: unknown, depth = 1): Generator<GraphNodeJson | Gra
 
 function maskProperties(
   properties: Record<string, unknown>,
+  columns: readonly string[],
   mask: ResultGraphOptions["mask"],
 ): Record<string, unknown> {
   if (!mask) return properties;
-  return Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, mask(key, value)]));
+  return Object.fromEntries(Object.entries(properties).map(([key, value]) => [key, mask(key, value, columns)]));
 }
 
 function asText(value: unknown): string {
@@ -161,6 +167,18 @@ export function paletteColor(colorIndex: number | null, palette: readonly string
   return colorIndex === null ? undefined : palette[colorIndex % palette.length];
 }
 
+interface Found<T> {
+  readonly original: T;
+  readonly columns: string[];
+}
+
+/** The entry for an element, made on first sight, so the first copy is the one kept. */
+function foundIn<T extends { elementId: string }>(found: Map<string, Found<T>>, value: T): Found<T> {
+  const entry = found.get(value.elementId) ?? { original: value, columns: [] };
+  found.set(value.elementId, entry);
+  return entry;
+}
+
 export function buildResultGraph(
   rows: readonly Record<string, unknown>[],
   fields: readonly string[],
@@ -171,23 +189,21 @@ export function buildResultGraph(
     throw new Error(`maxNodes must be a non-negative integer, got ${maxNodes}`);
   }
 
-  const allNodes = new Map<string, GraphNodeJson>();
-  const allRelationships = new Map<string, GraphRelationshipJson>();
+  // Each element with the columns it was found under, in the order they were met.
+  const allNodes = new Map<string, Found<GraphNodeJson>>();
+  const allRelationships = new Map<string, Found<GraphRelationshipJson>>();
   for (const row of rows) {
     for (const field of fields) {
       for (const value of graphValuesIn(row[field])) {
-        if (value["~graph"] === "node") {
-          if (!allNodes.has(value.elementId)) allNodes.set(value.elementId, value);
-        } else if (!allRelationships.has(value.elementId)) {
-          allRelationships.set(value.elementId, value);
-        }
+        const found = value["~graph"] === "node" ? foundIn(allNodes, value) : foundIn(allRelationships, value);
+        if (!found.columns.includes(field)) found.columns.push(field);
       }
     }
   }
 
   const labelSlots = new Map<string, { label: string; count: number; colorIndex: number }>();
   const nodes: GraphViewNode[] = [];
-  for (const original of [...allNodes.values()].slice(0, maxNodes)) {
+  for (const { original, columns } of [...allNodes.values()].slice(0, maxNodes)) {
     let colorIndex: number | null = null;
     for (const label of original.labels) {
       const slot = labelSlots.get(label) ?? { label, count: 0, colorIndex: labelSlots.size };
@@ -195,7 +211,10 @@ export function buildResultGraph(
       labelSlots.set(label, slot);
       colorIndex ??= slot.colorIndex;
     }
-    const value = { ...original, properties: maskProperties(original.properties, mask) };
+    const value = {
+      ...original,
+      properties: maskProperties(original.properties, columns, mask),
+    };
     nodes.push({ id: value.elementId, caption: captionOf(value), colorIndex, value });
   }
 
@@ -203,7 +222,7 @@ export function buildResultGraph(
   const typeCounts = new Map<string, number>();
   const relationships: GraphViewRelationship[] = [];
   let droppedRelationships = 0;
-  for (const original of allRelationships.values()) {
+  for (const { original, columns } of allRelationships.values()) {
     if (!drawn.has(original.startNodeElementId) || !drawn.has(original.endNodeElementId)) {
       droppedRelationships += 1;
       continue;
@@ -214,7 +233,10 @@ export function buildResultGraph(
       source: original.startNodeElementId,
       target: original.endNodeElementId,
       caption: original.type,
-      value: { ...original, properties: maskProperties(original.properties, mask) },
+      value: {
+        ...original,
+        properties: maskProperties(original.properties, columns, mask),
+      },
     });
   }
 

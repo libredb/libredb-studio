@@ -53,19 +53,44 @@ describe("graphMask", () => {
     const mask = graphMask(DEFAULT_MASKING_CONFIG, true);
     const pattern = detectSensitiveColumnsFromConfig(["email"], DEFAULT_MASKING_CONFIG).get("email");
     if (!mask || !pattern) throw new Error("expected a mask and an email pattern");
-    expect(mask("email", "alice@example.com")).toBe(maskValueByPattern("alice@example.com", pattern));
-    expect(mask("email", "alice@example.com")).not.toContain("alice@example.com");
+    expect(mask("email", "alice@example.com", [])).toBe(maskValueByPattern("alice@example.com", pattern));
+    expect(mask("email", "alice@example.com", [])).not.toContain("alice@example.com");
     // A second call for the same key answers from the cache with the same result.
-    expect(mask("email", "bob@example.com")).toBe(maskValueByPattern("bob@example.com", pattern));
+    expect(mask("email", "bob@example.com", [])).toBe(maskValueByPattern("bob@example.com", pattern));
   });
 
   test("leaves an unflagged key and a missing value as they are, as the grid does", () => {
     const mask = graphMask(DEFAULT_MASKING_CONFIG, true);
     if (!mask) throw new Error("expected a mask");
-    expect(mask("name", "Alice")).toBe("Alice");
-    expect(mask("name", "Bob")).toBe("Bob");
-    expect(mask("email", null)).toBeNull();
-    expect(mask("email", undefined)).toBeUndefined();
+    expect(mask("name", "Alice", [])).toBe("Alice");
+    expect(mask("name", "Bob", [])).toBe("Bob");
+    expect(mask("email", null, [])).toBeNull();
+    expect(mask("email", undefined, [])).toBeUndefined();
+  });
+
+  test("masks every property of an element found under a column the grid masks, with that column's pattern", () => {
+    const mask = graphMask(DEFAULT_MASKING_CONFIG, true);
+    const secret = detectSensitiveColumnsFromConfig(["secret"], DEFAULT_MASKING_CONFIG).get("secret");
+    if (!mask || !secret) throw new Error("expected a mask and a secret pattern");
+    expect(mask("value", "hunter2-RAW", ["secret"])).toBe(maskValueByPattern("hunter2-RAW", secret));
+    expect(mask("name", "Alice", ["n", "secret"])).toBe(maskValueByPattern("Alice", secret));
+    expect(mask("count", 42, ["secret"])).toBe(maskValueByPattern(42, secret));
+    expect(mask("name", null, ["secret"])).toBeNull();
+    // Under an unflagged column the key decides, as before.
+    expect(mask("name", "Alice", ["n"])).toBe("Alice");
+  });
+
+  test("a node under a flagged column never shows a raw property in its caption or its value", () => {
+    const secretNode = node("8", ["Secret"], { value: "hunter2-RAW", owner: "alice" });
+    const masked = buildResultGraph([{ secret: secretNode }], ["secret"], {
+      maxNodes: MAX_GRAPH_NODES,
+      mask: graphMask(DEFAULT_MASKING_CONFIG, true),
+    });
+    const text = JSON.stringify(masked);
+    expect(text).not.toContain("hunter2-RAW");
+    expect(text).not.toContain("alice");
+    expect(masked.nodes[0].value.labels).toEqual(["Secret"]);
+    expect(masked.nodes[0].value.elementId).toBe("8");
   });
 
   test("a masked node never shows the raw value in its caption or its value", () => {

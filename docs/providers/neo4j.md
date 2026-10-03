@@ -310,6 +310,7 @@ The layout is fcose, rerun by Re-layout; a dragged node stays where it is droppe
 The canvas takes focus and is named "Graph of N nodes and M relationships"; there `+` and `-` zoom, `0` fits and the arrow keys pan.
 Export PNG draws the whole graph on the theme's background, and Export JSON writes `{ "nodes": [...], "relationships": [...] }` of the drawn elements in their tagged forms.
 Masking follows the grid's rule: when the grid would mask, a property whose key the masking config flags is masked in the captions, the inspector and both exports.
+A node or relationship found under a column the grid masks by name has every property masked with that column's pattern, as the grid masks the whole cell; its labels, type and elementId stay.
 
 ## 6. Schema introspection
 

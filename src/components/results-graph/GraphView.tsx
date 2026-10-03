@@ -4,9 +4,10 @@
  * The Graph tab: one result's nodes and relationships, drawn
  *
  * It draws only what the statement returned (`buildResultGraph`), never a second
- * query, and masks exactly as the grid does: the same `maskingInForce` decision, and
- * a property whose key the config flags is masked before any caption, the inspector
- * or an export can see it.
+ * query, and masks exactly as the grid does: the same `maskingInForce` decision; an
+ * element found under a column the grid masks has every property masked, and
+ * elsewhere a property whose key the config flags is masked, before any caption,
+ * the inspector or an export can see it.
  *
  * The canvas library arrives through `loadCytoscape`, awaited inside an effect, so
  * nothing here touches `window` at module load or on the server. Tests pass a
