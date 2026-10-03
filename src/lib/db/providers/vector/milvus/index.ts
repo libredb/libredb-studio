@@ -23,7 +23,13 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryCancelledError, QueryError } from "@/lib/db/errors";
-import { assertContainerPathShape, assertObjectPathShape, findKind, requireSourceKind } from "@/lib/db/object-kinds";
+import {
+  assertContainerPathShape,
+  assertObjectPathShape,
+  type ContainerPathShapeEngine,
+  findKind,
+  requireSourceKind,
+} from "@/lib/db/object-kinds";
 import type {
   ActiveSessionDetails,
   Container,
@@ -101,7 +107,11 @@ const MILVUS_SCHEMA_REFRESH_PATTERN = "(?!)";
 /** The deadline of every call outside a console request: connect, the tree, the Source, monitoring and maintenance. */
 const SURFACE_DEADLINE_MS = 10_000;
 
-const CONTAINER_PATH = { code: "milvus", label: "A Milvus", shapeNames: "label" } as const;
+const MILVUS_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "milvus",
+  label: "A Milvus",
+  shapeNames: "label",
+};
 const OBJECT_PATH = { code: "milvus", label: "A Milvus", attachedSegment: "required" } as const;
 const ENGINE = { displayName: "Milvus", type: "milvus" } as const;
 
@@ -304,13 +314,13 @@ export class MilvusProvider extends BaseDatabaseProvider {
   }
 
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
-    assertContainerPathShape(this.getCapabilities(), container, CONTAINER_PATH);
+    assertContainerPathShape(this.getCapabilities(), container, MILVUS_CONTAINER_PATH_ENGINE);
     const { session, context } = this.surface();
     return countMilvusCollections(session.client, context, container[0]);
   }
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
-    assertContainerPathShape(this.getCapabilities(), container, CONTAINER_PATH);
+    assertContainerPathShape(this.getCapabilities(), container, MILVUS_CONTAINER_PATH_ENGINE);
     this.requireKind(kind);
     const { session, context } = this.surface();
     return listMilvusCollections(session.client, context, container[0]);
@@ -324,7 +334,7 @@ export class MilvusProvider extends BaseDatabaseProvider {
 
   /** One listing, then the bulk describe: fields only, the caller's limit applied before any describe call. */
   public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
-    assertContainerPathShape(this.getCapabilities(), container, CONTAINER_PATH);
+    assertContainerPathShape(this.getCapabilities(), container, MILVUS_CONTAINER_PATH_ENGINE);
     this.requireKind(kind);
     const { session, context } = this.surface();
     const names = await listMilvusCollectionNames(session.client, context, container[0]);
