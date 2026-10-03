@@ -1,7 +1,8 @@
 import "../setup-dom";
 import "../helpers/mock-sonner";
 
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import { renderHook, act } from "@testing-library/react";
 
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
@@ -1378,5 +1379,154 @@ describe("useQueryAdapter", () => {
     });
 
     expect(params.tabs[0].resultQuery).toBe("SELECT * FROM users");
+  });
+});
+
+// =============================================================================
+// A statement the connection type's editor refuses (vector family, PR 1v)
+// =============================================================================
+//
+// This shell mounts no Toaster, so `runError` is the signal; the host owns the fetch behind `onQueryExecute`, which
+// is never called. `handleLoadMore` calls `onQueryExecute` itself and never re-enters `executeQuery`, so it makes the
+// check on its own, on the statement it pages.
+describe("a statement the connection type's editor refuses", () => {
+  const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
+  const REFUSED = '{"FORBIDDEN": true}';
+  let remove: () => void = () => {};
+
+  beforeEach(() => {
+    remove = installStandInVocabulary({
+      refuse: (text) => (text.includes("FORBIDDEN") ? REFUSAL : undefined),
+      maxTextBytes: 64,
+    });
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  function mount(
+    tab: QueryTab = makeTab({
+      query: REFUSED,
+      result: { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 },
+    }),
+    onQueryExecute = mock(() => Promise.resolve(makeQueryResult())),
+  ) {
+    const { tabs, setTabs } = createMutableTabs([tab]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: STAND_IN_TYPE }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+    return { result, tabs, onQueryExecute };
+  }
+
+  function expectRefused(tabs: QueryTab[], onQueryExecute: ReturnType<typeof mock>, sentence = REFUSAL) {
+    expect(onQueryExecute).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+    expect(tabs[0].result).toBeNull();
+    expect(tabs[0].isExecuting).toBe(false);
+    expect(tabs[0].isLoadingMore).toBe(false);
+  }
+
+  test("executeQuery hands the host nothing and writes the sentence to the tab", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+    expectRefused(tabs, onQueryExecute);
+    expect(mockToastError).toHaveBeenCalledWith("Statement Refused", { description: REFUSAL });
+  });
+
+  test("forceExecuteQuery, the dialog's Proceed, hands the host nothing either", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      result.current.forceExecuteQuery(REFUSED);
+    });
+    expectRefused(tabs, onQueryExecute);
+  });
+
+  test("the unlimited run hands the host nothing and closes its dialog", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      result.current.setUnlimitedWarningOpen(true);
+      result.current.setPendingUnlimitedQuery({ query: REFUSED, tabId: "tab-1" });
+    });
+    await act(async () => {
+      result.current.handleUnlimitedQuery();
+    });
+    expectRefused(tabs, onQueryExecute);
+    expect(result.current.unlimitedWarningOpen).toBe(false);
+    expect(result.current.pendingUnlimitedQuery).toBeNull();
+  });
+
+  test("Load More refuses the statement it pages", async () => {
+    const tab = makeTab({
+      query: "SELECT 1",
+      resultQuery: REFUSED,
+      result: {
+        rows: [{ id: 1 }],
+        fields: ["id"],
+        rowCount: 1,
+        executionTime: 1,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+      },
+    });
+    const { result, tabs, onQueryExecute } = mount(tab);
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+    expectRefused(tabs, onQueryExecute);
+  });
+
+  test("a text over the declared byte bound is refused with its size", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      await result.current.executeQuery("x".repeat(65));
+    });
+    expectRefused(
+      tabs,
+      onQueryExecute,
+      "The statement is 65 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it.",
+    );
+  });
+
+  test("an accepted statement still reaches the host once", async () => {
+    const { result, tabs, onQueryExecute } = mount(makeTab({ query: "SELECT 1" }));
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+    expect(onQueryExecute).toHaveBeenCalledTimes(1);
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  test("a refusal disowns a run still in flight on the tab, so its late answer does not land over the sentence", async () => {
+    let answerFirst: (result: WorkspaceQueryResult) => void = () => {};
+    const onQueryExecute = mock(
+      () =>
+        new Promise<WorkspaceQueryResult>((resolve) => {
+          answerFirst = resolve;
+        }),
+    );
+    const { result, tabs } = mount(makeTab({ query: "SELECT 1" }), onQueryExecute);
+    let first: Promise<void> | undefined;
+    act(() => {
+      first = result.current.executeQuery("SELECT 1");
+    });
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+    await act(async () => {
+      answerFirst(makeQueryResult());
+      await first;
+    });
+    expect(onQueryExecute).toHaveBeenCalledTimes(1);
+    expect(tabs[0].runError).toBe(REFUSAL);
+    expect(tabs[0].result).toBeNull();
   });
 });

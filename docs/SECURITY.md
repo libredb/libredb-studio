@@ -483,6 +483,13 @@ These are real, current, and not oversights. Each is a decision with a reason.
   An etcd connection's read-only mode (row 3.8) does not narrow this: it binds a `user` only on a managed seed and only where etcd authenticates the client with a secret only the seeds hold, a password or a client certificate, so on an etcd that authenticates nobody a `user` who knows the address writes through a connection of their own ([`docs/providers/etcd.md`](./providers/etcd.md) section 3.4).
   Cancelling an etcd write in the editor shows it as cancelled even when etcd applied it, because the editor aborts its own request, posts the cancel and discards the answer that says the write was already sent.
   The etcd provider's Kubernetes write protection is by prefix, and by content only where a single-key write meets a stored Kubernetes envelope: under a custom `--etcd-prefix`, a range write, a value written between a `txn`'s read of its single-key targets and its send, a `lease revoke`, a new key, and a key holding Kubernetes JSON or CBOR are not recognised.
+- **A statement the editor refuses is never sent and never written to history.**
+  A connection type can declare statements its editor refuses, and a bound on a statement's size in UTF-8 bytes, on its row in `src/lib/db/destructive-commands.ts`.
+  Such a statement is refused in the browser before the confirmation dialog, on every path the editor takes: Run, Proceed, Explain, Load More and playground mode, and the embedded workspace's four run paths.
+  It reaches no route and no host callback, and it is not written to query history.
+  `POST /api/db/query` answers 413 for a text over the bound and `POST /api/db/multi-query` refuses such a type with 400, so a caller outside the editor meets the same bound.
+  A statement the editor accepts is written to history whole, as on every engine, even when the server then refuses it.
+  No shipped engine declares a refusal or a bound yet.
 - **Env-mode local passwords are not hashed.** With `STORAGE_PROVIDER=local` they arrive as
   `ADMIN_PASSWORD` and `USER_PASSWORD`, so the environment already holds the secret. On `sqlite` or
   `postgres` those variables only seed the account registry, and the stored value is scrypt
