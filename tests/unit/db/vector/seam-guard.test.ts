@@ -4,16 +4,27 @@
  * The set is every file of src/lib/db/vector/ and src/lib/db/console/, and src/lib/editor/console-language.ts. A
  * member may import another member; types, and only types, from @/lib/types; the error classes of @/lib/db/errors;
  * and, for the editor file alone, types from monaco-editor. Nothing else: no Node built-in, no provider module, no
- * other module of the repository, and no engine's name anywhere in the file. Module names are resolved as
- * TypeScript resolves them, with the repository's tsconfig, so an alias counts as well as a relative path.
+ * other module of the repository, and no engine's name anywhere in the file, in any case and inside an identifier
+ * too. Module names are resolved as TypeScript resolves them, with the repository's tsconfig, so an alias counts as
+ * well as a relative path.
  *
  * Each rule is proven both ways: the real sources pass, and a violation planted in a copy of a real file's text
  * fails by name. The guard is syntactic, as etcd's is (tests/unit/db/etcd/seam-guard.test.ts): a module name built
  * at run time is refused as not a plain string rather than chased.
  */
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { isBuiltin } from "node:module";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
 
@@ -22,14 +33,18 @@ const DIRECTORIES = ["src/lib/db/vector", "src/lib/db/console"];
 const EDITOR_FILE = "src/lib/editor/console-language.ts";
 const TYPES_ONLY = new Set(["src/lib/types.ts"]);
 const ANY_IMPORT = new Set(["src/lib/db/errors.ts"]);
-const ENGINE_NAMES = /\b(milvus|qdrant|zilliz)\b/i;
+/** An engine's name in any case and anywhere, inside an identifier included: `isQdrant` names one as a comment does. */
+const ENGINE_NAMES = /(milvus|qdrant|zilliz)/i;
 
-/** Every file of the browser-safe set, as repository-relative paths. */
-function browserSafeFiles(): string[] {
+/**
+ * Every file of the browser-safe set, as repository-relative paths: every file under the two directories, whatever
+ * its depth and its extension, and the editor file.
+ */
+function browserSafeFiles(root = ROOT): string[] {
   const members = DIRECTORIES.flatMap((directory) =>
-    readdirSync(join(ROOT, directory))
-      .filter((name) => name.endsWith(".ts"))
-      .map((name) => `${directory}/${name}`),
+    readdirSync(join(root, directory), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => `${entry.parentPath.slice(root.length + 1)}/${entry.name}`.split("\\").join("/")),
   );
   return [...members, EDITOR_FILE].sort();
 }
@@ -207,6 +222,26 @@ describe("planted violations fail by name", () => {
       'const label = "milvus";\n',
       "browser-safe set: src/lib/db/vector/count.ts names the engine milvus",
     ],
+    [
+      "src/lib/db/vector/count.ts",
+      "const milvusRoutes = 1;\n",
+      "browser-safe set: src/lib/db/vector/count.ts names the engine milvus",
+    ],
+    [
+      "src/lib/db/vector/count.ts",
+      "const isQdrant = false;\n",
+      "browser-safe set: src/lib/db/vector/count.ts names the engine Qdrant",
+    ],
+    [
+      "src/lib/db/vector/count.ts",
+      'const MILVUS_PREFIX = "";\n',
+      "browser-safe set: src/lib/db/vector/count.ts names the engine MILVUS",
+    ],
+    [
+      "src/lib/db/vector/count.ts",
+      "// zillizcloud\n",
+      "browser-safe set: src/lib/db/vector/count.ts names the engine zilliz",
+    ],
   ])("%s with %p fails", (file, planted, finding) => {
     expect(seamFindings(file, planted + read(file))).toEqual([finding]);
   });
@@ -218,5 +253,35 @@ describe("planted violations fail by name", () => {
     ["src/lib/db/console/guard.ts", 'import type { VectorTarget } from "@/lib/db/vector/dense";\n'],
   ])("%s with %p passes", (file, planted) => {
     expect(seamFindings(file, planted + read(file))).toEqual([]);
+  });
+});
+
+describe("the set is every file under its directories", () => {
+  test("a file in a subdirectory and a .tsx file are members, so neither escapes the rule", () => {
+    const root = mkdtempSync(join(tmpdir(), "seam-guard-"));
+    try {
+      mkdirSync(join(root, "src/lib/db/vector/nested"), { recursive: true });
+      mkdirSync(join(root, "src/lib/db/console"), { recursive: true });
+      writeFileSync(join(root, "src/lib/db/vector/a.ts"), "");
+      writeFileSync(join(root, "src/lib/db/vector/nested/b.ts"), "");
+      writeFileSync(join(root, "src/lib/db/console/cell.tsx"), "");
+      expect(browserSafeFiles(root)).toEqual([
+        "src/lib/db/console/cell.tsx",
+        "src/lib/db/vector/a.ts",
+        "src/lib/db/vector/nested/b.ts",
+        EDITOR_FILE,
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a .tsx member is read as the rule reads a .ts one", () => {
+    expect(
+      seamFindings(
+        "src/lib/db/vector/cell.tsx",
+        'import { readFileSync } from "node:fs";\nexport const cell = <b />;\n',
+      ),
+    ).toEqual(["browser-safe set: src/lib/db/vector/cell.tsx imports node:fs, a runtime built-in"]);
   });
 });

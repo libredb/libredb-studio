@@ -5,13 +5,15 @@
  * Over the whole text of every file of src/lib/db/vector/ and src/lib/db/console/, code and comments alike, it
  * refuses an engine's name, a vendor's path, and an engine's own spelling of a vector type, a metric or an index.
  * Each spelling matches case-sensitively on word boundaries, so `squared Euclidean` and the lower-case union
- * members `cosine` and `hnsw` pass; an engine's name matches in any case. The exported symbol set of every file is
- * listed exactly, so a symbol with one reader cannot enter a shared module unnoticed: adding an export is an edit
- * of this list, which a reviewer sees. src/lib/db/utils/server-text.ts, which both providers read, is held to the
- * engine-name rule and to its two exports.
+ * members `cosine` and `hnsw` pass; an engine's name matches in any case and anywhere, inside an identifier too.
+ * The files are every file under the two directories, whatever its depth and extension. The exported symbol set of
+ * every file is listed exactly, so a symbol with one reader cannot enter a shared module unnoticed: adding an
+ * export is an edit of this list, which a reviewer sees. src/lib/db/utils/server-text.ts, which both providers
+ * read, is held to the engine-name rule and to its two exports.
  */
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ts from "typescript";
 
@@ -19,7 +21,8 @@ const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIRECTORIES = ["src/lib/db/vector", "src/lib/db/console"];
 const SERVER_TEXT = "src/lib/db/utils/server-text.ts";
 
-const ENGINE_NAMES: readonly RegExp[] = [/\bmilvus\b/i, /\bqdrant\b/i, /\bzilliz\b/i];
+/** In any case and anywhere in the text, inside an identifier included: `isQdrant` names an engine as a comment does. */
+const ENGINE_NAMES: readonly RegExp[] = [/milvus/i, /qdrant/i, /zilliz/i];
 const VENDOR_PATHS: readonly string[] = ["/v2/vectordb/", "collections/{"];
 const NATIVE_SPELLINGS: readonly string[] = [
   "FloatVector",
@@ -178,11 +181,12 @@ function exportFindings(file: string, text: string): string[] {
 }
 
 const read = (file: string) => readFileSync(join(ROOT, file), "utf8");
-const sharedFiles = (): string[] =>
+/** Every file under the two shared directories, whatever its depth and its extension. */
+const sharedFiles = (root = ROOT): string[] =>
   DIRECTORIES.flatMap((directory) =>
-    readdirSync(join(ROOT, directory))
-      .filter((name) => name.endsWith(".ts"))
-      .map((name) => `${directory}/${name}`),
+    readdirSync(join(root, directory), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => `${entry.parentPath.slice(root.length + 1)}/${entry.name}`.split("\\").join("/")),
   ).sort();
 
 describe("the shared vector and console modules (spec 3.2)", () => {
@@ -234,6 +238,11 @@ describe("planted violations fail by name, and the near misses pass", () => {
     ["// as Milvus answers\n", "content: src/lib/db/vector/score.ts names the engine Milvus"],
     ['const host = "qdrant";\n', "content: src/lib/db/vector/score.ts names the engine qdrant"],
     ["// Zilliz Cloud\n", "content: src/lib/db/vector/score.ts names the engine Zilliz"],
+    ["const milvusRoutes = 1;\n", "content: src/lib/db/vector/score.ts names the engine milvus"],
+    ["const isQdrant = false;\n", "content: src/lib/db/vector/score.ts names the engine Qdrant"],
+    ['const MILVUS_PREFIX = "";\n', "content: src/lib/db/vector/score.ts names the engine MILVUS"],
+    ["const qdrant_key = 1;\n", "content: src/lib/db/vector/score.ts names the engine qdrant"],
+    ["// zillizcloud\n", "content: src/lib/db/vector/score.ts names the engine zilliz"],
   ])("%p fails by name", (planted, finding) => {
     expect(contentFindings(score, planted + read(score))).toEqual([finding]);
   });
@@ -251,6 +260,24 @@ describe("planted violations fail by name, and the near misses pass", () => {
     expect(
       exportedNames("x.ts", 'export { a, b as c } from "./y";\nexport * from "./z";\nexport * as w from "./v";\n'),
     ).toEqual(["*", "a", "c", "w"]);
+  });
+
+  test("a file in a subdirectory and a .tsx file are listed, so neither escapes the rule or the export list", () => {
+    const root = mkdtempSync(join(tmpdir(), "content-guard-"));
+    try {
+      mkdirSync(join(root, "src/lib/db/vector/nested"), { recursive: true });
+      mkdirSync(join(root, "src/lib/db/console"), { recursive: true });
+      writeFileSync(join(root, "src/lib/db/vector/a.ts"), "");
+      writeFileSync(join(root, "src/lib/db/vector/nested/b.ts"), "");
+      writeFileSync(join(root, "src/lib/db/console/cell.tsx"), "");
+      expect(sharedFiles(root)).toEqual([
+        "src/lib/db/console/cell.tsx",
+        "src/lib/db/vector/a.ts",
+        "src/lib/db/vector/nested/b.ts",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("an engine's name in server-text.ts fails", () => {
