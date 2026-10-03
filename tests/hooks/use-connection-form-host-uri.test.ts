@@ -126,6 +126,36 @@ describe("useConnectionForm: an address in the Host box", () => {
     expect(result.current.testResult).toEqual({ tone: "error", message: USERINFO_SENTENCE });
   });
 
+  test("a refusal clears once the Host box is edited, and a test result it did not write stays", async () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setHost("http://u:p@h.example:1", "insertFromPaste"));
+    expect(result.current.testResult).toEqual({ tone: "error", message: USERINFO_SENTENCE });
+    act(() => result.current.setHost("h.example", "deleteContentBackward"));
+    expect([result.current.host, result.current.testResult]).toEqual(["h.example", null]);
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    const tested = result.current.testResult;
+    expect(tested).not.toBeNull();
+    act(() => result.current.setHost("h.example.org", "insertText"));
+    expect(result.current.testResult).toBe(tested);
+  });
+
+  test("a refusal Test Connection said clears once the Host box is edited", async () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setHost("http://h.example/path", "insertText"));
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    expect(result.current.testResult?.tone).toBe("error");
+    act(() => result.current.setHost("http://h.example", "deleteContentBackward"));
+    expect(result.current.testResult).toBeNull();
+  });
+
   test("an engine that declares nothing keeps the Host box raw, pasted or typed", async () => {
     const { result, onConnect } = renderForm();
     act(() => result.current.setHost("http://localhost:6333", "insertFromPaste"));

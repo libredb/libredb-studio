@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   DatabaseConnection,
   DatabaseType,
@@ -524,6 +524,14 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     }
   }
 
+  /** The refusal of the Host box's address the dialog is showing, if it is showing one, so an edit can clear it. */
+  const hostRefusal = useRef<{ tone: TestResultTone; message: string } | null>(null);
+  const showHostRefusal = useCallback((sentence: string) => {
+    const refusal = { tone: "error" as const, message: sentence };
+    hostRefusal.current = refusal;
+    setTestResult(refusal);
+  }, []);
+
   /**
    * The Host box's setter as the dialog calls it: the text, and the input kind that delivered it. For an engine
    * that declares `hostAcceptsUri`, a pasted or dropped `http(s)://` address fills Host and Port and raises SSL
@@ -533,11 +541,13 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    */
   const setHostFromInput = (text: string, inputType?: string) => {
     setHost(text);
+    // A refusal is about the text it read, so an edit takes it away; any other result stays until the next test.
+    setTestResult((current) => (current !== null && current === hostRefusal.current ? null : current));
     if (inputType === undefined || !WHOLE_VALUE_INPUTS.has(inputType)) return;
     const hostBox = readHostBox(type, text);
     if (hostBox.kind === "host") return;
     if (hostBox.kind === "refused") {
-      setTestResult({ tone: "error", message: hostBox.sentence });
+      showHostRefusal(hostBox.sentence);
       return;
     }
     setHost(hostBox.host);
@@ -730,9 +740,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const validateHostAddress = useCallback(() => {
     const hostBox = readHostBox(type, host);
     if (hostBox.kind !== "refused") return true;
-    setTestResult({ tone: "error", message: hostBox.sentence });
+    showHostRefusal(hostBox.sentence);
     return false;
-  }, [type, host]);
+  }, [type, host, showHostRefusal]);
 
   const handleTestConnection = useCallback(async () => {
     if (!validateQueryTimeout() || !validateHostAddress()) return;
