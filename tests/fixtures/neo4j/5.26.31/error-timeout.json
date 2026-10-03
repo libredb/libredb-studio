@@ -1,0 +1,19 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:38.401Z",
+    "database": "neo4j"
+  },
+  "statement": "UNWIND range(1, 2000000000) AS x RETURN count(x)",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "fail",
+  "error": {
+    "category": "timeout",
+    "code": null,
+    "message": "The query did not finish within 1000 ms"
+  }
+}

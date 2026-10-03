@@ -1,0 +1,15 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:40.431Z",
+    "database": null
+  },
+  "surface": "verify() to 127.0.0.1:1, where nothing listens",
+  "outcome": "fail",
+  "error": {
+    "category": "connection",
+    "code": "ServiceUnavailable",
+    "message": "Failed to connect to server. Please ensure that your database is listening on the correct host and port and that you have compatible encryption settings both on Neo4j server and driver. Note that the default encryption setting has changed in Neo4j 4.0. Caused by: connect ECONNREFUSED 127.0.0.1:1"
+  }
+}

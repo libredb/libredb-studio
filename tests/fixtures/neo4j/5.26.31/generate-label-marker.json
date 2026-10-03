@@ -1,0 +1,43 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:37.919Z",
+    "database": "neo4j"
+  },
+  "statement": "MATCH (n:`Marker`) RETURN n LIMIT 100",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "n"
+    ],
+    "rows": [
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:58",
+          "labels": [
+            "Marker"
+          ],
+          "properties": {}
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:59",
+          "labels": [
+            "Marker"
+          ],
+          "properties": {}
+        }
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

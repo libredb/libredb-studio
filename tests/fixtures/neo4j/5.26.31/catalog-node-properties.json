@@ -1,0 +1,324 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:37.788Z",
+    "database": "neo4j"
+  },
+  "statement": "CALL db.schema.nodeTypeProperties() YIELD nodeLabels, propertyName, propertyTypes, mandatory",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 10000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "nodeLabels",
+      "propertyName",
+      "propertyTypes",
+      "mandatory"
+    ],
+    "rows": [
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "id",
+        "propertyTypes": [
+          "String"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "tier",
+        "propertyTypes": [
+          "Long"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "uptime",
+        "propertyTypes": [
+          "Double"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aBoolean",
+        "propertyTypes": [
+          "Boolean"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "notANumber",
+        "propertyTypes": [
+          "Double"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aString",
+        "propertyTypes": [
+          "String"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aList",
+        "propertyTypes": [
+          "LongArray"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aFloat",
+        "propertyTypes": [
+          "Double"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aLocalDateTime",
+        "propertyTypes": [
+          "LocalDateTime"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "minInteger",
+        "propertyTypes": [
+          "Long"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "anInteger",
+        "propertyTypes": [
+          "Long"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "beyondDoubles",
+        "propertyTypes": [
+          "Long"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aTime",
+        "propertyTypes": [
+          "Time"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aDuration",
+        "propertyTypes": [
+          "Duration"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aDateTime",
+        "propertyTypes": [
+          "DateTime"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aCartesianPoint",
+        "propertyTypes": [
+          "Point"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aWgs84Point",
+        "propertyTypes": [
+          "Point"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aDate",
+        "propertyTypes": [
+          "Date"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Service"
+        ],
+        "propertyName": "aLocalTime",
+        "propertyTypes": [
+          "LocalTime"
+        ],
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Team"
+        ],
+        "propertyName": "name",
+        "propertyTypes": [
+          "String"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Team"
+        ],
+        "propertyName": "founded",
+        "propertyTypes": [
+          "Date"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Weird Label"
+        ],
+        "propertyName": "name",
+        "propertyTypes": [
+          "String"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Weird Label"
+        ],
+        "propertyName": "rank",
+        "propertyTypes": [
+          "Long"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Back`tick"
+        ],
+        "propertyName": "name",
+        "propertyTypes": [
+          "String"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Shared"
+        ],
+        "propertyName": "id",
+        "propertyTypes": [
+          "Long"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Marker"
+        ],
+        "propertyName": null,
+        "propertyTypes": null,
+        "mandatory": false
+      },
+      {
+        "nodeLabels": [
+          "Person"
+        ],
+        "propertyName": "name",
+        "propertyTypes": [
+          "String"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Person"
+        ],
+        "propertyName": "skills",
+        "propertyTypes": [
+          "StringArray"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Person"
+        ],
+        "propertyName": "active",
+        "propertyTypes": [
+          "Boolean"
+        ],
+        "mandatory": true
+      },
+      {
+        "nodeLabels": [
+          "Person"
+        ],
+        "propertyName": "age",
+        "propertyTypes": [
+          "Long"
+        ],
+        "mandatory": true
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

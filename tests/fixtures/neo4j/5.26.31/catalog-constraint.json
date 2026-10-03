@@ -1,0 +1,38 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:37.784Z",
+    "database": "neo4j"
+  },
+  "statement": "SHOW CONSTRAINTS YIELD name, type, entityType, labelsOrTypes, properties",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 10000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "name",
+      "type",
+      "entityType",
+      "labelsOrTypes",
+      "properties"
+    ],
+    "rows": [
+      {
+        "name": "service_id",
+        "type": "UNIQUENESS",
+        "entityType": "NODE",
+        "labelsOrTypes": [
+          "Service"
+        ],
+        "properties": [
+          "id"
+        ]
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

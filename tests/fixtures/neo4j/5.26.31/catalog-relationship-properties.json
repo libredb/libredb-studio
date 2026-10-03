@@ -1,0 +1,62 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:37.796Z",
+    "database": "neo4j"
+  },
+  "statement": "CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 10000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "relType",
+      "propertyName",
+      "propertyTypes",
+      "mandatory"
+    ],
+    "rows": [
+      {
+        "relType": ":`Shared`",
+        "propertyName": null,
+        "propertyTypes": null,
+        "mandatory": false
+      },
+      {
+        "relType": ":`MEMBER_OF`",
+        "propertyName": "role",
+        "propertyTypes": [
+          "String"
+        ],
+        "mandatory": false
+      },
+      {
+        "relType": ":`MEMBER_OF`",
+        "propertyName": "since",
+        "propertyTypes": [
+          "Date"
+        ],
+        "mandatory": false
+      },
+      {
+        "relType": ":`OWNS`",
+        "propertyName": null,
+        "propertyTypes": null,
+        "mandatory": false
+      },
+      {
+        "relType": ":`DEPENDS_ON`",
+        "propertyName": "critical",
+        "propertyTypes": [
+          "Boolean"
+        ],
+        "mandatory": true
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

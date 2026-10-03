@@ -1,0 +1,119 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:37.801Z",
+    "database": "neo4j"
+  },
+  "statement": "SHOW FUNCTIONS YIELD name, isBuiltIn WHERE isBuiltIn AND name CONTAINS '.' RETURN name ORDER BY name",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 10000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "name"
+    ],
+    "rows": [
+      {
+        "name": "date.realtime"
+      },
+      {
+        "name": "date.statement"
+      },
+      {
+        "name": "date.transaction"
+      },
+      {
+        "name": "date.truncate"
+      },
+      {
+        "name": "datetime.fromepoch"
+      },
+      {
+        "name": "datetime.fromepochmillis"
+      },
+      {
+        "name": "datetime.realtime"
+      },
+      {
+        "name": "datetime.statement"
+      },
+      {
+        "name": "datetime.transaction"
+      },
+      {
+        "name": "datetime.truncate"
+      },
+      {
+        "name": "duration.between"
+      },
+      {
+        "name": "duration.inDays"
+      },
+      {
+        "name": "duration.inMonths"
+      },
+      {
+        "name": "duration.inSeconds"
+      },
+      {
+        "name": "graph.byElementId"
+      },
+      {
+        "name": "graph.byName"
+      },
+      {
+        "name": "localdatetime.realtime"
+      },
+      {
+        "name": "localdatetime.statement"
+      },
+      {
+        "name": "localdatetime.transaction"
+      },
+      {
+        "name": "localdatetime.truncate"
+      },
+      {
+        "name": "localtime.realtime"
+      },
+      {
+        "name": "localtime.statement"
+      },
+      {
+        "name": "localtime.transaction"
+      },
+      {
+        "name": "localtime.truncate"
+      },
+      {
+        "name": "point.distance"
+      },
+      {
+        "name": "point.withinBBox"
+      },
+      {
+        "name": "time.realtime"
+      },
+      {
+        "name": "time.statement"
+      },
+      {
+        "name": "time.transaction"
+      },
+      {
+        "name": "time.truncate"
+      },
+      {
+        "name": "vector.similarity.cosine"
+      },
+      {
+        "name": "vector.similarity.euclidean"
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

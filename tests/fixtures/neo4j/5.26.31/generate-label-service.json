@@ -1,0 +1,161 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:07:37.979Z",
+    "database": "neo4j"
+  },
+  "statement": "MATCH (n:`Service`) RETURN n LIMIT 100",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "n"
+    ],
+    "rows": [
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "gateway",
+            "uptime": 99.95
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "auth",
+            "uptime": 99.99
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:46",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "ledger",
+            "uptime": 99.9
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "checkout",
+            "uptime": 99.5
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:48",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "indexer",
+            "uptime": 98.7
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:49",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "query",
+            "uptime": 99.1
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:50",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 3,
+            "id": "warehouse",
+            "uptime": 97
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:51",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "aBoolean": false,
+            "notANumber": "NaN",
+            "aString": "plain text",
+            "aList": [
+              1,
+              2,
+              3
+            ],
+            "aFloat": 0.1,
+            "minInteger": "-9223372036854775808",
+            "aLocalDateTime": "2026-10-03T13:45:30.123456789",
+            "anInteger": 42,
+            "beyondDoubles": "9007199254740993",
+            "aTime": "13:45:30.123456789+03:00",
+            "aWgs84Point": {
+              "srid": 4326,
+              "x": 28.9784,
+              "y": 41.0082
+            },
+            "aDate": "2026-10-03",
+            "aLocalTime": "13:45:30.123456789",
+            "aCartesianPoint": {
+              "srid": 7203,
+              "x": 1.5,
+              "y": -2.25
+            },
+            "aDuration": "P1Y2M3DT4H5M6.789000000S",
+            "id": "types",
+            "aDateTime": "2026-10-03T13:45:30.123456789+03:00[Europe/Istanbul]"
+          }
+        }
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}
