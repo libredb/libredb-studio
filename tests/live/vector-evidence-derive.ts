@@ -8,6 +8,8 @@
  * - The expected cells in Studio's cell form: dense as numbers, binary as byte arrays, Milvus sparse as an index map
  *   in ascending index order, Qdrant sparse as `{indices, values}`, derived from what the seed says the server
  *   stores and never from a REST base64 answer.
+ * - A Milvus struct array's vector subfield, `<field>[<subfield>]`, is an embedding list: a multivector whose cell is
+ *   the subfield's vector of every struct element, in element order, scored by its MAX_SIM metric.
  * - The expected score of the Milvus `edge_values` sparse self-search, which REST cannot encode: its value 3.4e38
  *   squared passes the float32 maximum, so the score is Infinity.
  * - The comparison of one expected cell with the cell a REST answer holds, as float32.
@@ -44,6 +46,9 @@ export interface MilvusManifestField {
   readonly name: string;
   readonly type: string;
   readonly dim?: number;
+  /** "Struct" on a struct array, whose subfields are `fields`. */
+  readonly element_type?: string;
+  readonly fields?: readonly MilvusManifestField[];
 }
 
 export interface MilvusManifestIndex {
@@ -162,6 +167,11 @@ const MILVUS_METRICS: Readonly<Record<string, VectorMetricJson>> = {
   HAMMING: "hamming",
   JACCARD: "jaccard",
   BM25: "other",
+  // An embedding list's score: the sum, over the query's rows, of each row's best match; no family metric.
+  MAX_SIM: "other",
+  MAX_SIM_COSINE: "other",
+  MAX_SIM_IP: "other",
+  MAX_SIM_L2: "other",
 };
 
 /** Milvus `index_type` to the family's index kind; a name this table does not list is `opaque`. */
@@ -227,34 +237,50 @@ function lookup<T>(table: Readonly<Record<string, T>>, key: string | null, what:
   return found;
 }
 
+/**
+ * A collection's vector fields as the derivation reads them: every top-level vector field, then every vector
+ * subfield of a struct array as `<field>[<subfield>]`, an embedding list, which Milvus addresses by that name.
+ */
+function milvusVectorFields(
+  collection: MilvusManifestCollection,
+): readonly { readonly name: string; readonly field: MilvusManifestField; readonly struct?: string }[] {
+  return collection.fields.flatMap((field) => {
+    if (field.type in MILVUS_VECTOR_TYPES) return [{ name: field.name, field }];
+    if (field.type !== "Array" || field.element_type !== "Struct") return [];
+    return (field.fields ?? [])
+      .filter((sub) => sub.type in MILVUS_VECTOR_TYPES)
+      .map((sub) => ({ name: `${field.name}[${sub.name}]`, field: sub, struct: field.name }));
+  });
+}
+
 /** The expected fields of every Milvus collection, keyed "<database>/<collection>". */
 export function expectedMilvusFields(manifest: MilvusManifest): Record<string, ExpectedVectorField[]> {
   const out: Record<string, ExpectedVectorField[]> = {};
   for (const [database, collections] of Object.entries(manifest.databases)) {
     for (const [name, collection] of Object.entries(collections)) {
-      out[`${database}/${name}`] = collection.fields
-        .filter((field) => field.type in MILVUS_VECTOR_TYPES)
-        .map((field) => {
-          const { kind, dtype } = MILVUS_VECTOR_TYPES[field.type];
-          const index = collection.indexes[field.name];
-          if (kind !== "sparse" && field.dim === undefined) {
-            throw new Error(`${database}.${name}.${field.name} has no dimension in the manifest`);
-          }
-          return {
-            name: field.name,
-            kind,
-            dtype,
-            dimension: kind === "sparse" ? null : (field.dim ?? null),
-            // A field with no index has neither a metric nor an index kind.
-            metric:
-              index === undefined
-                ? null
-                : lookup(MILVUS_METRICS, index.metric, `Milvus metric of ${database}.${name}.${field.name}`),
-            nativeMetric: index === undefined ? null : index.metric,
-            indexKind: index === undefined ? null : (MILVUS_INDEX_KINDS[index.type] ?? "opaque"),
-            nativeType: kind === "sparse" ? field.type : `${field.type}(${field.dim})`,
-          };
-        });
+      out[`${database}/${name}`] = milvusVectorFields(collection).map(({ name: fieldName, field, struct }) => {
+        const family = MILVUS_VECTOR_TYPES[field.type];
+        const kind = struct === undefined ? family.kind : "multi";
+        const index = collection.indexes[fieldName];
+        if (family.kind !== "sparse" && field.dim === undefined) {
+          throw new Error(`${database}.${name}.${fieldName} has no dimension in the manifest`);
+        }
+        const elementType = family.kind === "sparse" ? field.type : `${field.type}(${field.dim})`;
+        return {
+          name: fieldName,
+          kind,
+          dtype: family.dtype,
+          dimension: family.kind === "sparse" ? null : (field.dim ?? null),
+          // A field with no index has neither a metric nor an index kind.
+          metric:
+            index === undefined
+              ? null
+              : lookup(MILVUS_METRICS, index.metric, `Milvus metric of ${database}.${name}.${fieldName}`),
+          nativeMetric: index === undefined ? null : index.metric,
+          indexKind: index === undefined ? null : (MILVUS_INDEX_KINDS[index.type] ?? "opaque"),
+          nativeType: struct === undefined ? elementType : `ArrayOfVector(${elementType})`,
+        };
+      });
     }
   }
   return out;
@@ -337,6 +363,16 @@ function indicesValues(value: unknown, where: string): { indices: number[]; valu
   return { indices: order.map((entry) => entry.index), values: order.map((entry) => entry.value) };
 }
 
+/** A struct array's elements to its vector subfield's rows, in element order: the embedding list. */
+function embeddingList(value: unknown, subfield: string, where: string): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${where} is not a struct array in the manifest`);
+  return value.map((element, position) => {
+    const row = (element as Record<string, unknown> | null)?.[subfield];
+    if (row === undefined) throw new Error(`${where} element ${position} holds no ${subfield} in the manifest`);
+    return row;
+  });
+}
+
 export function expectedMilvusCells(manifest: MilvusManifest): ExpectedCells {
   const cells: ExpectedCell[] = [];
   const excluded: ExcludedField[] = [];
@@ -344,20 +380,20 @@ export function expectedMilvusCells(manifest: MilvusManifest): ExpectedCells {
     for (const [name, collection] of Object.entries(collections)) {
       const where = `${database}/${name}`;
       const outputs = new Set(collection.functions.flatMap((fn) => fn.output));
-      for (const field of collection.fields) {
+      for (const { name: fieldName, field, struct } of milvusVectorFields(collection)) {
         const family = MILVUS_VECTOR_TYPES[field.type];
-        if (family === undefined) continue;
-        if (outputs.has(field.name)) {
+        if (outputs.has(fieldName)) {
           excluded.push({
             collection: where,
-            field: field.name,
+            field: fieldName,
             reason: "a server function's output, which the seed never writes",
           });
           continue;
         }
         for (const row of collection.sample) {
-          const value = row.values[field.name];
-          if (value === undefined) throw new Error(`${where} seq ${row.seq} holds no ${field.name} in the manifest`);
+          const value = row.values[struct ?? field.name];
+          if (value === undefined) throw new Error(`${where} seq ${row.seq} holds no ${fieldName} in the manifest`);
+          const at = `${where} seq ${row.seq} ${fieldName}`;
           cells.push({
             collection: where,
             seq: row.seq,
@@ -365,10 +401,15 @@ export function expectedMilvusCells(manifest: MilvusManifest): ExpectedCells {
               collection.key === null
                 ? { field: "seq", value: row.values.seq }
                 : { field: collection.key, value: row.key },
-            field: field.name,
-            kind: family.kind,
+            field: fieldName,
+            kind: struct === undefined ? family.kind : "multi",
             dtype: family.dtype,
-            cell: family.kind === "sparse" ? indexMap(value, `${where} seq ${row.seq} ${field.name}`) : value,
+            cell:
+              struct !== undefined
+                ? embeddingList(value, field.name, at)
+                : family.kind === "sparse"
+                  ? indexMap(value, at)
+                  : value,
           });
         }
       }

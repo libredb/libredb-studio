@@ -119,6 +119,38 @@ const MILVUS: MilvusManifest = {
         indexes: { sp: { type: "SPARSE_INVERTED_INDEX", metric: "IP", params: {} } },
         sample: [{ seq: 2, key: 3, values: { id: 3, label: "non-finite-score", sp: { "1": 3.3999999521443642e38 } } }],
       },
+      emb_list: {
+        rows: 1,
+        loaded: true,
+        key: "id",
+        functions: [],
+        fields: [
+          { name: "id", type: "Int64" },
+          {
+            name: "chunks",
+            type: "Array",
+            element_type: "Struct",
+            fields: [
+              { name: "note", type: "VarChar" },
+              { name: "emb", type: "FloatVector", dim: 2 },
+            ],
+          },
+        ],
+        indexes: { "chunks[emb]": { type: "HNSW", metric: "MAX_SIM_COSINE", params: {} } },
+        sample: [
+          {
+            seq: 0,
+            key: 7,
+            values: {
+              id: 7,
+              chunks: [
+                { note: "a", emb: [1, 0] },
+                { note: "b", emb: [0.5, 0.25] },
+              ],
+            },
+          },
+        ],
+      },
     },
   },
 };
@@ -195,6 +227,7 @@ describe("expectedMilvusFields", () => {
       "default/docs_int64",
       "default/docs_varchar",
       "default/edge_values",
+      "default/emb_list",
       "default/fts",
     ]);
     expect(fields["default/docs_varchar"].map((field) => field.name)).toEqual(["f16", "bin", "sparse", "q"]);
@@ -258,6 +291,46 @@ describe("expectedMilvusFields", () => {
       indexKind: null,
       nativeType: "FloatVector(2)",
     });
+  });
+
+  test("a struct array's vector subfield is a multivector named field[subfield], scored by its MAX_SIM metric", () => {
+    expect(fields["default/emb_list"]).toEqual([
+      {
+        name: "chunks[emb]",
+        kind: "multi",
+        dtype: "float32",
+        dimension: 2,
+        metric: "other",
+        nativeMetric: "MAX_SIM_COSINE",
+        indexKind: "hnsw",
+        nativeType: "ArrayOfVector(FloatVector(2))",
+      },
+    ]);
+  });
+
+  test("every MAX_SIM metric of an embedding list is the family's other metric", () => {
+    for (const metric of ["MAX_SIM", "MAX_SIM_COSINE", "MAX_SIM_IP", "MAX_SIM_L2"]) {
+      const manifest = structuredClone(MILVUS) as unknown as {
+        databases: { default: { emb_list: { indexes: Record<string, { metric: string }> } } };
+      };
+      manifest.databases.default.emb_list.indexes["chunks[emb]"].metric = metric;
+      const [field] = expectedMilvusFields(manifest as unknown as MilvusManifest)["default/emb_list"];
+      expect({ metric, family: field.metric, native: field.nativeMetric }).toEqual({
+        metric,
+        family: "other",
+        native: metric,
+      });
+    }
+  });
+
+  test("a struct array's vector subfield without a dimension is refused by name", () => {
+    const manifest = structuredClone(MILVUS) as unknown as {
+      databases: { default: { emb_list: { fields: { fields?: { dim?: number }[] }[] } } };
+    };
+    delete manifest.databases.default.emb_list.fields[1].fields?.[1].dim;
+    expect(() => expectedMilvusFields(manifest as unknown as MilvusManifest)).toThrow(
+      "default.emb_list.chunks[emb] has no dimension in the manifest",
+    );
   });
 
   test("every index type maps to its family kind, and a name the table does not list is opaque", () => {
@@ -388,6 +461,31 @@ describe("expectedMilvusCells", () => {
 
   test("a collection whose key the server assigns is addressed by seq", () => {
     expect(cell("default/docs_int64", "vec")?.match).toEqual({ field: "seq", value: 0 });
+  });
+
+  test("an embedding-list cell is its subfield's vector of every struct element, in element order", () => {
+    expect(cell("default/emb_list", "chunks[emb]")).toEqual({
+      collection: "default/emb_list",
+      seq: 0,
+      match: { field: "id", value: 7 },
+      field: "chunks[emb]",
+      kind: "multi",
+      dtype: "float32",
+      cell: [
+        [1, 0],
+        [0.5, 0.25],
+      ],
+    });
+  });
+
+  test("a struct element without the subfield is refused by name", () => {
+    const manifest = structuredClone(MILVUS) as unknown as {
+      databases: { default: { emb_list: { sample: { values: { chunks: Record<string, unknown>[] } }[] } } };
+    };
+    delete manifest.databases.default.emb_list.sample[0].values.chunks[1].emb;
+    expect(() => expectedMilvusCells(manifest as unknown as MilvusManifest)).toThrow(
+      "default/emb_list seq 0 chunks[emb] element 1 holds no emb in the manifest",
+    );
   });
 
   test("a server function's output is excluded by name, because the seed never writes it", () => {
