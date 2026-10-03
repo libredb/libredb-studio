@@ -61,6 +61,7 @@
       <li>Apache Kafka (read-only)</li>
       <li>etcd</li>
       <li>Neo4j (read-only)</li>
+      <li>Qdrant (read-only)</li>
     </ul>
     <p>What you get:</p>
     <ul>

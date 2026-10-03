@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd and Neo4j** from your browser, with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j and Qdrant** from your browser, with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard.
 
 ---
 
@@ -34,7 +34,7 @@ docker run \
   libredb/libredb-studio:latest
 ```
 
-Open <http://localhost:3000>. No password is set above, so the first start generates one and prints it with `docker logs libredb-studio`. To choose your own instead, add `-e ADMIN_PASSWORD=...` and `-e JWT_SECRET=...` — the secret has to be at least 32 characters. `USER_EMAIL` / `USER_PASSWORD` are optional and create a second, lower-privilege account; without them there is no such account.
+Open <http://localhost:3000>. No password is set above, so the first start generates one and prints it with `docker logs libredb-studio`. To choose your own instead, add `-e ADMIN_PASSWORD=...` and `-e JWT_SECRET=...` — the secret has to be at least 32 characters.
 
 > **None of these auth variables are mandatory.** With the local provider, `ADMIN_PASSWORD` and `JWT_SECRET` are required only when you opt into strict mode (`AUTH_BOOTSTRAP=off`); otherwise both are generated on first start and the admin password is printed once to the container log. `USER_EMAIL` / `USER_PASSWORD` are always optional — omit them to run admin-only, since no default user password is ever assumed. None of them are used when `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
@@ -109,8 +109,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Twenty-one external engines share one interface.
-The twenty-second row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
+Twenty-two external engines share one interface.
+The twenty-third row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -135,6 +135,7 @@ The twenty-second row is the embedded LibreDB store: it ships inside the image, 
 | **Apache Kafka** | `@platformatic/kafka` | Topic, group and broker browser, reads by offset or time |
 | **etcd** | `@grpc/grpc-js` | etcdctl command editor, key-prefix browser, guarded value edits |
 | **Neo4j** | `neo4j-driver-lite` | Read-only Cypher editor, label and relationship-type browser |
+| **Qdrant** | none, HTTP | Read-only REST request editor, vector search, collection browser |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
@@ -142,7 +143,7 @@ Prometheus and Apache Kafka are read-only too: Studio calls only their read APIs
 
 ### Engines with no provider of their own
 
-Twenty-eight further engines speak the wire protocol of one of the twenty-one drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much of the product worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the twenty-two drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

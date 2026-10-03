@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **22 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Trino, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, Apache Kafka, etcd, Neo4j, LibreDB. The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **23 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Trino, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, Apache Kafka, etcd, Neo4j, Qdrant, LibreDB. The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
@@ -44,6 +44,7 @@ graph TD
         DBFactory --> TimeSeries[Time-Series Providers]
         DBFactory --> Stream[Stream Providers]
         DBFactory --> Graph[Graph Providers]
+        DBFactory --> Vector[Vector Providers]
 
         SQL --> PG[(PostgreSQL)]
         SQL --> MySQL[(MySQL)]
@@ -65,6 +66,7 @@ graph TD
         TimeSeries --> Prometheus[(Prometheus)]
         Stream --> Kafka[(Apache Kafka)]
         Graph --> Neo4j[(Neo4j)]
+        Vector --> Qdrant[(Qdrant)]
         DBFactory --> Embedded[Embedded Providers]
         Embedded --> LibreDB[(LibreDB)]
     end
@@ -125,6 +127,7 @@ classDiagram
     BaseDatabaseProvider <|-- KafkaProvider
     BaseDatabaseProvider <|-- EtcdProvider
     BaseDatabaseProvider <|-- GraphBaseProvider
+    BaseDatabaseProvider <|-- QdrantProvider
     BaseDatabaseProvider <|-- LibreDBProvider
 
     SQLBaseProvider <|-- PostgresProvider
@@ -337,6 +340,7 @@ src/
     │   │   ├── timeseries/  # prometheus/ (transport seam + PromQL over the Prometheus HTTP API)
     │   │   ├── stream/      # kafka/ (read-client seam + JSON read requests over the Kafka protocol via @platformatic/kafka)
     │   │   ├── graph/       # neo4j/ (an engine profile, catalog, statement gate and monitoring on the graph layer below)
+    │   │   ├── vector/      # qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends (docs/ADDING_A_PROVIDER.md, "Adding a graph engine"):
     │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators), objects.ts, values.ts and
@@ -352,7 +356,7 @@ src/
     │                        #   cookie, WebAuthn wrapper, management and sign-in services, browser client
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder, the
-    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis and etcd command languages, and Cypher
+    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis and etcd command languages, Cypher, and the Qdrant console language
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path

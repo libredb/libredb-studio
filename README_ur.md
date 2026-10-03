@@ -111,11 +111,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">اکیس engines، ایک interface</span>
+### <span dir="rtl">بائیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Qdrant
 
 <div dir="rtl" align="right">
 
@@ -145,6 +145,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **Apache Kafka** | <span dir="rtl">`@platformatic/kafka` (pure TypeScript، port 9092)</span> | <span dir="rtl">JSON read request جو topic کو partition، offset یا timestamp سے، سب سے پرانے offset سے یا تازہ ترین messages پڑھتی ہے؛ keys، values اور headers JSON، text یا base64 میں decode ہوتے ہیں اور Confluent format والی value اپنے schema id سے نشان زد ہوتی ہے؛ topic browser میں partitions اور non-default configs (offline یا under-replicated topic نشان زد)، دونوں protocols کے consumer groups اور ہر partition کا lag، brokers اور ان کے configs، اور health، topic count اور disk size۔ ساخت کے لحاظ سے صرف پڑھنے کے لیے: نہ produce، نہ offset commit، نہ consumer group میں شمولیت، نہ topic بنانا۔ Custom CA اور client certificates کے ساتھ TLS، اور SASL PLAIN یا SCRAM صرف TLS پر؛ SSH tunnel نہیں، کیونکہ brokers تک ان کے advertised addresses پر پہنچا جاتا ہے</span> |
 | **etcd** | <span dir="rtl">`@grpc/grpc-js` (pure JavaScript، gRPC، port 2379)</span> | <span dir="rtl">Editor میں etcdctl کا subset (`get`، `put`، `del`، `txn`، leases، محدود `watch`، members، alarms، users اور roles)؛ tree میں key-prefix groups اور Keys panel میں ہر key؛ کسی key کی value اس کی revision سے guarded ایک transaction میں edit ہوتی ہے؛ admins کے لیے compaction، defragmentation اور alarm disarm، ہر ایک connection کا نام type کر کے confirm ہوتا ہے۔ Kubernetes prefix یا `compact_rev_key` پر ہر write refuse ہوتا ہے، اور Kubernetes secrets اور protobuf یا encrypted values کبھی نہیں دکھتیں۔ Custom CA کے ساتھ TLS، client certificates (ان کا Common Name etcd user) اور password sign-in صرف TLS پر؛ SSH tunnel؛ seed میں اعلان کردہ read-only mode</span> |
 | **Neo4j** | <span dir="rtl">`neo4j-driver-lite` (pure JavaScript، Bolt، port 7687)</span> | <span dir="rtl">Neo4j 5.26 LTS کے لیے editor میں read-only Cypher، ہر run میں ایک statement؛ tree میں node labels اور relationship types (ان کی properties بطور columns)، indexes اور constraints؛ grid میں nodes، relationships اور paths بطور tagged JSON cells، 64-bit integers اور temporal values بغیر precision کھوئے؛ Community کے فراہم کردہ monitoring panels۔ ہر statement پہلے اپنے tokens پر read policy سے، پھر `EXPLAIN` کے ذریعے server کی اپنی classification سے (جسے allowlisted SHOW form چھوڑ دیتا ہے) گزرتا ہے اور READ session میں چلتا ہے، اس لیے کسی write کو تینوں layers توڑنی ہوں گی۔ EXPLAIN یا PROFILE view، maintenance، agent execution اور MCP `run_read_query` نہیں؛ Custom CA کے ساتھ TLS اور SSH tunnel؛ connection string نہیں</span> |
+| **Qdrant** | <span dir="rtl">کوئی نہیں، HTTP (Qdrant کا REST API، port 6333)</span> | <span dir="rtl">Editor میں Qdrant کی اپنی REST requests (ایک JSON body کے ساتھ `METHOD /path`)، سترہ read routes: points پڑھنا، scroll، exact counts، facets، اور dense، sparse اور multivector data پر queries، batches اور grouped queries، local BM25 model سمیت؛ tree میں collections، ان کے vectors، payload indexes اور payload keys کا sampled view؛ dimension کے ساتھ vector cells اور پوری value کی copy۔ Studio کچھ نہیں لکھتا، local BM25 کے سوا ہر inference input refuse کرتا ہے، اور بغیر expiry یا manage access والے JWT پر warning دیتا ہے۔ Custom CA اور client certificates کے ساتھ TLS؛ key صرف TLS پر، loopback پر یا SSH tunnel سے؛ seed میں اعلان کردہ read-only mode</span> |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
 <div dir="rtl" align="right">

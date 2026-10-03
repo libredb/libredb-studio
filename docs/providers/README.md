@@ -27,13 +27,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Apache Kafka | `kafka` | Stream | `@platformatic/kafka` (pure TypeScript) | JSON (a read request) | [kafka.md](./kafka.md) |
 | etcd | `etcd` | Key-Value | `@grpc/grpc-js` (pure JavaScript, gRPC) | etcdctl commands (a subset) | [etcd.md](./etcd.md) |
 | Neo4j | `neo4j` | Graph | `neo4j-driver-lite` (pure JavaScript, Bolt) | Cypher (read-only) | [neo4j.md](./neo4j.md) |
+| Qdrant | `qdrant` | Vector | none, REST over the shared `node:http(s)` transport | Qdrant REST requests (read routes) | [qdrant.md](./qdrant.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd and Neo4j are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Db2, Prometheus, Kafka, etcd, Neo4j and Qdrant are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
@@ -259,8 +260,8 @@ The etcd row and the etcd fixtures note below were verified against the running 
 The Db2 LUW row is read off `database-compose.yml`: its image, capabilities and fixture were measured on 2026-10-03 on a container started the same way, not on the compose service itself, whose first boot creates the instance and the database and takes several minutes.
 The Neo4j row was verified against the running container on 2026-10-03, by the capture `tests/fixtures/neo4j/5.26.31/README.md` records.
 
-Start the twenty-two always-on services with a plain `docker compose -f database-compose.yml up -d`:
-eighteen engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init` and `etcd-seed` seed sidecars; the `Profile` column names
+Start the twenty-six always-on services with a plain `docker compose -f database-compose.yml up -d`:
+twenty engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init`, `etcd-seed`, `milvus-seed` and `qdrant-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -285,6 +286,7 @@ provider's integration pass.
 | Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
 | etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | *none* |
 | Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
+| Qdrant | `qdrant` | localhost | 6333 | *none* | *none* | *none* | *none* |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
@@ -314,6 +316,10 @@ The user `reader` may read the prefix `/app/` and the key `/config/a` only, whic
 **The `neo4j` service starts empty, and its graph is loaded by hand.**
 Once it is healthy, load the seed with `docker exec -i libredb-neo4j cypher-shell -u neo4j -p password123 < docker/neo4j/seed.cypher`; [`docker/neo4j/README.md`](../../docker/neo4j/README.md) says what the graph holds and why.
 Neo4j refuses a password shorter than 8 characters, so the credential is `neo4j` / `password123`, and the service runs plaintext Bolt with no TLS ([neo4j.md, section 11.3](./neo4j.md#113-the-live-fixture)).
+
+**Qdrant has three more fixtures behind two profiles, and the plain `qdrant` service takes no key and no TLS.**
+`qdrant` is seeded by its `qdrant-seed` one-shot; `qdrant-auth` (port 6343, an admin key, a read-only key and JWT RBAC) sits behind the profile `qdrant-auth`, and `qdrant-tls` (port 6353, one-way TLS) and `qdrant-mtls` (port 6363, TLS that verifies a client certificate) behind `qdrant-tls`.
+Their keys and certificates are generated into a volume by the `qdrant-keys` one-shot and never committed; [`docker/qdrant/README.md`](../../docker/qdrant/README.md) says how to start and seed each, how to copy the keys out, and what every seeded collection is for.
 
 **Cassandra needs one field this table has no column for, and will not connect without it.** `Local
 Data Center` must be `datacenter1` - a stock single node names its own data centre that, and the

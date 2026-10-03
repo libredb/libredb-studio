@@ -101,9 +101,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 21のエンジン、1つのインターフェース
+### 22のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Qdrant
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -129,6 +129,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **Apache Kafka** | `@platformatic/kafka`（純粋なTypeScript、9092） | トピックをパーティション、オフセット、タイムスタンプ、最古のオフセット、または最新のメッセージから読むJSONの読み取りリクエスト。キー、値、ヘッダーはJSON、テキスト、base64としてデコードされ、Confluent形式の値はスキーマIDで表示されます。パーティションとデフォルト以外の設定を持つトピックブラウザ（オフラインまたはレプリカ不足のトピックはツリーに表示）、両プロトコルのコンシューマーグループとパーティションごとのラグ、brokerとその設定、ヘルス・トピック数・ディスク上のサイズ。構造上読み取り専用です：producer送信、オフセットのコミット、コンシューマーグループへの参加、トピックの作成は行いません。独自CAとクライアント証明書によるTLS、SASL PLAINとSCRAMはTLS上のみ。brokerには各brokerが広告するアドレスで接続するため、SSHトンネルは使えません |
 | **etcd** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、2379） | エディタでetcdctlのサブセット（`get`、`put`、`del`、`txn`、リース、上限付きの`watch`、メンバー、アラーム、ユーザーとロール）。ツリーにはキープレフィックスのグループ、キーパネルにはすべてのキー。キーの値はリビジョンを条件とする1つのトランザクションで編集されます。管理者向けにコンパクション、デフラグ、アラーム解除があり、いずれも接続名の入力で確認します。Kubernetesのプレフィックスや`compact_rev_key`への書き込みはすべて拒否され、KubernetesのSecretとprotobufまたは暗号化された値は表示されません。独自CAによるTLS、クライアント証明書（Common Nameがetcdユーザー）、TLS上のみのパスワード認証。SSHトンネル。シードで宣言する読み取り専用モード |
 | **Neo4j** | `neo4j-driver-lite`（純粋なJavaScript、Bolt、7687） | Neo4j 5.26 LTSに対する読み取り専用のCypherエディタ（1回の実行で1ステートメント）。ツリーにはノードラベルとリレーションシップタイプ（プロパティを列として）、インデックスと制約。ノード、リレーションシップ、パスはタグ付きJSONセルとしてグリッドに表示され、64ビット整数と日時の値は正確に保たれます。Communityが提供する監視パネル。すべてのステートメントはトークン単位の読み取りポリシー、`EXPLAIN`によるサーバー自身の分類（許可されたSHOW形式はこれを省略）、READセッションを通るため、書き込みは3つの層をすべて破る必要があります。EXPLAIN・PROFILEビュー、メンテナンス、エージェント実行、MCPの`run_read_query`はありません。独自CAによるTLS、SSHトンネル。接続文字列なし |
+| **Qdrant** | なし、HTTP（QdrantのREST API、6333） | エディタでQdrant独自のRESTリクエスト（1つのJSONボディを持つ`メソッド /パス`）、17の読み取りルート：ポイントの取得、スクロール、正確な件数、ファセット、そして密・疎・マルチベクトルに対するクエリ、バッチ、グループ化クエリ（ローカルBM25モデルを含む）。ツリーにはコレクションとそのベクトル、payloadインデックス、payloadキーのサンプル表示。次元付きのベクトルセルと値全体のコピー。Studioは何も書き込まず、ローカルBM25以外の推論入力をすべて拒否し、有効期限のないJWTや管理権限を持つJWTを警告します。独自CAとクライアント証明書によるTLS。キーはTLS上、ループバック、またはSSHトンネル経由のみ。シードで宣言する読み取り専用モード |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
 > **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。ただしKafkaの接続はトンネルを拒否します。Kafkaクライアントは各brokerにそのbrokerが広告するアドレスで接続し、1つのアドレスだけを転送するトンネルはそのアドレスを運べないためです。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteとDuckDBも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Prometheus、Apache Kafkaです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
