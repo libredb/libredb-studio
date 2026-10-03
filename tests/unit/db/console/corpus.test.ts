@@ -4,9 +4,10 @@
  *
  * The corpus: the nine Milvus console requests of the design's examples and the 257 Qdrant documentation blocks,
  * both under tests/fixtures/vector/corpus/; both engines' refusal corpora and seven string-and-comment fixtures,
- * written below as exact bytes; the bound cases; and the tag-shaped objects. The Qdrant v1 route table is the
- * provider's own (src/lib/db/providers/vector/qdrant/routes.ts), read under the stand-in dialect so the bound cases
- * keep their 2 MiB texts; the other tables are stand-ins built from tests/fixtures/vector/routes/.
+ * written below as exact bytes; the bound cases; and the tag-shaped objects. The Milvus and Qdrant v1 route tables
+ * are the providers' own (src/lib/db/providers/vector/milvus/routes.ts and .../qdrant/routes.ts), Qdrant's read under
+ * the stand-in dialect so the bound cases keep their 2 MiB texts; the full Qdrant table is a stand-in built from
+ * tests/fixtures/vector/routes/.
  *
  * Under Node: the helper is bundled for Node and run in a child process. CI's Node is 24; the PR's completion
  * sequence runs this file a second time with Node 26 first on PATH.
@@ -20,11 +21,11 @@ import type { ConsoleDialectSpec, RouteSpec } from "@/lib/db/console/dialect";
 import { classifyConsole } from "@/lib/db/console/guard";
 import { ConsoleRefusal, parseConsole } from "@/lib/db/console/parser";
 import { isTaggedFloat, isTaggedInt, type TaggedJson } from "@/lib/db/console/tagged-json";
+import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { type CorpusCase, type CorpusOutcome, type CorpusTable, corpusOutcomes } from "../../../helpers/console-corpus";
 import {
   type FixtureRouteJson,
-  MILVUS_STAND_IN,
   QDRANT_STAND_IN,
   type RouteTableJson,
   standInRoutes,
@@ -33,11 +34,9 @@ import {
 const FIXTURES = join(import.meta.dir, "..", "..", "..", "fixtures", "vector");
 const readJson = <T>(...path: string[]): T => JSON.parse(readFileSync(join(FIXTURES, ...path), "utf8")) as T;
 
-const milvusTable = readJson<RouteTableJson>("routes", "milvus-v1.json");
 const qdrantV1Table = readJson<RouteTableJson>("routes", "qdrant-v1.json");
 const qdrantFullTable = readJson<RouteTableJson>("routes", "qdrant-full.json");
 const v1Ops = new Set(qdrantV1Table.routes.map((route) => route.op));
-const allRead = () => "read" as const;
 
 /** Every method the full Qdrant table names, so a documentation block is never refused for its method alone. */
 const QDRANT_FULL_STAND_IN: ConsoleDialectSpec = {
@@ -47,7 +46,7 @@ const QDRANT_FULL_STAND_IN: ConsoleDialectSpec = {
 };
 
 const TABLES: Readonly<Record<string, CorpusTable>> = {
-  milvus: { spec: MILVUS_STAND_IN, routes: standInRoutes(milvusTable, allRead) },
+  milvus: { spec: MILVUS_CONSOLE, routes: MILVUS_ROUTES },
   qdrant: { spec: QDRANT_STAND_IN, routes: QDRANT_ROUTES },
   "qdrant-full": {
     spec: QDRANT_FULL_STAND_IN,
@@ -456,7 +455,7 @@ describe("the bounds", () => {
     const before = process.memoryUsage().rss;
     let refusal: unknown;
     try {
-      parseConsole(MILVUS_STAND_IN, TABLES.milvus.routes, text);
+      parseConsole(MILVUS_CONSOLE, MILVUS_ROUTES, text);
     } catch (error) {
       refusal = error;
     }
