@@ -706,18 +706,19 @@ export function ConnectionModal({
                       {/*
                         A credential the engine declares a warning for (src/lib/db/credential-warnings.ts),
                         drawn before Test Connection and apart from its result: a caution about what was
-                        typed, which blocks nothing.
+                        typed, which blocks nothing. An `output` rather than a p with role="status": it
+                        carries the polite live region natively, and jsx-a11y's prefer-tag-over-role is an
+                        error in this repository.
                       */}
                       {credentialWarning !== undefined && (
-                        <p
+                        <output
                           id="credential-warning"
                           data-testid="credential-warning"
-                          role="status"
                           className="flex items-start gap-1.5 text-xs text-warning"
                         >
                           <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
                           <span>{credentialWarning}</span>
-                        </p>
+                        </output>
                       )}
                       {/*
                         Measured on Trino 476 with authentication DISABLED: a request

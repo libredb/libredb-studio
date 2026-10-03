@@ -1629,7 +1629,8 @@ describe("ConnectionModal: the Host box address and the credential warning", () 
     );
     const warning = getByTestId("credential-warning");
     expect(warning.textContent).toBe("Credential warning: synthetic sentence.");
-    expect(warning.getAttribute("role")).toBe("status");
+    // An `output` element: its implicit role is status, a polite live region, with no role attribute written.
+    expect(warning.tagName).toBe("OUTPUT");
     expect(warning.parentElement).toBe((container.querySelector("#password") as HTMLElement).parentElement);
     expect(queryByTestId("connection-test-result")).toBeNull();
   });
