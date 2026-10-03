@@ -4,10 +4,18 @@
  * collections are compared on schema, configuration, aliases and load state only, and anything unclassified fails.
  */
 import { describe, expect, test } from "bun:test";
-import { assertUnchanged, compareSnapshots, SCRATCH_FIELDS } from "../../live/support/compare";
+import {
+  assertUnchanged,
+  compareSnapshots,
+  type FieldClasses,
+  SCRATCH_FIELDS,
+  type SnapshotComparison,
+  type SnapshotDifference,
+  type VolatileReading,
+} from "../../live/support/compare";
 import type { CollectionSnapshot, FieldReading, SnapshotRecord } from "../../live/support/snapshot";
 
-const CLASSES = {
+const CLASSES: FieldClasses = {
   stable: ["schema", "configuration", "aliases", "loadState", "rowCount"],
   volatile: ["segments", "memory"],
 };
@@ -196,8 +204,27 @@ describe("compareSnapshots", () => {
 });
 
 describe("assertUnchanged", () => {
-  test("passes a comparison with no difference", () => {
-    expect(() => assertUnchanged({ differences: [], volatile: [] })).not.toThrow();
+  test("passes a comparison with no difference, however many volatile readings it records", () => {
+    const reading: VolatileReading = {
+      collection: "milvus:default/docs_int64",
+      field: "memory",
+      before: { value: 271 },
+      after: { value: 512 },
+    };
+    const comparison: SnapshotComparison = { differences: [], volatile: [reading] };
+    expect(() => assertUnchanged(comparison)).not.toThrow();
+  });
+
+  test("a whole collection that appeared is listed as the collection", () => {
+    const difference: SnapshotDifference = {
+      collection: "qdrant:/docs",
+      field: null,
+      before: "absent",
+      after: { value: "present" },
+    };
+    expect(() => assertUnchanged({ differences: [difference], volatile: [] })).toThrow(
+      'qdrant:/docs (the collection): "absent" -> {"value":"present"}',
+    );
   });
 
   test("throws, listing every difference", () => {

@@ -6,10 +6,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   collectionKey,
+  isUnavailableReason,
   parseSnapshotRecord,
   readField,
+  type SnapshotEngine,
+  type SnapshotJson,
   SnapshotReadError,
   UNAVAILABLE_REASONS,
+  type UnavailableReason,
   unavailable,
 } from "../../live/support/snapshot";
 
@@ -54,6 +58,14 @@ function firstCollection(record: Record<string, unknown>): Record<string, unknow
 describe("the unavailable record", () => {
   test("the reason set is closed and holds exactly the two reasons the spec names", () => {
     expect([...UNAVAILABLE_REASONS]).toEqual(["not-loaded", "strict-mode-exact-disabled"]);
+  });
+
+  test("isUnavailableReason accepts each closed reason and nothing else", () => {
+    const accepted: readonly UnavailableReason[] = UNAVAILABLE_REASONS.filter(isUnavailableReason);
+    expect(accepted).toEqual([...UNAVAILABLE_REASONS]);
+    for (const other of ["loaded", "Not-Loaded", "", 3, null, undefined, { unavailable: "not-loaded" }]) {
+      expect(isUnavailableReason(other)).toBe(false);
+    }
   });
 
   test("each closed reason builds its record", () => {
@@ -134,6 +146,18 @@ describe("collectionKey", () => {
 });
 
 describe("parseSnapshotRecord", () => {
+  test("a value of any JSON shape is kept, and every collection names one of the two engines", () => {
+    const value: SnapshotJson = { fields: ["id", 1, 2.5, true, null], nested: { empty: [] } };
+    const parsed = parseSnapshotRecord(
+      variant((r) => {
+        firstCollection(r).fields = { schema: { value } };
+      }),
+    );
+    expect(parsed.collections[0].fields.schema).toEqual({ value });
+    const engines: readonly SnapshotEngine[] = parsed.collections.map((collection) => collection.engine);
+    expect(engines).toEqual(["milvus", "milvus", "qdrant"]);
+  });
+
   test("a valid record parses to the same record", () => {
     expect(parseSnapshotRecord(JSON.stringify(RECORD))).toEqual(RECORD as never);
   });

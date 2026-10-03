@@ -4,9 +4,19 @@
  * phase 1, in order.
  */
 import { describe, expect, test } from "bun:test";
-import { expectCalls } from "../helpers/call-log";
+import { type CallLog, type ExpectedCall, expectCalls, type LoggedCall } from "../helpers/call-log";
 
 describe("expectCalls", () => {
+  test("a log is an array of calls or an object carrying them as calls, and both read the same", () => {
+    const calls: readonly LoggedCall[] = [
+      { method: "DescribeCollection", args: ["docs"] },
+      { method: "DescribeIndex" },
+    ];
+    const logs: readonly CallLog[] = [calls, { calls }];
+    const expected: readonly ExpectedCall[] = [{ method: "DescribeCollection", args: ["docs"] }, "DescribeIndex"];
+    for (const log of logs) expect(() => expectCalls(log, expected)).not.toThrow();
+  });
+
   test("an empty log passes an empty expectation, the phase 0 case", () => {
     expect(() => expectCalls([], [])).not.toThrow();
   });

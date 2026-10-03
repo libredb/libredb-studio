@@ -4,7 +4,12 @@
  * call the rules cannot place.
  */
 import { describe, expect, test } from "bun:test";
-import { guardMutations, MutationOutsidePrefixError, UndeclaredMethodError } from "../../live/support/mutation-guard";
+import {
+  guardMutations,
+  MutationOutsidePrefixError,
+  type MutationRules,
+  UndeclaredMethodError,
+} from "../../live/support/mutation-guard";
 
 class FakeAdminClient {
   readonly wire: string[] = [];
@@ -30,13 +35,13 @@ class FakeAdminClient {
 const PREFIX = "libredb_live_";
 
 function guarded(client = new FakeAdminClient()): { client: FakeAdminClient; guard: FakeAdminClient } {
-  const guard = guardMutations(client, {
+  const rules: MutationRules<FakeAdminClient> = {
     prefix: PREFIX,
     reads: ["listCollections"],
     mutating: ["createCollection", "createAlias"],
     targetsOf: (_method, args) => args.filter((arg): arg is string => typeof arg === "string"),
-  });
-  return { client, guard };
+  };
+  return { client, guard: guardMutations(client, rules) };
 }
 
 describe("guardMutations", () => {

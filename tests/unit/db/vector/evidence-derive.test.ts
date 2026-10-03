@@ -5,18 +5,34 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  type CellComparison,
   compareCell,
+  type ExcludedField,
+  type ExpectedCells,
+  type ExpectedVectorField,
   expectedMilvusCells,
   expectedMilvusFields,
   expectedQdrantCells,
   expectedQdrantFields,
   float32SelfInnerProduct,
   type MilvusManifest,
+  type MilvusManifestCollection,
+  type MilvusManifestField,
+  type MilvusManifestIndex,
+  type MilvusManifestRow,
+  type MilvusNonFiniteScore,
   milvusNonFiniteScore,
   type QdrantManifest,
+  type QdrantManifestCollection,
+  type QdrantManifestPoint,
+  type QdrantManifestVector,
+  type ScoreText,
   scoreText,
   serialiseFixture,
+  type VectorDTypeJson,
   type VectorIndexKindJson,
+  type VectorKindJson,
+  type VectorMetricJson,
 } from "../../../live/vector-evidence-derive";
 
 const MILVUS: MilvusManifest = {
@@ -492,5 +508,42 @@ describe("serialiseFixture", () => {
     expect(() => serialiseFixture({ text: "\u0000negative-zero\u0000" })).toThrow(
       "the content holds the serialiser's placeholder for -0",
     );
+  });
+});
+
+describe("the published types", () => {
+  test("name the manifests' parts and what each derivation returns", () => {
+    const milvusCollections: readonly MilvusManifestCollection[] = Object.values(MILVUS.databases).flatMap(
+      (collections) => Object.values(collections),
+    );
+    const milvusFields: readonly MilvusManifestField[] = milvusCollections.flatMap((collection) => collection.fields);
+    const milvusIndexes: readonly MilvusManifestIndex[] = milvusCollections.flatMap((collection) =>
+      Object.values(collection.indexes),
+    );
+    const milvusRows: readonly MilvusManifestRow[] = milvusCollections.flatMap((collection) => collection.sample);
+    expect([milvusFields.length > 0, milvusIndexes.length > 0, milvusRows.length > 0]).toEqual([true, true, true]);
+
+    const qdrantCollections: readonly QdrantManifestCollection[] = Object.values(QDRANT.collections);
+    const qdrantVectors: readonly QdrantManifestVector[] = qdrantCollections.flatMap(
+      (collection) => collection.vectors,
+    );
+    const qdrantPoints: readonly QdrantManifestPoint[] = qdrantCollections.flatMap((collection) => collection.sample);
+    expect([qdrantVectors.length > 0, qdrantPoints.length > 0]).toEqual([true, true]);
+
+    const fields: readonly ExpectedVectorField[] = Object.values(expectedMilvusFields(MILVUS)).flat();
+    const kinds: readonly VectorKindJson[] = fields.map((field) => field.kind);
+    const dtypes: readonly VectorDTypeJson[] = fields.map((field) => field.dtype);
+    const metrics: readonly (VectorMetricJson | null)[] = fields.map((field) => field.metric);
+    expect([kinds.length, dtypes.length, metrics.length]).toEqual([fields.length, fields.length, fields.length]);
+
+    const cells: ExpectedCells = expectedQdrantCells(QDRANT);
+    const excluded: readonly ExcludedField[] = cells.excluded;
+    expect(excluded.every((entry) => entry.reason.length > 0)).toBe(true);
+
+    const nonFinite: MilvusNonFiniteScore = milvusNonFiniteScore(MILVUS);
+    const score: ScoreText = nonFinite.score;
+    expect(score).toBe("Infinity");
+    const comparison: CellComparison = compareCell(nonFinite.cell, { "1": 3.4e38 });
+    expect(comparison).toEqual({ status: "equal" });
   });
 });

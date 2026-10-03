@@ -10,8 +10,11 @@ import {
   MILVUS_TSV_SHA256,
   MILVUS_V1_ROUTES,
   milvusRoutesFromTsv,
+  type BodyKey,
+  type FixtureRoute,
   QDRANT_SPEC_SHA256,
   QDRANT_V1_OPERATIONS,
+  QDRANT_V1_QUERY_KEYS,
   qdrantRoutesFromOpenApi,
   type RouteTable,
   sha256Hex,
@@ -188,6 +191,24 @@ describe("the committed route tables", () => {
           ? ["with", "completed_limit"]
           : [];
       expect({ op: route.op, query: route.query }).toEqual({ op: route.op, query: expected });
+    }
+  });
+
+  test("every query key of the v1 table is one of QDRANT_V1_QUERY_KEYS, and each of those is used", () => {
+    const routes: readonly FixtureRoute[] = qdrantV1.routes;
+    const used = [...new Set(routes.flatMap((route) => route.query))].sort();
+    expect(used).toEqual([...QDRANT_V1_QUERY_KEYS].sort());
+  });
+
+  test("every Milvus body key names its type and whether it is required", () => {
+    const keys: readonly BodyKey[] = milvus.routes.flatMap((route) => route.bodyKeys ?? []);
+    expect(keys.length).toBeGreaterThan(0);
+    for (const key of keys) {
+      expect({ name: typeof key.name, type: typeof key.type, required: typeof key.required }).toEqual({
+        name: "string",
+        type: "string",
+        required: "boolean",
+      });
     }
   });
 
