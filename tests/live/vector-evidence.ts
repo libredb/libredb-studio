@@ -16,8 +16,11 @@
  *
  * Run by hand, never by `bun run test` (tests/runner/discover.ts excludes tests/live/):
  *   bun tests/live/vector-evidence.ts --report <file>             capture both engines and write the fixtures
+ *   bun tests/live/vector-evidence.ts --engine <engine> --report <file>
+ *                                                                 capture one engine and write its fixtures alone
  *   bun tests/live/vector-evidence.ts --readme --report <file>    render tests/fixtures/vector/README.md
- * <file> is outside the repository.
+ * <file> is outside the repository. A one-engine run replaces that engine's directory and its entry of
+ * expected-scores.json, and keeps the other engine's files, its entry and its README lines as they are.
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -206,6 +209,12 @@ function milvusValues(manifest: MilvusManifest, collection: string, key: string 
   return row.values;
 }
 
+/** A struct array's elements as the embedding list of one vector subfield. */
+function embeddingListOf(elements: unknown, subfield: string): unknown[] {
+  if (!Array.isArray(elements)) throw new Error(`the manifest holds no struct array with ${subfield}`);
+  return elements.map((element) => (element as Record<string, unknown>)[subfield]);
+}
+
 const firstHit = (answer: unknown): Record<string, unknown> | undefined =>
   ((answer as { data?: Record<string, unknown>[] }).data ?? [])[0];
 
@@ -342,6 +351,33 @@ function milvusCaptures(manifest: MilvusManifest): Capture[] {
       {
         check: (answer) =>
           firstHit(answer)?.distance === 25 ? null : `answered ${JSON.stringify(firstHit(answer))}, not distance 25`,
+      },
+    ),
+    milvusPost(
+      "query-emb_list",
+      "entities/query of every emb_list row with vec and its embedding list",
+      "entities/query",
+      {
+        collectionName: "emb_list",
+        filter: "id >= 1",
+        outputFields: ["id", "vec", "chunks"],
+        limit: 10,
+      },
+    ),
+    milvusPost(
+      "search-max-sim",
+      "entities/search, MAX_SIM_COSINE, emb_list.chunks[emb], the embedding list of id 3",
+      "entities/search",
+      {
+        collectionName: "emb_list",
+        annsField: "chunks[emb]",
+        data: [embeddingListOf(milvusValues(manifest, "emb_list", 3).chunks, "emb")],
+        outputFields: ["id"],
+        limit: 3,
+      },
+      {
+        check: (answer) =>
+          String(firstHit(answer)?.id) === "3" ? null : `answered ${JSON.stringify(firstHit(answer))}, not id 3 first`,
       },
     ),
     milvusPost(
@@ -543,6 +579,7 @@ const ROW_CAPTURES: Readonly<Record<Engine, Readonly<Record<string, string>>>> =
     "query-docs_int64": "default/docs_int64",
     "query-docs_varchar": "default/docs_varchar",
     "query-edge_values": "default/edge_values",
+    "query-emb_list": "default/emb_list",
   },
   qdrant: {
     "scroll-docs": "docs",
@@ -566,7 +603,15 @@ function restRows(engine: Engine, recorded: readonly Recorded[]): Map<string, Re
 }
 
 function restCell(engine: Engine, row: Record<string, unknown>, field: string): unknown {
-  if (engine === "milvus") return row[field];
+  if (engine === "milvus") {
+    // An embedding list, `<field>[<subfield>]`: REST answers the struct array as its elements.
+    const subfield = /^(.+)\[(.+)\]$/.exec(field);
+    if (subfield === null) return row[field];
+    const elements = row[subfield[1]];
+    return Array.isArray(elements)
+      ? elements.map((element) => (element as Record<string, unknown>)[subfield[2]])
+      : elements;
+  }
   const vector = row.vector;
   if (field === "" && Array.isArray(vector)) return vector;
   return (vector as Record<string, unknown> | undefined)?.[field] ?? null;
@@ -651,10 +696,11 @@ function assertNoSecret(name: string, text: string): void {
     throw new Error(`${name} would hold a key or a certificate: nothing written`);
 }
 
+/** A run's report; a one-engine run holds that engine's provenance and cross-check alone. */
 interface RunReport {
   readonly runtime: string;
-  readonly provenance: Readonly<Record<Engine, Provenance>>;
-  readonly crossCheck: Readonly<Record<Engine, Omit<CrossCheck, "differs">>>;
+  readonly provenance: Readonly<Partial<Record<Engine, Provenance>>>;
+  readonly crossCheck: Readonly<Partial<Record<Engine, Omit<CrossCheck, "differs">>>>;
   readonly written: readonly string[];
 }
 
@@ -665,83 +711,116 @@ function argument(name: string): string {
   return value;
 }
 
+/** The engines a run captures: both, or the one `--engine` names. */
+function runEngines(): readonly Engine[] {
+  if (!process.argv.includes("--engine")) return ENGINES;
+  const named = argument("--engine");
+  if (!(ENGINES as readonly string[]).includes(named))
+    throw new Error(`--engine ${named} is not one of ${ENGINES.join(", ")}`);
+  return [named as Engine];
+}
+
 async function captureRun(): Promise<number> {
   const reportFile = argument("--report");
-  for (const engine of ENGINES) requireHealthy(ENDPOINTS[engine].container);
-  const pinned = { milvus: pinnedImage(ENDPOINTS.milvus.container), qdrant: pinnedImage(ENDPOINTS.qdrant.container) };
-  const manifestText = { milvus: seedManifest("milvus", pinned.milvus), qdrant: seedManifest("qdrant", pinned.qdrant) };
-  const milvus = parse(manifestText.milvus) as MilvusManifest;
-  const qdrant = parse(manifestText.qdrant) as QdrantManifest;
-  const provenance: Record<Engine, Provenance> = {
-    milvus: manifestProvenance("milvus", milvus, pinned.milvus),
-    qdrant: manifestProvenance("qdrant", qdrant, pinned.qdrant),
-  };
-  const recorded = await runCaptures([...milvusCaptures(milvus), ...qdrantCaptures(qdrant)]);
+  const engines = runEngines();
+  const runs = (engine: Engine) => engines.includes(engine);
+  for (const engine of engines) requireHealthy(ENDPOINTS[engine].container);
+  const pinned: Partial<Record<Engine, { image: string; digest: string }>> = {};
+  const manifestText: Partial<Record<Engine, string>> = {};
+  for (const engine of engines) {
+    pinned[engine] = pinnedImage(ENDPOINTS[engine].container);
+    manifestText[engine] = seedManifest(engine, pinned[engine] as { image: string; digest: string });
+  }
+  const milvus = runs("milvus") ? (parse(manifestText.milvus as string) as MilvusManifest) : undefined;
+  const qdrant = runs("qdrant") ? (parse(manifestText.qdrant as string) as QdrantManifest) : undefined;
+  const provenance: Partial<Record<Engine, Provenance>> = {};
+  if (milvus !== undefined)
+    provenance.milvus = manifestProvenance("milvus", milvus, pinned.milvus as { image: string; digest: string });
+  if (qdrant !== undefined)
+    provenance.qdrant = manifestProvenance("qdrant", qdrant, pinned.qdrant as { image: string; digest: string });
+  const recorded = await runCaptures([
+    ...(milvus === undefined ? [] : milvusCaptures(milvus)),
+    ...(qdrant === undefined ? [] : qdrantCaptures(qdrant)),
+  ]);
   const problems = problemsOf(recorded);
   if (problems.length > 0) throw new Error(`Nothing written:\n${problems.join("\n")}`);
-  const cells = { milvus: expectedMilvusCells(milvus), qdrant: expectedQdrantCells(qdrant) };
-  const checks = {
-    milvus: crossCheck("milvus", cells.milvus.cells, recorded),
-    qdrant: crossCheck("qdrant", cells.qdrant.cells, recorded),
+  const cells = {
+    milvus: milvus === undefined ? undefined : expectedMilvusCells(milvus),
+    qdrant: qdrant === undefined ? undefined : expectedQdrantCells(qdrant),
   };
-  const differing = [...checks.milvus.differs, ...checks.qdrant.differs];
+  const checks: Partial<Record<Engine, CrossCheck>> = {};
+  for (const engine of engines) checks[engine] = crossCheck(engine, cells[engine]?.cells ?? [], recorded);
+  const differing = engines.flatMap((engine) => checks[engine]?.differs ?? []);
   if (differing.length > 0)
     throw new Error(`A derived cell differs from REST; nothing written:\n${differing.join("\n")}`);
-  const hnsw = hnswDifferences(qdrant, recorded);
+  const hnsw = qdrant === undefined ? [] : hnswDifferences(qdrant, recorded);
   if (hnsw.length > 0)
     throw new Error(`A derived index kind differs from describe; nothing written:\n${hnsw.join("\n")}`);
 
+  // A one-engine run keeps the other engine's entry of expected-scores.json as the last run wrote it.
+  const kept =
+    engines.length === ENGINES.length
+      ? {}
+      : (JSON.parse(readFileSync(path.join(OUT, "expected-scores.json"), "utf8")) as Record<string, unknown>);
   const nonFinite = recorded.find(
     (entry) => entry.capture.engine === "qdrant" && entry.capture.name === "search-non-finite",
   );
-  const files = new Map<string, string>([
-    ["milvus/manifest.json", manifestText.milvus],
-    ["qdrant/manifest.json", manifestText.qdrant],
-    ["milvus/expected-fields.json", serialiseFixture({ $derived: DERIVED, fields: expectedMilvusFields(milvus) })],
-    ["qdrant/expected-fields.json", serialiseFixture({ $derived: DERIVED, fields: expectedQdrantFields(qdrant) })],
-    ["milvus/expected-cells.json", serialiseFixture({ $derived: DERIVED, ...cells.milvus })],
-    ["qdrant/expected-cells.json", serialiseFixture({ $derived: DERIVED, ...cells.qdrant })],
-    [
-      "expected-scores.json",
-      serialiseFixture({
-        $derived: { by: DERIVED.by, from: "milvus/manifest.json and qdrant/search-non-finite.json" },
-        milvus: milvusNonFiniteScore(milvus),
-        qdrant: {
-          collection: "edge_values",
-          id: 2,
-          field: "sp",
-          printed: nonFinite === undefined ? undefined : firstPoint(parse(nonFinite.answer.body))?.score,
-          capture: "qdrant/search-non-finite.json",
-        },
-      }),
-    ],
-    ...recorded.map((entry): [string, string] => [
+  const files = new Map<string, string>();
+  if (milvus !== undefined && cells.milvus !== undefined) {
+    files.set("milvus/manifest.json", manifestText.milvus as string);
+    files.set(
+      "milvus/expected-fields.json",
+      serialiseFixture({ $derived: DERIVED, fields: expectedMilvusFields(milvus) }),
+    );
+    files.set("milvus/expected-cells.json", serialiseFixture({ $derived: DERIVED, ...cells.milvus }));
+  }
+  if (qdrant !== undefined && cells.qdrant !== undefined) {
+    files.set("qdrant/manifest.json", manifestText.qdrant as string);
+    files.set(
+      "qdrant/expected-fields.json",
+      serialiseFixture({ $derived: DERIVED, fields: expectedQdrantFields(qdrant) }),
+    );
+    files.set("qdrant/expected-cells.json", serialiseFixture({ $derived: DERIVED, ...cells.qdrant }));
+  }
+  files.set(
+    "expected-scores.json",
+    serialiseFixture({
+      $derived: { by: DERIVED.by, from: "milvus/manifest.json and qdrant/search-non-finite.json" },
+      milvus: milvus === undefined ? kept.milvus : milvusNonFiniteScore(milvus),
+      qdrant:
+        qdrant === undefined
+          ? kept.qdrant
+          : {
+              collection: "edge_values",
+              id: 2,
+              field: "sp",
+              printed: nonFinite === undefined ? undefined : firstPoint(parse(nonFinite.answer.body))?.score,
+              capture: "qdrant/search-non-finite.json",
+            },
+    }),
+  );
+  for (const entry of recorded) {
+    files.set(
       `${entry.capture.engine}/${entry.capture.name}.json`,
-      serialiseFixture(record(entry, provenance[entry.capture.engine])),
-    ]),
-  ]);
+      serialiseFixture(record(entry, provenance[entry.capture.engine] as Provenance)),
+    );
+  }
   for (const [name, text] of files) assertNoSecret(name, text);
-  for (const engine of ENGINES) rmSync(path.join(OUT, engine), { recursive: true, force: true });
+  for (const engine of engines) rmSync(path.join(OUT, engine), { recursive: true, force: true });
   for (const [name, text] of files) {
     const file = path.join(OUT, name);
     mkdirSync(path.dirname(file), { recursive: true });
     writeFileSync(file, text);
   }
+  const crossChecks: Partial<Record<Engine, Omit<CrossCheck, "differs">>> = {};
+  for (const engine of engines) {
+    const check = checks[engine] as CrossCheck;
+    crossChecks[engine] = { equal: check.equal, notComparable: check.notComparable, uncaptured: check.uncaptured };
+  }
   const report: RunReport = {
     runtime: RUNTIME,
     provenance,
-    crossCheck: {
-      milvus: {
-        equal: checks.milvus.equal,
-        notComparable: checks.milvus.notComparable,
-        uncaptured: checks.milvus.uncaptured,
-      },
-      qdrant: {
-        equal: checks.qdrant.equal,
-        notComparable: checks.qdrant.notComparable,
-        uncaptured: checks.qdrant.uncaptured,
-      },
-    },
+    crossCheck: crossChecks,
     written: [...files.keys()].sort(),
   };
   writeFileSync(reportFile, serialiseFixture(report));
@@ -780,6 +859,16 @@ function capturedFiles(): CapturedFile[] {
   );
 }
 
+/** The content of one generated block, between its markers. */
+function blockOf(readme: string, block: string): string {
+  const start = `<!-- generated:${block} -->`;
+  const end = `<!-- /generated:${block} -->`;
+  const from = readme.indexOf(start);
+  const to = readme.indexOf(end);
+  if (from === -1 || to < from) throw new Error(`tests/fixtures/vector/README.md has no ${start} ... ${end} block`);
+  return readme.slice(from + start.length, to);
+}
+
 function replaceBlock(readme: string, block: string, content: string): string {
   const start = `<!-- generated:${block} -->`;
   const end = `<!-- /generated:${block} -->`;
@@ -802,15 +891,30 @@ function renderReadme(): number {
       return `| ${engine} | \`${own[0]?.image}\` | \`${own[0]?.digest}\` | ${own[0]?.version} | ${dates[0]} to ${dates.at(-1)} | ${runtimes} |`;
     }),
   ].join("\n");
+  // An engine the report does not hold, after a one-engine run, keeps the lines the README holds for it.
+  const file = path.join(OUT, "README.md");
+  let readme = readFileSync(file, "utf8");
+  const previous = blockOf(readme, "cross-check").split("\n");
+  const row = (engine: Engine): string => {
+    const check = report.crossCheck[engine];
+    if (check !== undefined)
+      return `| ${engine} | ${check.equal} | ${check.notComparable.length} | ${check.uncaptured} |`;
+    const kept = previous.find((line) => line.startsWith(`| ${engine} |`));
+    if (kept === undefined)
+      throw new Error(`the report holds no cross-check of ${engine}, and the README none to keep`);
+    return kept;
+  };
+  const notComparable = (engine: Engine): string[] => {
+    const check = report.crossCheck[engine];
+    if (check !== undefined) return check.notComparable.map((line) => `- ${engine}: ${line}.`);
+    return previous.filter((line) => line.startsWith(`- ${engine}: `));
+  };
   const cross = [
     "| Engine | Cells equal to REST as float32 | Cells REST answers in another shape | Cells no capture holds |",
     "|---|---|---|---|",
-    ...ENGINES.map((engine) => {
-      const check = report.crossCheck[engine];
-      return `| ${engine} | ${check.equal} | ${check.notComparable.length} | ${check.uncaptured} |`;
-    }),
+    ...ENGINES.map(row),
     "",
-    ...ENGINES.flatMap((engine) => report.crossCheck[engine].notComparable.map((line) => `- ${engine}: ${line}.`)),
+    ...ENGINES.flatMap(notComparable),
   ].join("\n");
   const catalog = [
     "| File | Outcome | Request | Surface |",
@@ -820,8 +924,6 @@ function renderReadme(): number {
         `| \`${file}\` | ${r.outcome} | \`${r.$captured.request.method} ${r.$captured.request.path}\` | ${r.$captured.surface} |`,
     ),
   ].join("\n");
-  const file = path.join(OUT, "README.md");
-  let readme = readFileSync(file, "utf8");
   readme = replaceBlock(readme, "provenance", provenance);
   readme = replaceBlock(readme, "cross-check", cross);
   readme = replaceBlock(readme, "catalog", catalog);
