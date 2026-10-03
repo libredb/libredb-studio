@@ -801,7 +801,7 @@ comment. Three surfaces read labels today, plus the agent's prompt layer:
 | `selectAction` | `TableItem` row menu, first item ("Select Top 50" / "Find Documents" / "Scan Keys") |
 | `generateAction` | `TableItem` row menu, second item ("Generate Query" / "Generate Find") |
 | `analyzeAction` | `TableItem` row menu only, and only where the rows are not derived groupings. **The Operations tab does not read it.** That tab's per-table button takes its wording from `maintenanceOperationSpecs.analyze.label` through `maintenanceControl()`, and falls back to the generic verb "Analyze" where the provider declares no spec (#496) |
-| `vacuumAction` | `TableItem` row menu only, under the same derived-groupings gate as `analyzeAction`, and not read by the Operations tab either. That button is gated on the literal `vacuum` and worded from `maintenanceOperationSpecs.vacuum.label`, so the four providers that point this label at `optimize`/`reindex` via `vacuumActionOperation` show a row item whose wording the tab does not repeat (#496) |
+| `vacuumAction` | `TableItem` row menu only, under the same derived-groupings gate as `analyzeAction`, and not read by the Operations tab either. That button is gated on the literal `vacuum` and worded from `maintenanceOperationSpecs.vacuum.label`, so the five providers that point this label at `optimize` via `vacuumActionOperation` show a row item whose wording the tab does not repeat (#496) |
 | `searchPlaceholder` | `SchemaExplorer` search input placeholder text |
 | `analyzeGlobalLabel` | Admin Operations tab, analyze card's button text ("Run Analyze") |
 | `analyzeGlobalTitle` | Admin Operations tab, analyze card title ("Update Statistics") |
