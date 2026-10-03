@@ -130,7 +130,7 @@ A broker whose Fetch range does not hold version 13 is refused at the first read
 
 The editor text is JSON, so the provider declares `queryLanguage: "json"` and names its kind of JSON with `queryDialect: "kafka"`, the rule Prometheus's design stated: `queryDialect` distinguishes kinds of JSON, and a new `queryLanguage` is for text that is not JSON (#1088, section 3.3).
 The cost is the #427 bug class: a reader keyed on `"json"` alone treats the text as MongoDB.
-Every reader of either field has a Kafka arm or a test pinning that its branch is correct for Kafka: a Kafka tab type rendered in Monaco's built-in `json` mode, a Kafka arm before the MongoDB arm in both generators, the MongoDB completion provider registered only where no JSON dialect is declared, and the gates below.
+Every reader of either field has a Kafka arm or a test pinning that its branch is correct for Kafka: a Kafka tab type rendered in Monaco's built-in `json` mode, a Kafka record in `DIALECT_GENERATORS`, read before the MongoDB arm in both generators, the MongoDB completion provider registered only where no JSON dialect is declared, and the gates below.
 On a topic row both row menus withhold Profile, through `offersColumnProfiling`, Code Generator, through `offersCodeGeneration`, and Generate Test Data, because no kind declares `acceptsRowWrites`.
 Code generation is withheld because the models it writes over a topic's fixed columns reject the rows a read returns: a `Date` timestamp against the ISO string, a record-typed value against text, base64 and the Confluent label.
 Both menus also withhold Generate Count Query, through `offersCountQuery` (#702): a read request is JSON of its own dialect, with no count grammar.

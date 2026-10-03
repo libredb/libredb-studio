@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import { isCredentialReference } from "./credential-resolver";
 
 // SSLMode matches the union in src/lib/types.ts — NO 'prefer'. Kept in step BY HAND: a zod
 // enum is a value, so a mode missing here is not a compile error, it is a seed file the
@@ -183,6 +185,29 @@ export const SeedConnectionSchema = z
       code: z.ZodIssueCode.custom,
       message: `readOnly is not offered for ${conn.type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`,
       path: ["readOnly"],
+    });
+  })
+  // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a
+  // published default pair, or no secret where the type accepts none, so the mode would promise a boundary the
+  // server does not keep. The file shows only literals, so a pair with a `${ENV}` or `${vault:...}` reference in
+  // either field passes here and the type's provider checks the resolved value before it dials, while a password
+  // the file leaves absent or empty is refused whatever the user is: load refuses what the file shows; resolution
+  // refuses the rest. Read from the declared record, never a type-id branch. The message names the connection and
+  // the field, never the value.
+  .superRefine((conn, ctx) => {
+    if (conn.readOnly !== true) return;
+    if (isCredentialReference(conn.password)) return;
+    const userIsReference = isCredentialReference(conn.user);
+    if (userIsReference && (conn.password ?? "") !== "") return;
+    const refusal = readOnlySeedRefusal(conn.type, {
+      user: userIsReference ? undefined : conn.user,
+      password: conn.password,
+    });
+    if (refusal === undefined) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}": ${refusal} readOnly: true is refused with this credential, because the mode would promise a boundary the server does not keep. Give this connection a credential of its own, or remove readOnly.`,
+      path: ["password"],
     });
   });
 

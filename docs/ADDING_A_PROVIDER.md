@@ -463,6 +463,18 @@ const selectableTypes: DatabaseType[] = [
 
 That's it. The ConnectionModal reads `getDBConfig(type)` for everything else — port, form fields, connection string toggle — automatically.
 
+Two optional declarations on the same entry change what the dialog does with the Host box and the credential.
+`hostAcceptsUri: ["http", "https"]` lets a user paste a whole address such as `https://host:443` into Host, for an engine whose own documentation writes its endpoint that way.
+The dialog splits it into Host and Port, keeps an explicit port such as 443 or 80 as typed, takes 80 or 443 when the address names none, and never lowers the SSL mode: `https://` raises a disabled mode to `verify-system`.
+An address with a user name or password, a path, a query string or a fragment is refused, naming the part to remove.
+The connection-string box is a different reader and keeps reading `http://` and `https://` as ClickHouse, so the provider doc points users to the Host box.
+The provider still validates the host and port with `validateHost` and `validatePort` when it connects.
+Credential warnings are declared as the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, a module with no React or Node import, and every entry's `credentialWarnings` reads that row by reference, so the dialog and the seed loader read one record and the entry itself declares nothing.
+An entry is a `pair` (a published default user and password), a `jwt` (a token that declares no expiry, manage access, or no access claim) or `no-secret` (the engine accepts a connection with no secret).
+The dialog draws a `pair` or `jwt` warning beside the password before Test Connection, and blocks nothing.
+The seed loader refuses a `readOnly: true` seed whose literal credential matches a `pair` entry, or that has no password where the type declares `no-secret`, and the provider runs `readOnlySeedRefusal` on a seed connection once its references resolve, before it dials.
+Add a test that the real record declares each entry you add.
+
 ## Step 5: Install the Driver
 
 ```bash
@@ -735,7 +747,7 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json' \| 'promql' \| 'cypher'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
-| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| undefined` | Optional. Names the dialect's records in three registries, which every reader consults **before** `queryLanguage`: `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
+| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
@@ -985,7 +997,7 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/query-generators.ts`: a record in `DIALECT_GENERATORS`, what a tree click and Generate Query write, read before the `json` arm, or a tree click auto-executes a MongoDB document.
       `docs/providers/kafka.md` section 3.1 is the worked case.
 - [ ] `src/components/QueryEditor.tsx`: the MongoDB completion provider registers only where the declared capabilities name no JSON dialect.
-- [ ] `tests/unit/lib/dialect-reader-allowlist.test.ts`: every other line under `src/` that compares `queryDialect` or reads `queryLanguage === "json"` is on its closed list with its owner.
+- [ ] `tests/unit/lib/dialect-reader-allowlist.test.ts`: every other line under `src/` that compares `queryDialect`, reads `queryLanguage === "json"` or negates `queryLanguage` is on its closed list with its owner.
       A new reader goes into a registry, or onto the list with the reason it is not one.
 
 **For a new connection field**, beside the three `Record<keyof DatabaseConnection, ...>` maps and `connection-filter.ts` that the note below names:
@@ -1032,6 +1044,8 @@ Those three reach code and tests only; the four prose greps of the published blo
       `docs/providers/prometheus.md` section 3.1 is the worked case.
 - [ ] `src/lib/db-ui-config.ts`: `fieldLabels` and `fieldHints`, when a connection field needs its own label or hint.
       Declare them there rather than adding a type test to `src/components/ConnectionModal.tsx`, which already carries five (`docs/BACKLOG.md` U36).
+- [ ] `src/lib/db-ui-config.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address; and the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, which the entry's `credentialWarnings` reads by reference, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
+      Each needs a test that the real record declares it, and a declared `pair` or `no-secret` entry needs the provider's own `readOnlySeedRefusal` check in `connect()` for a seed connection.
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
 compares the translated READMEs against `README.md` and `chart:check` compares versions. The catalog

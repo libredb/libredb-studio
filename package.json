@@ -138,6 +138,7 @@
     "build": "node scripts/copy-monaco.mjs && next build",
     "build:lib": "tsup && node scripts/copy-theme.mjs",
     "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16 --exclude-entrypoints styles.css",
+    "lib:closure": "node scripts/check-lib-closure.mjs",
     "prepublishOnly": "bun run build:lib && bun run attw",
     "start": "next start",
     "format": "biome format .",

@@ -71,10 +71,13 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
  * declaration to `StudioWorkspace` can carry the second, since every shipped provider's dialect is a member of the
  * union; it is looked up as an own key, so a name such as `constructor` finds nothing either, and each reader
  * keeps the answer it gave such a declaration before the registry existed (`declaresDialect` tells the two apart).
+ * A value that is not a string finds nothing too: nothing checks a host's declaration against the union at run
+ * time, and an own-key lookup would coerce `["kafka"]` to `kafka` and throw on an object whose `toString` is not
+ * callable, where every per-dialect comparison before the registry simply missed.
  */
 export function registeredDialect(capabilities: ProviderCapabilities | undefined): QueryDialect | undefined {
-  const dialect = capabilities?.queryDialect;
-  return dialect !== undefined && Object.hasOwn(QUERY_DIALECTS, dialect) ? dialect : undefined;
+  const dialect: unknown = capabilities?.queryDialect;
+  return typeof dialect === "string" && Object.hasOwn(QUERY_DIALECTS, dialect) ? (dialect as QueryDialect) : undefined;
 }
 
 /** The registry record of the dialect a declaration names, or undefined as `registeredDialect` is. */

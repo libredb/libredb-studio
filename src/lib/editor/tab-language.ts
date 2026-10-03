@@ -46,8 +46,13 @@ export function resolveTabType(capabilities?: ProviderCapabilities | null): Quer
  * `monacoId` (`src/lib/editor/dialect-editors.ts`).
  *
  * A tab type this release has no record for, which a tab saved by a later release and restored here carries,
- * renders in `sql`, the answer this function always gave a type it did not name.
+ * renders in `sql`, the answer this function always gave a type it did not name. So does a stored type that is
+ * not a string: the restore path copies it from localStorage unchecked, and an own-key lookup would coerce
+ * `["etcd"]` to `etcd`, or throw inside a render on an object whose `toString` is not callable.
  */
 export function editorLanguageForTabType(type: QueryTab["type"]): EditorLanguage {
-  return Object.hasOwn(DIALECT_EDITORS, type) ? DIALECT_EDITORS[type].monacoId : "sql";
+  const stored: unknown = type;
+  return typeof stored === "string" && Object.hasOwn(DIALECT_EDITORS, stored)
+    ? DIALECT_EDITORS[stored as QueryTab["type"]].monacoId
+    : "sql";
 }

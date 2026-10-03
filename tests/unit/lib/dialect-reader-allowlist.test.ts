@@ -3,9 +3,10 @@
  *
  * The registries (`src/lib/db/query-dialects.ts`, `src/lib/editor/dialect-editors.ts`, and `DIALECT_GENERATORS`
  * in `src/lib/query-generators.ts`) answer what the per-dialect arms used to: a tab type, a Monaco language, a
- * formatter, three row-menu gates and the generated statements. A comparison of `queryDialect` anywhere else, or
- * a read of the JSON language that would take a dialect's text for MongoDB's, is the #427 class coming back, so
- * every such line under `src/` must be on the list below with the owner that keeps it.
+ * formatter, three row-menu gates and the generated statements. A comparison of `queryDialect` anywhere else, a
+ * read of the JSON language that would take a dialect's text for MongoDB's, or a negated read of the language that
+ * would send a new member into one branch (#1085), is the #427 class coming back, so every such line under `src/`
+ * must be on the list below with the owner that keeps it.
  *
  * A list and not a ban, because the MongoDB reads are right where they are: MongoDB declares JSON with no
  * dialect, so the JSON arm of each generator, the quoting helpers and the test data generator are its own. A
@@ -31,6 +32,13 @@ const REGISTRIES: ReadonlySet<string> = new Set(["src/lib/db/query-dialects.ts",
 const DIALECT_COMPARISON = /queryDialect\s*[!=]==/;
 /** A read of the JSON language, which without a dialect check means MongoDB. */
 const JSON_LANGUAGE_READ = /queryLanguage === "json"/;
+/** A negated read of the language, which sends every other member of the union into one branch (#1085). */
+const NEGATED_LANGUAGE_READ = /queryLanguage\s*!==/;
+
+/** Whether a line reads the dialect or the language in one of the three shapes this file holds to its list. */
+function readsDialect(line: string): boolean {
+  return DIALECT_COMPARISON.test(line) || JSON_LANGUAGE_READ.test(line) || NEGATED_LANGUAGE_READ.test(line);
+}
 
 /** A reader outside the registries: its file, its trimmed line text, and who owns it. */
 interface Reader {
@@ -108,7 +116,7 @@ const ALLOWED: readonly Reader[] = [
 
 /**
  * Lines that test a type-id where a reader might expect a dialect, listed so nobody moves them into the registry
- * by mistake: neither pattern above matches them, and this file checks that they still exist as written.
+ * by mistake: no pattern above matches them, and this file checks that they still exist as written.
  */
 const NOT_DIALECT_READERS: readonly Reader[] = [
   {
@@ -137,11 +145,7 @@ function dialectReaders(root: string, env?: NodeJS.ProcessEnv): { path: string; 
     .flatMap((path) =>
       readFileSync(join(root, path), "utf8")
         .split("\n")
-        .flatMap((line, index) =>
-          DIALECT_COMPARISON.test(line) || JSON_LANGUAGE_READ.test(line)
-            ? [{ path, line: index + 1, text: line.trim() }]
-            : [],
-        ),
+        .flatMap((line, index) => (readsDialect(line) ? [{ path, line: index + 1, text: line.trim() }] : [])),
     );
 }
 
@@ -202,13 +206,13 @@ describe("readers of a query dialect outside the registries", () => {
     expect(allowlistFindings(ROOT)).toEqual([]);
   });
 
-  test("a type-id test listed as not a dialect reader still reads as written, and matches neither pattern", () => {
+  test("a type-id test listed as not a dialect reader still reads as written, and matches no pattern", () => {
     for (const { path, text } of NOT_DIALECT_READERS) {
       const lines = readFileSync(join(ROOT, path), "utf8")
         .split("\n")
         .map((line) => line.trim());
       expect(lines, `${path} no longer holds: ${text}`).toContain(text);
-      expect(DIALECT_COMPARISON.test(text) || JSON_LANGUAGE_READ.test(text)).toBe(false);
+      expect(readsDialect(text)).toBe(false);
     }
   });
 });
@@ -222,6 +226,15 @@ describe("planted readers fail by name", () => {
     const plant = 'export const isRedis = (c: { queryDialect?: string }) => c.queryDialect === "redis";\n';
     expect(inPlantedRepository({ "src/lib/planted.ts": `// a planted reader\n${plant}` }, allowlistFindings)).toEqual([
       `unlisted src/lib/planted.ts:2 ${plant.trim()}`,
+    ]);
+  });
+
+  test("a negated language read planted in a new source file is reported, the #1085 shape", () => {
+    // `queryLanguage !== "sql"` sends every other member of the language union into one branch, which is how a
+    // new language once landed in a MongoDB arm; the closed list holds such reads as it holds the other two.
+    const plant = 'export const notSql = (c: { queryLanguage?: string }) => c.queryLanguage !== "sql";\n';
+    expect(inPlantedRepository({ "src/lib/planted.ts": plant }, allowlistFindings)).toEqual([
+      `unlisted src/lib/planted.ts:1 ${plant.trim()}`,
     ]);
   });
 

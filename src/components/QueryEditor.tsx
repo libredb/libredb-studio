@@ -176,9 +176,10 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
 
     // Format gate for the "Format SQL" context-menu action (#1085). Its label is fixed at
     // registration, so it is offered on an SQL tab only: a JSON tab formats through its toolbar
-    // button and the shortcut, and a PromQL, Redis or LibreDB tab has no formatter. Read at
-    // invocation time for the reason the explain gate above gives.
-    const canFormatSql = language === "sql";
+    // button and the shortcut, and a PromQL, Redis or LibreDB tab has no formatter. It also asks
+    // the dialect registry, as the toolbar does, so the entry is never offered where SQL's record
+    // gives no formatter. Read at invocation time for the reason the explain gate above gives.
+    const canFormatSql = language === "sql" && formatterForLanguage(language) !== undefined;
     const canFormatSqlRef = useRef(canFormatSql);
     const canFormatSqlKeyRef = useRef<Monaco.editor.IContextKey<boolean> | null>(null);
 

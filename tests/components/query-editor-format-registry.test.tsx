@@ -16,6 +16,9 @@ import React from "react";
 /** Each text the stand-in formatter was handed, in order. */
 const formatted: string[] = [];
 
+/** The last value the editor set on each Monaco context key, by key name. */
+const contextKeys = new Map<string, unknown>();
+
 mock.module("@/lib/editor/dialect-editors", () => ({
   DIALECT_EDITORS: {},
   formatterForLanguage: (language: string) =>
@@ -51,7 +54,14 @@ mock.module("@monaco-editor/react", () => ({
         onDidChangeCursorSelection: () => undefined,
         addCommand: () => undefined,
         addAction: () => undefined,
-        createContextKey: () => ({ set: () => undefined, get: () => false, reset: () => undefined }),
+        createContextKey: (name: string, initial: unknown) => {
+          contextKeys.set(name, initial);
+          return {
+            set: (value: unknown) => contextKeys.set(name, value),
+            get: () => contextKeys.get(name),
+            reset: () => contextKeys.delete(name),
+          };
+        },
         updateOptions: () => undefined,
         deltaDecorations: () => [],
         focus: () => undefined,
@@ -74,6 +84,7 @@ const { QueryEditor } = await import("@/components/QueryEditor");
 afterEach(() => {
   cleanup();
   formatted.length = 0;
+  contextKeys.clear();
 });
 
 describe("QueryEditor's Format control follows the tab language's registry formatter", () => {
@@ -94,5 +105,12 @@ describe("QueryEditor's Format control follows the tab language's registry forma
     const { queryByText } = render(React.createElement(QueryEditor, { value: "SELECT 1", language: "sql" }));
     expect(queryByText("Format")).toBeNull();
     expect(formatted).toEqual([]);
+  });
+
+  test("an SQL tab whose record has no formatter offers no Format SQL context-menu entry", () => {
+    // The entry's label stays SQL-only, but it is offered only where the registry gives SQL a formatter, so the
+    // menu never offers a Format that does nothing.
+    render(React.createElement(QueryEditor, { value: "SELECT 1", language: "sql" }));
+    expect(contextKeys.get("libredbCanFormatSql")).toBe(false);
   });
 });

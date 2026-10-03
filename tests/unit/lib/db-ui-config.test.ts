@@ -8,6 +8,7 @@ import {
   getDBConfig,
   getDBIcon,
   getDBColor,
+  hostUriSchemes,
   isFileBased,
   offersSshTunnel,
   readOnlyHint,
@@ -17,6 +18,13 @@ import {
 } from "@/lib/db-ui-config";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import type { DatabaseType } from "@/lib/types";
+import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
+import { declareHostUri } from "../../helpers/synthetic-host-uri";
+import {
+  declareCredentialWarnings,
+  SYNTHETIC_NO_SECRET,
+  SYNTHETIC_PAIR,
+} from "../../helpers/synthetic-credential-warnings";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
@@ -683,5 +691,44 @@ describe("db-showcase", () => {
       expect(listShowcaseDatabases()).not.toBe(listShowcaseDatabases());
       expect(listShowcaseDatabases()).toEqual(listShowcaseDatabases());
     });
+  });
+});
+
+describe("Host box addresses and credential warnings", () => {
+  test("no shipped type declares hostAcceptsUri yet, so every Host box takes a host alone", () => {
+    expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([]);
+  });
+
+  test("hostUriSchemes reads an entry's declaration, and only that entry's", () => {
+    const restore = declareHostUri("etcd", ["http", "https"]);
+    try {
+      expect(hostUriSchemes("etcd")).toEqual(["http", "https"]);
+      expect(hostUriSchemes("postgres")).toEqual([]);
+    } finally {
+      restore();
+    }
+    expect(hostUriSchemes("etcd")).toEqual([]);
+  });
+
+  test("every entry's credentialWarnings is the shared record's own array, never a copy", () => {
+    for (const type of ALL_TYPES) {
+      expect({ type, same: getDBConfig(type).credentialWarnings === CREDENTIAL_WARNINGS[type] }).toEqual({
+        type,
+        same: true,
+      });
+    }
+  });
+
+  test("an entry's credentialWarnings is the shared record's array once a type declares one", () => {
+    const declared = [SYNTHETIC_PAIR, SYNTHETIC_NO_SECRET];
+    const restore = declareCredentialWarnings("etcd", declared);
+    try {
+      expect(getDBConfig("etcd").credentialWarnings).toBe(declared);
+      expect(getDBConfig("etcd").credentialWarnings).toBe(CREDENTIAL_WARNINGS.etcd);
+      expect(getDBConfig("postgres").credentialWarnings).toBeUndefined();
+    } finally {
+      restore();
+    }
+    expect(getDBConfig("etcd").credentialWarnings).toBeUndefined();
   });
 });

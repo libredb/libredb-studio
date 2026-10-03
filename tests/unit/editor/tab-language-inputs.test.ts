@@ -43,6 +43,28 @@ describe("a host declaring a dialect this release has no record for", () => {
   });
 });
 
+describe("a value that is not a string where a tab type or a dialect is expected", () => {
+  // A restored tab's type is whatever JSON localStorage holds, and a host's capabilities whatever its code passes,
+  // so neither is checked against the union at run time. Before the registries every such value missed every
+  // `===` comparison; an own-key lookup would instead coerce it to a key, read `["etcd"]` as `etcd`, and throw on
+  // an object whose `toString` is not callable, inside a render.
+  const NOT_STRINGS: readonly unknown[] = [{ toString: 0 }, ["etcd"], ["redis"], 42, true, null];
+
+  test("renders a restored tab in sql and never throws", () => {
+    for (const type of NOT_STRINGS) {
+      expect(editorLanguageForTabType(type as QueryTab["type"])).toBe("sql");
+    }
+  });
+
+  test("gives the tab type its language gives, as a dialect with no record does", () => {
+    for (const dialect of NOT_STRINGS) {
+      const caps = makeCaps({ queryDialect: dialect as ProviderCapabilities["queryDialect"] });
+      expect(resolveTabType(caps)).toBe("mongodb");
+      expect(resolveTabType({ ...caps, queryLanguage: "sql" })).toBe("sql");
+    }
+  });
+});
+
 describe("capabilities that have not arrived", () => {
   test("open an SQL tab that renders in sql, while provider-meta is in flight or after it failed", () => {
     expect(resolveTabType(undefined)).toBe("sql");

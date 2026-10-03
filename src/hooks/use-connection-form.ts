@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import {
   DatabaseConnection,
   DatabaseType,
@@ -11,10 +11,12 @@ import {
   SSLConfig,
   SSHTunnelConfig,
 } from "@/lib/types";
-import { getDBConfig, offersSshTunnel } from "@/lib/db-ui-config";
+import { getDBConfig, hostUriSchemes, offersSshTunnel } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
+import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
 import { newLocalId } from "@/lib/ids";
 import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { credentialWarningFor } from "@/lib/db/credential-warnings";
 
 /**
  * Whether this editor OWNS a connection field or merely carries it.
@@ -245,6 +247,22 @@ export function offersReadOnlyToggle(
 ): boolean {
   return enforced && editConnection?.seedId === undefined;
 }
+
+/**
+ * The Host box's text read as an address, for an engine that declares `hostAcceptsUri`; a host for every other
+ * engine, whose box keeps whatever is typed, as it always has.
+ */
+function readHostBox(type: DatabaseType, text: string): HostUriResult {
+  const schemes = hostUriSchemes(type);
+  return schemes.length === 0 ? { kind: "host" } : parseHostUri(text, schemes);
+}
+
+/**
+ * The input kinds that deliver a whole value at once. A pasted or dropped address is split on arrival; a typed
+ * one is not, because `http://l` is already a valid address and splitting it would take the box away from the
+ * user mid-word. `buildConnection` splits a typed address instead.
+ */
+const WHOLE_VALUE_INPUTS: ReadonlySet<string> = new Set(["insertFromPaste", "insertFromDrop"]);
 
 export function useConnectionForm({ isOpen, onConnect, editConnection, onTestConnection }: UseConnectionFormProps) {
   const D = CONNECTION_FORM_DEFAULTS;
@@ -506,15 +524,70 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     }
   }
 
+  /** The refusal of the Host box's address the dialog is showing, if it is showing one, so an edit can clear it. */
+  const hostRefusal = useRef<{ tone: TestResultTone; message: string } | null>(null);
+  const showHostRefusal = useCallback((sentence: string) => {
+    const refusal = { tone: "error" as const, message: sentence };
+    hostRefusal.current = refusal;
+    setTestResult(refusal);
+  }, []);
+
+  /**
+   * The Host box's setter as the dialog calls it: the text, and the input kind that delivered it. For an engine
+   * that declares `hostAcceptsUri`, a pasted or dropped `http(s)://` address fills Host and Port and raises SSL
+   * Mode for `https://`, never lowering it, and a refused one says which part to remove. Everything else, and
+   * every engine that declares nothing, is stored as typed. The edit load above calls the plain state setter, so
+   * a stored host shows as it was saved.
+   */
+  const setHostFromInput = (text: string, inputType?: string) => {
+    setHost(text);
+    // A refusal is about the text it read, so an edit takes it away; any other result stays until the next test.
+    setTestResult((current) => (current !== null && current === hostRefusal.current ? null : current));
+    if (inputType === undefined || !WHOLE_VALUE_INPUTS.has(inputType)) return;
+    splitHostAddress(text);
+  };
+
+  /** Fills Host, Port and SSL Mode from an accepted address, or shows the refusal of a refused one. */
+  const splitHostAddress = (text: string) => {
+    const hostBox = readHostBox(type, text);
+    if (hostBox.kind === "host") return;
+    if (hostBox.kind === "refused") {
+      showHostRefusal(hostBox.sentence);
+      return;
+    }
+    setHost(hostBox.host);
+    setPort(String(hostBox.port));
+    const mode = tlsModeAfterScheme(hostBox.scheme, sslMode) ?? sslMode;
+    if (mode !== sslMode) {
+      setSSLMode(mode);
+      setShowSSL(true);
+    }
+  };
+
+  /**
+   * The Host box as the user leaves it: a typed address is split as a paste is, so the dialog shows the host, port
+   * and SSL Mode that Test Connection and Save will use, rather than splitting only inside `buildConnection`. A
+   * keystroke never splits, because `http://l` is already a whole address.
+   */
+  const settleHost = () => splitHostAddress(host);
+
   const buildConnection = useCallback((): DatabaseConnection => {
+    // The Host box read here, because every test and save passes through this function: an address typed rather
+    // than pasted is split now, and its scheme raises SSL Mode exactly as a paste does. A refused address never
+    // reaches this point (`validateHostAddress`).
+    const hostBox = readHostBox(type, host);
+    const address = hostBox.kind === "uri" ? hostBox : undefined;
+    const effectiveSslMode = address ? (tlsModeAfterScheme(address.scheme, sslMode) ?? sslMode) : sslMode;
     const sslConfig: SSLConfig | undefined =
-      sslMode !== "disable"
+      effectiveSslMode !== "disable"
         ? {
-            mode: sslMode,
+            mode: effectiveSslMode,
             ...(caCert ? { caCert } : {}),
             ...(clientCert ? { clientCert } : {}),
             ...(clientKey ? { clientKey } : {}),
-            ...(editConnection?.ssl?.mode === sslMode ? preservedFields(editConnection.ssl, SSL_OWNERSHIP) : {}),
+            ...(editConnection?.ssl?.mode === effectiveSslMode
+              ? preservedFields(editConnection.ssl, SSL_OWNERSHIP)
+              : {}),
           }
         : undefined;
 
@@ -557,8 +630,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       id: editConnection?.id || newLocalId(),
       name: name || `${type}-connection`,
       type,
-      ...(addressedFields.has("host") ? { host } : {}),
-      ...(addressedFields.has("port") ? { port: parseInt(port) } : {}),
+      ...(addressedFields.has("host") ? { host: address?.host ?? host } : {}),
+      ...(addressedFields.has("port") ? { port: address?.port ?? parseInt(port) } : {}),
       ...(addressedFields.has("user") ? { user } : {}),
       ...(addressedFields.has("password") ? { password } : {}),
       ...(addressedFields.has("database") ? { database } : {}),
@@ -675,8 +748,16 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     return true;
   }, [queryTimeout]);
 
+  /** An address in the Host box that the engine's declaration refuses, said before anything is sent, as the timeout is. */
+  const validateHostAddress = useCallback(() => {
+    const hostBox = readHostBox(type, host);
+    if (hostBox.kind !== "refused") return true;
+    showHostRefusal(hostBox.sentence);
+    return false;
+  }, [type, host, showHostRefusal]);
+
   const handleTestConnection = useCallback(async () => {
-    if (!validateQueryTimeout()) return;
+    if (!validateQueryTimeout() || !validateHostAddress()) return;
     setIsTesting(true);
     setTestResult(null);
 
@@ -702,10 +783,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     } finally {
       setIsTesting(false);
     }
-  }, [buildConnection, probeConnection, validateQueryTimeout]);
+  }, [buildConnection, probeConnection, validateQueryTimeout, validateHostAddress]);
 
   const handleConnect = useCallback(async () => {
-    if (!validateQueryTimeout()) return;
+    if (!validateQueryTimeout() || !validateHostAddress()) return;
     setIsTesting(true);
     setTestResult(null);
 
@@ -766,7 +847,15 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     } finally {
       setIsTesting(false);
     }
-  }, [buildConnection, degradedSaveAcknowledged, isEditMode, onConnect, probeConnection, validateQueryTimeout]);
+  }, [
+    buildConnection,
+    degradedSaveAcknowledged,
+    isEditMode,
+    onConnect,
+    probeConnection,
+    validateQueryTimeout,
+    validateHostAddress,
+  ]);
 
   const handlePasteConnectionString = useCallback(() => {
     const trimmed = pasteInput.trim();
@@ -911,6 +1000,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
   });
   const readOnlyOffered = offersReadOnlyToggle(READ_ONLY_ENFORCED[type], editConnection);
+  // The warning reads the credential `buildConnection` would send: a user left in state by another engine is not
+  // this engine's, so it does not count where this engine takes no user name. It blocks nothing.
+  const credentialWarning = credentialWarningFor(type, {
+    user: getDBConfig(type).connectionFields.includes("user") ? user : "",
+    password,
+  });
 
   return {
     // Connection fields
@@ -919,7 +1014,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     name,
     setName,
     host,
-    setHost,
+    setHost: setHostFromInput,
+    settleHost,
     port,
     setPort,
     user,
@@ -1011,5 +1107,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     // Derived data
     dbTypes,
     readOnlyOffered,
+    credentialWarning,
   };
 }

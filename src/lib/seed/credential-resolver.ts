@@ -87,6 +87,14 @@ function isVaultReference(value: string): boolean {
   return value.startsWith(VAULT_PREFIX);
 }
 
+/**
+ * Whether the resolver replaces this value, a `${ENV}` or a `${vault:...}` reference, rather than passing it on
+ * as the literal it is. The seed schema reads it to tell what the file shows from what resolution decides.
+ */
+export function isCredentialReference(value: string | undefined): boolean {
+  return value !== undefined && (isVaultReference(value) || ENV_VAR_PATTERN.test(value));
+}
+
 function resolveField(value: string | undefined, fieldName: string, connId: string): string | undefined {
   if (value === undefined) return undefined;
 

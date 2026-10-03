@@ -257,6 +257,15 @@ The load refuses `readOnly: true` on a connection that is not managed: an unmana
 The mode is a boundary only where etcd authenticates the client with a secret only the seeds hold, a password or a client certificate: on an etcd that authenticates nobody, a `user` who knows the address can reach it with a connection of their own.
 A read-only connection shows a Read-only marker beside its name in the sidebar and in the editor header.
 
+A connection type can declare credentials that would make a read-only seed a promise nobody keeps: a published default user and password, or, where the engine accepts a connection with no secret, no password at all.
+No shipped type declares one yet.
+On a type that does, the seed loader refuses a `readOnly: true` connection whose credential matches, in two stages: load refuses what the file shows; resolution refuses the rest.
+At load, a literal `user` and `password` that match, or an absent or empty `password`, fail the whole file with an error that names the connection and the `password` field and never repeats the value.
+An absent or empty `password` fails the file whatever the `user` holds, a reference included.
+A `${ENV}` or `${vault:...}` reference cannot be read at load, so a pair with a reference in either field passes there; once it resolves, the type's provider refuses the connection before anything is dialled if the resolved credential matches or is empty.
+A value shaped like `${...}` that the resolver does not resolve, such as `${lower}`, is a literal and is checked as one.
+An empty `user` with a password of the form `user:password` is read as that pair, so a token that carries a default credential is refused too.
+
 ### A read-only Neo4j graph
 
 A Neo4j connection is read-only whatever `readOnly` says, because its provider refuses every write before it is sent ([providers/neo4j.md](providers/neo4j.md), section 3.1), so `readOnly: true` loads on a managed Neo4j seed and states what the connection does.
@@ -595,6 +604,7 @@ extraEnvFrom:
 | Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
 | `readOnly: true` on a connection whose type does not enforce it, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
+| `readOnly: true` on a connection whose literal credential matches a default its type declares, or with no password where its type declares it accepts none | The whole file fails like any invalid config, and the error names the connection and `password`, never the value; a `${ENV}` or `${vault:...}` reference is checked once it resolves, and the connection is refused before anything is dialled |
 | `mcp: true` on an etcd connection | The whole file fails like any invalid config, and the error names `mcp` and `etcd` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged. |

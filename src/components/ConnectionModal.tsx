@@ -167,6 +167,7 @@ export function ConnectionModal({
     setName,
     host,
     setHost,
+    settleHost,
     port,
     setPort,
     user,
@@ -258,6 +259,7 @@ export function ConnectionModal({
     // Derived data
     dbTypes,
     readOnlyOffered,
+    credentialWarning,
   } = useConnectionForm({ isOpen, onClose, onConnect, editConnection, onTestConnection });
 
   // Couchbase pins one bucket per connection (issue #262, decision 4), so the shared
@@ -620,7 +622,8 @@ export function ConnectionModal({
                       <Input
                         id="host"
                         value={host}
-                        onChange={(e) => setHost(e.target.value)}
+                        onChange={(e) => setHost(e.target.value, (e.nativeEvent as InputEvent).inputType)}
+                        onBlur={settleHost}
                         placeholder="localhost"
                         autoComplete="off"
                         aria-describedby={describedByHint(uiConfig, "host")}
@@ -702,6 +705,23 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
                       <DeclaredFieldHint config={uiConfig} field="password" />
+                      {/*
+                        A credential the engine declares a warning for (src/lib/db/credential-warnings.ts),
+                        drawn before Test Connection and apart from its result: a caution about what was
+                        typed, which blocks nothing. An `output` rather than a p with role="status": it
+                        carries the polite live region natively, and jsx-a11y's prefer-tag-over-role is an
+                        error in this repository.
+                      */}
+                      {credentialWarning !== undefined && (
+                        <output
+                          id="credential-warning"
+                          data-testid="credential-warning"
+                          className="flex items-start gap-1.5 text-xs text-warning"
+                        >
+                          <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+                          <span>{credentialWarning}</span>
+                        </output>
+                      )}
                       {/*
                         Measured on Trino 476 with authentication DISABLED: a request
                         carrying `Authorization: Basic` over plain HTTP is answered 401,
