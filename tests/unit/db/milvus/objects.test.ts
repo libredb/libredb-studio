@@ -14,6 +14,7 @@ import {
   listMilvusDatabases,
   MILVUS_COLLECTION_KIND,
   MILVUS_CONTAINER_LEVELS,
+  MILVUS_FAN_OUT,
   MILVUS_OBJECT_KINDS,
   milvusCause,
   refusedForPrivilege,
@@ -75,6 +76,10 @@ describe("the declarations", () => {
       },
     ]);
     expect(MILVUS_COLLECTION_KIND).toBe("collection");
+  });
+
+  test("a fan-out of reads keeps at most four in flight, the provider's own bound", () => {
+    expect(MILVUS_FAN_OUT).toBe(4);
   });
 });
 
