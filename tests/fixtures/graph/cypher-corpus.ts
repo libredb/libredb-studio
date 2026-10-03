@@ -649,4 +649,16 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
     verdict: "denied-function",
     subject: "custom.fetch",
   },
+  {
+    name: "an APOC function named by one backticked dotted name",
+    text: "RETURN `apoc.text.join`(['a'], ',')",
+    verdict: "denied-namespace",
+    subject: "apoc.",
+  },
+  {
+    name: "a function outside the allowlist named by one backticked dotted name",
+    text: "RETURN `custom.fetch`('x')",
+    verdict: "denied-function",
+    subject: "custom.fetch",
+  },
 ];

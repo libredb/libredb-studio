@@ -89,19 +89,6 @@ function qualifiedNameAt(tokens: readonly CypherToken[], at: number): QualifiedN
   return { joined: names.join("."), parts: names.length, end: index };
 }
 
-/** The index of the `)` closing the `(` at `open`, or undefined when none closes it. */
-function closingParen(tokens: readonly CypherToken[], open: number): number | undefined {
-  let depth = 0;
-  for (let index = open; index < tokens.length; index += 1) {
-    if (isPunct(tokens[index], "(")) depth += 1;
-    else if (isPunct(tokens[index], ")")) {
-      depth -= 1;
-      if (depth === 0) return index;
-    }
-  }
-  return undefined;
-}
-
 /** Checks one text against the profile: one statement, read-only, every name it calls allowed. */
 export function checkCypherRead(text: string, profile: GraphPolicyProfile): CypherReadVerdict {
   const engine = profile.engineLabel;
@@ -180,17 +167,15 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
       );
     }
 
-    if (isWord(token, "CALL")) {
+    // After a dot, CALL and SHOW are property keys; before a colon, map keys. Neither starts a clause.
+    const isClausePosition = !isPunct(tokens[index - 1], ".") && !isPunct(tokens[index + 1], ":");
+
+    if (isClausePosition && isWord(token, "CALL")) {
       const next = tokens[index + 1];
-      if (isPunct(next, "{")) {
+      if (isPunct(next, "{") || isPunct(next, "(")) {
+        // A subquery `CALL { ... }` or a scoped one `CALL (vars) { ... }`: the scope holds only variables
+        // or `*`, so the scope and the body are walked by the same rules as the rest of the statement.
         index += 1;
-        continue;
-      }
-      if (isPunct(next, "(")) {
-        // A scoped subquery `CALL (vars) { ... }`: the scope holds variables, the body is walked as usual.
-        // With no closing `)`, every token after CALL is walked instead.
-        const close = closingParen(tokens, index + 1);
-        index = close === undefined ? index + 1 : close + 1;
         continue;
       }
       const name = qualifiedNameAt(tokens, index + 1);
@@ -211,7 +196,7 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
       continue;
     }
 
-    if (isWord(token, "SHOW")) {
+    if (isClausePosition && isWord(token, "SHOW")) {
       const form: string[] = [];
       const typed: string[] = [];
       for (let at = index + 1; at < tokens.length; at += 1) {
@@ -240,7 +225,10 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
     if (index >= checkedUntil && isNamePart(token)) {
       const name = qualifiedNameAt(tokens, index);
       checkedUntil = name.end;
-      if (name.parts > 1) {
+      // One backticked part holding dots and called, such as `apoc.text.join`(...), may resolve to the
+      // namespaced function, so it is read as a qualified name: fail closed.
+      const calledDotted = token.kind === "backtick" && token.value.includes(".") && isPunct(tokens[name.end], "(");
+      if (name.parts > 1 || calledDotted) {
         const denied = refuseNamespace(name, token.start);
         if (denied !== undefined) return denied;
         const lower = name.joined.toLowerCase();

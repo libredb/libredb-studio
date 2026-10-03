@@ -276,8 +276,39 @@ describe("qualified names", () => {
     expect(refusalOf("CALL (n, CREATE").subject).toBe("CREATE");
   });
 
-  test("a scoped CALL skips nested parentheses in its scope", () => {
+  test("a scoped CALL walks nested parentheses in its scope", () => {
     expect(allowedOf("MATCH (n) CALL ((n)) { RETURN 1 AS x } RETURN x").allowed).toBe(true);
+    expect(allowedOf("MATCH (n) CALL (*) { RETURN 1 AS x } RETURN x").allowed).toBe(true);
+  });
+
+  test("a scoped CALL's scope is read by the same rules as the rest of the statement", () => {
+    expect(refusalOf("CALL (x, set) { RETURN 1 AS y } RETURN y").subject).toBe("SET");
+    expect(refusalOf("CALL ($p) { RETURN 1 AS y } RETURN y").code).toBe("parameters-unsupported");
+    expect(refusalOf("CALL (apoc.load.json('x')) { RETURN 1 AS y } RETURN y").subject).toBe("apoc.");
+    expect(refusalOf("CALL (custom.fetch('x')) { RETURN 1 AS y } RETURN y").subject).toBe("custom.fetch");
+  });
+
+  test("one backticked name holding dots, called, is read as a qualified function name", () => {
+    expect(refusalOf("RETURN `Apoc.text.join`(['a'], ',')").subject).toBe("apoc.");
+    expect(refusalOf("RETURN 1, `custom.fetch`('x')").position).toBe(10);
+    expect(allowedOf("RETURN `date.truncate`('day', date())").allowed).toBe(true);
+  });
+
+  test("one backticked name holding dots, not called, is a plain name", () => {
+    expect(allowedOf("MATCH (`apoc.x`) RETURN `apoc.x`").allowed).toBe(true);
+    expect(allowedOf("MATCH (n) RETURN n.`custom.fetch`").allowed).toBe(true);
+  });
+
+  test("CALL and SHOW after a dot or before a colon are names, not clauses", () => {
+    expect(allowedOf("MATCH (n) RETURN n.call").callsProcedure).toBe(false);
+    expect(allowedOf("MATCH (n) RETURN n.show").isShow).toBe(false);
+    expect(allowedOf("RETURN {call: 1, show: 2}").allowed).toBe(true);
+    expect(allowedOf("MATCH (n) RETURN n.CALL, n.SHOW").allowed).toBe(true);
+  });
+
+  test("CALL after a dot and called is still a qualified function outside the allowlist", () => {
+    expect(refusalOf("MATCH (n) RETURN n.call('x')").subject).toBe("n.call");
+    expect(refusalOf("RETURN apoc.call('x')").subject).toBe("apoc.");
   });
 });
 
