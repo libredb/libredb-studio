@@ -1498,6 +1498,51 @@ services:
     entrypoint: ["sh", "-c", "sh /etcd/seed.sh https://etcd-auth-password:2379 && sh /etcd/rbac.sh https://etcd-auth-password:2379"]
     <<: *etcd-one-shot-limits
 
+  # ---------------------------------------------------------------------------------------
+  # Neo4j (the neo4j provider). One Community server, Bolt for the provider and HTTP for the
+  # health probe only. The seed is a graph written for this repository, loaded by hand once the
+  # service is healthy; the official Movies graph carries no licence and is not vendored. The
+  # graph and the commands are described in docker/neo4j/README.md.
+  # ---------------------------------------------------------------------------------------
+  neo4j:
+    # Pinned to the exact build the provider is verified against, by tag and by digest: the
+    # error codes, the value encodings and the captures the provider is tested on are claims
+    # about 5.26.31, not about Neo4j in general.
+    image: neo4j:5.26.31-community@sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255
+    container_name: libredb-neo4j
+    restart: unless-stopped
+    ports:
+      # Loopback only, as the postgres service's. 7687 is Bolt, the provider's transport; 7474
+      # is HTTP, kept for the probe and the Browser a developer may open by hand.
+      - "127.0.0.1:7687:7687"
+      - "127.0.0.1:7474:7474"
+    environment:
+      # The test credential, as the clickhouse and couchbase services spell theirs. Neo4j
+      # refuses a password shorter than 8 characters, which rules out the postgres/postgres form.
+      NEO4J_AUTH: neo4j/password123
+      # Small enough to sit inside the bound below: heap plus page cache plus the JVM's own.
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 128m
+      # No usage report to Neo4j from a test fixture.
+      NEO4J_server_bolt_telemetry_enabled: "false"
+    # No data volume: removing the container resets the fixture.
+    healthcheck:
+      # The HTTP discovery document, answered once the server accepts connections. The image
+      # ships wget; cypher-shell would start a JVM per probe.
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:7474/ || exit 1"]
+      start_period: 60s
+      start_interval: 2s
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    # Bounded as the etcd and Kafka fixtures are; no swap past it.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    memswap_limit: 1G
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #
