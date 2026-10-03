@@ -235,6 +235,24 @@ function expectCommandsNameProjectAndServices(readme: string, services: readonly
   }
 }
 
+/**
+ * Every `docker cp` of a README copies keys or passwords out of a volume, so its destination is a path under a
+ * directory the same block made with `mktemp -d`: fresh, so the copy never nests into an earlier one, and readable by
+ * its owner alone.
+ */
+function expectCopiesIntoAPrivateDirectory(readme: string): void {
+  const blocks = readme.split("```").filter((_block, index) => index % 2 === 1);
+  const copies = blocks.filter((block) => block.includes("docker cp"));
+  expect(copies.length).toBeGreaterThan(0);
+  for (const block of copies) {
+    const lines = block.split("\n").filter((line) => line.trim() !== "" && line.trim() !== "sh");
+    expect({ block, first: lines[0] }).toEqual({ block, first: "dir=$(mktemp -d)" });
+    for (const line of lines.filter((entry) => entry.startsWith("docker cp"))) {
+      expect(line).toMatch(/^docker cp libredb-[a-z-]+:\/[a-z]+ "\$dir\/[a-z-]+"$/);
+    }
+  }
+}
+
 const MILVUS_SEED_IMAGE = "python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016";
 const MILVUS_SERVICES = ["milvus", "milvus-seed", "milvus-certs", "milvus-tls", "milvus-mtls"];
 
@@ -301,6 +319,7 @@ describe("the Milvus seed", () => {
     const readme = script("milvus/README.md");
     for (const name of MILVUS_SERVICES) expect(readme).toContain(`\`${name}\``);
     expectCommandsNameProjectAndServices(readme, MILVUS_SERVICES);
+    expectCopiesIntoAPrivateDirectory(readme);
   });
 });
 
@@ -467,5 +486,6 @@ describe("the Qdrant seed", () => {
     const readme = script("qdrant/README.md");
     for (const name of QDRANT_SERVICES) expect(readme).toContain(`\`${name}\``);
     expectCommandsNameProjectAndServices(readme, QDRANT_SERVICES);
+    expectCopiesIntoAPrivateDirectory(readme);
   });
 });

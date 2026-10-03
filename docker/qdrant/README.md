@@ -84,10 +84,11 @@ docker volume rm libredb-studio_qdrant-keys
 Each key is 32 random bytes written as 64 hexadecimal characters, above the 32 bytes the server asks of the key it signs JWTs with.
 A live check mints every JWT it needs at test time, HS256 with `auth/admin.key`, and never writes one into the repository.
 Send a key or a JWT in the `api-key` header or as `Authorization: Bearer`.
-Copy the volume out of the one-shot's container, outside the repository:
+Copy the volume out of the one-shot's container into a fresh directory only you can read, outside the repository, so the copy never lands in an earlier one:
 
 ```sh
-docker cp libredb-qdrant-keys:/keys /tmp/qdrant-keys
+dir=$(mktemp -d)
+docker cp libredb-qdrant-keys:/keys "$dir/keys"
 ```
 
 ## The seeded collections
