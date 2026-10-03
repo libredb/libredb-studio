@@ -21,6 +21,9 @@ const NOT_REPORTED = "N/A";
 /** A listing the catalog's row bound cut, phrased to follow "counted from" (`DatabaseOverview.tableCountSampledFrom`). */
 const CATALOG_CUT_SAMPLE = "one catalog read that stopped at its row bound";
 
+/** A label listing the server refused, phrased to follow "counted from", so the Tables card reads "0+". */
+const LABELS_REFUSED_SAMPLE = "a label listing the server refused to read";
+
 /** The kernel's version and edition, as `dbms.components()` answers them. */
 export interface Neo4jServerVersion {
   readonly version: string;
@@ -45,16 +48,16 @@ export function toHealthInfo(): HealthInfo {
   return { databaseSize: NOT_REPORTED, cacheHitRatio: NOT_REPORTED, slowQueries: [], activeSessions: [] };
 }
 
-/** What the overview is built from; an absent count is one the server refused to read. */
+/** What the overview is built from; an absent count or listing is one the server refused to read. */
 export interface Neo4jOverviewInput {
   readonly server: Neo4jServerVersion | undefined;
   readonly nodes: Neo4jCount | undefined;
   readonly relationships: Neo4jCount | undefined;
-  readonly labels: number;
+  readonly labels: number | undefined;
   readonly labelsCut: boolean;
-  readonly relationshipTypes: number;
+  readonly relationshipTypes: number | undefined;
   readonly relationshipTypesCut: boolean;
-  readonly indexes: number;
+  readonly indexes: number | undefined;
 }
 
 function counted(count: Neo4jCount | undefined, noun: string, singular: string): string {
@@ -64,17 +67,30 @@ function counted(count: Neo4jCount | undefined, noun: string, singular: string):
 /**
  * Labels are the tables (`tableCount`, a floor when the listing was cut), the created indexes are
  * `indexCount`, and the graph's size is said in nodes and relationships, since Bolt reports no store size.
+ *
+ * A listing the server refused still answers the rest. `tableCount` and `indexCount` are required numbers,
+ * so a refused one is 0 with words beside it: the label count is a floor of 0 named by
+ * `tableCountSampledFrom`, and an unreadable type or index count is said in `databaseSize`, the overview's
+ * one free text. No database count is read, though spec 7 lists one: the connection holds one database
+ * (SR4), and `DatabaseOverview` has no field for it.
  */
 export function toOverview(input: Neo4jOverviewInput): DatabaseOverview {
-  const types = `${input.relationshipTypesCut ? "at least " : ""}${input.relationshipTypes} relationship types`;
+  const graph = `${counted(input.nodes, "nodes", "node")} and ${counted(input.relationships, "relationships", "relationship")}`;
+  const types =
+    input.relationshipTypes === undefined
+      ? ", relationship type count not readable"
+      : ` of ${input.relationshipTypesCut ? "at least " : ""}${input.relationshipTypes} relationship types`;
+  const indexes = input.indexes === undefined ? ", index count not readable" : "";
+  const sampledFrom =
+    input.labels === undefined ? LABELS_REFUSED_SAMPLE : input.labelsCut ? CATALOG_CUT_SAMPLE : undefined;
   return {
     version: versionText(input.server),
     uptime: NOT_REPORTED,
     maxConnections: 0,
-    databaseSize: `${counted(input.nodes, "nodes", "node")} and ${counted(input.relationships, "relationships", "relationship")} of ${types}`,
-    tableCount: input.labels,
-    ...(input.labelsCut ? { tableCountSampledFrom: CATALOG_CUT_SAMPLE } : {}),
-    indexCount: input.indexes,
+    databaseSize: `${graph}${types}${indexes}`,
+    tableCount: input.labels ?? 0,
+    ...(sampledFrom === undefined ? {} : { tableCountSampledFrom: sampledFrom }),
+    indexCount: input.indexes ?? 0,
   };
 }
 

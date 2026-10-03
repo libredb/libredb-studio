@@ -20,6 +20,9 @@
  *   holds the sentence used here to that README.
  * - The row-bound cut: no capture holds more than `DEFAULT_QUERY_LIMIT` rows, so one run is replayed with a
  *   smaller bound through the recorded client's own slicing.
+ * - The backticked property read ``MATCH (n) RETURN n.`set` ``: no capture holds it, so its EXPLAIN is
+ *   answered with the captured classification of `MATCH (n) RETURN n` and its run with one built null row;
+ *   what it proves is that the policy and the gate let it through to the server.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -231,6 +234,38 @@ describe("the query path (spec 5)", () => {
     const before = calls.length;
     await expect(provider.query("CREATE (n:Person {name: 'x'})")).rejects.toThrow(QueryError);
     expect(calls.length).toBe(before);
+    await provider.disconnect();
+  });
+
+  test.each([
+    ["a property", "MATCH (n) RETURN n.set", "`set`"],
+    ["a map key", "RETURN {create: 1} AS m", "`create`"],
+  ])("a denied word as %s is refused with the backtick advice and makes no run", async (_, statement, advice) => {
+    const { provider, calls } = await connected();
+    const before = calls.length;
+    const error = await provider.query(statement).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toContain(`write it in backticks, as ${advice}`);
+    expect(calls.length).toBe(before);
+    await provider.disconnect();
+  });
+
+  test("the backticked property read passes the policy and the gate and runs", async () => {
+    const statement = "MATCH (n) RETURN n.`set`";
+    const classified = neo4jCapture("explain-read").result as GraphRunResult;
+    const built: GraphRunResult = {
+      fields: ["n.`set`"],
+      rows: [{ "n.`set`": null }],
+      truncated: false,
+      queryType: "r",
+    };
+    const { provider, calls } = await connected((sent) => {
+      if (sent === `EXPLAIN ${statement}`) return Promise.resolve(classified);
+      return sent === statement ? Promise.resolve(built) : undefined;
+    });
+    const result = await provider.query(statement);
+    expect(result.rows).toEqual([{ "n.`set`": null }]);
+    expect(calls.slice(-2).map((call) => call.statement)).toEqual([`EXPLAIN ${statement}`, statement]);
     await provider.disconnect();
   });
 

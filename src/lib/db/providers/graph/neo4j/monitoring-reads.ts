@@ -31,6 +31,7 @@ import { PROVIDER } from "./errors";
 import {
   isoDurationMs,
   type Neo4jCount,
+  type Neo4jLabelCount,
   type Neo4jServerVersion,
   toActiveSessions,
   toIndexStats,
@@ -151,29 +152,38 @@ export async function readPing(client: Runner, database: string): Promise<void> 
   }
 }
 
-/** The overview: node and relationship counts, the label, type and created-index listings, and the version read at connect. */
+/**
+ * The overview: node and relationship counts, the label, type and created-index listings, and the version
+ * read at connect. Each of the five reads is answered on its own, so a refused one (an Enterprise reader
+ * without the index privilege, say) leaves its figure unreadable and the others standing (spec 7).
+ */
 export async function readOverview(
   client: Runner,
   database: string,
   server: Neo4jServerVersion | undefined,
 ): Promise<DatabaseOverview> {
   const { nodeCount, relationshipCount } = NEO4J_MONITORING_STATEMENTS;
+  const listing = (kind: "label" | "relationship_type" | "index") =>
+    orEmpty<{ entries: readonly unknown[]; truncated: boolean } | undefined>(
+      () => neo4jCatalog.listKind(client, database, kind),
+      undefined,
+    );
   const [nodes, relationships, labels, types, indexes] = await Promise.all([
     orEmpty<Neo4jCount | undefined>(() => readCount(client, nodeCount, database, "nodes"), undefined),
     orEmpty<Neo4jCount | undefined>(() => readCount(client, relationshipCount, database, "relationships"), undefined),
-    neo4jCatalog.listKind(client, database, "label"),
-    neo4jCatalog.listKind(client, database, "relationship_type"),
-    neo4jCatalog.listKind(client, database, "index"),
+    listing("label"),
+    listing("relationship_type"),
+    listing("index"),
   ]);
   return toOverview({
     server,
     nodes,
     relationships,
-    labels: labels.entries.length,
-    labelsCut: labels.truncated,
-    relationshipTypes: types.entries.length,
-    relationshipTypesCut: types.truncated,
-    indexes: indexes.entries.length,
+    labels: labels?.entries.length,
+    labelsCut: labels?.truncated === true,
+    relationshipTypes: types?.entries.length,
+    relationshipTypesCut: types?.truncated === true,
+    indexes: indexes?.entries.length,
   });
 }
 
@@ -200,7 +210,12 @@ export function readActiveSessions(client: Runner, database: string): Promise<Ac
   }, []);
 }
 
-/** Node counts of the first `TABLE_STATS_LABEL_BOUND` labels by name (SR11). */
+/**
+ * Node counts of the first `TABLE_STATS_LABEL_BOUND` labels by name (SR11). The counts run one after another,
+ * each in its own READ session, so a monitoring refresh holds one session at a time rather than fifty; each
+ * is an O(1) read of the count store. The panel is all or nothing: one refused count, like a refused label
+ * listing, empties it, since a partial list would read as the whole graph.
+ */
 export function readTableStats(client: Runner, database: string): Promise<TableStats[]> {
   return orEmpty(async () => {
     const { entries } = await neo4jCatalog.listKind(client, database, "label");
@@ -208,21 +223,22 @@ export function readTableStats(client: Runner, database: string): Promise<TableS
       .map((entry) => entry.name)
       .sort()
       .slice(0, TABLE_STATS_LABEL_BOUND);
-    const counts = await Promise.all(
-      labels.map(async (label) => {
-        const statement = labelCountStatement(label);
-        if (statement === undefined) return [];
-        return [{ label, count: await readCount(client, statement, database, "c") }];
-      }),
-    );
-    return toTableStats(database, counts.flat());
+    const counts: Neo4jLabelCount[] = [];
+    for (const label of labels) {
+      const statement = labelCountStatement(label);
+      // oxlint-disable-next-line no-await-in-loop -- one session at a time, as the docblock says.
+      if (statement !== undefined) counts.push({ label, count: await readCount(client, statement, database, "c") });
+    }
+    return toTableStats(database, counts);
   }, []);
 }
 
 /**
  * The created indexes' usage. The default `LOOKUP` indexes are left out, as the tree leaves them out, and
  * uniqueness comes from the catalog's index rows, since this read's column list names no owning constraint.
- * A `readCount` of null is an index with no tracked read, which has made no scan.
+ * A `readCount` of null is an index with no tracked read, which has made no scan. The statement yields
+ * `lastRead`, as spec 7 lists it, but nothing reads it: `IndexStats` has no field for it. It stays in the
+ * column list because the recorded captures are keyed by the statement's text.
  */
 export function readIndexStats(client: Runner, database: string): Promise<IndexStats[]> {
   const statement = NEO4J_MONITORING_STATEMENTS.indexUsage;

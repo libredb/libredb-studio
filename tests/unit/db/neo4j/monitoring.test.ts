@@ -74,6 +74,20 @@ describe("toOverview", () => {
       "30 nodes and relationship count not readable of 4 relationship types",
     );
   });
+
+  test("a refused label listing is a floor of 0, and a refused type or index listing is said to be unreadable", () => {
+    const labels = toOverview({ ...BASE, labels: undefined });
+    expect(labels.tableCount).toBe(0);
+    expect(labels.tableCountSampledFrom).toBe("a label listing the server refused to read");
+    expect(toOverview({ ...BASE, relationshipTypes: undefined }).databaseSize).toBe(
+      "30 nodes and 40 relationships, relationship type count not readable",
+    );
+    const indexes = toOverview({ ...BASE, indexes: undefined });
+    expect(indexes.indexCount).toBe(0);
+    expect(indexes.databaseSize).toBe(
+      "30 nodes and 40 relationships of 4 relationship types, index count not readable",
+    );
+  });
 });
 
 describe("isoDurationMs", () => {

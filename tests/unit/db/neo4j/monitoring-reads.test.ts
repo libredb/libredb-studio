@@ -163,6 +163,38 @@ describe("readOverview", () => {
     await expect(readOverview(client, DATABASE, SERVER)).rejects.toThrow("Connection refused");
   });
 
+  test("a refused label listing is a floor of 0; the counts are still answered", async () => {
+    const { client } = replacing({ [NEO4J_CATALOG_STATEMENTS.label]: refused() });
+    const overview = await readOverview(client, DATABASE, SERVER);
+    expect(overview.tableCount).toBe(0);
+    expect(overview.tableCountSampledFrom).toBe("a label listing the server refused to read");
+    expect(overview.databaseSize).toBe("30 nodes and 40 relationships of 4 relationship types");
+  });
+
+  test("a refused relationship type listing is said to be unreadable", async () => {
+    const { client } = replacing({ [NEO4J_CATALOG_STATEMENTS.relationship_type]: refused() });
+    const overview = await readOverview(client, DATABASE, SERVER);
+    expect(overview.databaseSize).toBe("30 nodes and 40 relationships, relationship type count not readable");
+    expect(overview.tableCount).toBe(7);
+  });
+
+  test("a refused index listing is said to be unreadable", async () => {
+    const { client } = replacing({ [NEO4J_CATALOG_STATEMENTS.index]: refused() });
+    const overview = await readOverview(client, DATABASE, SERVER);
+    expect(overview.indexCount).toBe(0);
+    expect(overview.databaseSize).toBe(
+      "30 nodes and 40 relationships of 4 relationship types, index count not readable",
+    );
+  });
+
+  test.each(["label", "relationship_type", "index"] as const)(
+    "a %s listing on a server that cannot be reached is thrown",
+    async (kind) => {
+      const { client } = replacing({ [NEO4J_CATALOG_STATEMENTS[kind]]: unreachable() });
+      await expect(readOverview(client, DATABASE, SERVER)).rejects.toThrow("Connection refused");
+    },
+  );
+
   test("a count of the wrong shape is refused by statement", async () => {
     const { client } = replacing({ [nodeCount]: rows({ nodes: 1.5 }) });
     await expect(readOverview(client, DATABASE, SERVER)).rejects.toThrow("a count");
@@ -241,6 +273,26 @@ describe("readTableStats", () => {
     // "A\u0001bad" sorts first, takes a place among the fifty and is left out: TableStats has no notice field.
     expect(stats.map((row) => row.tableName)).toEqual(labels.slice(0, TABLE_STATS_LABEL_BOUND - 1));
     expect(calls.filter((call) => call.statement.startsWith("MATCH")).length).toBe(TABLE_STATS_LABEL_BOUND - 1);
+  });
+
+  test("runs the label counts one at a time, so a refresh opens one session, not fifty", async () => {
+    const recorded = recordedGraphClient();
+    let open = 0;
+    let most = 0;
+    const client: Pick<GraphClient, "run"> = {
+      async run(statement, options) {
+        open += 1;
+        most = Math.max(most, open);
+        await Promise.resolve();
+        try {
+          return await recorded.run(statement, options);
+        } finally {
+          open -= 1;
+        }
+      },
+    };
+    expect((await readTableStats(client, DATABASE)).length).toBe(7);
+    expect(most).toBe(1);
   });
 
   test("a refused listing or count is no rows; an unreachable server is thrown", async () => {
