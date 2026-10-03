@@ -279,6 +279,19 @@ describe("the drafted statement is read out of the closing prose", () => {
   });
 
   /*
+    Neo4j spec 6.4. `cypher` is a language tag, and it still names one engine while `neo4j` is the only
+    type-id that runs Cypher: the `promql` case. Read as naming no engine, a Cypher block on a PostgreSQL
+    run was filed as that run's statement.
+  */
+  test("a Cypher block is the deliverable of a Neo4j run, and of no other engine's", () => {
+    const statement = "MATCH (n:Person) RETURN n";
+    const cypher = ["```cypher", statement, "```"].join("\n");
+
+    expect(readPlanStatement(cypher, "postgres")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(cypher, "neo4j")).toEqual({ kind: "statement", sql: statement, tag: "cypher" });
+  });
+
+  /*
     #1088. The planning contract asks for a block tagged with the connection's type-id, so a Kafka
     run fences its read request as ```kafka, and that block is its deliverable. It names one engine
     like any type-id, so on another connection it is the `mysql` case above.

@@ -86,9 +86,7 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // runs show a model writing it.
   etcd: true,
   // A ```neo4j block holds one read-only Cypher statement the editor runs as it is (Neo4j spec 6.4). The
-  // `cypher` alias below is registered as a QUERY tag but NOT as an engine, the `cql` rule: Cypher is a
-  // language several graph engines speak, so reading `cypher` as "this was written for Neo4j" would put a
-  // claim in the model's mouth once a second graph engine exists.
+  // `cypher` alias below spells the language, and it still names this engine: see its entry.
   neo4j: true,
 });
 
@@ -148,6 +146,10 @@ const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   // `cql` is absent on a reason the same rule does not leave standing, since ScyllaDB connects
   // through `cassandra` too; docs/BACKLOG.md B86 records it.
   promql: "prometheus",
+  // The `promql` rule again: Cypher is a language, and `neo4j` is the only type-id that runs it. Left
+  // out of this record, a ```cypher block contradicted no connection and was recorded as a PostgreSQL
+  // run's statement. A second graph type-id that runs Cypher is the moment to revisit this entry.
+  cypher: "neo4j",
 });
 
 /**
