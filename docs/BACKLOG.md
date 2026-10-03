@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D151, U17 · 95
+- [Drivers and connections](#drivers-and-connections) — D1-D153, U17 · 97
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X23, U2-U73 · 64
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X23, U2-U74 · 65
 - [Dependencies](#dependencies) — P1-P8 · 8
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -2112,6 +2112,31 @@ Measured 2026-10-03: no `provenance:` assignment exists in either provider, and 
 
 **Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
 
+### D152. A SQLite BLOB reaches the grid as an object keyed by byte index
+
+bun:sqlite and node:sqlite read a BLOB as a `Uint8Array`, and the SQLite provider (`src/lib/db/providers/sql/sqlite.ts`, through `sqlite-driver.ts`) returns it unchanged in the result rows.
+The query route serializes the result with `JSON.stringify`, which writes a `Uint8Array` as an object keyed by index, so the standalone grid receives `{"0":1,"1":2,"2":171,"3":255}` for the four bytes `01 02 ab ff`.
+`asBytes` in `src/lib/export/binary.ts` takes a live `Uint8Array` or the `{"type":"Buffer","data":[...]}` form a Node `Buffer` serializes to, and that object is neither, so every reader that goes through `asBytes` (the grid cell, the row detail, Copy Cell, the CSV and SQL export writers, inline editing and the agent's result tool) treats the value as a JSON object rather than as binary.
+PostgreSQL `bytea` and SQL Server `varbinary` arrive in the `Buffer` form and show and copy as `\x` hex.
+Measured 2026-10-03 in the browser pass of #1248, on the CI images of that branch and of `main` before it: the SQLite cell showed and copied the object form on both, and the PostgreSQL and SQL Server cells showed and copied `\x0102abff`.
+The libSQL transport also decodes a BLOB to a `Uint8Array` (`decodeBlob` in `src/lib/db/providers/sql/libsql/hrana-transport.ts`); that path was not measured.
+
+Found by the browser pass of the vector results grid (#1248).
+Not fixed there: the defect predates that PR, and its cause is in what the provider hands the route, not in the grid.
+
+**Done when:** a SQLite BLOB reaches the browser in a form `asBytes` reads, the grid shows it as `\x` hex and Copy Cell writes the whole value, a provider test reads a BLOB and asserts the serialized form, and the libSQL provider is measured the same way and fixed or recorded.
+
+### D153. The etcd connection-options test can outrun bun's five-second hook timeout
+
+The file-level `beforeAll` in `tests/unit/db/etcd/connection-options.test.ts` makes its certificates at test time with `openssl`, eight of them over a new RSA-2048 key, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
+On the `Unit & Integration Tests` run of #1246 on 2026-10-03 (12:03 UTC) the hook timed out after 5001 ms while `openssl req` made the eighth key, the one for `etcd-server`, and the file failed with no test run; later runs of the same job passed.
+The same eight keys took 14 to 88 ms each on a development machine the same day, so the setup normally ends far inside the limit, but RSA key generation searches for primes and has no fixed duration, and a busy runner stretches it further.
+
+Found on #1246, whose change does not touch etcd.
+Not fixed there: the test is etcd's, and that PR touched no other provider.
+
+**Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), or makes RSA keys only where a test needs RSA, and the file passes repeated runs at the CI job's concurrency.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -3311,6 +3336,19 @@ Found while designing the vector results grid (#424).
 Not fixed there: the badge is shared by every engine, and changing what it draws changes every engine's tree.
 
 **Done when:** the tree shows a column type's parenthesised part, or a short form that keeps a vector's dimension, and a test renders `NUMERIC(10,2)` and a vector type with a dimension and asserts what each badge shows.
+
+### U74. The packaged `StudioWorkspace` reads `process` and fails to mount in a host that defines none
+
+The package's client code reads `process.env` with no guard in `getAppVersion` (`src/lib/app-version.ts`, called by `src/components/sidebar/Sidebar.tsx`), in `configureMonacoLoader` (`src/lib/editor/monaco-loader.ts`, called by `QueryEditor.tsx` and `ObjectSourceView.tsx`) and in the version labels of `StudioDesktopHeader.tsx` and `StudioMobileHeader.tsx`.
+`tsup.config.ts` replaces none of them, so the built `dist/workspace.mjs` and its chunks still read `process.env.NEXT_PUBLIC_APP_VERSION` and `process.env.NEXT_PUBLIC_MONACO_VS_PATH` when they run.
+Next.js gives browser code a `process` object, so the standalone app never meets this; a host built by a bundler that gives none does, and `package.json` names only `react` and `react-dom` as peer dependencies, so nothing tells that host to provide one.
+Measured 2026-10-03 in the browser pass of #1247: a host page built with `Bun.build`, defining `process.env.NODE_ENV` alone, threw `ReferenceError: process is not defined` when it mounted the packaged `StudioWorkspace`, and with a `window.process` object added to the page it mounted and ran queries.
+`main` before #1247 has the same reads; `src/lib/logger.ts` reads `LOG_LEVEL` behind a `typeof process` check and is not one of them.
+
+Found by the browser pass of the vector-family foundation (#1247).
+Not fixed there: the reads predate that PR.
+
+**Done when:** the package mounts in a host that defines no `process`, because the build replaces those reads or they go through a guarded accessor, and a check over the built package fails on an unguarded `process` read.
 
 ## Dependencies
 
