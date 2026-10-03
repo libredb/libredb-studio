@@ -646,6 +646,10 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * would misread where a literal ends. Its provider reads the text with the graph lexer
  * (`src/lib/db/graph/cypher/lexer.ts`) and refuses every write before sending it.
  *
+ * `milvus` takes one Milvus console request (vector-family spec 5.4), a `POST /v2/vectordb/<route>` line and one
+ * JSON body, which is not SQL text either: its strings escape with a backslash, and its filter is a Milvus
+ * expression the server parses. Its provider extends `BaseDatabaseProvider` and parses the text itself.
+ *
  * `qdrant` takes one Qdrant console request (vector-family spec 6.4), a `METHOD /path` line and one JSON body,
  * which is not SQL text either: its strings escape with a backslash and `//` opens a comment outside a string.
  * Its provider extends `BaseDatabaseProvider` and parses the text with the shared console parser.
@@ -681,6 +685,7 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "kafka",
   "etcd",
   "neo4j",
+  "milvus",
   "qdrant",
 ]);
 

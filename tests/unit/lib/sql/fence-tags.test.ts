@@ -34,6 +34,7 @@ describe("fenceTagEngine", () => {
       "kafka",
       "etcd",
       "neo4j",
+      "milvus",
       "qdrant",
     ] satisfies DatabaseType[];
 
@@ -123,6 +124,12 @@ describe("fenceTagEngine", () => {
     // The control: the canonical tag names the same engine, so the two spellings cannot disagree.
     expect(isQueryFenceTag("neo4j")).toBe(true);
     expect(fenceTagEngine("neo4j")).toBe("neo4j");
+  });
+
+  test("milvus has no alias: json, http and rest name other things, so none of them names Milvus (vector-family spec 5.7)", () => {
+    for (const tag of ["json", "http", "rest"]) expect(fenceTagEngine(tag)).not.toBe("milvus");
+    expect(fenceTagEngine("milvus")).toBe("milvus");
+    expect(isQueryFenceTag("milvus")).toBe(true);
   });
 
   test("qdrant has no alias: json, http and rest name other things, so none of them names Qdrant (vector-family spec 6.7)", () => {

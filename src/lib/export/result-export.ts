@@ -327,14 +327,14 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * it answers `Unknown type 'text'` to.
  *
  * The map is total, for the reason `BINARY_LITERAL` below is: a new provider must not
- * inherit a silently wrong answer. The thirteen dialects with NO row measured have an
+ * inherit a silently wrong answer. The fourteen dialects with NO row measured have an
  * empty one. Db2 is the one of them that parses both statements (#786); no bare name was
  * measured standing alone there, so each is re-spelled from its family. Druid takes no INSERT at all without the MSQ extension. The two search
  * endpoints and Couchbase parse no CREATE TABLE: a SQL++ collection is schemaless and
  * `CREATE COLLECTION` takes no columns, which is why the Couchbase provider declares
- * `supportsCreateTable: false`. MongoDB, Redis, Kafka, etcd, Qdrant and the embedded store declare
+ * `supportsCreateTable: false`. MongoDB, Redis, Kafka, etcd, Milvus, Qdrant and the embedded store declare
  * `queryLanguage: "json"`, `prometheus` declares `"promql"` and `neo4j` declares `"cypher"`,
- * so no SQL statement is ever built for those eight to read. A file for any of those twelve
+ * so no SQL statement is ever built for those nine to read. A file for any of those thirteen
  * is by definition meant to run somewhere else, so every bare name in it is re-spelled
  * portably rather than kept as one engine's private word.
  */
@@ -530,6 +530,7 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   kafka: NOTHING_STANDS_ALONE,
   etcd: NOTHING_STANDS_ALONE,
   neo4j: NOTHING_STANDS_ALONE,
+  milvus: NOTHING_STANDS_ALONE,
   qdrant: NOTHING_STANDS_ALONE,
 };
 
@@ -657,13 +658,14 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   // for somewhere else; their SQL reads its literals the way MySQL's does.
   elasticsearch: "standard-hex",
   opensearch: "standard-hex",
-  // `queryLanguage: "json"`: no statement is ever built for these six to read, so
+  // `queryLanguage: "json"`: no statement is ever built for these seven to read, so
   // the standard form is the only thing an export can claim (as in `values.ts`).
   mongodb: "standard-hex",
   redis: "standard-hex",
   libredb: "standard-hex",
   kafka: "standard-hex",
   etcd: "standard-hex",
+  milvus: "standard-hex",
   qdrant: "standard-hex",
   // PromQL, not SQL (#1085): no statement is ever built for it either, so the same claim.
   prometheus: "standard-hex",

@@ -39,6 +39,7 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   kafka: null,
   etcd: null,
   neo4j: null,
+  milvus: null,
   qdrant: null,
 };
 
