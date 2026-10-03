@@ -46,6 +46,9 @@ const TEST_PROFILE: GraphPolicyProfile = {
       ["IN", "TRANSACTIONS"],
       // `IN [n] CONCURRENT TRANSACTIONS`: the optional number sits between IN and CONCURRENT.
       ["CONCURRENT", "TRANSACTIONS"],
+      // A count between IN and the word would let either sequence above miss a batch form.
+      ["ROWS"],
+      ["TRANSACTIONS"],
     ],
     deniedNamespaces: ["apoc.", "gds."],
     allowedProcedures: ALLOWED_PROCEDURES,

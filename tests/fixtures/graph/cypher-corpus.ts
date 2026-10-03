@@ -572,6 +572,35 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
     subject: "CONCURRENT TRANSACTIONS",
   },
   {
+    name: "CALL IN a number of ROWS",
+    text: "MATCH (n) CALL { WITH n RETURN n } IN 4 ROWS RETURN n",
+    verdict: "denied-word",
+    subject: "ROWS",
+  },
+  {
+    name: "CALL IN a number of ROWS written with a digit group",
+    text: "MATCH (n) CALL { WITH n RETURN n } IN 1_000 ROWS RETURN n",
+    verdict: "denied-word",
+    subject: "ROWS",
+  },
+  {
+    name: "CALL IN a number of TRANSACTIONS",
+    text: "MATCH (n) CALL { WITH n RETURN n } IN 4 TRANSACTIONS RETURN n",
+    verdict: "denied-word",
+    subject: "TRANSACTIONS",
+  },
+  {
+    name: "CALL IN TRANSACTIONS OF a number of ROWS",
+    text: "MATCH (n) CALL { WITH n RETURN n AS m } IN TRANSACTIONS OF 4 ROWS RETURN m",
+    verdict: "denied-word",
+    subject: "IN TRANSACTIONS",
+  },
+  {
+    name: "rows and transactions as backticked property names",
+    text: "MATCH (n) RETURN n.`rows`, n.`transactions`",
+    verdict: "allowed",
+  },
+  {
     name: "USE before SHOW",
     text: "USE system SHOW USERS",
     verdict: "denied-word",

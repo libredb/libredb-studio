@@ -79,6 +79,11 @@ const DENIED_WORDS = [
   // The parallel form, `IN [n] CONCURRENT TRANSACTIONS` (Neo4j 5.21): the count between IN and the words
   // would let the two-word entry above miss it, so the words are denied on their own.
   "CONCURRENT TRANSACTIONS",
+  // Any other count before the words, `IN 4 ROWS` or `IN 4 TRANSACTIONS`, would miss both sequences above, and
+  // `1_000` lexes as a number then a word. 5.26.31 rejects those two spellings, so the single words are denied
+  // for the series and spellings not measured, and a name spelled like either is written in backticks.
+  "ROWS",
+  "TRANSACTIONS",
 ];
 
 export const NEO4J_POLICY_PROFILE: GraphPolicyProfile = {
