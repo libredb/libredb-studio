@@ -7,7 +7,7 @@ import type * as Monaco from "monaco-editor";
 import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { formatterForLanguage } from "@/lib/editor/dialect-editors";
+import { formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
 import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
 import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
 import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
@@ -499,6 +499,9 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       registerPromqlLanguage(monacoInstance);
       registerEtcdLanguage(monacoInstance);
       registerCypherLanguage(monacoInstance);
+      // Every console dialect's language, from its editor record (vector-family spec 3.5): the records are the
+      // only input, so nothing here names a dialect.
+      registerDialectConsoles(monacoInstance);
 
       // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
       if (!originalConsoleErrorRef.current) {

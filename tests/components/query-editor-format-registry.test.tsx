@@ -28,6 +28,8 @@ mock.module("@/lib/editor/dialect-editors", () => ({
           return text.toUpperCase();
         }
       : undefined,
+  // The stand-in registry carries no console language, so registering its consoles before mount does nothing.
+  registerDialectConsoles: () => {},
 }));
 
 mock.module("@monaco-editor/react", () => ({

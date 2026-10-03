@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { DIALECT_EDITORS, formatterForLanguage } from "@/lib/editor/dialect-editors";
+import type * as Monaco from "monaco-editor";
+import type { ConsoleLanguage } from "@/lib/editor/console-language";
+import { DIALECT_EDITORS, formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
+import { QDRANT_ROUTES, QDRANT_STAND_IN } from "../../helpers/console-stand-ins";
 
 const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "sql",
@@ -100,5 +103,51 @@ describe("formatterForLanguage", () => {
     for (const language of ["libredb", "redis", "promql", "etcd", "graph-cypher"] as const) {
       expect(formatterForLanguage(language)).toBeUndefined();
     }
+  });
+});
+
+describe("the console field", () => {
+  test("no shipped tab type carries a console language yet", () => {
+    for (const [tabType, editor] of Object.entries(DIALECT_EDITORS)) {
+      expect(editor.console, `${tabType} carries a console language`).toBeUndefined();
+    }
+  });
+});
+
+describe("registerDialectConsoles", () => {
+  /** A Monaco that records the ids it registers, answering the registered ones back as `getLanguages` does. */
+  function recordingMonaco() {
+    const registered: { id: string }[] = [];
+    const monaco = {
+      languages: {
+        getLanguages: () => registered,
+        register: (language: { id: string }) => registered.push(language),
+        setTokensProvider: () => ({ dispose: () => {} }),
+        setLanguageConfiguration: () => ({ dispose: () => {} }),
+        registerCompletionItemProvider: () => ({ dispose: () => {} }),
+        CompletionItemKind: { Value: 13 },
+      },
+    } as unknown as typeof Monaco;
+    return { monaco, registered };
+  }
+
+  const synthetic = (id: string): ConsoleLanguage => ({ spec: { ...QDRANT_STAND_IN, id }, routes: QDRANT_ROUTES });
+
+  test("registers each record's console language once, and skips the records that carry none", () => {
+    const { monaco, registered } = recordingMonaco();
+    const editors = {
+      first: { console: synthetic("first-console") },
+      plain: {},
+      second: { console: synthetic("second-console") },
+    };
+    registerDialectConsoles(monaco, editors);
+    registerDialectConsoles(monaco, editors);
+    expect(registered.map((language) => language.id)).toEqual(["first-console", "second-console"]);
+  });
+
+  test("registers nothing for the shipped records", () => {
+    const { monaco, registered } = recordingMonaco();
+    registerDialectConsoles(monaco);
+    expect(registered).toEqual([]);
   });
 });

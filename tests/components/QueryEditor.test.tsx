@@ -1952,6 +1952,14 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("graph-cypher");
   });
 
+  test("registers no console language while no editor record carries one (vector-family spec 3.5)", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", value: "SELECT 1" })));
+
+    // registerDialectConsoles runs on every mount, and no shipped record carries a console language, so the
+    // five custom languages registered before it are the whole list.
+    expect(capturedLanguageRegistrations).toEqual(["libredb", "redis", "promql", "etcd", "graph-cypher"]);
+  });
+
   describe("the Cypher completion provider registers for a graph-cypher editor only", () => {
     type Provider = {
       triggerCharacters?: string[];

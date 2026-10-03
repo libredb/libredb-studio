@@ -1,4 +1,6 @@
+import type * as Monaco from "monaco-editor";
 import { format } from "sql-formatter";
+import { type ConsoleLanguage, registerConsoleLanguage } from "@/lib/editor/console-language";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
 import type { QueryTab } from "@/lib/types";
 
@@ -14,6 +16,12 @@ export interface DialectEditor {
   readonly monacoId: EditorLanguage;
   /** What Format writes for the editor's text; absent, the tab has no Format button and the shortcut does nothing. */
   readonly format?: (text: string) => string;
+  /**
+   * The console language a console dialect's tab renders in: its grammar facts and its route table, which
+   * `registerDialectConsoles` registers under the dialect's id before the editor mounts. Absent for every tab type
+   * that is not a console.
+   */
+  readonly console?: ConsoleLanguage;
 }
 
 /** The SQL formatter's options, unchanged since `QueryEditor` called it directly. */
@@ -62,4 +70,18 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
  */
 export function formatterForLanguage(language: EditorLanguage): ((text: string) => string) | undefined {
   return Object.values(DIALECT_EDITORS).find((editor) => editor.monacoId === language && editor.format)?.format;
+}
+
+/**
+ * Register the console language of every record that carries one, before an editor mounts (`QueryEditor`'s
+ * `handleBeforeMount`). Each registration is idempotent, so every mount may call this; the records are the only
+ * input, so no reader branches on a dialect to reach its console.
+ */
+export function registerDialectConsoles(
+  monaco: typeof Monaco,
+  editors: Readonly<Record<string, Pick<DialectEditor, "console">>> = DIALECT_EDITORS,
+): void {
+  for (const editor of Object.values(editors)) {
+    if (editor.console !== undefined) registerConsoleLanguage(monaco, editor.console);
+  }
 }

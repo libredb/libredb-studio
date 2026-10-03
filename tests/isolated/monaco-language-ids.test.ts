@@ -301,6 +301,16 @@ describe("the installed editor's language ids", () => {
     expect(basic.has("cypher")).toBe(true);
   });
 
+  test("no id the installed editor registers is named milvus or qdrant, so each console's tokens provider is the one in charge (vector-family spec 3.5)", () => {
+    // registerConsoleLanguage returns early when its id is already registered, as registerEtcdLanguage does,
+    // so a built-in id of either name would leave the console lexer out of the editor.
+    for (const id of ["milvus", "qdrant"]) {
+      expect(basic.has(id)).toBe(false);
+      expect(rich).not.toContain(id);
+      expect(core.has(id)).toBe(false);
+    }
+  });
+
   test("every declared sourceLanguage is an id the installed editor registers", async () => {
     const registered = new Set([...basic, ...rich, ...core]);
     const declared = await everyDeclaredSourceLanguage();
