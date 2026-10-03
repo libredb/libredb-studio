@@ -132,6 +132,14 @@ describe("getCapabilities", () => {
 });
 
 describe("connect", () => {
+  // The production path: no factory injected, so the Bolt transport the composition root builds runs. A
+  // userinfo host is refused by boltEndpointOf before any socket opens, which only the real transport says.
+  test("without an injected factory, builds the Bolt endpoint and refuses a userinfo host before any socket", async () => {
+    const provider = new Neo4jProvider({ ...CONNECTION, host: "user@neo4j.internal" });
+    await expect(provider.connect()).rejects.toThrow(/user/i);
+    expect(provider.isConnected()).toBe(false);
+  });
+
   test("reads the kernel's version once, on the connection's database", async () => {
     const { provider, calls } = await connected();
     const reads = calls.filter((call) => call.statement === NEO4J_MONITORING_STATEMENTS.components);
