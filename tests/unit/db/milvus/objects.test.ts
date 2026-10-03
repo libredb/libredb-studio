@@ -6,28 +6,37 @@
  */
 import { describe, expect, test } from "bun:test";
 import { QueryError, TimeoutError } from "@/lib/db/errors";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import {
   countMilvusCollections,
+  describeMilvusCollection,
+  describeMilvusCollections,
   inBoundedFlight,
   listMilvusCollectionNames,
   listMilvusCollections,
   listMilvusDatabases,
   MILVUS_COLLECTION_KIND,
   MILVUS_CONTAINER_LEVELS,
+  MILVUS_DESCRIBE_BATCH,
   MILVUS_FAN_OUT,
   MILVUS_OBJECT_KINDS,
   milvusCause,
+  readCollectionIndexes,
   refusedForPrivilege,
   refusedStatusCode,
   surfaceCall,
   surfaceErrorContext,
   unimplementedByServer,
 } from "@/lib/db/providers/vector/milvus/objects";
+import { collectionColumns } from "@/lib/db/providers/vector/milvus/schema";
 import { engineLimiter, LimiterFullError } from "@/lib/db/utils/bounded-limiter";
 import { expectCalls } from "../../../helpers/call-log";
 import {
   createFakeMilvusClient,
+  DOCS_INT64,
+  DOCS_INT64_INDEX,
   failedStatus,
+  OK,
   permissionDenied,
   plainCollection,
   settle,
@@ -286,5 +295,198 @@ describe("the collection listing and its count", () => {
     expect(left).toEqual(["Beta", "alpha", "zeta"]);
     expect(right).toEqual(["notes"]);
     expect(client.calls.map((call) => call.args?.[0]).sort()).toEqual(["default", "probe_db"]);
+  });
+});
+
+describe("describeMilvusCollection", () => {
+  const catalog = { databases: { default: [{ describe: DOCS_INT64, indexes: [DOCS_INT64_INDEX] }] } };
+
+  test("DescribeCollection then DescribeIndex: schema.ts's columns, an IndexSchema per index, no foreign key", async () => {
+    const client = createFakeMilvusClient(catalog);
+    expect(await describeMilvusCollection(client, testSurface(), "default", "docs_int64")).toEqual({
+      path: ["default", "docs_int64"],
+      columns: collectionColumns(DOCS_INT64),
+      indexes: [{ name: "vec", columns: ["vec"], unique: false }],
+      foreignKeys: [],
+    });
+    expectCalls(client, [
+      { method: "describeCollection", args: ["default", { collection_name: "docs_int64" }] },
+      { method: "describeIndex", args: ["default", { collection_name: "docs_int64" }] },
+    ]);
+  });
+
+  test("no column carries a default value", async () => {
+    const client = createFakeMilvusClient(catalog);
+    const detail = await describeMilvusCollection(client, testSurface(), "default", "docs_int64");
+    expect(detail.columns.every((column) => column.defaultValue === undefined)).toBe(true);
+  });
+
+  test("a collection with no index answers 700, which is no index, not an error", async () => {
+    const client = createFakeMilvusClient({ databases: { default: [{ describe: DOCS_INT64 }] } });
+    expect((await describeMilvusCollection(client, testSurface(), "default", "docs_int64")).indexes).toEqual([]);
+    expect(await readCollectionIndexes(client, testSurface(), "default", "docs_int64")).toEqual([]);
+  });
+
+  test("an unknown collection is raised with the collection sentence after one DescribeCollection", async () => {
+    const client = createFakeMilvusClient(catalog);
+    await expect(describeMilvusCollection(client, testSurface(), "default", "gone")).rejects.toThrow(
+      "Collection gone does not exist in database default.",
+    );
+    expectCalls(client, ["describeCollection"]);
+  });
+
+  test("a DescribeIndex refused for want of IndexDetail is raised, never shown as no index", async () => {
+    const client = createFakeMilvusClient(catalog);
+    client.on("describeIndex", () => permissionDenied("IndexDetail"));
+    await expect(describeMilvusCollection(client, testSurface(), "default", "docs_int64")).rejects.toThrow(
+      "The Milvus user lacks the privilege",
+    );
+  });
+});
+
+/** `count` collections named c_000 and up, each a plain one. */
+function many(count: number) {
+  return Array.from({ length: count }, (_, at) => ({ describe: plainCollection(`c_${String(at).padStart(3, "0")}`) }));
+}
+const namesOf = (count: number) => Array.from({ length: count }, (_, at) => `c_${String(at).padStart(3, "0")}`);
+
+describe("describeMilvusCollections", () => {
+  test("one BatchDescribeCollection for up to 200 names, columns only and no index read", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(200) } });
+    const batch = await describeMilvusCollections(client, testSurface(), "default", namesOf(200));
+    expect(batch.details).toHaveLength(200);
+    expect(batch.details[0]).toEqual({
+      path: ["default", "c_000"],
+      columns: collectionColumns(plainCollection("c_000")),
+      indexes: [],
+      foreignKeys: [],
+    });
+    expect(batch.truncated).toBeUndefined();
+    expectCalls(client, ["batchDescribeCollection"]);
+    expect(MILVUS_DESCRIBE_BATCH).toBe(200);
+  });
+
+  test("two calls for 201 names: 200, then 1", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(201) } });
+    const batch = await describeMilvusCollections(client, testSurface(), "default", namesOf(201));
+    expect(batch.details).toHaveLength(201);
+    expect(
+      client.calls.map((call) => (call.args?.[1] as { collection_name: string[] }).collection_name.length),
+    ).toEqual([200, 1]);
+  });
+
+  test("the caller's limit is applied before any call, and truncated names it in the shared sentence", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(5) } });
+    const batch = await describeMilvusCollections(client, testSurface(), "default", namesOf(5), 3);
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["c_000", "c_001", "c_002"]);
+    expect(batch.truncated).toEqual({ limit: 3, reason: callerBoundTruncationReason(3) });
+    expectCalls(client, [
+      { method: "batchDescribeCollection", args: ["default", { collection_name: ["c_000", "c_001", "c_002"] }] },
+    ]);
+  });
+
+  test("a limit at or above the listing truncates nothing", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(2) } });
+    expect(
+      (await describeMilvusCollections(client, testSurface(), "default", namesOf(2), 2)).truncated,
+    ).toBeUndefined();
+  });
+
+  test("an empty listing sends nothing", async () => {
+    const client = createFakeMilvusClient({ databases: { default: [] } });
+    expect(await describeMilvusCollections(client, testSurface(), "default", [])).toEqual({ details: [] });
+    expect(client.calls).toEqual([]);
+  });
+
+  test("entries are read by position: an alias asked is described under the name asked, never the echoed one", async () => {
+    const client = createFakeMilvusClient({ databases: { default: [{ describe: DOCS_INT64 }] } });
+    client.on("batchDescribeCollection", () => ({ status: OK, responses: [DOCS_INT64] }));
+    const batch = await describeMilvusCollections(client, testSurface(), "default", ["docs_alias"]);
+    expect(batch.details.map((detail) => detail.path)).toEqual([["default", "docs_alias"]]);
+  });
+
+  test("a collection dropped between the listing and the bulk describe is left out, and the others are kept", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(3) } });
+    const batch = await describeMilvusCollections(client, testSurface(), "default", ["c_000", "c_dropped", "c_002"]);
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["c_000", "c_002"]);
+    expect(batch.truncated).toBeUndefined();
+  });
+
+  test.each([
+    [100, "CollectionNotExists"],
+    [800, "DatabaseNotExist"],
+    [1100, "IllegalArgument"],
+    [0, "CollectionNotExists"],
+  ])("a per-entry %i %s leaves that object out", async (code, errorCode) => {
+    const client = createFakeMilvusClient({ databases: { default: many(2) } });
+    client.on("batchDescribeCollection", () => ({
+      status: OK,
+      responses: [
+        plainCollection("c_000"),
+        { ...plainCollection("c_001"), status: { ...OK, code, error_code: errorCode } },
+      ],
+    }));
+    const batch = await describeMilvusCollections(client, testSurface(), "default", namesOf(2));
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["c_000"]);
+  });
+
+  test("a per-entry failure of another code is raised", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(1) } });
+    client.on("batchDescribeCollection", () => ({
+      status: OK,
+      responses: [
+        { ...plainCollection("c_000"), status: { ...OK, code: 65535, error_code: "UnexpectedError", reason: "x" } },
+      ],
+    }));
+    await expect(describeMilvusCollections(client, testSurface(), "default", namesOf(1))).rejects.toThrow(
+      "Milvus refused the bulk describe of collection c_000 with code 65535 (UnexpectedError).",
+    );
+  });
+
+  test("a whole-call failure is raised: a gRPC 7 and a code 1101", async () => {
+    const denied = createFakeMilvusClient({ databases: { default: many(1) } });
+    denied.on("batchDescribeCollection", () => permissionDenied("DescribeCollection"));
+    await expect(describeMilvusCollections(denied, testSurface(), "default", namesOf(1))).rejects.toThrow(
+      "The Milvus user lacks the privilege",
+    );
+    const failed = createFakeMilvusClient({ databases: { default: many(1) } });
+    failed.on("batchDescribeCollection", () => failedStatus(1101, "UnexpectedError", "rate limit exceeded"));
+    await expect(describeMilvusCollections(failed, testSurface(), "default", namesOf(1))).rejects.toThrow("code 1101");
+  });
+
+  test("an answer with another number of entries than names asked is refused, reading none", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(2) } });
+    client.on("batchDescribeCollection", () => ({ status: OK, responses: [plainCollection("c_000")] }));
+    await expect(describeMilvusCollections(client, testSurface(), "default", namesOf(2))).rejects.toThrow(
+      "Milvus answered a bulk describe of 2 collections with 1 entries",
+    );
+  });
+
+  test("UNIMPLEMENTED: one DescribeCollection per collection, never more than 4 in flight", async () => {
+    const client = createFakeMilvusClient({ databases: { default: many(10) } });
+    client.on("batchDescribeCollection", () => unimplemented("BatchDescribeCollection"));
+    const release = client.hold("describeCollection");
+    const pending = describeMilvusCollections(client, testSurface({}, 8), "default", namesOf(10), 9);
+    await settle();
+    expect(client.inFlight()).toBe(4);
+    release();
+    const batch = await pending;
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(namesOf(9));
+    expect(batch.truncated).toEqual({ limit: 9, reason: callerBoundTruncationReason(9) });
+    expect(client.maxInFlight()).toBe(4);
+    expect(client.calls.filter((call) => call.method === "describeCollection")).toHaveLength(9);
+  });
+
+  test("UNIMPLEMENTED: the fallback leaves out a collection that is gone and raises any other failure", async () => {
+    const gone = createFakeMilvusClient({ databases: { default: many(2) } });
+    gone.on("batchDescribeCollection", () => unimplemented("BatchDescribeCollection"));
+    const batch = await describeMilvusCollections(gone, testSurface(), "default", ["c_000", "c_gone", "c_001"]);
+    expect(batch.details.map((detail) => detail.path[1])).toEqual(["c_000", "c_001"]);
+    const denied = createFakeMilvusClient({ databases: { default: many(2) } });
+    denied.on("batchDescribeCollection", () => unimplemented("BatchDescribeCollection"));
+    denied.on("describeCollection", () => permissionDenied("DescribeCollection"));
+    await expect(describeMilvusCollections(denied, testSurface(), "default", namesOf(2))).rejects.toThrow(
+      "The Milvus user lacks the privilege",
+    );
   });
 });

@@ -15,6 +15,7 @@
  * indexes, partitions, statistics and both Source parts answer on an unloaded collection.
  */
 import { QueryError } from "@/lib/db/errors";
+import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   Container,
@@ -22,11 +23,26 @@ import type {
   DatabaseObject,
   DatabaseType,
   KindCount,
+  ObjectDetail,
+  ObjectDetailBatch,
   ObjectKindSpec,
 } from "@/lib/db/types";
 import { LimiterFullError, type LimiterTicket, type ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
-import { type CallOptions, type MilvusClient, MilvusError } from "./client";
-import { type MilvusErrorConnection, type MilvusErrorContext, toMilvusError, toProviderError } from "./errors";
+import {
+  type CallOptions,
+  type DescribeCollectionResponse,
+  type MilvusClient,
+  MilvusError,
+  type WireIndexDescription,
+} from "./client";
+import {
+  type MilvusErrorConnection,
+  type MilvusErrorContext,
+  statusFailure,
+  toMilvusError,
+  toProviderError,
+} from "./errors";
+import { collectionColumns } from "./schema";
 
 const PROVIDER: DatabaseType = "milvus";
 
@@ -240,4 +256,157 @@ export async function listMilvusCollections(
 ): Promise<DatabaseObject[]> {
   const names = await listMilvusCollectionNames(client, context, database);
   return names.map((name) => ({ path: [database, name], name, kind: MILVUS_COLLECTION_KIND }));
+}
+
+// -- describe and the bulk describe -----------------------------------------------------------------------
+
+/** Names per BatchDescribeCollection: 1,007 small schemas were 522,171 bytes, far below the receive cap. */
+export const MILVUS_DESCRIBE_BATCH = 200;
+
+/** Per-entry codes that leave an object out of a bulk describe: the listing changed in between. */
+const ABSENT_CODES: ReadonlySet<number> = new Set([100, 800, 1100]);
+
+/** Whether a failure says the collection, or its database, is not there any more; 2.6.25 says so with code 0. */
+function absent(failure: MilvusError | undefined): boolean {
+  const status = failure?.status;
+  return status !== undefined && (ABSENT_CODES.has(status.code) || status.errorCode === "CollectionNotExists");
+}
+
+/** One collection's index descriptions; a collection with none answers 700 IndexNotExist, which is no index. */
+export async function readCollectionIndexes(
+  client: Pick<MilvusClient, "describeIndex">,
+  context: MilvusSurfaceContext,
+  database: string,
+  collection: string,
+): Promise<readonly WireIndexDescription[]> {
+  try {
+    const answer = await surfaceCall(
+      context,
+      `index read of collection ${collection}`,
+      { database, collection },
+      (options) => client.describeIndex({ collection_name: collection }, options),
+    );
+    return answer.index_descriptions;
+  } catch (error) {
+    if (refusedStatusCode(error) === 700) return [];
+    throw error;
+  }
+}
+
+/**
+ * A collection opened in the tree: schema.ts's columns from one DescribeCollection, and one `IndexSchema` per index,
+ * named with its one field, from one DescribeIndex. The index type, metric and build state are in the
+ * Source; Milvus has no foreign key.
+ */
+export async function describeMilvusCollection(
+  client: Pick<MilvusClient, "describeCollection" | "describeIndex">,
+  context: MilvusSurfaceContext,
+  database: string,
+  collection: string,
+): Promise<ObjectDetail> {
+  const describe = await surfaceCall(
+    context,
+    `describe of collection ${collection}`,
+    { database, collection },
+    (options) => client.describeCollection({ collection_name: collection }, options),
+  );
+  const indexes = await readCollectionIndexes(client, context, database, collection);
+  return {
+    path: [database, collection],
+    columns: collectionColumns(describe),
+    indexes: indexes.map((index) => ({ name: index.index_name, columns: [index.field_name], unique: false })),
+    foreignKeys: [],
+  };
+}
+
+function detailOf(database: string, name: string, describe: DescribeCollectionResponse): ObjectDetail {
+  return { path: [database, name], columns: collectionColumns(describe), indexes: [], foreignKeys: [] };
+}
+
+/**
+ * At most 200 names per BatchDescribeCollection, one call at a time, entries read by position, never by the echoed
+ * `collection_name`, which is the alias when an alias was asked. An entry succeeds only with code 0 and
+ * `Success` together; a per-entry 100, 800 or 1100 leaves the object out; any other per-entry failure is raised.
+ */
+async function batchDescribe(
+  client: Pick<MilvusClient, "batchDescribeCollection">,
+  context: MilvusSurfaceContext,
+  database: string,
+  names: readonly string[],
+): Promise<ObjectDetail[]> {
+  const details: ObjectDetail[] = [];
+  for (let start = 0; start < names.length; start += MILVUS_DESCRIBE_BATCH) {
+    const chunk = names.slice(start, start + MILVUS_DESCRIBE_BATCH);
+    // oxlint-disable-next-line no-await-in-loop -- one batch at a time, each under its own permit.
+    const answer = await surfaceCall(context, `bulk describe of database ${database}`, { database }, (options) =>
+      client.batchDescribeCollection({ collection_name: chunk }, options),
+    );
+    if (answer.responses.length !== chunk.length) {
+      throw new QueryError(
+        `Milvus answered a bulk describe of ${chunk.length} collections with ${answer.responses.length} entries, so Studio cannot tell which entry describes which collection and reads none of them.`,
+        PROVIDER,
+      );
+    }
+    chunk.forEach((name, at) => {
+      const entry = answer.responses[at];
+      const failure = statusFailure(entry.status, "BatchDescribeCollection");
+      if (failure === undefined) details.push(detailOf(database, name, entry));
+      else if (!absent(failure)) {
+        throw toProviderError(
+          failure,
+          surfaceErrorContext(context, `bulk describe of collection ${name}`, { database, collection: name }),
+        );
+      }
+    });
+  }
+  return details;
+}
+
+/** The fallback: one DescribeCollection per collection, at most 4 in flight. */
+async function describeEach(
+  client: Pick<MilvusClient, "describeCollection">,
+  context: MilvusSurfaceContext,
+  database: string,
+  names: readonly string[],
+): Promise<ObjectDetail[]> {
+  const described = await inBoundedFlight(names, MILVUS_FAN_OUT, async (name) => {
+    try {
+      const describe = await surfaceCall(
+        context,
+        `describe of collection ${name}`,
+        { database, collection: name },
+        (options) => client.describeCollection({ collection_name: name }, options),
+      );
+      return detailOf(database, name, describe);
+    } catch (error) {
+      if (absent(milvusCause(error))) return undefined;
+      throw error;
+    }
+  });
+  return described.filter((detail): detail is ObjectDetail => detail !== undefined);
+}
+
+/**
+ * The agent's bulk column read of one database: fields only and no index, which DescribeIndex would read by
+ * walking segments. The caller's `limit` is applied before any call, and `truncated` then names it in the
+ * shared sentence. The batch answers in one round trip on 3.0.2 and 2.6.25, so the one-per-collection
+ * fallback runs only on a server that answers UNIMPLEMENTED.
+ */
+export async function describeMilvusCollections(
+  client: Pick<MilvusClient, "batchDescribeCollection" | "describeCollection">,
+  context: MilvusSurfaceContext,
+  database: string,
+  names: readonly string[],
+  limit?: number,
+): Promise<ObjectDetailBatch> {
+  const cut = limit !== undefined && names.length > limit;
+  const kept = cut ? names.slice(0, limit) : names;
+  let details: ObjectDetail[];
+  try {
+    details = await batchDescribe(client, context, database, kept);
+  } catch (error) {
+    if (!unimplementedByServer(error)) throw error;
+    details = await describeEach(client, context, database, kept);
+  }
+  return cut ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
 }
