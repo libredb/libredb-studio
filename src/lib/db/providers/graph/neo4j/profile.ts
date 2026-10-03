@@ -71,6 +71,10 @@ const DENIED_WORDS = [
   "USE",
   // GQL's spelling of CREATE, accepted since Neo4j 5.18.
   "INSERT",
+  // The commands that move databases between the servers of a cluster.
+  "DEALLOCATE",
+  "REALLOCATE",
+  "DRYRUN",
   "IN TRANSACTIONS",
 ];
 

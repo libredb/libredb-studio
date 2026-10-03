@@ -114,6 +114,9 @@ describe("NEO4J_POLICY_PROFILE", () => {
       "TERMINATE",
       "USE",
       "INSERT",
+      "DEALLOCATE",
+      "REALLOCATE",
+      "DRYRUN",
       "IN TRANSACTIONS",
     ]);
     for (const words of policy.deniedWords) {
@@ -127,6 +130,18 @@ describe("NEO4J_POLICY_PROFILE", () => {
     const refusal = refusalOf("INSERT (n:X) RETURN n");
     expect(refusal.code).toBe("denied-word");
     expect(refusal.subject).toBe("INSERT");
+  });
+
+  test("refuses the server administration commands that move databases between servers", () => {
+    for (const [text, subject] of [
+      ["DEALLOCATE DATABASES FROM SERVERS 'server-1'", "DEALLOCATE"],
+      ["REALLOCATE DATABASES", "REALLOCATE"],
+      ["DRYRUN REALLOCATE DATABASES", "DRYRUN"],
+    ] as const) {
+      const refusal = refusalOf(text);
+      expect(refusal.code).toBe("denied-word");
+      expect(refusal.subject).toBe(subject);
+    }
   });
 
   test("refuses the apoc and gds namespaces as procedures and as functions", () => {

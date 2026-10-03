@@ -82,8 +82,9 @@ The policy reads tokens, not text: a word inside a string, a comment or a backti
 It reads one statement: more than one non-empty statement is refused, while a `;` inside a string or a comment and a trailing `;` are not statements.
 Procedures, qualified functions and SHOW forms are allowlists, so a name the profile does not list is refused; clauses are a denylist, backed by the gate and READ mode, because the read clauses of Cypher are many and the writing ones few.
 
-Denied words, refused wherever they stand outside a string, a comment or a backtick name, even where Cypher would read them as a property or a map key: `CREATE`, `MERGE`, `SET`, `DELETE`, `DETACH`, `REMOVE`, `DROP`, `FOREACH`, `LOAD`, `ALTER`, `RENAME`, `GRANT`, `DENY`, `REVOKE`, `START`, `STOP`, `ENABLE`, `TERMINATE`, `USE`, `INSERT` and the sequence `IN TRANSACTIONS`.
+Denied words, refused wherever they stand outside a string, a comment or a backtick name, even where Cypher would read them as a property or a map key: `CREATE`, `MERGE`, `SET`, `DELETE`, `DETACH`, `REMOVE`, `DROP`, `FOREACH`, `LOAD`, `ALTER`, `RENAME`, `GRANT`, `DENY`, `REVOKE`, `START`, `STOP`, `ENABLE`, `TERMINATE`, `USE`, `INSERT`, `DEALLOCATE`, `REALLOCATE`, `DRYRUN` and the sequence `IN TRANSACTIONS`.
 INSERT is GQL's spelling of CREATE, which Neo4j accepts since 5.18.
+DEALLOCATE, REALLOCATE and DRYRUN are the commands that move databases between the servers of a cluster.
 `USE` is denied because the database is the connection's, and `USE system` reaches the administration surface; `IN TRANSACTIONS` commits batches of its own.
 A property, a map key or a label spelled like a denied word is written in backticks, `` n.`set` ``, and the refusal says so.
 
