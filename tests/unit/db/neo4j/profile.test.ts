@@ -118,6 +118,7 @@ describe("NEO4J_POLICY_PROFILE", () => {
       "REALLOCATE",
       "DRYRUN",
       "IN TRANSACTIONS",
+      "CONCURRENT TRANSACTIONS",
     ]);
     for (const words of policy.deniedWords) {
       const refusal = refusalOf(`MATCH (n) ${words.join(" ")} n`);

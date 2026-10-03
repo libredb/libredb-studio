@@ -76,6 +76,9 @@ const DENIED_WORDS = [
   "REALLOCATE",
   "DRYRUN",
   "IN TRANSACTIONS",
+  // The parallel form, `IN [n] CONCURRENT TRANSACTIONS` (Neo4j 5.21): the count between IN and the words
+  // would let the two-word entry above miss it, so the words are denied on their own.
+  "CONCURRENT TRANSACTIONS",
 ];
 
 export const NEO4J_POLICY_PROFILE: GraphPolicyProfile = {
