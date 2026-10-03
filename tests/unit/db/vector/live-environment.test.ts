@@ -201,3 +201,97 @@ describe("docker/milvus/certs.sh", () => {
     expect(certs).toContain("chmod 644 ./*");
   });
 });
+
+/** Every `docker compose` command of a README's sh blocks, its continuation lines joined. */
+function composeCommands(readme: string): string[] {
+  return [...readme.matchAll(/```sh\n([\s\S]*?)```/g)]
+    .flatMap((block) => block[1].replace(/\\\n\s*/g, " ").split("\n"))
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("docker compose"));
+}
+
+/** The services a compose command names after its verb: every word for up and rm, the first for run. */
+function namedServices(command: string): string[] {
+  const words = command.split(/\s+/);
+  const verb = words.findIndex((word) => word === "up" || word === "run" || word === "rm");
+  if (verb === -1) return [];
+  const rest = words.slice(verb + 1).filter((word) => !word.startsWith("-"));
+  return words[verb] === "run" ? rest.slice(0, 1) : rest;
+}
+
+function expectCommandsNameProjectAndServices(readme: string, services: readonly string[]): void {
+  const commands = composeCommands(readme);
+  expect(commands.length).toBeGreaterThan(0);
+  for (const command of commands) {
+    expect({ command, project: command.includes("-p libredb-studio -f database-compose.yml") }).toEqual({
+      command,
+      project: true,
+    });
+    const named = namedServices(command);
+    expect({ command, names: named.length > 0 }).toEqual({ command, names: true });
+    for (const name of named)
+      expect({ command, name, known: services.includes(name) }).toEqual({ command, name, known: true });
+  }
+}
+
+const MILVUS_SEED_IMAGE = "python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016";
+const MILVUS_SERVICES = ["milvus", "milvus-seed", "milvus-certs", "milvus-tls", "milvus-mtls"];
+
+describe("the Milvus seed", () => {
+  test("milvus-seed is a one-shot in the pinned Python image that waits for a healthy milvus and installs by hash", () => {
+    const seed = service("milvus-seed");
+    expect(seed).toMatchObject({
+      image: MILVUS_SEED_IMAGE,
+      container_name: "libredb-milvus-seed",
+      restart: "no",
+      depends_on: { milvus: { condition: "service_healthy" } },
+      command: ["--uri", "http://milvus:19530", "--credentials", "/credentials"],
+    });
+    expect(seed.profiles).toBeUndefined();
+    expect(seed.ports).toBeUndefined();
+    expect(seed.volumes).toEqual(["./docker/milvus:/seed:ro", "milvus-credentials:/credentials"]);
+    // The file writes $$@, which compose reads as the shell's $@: the arguments of `run ... milvus-seed <arguments>`.
+    expect(seed.entrypoint?.[2]).toBe(
+      'pip install --quiet --no-cache-dir --require-hashes -r /seed/requirements.txt 1>&2 && exec python /seed/seed.py "$$@"',
+    );
+    expect(limits("milvus-seed")).toEqual({ cpus: "1", memory: "1G", swap: "1G" });
+    expect(compose.volumes).toHaveProperty("milvus-credentials");
+  });
+
+  test("seed.py creates the research's objects and the four the fixtures add, in two databases", () => {
+    const seed = script("milvus/seed.py");
+    for (const name of [
+      "docs_int64",
+      "docs_varchar",
+      "fts",
+      "unloaded_big",
+      "scratch",
+      "edge_values",
+      "pk_partitioned",
+      "large_topk",
+      "shadowed",
+      "wide_768",
+      "notes",
+    ]) {
+      expect(seed).toContain(`"${name}", "`);
+    }
+    expect(seed).toContain('"probe_db", "notes"');
+    expect(seed).toContain('properties={"query_mode": "large_topk"}');
+    expect(seed).toContain("num_partitions=1024");
+    expect(seed).toContain('c.add_collection_field(spec.name, field_name="zeta"');
+  });
+
+  test("seed.py names root's documented default once, and generates every other password", () => {
+    const seed = script("milvus/seed.py");
+    expect(seed.match(/root:Milvus/g)).toHaveLength(1);
+    expect(seed).toContain('ROOT_TOKEN = "root:Milvus"');
+    expect(seed).toContain("secrets.token_hex(16)");
+    expect(seed).not.toMatch(/password\s*=\s*"/i);
+  });
+
+  test("docker/milvus/README.md names every service, and every command names the project and its services", () => {
+    const readme = script("milvus/README.md");
+    for (const name of MILVUS_SERVICES) expect(readme).toContain(`\`${name}\``);
+    expectCommandsNameProjectAndServices(readme, MILVUS_SERVICES);
+  });
+});

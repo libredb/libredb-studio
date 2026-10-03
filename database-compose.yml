@@ -1556,6 +1556,39 @@ services:
             memory: 4G
       memswap_limit: 4G
 
+  milvus-seed:
+    # One-shot seed (docker/milvus/seed.py) in a pinned Python image, which installs pymilvus
+    # and its dependencies from docker/milvus/requirements.txt, pinned with hashes. It creates
+    # what is missing and leaves what exists, so it may run again on a seeded server, and it
+    # generates the passwords of the users reader and nobody into the milvus-credentials volume.
+    # pip writes to stderr, so `run ... milvus-seed ... --manifest` prints the manifest alone.
+    image: python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+    container_name: libredb-milvus-seed
+    restart: "no"
+    depends_on:
+      milvus:
+        condition: service_healthy
+    volumes:
+      - ./docker/milvus:/seed:ro
+      - milvus-credentials:/credentials
+    environment: &seed-env
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PIP_ROOT_USER_ACTION: ignore
+      PYTHONDONTWRITEBYTECODE: "1"
+    entrypoint:
+      - sh
+      - -c
+      - pip install --quiet --no-cache-dir --require-hashes -r /seed/requirements.txt 1>&2 && exec python /seed/seed.py "$$@"
+      - milvus-seed
+    command: ["--uri", "http://milvus:19530", "--credentials", "/credentials"]
+    <<: &vector-seed-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "1"
+            memory: 1G
+      memswap_limit: 1G
+
   # -- Milvus, one-way and mutual TLS -------------------------------------------
 
   milvus-certs:
@@ -2260,9 +2293,9 @@ volumes:
   # the generated CA and broker certificate from the one-shot kafka-auth-certs service to the
   # broker, and etcd-auth-certs the generated certificates and passwords from etcd-auth-certs to
   # the two etcd auth servers and their init one-shots. Each Milvus server keeps its data in a
-  # volume of its own, because the image runs as uid 999 and a bind mount crashed it, and
-  # milvus-certs holds the generated certificates. Everything else uses the image's own
-  # anonymous volumes.
+  # volume of its own, because the image runs as uid 999 and a bind mount crashed it;
+  # milvus-certs and milvus-credentials hold the generated certificates and the seeded users'
+  # passwords. Everything else uses the image's own anonymous volumes.
   #
   # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
   # that write or read segments. A `down -v` resets the cluster to empty.
@@ -2278,3 +2311,4 @@ volumes:
   milvus-tls-data: {}
   milvus-mtls-data: {}
   milvus-certs: {}
+  milvus-credentials: {}
