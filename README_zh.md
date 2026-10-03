@@ -132,10 +132,9 @@ LibreDB Studio 走另一条路：**工具去找数据，而不是把数据搬来
 
 LibreDB Studio 走的是另一条路。它部署在数据旁边：一个容器、一个 Helm chart、一个 operator、一份 PaaS 一键模板，或者用 `npm i @libredb/studio` 嵌进你自己的产品。没有任何东西需要朝外暴露。
 
-十八种引擎共用一个界面，PostgreSQL、MySQL、Oracle、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Apache Cassandra、Prometheus、Apache Kafka 和 openGauss，处处是同一套浏览器，凡是引擎有东西可报的地方都有 ER 图、schema 对比和监控。十九种里有三种是只读的，因为它们自己的 SQL 就是只读的：Druid、Elasticsearch 和 OpenSearch 的文法里根本没有 `UPDATE`，也没有 `CREATE TABLE`，所以那些控件被如实报告为不支持，而不是等到用的时候才失败。Cassandra 是其中刻意报告得最少的一个：它给出的任何行数和容量都不真实，所以对象浏览器索性两者都不显示，而不是显示一个错的数字；它确实会发布的分区估算来自已刷盘的文件，实测一张 500 行的表被读作 143。Trino 是另一个异类：它是查询引擎而不是数据库，所以不声明任何主键和索引，报告的字节数属于它背后那些连接器所在的系统。
-Apache Kafka 是最新的一个：JSON 读取请求通过 Kafka 协议按分区、偏移量或时间戳读取主题中的消息，浏览器显示主题、带延迟的消费者组和 broker，并且按构造只读，因为 Studio 从不生产消息、提交偏移量、加入消费者组或创建主题。
-Prometheus 和 MongoDB、Redis 一样完全不是 SQL：它通过 Prometheus HTTP API 使用 PromQL，浏览指标、规则和抓取目标，并且是只读的，因为 Studio 不调用服务器的任何写入或管理端点。
-十九种引擎共用一个界面，PostgreSQL、MySQL、Oracle、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Apache Cassandra、Prometheus、Apache Kafka 和 etcd，处处是同一套浏览器，凡是引擎有东西可报的地方都有 ER 图、schema 对比和监控。十九种里有三种是只读的，因为它们自己的 SQL 就是只读的：Druid、Elasticsearch 和 OpenSearch 的文法里根本没有 `UPDATE`，也没有 `CREATE TABLE`，所以那些控件被如实报告为不支持，而不是等到用的时候才失败。Cassandra 是其中刻意报告得最少的一个：它给出的任何行数和容量都不真实，所以对象浏览器索性两者都不显示，而不是显示一个错的数字；它确实会发布的分区估算来自已刷盘的文件，实测一张 500 行的表被读作 143。Trino 是另一个异类：它是查询引擎而不是数据库，所以不声明任何主键和索引，报告的字节数属于它背后那些连接器所在的系统。
+二十种引擎共用一个界面，PostgreSQL、MySQL、Oracle、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Apache Cassandra、Prometheus、Apache Kafka、openGauss 和 etcd，处处是同一套浏览器，凡是引擎有东西可报的地方都有 ER 图、schema 对比和监控。十九种里有三种是只读的，因为它们自己的 SQL 就是只读的：Druid、Elasticsearch 和 OpenSearch 的文法里根本没有 `UPDATE`，也没有 `CREATE TABLE`，所以那些控件被如实报告为不支持，而不是等到用的时候才失败。Cassandra 是其中刻意报告得最少的一个：它给出的任何行数和容量都不真实，所以对象浏览器索性两者都不显示，而不是显示一个错的数字；它确实会发布的分区估算来自已刷盘的文件，实测一张 500 行的表被读作 143。Trino 是另一个异类：它是查询引擎而不是数据库，所以不声明任何主键和索引，报告的字节数属于它背后那些连接器所在的系统。
+openGauss 是在它之前的一个：它说 PostgreSQL 的线路协议，也接受 PostgreSQL 的 SQL，但它的密码握手是自己的——请求 10 和 11 分别是 SHA-256 和 MD5-SHA-256，而 PostgreSQL 的含义是 SASL 及其后续，所以标准驱动在一条查询都没发出之前就被拒绝。它把自己报告为 `pg`。
+
 etcd 是最新的一个：通过 etcd 的 gRPC API 以 etcdctl 子集读写键，浏览器显示键前缀分组和键浏览器，键值在一个以修订号为条件的事务中编辑，管理员可以压缩、碎片整理和解除告警；任何写入 Kubernetes 前缀的操作都会被拒绝，Kubernetes Secret 从不显示。
 Apache Kafka 是在它之前的一个：JSON 读取请求通过 Kafka 协议按分区、偏移量或时间戳读取主题中的消息，浏览器显示主题、带延迟的消费者组和 broker，并且按构造只读，因为 Studio 从不生产消息、提交偏移量、加入消费者组或创建主题。
 etcd、Apache Kafka 和 Prometheus 都和 MongoDB、Redis 一样完全不是 SQL：Prometheus 通过 Prometheus HTTP API 使用 PromQL，浏览指标、规则和抓取目标，并且是只读的，因为 Studio 不调用服务器的任何写入或管理端点。
@@ -145,8 +144,7 @@ etcd、Apache Kafka 和 Prometheus 都和 MongoDB、Redis 一样完全不是 SQL
 ### 为什么选择 LibreDB Studio？
 
 - **部署在数据旁边**：容器、Helm chart、Rancher、OpenShift operator、PaaS 一键模板，或用 npm 嵌入。
-- **十九种引擎，一个界面**：PostgreSQL、MySQL、Oracle、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Cassandra、Prometheus、Apache Kafka 和 openGauss。
-- **十九种引擎，一个界面**：PostgreSQL、MySQL、Oracle、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Cassandra、Prometheus、Apache Kafka、etcd。
+- **二十种引擎，一个界面**：PostgreSQL、MySQL、Oracle、SQL Server、SQLite、libSQL、DuckDB、MongoDB、Redis、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Cassandra、Prometheus、Apache Kafka、openGauss 和 etcd。
 - **你人在哪它就在哪跑**：浏览器、手机、Windows、MacOS、Linux 桌面。
 - **一个只读的 Agent，配你自己的模型**：说一个问题，这次运行就会起草 SQL、读取结果，并写出一份每条结论都引用来源的报告。Gemini、OpenAI，或者跑开源模型的本地 Ollama。
 - **没有东西被锁在墙后**：RBAC、OIDC 单点登录、查询审计日志和 ER 图，全部以 MIT 发布。
