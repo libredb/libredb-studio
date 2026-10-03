@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D153, U17 · 97
+- [Drivers and connections](#drivers-and-connections) — D1-D154, U17 · 98
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X23, U2-U74 · 65
@@ -2136,6 +2136,17 @@ Found on #1246, whose change does not touch etcd.
 Not fixed there: the test is etcd's, and that PR touched no other provider.
 
 **Done when:** the hook carries a timeout sized for a busy runner (bun's `beforeAll` takes one as its second argument), or makes RSA keys only where a test needs RSA, and the file passes repeated runs at the CI job's concurrency.
+
+### D154. Qdrant Cloud is not claimed
+
+Qdrant Cloud speaks the Qdrant REST API and connects as a `qdrant` connection: its address pasted into the Host box, SSL mode `verify-system`, and a key in API key or JWT.
+No test cluster has passed gate 4 of #424, so no listing, README or doc claims it (vector-family spec 6.2).
+Its keys are JWTs, with manage access to the whole cluster and an expiry of 90 days by default, and they never expire when the expiry is left empty, which the connection dialog's credential warning names.
+Its strict mode answers "Limit exceeded", "Index required but not found", "Exact search disabled" and HTTP 429 with `Retry-After` in normal use, and the provider maps each of them by the answer, never by the host name.
+
+Found 2026-10-03 while designing the Qdrant provider (vector-family spec 6.2).
+
+**Done when:** a Qdrant Cloud test cluster passes gate 4 of #424 (captures, the live check and the browser pass), and the provider doc, the README and the listings name it with the tier it measured.
 
 ## Value interpolation
 
