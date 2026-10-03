@@ -1000,7 +1000,7 @@ describe("declared per-row operations, the typed target and the preview (spec 3.
   });
 
   test("a typed-target control sends nothing until the row's own name is typed exactly, then sends once", async () => {
-    const onRunMaintenance = mock(async (_type: string, _target?: string, _container?: string) => true);
+    const onRunMaintenance = mock(async () => true);
     const view = render(
       <TablesTab data={makeData()} loading={false} onRunMaintenance={onRunMaintenance} capabilities={declared} />,
     );
@@ -1024,8 +1024,8 @@ describe("declared per-row operations, the typed target and the preview (spec 3.
   });
 
   test("a preview control reads the preview for its row and offers the confirm button only after it and the name", async () => {
-    const onRunMaintenance = mock(async (_type: string, _target?: string, _container?: string) => true);
-    const onPreviewMaintenance = mock(async (_type: string, _target: string, _container?: string) => SYNTHETIC_PREVIEW);
+    const onRunMaintenance = mock(async () => true);
+    const onPreviewMaintenance = mock(async () => SYNTHETIC_PREVIEW);
     const view = render(
       <TablesTab
         data={makeData()}
@@ -1050,7 +1050,7 @@ describe("declared per-row operations, the typed target and the preview (spec 3.
   });
 
   test("a refused preview offers no confirm button and sends nothing", async () => {
-    const onRunMaintenance = mock(async (_type: string, _target?: string, _container?: string) => true);
+    const onRunMaintenance = mock(async () => true);
     const view = render(
       <TablesTab
         data={makeData()}

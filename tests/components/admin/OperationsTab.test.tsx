@@ -2538,9 +2538,7 @@ describe("OperationsTab", () => {
   // order. No shipped provider declares either; the census suite pins that.
   // =========================================================================
 
-  const mockPreview = mock(
-    async (_type: string, _target: string, _container?: string): Promise<typeof SYNTHETIC_PREVIEW> => SYNTHETIC_PREVIEW,
-  );
+  const mockPreview = mock(async (): Promise<typeof SYNTHETIC_PREVIEW> => SYNTHETIC_PREVIEW);
 
   /** Clicks a row's control, found by its title, and returns the dialog it opened, found by the dialog's title. */
   const openRowDialog = async (view: ReturnType<typeof render>, title: string) => {
