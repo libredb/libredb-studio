@@ -98,6 +98,8 @@ describe("isoDurationMs", () => {
     ["P1DT1S", 86_401_000],
     ["PT0S", 0],
     ["P2D", 172_800_000],
+    // The driver writes a whole-day Duration with its T: new Duration(0, 1, 0, 0).toString() is "P1DT".
+    ["P1DT", 86_400_000],
   ])("%s is %d ms", (text, ms) => {
     expect(isoDurationMs(text)).toBe(ms);
   });

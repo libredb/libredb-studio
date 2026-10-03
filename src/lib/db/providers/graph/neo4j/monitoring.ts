@@ -97,10 +97,13 @@ export function toOverview(input: Neo4jOverviewInput): DatabaseOverview {
 /** Days, hours, minutes and seconds: the form Neo4j writes a transaction's elapsed time in. */
 const ELAPSED = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/;
 
-/** An ISO 8601 duration of days and time to milliseconds; undefined for any other text, or one naming nothing. */
+/**
+ * An ISO 8601 duration of days and time to milliseconds; undefined for any other text, or one naming nothing
+ * (`P`, `PT`). A trailing `T` after a day count is accepted, since the driver writes a whole-day Duration so.
+ */
 export function isoDurationMs(text: string): number | undefined {
   const match = ELAPSED.exec(text);
-  if (match === null || text.endsWith("P") || text.endsWith("T")) return undefined;
+  if (match === null || text === "P" || text === "PT") return undefined;
   const [, days, hours, minutes, seconds] = match.map((part) => Number(part ?? 0));
   return Math.round((((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000);
 }
