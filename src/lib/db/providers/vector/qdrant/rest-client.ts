@@ -92,9 +92,8 @@ function compile(op: string, template: QdrantRouteTemplate): Route {
 
 /** The route table, held to exactly the 17 operations: one more or one fewer is a programming error, raised at once. */
 function compileRoutes(routes: QdrantRouteTemplates): ReadonlyMap<string, Route> {
-  const given = Object.keys(routes).sort();
-  const expected = [...QDRANT_OPS].sort();
-  if (given.length !== expected.length || given.some((op, index) => op !== expected[index])) {
+  const given = new Set(Object.keys(routes));
+  if (given.size !== QDRANT_OPS.length || QDRANT_OPS.some((op) => !given.has(op))) {
     throw new TypeError("The Qdrant route table must name exactly the 17 operations of the v1 console");
   }
   return new Map(QDRANT_OPS.map((op) => [op, compile(op, routes[op])]));
