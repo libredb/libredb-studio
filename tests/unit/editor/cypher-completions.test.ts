@@ -110,9 +110,11 @@ function suggest(
 const labelsOf = (items: Monaco.languages.CompletionItem[]) => items.map((item) => item.label);
 
 describe("cypherCompletionSchemaOf", () => {
+  // Alphabetical as a person reads it (localeCompare), not by UTF-16 code unit, which put every capital
+  // before every lower-case letter: "bad..." now sorts before "KNOWS".
   test("reads label and relationship-type names through their kind-qualified segment, and properties from their columns", () => {
     expect(cypherCompletionSchemaOf(SCHEMA_OBJECTS)).toEqual({
-      labels: ["KNOWS", "Person", "Weird Label", "bad\u0001name"],
+      labels: ["bad\u0001name", "KNOWS", "Person", "Weird Label"],
       relationshipTypes: ["ACTED_IN", "KNOWS"],
       properties: ["born", "name", "roles", "since", "x y"],
     });

@@ -229,7 +229,7 @@ export function readTableStats(
     const { entries } = await neo4jCatalog.listKind(client, database, "label");
     const labels = entries
       .map((entry) => entry.name)
-      .sort()
+      .sort((a, b) => a.localeCompare(b, "en"))
       .slice(0, TABLE_STATS_LABEL_BOUND);
     const counts: Neo4jLabelCount[] = [];
     const skipped: string[] = [];

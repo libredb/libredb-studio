@@ -62,9 +62,9 @@ export function cypherCompletionSchemaOf(objects: readonly CypherSchemaObject[])
     for (const column of object.columns ?? []) properties.add(column.name);
   }
   return {
-    labels: [...labels].sort(),
-    relationshipTypes: [...relationshipTypes].sort(),
-    properties: [...properties].sort(),
+    labels: [...labels].sort((a, b) => a.localeCompare(b, "en")),
+    relationshipTypes: [...relationshipTypes].sort((a, b) => a.localeCompare(b, "en")),
+    properties: [...properties].sort((a, b) => a.localeCompare(b, "en")),
   };
 }
 
@@ -236,7 +236,12 @@ export function registerCypherCompletionProvider(
           }
           return [...items.values()];
         },
-        keyword: () => words([...CYPHER_KEYWORDS].sort(), Kind.Keyword, "Keyword"),
+        keyword: () =>
+          words(
+            [...CYPHER_KEYWORDS].sort((a, b) => a.localeCompare(b, "en")),
+            Kind.Keyword,
+            "Keyword",
+          ),
       };
       return { suggestions: suggestions[context.kind]() };
     },
