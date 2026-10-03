@@ -355,6 +355,7 @@ Vault credentials come from the environment, never from the seed file — a seed
 | `VAULT_TOKEN` | — | Static token. Takes precedence over `VAULT_ROLE` when both are set |
 | `VAULT_ROLE` | — | Kubernetes auth role, used when `VAULT_TOKEN` is unset. The login token's lease is tracked and refreshed before it lapses |
 | `VAULT_K8S_TOKEN_PATH` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Projected service account token presented to the Kubernetes login |
+| `VAULT_K8S_AUTH_PATH` | `kubernetes` | Mount path of the Kubernetes auth method; the login goes to `<VAULT_ADDR>/v1/auth/<path>/login`. Set it when the method is mounted elsewhere, such as one mount per cluster on a shared Vault. Leading and trailing slashes are ignored |
 | `VAULT_NAMESPACE` | — | Vault Enterprise namespace, sent as `X-Vault-Namespace` when set |
 | `VAULT_CACHE_TTL_MS` | `60000` | How long a read secret is cached |
 
