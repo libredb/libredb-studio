@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import React from "react";
 import { GraphView } from "@/components/results-graph/GraphView";
-import { type Core, type CytoscapeFactory, loadCytoscape } from "@/components/results-graph/cytoscape-host";
+import {
+  type Core,
+  type CytoscapeFactory,
+  fcoseLayout,
+  loadCytoscape,
+} from "@/components/results-graph/cytoscape-host";
 import { ChunkBoundary } from "@/components/LazyView";
 import { chartTheme } from "@/lib/charts/palette";
 import { DEFAULT_MASKING_CONFIG, type MaskingConfig, maskingInForce } from "@/lib/data-masking";
@@ -342,7 +347,51 @@ describe("GraphView: toolbar and keyboard", () => {
 
     const layout = spyOn(cy, "layout");
     fireEvent.click(getByRole("button", { name: "Re-layout" }));
-    expect(layout).toHaveBeenCalledWith({ name: "fcose", randomize: true, animate: false });
+    expect(layout).toHaveBeenCalledWith(fcoseLayout());
+  });
+
+  /** A headless canvas has no size, so each fit is stood in for by the zoom a small graph would reach. */
+  function fitsTo(zoom: number): CytoscapeFactory {
+    return async () => {
+      const create = await h.factory();
+      return (options) => {
+        const cy = create(options);
+        cy.fit = (() => cy.zoom(zoom)) as Core["fit"];
+        return cy;
+      };
+    };
+  }
+
+  test("the first layout, Fit, the 0 key and Re-layout never zoom a small graph past 1", async () => {
+    const { cy, getByRole } = await mount({ loadCytoscape: fitsTo(2.5) });
+    expect(cy.zoom()).toBe(1);
+    const again = (act: () => void) => {
+      cy.zoom(0.5);
+      act();
+      expect(cy.zoom()).toBe(1);
+    };
+    again(() => fireEvent.click(getByRole("button", { name: "Fit the graph" })));
+    again(() => fireEvent.keyDown(getByRole("application"), { key: "0" }));
+    again(() => fireEvent.click(getByRole("button", { name: "Re-layout" })));
+  });
+
+  test("a fit that zooms out to show a large graph is kept", async () => {
+    const { cy, getByRole } = await mount({ loadCytoscape: fitsTo(0.3) });
+    expect(cy.zoom()).toBeCloseTo(0.3);
+    cy.zoom(1);
+    fireEvent.click(getByRole("button", { name: "Fit the graph" }));
+    expect(cy.zoom()).toBeCloseTo(0.3);
+  });
+
+  test("Zoom in and the + key may pass 1, up to the canvas's own bound", async () => {
+    const { cy, getByRole } = await mount({ loadCytoscape: fitsTo(2.5) });
+    expect({ min: cy.minZoom(), max: cy.maxZoom() }).toEqual({ min: 0.1, max: 3 });
+    fireEvent.click(getByRole("button", { name: "Zoom in" }));
+    expect(cy.zoom()).toBeCloseTo(1.25);
+    fireEvent.keyDown(getByRole("application"), { key: "+" });
+    expect(cy.zoom()).toBeCloseTo(1.5625);
+    for (let press = 0; press < 10; press += 1) fireEvent.keyDown(getByRole("application"), { key: "+" });
+    expect(cy.zoom()).toBe(3);
   });
 
   test("keys zoom, fit, pan and clear, and every other key is left alone", async () => {
@@ -497,10 +546,12 @@ describe("GraphView: the canvas takes its size from its parent", () => {
     expect(observers).toHaveLength(1);
     expect(observers[0].observed).toEqual([getByRole("application")]);
     const resize = spyOn(cy, "resize");
-    const fit = spyOn(cy, "fit");
+    const fit = spyOn(cy, "fit").mockImplementation(() => cy.zoom(2.5));
     observers[0].callback();
     expect(resize).toHaveBeenCalledTimes(1);
     expect(fit).toHaveBeenCalledTimes(1);
+    // The fit after a resize is the capped one too.
+    expect(cy.zoom()).toBe(1);
   });
 
   test("unmounting stops observing, and a new result observes with a new observer", async () => {

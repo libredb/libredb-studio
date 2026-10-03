@@ -155,6 +155,28 @@ describe("graphStylesheet", () => {
     }
   });
 
+  test("a node is a modest fixed disc, captioned below in a fixed size that never runs into a neighbour", () => {
+    for (const mode of ["dark", "light"] as const) {
+      const theme = chartTheme(mode);
+      const [first] = graphStylesheet(theme, 0);
+      expect("style" in first ? first.style : undefined).toEqual({
+        "background-color": theme.axis,
+        label: "data(caption)",
+        color: theme.ink,
+        "font-size": 10,
+        "text-valign": "bottom",
+        "text-margin-y": 4,
+        "text-wrap": "ellipsis",
+        "text-max-width": "90px",
+        "text-background-color": theme.exportBackground,
+        "text-background-opacity": 0.85,
+        "text-background-padding": "1px",
+        width: 28,
+        height: 28,
+      });
+    }
+  });
+
   test("has no slot rule when nothing carries a label", () => {
     expect(selectors(graphStylesheet(chartTheme("light"), 0))).toEqual([
       "node",

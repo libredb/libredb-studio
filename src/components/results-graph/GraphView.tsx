@@ -26,7 +26,10 @@ import {
   type Core,
   type CytoscapeFactory,
   type EventObject,
+  MAX_ZOOM,
+  MIN_ZOOM,
   fcoseLayout,
+  fitGraph,
   loadCytoscape as defaultLoadCytoscape,
 } from "@/components/results-graph/cytoscape-host";
 import {
@@ -60,8 +63,6 @@ import type { QueryResult } from "@/lib/types";
 /** How far one zoom step or one arrow key moves the view. */
 const ZOOM_STEP = 1.25;
 const PAN_STEP = 40;
-/** Room left around the graph when it is fitted. */
-const FIT_PADDING = 30;
 
 const PAN_KEYS: Record<string, { x: number; y: number }> = {
   ArrowLeft: { x: PAN_STEP, y: 0 },
@@ -149,12 +150,13 @@ export function GraphView({
           container: containerRef.current,
           elements: graphElements(graph),
           style: stylesheetRef.current,
-          minZoom: 0.1,
-          maxZoom: 4,
+          minZoom: MIN_ZOOM,
+          maxZoom: MAX_ZOOM,
           boxSelectionEnabled: false,
         });
         cy = instance;
         instance.layout(fcoseLayout()).run();
+        fitGraph(instance);
         // Cytoscape cancels a press's default and blurs the active element before it
         // emits tapstart, so the canvas takes focus back here, or its keys stop after a click.
         instance.on("tapstart", () => containerRef.current?.focus({ preventScroll: true }));
@@ -166,7 +168,7 @@ export function GraphView({
         const container = containerRef.current;
         observer = new ResizeObserver(() => {
           instance.resize();
-          instance.fit(undefined, FIT_PADDING);
+          fitGraph(instance);
         });
         if (container) observer.observe(container);
         cyRef.current = instance;
@@ -192,8 +194,12 @@ export function GraphView({
     withCanvas((cy) =>
       cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } }),
     );
-  const fit = () => withCanvas((cy) => cy.fit(undefined, FIT_PADDING));
-  const relayout = () => withCanvas((cy) => cy.layout(fcoseLayout()).run());
+  const fit = () => withCanvas(fitGraph);
+  const relayout = () =>
+    withCanvas((cy) => {
+      cy.layout(fcoseLayout()).run();
+      fitGraph(cy);
+    });
   const clearSelection = () => {
     withCanvas((cy) => cy.elements().unselect());
     setSelection(null);

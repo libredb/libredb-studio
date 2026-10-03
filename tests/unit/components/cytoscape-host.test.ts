@@ -11,7 +11,16 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
 import ts from "typescript";
-import { type CytoscapeFactory, fcoseLayout, loadCytoscape } from "@/components/results-graph/cytoscape-host";
+import {
+  type CytoscapeFactory,
+  FIT_PADDING,
+  MAX_FIT_ZOOM,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  fcoseLayout,
+  fitGraph,
+  loadCytoscape,
+} from "@/components/results-graph/cytoscape-host";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const HOST = "src/components/results-graph/cytoscape-host.ts";
@@ -109,11 +118,78 @@ describe("loadCytoscape", () => {
 
 describe("fcoseLayout", () => {
   test("randomizes the first placement and never animates, so a run ends when run() returns", () => {
-    expect(fcoseLayout()).toEqual({ name: "fcose", randomize: true, animate: false });
+    expect(fcoseLayout()).toMatchObject({ name: "fcose", randomize: true, animate: false });
+  });
+
+  test("leaves the fit to fitGraph, and spaces nodes and components by their captions", () => {
+    expect(fcoseLayout()).toEqual({
+      name: "fcose",
+      randomize: true,
+      animate: false,
+      fit: false,
+      nodeDimensionsIncludeLabels: true,
+      packComponents: true,
+      nodeSeparation: 100,
+      idealEdgeLength: 90,
+      tilingPaddingVertical: 16,
+      tilingPaddingHorizontal: 16,
+    });
   });
 
   test("returns a fresh object each call, so a caller may add a handler to it", () => {
     expect(fcoseLayout()).not.toBe(fcoseLayout());
+  });
+});
+
+describe("fitGraph", () => {
+  /** A headless canvas has no size to fit to, so the fit is stood in for by the zoom it would reach. */
+  async function fitted(zoom: number) {
+    const make = await loadCytoscape();
+    const cy = make({ headless: true, styleEnabled: true, elements, minZoom: MIN_ZOOM, maxZoom: MAX_ZOOM });
+    const fit = spyOn(cy, "fit").mockImplementation(() => cy.zoom(zoom));
+    const center = spyOn(cy, "center");
+    fitGraph(cy);
+    return { cy, fit, center };
+  }
+
+  test("the bounds leave room to zoom in past the fit cap by hand", () => {
+    expect({ MIN_ZOOM, MAX_FIT_ZOOM, MAX_ZOOM, FIT_PADDING }).toEqual({
+      MIN_ZOOM: 0.1,
+      MAX_FIT_ZOOM: 1,
+      MAX_ZOOM: 3,
+      FIT_PADDING: 30,
+    });
+  });
+
+  test("fits every element with the padding, and keeps a fit that zooms out", async () => {
+    const { cy, fit, center } = await fitted(0.4);
+    try {
+      expect(fit).toHaveBeenCalledWith(undefined, FIT_PADDING);
+      expect(cy.zoom()).toBeCloseTo(0.4);
+      expect(center).not.toHaveBeenCalled();
+    } finally {
+      cy.destroy();
+    }
+  });
+
+  test("a fit that would zoom past the cap is set to the cap and centred, so a small graph is not blown up", async () => {
+    const { cy, center } = await fitted(2.5);
+    try {
+      expect(cy.zoom()).toBe(MAX_FIT_ZOOM);
+      expect(center).toHaveBeenCalledTimes(1);
+    } finally {
+      cy.destroy();
+    }
+  });
+
+  test("a fit that lands exactly on the cap is left as it is", async () => {
+    const { cy, center } = await fitted(1);
+    try {
+      expect(cy.zoom()).toBe(1);
+      expect(center).not.toHaveBeenCalled();
+    } finally {
+      cy.destroy();
+    }
   });
 });
 

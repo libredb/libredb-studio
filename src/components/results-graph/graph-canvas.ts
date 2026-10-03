@@ -79,6 +79,11 @@ export function graphElements(graph: ResultGraph): ElementDefinition[] {
  * chart palette. Text is drawn in the ink and never in a series colour, which the
  * palette forbids, and relationship captions sit on the export ground so a line
  * never runs through them.
+ *
+ * A node is a fixed disc with its caption below it in a fixed size, cut with an
+ * ellipsis at a width the layout's spacing leaves free, so a caption never runs
+ * into the next node; it sits on the export ground too, so a line under it stays
+ * out of the letters.
  */
 export function graphStylesheet(theme: ChartTheme, labelCount: number): StylesheetJson {
   const slots = Array.from({ length: labelCount }, (_, slot) => ({
@@ -95,6 +100,11 @@ export function graphStylesheet(theme: ChartTheme, labelCount: number): Styleshe
         "font-size": 10,
         "text-valign": "bottom",
         "text-margin-y": 4,
+        "text-wrap": "ellipsis",
+        "text-max-width": "90px",
+        "text-background-color": theme.exportBackground,
+        "text-background-opacity": 0.85,
+        "text-background-padding": "1px",
         width: 28,
         height: 28,
       },
