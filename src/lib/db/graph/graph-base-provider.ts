@@ -179,8 +179,11 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   protected readonly profile: GraphEngineProfile;
   private readonly createClient: GraphClientFactory;
   private session: GraphSession | null = null;
-  /** Statements in flight under the caller's id, so `cancelQuery` reaches them (spec 5.5). */
-  private readonly running = new Map<string, AbortController>();
+  /**
+   * Statements in flight under the caller's id, so `cancelQuery` reaches them (spec 5.5). An id
+   * holds a set: two runs sent under one id are both cancelled, never only the later one.
+   */
+  private readonly running = new Map<string, Set<AbortController>>();
   private readonly propertyCache = new Map<string, CachedRead<PropertyRead>>();
   private readonly indexCache = new Map<string, CachedRead<IndexRead>>();
 
@@ -244,6 +247,12 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async connect(): Promise<void> {
+    // A connect on a connected provider replaces the session, so the previous client is closed
+    // first and its statements aborted: no driver is left open, and a failed reconnect leaves no
+    // stale session behind. A close that fails is logged; the new connect is what the caller asked.
+    if (this.session !== null) {
+      await this.disconnect().catch((closeError: unknown) => this.logError("reconnect cleanup", closeError));
+    }
     let client: GraphClient | undefined;
     try {
       const endpoint = boltEndpointOf(this.config, this.profile.defaultPort);
@@ -279,7 +288,9 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   public async disconnect(): Promise<void> {
     const session = this.session;
     this.session = null;
-    for (const controller of this.running.values()) controller.abort(cancelled());
+    for (const controllers of this.running.values()) {
+      for (const controller of controllers) controller.abort(cancelled());
+    }
     this.running.clear();
     this.clearCatalogCache();
     this.setConnected(false);
@@ -309,7 +320,7 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     }
 
     const controller = new AbortController();
-    if (queryId !== undefined) this.running.set(queryId, controller);
+    if (queryId !== undefined) this.track(queryId, controller);
     const options: GraphRunOptions = {
       database,
       timeoutMs: this.queryTimeout,
@@ -324,8 +335,22 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
       );
       return toQueryResult(result, executionTime);
     } finally {
-      if (queryId !== undefined && this.running.get(queryId) === controller) this.running.delete(queryId);
+      if (queryId !== undefined) this.untrack(queryId, controller);
     }
+  }
+
+  private track(queryId: string, controller: AbortController): void {
+    const controllers = this.running.get(queryId);
+    if (controllers === undefined) this.running.set(queryId, new Set([controller]));
+    else controllers.add(controller);
+  }
+
+  /** Removes one finished run; a disconnect may already have cleared the id, and a later run under it stays. */
+  private untrack(queryId: string, controller: AbortController): void {
+    const controllers = this.running.get(queryId);
+    if (controllers === undefined) return;
+    controllers.delete(controller);
+    if (controllers.size === 0) this.running.delete(queryId);
   }
 
   /**
@@ -356,11 +381,11 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     }
   }
 
-  /** Aborts the statement running under `queryId`, which closes its session; false when none runs. */
+  /** Aborts every statement running under `queryId`, which closes their sessions; false when none runs. */
   public async cancelQuery(queryId: string): Promise<boolean> {
-    const controller = this.running.get(queryId);
-    if (controller === undefined) return false;
-    controller.abort(cancelled());
+    const controllers = this.running.get(queryId);
+    if (controllers === undefined) return false;
+    for (const controller of controllers) controller.abort(cancelled());
     return true;
   }
 
@@ -510,6 +535,10 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   // Health and maintenance
   // ==========================================================================
 
+  /**
+   * A healthy answer from the engine's `healthOf`, or the mapped error thrown, as etcd's health read
+   * does. `HealthInfo` has no response-time or unhealthy field, so there is no unhealthy form to answer.
+   */
   public async getHealth(): Promise<HealthInfo> {
     const client = this.client();
     const server = await this.mapped(() => client.verify());

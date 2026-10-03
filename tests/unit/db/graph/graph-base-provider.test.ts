@@ -311,7 +311,7 @@ describe("construction", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
-  test("defaults to the Bolt client factory without touching it", () => {
+  test("constructs with no client factory given and is not connected", () => {
     const provider = new TestGraphProvider(connection(), {}, profileWith(new FakeCatalog()));
     expect(provider.isConnected()).toBe(false);
   });
@@ -420,6 +420,48 @@ describe("connect", () => {
     expect(await provider.cancelQuery("q1")).toBe(false);
     held.resolve({ fields: [], rows: [], truncated: false });
     await running;
+  });
+
+  test("connecting again closes the previous client and aborts its statements first", async () => {
+    const { provider, transport } = await connected();
+    const held = deferred<GraphRunResult>();
+    transport.run = () => held.promise;
+    const running = provider.query("MATCH (n) RETURN n", [], "q1");
+    await Promise.resolve();
+    await provider.connect();
+    expect(transport.configs).toHaveLength(2);
+    expect(transport.closes).toBe(1);
+    expect(transport.calls[0]?.options.signal?.aborted).toBe(true);
+    expect(await provider.cancelQuery("q1")).toBe(false);
+    expect(provider.isConnected()).toBe(true);
+    held.resolve({ fields: [], rows: [], truncated: false });
+    await running;
+  });
+
+  test("a failed reconnect leaves no stale session behind", async () => {
+    const { provider, transport } = await connected();
+    transport.verify = async () => {
+      throw new GraphClientError("connection", "unreachable");
+    };
+    expect(((await rejectionOf(provider.connect())) as Error).message).toBe("TestGraph says: unreachable");
+    expect(transport.closes).toBe(2);
+    expect(provider.isConnected()).toBe(false);
+    expect(provider.exposedDatabase()).toBeUndefined();
+    expect(() => provider.exposedClient()).toThrow(DatabaseConfigError);
+  });
+
+  test("a previous client that fails to close is logged, and the reconnect goes on", async () => {
+    const { provider, transport } = await connected();
+    transport.closeError = new Error("close failed");
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0]?.[0])).toContain("reconnect cleanup failed: close failed");
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   test("disconnect before connect closes nothing", async () => {
@@ -620,6 +662,24 @@ describe("cancelQuery", () => {
     expect(transport.calls[0]?.options.signal?.aborted).toBe(true);
     expect(((await rejectionOf(running)) as Error).message).toBe("TestGraph says: The query was cancelled");
     expect(await provider.cancelQuery("q1")).toBe(false);
+  });
+
+  test("every statement in flight under one id is cancelled, not only the latest", async () => {
+    const { provider, transport } = await connected();
+    const first = deferred<GraphRunResult>();
+    const second = deferred<GraphRunResult>();
+    const answers = [first.promise, second.promise];
+    transport.run = () => answers.shift() as Promise<GraphRunResult>;
+    const one = provider.query("MATCH (n) RETURN n", undefined, "q");
+    const two = provider.query("MATCH (n) RETURN n", undefined, "q");
+    await Promise.resolve();
+    expect(await provider.cancelQuery("q")).toBe(true);
+    expect(transport.calls[0]?.options.signal?.aborted).toBe(true);
+    expect(transport.calls[1]?.options.signal?.aborted).toBe(true);
+    first.resolve({ fields: [], rows: [], truncated: false });
+    second.resolve({ fields: [], rows: [], truncated: false });
+    await Promise.all([one, two]);
+    expect(await provider.cancelQuery("q")).toBe(false);
   });
 
   test("a later statement under the same id is not removed by an earlier one finishing", async () => {
