@@ -23,6 +23,7 @@ import {
   Db2Icon,
   Neo4jIcon,
   QdrantIcon,
+  MilvusIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -50,6 +51,7 @@ describe("db-icons", () => {
     { name: "Db2Icon", Component: Db2Icon },
     { name: "Neo4jIcon", Component: Neo4jIcon },
     { name: "QdrantIcon", Component: QdrantIcon },
+    { name: "MilvusIcon", Component: MilvusIcon },
   ];
 
   for (const { name, Component } of icons) {

@@ -155,6 +155,7 @@
   --studio-hue-sky: #00598a;
   --studio-hue-sky-alt: #024a70;
   --studio-hue-indigo: #432dd7;
+  --studio-hue-indigo-alt: #372aac;
   --studio-hue-indigo-tint: #615fff;
   --studio-hue-violet: #7008e7;
   --studio-hue-purple: #8200db;
@@ -281,6 +282,7 @@
   --studio-hue-sky: #00bcff;
   --studio-hue-sky-alt: #74d4ff;
   --studio-hue-indigo: #7c86ff;
+  --studio-hue-indigo-alt: #a3b3ff;
   --studio-hue-indigo-tint: #615fff;
   --studio-hue-violet: #a684ff;
   --studio-hue-purple: #c27aff;
@@ -384,6 +386,7 @@
   --color-hue-sky: var(--studio-hue-sky);
   --color-hue-sky-alt: var(--studio-hue-sky-alt);
   --color-hue-indigo: var(--studio-hue-indigo);
+  --color-hue-indigo-alt: var(--studio-hue-indigo-alt);
   --color-hue-indigo-tint: var(--studio-hue-indigo-tint);
   --color-hue-violet: var(--studio-hue-violet);
   --color-hue-purple: var(--studio-hue-purple);

@@ -581,3 +581,32 @@ export const QdrantIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <circle cx="5.6" cy="18.4" r="1.25" />
   </svg>
 );
+
+/**
+ * Milvus: a mark drawn for Studio, never the project's logo or any vendor or Attu asset (vector-family spec 10.3).
+ *
+ * A query point and its three nearest neighbours, the search a vector database answers, as strokes at the house
+ * weight with no fill, which is what stays identifiable at the 14px the connection list draws.
+ */
+export const MilvusIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="2.25" />
+    <circle cx="5" cy="6" r="1.75" />
+    <circle cx="19" cy="7.5" r="1.75" />
+    <circle cx="9" cy="19.5" r="1.75" />
+    <path d="M10.3 10.55 6.35 7.15" />
+    <path d="m14.15 11.3 3.15-2.65" />
+    <path d="m11.15 14.1-1.45 3.75" />
+    <path d="M3 21h3" />
+    <path d="M18 21h3" />
+  </svg>
+);
