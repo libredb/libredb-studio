@@ -12,6 +12,8 @@
  * `database-compose.yml` seeded by docker/qdrant/seed.py: the descriptions, `GET /` and `GET /aliases` by
  * tests/live/vector-evidence.ts into tests/fixtures/vector/qdrant/, and the surface reads by
  * tests/live/qdrant-surface-evidence.ts into tests/fixtures/qdrant-surface/.
+ * Live check (tests/live/qdrant-live-check.ts) against ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822,
+ * 2026-10-03: Bun 1.4.2 19/19 passed, Node v24.14.0 19/19, Node v26.10.0 19/19.
  *
  * What is BUILT rather than captured: the 404 for a collection the seed does not hold, in the shape Qdrant
  * writes it (`collectionNotFound` in tests/helpers/qdrant-surface-fixtures.ts).
