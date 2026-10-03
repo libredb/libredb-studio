@@ -36,6 +36,7 @@ import {
   getDBConfig,
   isFileBased,
   offersSshTunnel,
+  readOnlyHint,
   takesConnectionField,
   type ConnectionField,
   type DatabaseUIConfig,
@@ -458,8 +459,7 @@ export function ConnectionModal({
                 <span className="text-xs font-medium text-fg-muted">Read-only</span>
               </label>
               <p id="readOnly-hint" className="text-xs text-fg-muted">
-                Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on
-                your own connection it is a safety rail, not a permission.
+                {readOnlyHint(uiConfig)}
               </p>
             </div>
           )}

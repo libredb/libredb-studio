@@ -163,6 +163,15 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "A key-prefix group holds keys whose values are bytes, not rows with declared columns, so there is no column definition to change.",
   },
+  // Not a table store either: a label groups nodes, each carrying whatever properties it was written with,
+  // and the columns the object browser shows are the property keys the server reports for that label. The
+  // provider is read-only besides. The sentence is the one `NO_TABLE_DDL` below prints when it declines the
+  // whole diff.
+  neo4j: {
+    label: "Neo4j",
+    reason:
+      "A node label groups nodes whose properties are not declared columns, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -207,7 +216,8 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  * text is PromQL, not SQL (`NON_SQL_DIALECTS`). `NO_TABLE_DDL` declines its whole diff before
  * any wrapper is written, so this entry keeps the two sets agreeing rather than changing output.
  * `kafka` (#1088) joined on the same fact and for the same reason: its text is a JSON read
- * request, not SQL. `etcd` (#1089) joined the same way: its text is an etcdctl command line.
+ * request, not SQL. `etcd` (#1089) joined the same way: its text is an etcdctl command line, and
+ * `neo4j` too: its text is a Cypher statement.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
@@ -226,6 +236,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "prometheus",
   "kafka",
   "etcd",
+  "neo4j",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -242,6 +253,7 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "prometheus",
   "kafka",
   "etcd",
+  "neo4j",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

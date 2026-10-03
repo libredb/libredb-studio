@@ -20,6 +20,11 @@ src/lib/db/
 ├── errors.ts                   # Custom error classes
 ├── factory.ts                  # Provider Factory
 ├── base-provider.ts            # Abstract base class
+├── graph/                      # The graph layer (pure core shipped to the browser; bolt/ and the base server only)
+│   ├── cypher/                 #   lexer, statements, quote, read-policy, generators
+│   ├── bolt/                   #   GraphClient seam, uri, bolt-client (the one neo4j-driver-lite client), record-values
+│   ├── objects.ts, values.ts, profile.ts # kinds and path segments, graph JSON forms, policy profile types
+│   └── graph-base-provider.ts  #   GraphBaseProvider: policy, statement gate, READ session, object surface
 ├── providers/
 │   ├── sql/                    # SQL Database Providers
 │   │   ├── sql-base.ts         # SQL-specific base class
@@ -101,6 +106,15 @@ src/lib/db/
 │   │       ├── objects.ts      #   kinds and the object surface: topics, groups, brokers
 │   │       ├── monitoring.ts   #   metadata, configs, log dirs -> monitoring
 │   │       └── errors.ts       #   KafkaError category -> the repository's error classes
+│   ├── graph/                  # Graph Providers, on the graph layer above
+│   │   └── neo4j/              # Neo4j Strategy (read-only Cypher over Bolt)
+│   │       ├── index.ts        #   Neo4jProvider: declarations, version read and monitoring delegation
+│   │       ├── profile.ts      #   NEO4J_POLICY_PROFILE: every list of the read policy (browser-safe)
+│   │       ├── statement-gate.ts #  EXPLAIN classification before a statement runs
+│   │       ├── catalog.ts      #   home database, kind listings, property and index reads
+│   │       ├── monitoring-reads.ts, monitoring.ts # the monitoring statements and their shaping
+│   │       ├── errors.ts       #   GraphClientError category -> the repository's error classes
+│   │       └── labels.ts       #   labels, and the plan-mode statement language
 │   └── embedded/               # Embedded (in-process) Providers
 │       └── libredb.ts          # LibreDB Strategy
 └── utils/
@@ -132,10 +146,14 @@ BaseDatabaseProvider (abstract)
 ├── PrometheusProvider ─────────────────────┤ Time series (PromQL over HTTP)
 ├── KafkaProvider ──────────────────────────┤ Stream (JSON read requests over the Kafka protocol)
 ├── EtcdProvider ───────────────────────────┤ Key-Value Store (etcdctl commands over gRPC)
+├── GraphBaseProvider (abstract)
+│   └── Neo4jProvider ──────────────────────┤ Graph (read-only Cypher over Bolt)
 └── LibreDBProvider ────────────────────────┘ Embedded (key-value)
 ```
 
 `SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
+
+Neo4j extends `GraphBaseProvider`, which extends `BaseDatabaseProvider` and runs the query path every graph engine shares; the engine supplies a profile. See [ADDING_A_PROVIDER.md](./ADDING_A_PROVIDER.md#adding-a-graph-engine) and [providers/neo4j.md](./providers/neo4j.md).
 
 Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and expresses its SQL-ness through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
 
@@ -189,7 +207,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Twenty type-ids are supported by nineteen provider modules: `elasticsearch` and `opensearch` share
+Twenty-one type-ids are supported by twenty provider modules: `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -216,6 +234,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Prometheus | `prometheus` | Time series (PromQL over HTTP, read-only) | [providers/prometheus.md](./providers/prometheus.md) |
 | Apache Kafka | `kafka` | Stream (JSON read requests over the Kafka protocol, read-only) | [providers/kafka.md](./providers/kafka.md) |
 | etcd | `etcd` | Key-Value (etcdctl commands over gRPC) | [providers/etcd.md](./providers/etcd.md) |
+| Neo4j | `neo4j` | Graph (Cypher over Bolt, read-only) | [providers/neo4j.md](./providers/neo4j.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -322,6 +341,7 @@ examples live in their prime docs:
 - **Prometheus** (a PromQL expression): [providers/prometheus.md](./providers/prometheus.md).
 - **Apache Kafka** (a JSON read request): [providers/kafka.md](./providers/kafka.md).
 - **etcd** (one etcdctl command): [providers/etcd.md](./providers/etcd.md).
+- **Neo4j** (one read-only Cypher statement): [providers/neo4j.md](./providers/neo4j.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
 takes ordinary SQL in the `sql` field and inherits the SQL editor and the shared limiter.
@@ -398,7 +418,7 @@ Provider-specific behaviour — pooling model, SSL/encryption, pagination, monit
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
-Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, or LibreDB.
+Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

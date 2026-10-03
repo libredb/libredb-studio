@@ -1,6 +1,6 @@
 import { describe, test, expect, spyOn } from "bun:test";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { maintenanceControl, offersCodeGeneration, offersColumnProfiling } from "@/lib/db/types";
+import { maintenanceControl, offersCodeGeneration, offersColumnProfiling, offersSchemaDiagram } from "@/lib/db/types";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 import type {
   DatabaseConnection,
@@ -1146,6 +1146,11 @@ describe("offersColumnProfiling", () => {
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json" }))).toBe(true);
   });
 
+  test("Cypher is not profiled, because the route writes no Cypher (Neo4j spec 6.5)", () => {
+    // Correct as a fall-through: the gate names the two languages the route writes.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
+  });
+
   test("PromQL is not profiled, because the route writes no PromQL", () => {
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "promql" }))).toBe(false);
     // The control: the same declaration in SQL.
@@ -1193,8 +1198,27 @@ describe("offersCodeGeneration", () => {
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
   });
 
+  test("Cypher is not offered it: a label's columns are sampled property keys, not a record type (Neo4j spec 6.5)", () => {
+    // Correct as a fall-through: the gate names SQL and JSON, so a language added later is not offered it.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
+  });
+
   test("undefined capabilities are a denial, not a permission", () => {
     expect(offersCodeGeneration(undefined)).toBe(false);
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
+  });
+});
+
+describe("offersSchemaDiagram", () => {
+  test("Cypher is not offered the diagram: a relationship type is no table and no column names an edge (SR20)", () => {
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
+  });
+
+  test("every other language keeps it, and so does a connection whose capabilities have not answered yet", () => {
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "json" }))).toBe(true);
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "promql" }))).toBe(true);
+    expect(offersSchemaDiagram(undefined)).toBe(true);
   });
 });

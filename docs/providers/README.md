@@ -25,13 +25,14 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
 | Prometheus | `prometheus` | Time series | none (HTTP: the Prometheus HTTP API, `/api/v1/*`) | PromQL | [prometheus.md](./prometheus.md) |
 | Apache Kafka | `kafka` | Stream | `@platformatic/kafka` (pure TypeScript) | JSON (a read request) | [kafka.md](./kafka.md) |
 | etcd | `etcd` | Key-Value | `@grpc/grpc-js` (pure JavaScript, gRPC) | etcdctl commands (a subset) | [etcd.md](./etcd.md) |
+| Neo4j | `neo4j` | Graph | `neo4j-driver-lite` (pure JavaScript, Bolt) | Cypher (read-only) | [neo4j.md](./neo4j.md) |
 | LibreDB | `libredb` | Embedded (Key-Value) | `@libredb/libredb` | JSON (command grammar) | [libredb.md](./libredb.md) |
 
 ## Conventions
 
 - **Filename = canonical type-id** (`postgres.md`, `mssql.md`, …), mirroring the source file
   (`src/lib/db/providers/<family>/<type-id>.ts`, or a `<type-id>/` directory when a provider is
-  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Prometheus, Kafka and etcd are). The official product name (e.g.
+  split across modules, as Couchbase, ClickHouse, Druid, Trino, Cassandra, libSQL, DuckDB, Prometheus, Kafka, etcd and Neo4j are). The official product name (e.g.
   "SQL Server") is used only in each doc's title and prose. **One directory may serve two type-ids**
   — `providers/sql/search/` is `elasticsearch` and `opensearch` — and each type-id still gets its own
   document, because the tri-sync invariant is per type-id and each doc is the prime reference for its
@@ -254,9 +255,10 @@ block asks for (twice those differ; see the notes).
 The Prometheus row and the `prometheus-auth` note below were verified against the running containers on 2026-09-23, by the capture `tests/fixtures/prometheus/README.md` records.
 The Apache Kafka row and the `kafka-auth` and `kafka-cluster` notes below were verified against the running containers on 2026-09-24, by the capture `tests/fixtures/kafka/README.md` records.
 The etcd row and the etcd fixtures note below were verified against the running containers on 2026-09-30, by the capture `tests/fixtures/etcd/README.md` records.
+The Neo4j row was verified against the running container on 2026-10-03, by the capture `tests/fixtures/neo4j/5.26.31/README.md` records.
 
-Start the twenty always-on services with a plain `docker compose -f database-compose.yml up -d`:
-sixteen engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init` and `etcd-seed` seed sidecars; the `Profile` column names
+Start the twenty-one always-on services with a plain `docker compose -f database-compose.yml up -d`:
+seventeen engine containers plus the one-shot `couchbase-init`, `trino-init`, `kafka-init` and `etcd-seed` seed sidecars; the `Profile` column names
 the ones that need asking for. The count is derived, not written: a service in this file carries no
 `profiles:` key precisely when it backs a SHIPPED provider, so a plain `up -d` can reproduce that
 provider's integration pass.
@@ -279,6 +281,7 @@ provider's integration pass.
 | Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | *none* |
 | Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
 | etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | *none* |
+| Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
@@ -304,6 +307,10 @@ The plain `prometheus` service on 9090 takes no credential at all ([prometheus.m
 `etcd` is seeded by its `etcd-seed` one-shot; `etcd-cluster` is three members on `127.0.0.2`, `127.0.0.3` and `127.0.0.4`, port 2379 (profile `etcd-cluster`), and `etcd-auth` (port 12379, TLS with client certificates) and `etcd-auth-password` (port 12479, TLS with a password) run with RBAC on (profile `etcd-auth`).
 Their certificates and passwords are generated into a volume at first start and never committed; [`docker/etcd/README.md`](../../docker/etcd/README.md) says how to start and seed each, how to copy the certificates out, and what every seeded key is for.
 The user `reader` may read the prefix `/app/` and the key `/config/a` only, which is what the auth fixtures are for ([etcd.md, section 4.7](./etcd.md#47-a-user-who-is-not-root)).
+
+**The `neo4j` service starts empty, and its graph is loaded by hand.**
+Once it is healthy, load the seed with `docker exec -i libredb-neo4j cypher-shell -u neo4j -p password123 < docker/neo4j/seed.cypher`; [`docker/neo4j/README.md`](../../docker/neo4j/README.md) says what the graph holds and why.
+Neo4j refuses a password shorter than 8 characters, so the credential is `neo4j` / `password123`, and the service runs plaintext Bolt with no TLS ([neo4j.md, section 11.3](./neo4j.md#113-the-live-fixture)).
 
 **Cassandra needs one field this table has no column for, and will not connect without it.** `Local
 Data Center` must be `datacenter1` - a stock single node names its own data centre that, and the

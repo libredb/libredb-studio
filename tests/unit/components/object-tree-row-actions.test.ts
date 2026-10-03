@@ -3,6 +3,8 @@ import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree
 import type { TreeRowModel } from "@/components/object-tree/flatten";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
+import { graphObjectSegment } from "@/lib/db/graph/objects";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 
 /**
@@ -716,6 +718,29 @@ describe("the actions whose destination speaks only some query languages", () =>
       "generate-code",
       "view-source",
     ]);
+  });
+
+  test("a graph label or relationship type is offered Generate Query only: nothing profiles, models, counts or writes its rows (Neo4j spec 6.5)", () => {
+    // The provider's own declaration: Cypher is a language the profile route, the code generator and the
+    // count write nothing in, and no graph kind takes row writes, so Generate Test Data, the one caller of
+    // TestDataGenerator, whose fall-through would write SQL INSERTs, is never offered.
+    const neo4j = new Neo4jProvider({
+      id: "neo4j-row-actions",
+      name: "Neo4j",
+      type: "neo4j",
+      host: "127.0.0.1",
+      port: 7687,
+      createdAt: new Date(0),
+    }).getCapabilities();
+    const handlers: TreeRowActionHandlers = { ...allHandlers(), onGenerateCount: () => {} };
+    for (const kind of ["label", "relationship_type"] as const) {
+      const path = ["neo4j", graphObjectSegment(kind, "Person")];
+      const object: DatabaseObject = { path, name: "Person", kind };
+      expect({ kind, ids: idsFor({ ...objectRow(kind), path }, neo4j, handlers, object) }).toEqual({
+        kind,
+        ids: ["generate-select"],
+      });
+    }
   });
 
   test("an etcd key-prefix group is offered Generate Command and Browse Keys, and nothing that profiles, models, counts or writes its rows (#1089)", () => {

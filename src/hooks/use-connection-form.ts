@@ -993,6 +993,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "prometheus",
     "kafka",
     "etcd",
+    "neo4j",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

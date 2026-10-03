@@ -2,7 +2,7 @@
 
 import React from "react";
 import { DatabaseConnection } from "@/lib/types";
-import { keyScanShape, type DatabaseObject } from "@/lib/db/types";
+import { keyScanShape, offersSchemaDiagram, type DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { Plus, Zap, Layers, LoaderCircle, CircleAlert } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -257,7 +257,8 @@ export const Sidebar = React.memo(function Sidebar({
           </span>
         </div>
         <div className="flex items-center gap-1">
-          {activeConnection && (
+          {/* Not on a Cypher connection: its relationship types are no tables (SR20). */}
+          {activeConnection && offersSchemaDiagram(metadata?.capabilities) && (
             <button
               className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
               onClick={onShowDiagram}

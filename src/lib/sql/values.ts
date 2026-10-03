@@ -96,6 +96,10 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // '\' ( '\' | '"' | "'" | 'b' | 'f' | 'n' | 'r' | 't' | 'u' hex hex hex hex )`.
   // Doubling is not in that grammar, so a doubled quote is not one literal there.
   couchbase: "backslash",
+  // Cypher spells its escapes with a backslash (`\'`, `\"`, `\\`, `\n`, `\uXXXX`), and a doubled quote is
+  // not one of them: it closes one string and opens the next. The graph lexer
+  // (`src/lib/db/graph/cypher/lexer.ts`) decodes the same set, so the two read a literal alike.
+  neo4j: "backslash",
 };
 
 /**

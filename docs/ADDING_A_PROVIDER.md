@@ -44,6 +44,9 @@ Three decisions. The first is the consequential one, which is why it is first.
      `escapeIdentifier()` and `buildLimitClause()` are inherited unchanged and `prepareQuery()` is
      the only override — for a single dialect trap, not for the transport.
    - **Non-SQL databases → extend `BaseDatabaseProvider`** directly, like MongoDB and Redis.
+   - **Graph databases that speak Cypher over Bolt → extend `GraphBaseProvider`**, which extends
+     `BaseDatabaseProvider` and owns the query path; the engine supplies a profile
+     ([Adding a graph engine](#adding-a-graph-engine)).
    - The one reason a SQL-speaking provider extends `BaseDatabaseProvider` anyway is a dialect the
      shared helpers cannot express. Couchbase is that case: SQL++ quotes identifiers with doubled
      backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting in
@@ -54,6 +57,8 @@ Three decisions. The first is the consequential one, which is why it is first.
 3. **Query language?**
    - `'sql'` → Monaco editor uses SQL mode with autocomplete
    - `'json'` → Monaco editor uses JSON mode with MQL-style autocomplete
+   - `'cypher'` → the graph layer's Cypher language, with completion from the schema and the engine's
+     policy profile
 
 ### Why a driver-free provider is worth the effort
 
@@ -169,6 +174,45 @@ directly; reshaping rows inside the transport would have broken schema loading. 
 
 ---
 
+## Adding a graph engine
+
+A graph engine that speaks Cypher over Bolt joins the shared graph layer, [`src/lib/db/graph/`](../src/lib/db/graph/), instead of writing a provider from `BaseDatabaseProvider` up.
+Neo4j is the one engine on it today ([neo4j.md](./providers/neo4j.md)); the layer was designed from Neo4j 5.26 and a probe of Memgraph 3.13.1, and a second engine is expected to find what that probe did not.
+
+**The layers, and which way they may import.**
+
+| Layer | Files | Runs | May import |
+|---|---|---|---|
+| Graph core | `cypher/` (lexer, statements, quoting, read policy, generators), `objects.ts`, `values.ts`, `profile.ts` | server and browser | nothing of `bolt/`, `graph-base-provider.ts` or `src/lib/db/providers/`, and no `node:` module |
+| Bolt transport | `bolt/client.ts` (the `GraphClient` seam), `bolt/uri.ts`, `bolt/bolt-client.ts`, `bolt/record-values.ts` | server | the driver, in `bolt-client.ts` and `record-values.ts` only |
+| Provider base | `graph-base-provider.ts` | server | the core and the transport |
+| Engine | `src/lib/db/providers/graph/<type-id>/` | server, except its policy profile | the layer, never another provider |
+
+`tests/unit/db/graph/seam-guard.test.ts` holds the direction and the driver members `bolt-client.ts` may call.
+
+**`GraphBaseProvider`** implements the query path, the object surface, the cancel, health and the maintenance refusal: every statement passes the read policy, then the engine's statement gate, then one `GraphClient.run` in a READ session on the connection's one database, bounded by `DEFAULT_QUERY_LIMIT` rows and the query timeout, and a cancel aborts the run, which closes its session.
+It leaves abstract `getCapabilities`, `getLabels` and the seven monitoring reads, so an engine provider is declarations, a profile and monitoring, as `src/lib/db/providers/graph/neo4j/index.ts` is.
+
+**`GraphEngineProfile`** is what an engine supplies, and its four hooks are the four places where the Memgraph probe measured an engine differing from Neo4j:
+
+| Hook | What it decides | Neo4j's answer |
+|---|---|---|
+| `readPolicy` | The denied words and namespaces, the allowlisted procedures, qualified functions and SHOW forms, and the refused prefixes the shared policy reads | `NEO4J_POLICY_PROFILE` in `neo4j/profile.ts`, pure, so the editor reads it too |
+| `dialect` | Whether a `CYPHER <n>` prefix exists, and the offset keyword generators write | the prefix exists; `SKIP` |
+| `statementGate` | The server's own classification of a statement the policy allowed, or none | `EXPLAIN` and `summary.queryType`, in `neo4j/statement-gate.ts` |
+| `catalog` | The home database and the statements that list each kind, the properties and the indexes | `neo4j/catalog.ts` |
+
+Beside them the profile carries `engineLabel`, `defaultPort` and `mapError`, the engine's error table.
+Two seams the probe measured are deliberately not hooks: READ-mode enforcement and cancellation.
+The transport has one execution strategy, an auto-commit `session.run` in a READ session that a closed session cancels, and Memgraph enforces READ mode only in an explicit transaction and stops a statement only on its timeout or `TERMINATE TRANSACTIONS <id>`.
+So an engine that needs another strategy adds it to the Bolt transport in its own PR, and the profile gains a field then; it edits nothing under `src/lib/db/providers/graph/neo4j/`.
+The Memgraph provider is filed as `docs/BACKLOG.md` D141.
+
+**What a graph engine still registers** is the same as any engine (Steps 1 to 4): its type-id, its `DB_UI_CONFIG` entry, its factory case, and every record the checklist below names.
+`queryLanguage: "cypher"` already has its readers, the editor language and the completion; a policy profile is looked up for the editor by type-id in `src/lib/db/graph-policy-profiles.ts`.
+
+---
+
 ## Step 1: Register the Database Type
 
 ### 1.1 — Add to `DatabaseType` union
@@ -192,7 +236,7 @@ If your database uses a new editor mode (not `'sql'` or `'mongodb'`), add it:
 ```typescript
 export interface QueryTab {
   // ...
-  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd';  // Add your type here if needed
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd' | 'cypher';  // Add your type here if needed
 }
 ```
 
@@ -201,7 +245,7 @@ For most SQL databases, the existing `'sql'` type is sufficient. You only need a
 A new tab type is reached one of two ways, and both are wired in `src/lib/editor/tab-language.ts` and its neighbours.
 A language that is a kind of JSON declares a `queryDialect` on the provider and gets a record in `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), whose `tabType` `resolveTabType()` reads **before** the `queryLanguage === 'json'` rung; skipping the dialect leaves the tab typed `mongodb`, which is exactly what #427 fixed.
 A language that is neither SQL nor JSON widens `ProviderCapabilities.queryLanguage` instead, as PromQL did (#1085), and every reader of that union then needs an explicit arm or a test pinning that its branch is right, because a reader written `=== 'json'` sends the new member into its SQL branch and one written `!== 'sql'` into its JSON branch.
-Either way the type gets a record in `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`), its Monaco language for `editorLanguageForTabType()` and its formatter, if any, for `QueryEditor`'s Format button, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage`, `registerPromqlLanguage` and `registerEtcdLanguage`.
+Either way the type gets a record in `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`), its Monaco language for `editorLanguageForTabType()` and its formatter, if any, for `QueryEditor`'s Format button, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage`, `registerPromqlLanguage`, `registerEtcdLanguage` and `registerCypherLanguage`.
 A JSON kind may instead render in Monaco's built-in `json` mode and register no module, as Kafka's read request does (#1088).
 Then the MongoDB completion provider `QueryEditor` registers for `json` must stay off it: it registers only where the declared capabilities name no JSON dialect, so its MongoDB snippets and column completions never reach a tab whose parser refuses them.
 
@@ -224,6 +268,7 @@ is kept in sync with its per-provider doc). Don't copy a skeleton from this guid
 | Document store reached over HTTP/REST (no driver) | `BaseDatabaseProvider` | `document/couchbase/` | [couchbase.md](./providers/couchbase.md) |
 | Key-value store | `BaseDatabaseProvider` | `redis.ts` | [redis.md](./providers/redis.md) |
 | Embedded (in-process, no wire protocol) | `BaseDatabaseProvider` | `embedded/libredb.ts` | [libredb.md](./providers/libredb.md) |
+| Graph database speaking Cypher over Bolt | `GraphBaseProvider` | `graph/neo4j/` | [neo4j.md](./providers/neo4j.md) |
 
 **Implement the abstract methods** from the `DatabaseProvider` interface: `connect`, `disconnect`,
 `query`, the five REQUIRED object methods (`listContainers`, `countObjects`, `listObjects`,
@@ -249,10 +294,10 @@ never off the kind id.
 **It is OPTIONAL, and omitting it entirely is the right answer for an engine that publishes no
 definition text.** `readObjectSource?` is declared optional on `DatabaseProvider` in
 `src/lib/db/types.ts` for that reason: a provider with no source-bearing kind can never reach the
-method, so requiring it would put an unreachable throw in each. Two shipped providers are exactly
-that case and say so in their own docs, `druid` and `libredb`. If yours is a third, declare
+method, so requiring it would put an unreachable throw in each. Three shipped providers are exactly
+that case and say so in their own docs, `druid`, `libredb` and `neo4j`. If yours is a fourth, declare
 `hasSource` on no kind, write no method, and add your type-id to the committed ABSTAINER list in
-`tests/isolated/object-source-declarations.test.ts` beside those two. Do NOT write the method
+`tests/isolated/object-source-declarations.test.ts` beside those three. Do NOT write the method
 answering an empty document, an empty string or any other neutral value: the pairing fails by name
 on a method with no source-bearing kind, and an empty text is a RAISE everywhere in the table below.
 
@@ -451,6 +496,8 @@ bun add <driver-package>
 #                            optional; this one is pure JS, which is the next best thing)
 # bun add @duckdb/node-api  (DuckDB — an embedded engine, so there is no protocol at all and no
 #                            HTTP alternative; this one is a NATIVE N-API addon)
+# bun add --exact neo4j-driver-lite  (Neo4j: Bolt is a binary protocol; pure JS, and the graph
+#                            layer's one transport, so a second graph engine adds no driver)
 ```
 
 If your engine exposes a documented HTTP API, weigh it against the native driver before adding a
@@ -699,7 +746,7 @@ Every field and what it controls:
 
 | Field | Type | Controls |
 |-------|------|----------|
-| `queryLanguage` | `'sql' \| 'json' \| 'promql'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
+| `queryLanguage` | `'sql' \| 'json' \| 'promql' \| 'cypher'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
 | `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
@@ -777,12 +824,12 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · kafka · etcd · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · kafka · etcd · neo4j · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
-provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), or
-a driverless provider reached over HTTP (clickhouse, druid or trino for SQL, couchbase for a
-document store).
+provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), a
+graph engine on the graph layer (neo4j), or a driverless provider reached over HTTP (clickhouse,
+druid or trino for SQL, couchbase for a document store).
 
 ## Driver-free candidates
 

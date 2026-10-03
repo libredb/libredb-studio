@@ -1,0 +1,35 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:18:20.402Z",
+    "database": "neo4j"
+  },
+  "statement": "CALL db.relationshipTypes() YIELD relationshipType RETURN relationshipType ORDER BY relationshipType",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 10000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "relationshipType"
+    ],
+    "rows": [
+      {
+        "relationshipType": "DEPENDS_ON"
+      },
+      {
+        "relationshipType": "MEMBER_OF"
+      },
+      {
+        "relationshipType": "OWNS"
+      },
+      {
+        "relationshipType": "Shared"
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

@@ -131,7 +131,7 @@ function draftEvent(options: {
     | { readonly kind: "no-inventory" }
     | { readonly kind: "not-applicable" };
   /** The editor language the server recorded with the draft; absent, as a ledger written before it. */
-  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd";
+  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -313,6 +313,50 @@ describe("AnswerCard — a plan run's statement", () => {
     ] as const) {
       const other = render(<AnswerCard timeline={etcdDraft} capabilities={capabilitiesFor(language, dialect)} />);
       expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-sky/40");
+      cleanup();
+    }
+  });
+
+  test("tints a Cypher read in the graph-cypher language its tab renders in, in an accent of its own (Neo4j spec 6.5)", () => {
+    // No guard here reads Cypher (`validatePlanStatement` declines it), so the draft is shown beside the
+    // "not checked" chip, as a PromQL or etcd one is.
+    const cypherDraft = planTimeline({
+      sql: "MATCH (n:`Person`) RETURN n LIMIT 100",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const cypher = render(<AnswerCard timeline={cypherDraft} capabilities={capabilitiesFor("cypher")} />);
+    const block = cypher.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("graph-cypher");
+    expect(block.className).toContain("border-hue-purple/40");
+    cleanup();
+
+    // The ledger's recorded language reaches the same accent when the rail has no capabilities.
+    const recorded = render(
+      <AnswerCard
+        timeline={planTimeline({
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "graph-cypher",
+        })}
+      />,
+    );
+    expect(recorded.getByTestId("agent-answer-statement").className).toContain("border-hue-purple/40");
+    cleanup();
+
+    // The controls: every other language's accent is not it, so the class above is Cypher's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["promql", undefined],
+      ["json", "redis"],
+      ["json", "libredb"],
+      ["json", "etcd"],
+    ] as const) {
+      const other = render(<AnswerCard timeline={cypherDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-purple/40");
       cleanup();
     }
   });

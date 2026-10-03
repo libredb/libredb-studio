@@ -4,7 +4,7 @@ import { DIALECT_EDITORS } from "@/lib/editor/dialect-editors";
 import type { QueryTab } from "@/lib/types";
 
 /** The Monaco language ids a query tab renders in, `QueryEditor`'s `language` prop. */
-export type EditorLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd";
+export type EditorLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher";
 
 /**
  * The tab type a connection's tabs take.
@@ -26,12 +26,18 @@ export type EditorLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "
  * `"promql"` (#1085) has a rung of its own because the fallback at the bottom is SQL: PromQL
  * declares no dialect and is not JSON, so without the rung a Prometheus tab would be typed
  * `sql` and its expression highlighted and completed as SQL.
+ *
+ * `"cypher"` (Neo4j spec 6.5) has a rung of its own for PromQL's reason: Cypher declares no dialect
+ * and is not JSON, so without the rung a Neo4j tab would be typed `sql`. It renders in the
+ * `graph-cypher` language `cypher-language.ts` registers over the graph layer's own lexer; the id is not
+ * `cypher`, which Monaco's own bundle registers.
  */
 export function resolveTabType(capabilities?: ProviderCapabilities | null): QueryTab["type"] {
   const dialect = dialectSpec(capabilities ?? undefined);
   if (dialect !== undefined) return dialect.tabType;
   if (capabilities?.queryLanguage === "json") return "mongodb";
   if (capabilities?.queryLanguage === "promql") return "promql";
+  if (capabilities?.queryLanguage === "cypher") return "cypher";
   return "sql";
 }
 

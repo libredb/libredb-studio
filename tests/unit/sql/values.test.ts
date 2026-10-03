@@ -94,6 +94,14 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "kafka")).toBe("'O''Brien'");
   });
 
+  test("escapes with a backslash for Cypher, where a doubled quote is not an escape (Neo4j)", () => {
+    // Cypher's string grammar has backslash escapes and no doubling, the reading the graph lexer
+    // (`src/lib/db/graph/cypher/lexer.ts`) decodes, so a quote and a backslash are both spelled with one.
+    expect(quoteLiteral("O'Brien", "neo4j")).toBe("'O\\'Brien'");
+    expect(quoteLiteral("a\\b", "neo4j")).toBe("'a\\\\b'");
+    expect(unquoteLiteral("'O\\'Brien'", "neo4j")).toBe("O'Brien");
+  });
+
   test("falls back to the standard form when no dialect is known", () => {
     // A generator that has no connection yet (no engine has been picked) can only
     // claim the SQL standard, which is also what its identifier quoting claims.
@@ -162,6 +170,9 @@ describe("positionalPlaceholder", () => {
     expect(positionalPlaceholder("kafka", 1)).toBeNull();
     // Nor an etcdctl command: the provider refuses bound params outright (#1089 5.4).
     expect(positionalPlaceholder("etcd", 1)).toBeNull();
+    // Nor a Cypher statement: Cypher binds named `$name` parameters only, and the provider sends none in
+    // this version, so the read policy refuses a parameter in the text before it is sent.
+    expect(positionalPlaceholder("neo4j", 1)).toBeNull();
   });
 });
 

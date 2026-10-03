@@ -81,11 +81,11 @@ import { CENSUS_CONNECTION } from "../helpers/census-connection";
  * The committed expectation, transcribed from the design's kind-declaration table, one entry
  * per type-id, each `<kind id>/<sourceLanguage>`.
  *
- * The two empty arrays are DECLARATIONS and not omissions. Druid publishes no `CREATE` text for
+ * The three empty arrays are DECLARATIONS and not omissions. Druid publishes no `CREATE` text for
  * a datasource or a system table at all, and its lookups live behind a Coordinator REST API this
  * provider's transport does not reach; the embedded store has no view, routine, trigger or index
  * anywhere in its export surface. Both were measured rather than assumed, and both provider docs
- * say so.
+ * say so. Neo4j's first version renders no definition text for any of its four kinds (spec 4.1).
  *
  * `plsql`, `tsql` and `cql` are absent on purpose: they are not language ids the installed editor
  * registers, so Oracle, SQL Server and Cassandra render under `sql`. That fact is guarded, from
@@ -137,6 +137,9 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   // Every kind but the key-prefix group has a source, JSON under the declared language (#1089 4.4): a key's
   // value and metadata, and a member's, a lease's, a user's and a role's answer, serialised by the provider.
   etcd: ["key/json", "member/json", "lease/json", "user/json", "role/json"],
+  // No kind has a source in v1 (Neo4j spec 4.1): a label, a relationship type, an index and a constraint are
+  // listed and described, and the provider implements no readObjectSource.
+  neo4j: [],
   libredb: [],
 });
 
@@ -156,7 +159,7 @@ const UNCONNECTED_SOURCE_KINDS: readonly string[] = CENSUS_TYPES.flatMap((type) 
  * It is also the third thing a new provider has to move, and `docs/ADDING_A_PROVIDER.md` says so:
  * the guard below asserts that the shipped checklist names every member of this list.
  */
-const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze(["druid", "libredb"]);
+const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze(["druid", "neo4j", "libredb"]);
 
 /** MariaDB's two extra kinds, which arrive only once the flavour has been measured. */
 const MARIADB_EXTRA_SOURCE_KINDS: readonly string[] = ["mysql/package/mysql", "mysql/sequence/mysql"];
@@ -220,7 +223,8 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(20);
+    // EXTERNAL_DATABASE_TYPES.length (20 with neo4j) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(21);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -240,8 +244,9 @@ describe("the fleet census of object source declarations", () => {
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
     expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(72);
     expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(72);
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(23);
-    expect(rows).toHaveLength(95);
+    // neo4j added four kinds, none source-bearing: 23 + 4 and 95 + 4.
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(27);
+    expect(rows).toHaveLength(99);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -331,7 +336,7 @@ describe("the fleet census of object source declarations", () => {
         .map((type) => String(type))
         .sort(),
     );
-    // Druid and the embedded store are the fleet's two abstainers, and both are deliberate: each
+    // Druid, Neo4j and the embedded store are the fleet's three abstainers, and each is deliberate: each
     // provider doc records what its engine publishes instead of a definition text.
     expect([...abstainers].sort()).toEqual([...CENSUS_ABSTAINERS].map(String).sort());
     expect(implementers.length + abstainers.length).toBe(CENSUS_TYPES.length);
@@ -356,7 +361,8 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    expect(rows).toHaveLength(103);
+    // 99 unconnected kinds plus the MariaDB branch's eight.
+    expect(rows).toHaveLength(107);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

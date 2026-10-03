@@ -112,7 +112,7 @@ const STATUS_TONES: Readonly<Record<AgentRunStatus, string>> = Object.freeze({
  * `"unknown"` is this surface having nothing to go on, which is a different state from
  * every engine in the ladder and must not collapse into the first of them.
  */
-type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "unknown";
+type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher" | "unknown";
 
 /**
  * Identity, never status. The rail spends amber on "nobody established this", rose on a
@@ -127,6 +127,10 @@ type StatementLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd
  *
  * etcd takes sky (#1089), the light blue of its own mark, between SQL's blue and JSON's cyan and
  * neither of them: its command line is no SQL and no JSON, and no guard here reads it either.
+ *
+ * Cypher takes purple (Neo4j spec 6.5, SR20): a hue no other language here uses and none of the three
+ * status hues above. No guard here reads Cypher either, so its draft too stands beside the amber "not
+ * checked" chip.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -135,6 +139,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   libredb: "border-hue-violet/40",
   promql: "border-hue-indigo/40",
   etcd: "border-hue-sky/40",
+  "graph-cypher": "border-hue-purple/40",
   unknown: "border-hairline-strong",
 });
 

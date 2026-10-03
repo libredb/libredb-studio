@@ -320,6 +320,21 @@ export function offersCountQuery(capabilities: ProviderCapabilities | undefined)
   return capabilities.queryLanguage === "sql" || capabilities.queryLanguage === "json";
 }
 
+/**
+ * Whether the schema diagram (ERD) may be offered for this engine, asked by every entry point that opens
+ * it: the sidebar button and the command palette item, in both shells.
+ *
+ * The diagram draws objects as tables and infers an edge from a column named like another table's
+ * `_id`. A graph's relationship types are not tables and its edges are data, not columns, so on a
+ * `"cypher"` connection the heuristic would invent edges and draw none of the real ones (Neo4j spec, SR20).
+ * Every other language keeps the diagram it always had, and so does a connection whose capabilities have
+ * not answered yet: the entry point was offered before this gate existed, and only a declared Cypher is
+ * known not to fit it.
+ */
+export function offersSchemaDiagram(capabilities: ProviderCapabilities | undefined): boolean {
+  return capabilities?.queryLanguage !== "cypher";
+}
+
 // ============================================================================
 // Provider Capabilities & Labels
 // ============================================================================
@@ -535,16 +550,20 @@ export interface ProviderCapabilities {
    * (MongoDB) branch. So a new member lands with an explicit arm in every reader, or with a test
    * pinning that the branch it falls into is right for it. `"promql"` is the Prometheus provider's
    * (#1085), and it declares no `queryDialect`, because PromQL is not a kind of JSON.
+   * `"cypher"` is the graph providers' (Neo4j spec 6.5), declared with no `queryDialect` for the
+   * same reason: Cypher is neither JSON nor SQL. Its tabs render in the `graph-cypher` language, a
+   * tree click writes a bounded Cypher read, and the count, profiling and code-generation gates
+   * below refuse it by naming the languages they serve.
    *
    * Published through `src/exports/types.ts`, so widening it breaks a consumer's exhaustive
    * switch over it; that ships with a release note, not a compatibility layer.
    */
-  queryLanguage: "sql" | "json" | "promql";
+  queryLanguage: "sql" | "json" | "promql" | "cypher";
   /**
    * Optional client-side query dialect, declared only beside `queryLanguage: "json"`, where it
    * names the grammar the editor text really is: JSON of this product's own schema (Kafka) or a
    * command line (Redis, LibreDB, etcd), for which `"json"` means only "not SQL". `queryLanguage`
-   * says SQL, JSON or PromQL; for a `"json"` provider the query generators otherwise
+   * says SQL, JSON, PromQL or Cypher; for a `"json"` provider the query generators otherwise
    * assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
    * generator (see `query-generators.ts`), and it is checked BEFORE

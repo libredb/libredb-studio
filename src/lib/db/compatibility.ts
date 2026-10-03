@@ -75,6 +75,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // family. kine and Xline speak etcd's API and are recorded below as relatives only once a gate-4
   // probe has measured each, never because the API answers.
   etcd: true,
+  // Neo4j (#424): its own provider, doc and integration test, and the first member of the `graph/`
+  // family. Memgraph speaks Bolt and Cypher and is recorded below as a relative only once a gate-4
+  // probe has measured it, never because the protocol answers.
+  neo4j: true,
   libredb: true,
 });
 
@@ -127,6 +131,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   kafka: true,
   // A cluster the user already runs, reached over etcd's gRPC API.
   etcd: true,
+  // A server the user already runs, reached over Bolt.
+  neo4j: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -187,6 +193,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
   // and maintenance operation before any request while the mode holds.
   etcd: true,
+  // Read-only whatever the flag says: this version of the provider refuses every write before it is sent,
+  // offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.
+  neo4j: true,
   libredb: false,
 });
 
@@ -223,6 +232,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // The one engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and
   // a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
+  // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
+  // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
+  neo4j: true,
   libredb: true,
 });
 

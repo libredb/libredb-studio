@@ -431,6 +431,22 @@ describe("QueryToolbar", () => {
     expect(sql.queryByText("BEGIN")).not.toBeNull();
   });
 
+  test("No transaction, sandbox, edit or import controls for a Cypher connection (Neo4j spec 6.5)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and a graph connection runs
+    // every statement in a read session, with no transaction to open.
+    const cypherMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "cypher" },
+      labels: { ...sqlLabels, entityName: "label", entityNamePlural: "labels" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: cypherMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    expect(queryByText("RUN")).not.toBeNull();
+  });
+
   test("No transaction, sandbox, edit or import controls for a Kafka connection (#1088)", () => {
     // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and a Kafka read request
     // is JSON in a dialect of its own, which no transaction, sandbox or import could reach.

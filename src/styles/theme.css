@@ -136,10 +136,11 @@
    * out of room in different places. Dark's tightest pair is amber/yellow; light's
    * is blue/indigo.
    *
-   * `-alt` is a second step of the same hue. For sky, yellow, emerald and teal it
-   * is a second IDENTITY — there are more engines than there are hues, and
-   * `db-ui-config`'s own test asserts every engine colour differs — and those four
-   * therefore join the separation set. Elsewhere it is emphasis on one identity.
+   * `-alt` is a second step of the same hue. For blue, sky, yellow, emerald, teal
+   * and fuchsia it is a second IDENTITY (there are more engines than there are
+   * hues, and `db-ui-config`'s own test asserts every engine colour differs), and
+   * those six therefore join the separation set. Elsewhere it is emphasis on one
+   * identity.
    *
    * One deviation from "the lightest step that clears AA", forced by separation
    * rather than by contrast: orange sits at -900, because Tailwind's amber ramp
@@ -199,6 +200,7 @@
   --studio-hue-purple-solid-hover: #ad46ff;
 
   --studio-hue-fuchsia: #8a0194;
+  --studio-hue-fuchsia-alt: #721378;
 }
 
 .dark {
@@ -313,6 +315,7 @@
   --studio-hue-purple-solid-hover: #ad46ff;
 
   --studio-hue-fuchsia: #ed6aff;
+  --studio-hue-fuchsia-alt: #f4a8ff;
 }
 
 /*
@@ -410,6 +413,7 @@
   --color-hue-cyan: var(--studio-hue-cyan);
   --color-hue-cyan-tint: var(--studio-hue-cyan-tint);
   --color-hue-fuchsia: var(--studio-hue-fuchsia);
+  --color-hue-fuchsia-alt: var(--studio-hue-fuchsia-alt);
   --color-hue-teal-solid: var(--studio-hue-teal-solid);
   --color-hue-teal-solid-hover: var(--studio-hue-teal-solid-hover);
   --color-hue-purple-solid: var(--studio-hue-purple-solid);

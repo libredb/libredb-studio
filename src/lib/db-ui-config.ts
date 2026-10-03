@@ -20,6 +20,7 @@ import {
   PrometheusIcon,
   KafkaIcon,
   EtcdIcon,
+  Neo4jIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -71,6 +72,12 @@ export interface DatabaseUIConfig {
    * the user reaches an error (#1085). Read through `connectionFieldHint`.
    */
   fieldHints?: Partial<Record<ConnectionField, string>>;
+  /**
+   * The sentence under the connection dialog's Read-only toggle, where this engine's mode differs from
+   * the dialog's own sentence, which says the mode can be turned off. Neo4j declares one because its
+   * connections are read-only whether or not the box is ticked (spec A7). Read through `readOnlyHint`.
+   */
+  readOnlyHint?: string;
   /**
    * The choices of a field the connection dialog draws as a select rather than a text box, each a
    * stored value and its label, offered after an empty "None" choice that stores nothing (#1088).
@@ -419,6 +426,27 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
         "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
     },
   },
+  neo4j: {
+    // A generic graph glyph, never Neo4j's logo (spec E12).
+    icon: Neo4jIcon,
+    // No identity hue is free. `hue-fuchsia` is Prometheus's; its `-alt` step is a second identity only
+    // because it clears the separation test, which is why `fuchsia` joined IDENTITY_ALTS in
+    // tests/unit/theme-accent-contrast.test.ts with this entry, as `blue` did with etcd's.
+    color: "text-hue-fuchsia-alt",
+    label: "Neo4j",
+    // The Bolt port. The HTTP port (7474) serves the browser and the HTTP API, which this provider never uses.
+    defaultPort: "7687",
+    // No URI scheme to paste: the provider builds its bolt:// URI from Host, Port and the SSL panel, and
+    // connection-string-parser.ts reads no Neo4j URI (spec 6.1).
+    showConnectionStringToggle: false,
+    // The SSL panel and the SSH tunnel stay offered: a bolt:// URI dials the one server it names, unlike a
+    // routing neo4j:// URI, which this provider never builds. An empty database is the server's home database.
+    connectionFields: ["host", "port", "user", "password", "database"],
+    fieldHints: { database: "Leave empty to use the server's home database." },
+    // The dialog's own sentence says the mode can be turned off, which is false here (spec A7).
+    readOnlyHint:
+      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+  },
   libredb: {
     icon: LibreDBIcon,
     color: "text-hue-violet",
@@ -525,4 +553,12 @@ export function connectionFieldLabel(config: DatabaseUIConfig, field: Connection
  */
 export function connectionFieldHint(config: DatabaseUIConfig, field: ConnectionField): string | undefined {
   return config.fieldHints?.[field];
+}
+
+/** The sentence under the Read-only toggle: the engine's own where it declares one, else the dialog's. */
+export function readOnlyHint(config: DatabaseUIConfig): string {
+  return (
+    config.readOnlyHint ??
+    "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission."
+  );
 }

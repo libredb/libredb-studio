@@ -1033,6 +1033,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     prometheus: "engine-has-no-foreign-key",
     kafka: "engine-has-no-foreign-key",
     etcd: "engine-has-no-foreign-key",
+    neo4j: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1144,6 +1145,8 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   kafka: { label: "Apache Kafka", reason: "not rows with declared columns" },
   // Not a table store (#1089): a key-prefix group holds keys whose values are bytes.
   etcd: { label: "etcd", reason: "not rows with declared columns" },
+  // Not a table store: a label groups nodes whose properties are not declared columns.
+  neo4j: { label: "Neo4j", reason: "not declared columns" },
 };
 
 /**
@@ -1317,6 +1320,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "prometheus",
           "kafka",
           "etcd",
+          "neo4j",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1370,6 +1374,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   prometheus: false, // not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   kafka: false, // a JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   etcd: false, // an etcdctl command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  neo4j: false, // a Cypher statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1399,6 +1404,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "prometheus",
             "kafka",
             "etcd",
+            "neo4j",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

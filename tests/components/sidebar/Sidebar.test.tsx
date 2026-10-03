@@ -503,6 +503,17 @@ describe("Sidebar", () => {
     expect(queryByText("Connected")).not.toBeNull();
   });
 
+  test("no ERD button on a connection declaring Cypher, whose relationship types are no tables (SR20)", () => {
+    const cypher = { capabilities: { ...oneLevel, queryLanguage: "cypher" } } as unknown as ProviderMetadata;
+    const { container, unmount } = render(<Sidebar {...createDefaultProps({ metadata: cypher })} />);
+    expect(container.querySelector('[title="Show ERD Diagram"]')).toBeNull();
+    unmount();
+
+    // The control: the same connection while its capabilities have not answered keeps the button.
+    const pending = render(<Sidebar {...createDefaultProps({ metadata: null })} />);
+    expect(pending.container.querySelector('[title="Show ERD Diagram"]')).not.toBeNull();
+  });
+
   test("clicking ERD button calls onShowDiagram", () => {
     const onShowDiagram = mock(() => {});
     const props = createDefaultProps({

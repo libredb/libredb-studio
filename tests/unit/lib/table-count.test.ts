@@ -76,6 +76,8 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   // An etcdctl command line (#1089): the dialect is declared and a key-prefix group is a derived grouping,
   // either of which withholds the action (`offersCountQuery`).
   etcd: null,
+  // Cypher (Neo4j spec 6.5): `offersCountQuery` answers false for the language, so no Count appears.
+  neo4j: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

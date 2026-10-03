@@ -222,6 +222,17 @@ const PROMETHEUS_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>()
 const KAFKA_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
 
 /**
+ * Cypher operations that destroy or change anything and reach the server: none, so the set is empty.
+ *
+ * Not an omission. Cypher text can write (`CREATE`, `MERGE`, `SET`, `DELETE`, `DROP`), but the provider
+ * refuses every write before sending it (Neo4j spec 5.5): the read policy in
+ * `src/lib/db/graph/cypher/read-policy.ts` refuses a write word, the server's own EXPLAIN classification
+ * refuses what the words miss, and the statement runs in a READ session besides. A confirmation would ask
+ * about a statement that cannot run.
+ */
+const NEO4J_DESTRUCTIVE_OPERATIONS: ReadonlySet<string> = new Set<string>();
+
+/**
  * The names a query would run, or `undefined` when the text cannot be read as one.
  *
  * `undefined` is not "nothing to run": it means the reader could not tell WHAT would
@@ -429,6 +440,14 @@ const readPrometheusOperations: OperationReader = () => [];
 const readKafkaOperations: OperationReader = () => [];
 
 /**
+ * What a Cypher buffer would run: never an operation this gate asks about.
+ *
+ * Nothing to resolve: the provider either runs the text as one read or refuses it before anything is sent,
+ * so a write, and text it cannot lex, changes nothing and asks nothing.
+ */
+const readNeo4jOperations: OperationReader = () => [];
+
+/**
  * The single type-to-facts table. It has a row for exactly the types that
  * `readsSqlText` in `@/lib/sql/grammar` reports as not SQL, and a test holds the two
  * tables to that. A type with no row here is one whose statements the SQL half of the
@@ -449,6 +468,9 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
   mongodb: { operations: MONGODB_DESTRUCTIVE_OPERATIONS, read: readMongodbOperations, decidesAlone: false },
+  // The provider refuses every write before sending it, so a confirmation would ask about a statement that
+  // cannot run (Neo4j spec 5.5).
+  neo4j: { operations: NEO4J_DESTRUCTIVE_OPERATIONS, read: readNeo4jOperations, decidesAlone: true },
   prometheus: { operations: PROMETHEUS_DESTRUCTIVE_OPERATIONS, read: readPrometheusOperations, decidesAlone: true },
   redis: { operations: REDIS_DESTRUCTIVE_COMMANDS, read: readRedisOperations, decidesAlone: false },
 };

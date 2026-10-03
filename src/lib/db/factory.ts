@@ -252,6 +252,15 @@ export async function createDatabaseProvider(
       return new KafkaProvider(connection, options);
     }
 
+    // Graph databases - dynamically imported
+    case "neo4j": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { Neo4jProvider } = await import("./providers/graph/neo4j/index");
+      return new Neo4jProvider(connection, options);
+    }
+
     // Embedded databases - dynamically imported
     case "libredb": {
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
@@ -263,7 +272,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, neo4j, libredb`,
         connection.type,
       );
   }

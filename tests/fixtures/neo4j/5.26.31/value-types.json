@@ -1,0 +1,152 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:18:21.806Z",
+    "database": "neo4j"
+  },
+  "statement": "MATCH (s:Service {id: 'types'}) MATCH p = (:Person)-[:MEMBER_OF]->(:Team) RETURN s.aString AS aString, s.anInteger AS anInteger, s.beyondDoubles AS beyondDoubles, s.minInteger AS minInteger, s.aFloat AS aFloat, s.notANumber AS notANumber, s.aBoolean AS aBoolean, s.aList AS aList, s.aDate AS aDate, s.aLocalTime AS aLocalTime, s.aTime AS aTime, s.aLocalDateTime AS aLocalDateTime, s.aDateTime AS aDateTime, s.aDuration AS aDuration, s.aCartesianPoint AS aCartesianPoint, s.aWgs84Point AS aWgs84Point, s AS node, p AS path LIMIT 1",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "aString",
+      "anInteger",
+      "beyondDoubles",
+      "minInteger",
+      "aFloat",
+      "notANumber",
+      "aBoolean",
+      "aList",
+      "aDate",
+      "aLocalTime",
+      "aTime",
+      "aLocalDateTime",
+      "aDateTime",
+      "aDuration",
+      "aCartesianPoint",
+      "aWgs84Point",
+      "node",
+      "path"
+    ],
+    "rows": [
+      {
+        "aString": "plain text",
+        "anInteger": 42,
+        "beyondDoubles": "9007199254740993",
+        "minInteger": "-9223372036854775808",
+        "aFloat": 0.1,
+        "notANumber": "NaN",
+        "aBoolean": false,
+        "aList": [
+          1,
+          2,
+          3
+        ],
+        "aDate": "2026-10-03",
+        "aLocalTime": "13:45:30.123456789",
+        "aTime": "13:45:30.123456789+03:00",
+        "aLocalDateTime": "2026-10-03T13:45:30.123456789",
+        "aDateTime": "2026-10-03T13:45:30.123456789+03:00[Europe/Istanbul]",
+        "aDuration": "P1Y2M3DT4H5M6.789000000S",
+        "aCartesianPoint": {
+          "srid": 7203,
+          "x": 1.5,
+          "y": -2.25
+        },
+        "aWgs84Point": {
+          "srid": 4326,
+          "x": 28.9784,
+          "y": 41.0082
+        },
+        "node": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:51",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "aBoolean": false,
+            "notANumber": "NaN",
+            "aString": "plain text",
+            "aList": [
+              1,
+              2,
+              3
+            ],
+            "aFloat": 0.1,
+            "aLocalDateTime": "2026-10-03T13:45:30.123456789",
+            "minInteger": "-9223372036854775808",
+            "anInteger": 42,
+            "beyondDoubles": "9007199254740993",
+            "aTime": "13:45:30.123456789+03:00",
+            "aWgs84Point": {
+              "srid": 4326,
+              "x": 28.9784,
+              "y": 41.0082
+            },
+            "aDate": "2026-10-03",
+            "aLocalTime": "13:45:30.123456789",
+            "aDuration": "P1Y2M3DT4H5M6.789000000S",
+            "aCartesianPoint": {
+              "srid": 7203,
+              "x": 1.5,
+              "y": -2.25
+            },
+            "id": "types",
+            "aDateTime": "2026-10-03T13:45:30.123456789+03:00[Europe/Istanbul]"
+          }
+        },
+        "path": {
+          "~graph": "path",
+          "nodes": [
+            {
+              "~graph": "node",
+              "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:40",
+              "labels": [
+                "Person"
+              ],
+              "properties": {
+                "skills": [
+                  "typescript"
+                ],
+                "name": "Ana Souza",
+                "active": true,
+                "age": 31
+              }
+            },
+            {
+              "~graph": "node",
+              "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+              "labels": [
+                "Team"
+              ],
+              "properties": {
+                "founded": "2019-03-01",
+                "name": "Platform"
+              }
+            }
+          ],
+          "relationships": [
+            {
+              "~graph": "relationship",
+              "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:12",
+              "type": "MEMBER_OF",
+              "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:40",
+              "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+              "properties": {
+                "role": "engineer",
+                "since": "2023-01-01"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

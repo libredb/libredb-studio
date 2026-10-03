@@ -6,11 +6,16 @@ import config from "../../playwright.config";
 // that reaches a db route late in file order can meet a budget the specs before it spent. On CI
 // run 36263561882, e2e/kafka-provider.spec.ts got "Too many requests. Try again in 38 seconds."
 // on all three attempts of its Test Connection check. Such a spec runs against the second server
-// process instead, whose counters only it, offline-editor.spec.ts and etcd-provider.spec.ts touch;
+// process instead, whose counters only it and the other specs listed below touch;
 // this pins that choice.
 
 const SECOND_SERVER = `http://localhost:${Number(process.env.E2E_OFFLINE_PORT ?? 3010)}`;
-const SECOND_SERVER_SPECS = ["offline-editor.spec.ts", "kafka-provider.spec.ts", "etcd-provider.spec.ts"];
+const SECOND_SERVER_SPECS = [
+  "offline-editor.spec.ts",
+  "kafka-provider.spec.ts",
+  "etcd-provider.spec.ts",
+  "neo4j-provider.spec.ts",
+];
 
 type Project = NonNullable<typeof config.projects>[number];
 

@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka and etcd** from your browser, with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard. A lightweight, secure bridge between heavy desktop tools (DataGrip/DBeaver) and minimal CLIs.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd and Neo4j** from your browser, with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard.
 
 ---
 
@@ -109,8 +109,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Nineteen external engines share one interface.
-The twentieth row is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
+Twenty external engines share one interface.
+The twenty-first row is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -133,6 +133,7 @@ The twentieth row is the embedded LibreDB store, which ships inside the image ra
 | **Prometheus** | none, HTTP | PromQL editor, metric, rule and target browser |
 | **Apache Kafka** | `@platformatic/kafka` | Topic, group and broker browser, reads by offset or time |
 | **etcd** | `@grpc/grpc-js` | etcdctl command editor, key-prefix browser, guarded value edits |
+| **Neo4j** | `neo4j-driver-lite` | Read-only Cypher editor, label and relationship-type browser |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
@@ -140,7 +141,7 @@ Prometheus and Apache Kafka are read-only too: Studio calls only their read APIs
 
 ### Engines with no provider of their own
 
-Twenty-eight further engines speak the wire protocol of one of the nineteen drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the twenty drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

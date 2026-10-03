@@ -504,3 +504,30 @@ export const EtcdIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M9 14.5c2 1.25 4 1.25 6 0" />
   </svg>
 );
+
+/**
+ * Neo4j: a generic graph glyph, never the vendor's logo.
+ *
+ * Three nodes joined by three relationships, drawn as strokes at the house weight with no fill: a property
+ * graph in its plainest form, which is what Neo4j stores and what stays identifiable at the 14px the
+ * connection list draws. The edges stop at each circle's outline, so no line crosses a node.
+ */
+export const Neo4jIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="6" cy="7" r="2.5" />
+    <circle cx="18" cy="6" r="2.5" />
+    <circle cx="12" cy="18" r="2.5" />
+    <path d="M8.49 6.79 15.51 6.21" />
+    <path d="M7.2 9.19 10.8 15.81" />
+    <path d="M16.88 8.24 13.12 15.76" />
+  </svg>
+);

@@ -11,6 +11,7 @@ import {
   hostUriSchemes,
   isFileBased,
   offersSshTunnel,
+  readOnlyHint,
   takesConnectionField,
   type ConnectionField,
   type DatabaseUIConfig,
@@ -48,6 +49,7 @@ const ALL_TYPES: DatabaseType[] = [
   "prometheus",
   "kafka",
   "etcd",
+  "neo4j",
 ];
 
 describe("db-ui-config", () => {
@@ -390,7 +392,14 @@ describe("db-ui-config", () => {
         : readdirSync(base, { recursive: true, encoding: "utf8" })
             .map((entry) => path.join(base, entry))
             .filter((entry) => entry.endsWith(".ts"));
-      const source = files.map((file) => readFileSync(file, "utf8")).join("\n");
+      // A provider on the shared graph layer reads the connection in the base class it extends
+      // (`src/lib/db/graph/graph-base-provider.ts`), outside its own directory, so every graph-layer
+      // module the provider imports is read with it; without this, Neo4j would be seen reading nothing.
+      const own = files.map((file) => readFileSync(file, "utf8")).join("\n");
+      const shared = [...own.matchAll(/from "@\/lib\/db\/graph\/([^"]+)"/g)].map((match) =>
+        readFileSync(path.join(ROOT, "src/lib/db/graph", `${match[1]}.ts`), "utf8"),
+      );
+      const source = [own, ...shared].join("\n");
       return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     };
 
@@ -481,6 +490,30 @@ describe("db-ui-config", () => {
     });
     expect(etcd.fieldLabels).toBeUndefined();
   });
+
+  test("neo4j declares the fields of its spec 6.1, the Bolt port, no connection string and the read-only hint", () => {
+    const neo4j = getDBConfig("neo4j");
+    expect(neo4j).toMatchObject({
+      label: "Neo4j",
+      color: "text-hue-fuchsia-alt",
+      defaultPort: "7687",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "user", "password", "database"],
+    });
+    // The SSL panel and the SSH tunnel are both offered: a bolt:// URI dials the one server it names.
+    expect(neo4j.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("neo4j")).toBe(true);
+    expect(neo4j.fieldHints).toEqual({ database: "Leave empty to use the server's home database." });
+    // The Read-only toggle's own sentence: the dialog's default says the mode can be turned off (spec A7).
+    expect(readOnlyHint(neo4j)).toBe(
+      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+    );
+    expect(readOnlyHint(DB_UI_CONFIG.etcd)).toBe(
+      "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
+    );
+    expect(neo4j.fieldLabels).toBeUndefined();
+    expect(neo4j.fieldOptions).toBeUndefined();
+  });
 });
 
 // ============================================================================
@@ -540,11 +573,11 @@ describe("declared connection-field copy (#1085)", () => {
     expect(connectionFieldHint(empty, "password")).toBeUndefined();
   });
 
-  test("only prometheus, kafka and etcd declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only prometheus, kafka, etcd and neo4j declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["prometheus", "kafka", "etcd"]);
+    expect(declared).toEqual(["prometheus", "kafka", "etcd", "neo4j"]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
@@ -620,6 +653,9 @@ describe("db-showcase", () => {
         "elasticsearch",
         "opensearch",
         "cassandra",
+        // Behind Cassandra and ahead of the analytical stores: the best-known graph database, and the
+        // only one on this page.
+        "neo4j",
         "couchbase",
         "clickhouse",
         "druid",

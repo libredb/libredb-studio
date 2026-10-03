@@ -610,4 +610,19 @@ describe("POST /api/db/profile", () => {
     expect(data.error).not.toContain("refusal_probe");
     expect(etcdProvider.query).not.toHaveBeenCalled();
   });
+
+  test("refuses a Cypher connection with a 400 that names the language, and sends nothing (Neo4j spec 6.5)", async () => {
+    // Correct as a fall-through: `offersColumnProfiling` names the two languages the route writes.
+    const cypherProvider = createMockProvider({ capabilities: { queryLanguage: "cypher" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(cypherProvider);
+    const body = { connection: validConnection, tablePath: ["neo4j", "(:Person)"], columns: ["name"] };
+
+    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
+
+    expect(refused.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toContain('"cypher"');
+    expect(cypherProvider.query).not.toHaveBeenCalled();
+  });
 });

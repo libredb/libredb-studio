@@ -279,6 +279,19 @@ describe("the drafted statement is read out of the closing prose", () => {
   });
 
   /*
+    Neo4j spec 6.4. `cypher` is a language tag, and it still names one engine while `neo4j` is the only
+    type-id that runs Cypher: the `promql` case. Read as naming no engine, a Cypher block on a PostgreSQL
+    run was filed as that run's statement.
+  */
+  test("a Cypher block is the deliverable of a Neo4j run, and of no other engine's", () => {
+    const statement = "MATCH (n:Person) RETURN n";
+    const cypher = ["```cypher", statement, "```"].join("\n");
+
+    expect(readPlanStatement(cypher, "postgres")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(cypher, "neo4j")).toEqual({ kind: "statement", sql: statement, tag: "cypher" });
+  });
+
+  /*
     #1088. The planning contract asks for a block tagged with the connection's type-id, so a Kafka
     run fences its read request as ```kafka, and that block is its deliverable. It names one engine
     like any type-id, so on another connection it is the `mysql` case above.
@@ -621,6 +634,18 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
     expect(validatePlanStatement(PROMQL, null, "promql").identifiers).toEqual({ kind: "not-applicable" });
     // The control: the same text on a SQL engine is judged, and the guard objects to it.
     expect(validatePlanStatement(PROMQL, INVENTORY, "sql").guardViolation).toBe("NON_READ_STATEMENT");
+  });
+
+  test("a Cypher draft is declined the same way: the reader speaks SQL and nothing else (Neo4j spec 6.5)", () => {
+    // Correct as a fall-through: `language !== "sql"` declines every language the guard cannot read.
+    const CYPHER = "MATCH (n:`Person`) RETURN n LIMIT 100";
+
+    expect(validatePlanStatement(CYPHER, INVENTORY, "cypher")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(CYPHER, null, "cypher").identifiers).toEqual({ kind: "not-applicable" });
   });
 
   test("a Kafka read request is declined the same way: it is JSON, and the reader speaks SQL (#1088)", () => {

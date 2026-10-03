@@ -1,0 +1,75 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:18:21.578Z",
+    "database": "neo4j"
+  },
+  "statement": "MATCH (n:`Team`) RETURN n LIMIT 100",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "n"
+    ],
+    "rows": [
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2019-03-01",
+            "name": "Platform"
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2020-07-15",
+            "name": "Payments"
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2021-01-04",
+            "name": "Search"
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2022-11-30",
+            "name": "Data"
+          }
+        }
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

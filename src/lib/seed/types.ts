@@ -67,6 +67,7 @@ const SeedDatabaseType = z.enum([
   "prometheus",
   "kafka",
   "etcd",
+  "neo4j",
 ]);
 
 export const SeedDefaultsSchema = z.object({

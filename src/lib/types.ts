@@ -100,7 +100,13 @@ export type DatabaseType =
   // declares `queryLanguage: "json"` with a `queryDialect` of its own, as Redis does for its commands.
   // The connection is one endpoint plus TLS and an optional password; a client certificate names the
   // user where etcd's RBAC is on, and `readOnly` below is a mode its provider enforces.
-  | "etcd";
+  | "etcd"
+  // Neo4j (issue #424). A property graph queried in Cypher over Bolt, the first member of the
+  // `graph/` family, served read-only on the shared graph layer in `src/lib/db/graph/`. The
+  // connection is one Bolt endpoint plus TLS, a user and password, and an optional `database`;
+  // with none, the server's home database is used. Every write is refused before it is sent,
+  // whatever `readOnly` says.
+  | "neo4j";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -616,7 +622,7 @@ export interface QueryTab {
    */
   runError?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka" | "etcd";
+  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka" | "etcd" | "cypher";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state
