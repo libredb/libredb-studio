@@ -3951,7 +3951,7 @@ describe("useQueryExecution", () => {
 });
 
 // =============================================================================
-// A statement the connection type's editor refuses (vector family, PR 1v)
+// A statement the connection type's editor refuses
 // =============================================================================
 //
 // No shipped row declares `refuse` or `maxTextBytes`, so the stand-in row drives every case. The refusal runs before

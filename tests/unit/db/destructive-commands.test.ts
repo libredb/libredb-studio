@@ -497,7 +497,7 @@ describe("the etcd row", () => {
 });
 
 /**
- * The editor's refusal (vector family, PR 1v): a statement a row's `refuse` or `maxTextBytes` refuses is never sent
+ * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
  * and never stored. No shipped row declares either field, so every rule here is driven by the stand-in row.
  */
 describe("statementRefusal and the console text bound", () => {

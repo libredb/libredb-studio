@@ -480,7 +480,7 @@ describe("useConnectionManager", () => {
   });
 
   /**
-   * Vector family, PR 1v: a column the provider only inferred from sampled data stays in `schema`, which the human
+   * A column the provider only inferred from sampled data stays in `schema`, which the human
    * views read, and never reaches `schemaContext`, which the AI panels send to a model.
    */
   test("schemaContext leaves out a column the engine only inferred from sampled data", async () => {

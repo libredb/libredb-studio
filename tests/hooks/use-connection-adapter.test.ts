@@ -173,7 +173,7 @@ describe("useConnectionAdapter", () => {
     expect(result.current.schemaContext).not.toContain("grant-");
   });
 
-  /** Vector family, PR 1v: the workspace's `schemaContext` drops a sampled column, and its `schema` keeps it. */
+  /** The workspace's `schemaContext` drops a sampled column, and its `schema` keeps it. */
   test("schemaContext leaves out a column the engine only inferred from sampled data", async () => {
     const [users, orders] = makeSchema();
     const sampled = {

@@ -126,7 +126,7 @@ function isLoopbackHost(host: string): boolean {
 }
 
 /**
- * The refusal of a secret that would cross the network without TLS, or undefined where it may go (VF1).
+ * The refusal of a secret that would cross the network without TLS, or undefined where it may go.
  *
  * Both vector engines send the secret on every request, so a non-empty one over no TLS is refused unless the host
  * is this machine or an SSH tunnel carries the connection. The caller maps "no TLS" (an absent or null ssl panel,

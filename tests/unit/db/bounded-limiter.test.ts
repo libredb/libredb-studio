@@ -1,5 +1,5 @@
 /**
- * The in-flight bounds every client call of a provider passes through (vector family, PR 1v).
+ * The in-flight bounds every client call of a provider passes through.
  *
  * Every case uses an engine key of its own, because the per-engine table is process-wide by design and this
  * file runs in a bun process of its own: no case can see another case's counters.

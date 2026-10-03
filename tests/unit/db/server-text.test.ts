@@ -1,5 +1,5 @@
 /**
- * The one boundary a server's own text crosses before Studio shows, logs or audits it (vector family, VF9).
+ * The one boundary a server's own text crosses before Studio shows, logs or audits it.
  *
  * A text that holds any form of the configured secret is withheld whole, never masked in part, because a partial
  * mask still shows the secret's length and its neighbours.

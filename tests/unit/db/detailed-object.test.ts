@@ -268,7 +268,7 @@ describe("objectAtPath", () => {
 });
 
 /**
- * The machine-facing projection (vector family, PR 1v): a column a provider only inferred from sampled data is named
+ * The machine-facing projection: a column a provider only inferred from sampled data is named
  * by the data, so no model and no MCP client receives it. Human views read the unprojected schema.
  */
 describe("machineColumns", () => {

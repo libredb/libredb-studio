@@ -252,7 +252,7 @@ describe("the answer", () => {
 });
 
 /**
- * Vector family, PR 1v: a column a provider only inferred from sampled data is named by the data, so it never
+ * A column a provider only inferred from sampled data is named by the data, so it never
  * reaches an MCP client, and `columns_omitted` keeps meaning "beyond the 50-column cap", because how many sampled
  * keys a sample held is itself read from the data.
  */

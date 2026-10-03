@@ -306,8 +306,8 @@ describe("validateHost and validatePort are exported for non-HTTP transports", (
 });
 
 /**
- * VF1: a non-empty secret never travels without TLS outside the machine, unless an SSH tunnel carries it.
- * The vector providers' connection checks (PR 4, PR 4q) run their own rows of this table through `connect()`.
+ * A non-empty secret never travels without TLS outside the machine, unless an SSH tunnel carries it.
+ * The vector providers' connection checks run their own rows of this table through `connect()`.
  */
 describe("plaintextSecretRefusal", () => {
   const PASSWORD_REFUSAL =

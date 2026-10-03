@@ -743,7 +743,7 @@ describe("POST /api/db/multi-query", () => {
 
 /**
  * A type that declares a console text bound runs one statement per request, so this route, whose SQL splitter would
- * turn one console text into several requests, refuses it before splitting anything (vector family, PR 1v).
+ * turn one console text into several requests, refuses it before splitting anything.
  */
 describe("POST /api/db/multi-query: a type that declares a console text bound", () => {
   const REFUSAL =

@@ -1334,7 +1334,7 @@ describe("POST /api/db/query — the database a run reads", () => {
 });
 
 /**
- * A connection type's console text bound (vector family, PR 1v). It is read after `resolveConnection` and the
+ * A connection type's console text bound. It is read after `resolveConnection` and the
  * `!sql` check and before the bound parameters, the provider and the statement cache, and the answer never repeats
  * the text. No shipped engine declares one, which the 9 MiB case pins.
  */

@@ -1383,7 +1383,7 @@ describe("useQueryAdapter", () => {
 });
 
 // =============================================================================
-// A statement the connection type's editor refuses (vector family, PR 1v)
+// A statement the connection type's editor refuses
 // =============================================================================
 //
 // This shell mounts no Toaster, so `runError` is the signal; the host owns the fetch behind `onQueryExecute`, which

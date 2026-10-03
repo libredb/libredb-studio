@@ -1752,7 +1752,7 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
-   * Vector family, PR 1v: a column a provider only inferred from sampled data is named by the data, so the walk
+   * A column a provider only inferred from sampled data is named by the data, so the walk
    * builds no inventory object with it, and neither the snapshot nor the context a model is handed holds it.
    */
   test("a column the engine only inferred from sampled data reaches neither the inventory nor the packed context", async () => {
