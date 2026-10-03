@@ -86,9 +86,14 @@ function sameOptions(a: BoundedLimiterOptions, b: BoundedLimiterOptions): boolea
 }
 
 function fullQueueSentence(options: BoundedLimiterOptions): string {
+  // A limiter with no queue refuses as soon as its slots are taken, so its sentence names no waiting calls.
+  const bound =
+    options.queueDepth === 0
+      ? `its ${options.perEngine} in-flight slots taken and keeps no calls waiting`
+      : `${options.queueDepth} calls waiting for its ${options.perEngine} in-flight slots`;
   return (
-    `This engine already has ${options.queueDepth} calls waiting for its ${options.perEngine} in-flight slots ` +
-    "in this Studio process, so the call was refused before it was sent. Try again when the running calls finish."
+    `This engine already has ${bound} in this Studio process, so the call was refused before it was sent. ` +
+    "Try again when the running calls finish."
   );
 }
 

@@ -167,6 +167,16 @@ describe("engineLimiter: the queue", () => {
     );
   });
 
+  test("with no queue, the refusal names the in-flight bound and no waiting calls", async () => {
+    const provider = engineLimiter(freshKey(), { perProvider: 1, perEngine: 1, queueDepth: 0 })();
+    await provider.acquire(never());
+    const refused = provider.acquire(never());
+    await expect(refused).rejects.toBeInstanceOf(LimiterFullError);
+    await expect(refused).rejects.toThrow(
+      "This engine already has its 1 in-flight slots taken and keeps no calls waiting in this Studio process, so the call was refused before it was sent. Try again when the running calls finish.",
+    );
+  });
+
   test("a waiting call whose signal aborts leaves the queue with the signal's reason and is never admitted", async () => {
     const provider = engineLimiter(freshKey(), { perProvider: 1, perEngine: 1, queueDepth: 1 })();
     const held = await provider.acquire(never());
