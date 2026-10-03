@@ -187,15 +187,15 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-**MongoDB, Redis, Prometheus, Kafka and etcd are the five types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those five, which is what `readsSqlText()` reports on.
-Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, a Kafka read request or an etcdctl command is not judged by a SQL reader that cannot parse it.
+**MongoDB, Redis, Prometheus, Kafka, etcd and Neo4j are the six types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those six, which is what `readsSqlText()` reports on.
+Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, a Kafka read request, an etcdctl command or a Cypher statement is not judged by a SQL reader that cannot parse it.
 
 The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).
 Beyond it, each type whose text is not SQL has a row of its own in `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts`, and a test holds that table to the set `readsSqlText()` reports on.
 The MongoDB and Redis rows name the destructive operations the provider can actually dispatch (`deleteOne`/`deleteMany`/`updateOne`/`updateMany` and the `$out`/`$merge` pipeline stages for MongoDB; `DEL`, `FLUSHALL`, `SET`, `CONFIG SET` and the rest for Redis), and the gate reduces the buffer the way the provider would, to one JSON document or to Redis's first blank-line-delimited block, before looking a name up in it.
 Text it cannot read as a command at all is not treated as safe: mongosh syntax, a half-typed document or a broken JSON command body **asks**.
 Before that table existed the answer for both types was a bare `false`, so a `FLUSHALL` and a `deleteMany` ran with no confirmation while a `DELETE FROM` on every SQL engine asked.
-The Prometheus and Kafka rows name no operation, the etcd row names what `guard.ts` classifies, and each of the three is the gate's whole answer, the rows the keyword test does not read in front of: PromQL has no statement that writes, its editor text only ever reaches `POST /api/v1/query`, and a metric may legally be named `update`, `delete` or `drop`, which the keyword test read as a write; a Kafka read request only reads, and a topic may be named any of those too; and etcd's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
+The Prometheus, Kafka and Neo4j rows name no operation, the etcd row names what `guard.ts` classifies, and each of the four is the gate's whole answer, the rows the keyword test does not read in front of: PromQL has no statement that writes, its editor text only ever reaches `POST /api/v1/query`, and a metric may legally be named `update`, `delete` or `drop`, which the keyword test read as a write; a Kafka read request only reads, and a topic may be named any of those too; the Neo4j provider refuses every write before sending it; and etcd's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
 The embedded LibreDB is not in that set: its text is read as SQL, and its undecided grammar facts are rows in the table below.
 
 | Fact | Undecided, so left at the default | Established, and it happens to equal the default |
@@ -345,7 +345,8 @@ trailing comment can reach — and it now declines whenever such a statement men
 `FETCH` at all, blunt on purpose, since a page cannot be ruled out from text nothing can read (#293).
 
 Providers that append a clause of their own follow the same rule: Oracle's `FETCH FIRST` and
-`OFFSET … FETCH NEXT`, and MSSQL's `OFFSET … FETCH NEXT` pagination branch. MSSQL's `SELECT TOP n`
+`OFFSET … FETCH NEXT`, Db2's `FETCH FIRST n ROWS ONLY` and `OFFSET m ROWS FETCH NEXT n ROWS ONLY`,
+and MSSQL's `OFFSET … FETCH NEXT` pagination branch. MSSQL's `SELECT TOP n`
 splices into the head, which no trailing comment can reach, so it keeps bounding a statement whose end
 may not be cut — with the one exception above. MSSQL also recognises a page form of its own that the
 shared probes above do not, `OFFSET n ROWS` with no `FETCH` tail; it is read in that provider, because
@@ -570,7 +571,7 @@ ordering notice beside it cannot disagree:
 
 | Condition | Where it comes from | Why |
 |-----------|--------------------|-----|
-| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Eight providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, Kafka and etcd answer it with page one. An absent flag reads as unsupported |
+| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Nine providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, Kafka, etcd and Neo4j answer it with page one. An absent flag reads as unsupported |
 | `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a full page — see below |
 | the surface supplies `onLoadMore` | `BottomPanel` | A result hydrated from an agent run has no statement of its own to page |
 
