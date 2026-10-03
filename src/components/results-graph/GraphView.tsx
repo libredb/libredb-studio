@@ -16,8 +16,9 @@
  * whose chunk never arrived.
  *
  * Keyboard: the canvas is focusable; `+` and `=` zoom in, `-` zooms out, `0` fits,
- * the arrow keys pan, and Escape clears the selection. The toolbar, the inspector
- * and the legend are ordinary DOM, reached by Tab.
+ * the arrow keys pan, and Escape clears the selection; a key held with Ctrl, Cmd or
+ * Alt is left to the browser. A press on the canvas focuses it. The toolbar, the
+ * inspector and the legend are ordinary DOM, reached by Tab.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileBraces, ImageDown, Maximize, RefreshCw, X, ZoomIn, ZoomOut } from "lucide-react";
@@ -153,6 +154,9 @@ export function GraphView({
         });
         cy = instance;
         instance.layout(fcoseLayout()).run();
+        // Cytoscape cancels a press's default and blurs the active element before it
+        // emits tapstart, so the canvas takes focus back here, or its keys stop after a click.
+        instance.on("tapstart", () => containerRef.current?.focus({ preventScroll: true }));
         instance.on("tap", "node, edge", (event: EventObject) => setSelection({ graph, key: event.target.id() }));
         instance.on("tap", (event: EventObject) => {
           if (event.target === instance) setSelection(null);
@@ -192,6 +196,8 @@ export function GraphView({
   const exportJson = () => save(new Blob([graphJson(graph)], { type: "application/json" }), `graph_${Date.now()}.json`);
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    // A modified key is the browser's: page zoom, history navigation.
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
     const pan = PAN_KEYS[event.key];
     if (pan) withCanvas((cy) => cy.panBy(pan));
     else if (event.key === "+" || event.key === "=") zoomBy(ZOOM_STEP);

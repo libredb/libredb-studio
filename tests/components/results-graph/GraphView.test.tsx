@@ -373,6 +373,43 @@ describe("GraphView: toolbar and keyboard", () => {
     expect(fireEvent.keyDown(canvas, { key: "Tab" })).toBe(true);
   });
 
+  test("a pointer press on the canvas gives it focus back, so Escape works after a click", async () => {
+    // Cytoscape's mousedown handler calls preventDefault and blurs the active element
+    // before it emits tapstart, so the canvas would never hold focus after a click.
+    const { cy, getByRole, queryByRole } = await mount();
+    const canvas = getByRole("application");
+    for (const target of [cy.$id("n:4:a"), cy]) {
+      (document.activeElement as HTMLElement | null)?.blur();
+      act(() => {
+        target.emit("tapstart");
+      });
+      expect(document.activeElement).toBe(canvas);
+    }
+    act(() => {
+      cy.$id("n:4:a").emit("tapstart");
+      cy.$id("n:4:a").emit("tap");
+    });
+    expect(queryByRole("region", { name: "Inspector" })).not.toBeNull();
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Escape" });
+    expect(queryByRole("region", { name: "Inspector" })).toBeNull();
+  });
+
+  test("a key held with Ctrl, Cmd or Alt is the browser's, never the canvas's", async () => {
+    const { cy, getByRole } = await mount();
+    const canvas = getByRole("application");
+    const zoom = cy.zoom();
+    const pan = { ...cy.pan() };
+    const fit = spyOn(cy, "fit");
+    for (const modifier of [{ ctrlKey: true }, { metaKey: true }, { altKey: true }]) {
+      for (const key of ["+", "=", "-", "0", "ArrowLeft", "Escape"]) {
+        expect(fireEvent.keyDown(canvas, { key, ...modifier })).toBe(true);
+      }
+    }
+    expect(cy.zoom()).toBe(zoom);
+    expect(cy.pan()).toEqual(pan);
+    expect(fit).not.toHaveBeenCalled();
+  });
+
   test("the toolbar waits for the canvas", async () => {
     let release: (create: Awaited<ReturnType<CytoscapeFactory>>) => void = () => {};
     const pending: CytoscapeFactory = () => new Promise((resolve) => (release = resolve));
