@@ -250,9 +250,10 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
       await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
       const { port } = proxy.address() as net.AddressInfo;
       // The driver's DEFAULT mechanism, as a connection that did not ask for plaintext gets it.
-      const { securityMechanism: _named, ...unnamed } = BASE;
+      const unnamed: ConnectionConfig = { ...BASE, host: "127.0.0.1", port };
+      delete unnamed.securityMechanism;
       try {
-        const client = new Client({ ...unnamed, host: "127.0.0.1", port });
+        const client = new Client(unnamed);
         const connected = await attempt(() => client.connect());
         if (connected.ok) {
           await client.query("VALUES 1");
