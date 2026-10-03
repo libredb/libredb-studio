@@ -130,6 +130,8 @@ export function hasGraphValues(rows: readonly Record<string, unknown>[]): boolea
 }
 
 /** The palette colour of a slot, cycling when labels outnumber colours; undefined for no slot. */
+export function paletteColor(colorIndex: number, palette: readonly string[]): string;
+export function paletteColor(colorIndex: number | null, palette: readonly string[]): string | undefined;
 export function paletteColor(colorIndex: number | null, palette: readonly string[]): string | undefined {
   if (palette.length === 0) throw new Error("paletteColor needs a non-empty palette");
   return colorIndex === null ? undefined : palette[colorIndex % palette.length];

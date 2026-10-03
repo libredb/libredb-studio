@@ -105,7 +105,7 @@ describe("graphStylesheet", () => {
     for (let slot = 0; slot < 10; slot += 1) {
       const block = sheet.find((entry) => "selector" in entry && entry.selector === `node[colorIndex = ${slot}]`);
       expect(block && "style" in block ? block.style : undefined).toEqual({
-        "background-color": paletteColor(slot, theme.series) as string,
+        "background-color": paletteColor(slot, theme.series),
       });
     }
     expect(paletteColor(8, theme.series)).toBe(theme.series[0]);

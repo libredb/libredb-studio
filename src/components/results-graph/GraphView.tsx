@@ -303,7 +303,7 @@ function Legend({ graph, palette }: { graph: ResultGraph; palette: readonly stri
           <ul className="mb-3 space-y-1">
             {graph.labels.map(({ label, count, colorIndex }) => (
               <li key={label} className="flex items-center gap-2">
-                <Swatch color={paletteColor(colorIndex, palette) as string} />
+                <Swatch color={paletteColor(colorIndex, palette)} />
                 <span className="truncate text-fg">{label}</span>
                 <span className="ml-auto font-mono text-fg-muted">{count}</span>
               </li>

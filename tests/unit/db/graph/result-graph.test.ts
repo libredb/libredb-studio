@@ -251,6 +251,11 @@ describe("paletteColor", () => {
     expect([0, 1, 2, 3, 4, 7].map((i) => paletteColor(i, palette))).toEqual(["#1", "#2", "#3", "#1", "#2", "#2"]);
   });
 
+  test("a slot always has a colour, so a caller needs no cast", () => {
+    const color: string = paletteColor(4, palette);
+    expect(color).toBe("#2");
+  });
+
   test("an unlabelled node gets no palette colour", () => {
     expect(paletteColor(null, palette)).toBeUndefined();
   });

@@ -78,7 +78,7 @@ export function graphElements(graph: ResultGraph): ElementDefinition[] {
 export function graphStylesheet(theme: ChartTheme, labelCount: number): StylesheetJson {
   const slots = Array.from({ length: labelCount }, (_, slot) => ({
     selector: `node[colorIndex = ${slot}]`,
-    style: { "background-color": paletteColor(slot, theme.series) as string },
+    style: { "background-color": paletteColor(slot, theme.series) },
   }));
   return [
     {
