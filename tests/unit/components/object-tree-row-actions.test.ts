@@ -831,6 +831,24 @@ describe("rowActions and declared per-row operations (spec 3.11)", () => {
     expect(idsFor(columnRow(), declared)).toEqual([]);
   });
 
+  test("a declared operation that names its kinds is a row item on those kinds only, as the provider's own are (#786)", () => {
+    const kinded = capabilitiesOf({
+      objectKinds: [table, view, routine],
+      ...SYNTHETIC_ENTITY_CAPABILITIES,
+      maintenanceOperationSpecs: {
+        ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs,
+        compact: { ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs.compact, kinds: ["table"] },
+      },
+    });
+
+    expect(maintenanceIds(idsFor(objectRow("table"), kinded))).toEqual([
+      "maintenance-analyze",
+      "maintenance-disarm",
+      "maintenance-compact",
+    ]);
+    expect(maintenanceIds(idsFor(objectRow("view"), kinded))).toEqual(["maintenance-analyze", "maintenance-disarm"]);
+  });
+
   test("a whole-database operation outside MaintenanceType is not a row item", () => {
     expect(idsFor(objectRow("table"), declared)).not.toContain("maintenance-defragment");
   });

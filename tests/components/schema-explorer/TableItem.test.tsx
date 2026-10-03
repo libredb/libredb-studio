@@ -1261,6 +1261,44 @@ describe("declared per-row operations in the mobile row menu (spec 3.11)", () =>
     expect(onOpenMaintenance.mock.calls[0][1]).toEqual(["app", "users"]);
   });
 
+  test("a declared operation that names its kinds is offered on those kinds only, as the desktop tree does", () => {
+    const kindedCaps = caps({
+      queryLanguage: "sql",
+      objectKinds: [tableKind, viewKind],
+      ...SYNTHETIC_ENTITY_CAPABILITIES,
+      maintenanceOperationSpecs: {
+        ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs,
+        compact: { ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs.compact, kinds: ["table"] },
+      },
+    });
+    const table = render(
+      <TableItem
+        table={qualifiedTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={kindedCaps}
+        labels={labelsFor({})}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+    expect(maintenanceTexts(table.getByTestId("dropdown"))).toEqual(MAINTENANCE_ITEMS);
+    cleanup();
+
+    const view = render(
+      <TableItem
+        table={viewObject}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={kindedCaps}
+        labels={labelsFor({})}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+    expect(maintenanceTexts(view.getByTestId("dropdown"))).toEqual(["Analyze Table", "Release Object"]);
+  });
+
   test("a declared operation alone still draws the maintenance group", () => {
     const { getByTestId } = render(
       <TableItem

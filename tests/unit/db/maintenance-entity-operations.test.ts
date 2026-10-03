@@ -67,6 +67,21 @@ describe("declaredEntityOperations (spec 3.11)", () => {
     );
   });
 
+  test("an operation that names its kinds is listed for a row of those kinds, and for a caller that names no kind", () => {
+    const kinded = capabilities({
+      maintenanceOperationSpecs: {
+        ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs,
+        compact: { ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs.compact, kinds: ["table"] },
+      },
+    });
+    const types = (kind?: string) => declaredEntityOperations(kinded, kind).map((operation) => operation.type);
+
+    expect(types("table")).toEqual(["disarm", "compact"]);
+    expect(types("view")).toEqual(["disarm"]);
+    // The Operations and Tables tabs list tables and name no kind, as they do for their MaintenanceType candidates.
+    expect(types()).toEqual(["disarm", "compact"]);
+  });
+
   test("unknown capabilities, an engine with no maintenance and an operation with no spec offer nothing", () => {
     expect(declaredEntityOperations(undefined)).toEqual([]);
     expect(declaredEntityOperations(capabilities({ supportsMaintenance: false }))).toEqual([]);

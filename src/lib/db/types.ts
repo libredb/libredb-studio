@@ -322,13 +322,17 @@ export interface DeclaredEntityOperation {
  * generic icon. An operation is listed only where `maintenanceControl` offers it per row and its spec names it:
  * unknown capabilities, an engine with no maintenance and an operation with no spec list nothing, because an operation
  * outside `MaintenanceType` has no generic wording to fall back on. etcd's three declare `perEntity: false`.
+ *
+ * A row menu names its row's `kind`, and is then offered an operation only on the kinds its spec names (#786); the two
+ * tabs list tables and name none, as they do for their own candidates.
  */
 export function declaredEntityOperations(
   capabilities: ProviderCapabilities | undefined,
+  kind?: string,
 ): readonly DeclaredEntityOperation[] {
   return [...new Set(capabilities?.maintenanceOperations ?? [])].flatMap((type): DeclaredEntityOperation[] => {
     if (Object.hasOwn(MAINTENANCE_TYPE_MEMBERS, type)) return [];
-    const control = maintenanceControl(capabilities, type, "perEntity");
+    const control = maintenanceControl(capabilities, type, "perEntity", kind);
     return control.offered && control.label !== undefined ? [{ type, label: control.label }] : [];
   });
 }

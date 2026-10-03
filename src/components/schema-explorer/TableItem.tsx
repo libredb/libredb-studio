@@ -148,7 +148,7 @@ function renderMenuItems({
   );
   // Every declared operation outside `MaintenanceType` that runs on one row, in declaration order (spec 3.11): the
   // same list the desktop tree's row menu reads, so the two menus cannot disagree.
-  const entityOperations = declaredEntityOperations(capabilities);
+  const entityOperations = declaredEntityOperations(capabilities, table.kind);
 
   return (
     <>
