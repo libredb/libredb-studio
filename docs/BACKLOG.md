@@ -1995,16 +1995,17 @@ Not fixed there: the SQLite provider is outside that PR.
 
 **Done when:** a statement that changes no row reports no changed rows on both SQLite drivers, read from the statement itself rather than the connection's last count, and a test runs a `DELETE` then a `CREATE TABLE` on one connection and pins the second answer.
 
-### D140. MongoDB reads its fields from a sample and does not mark them sampled
+### D140. MongoDB and Couchbase read their fields from a sample and do not mark them sampled
 
 `describeObject` in `src/lib/db/providers/document/mongodb.ts` infers a collection's fields from up to `OBJECT_SAMPLE_SIZE` (100) documents and sets no `provenance` on the columns it builds.
-So every field name it reports, which comes from the stored documents rather than from a declaration, reaches MCP `inspect_schema`, agent grounding and the four AI panels.
+`src/lib/db/providers/document/couchbase/index.ts` does the same with the engine's `INFER` sampler, because Couchbase stores no schema to read, and sets no `provenance` either.
+So every field name either reports, which comes from the stored documents rather than from a declaration, reaches MCP `inspect_schema`, agent grounding and the four AI panels.
 `ColumnSchema.provenance: "sampled"` exists for that case, and `machineColumns` in `src/lib/db/detailed-object.ts` keeps a marked column from every one of those surfaces.
-Adopting it is one assignment in the column builder and its test, but the consequence is not small: every MongoDB field is sampled, so marking them removes MongoDB's whole field list from MCP, agent grounding and the AI panels, where a model drafts queries from those names today.
-That trade needs the owner's decision before anyone makes it.
-Measured 2026-10-03: no `provenance:` assignment exists in the provider, and `OBJECT_SAMPLE_SIZE` is 100.
+Adopting it is one assignment in the column builder and its test, but the consequence is not small: every MongoDB and Couchbase field is sampled, so marking them removes each engine's whole field list from MCP, agent grounding and the AI panels, where a model drafts queries from those names today.
+That trade needs the owner's decision before anyone makes it, once for both engines.
+Measured 2026-10-03: no `provenance:` assignment exists in either provider, and MongoDB's `OBJECT_SAMPLE_SIZE` is 100.
 
-**Done when:** the owner has decided whether MongoDB's sampled fields stay visible to models, and either the column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or `docs/providers/mongodb.md` states that its sampled fields reach those surfaces and this entry is deleted.
+**Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
 
 ## Value interpolation
 
