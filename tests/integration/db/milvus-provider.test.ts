@@ -24,9 +24,10 @@ import type { DescribeCollectionResponse } from "@/lib/db/providers/vector/milvu
 import { collectionColumns } from "@/lib/db/providers/vector/milvus/schema";
 import { milvusSourceParts } from "@/lib/db/providers/vector/milvus/source";
 import type { DatabaseConnection } from "@/lib/db/types";
-import { DOCS_INT64, DOCS_INT64_INDEX, SYSTEM_INFO } from "../../helpers/milvus-catalog-client";
+import { DOCS_INT64, DOCS_INT64_INDEX, FTS, SYSTEM_INFO } from "../../helpers/milvus-catalog-client";
 import { capturedAnswer, milvusCapture } from "../../helpers/milvus-fixtures";
 import { okStatus, type RecordedMilvusAnswer, recordedMilvusWire, statusError } from "../../helpers/milvus-wire";
+import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 const CONNECTION: DatabaseConnection = {
   id: "milvus-integration",
@@ -194,6 +195,41 @@ describe("the object surface over the adapter", () => {
     expect(right.map((object) => object.name)).toEqual(["notes"]);
     expect(requestOf(wire, "ShowCollections")).toContainEqual({ db_name: "default" });
     expect(requestOf(wire, "ShowCollections")).toContainEqual({ db_name: "probe_db" });
+  });
+
+  test("the object surface meets the fleet's contract", async () => {
+    const byName: Record<string, DescribeCollectionResponse> = { docs_int64: DOCS_INT64, fts: FTS };
+    const notFound = {
+      ...DOCS_INT64,
+      schema: null,
+      status: { ...okStatus, code: 100, error_code: "CollectionNotExists", reason: "collection not found" },
+    };
+    const { provider } = await connected({
+      ShowCollections: (request) => ({
+        status: okStatus,
+        collection_names: request.db_name === "probe_db" ? ["notes"] : ["docs_int64", "fts"],
+        collection_ids: [],
+        created_timestamps: [],
+        created_utc_timestamps: [],
+        inMemory_percentages: [],
+        query_service_available: [],
+        shards_num: [],
+      }),
+      DescribeCollection: (request) => byName[request.collection_name as string] ?? notFound,
+      BatchDescribeCollection: (request) => ({
+        status: okStatus,
+        responses: (request.collection_name as readonly string[]).map((name) => byName[name] ?? notFound),
+      }),
+    });
+    await assertObjectSurface(provider, {
+      containers: [["default"], ["probe_db"]],
+      container: ["default"],
+      kinds: { collection: 2 },
+      sampleObject: { path: ["default", "docs_int64"], kind: "collection" },
+      absentSource: { path: ["default", "no_such_collection"], kind: "collection" },
+      noAbstainingKinds: true,
+    });
+    await provider.disconnect();
   });
 });
 
