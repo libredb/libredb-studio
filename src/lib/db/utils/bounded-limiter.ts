@@ -16,7 +16,7 @@
  * admission cannot deadlock: a console request holds one across its metadata reads and its execution call, issued
  * one after the other, and every other caller takes one per call it has in flight.
  */
-import { QueryError } from "@/lib/db/errors";
+import { QueryCancelledError, QueryError } from "@/lib/db/errors";
 
 export interface BoundedLimiterOptions {
   /** Calls in flight for one provider instance. */
@@ -170,4 +170,68 @@ export function engineLimiter(engineKey: string, options: BoundedLimiterOptions)
   const table: EngineTable = existing ?? { options: { ...options }, inFlight: 0, queue: [] };
   ENGINES.set(engineKey, table);
   return () => providerLimiter(table);
+}
+
+/** The refusal of a `queryId` already running or waiting on this provider; nothing was sent. */
+export class DuplicateRunError extends QueryError {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicateRunError";
+    Object.setPrototypeOf(this, DuplicateRunError.prototype);
+  }
+}
+
+/** One run's view of the registry: the signal its calls take, and the end it reports when it settles. */
+export interface RunHandle {
+  readonly signal: AbortSignal;
+  end(): void;
+}
+
+/** A provider instance's runs by `queryId`, which `POST /api/db/cancel` reaches through the provider's `cancelQuery`. */
+export interface RunRegistry {
+  /** Throws `DuplicateRunError` for a `queryId` already running or queued. */
+  begin(queryId: string | undefined, deadline: AbortSignal): RunHandle;
+  /** Aborts a running or queued run; false for an unknown id. */
+  cancel(queryId: string): boolean;
+}
+
+/** The browser's `q-<epoch ms>-<id>` fits, and nothing a client could use to make the registry hold a large key. */
+const QUERY_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const QUERY_ID_SENTENCE = 'queryId must be 1 to 128 characters of letters, digits, "_" and "-"';
+const DUPLICATE_RUN_SENTENCE =
+  "A run with this queryId is already running or waiting on this connection. Start the next run with a new queryId.";
+const CANCELLED_SENTENCE = "The query was cancelled.";
+
+/**
+ * The runs of one provider instance, so every user of a shared seed shares them: a cancel names a run by its id
+ * alone, with no owner check, as `POST /api/db/cancel` does for every cancel-capable provider, and only a client
+ * that reuses its own id meets `DuplicateRunError`.
+ *
+ * A run's signal aborts at its deadline or at its cancel, whichever comes first. Nothing bridges a dropped HTTP
+ * request to a cancel, so a run abandoned without Stop ends at its deadline.
+ */
+export function createRunRegistry(): RunRegistry {
+  const runs = new Map<string, AbortController>();
+  return {
+    begin(queryId, deadline) {
+      if (queryId === undefined) return { signal: deadline, end: () => {} };
+      if (typeof queryId !== "string" || !QUERY_ID.test(queryId)) throw new QueryError(QUERY_ID_SENTENCE);
+      if (runs.has(queryId)) throw new DuplicateRunError(DUPLICATE_RUN_SENTENCE);
+      const controller = new AbortController();
+      runs.set(queryId, controller);
+      return {
+        signal: AbortSignal.any([deadline, controller.signal]),
+        end() {
+          // Only this run's own entry: once it ended, the same id may name a newer run, which must stay cancellable.
+          if (runs.get(queryId) === controller) runs.delete(queryId);
+        },
+      };
+    },
+    cancel(queryId) {
+      const controller = runs.get(queryId);
+      if (controller === undefined) return false;
+      controller.abort(new QueryCancelledError(CANCELLED_SENTENCE));
+      return true;
+    },
+  };
 }
