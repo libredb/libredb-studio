@@ -1498,6 +1498,144 @@ services:
     entrypoint: ["sh", "-c", "sh /etcd/seed.sh https://etcd-auth-password:2379 && sh /etcd/rbac.sh https://etcd-auth-password:2379"]
     <<: *etcd-one-shot-limits
 
+  # ---------------------------------------------------------------------------------------
+  # Milvus (the milvus provider). One standalone server with authorization on is the default
+  # fixture, seeded by a one-shot Python sidecar; two TLS servers sit behind the `milvus-tls`
+  # profile, one-way TLS and mutual TLS. Every server follows Milvus's standalone_embed.sh at
+  # tag v3.0.2 with three measured changes: a named volume per server, because the image runs
+  # as uid 999 and the script's bind mount crashed it with exit code 134; image v3.0.2, where
+  # the script at that tag pins v3.0.1; and, for TLS, REST on a listener of its own, because
+  # TLS forces separate ports. docker/milvus/README.md describes the servers, the seeded
+  # objects, the users and the certificates.
+  # ---------------------------------------------------------------------------------------
+  milvus:
+    # Pinned to the exact build the vector fixtures were captured from, by tag and by digest:
+    # the captures under tests/fixtures/vector are claims about 3.0.2.
+    image: milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0
+    container_name: libredb-milvus
+    # During the research the embedded etcd of one server stalled on fdatasync for 7.8 s, lost
+    # its lease and exited with code 80, so the server restarts; a harness checks every
+    # service's health first and fails loudly on an exited or unhealthy one, with no retry.
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    security_opt: ["seccomp:unconfined"]
+    # Authorization is on. root keeps Milvus's documented default password, which nothing here
+    # sets: it is the server's built-in default.
+    environment: &milvus-env
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      ETCD_CONFIG_PATH: /milvus/configs/embedEtcd.yaml
+      COMMON_STORAGETYPE: local
+      DEPLOY_MODE: STANDALONE
+      COMMON_SECURITY_AUTHORIZATIONENABLED: "true"
+    volumes:
+      - milvus-data:/var/lib/milvus
+      - ./docker/milvus/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml
+      - ./docker/milvus/user.yaml:/milvus/configs/user.yaml
+    ports:
+      # gRPC and REST share 19530. The management port 9091 answers without authentication on
+      # 3.0.2, so it is published on loopback alone, as 19091, for the live check's telemetry
+      # read; 9091 on the host is prometheus-auth's. The embedded etcd's 2379 is not published.
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:19091:9091"
+    healthcheck: &milvus-health
+      # The management port's own probe, plain HTTP inside the container on every server.
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      start_period: 90s
+      start_interval: 2s
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    # Bounded at the maintainer's request; no swap past it. Measured 156 to 292 MiB after
+    # seeding during the research.
+    <<: &milvus-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "2"
+            memory: 4G
+      memswap_limit: 4G
+
+  # -- Milvus, one-way and mutual TLS -------------------------------------------
+
+  milvus-certs:
+    # Generates a throwaway CA, the servers' certificate and the client certificates into a
+    # named volume at first start (docker/milvus/certs.sh), so no private key is ever committed.
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-milvus-certs
+    profiles: ["milvus-tls"]
+    restart: "no"
+    volumes:
+      - milvus-certs:/certs
+      - ./docker/milvus:/milvus:ro
+    entrypoint: ["sh", "/milvus/certs.sh", "/certs"]
+    <<: &vector-one-shot-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "0.5"
+            memory: 64M
+      memswap_limit: 64M
+
+  milvus-tls:
+    # tlsMode 1: the server presents its certificate and asks for none. REST moves to its own
+    # listener, 8080, published as 19541. Profile-gated, with milvus-mtls.
+    image: milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0
+    container_name: libredb-milvus-tls
+    profiles: ["milvus-tls"]
+    restart: unless-stopped
+    depends_on:
+      milvus-certs:
+        condition: service_completed_successfully
+    command: ["milvus", "run", "standalone"]
+    security_opt: ["seccomp:unconfined"]
+    environment:
+      <<: *milvus-env
+      COMMON_SECURITY_TLSMODE: "1"
+      PROXY_HTTP_PORT: "8080"
+      TLS_SERVERPEMPATH: /milvus/tls/server.pem
+      TLS_SERVERKEYPATH: /milvus/tls/server.key
+      TLS_CAPEMPATH: /milvus/tls/ca.pem
+    volumes:
+      - milvus-tls-data:/var/lib/milvus
+      - milvus-certs:/milvus/tls:ro
+      - ./docker/milvus/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml
+      - ./docker/milvus/user.yaml:/milvus/configs/user.yaml
+    ports:
+      - "127.0.0.1:19531:19530"
+      - "127.0.0.1:19541:8080"
+    healthcheck: *milvus-health
+    <<: *milvus-limits
+
+  milvus-mtls:
+    # tlsMode 2: the server also asks for a client certificate issued by the fixture's CA. Only
+    # gRPC is published; REST keeps its own listener inside the container.
+    image: milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0
+    container_name: libredb-milvus-mtls
+    profiles: ["milvus-tls"]
+    restart: unless-stopped
+    depends_on:
+      milvus-certs:
+        condition: service_completed_successfully
+    command: ["milvus", "run", "standalone"]
+    security_opt: ["seccomp:unconfined"]
+    environment:
+      <<: *milvus-env
+      COMMON_SECURITY_TLSMODE: "2"
+      PROXY_HTTP_PORT: "8080"
+      TLS_SERVERPEMPATH: /milvus/tls/server.pem
+      TLS_SERVERKEYPATH: /milvus/tls/server.key
+      TLS_CAPEMPATH: /milvus/tls/ca.pem
+    volumes:
+      - milvus-mtls-data:/var/lib/milvus
+      - milvus-certs:/milvus/tls:ro
+      - ./docker/milvus/embedEtcd.yaml:/milvus/configs/embedEtcd.yaml
+      - ./docker/milvus/user.yaml:/milvus/configs/user.yaml
+    ports:
+      - "127.0.0.1:19532:19530"
+    healthcheck: *milvus-health
+    <<: *milvus-limits
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #
@@ -2116,13 +2254,15 @@ services:
     memswap_limit: 1536M
 
 volumes:
-  # Named volumes for Druid and for the certificates of kafka-auth and the etcd auth fixtures
-  # only. Druid is the one service here whose processes must share state (deep storage) and
-  # whose task history is worth surviving a restart; kafka-auth-certs hands the generated CA and
-  # broker certificate from the one-shot kafka-auth-certs service to the broker, and
-  # etcd-auth-certs the generated certificates and passwords from etcd-auth-certs to the two
-  # etcd auth servers and their init one-shots. Everything else uses the image's own anonymous
-  # volumes.
+  # Named volumes for Druid, for the certificates of kafka-auth and the etcd auth fixtures, and
+  # for the vector fixtures. Druid is the one service here whose processes must share state
+  # (deep storage) and whose task history is worth surviving a restart; kafka-auth-certs hands
+  # the generated CA and broker certificate from the one-shot kafka-auth-certs service to the
+  # broker, and etcd-auth-certs the generated certificates and passwords from etcd-auth-certs to
+  # the two etcd auth servers and their init one-shots. Each Milvus server keeps its data in a
+  # volume of its own, because the image runs as uid 999 and a bind mount crashed it, and
+  # milvus-certs holds the generated certificates. Everything else uses the image's own
+  # anonymous volumes.
   #
   # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
   # that write or read segments. A `down -v` resets the cluster to empty.
@@ -2134,3 +2274,7 @@ volumes:
   druid_router_var: {}
   kafka-auth-certs: {}
   etcd-auth-certs: {}
+  milvus-data: {}
+  milvus-tls-data: {}
+  milvus-mtls-data: {}
+  milvus-certs: {}
