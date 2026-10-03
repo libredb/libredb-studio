@@ -837,8 +837,12 @@ describe("the adapter over the recorded wire (5.1, E15, E16)", () => {
     timeout.abort(new DOMException("The operation timed out.", "TimeoutError"));
     const cancel = new AbortController();
     cancel.abort();
-    for (const signal of [timeout.signal, cancel.signal]) {
-      const error = await failure(client.loadCollection({ collection_name: "c" }, call("default", signal)));
+    const errors = await Promise.all(
+      [timeout.signal, cancel.signal].map((signal) =>
+        failure(client.loadCollection({ collection_name: "c" }, call("default", signal))),
+      ),
+    );
+    for (const error of errors) {
       const message = toProviderError(error, {
         operation: "Load of c",
         write: true,
