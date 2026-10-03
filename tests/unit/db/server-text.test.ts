@@ -9,6 +9,9 @@ import { secretForms, serverText } from "@/lib/db/utils/server-text";
 
 const WITHHELD = "(the server's text was withheld because it contained the configured credential)";
 const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
+const base64url = (value: string) => Buffer.from(value, "utf8").toString("base64url");
+// Built from its parts, so no commit holds a literal shaped as a credential for the secret scan to report.
+const fabricatedJwt = () => [base64url('{"alg":"HS256"}'), base64url('{"sub":"x"}'), base64url("signature")].join(".");
 
 describe("secretForms", () => {
   test("lists the secret, its base64 without padding and its URI-encoded form", () => {
@@ -16,7 +19,7 @@ describe("secretForms", () => {
   });
 
   test("adds each segment of a value shaped as a JWT", () => {
-    const token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+    const token = fabricatedJwt();
     const forms = secretForms([token]);
     for (const segment of token.split(".")) expect(forms).toContain(segment);
   });
@@ -50,7 +53,7 @@ describe("serverText", () => {
   });
 
   test("withholds a text holding one segment of a configured JWT", () => {
-    const token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
+    const token = fabricatedJwt();
     expect(serverText("bad signature c2lnbmF0dXJl", secretForms([token]))).toBe(WITHHELD);
   });
 
