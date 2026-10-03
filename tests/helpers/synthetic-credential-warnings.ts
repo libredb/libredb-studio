@@ -1,0 +1,38 @@
+import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
+import type { DatabaseType } from "@/lib/types";
+
+/**
+ * Synthetic declarations: no shipped type declares a credential warning in this release, so each test declares
+ * one on a real type for its own duration. `etcd` carries the pair and no-secret cases because it is the one
+ * type whose provider enforces `readOnly`, so a read-only seed of it reaches the credential check at all.
+ */
+export const SYNTHETIC_PAIR = {
+  kind: "pair",
+  user: "root",
+  password: "Milvus",
+  message: "This user and password are a published default, so anyone who knows the product knows them.",
+} as const satisfies CredentialWarning;
+
+export const SYNTHETIC_NO_SECRET = {
+  kind: "no-secret",
+  message:
+    "This connection type accepts a connection with no secret, so a read-only seed without one promises a boundary the server does not keep.",
+} as const satisfies CredentialWarning;
+
+export const SYNTHETIC_JWT = {
+  kind: "jwt",
+  noExp: true,
+  access: ["m", "absent"],
+  message: "This token declares no expiry, or manage access over everything.",
+} as const satisfies CredentialWarning;
+
+/** Declares `entries` for `type` in the shared record and returns the undo, which a test runs in `afterEach`. */
+export function declareCredentialWarnings(type: DatabaseType, entries: readonly CredentialWarning[]): () => void {
+  const record = CREDENTIAL_WARNINGS as Partial<Record<DatabaseType, readonly CredentialWarning[]>>;
+  const before = record[type];
+  record[type] = entries;
+  return () => {
+    if (before === undefined) delete record[type];
+    else record[type] = before;
+  };
+}

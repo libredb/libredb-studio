@@ -8,7 +8,7 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
  * Modules the connection dialog runs in the browser and the seed loader runs on the server, so they may import
  * nothing but types: no React, no icon, no Node built-in, and not endpoint.ts, which imports node:net.
  */
-const BROWSER_SAFE_MODULES = ["src/lib/connection-host-uri.ts"];
+const BROWSER_SAFE_MODULES = ["src/lib/connection-host-uri.ts", "src/lib/db/credential-warnings.ts"];
 
 describe("browser-safe modules import types only", () => {
   test.each(BROWSER_SAFE_MODULES)("%s imports nothing but types from @/lib/types", (file) => {
