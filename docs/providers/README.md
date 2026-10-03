@@ -281,10 +281,11 @@ provider's integration pass.
 | OpenSearch | `opensearch` | localhost | **9201** | *none* | *none* | *none* | — |
 | Trino | `trino` | localhost | 8080 | *none* | *none* | `tpch` (catalog) | — |
 | Apache Cassandra | `cassandra` | localhost | 9042 | *none* | *none* | `probe` (keyspace) | — |
-| Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | *none* |
-| Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | *none* |
-| etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | *none* |
-| Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | *none* |
+| Prometheus | `prometheus` | localhost | 9090 | *none* | *none* | *none* | — |
+| Apache Kafka | `kafka` | localhost | 9092 | *none* | *none* | *none* | — |
+| etcd | `etcd` | localhost | 2379 | *none* | *none* | *none* (one connection is one cluster) | — |
+| Neo4j | `neo4j` | localhost | 7687 | `neo4j` | `password123` | `neo4j`, or empty for the home database | — |
+| libSQL | `libsql` | localhost | **18080** | *none* | *none* | *none* | — |
 | SQLite | *no service* | — | — | — | — | a file path on the Studio host | — |
 | LibreDB | *no service* | — | — | — | — | a directory on the Studio host | — |
 
