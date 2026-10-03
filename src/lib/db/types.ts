@@ -109,14 +109,18 @@ export type MaintenanceType = "vacuum" | "analyze" | "reindex" | "kill" | "optim
 
 /**
  * Every maintenance operation a provider may declare in `maintenanceOperations` and be asked to run through
- * `runMaintenance`: the six of `MaintenanceType`, and etcd's three.
+ * `runMaintenance`: the six of `MaintenanceType`, etcd's three and Milvus's two.
  *
  * `compact`, `defragment` and `disarm` are etcd's history compaction, member defragmentation and alarm disarm
  * (#1089, section 7.2), operations of their own rather than `vacuum` and `optimize` under other words: a reused
  * `vacuum` is audited as VACUUM and read by the monitoring Tables tab's vacuum column, and `optimize` has no global
  * card, so a defragmentation declared as it would have had no control at all.
+ *
+ * `load` and `release` are Milvus's per-collection Load and Release (#424): a load
+ * reads a collection into the query-node memory every client of the cluster shares, and a release frees it, which no
+ * existing member means; the maintenance route audits them as LOAD and RELEASE.
  */
-export type MaintenanceOperation = MaintenanceType | "compact" | "defragment" | "disarm";
+export type MaintenanceOperation = MaintenanceType | "compact" | "defragment" | "disarm" | "load" | "release";
 
 export interface MaintenanceResult {
   success: boolean;
