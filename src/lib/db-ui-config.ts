@@ -22,6 +22,8 @@ import {
   EtcdIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
+import type { HostUriScheme } from "@/lib/connection-host-uri";
+import type { CredentialWarning } from "@/lib/db/credential-warnings";
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
 export type DBIcon = LucideIcon | React.FC<React.SVGAttributes<SVGSVGElement> & { className?: string }>;
@@ -83,6 +85,20 @@ export interface DatabaseUIConfig {
    * dialog offers the tunnel. Read through `offersSshTunnel`, never directly.
    */
   showSshTunnel?: false;
+  /**
+   * The schemes the connection dialog's Host box takes as a whole address, split into Host and Port on paste
+   * and at save (src/lib/connection-host-uri.ts), absent meaning the box takes a host alone, as it always has.
+   * Read through `hostUriSchemes`, never directly. The connection-string box is a different reader and keeps
+   * `http://` and `https://` for ClickHouse.
+   */
+  hostAcceptsUri?: readonly HostUriScheme[];
+  /**
+   * The credentials this engine warns about, taken by reference from `CREDENTIAL_WARNINGS` in
+   * src/lib/db/credential-warnings.ts and never written out here, so the dialog's warning and the seed loader's
+   * refusal read one record. That module holds the data because this one imports React icons, which the seed
+   * loader must not.
+   */
+  credentialWarnings?: readonly CredentialWarning[];
 }
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
@@ -446,6 +462,20 @@ export function isFileBased(type: DatabaseType): boolean {
  */
 export function takesConnectionField(type: DatabaseType, field: ConnectionField): boolean {
   return DB_UI_CONFIG[type].connectionFields.includes(field);
+}
+
+const NO_HOST_URI_SCHEMES: readonly HostUriScheme[] = Object.freeze([]);
+
+/**
+ * The schemes the Host box takes as a whole address for this engine: its `hostAcceptsUri`, or none.
+ *
+ * One rule, two readers in `useConnectionForm`, as `offersSshTunnel` has: the host setter it returns, which
+ * splits a pasted address on arrival, and `buildConnection`, which splits one that was typed and which no path
+ * to a tested or saved connection bypasses. Loading a connection to edit reads neither, so its host shows as it
+ * was saved.
+ */
+export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
+  return DB_UI_CONFIG[type].hostAcceptsUri ?? NO_HOST_URI_SCHEMES;
 }
 
 /**
