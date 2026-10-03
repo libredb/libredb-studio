@@ -6,7 +6,7 @@ import { defineConfig, devices } from "@playwright/test";
 // that port is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
-// offline-editor.spec.ts and the kafka, etcd, neo4j and qdrant provider specs get a second server
+// offline-editor.spec.ts and the kafka, etcd, neo4j, milvus and qdrant provider specs get a second server
 // process on its own port - see the projects and the webServer array below for why. Override with
 // E2E_OFFLINE_PORT under the same collision circumstances as E2E_PORT.
 const offlinePort = Number(process.env.E2E_OFFLINE_PORT ?? 3010);
@@ -51,10 +51,10 @@ export default defineConfig({
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
-      // offline-editor.spec.ts and the kafka, etcd, neo4j and qdrant provider specs run under their own
+      // offline-editor.spec.ts and the kafka, etcd, neo4j, milvus and qdrant provider specs run under their own
       // projects below, against the second server, and passkey.spec.ts against the third.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|qdrant-provider|passkey)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|passkey)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -97,6 +97,13 @@ export default defineConfig({
       name: "chromium-neo4j",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /neo4j-provider\.spec\.ts/,
+    },
+    {
+      // milvus-provider.spec.ts drives Test Connection too (one call, for the refusal it asserts), so it takes the
+      // second server for the reason kafka-provider.spec.ts does.
+      name: "chromium-milvus",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /milvus-provider\.spec\.ts/,
     },
     {
       // qdrant-provider.spec.ts drives Test Connection too (one call, for the refusal it asserts), so it takes the

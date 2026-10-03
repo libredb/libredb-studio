@@ -15,6 +15,7 @@ const SECOND_SERVER_SPECS = [
   "kafka-provider.spec.ts",
   "etcd-provider.spec.ts",
   "neo4j-provider.spec.ts",
+  "milvus-provider.spec.ts",
   "qdrant-provider.spec.ts",
 ];
 
