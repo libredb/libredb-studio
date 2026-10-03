@@ -302,7 +302,7 @@ A cell cut to `"<value too large: N bytes>"` (section 5.3) is text, so it draws 
 The tab draws the first 300 distinct nodes in row order, and when a result holds more it says so: "Showing 300 of 412 nodes. The graph draws at most 300 nodes; the Results tab holds every row."
 A relationship is drawn only when both its endpoints are drawn, and the ones left out are counted: "2 relationships are not drawn because an endpoint is not among the drawn nodes."
 Each label gets a colour of the chart palette in order of first appearance, cycling when labels outnumber colours, and a node takes its first label's.
-A node's caption is the first present property among `name`, `title` and `label`, then a key ending in `name`, then `description`, then the first string property, else the first label, else the `elementId`, compared without case and cut to at most 24 characters with an ellipsis.
+A node's caption is the first present property among `name`, `title` and `label`, then a key ending in `name`, then `description`, then `id`, then the first string property that is not a non-finite float (`NaN`, `Infinity`, `-Infinity`), else the first label, else the `elementId`, compared without case and cut to at most 24 characters with an ellipsis.
 A relationship's caption is its type, and an arrow shows its direction.
 The legend lists the labels with their colour and count, and the relationship types with their count.
 A click on a node or a relationship opens the inspector beside the canvas, under it on a narrow screen, with its labels or type, its `elementId` and every property; Escape clears the selection.

@@ -334,8 +334,23 @@ describe("captionOf", () => {
     expect(caption({ x: 1, Description: "D" })).toBe("D");
   });
 
+  test("then the id key, exact and without case, before any other string property", () => {
+    expect(caption({ city: "Izmir", id: "gateway" })).toBe("gateway");
+    expect(caption({ city: "Izmir", ID: 7 })).toBe("7");
+    expect(caption({ id: "gateway", description: "D" })).toBe("D");
+    expect(caption({ paid: "yes", uuid: "u-1" })).toBe("yes");
+  });
+
   test("then the first string property", () => {
     expect(caption({ age: 3, city: "Izmir", code: "c" })).toBe("Izmir");
+  });
+
+  test("a non-finite float, which arrives as text, is never the first string property", () => {
+    expect(caption({ a: "NaN", b: "Infinity", c: "-Infinity", id: "types" })).toBe("types");
+    expect(caption({ a: "NaN", b: "Infinity", c: "-Infinity", city: "Izmir" })).toBe("Izmir");
+    expect(caption({ a: "NaN", b: "Infinity", c: "-Infinity" }, ["Service"])).toBe("Service");
+    // Under a key the rule names, the value is shown as stored.
+    expect(caption({ name: "NaN" })).toBe("NaN");
   });
 
   test("a null, undefined or empty preferred property is skipped", () => {

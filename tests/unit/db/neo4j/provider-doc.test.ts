@@ -23,7 +23,7 @@ import { MAX_CELL_DEPTH, MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
 import { GRAPH_SAMPLE_LIMIT } from "@/lib/db/graph/cypher/generators";
 import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
-import { type ResultGraph, buildResultGraph } from "@/lib/db/graph/result-graph";
+import { type ResultGraph, buildResultGraph, captionOf } from "@/lib/db/graph/result-graph";
 import { GRAPH_TAG } from "@/lib/db/graph/values";
 import { CATALOG_ROW_BOUND, NEO4J_CATALOG_STATEMENTS } from "@/lib/db/providers/graph/neo4j/catalog";
 import { mapNeo4jError } from "@/lib/db/providers/graph/neo4j/errors";
@@ -581,6 +581,21 @@ describe("docs/providers/neo4j.md section 5.6 states the Graph tab's bound, noti
   test("the caption length is the model's", () => {
     const length = privateConstant("src/lib/db/graph/result-graph.ts", "CAPTION_LENGTH");
     expect(GRAPH_TAB).toContain(`at most ${length} characters`);
+  });
+
+  test("the caption order is the model's, key by key", () => {
+    const caption = (properties: Record<string, unknown>) =>
+      captionOf({ elementId: "e", labels: ["L"], properties });
+    const stated = /A node's caption is ([^\n]*)\n/.exec(GRAPH_TAB)?.[1] ?? "";
+    expect(stated).toContain(
+      "the first present property among `name`, `title` and `label`, then a key ending in `name`, then `description`, then `id`, then the first string property that is not a non-finite float (`NaN`, `Infinity`, `-Infinity`), else the first label, else the `elementId`",
+    );
+    expect(caption({ s: "x", id: "i", description: "d", firstName: "f", label: "l" })).toBe("l");
+    expect(caption({ s: "x", id: "i", description: "d", firstName: "f" })).toBe("f");
+    expect(caption({ s: "x", id: "i", description: "d" })).toBe("d");
+    expect(caption({ s: "x", id: "i" })).toBe("i");
+    expect(caption({ f: "NaN", s: "x" })).toBe("x");
+    expect(caption({ f: "NaN" })).toBe("L");
   });
 
   test("the canvas name is the shape of graphAriaLabel", () => {

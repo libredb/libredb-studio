@@ -61,6 +61,8 @@ export interface ResultGraphOptions {
 
 const CAPTION_LENGTH = 24;
 const ELLIPSIS = "…";
+/** How a float with no JSON number arrives: as one of these three texts. */
+const NON_FINITE_FLOATS: ReadonlySet<unknown> = new Set(["NaN", "Infinity", "-Infinity"]);
 
 /**
  * How deep the walk looks into a cell, the cell itself being depth 1. The Bolt
@@ -129,11 +131,15 @@ function truncate(text: string): string {
 
 /**
  * A node's caption: the first present property among `name`, `title`, `label`,
- * then a key ending in `name`, then `description`, then the first string
- * property, else the first label, else the elementId; at most 24 characters.
- * Every key comparison ignores case, and when two keys match one step (`Name`
- * and `name`), the first in property order wins. Null, undefined and the empty
- * string are not present.
+ * then a key ending in `name`, then `description`, then `id`, then the first
+ * string property, else the first label, else the elementId; at most 24
+ * characters. Every key comparison ignores case, and when two keys match one
+ * step (`Name` and `name`), the first in property order wins. Null, undefined
+ * and the empty string are not present.
+ *
+ * "The first string property" passes over `NaN`, `Infinity` and `-Infinity`: a
+ * non-finite float has no JSON number, so it arrives as that text, and it names
+ * nothing. Under a key the rule names, such a value is still shown as stored.
  */
 export function captionOf(node: Pick<GraphNodeJson, "elementId" | "labels" | "properties">): string {
   const present = Object.entries(node.properties).filter(([, value]) => value != null && value !== "");
@@ -144,7 +150,8 @@ export function captionOf(node: Pick<GraphNodeJson, "elementId" | "labels" | "pr
     keyed((key) => key === "label") ??
     keyed((key) => key.endsWith("name")) ??
     keyed((key) => key === "description") ??
-    present.find(([, value]) => typeof value === "string");
+    keyed((key) => key === "id") ??
+    present.find(([, value]) => typeof value === "string" && !NON_FINITE_FLOATS.has(value));
   return truncate(found ? asText(found[1]) : (node.labels[0] ?? node.elementId));
 }
 
