@@ -54,13 +54,13 @@ test.describe("Neo4j in the connection dialog", () => {
     await expect(dialog.getByText("SSH Tunnel", { exact: true })).toBeVisible();
   });
 
-  test("says under User that the connection is read-only whatever the toggle says", async ({ page }) => {
+  test("says under the Read-only toggle that the connection is read-only whatever it says", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Neo4j", exact: true }).click();
 
     await expect(
       dialog.getByText(
-        "Neo4j connections are read-only in this version, whether or not Read-only is set: this user's write privileges are never used.",
+        "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
         { exact: true },
       ),
     ).toBeVisible();

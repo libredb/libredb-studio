@@ -15,7 +15,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYAML } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { DB_UI_CONFIG, readOnlyHint } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { type GraphClient, GraphClientError, type GraphRunResult } from "@/lib/db/graph/bolt/client";
 import { MAX_CELL_DEPTH, MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-values";
@@ -420,10 +420,7 @@ describe("docs/providers/neo4j.md section 3.6 states the machine access the prod
 describe("docs/providers/neo4j.md section 4.1 states the dialog's fields", () => {
   const neo4j = DB_UI_CONFIG.neo4j;
 
-  test.each([
-    ["User", "user"],
-    ["Database", "database"],
-  ] as const)("the %s row carries the dialog's own hint", (cell, field) => {
+  test.each([["Database", "database"]] as const)("the %s row carries the dialog's own hint", (cell, field) => {
     expect(rowOf(FIELDS, cell)).toBe(`| ${cell} | ${neo4j.fieldHints?.[field]} |`);
   });
 
@@ -441,6 +438,8 @@ describe("docs/providers/neo4j.md section 4.1 states the dialog's fields", () =>
   test("the read-only toggle keeps the promise: the provider keeps the mode", () => {
     expect(READ_ONLY_ENFORCED.neo4j).toBe(true);
     expect(rowOf(FIELDS, "Read-only")).toContain("read-only either way");
+    // The sentence the dialog draws under the toggle, quoted from the declaration (spec A7).
+    expect(rowOf(FIELDS, "Read-only")).toContain(`"${readOnlyHint(neo4j)}"`);
   });
 });
 

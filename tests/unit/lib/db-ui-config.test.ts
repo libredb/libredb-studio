@@ -10,6 +10,7 @@ import {
   getDBColor,
   isFileBased,
   offersSshTunnel,
+  readOnlyHint,
   takesConnectionField,
   type ConnectionField,
   type DatabaseUIConfig,
@@ -494,10 +495,14 @@ describe("db-ui-config", () => {
     // The SSL panel and the SSH tunnel are both offered: a bolt:// URI dials the one server it names.
     expect(neo4j.showSshTunnel).toBeUndefined();
     expect(offersSshTunnel("neo4j")).toBe(true);
-    expect(neo4j.fieldHints).toEqual({
-      user: "Neo4j connections are read-only in this version, whether or not Read-only is set: this user's write privileges are never used.",
-      database: "Leave empty to use the server's home database.",
-    });
+    expect(neo4j.fieldHints).toEqual({ database: "Leave empty to use the server's home database." });
+    // The Read-only toggle's own sentence: the dialog's default says the mode can be turned off (spec A7).
+    expect(readOnlyHint(neo4j)).toBe(
+      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+    );
+    expect(readOnlyHint(DB_UI_CONFIG.etcd)).toBe(
+      "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
+    );
     expect(neo4j.fieldLabels).toBeUndefined();
     expect(neo4j.fieldOptions).toBeUndefined();
   });

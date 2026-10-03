@@ -163,14 +163,14 @@ The cancel, the READ-mode refusal and every capture of section 11 were measured 
 |---|---|
 | Host | A name or address only: the provider builds the `bolt` URI from Host, Port and the SSL panel |
 | Port | `7687` by default, Bolt's port; 7474 is Neo4j's HTTP port, which this provider never uses |
-| User | Neo4j connections are read-only in this version, whether or not Read-only is set: this user's write privileges are never used. |
+| User | The Neo4j user; its write privileges are never used, because the connection is read-only |
 | Password | The user's password, sent in Bolt's basic authentication |
 | Database | Leave empty to use the server's home database. |
 | SSL / TLS | The mode and the CA (section 4.3) |
 | SSH Tunnel | A bastion that forwards the one Bolt endpoint |
-| Read-only | Accepted, and read-only either way: the provider refuses every write whatever the toggle says |
+| Read-only | Accepted, and read-only either way: the provider refuses every write whatever the toggle says. The dialog says so under the toggle: "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used." |
 
-The User and Database rows are the hints the connection dialog shows under each field.
+The Database row is the hint the connection dialog shows under that field, and the Read-only row quotes the sentence under the toggle.
 There is no connection string: no `bolt://` or `neo4j://` URI is parsed, so a scheme typed into Host is refused rather than read.
 A user name or password written into the host is refused with "Invalid host: a user name or password belongs in the connection's user and password fields, not in the host".
 The host and port go through the shared validators of `src/lib/db/http/endpoint.ts`, and the built URI is parsed back and must name the same host and port.

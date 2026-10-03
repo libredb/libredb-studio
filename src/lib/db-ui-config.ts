@@ -71,6 +71,12 @@ export interface DatabaseUIConfig {
    */
   fieldHints?: Partial<Record<ConnectionField, string>>;
   /**
+   * The sentence under the connection dialog's Read-only toggle, where this engine's mode differs from
+   * the dialog's own sentence, which says the mode can be turned off. Neo4j declares one because its
+   * connections are read-only whether or not the box is ticked (spec A7). Read through `readOnlyHint`.
+   */
+  readOnlyHint?: string;
+  /**
    * The choices of a field the connection dialog draws as a select rather than a text box, each a
    * stored value and its label, offered after an empty "None" choice that stores nothing (#1088).
    * The dialog draws the select where the engine takes the field, the same condition
@@ -420,11 +426,10 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // The SSL panel and the SSH tunnel stay offered: a bolt:// URI dials the one server it names, unlike a
     // routing neo4j:// URI, which this provider never builds. An empty database is the server's home database.
     connectionFields: ["host", "port", "user", "password", "database"],
-    // The read-only sentence sits under User because the form draws no per-engine hint on its Read-only toggle.
-    fieldHints: {
-      user: "Neo4j connections are read-only in this version, whether or not Read-only is set: this user's write privileges are never used.",
-      database: "Leave empty to use the server's home database.",
-    },
+    fieldHints: { database: "Leave empty to use the server's home database." },
+    // The dialog's own sentence says the mode can be turned off, which is false here (spec A7).
+    readOnlyHint:
+      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
   },
   libredb: {
     icon: LibreDBIcon,
@@ -509,4 +514,12 @@ export function connectionFieldLabel(config: DatabaseUIConfig, field: Connection
  */
 export function connectionFieldHint(config: DatabaseUIConfig, field: ConnectionField): string | undefined {
   return config.fieldHints?.[field];
+}
+
+/** The sentence under the Read-only toggle: the engine's own where it declares one, else the dialog's. */
+export function readOnlyHint(config: DatabaseUIConfig): string {
+  return (
+    config.readOnlyHint ??
+    "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission."
+  );
 }

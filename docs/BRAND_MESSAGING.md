@@ -4,7 +4,7 @@ The messaging architecture marketing teams work from: what LibreDB claims, who i
 
 ## Positioning statement
 
-> For engineering teams whose databases live in the cloud, LibreDB Studio is the database editor that deploys next to the data instead of onto your laptop: one browser tab for PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Redis, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Prometheus, Apache Kafka and etcd, with SSO and audit built in, under MIT with nothing held back.
+> For engineering teams whose databases live in the cloud, LibreDB Studio is the database editor that deploys next to the data instead of onto your laptop: one browser tab for PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Redis, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Prometheus, Apache Kafka, etcd and Neo4j, with SSO and audit built in, under MIT with nothing held back.
 
 One sentence, one reference point. Everything else in this brief either supports it or is cut.
 
