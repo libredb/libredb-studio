@@ -68,6 +68,21 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 const GRPC_JS = "@grpc/grpc-js";
 const PROTO_LOADER = "@grpc/proto-loader";
 
+/**
+ * The files another provider's seam guard holds. The Milvus provider copies etcd's gRPC transport under the
+ * isolation rule (vector-family spec 5.1, decision Q1a), and tests/unit/db/milvus/seam-guard.test.ts holds who among
+ * these imports @grpc/grpc-js, @grpc/proto-loader, the Milvus descriptor and its generator. This guard's lists stay
+ * etcd's own, and a stray anywhere else still fails here.
+ */
+const HELD_BY_THE_MILVUS_GUARD: readonly RegExp[] = [
+  /^src\/lib\/db\/providers\/vector\/milvus\//,
+  /^scripts\/generate-milvus-descriptor\.mjs$/,
+  /^tests\/unit\/db\/milvus\//,
+  /^tests\/helpers\/milvus-/,
+  /^tests\/live\/milvus-/,
+];
+const heldByTheMilvusGuard = (path: string) => HELD_BY_THE_MILVUS_GUARD.some((pattern) => pattern.test(path));
+
 // -- reading files ------------------------------------------------------------------------------------------------
 
 /** A parsed source file of a repository, by its path relative to the root with `/` on every platform. */
@@ -333,7 +348,9 @@ const IMPORT_RULES: readonly ImportRule[] = [
 /** The rule's findings over the repository at `root`: every file it does not name, then every named file it misses. */
 function importRuleFindings(rule: ImportRule, root: string, env?: NodeJS.ProcessEnv): string[] {
   const files = filesOf(root, env);
-  const found = new Set(files.filter((file) => rule.holds(file, root)).map((file) => file.path));
+  const found = new Set(
+    files.filter((file) => !heldByTheMilvusGuard(file.path) && rule.holds(file, root)).map((file) => file.path),
+  );
   const listed = new Set(files.map((file) => file.path));
   return [
     ...[...found]
@@ -1213,6 +1230,32 @@ describe("planted violations: spec E11's import lists fail by name", () => {
     expect(
       inPlantedRepository(rest, (root, env) => importRuleFindings(ruleNamed("@grpc/grpc-js importers"), root, env)),
     ).toEqual([`@grpc/grpc-js importers: ${ADAPTER_TEST} is named, and is not in the repository`]);
+  });
+
+  test("the Milvus provider's files are the Milvus seam guard's, while any other stray still fails by name", () => {
+    const milvusFiles = {
+      "src/lib/db/providers/vector/milvus/grpc-client.ts": `import * as grpc from "${GRPC_JS}";\n`,
+      "tests/live/milvus-evidence.ts": `import * as grpc from "${GRPC_JS}";\n`,
+      "tests/unit/db/milvus/grpc-client.test.ts": `import * as grpc from "${GRPC_JS}";\n`,
+      "tests/helpers/milvus-wire.ts": `import * as grpc from "${GRPC_JS}";\n`,
+      "scripts/generate-milvus-descriptor.mjs": `import "${PROTO_LOADER}";\n`,
+    };
+    const findings = (name: string, planted: Readonly<Record<string, string>>) =>
+      inPlantedRepository({ ...HOLDING[name], ...planted }, (root, env) =>
+        importRuleFindings(ruleNamed(name), root, env),
+      );
+    expect(findings("@grpc/grpc-js importers", milvusFiles)).toEqual([]);
+    expect(findings("@grpc/proto-loader importers", milvusFiles)).toEqual([]);
+    expect(
+      findings("descriptor readers", {
+        "tests/unit/db/milvus/wire-fields.test.ts": 'const file = join(dir, "proto", "descriptor.ts");\n',
+      }),
+    ).toEqual([]);
+    // A provider directory beside Milvus's is no one else's: the rule still names it.
+    const stray = "src/lib/db/providers/vector/qdrant/transport.ts";
+    expect(findings("@grpc/grpc-js importers", { [stray]: `import * as grpc from "${GRPC_JS}";\n` })).toEqual([
+      `@grpc/grpc-js importers: ${stray} imports @grpc/grpc-js, and spec E11 does not name it`,
+    ]);
   });
 });
 
