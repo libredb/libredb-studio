@@ -4,6 +4,7 @@
  * read, or a major that is neither 2 nor 3, takes the pre-3.0 answer of every gate.
  */
 import { describe, expect, test } from "bun:test";
+import { secretForms } from "@/lib/db/utils/server-text";
 import {
   MILVUS_TESTED_VERSION,
   MILVUS_VERSION_GATES,
@@ -75,5 +76,37 @@ describe("versionGateRefusal (5.9)", () => {
     expect(versionGateRefusal("orderByFields", readMilvusVersion({ version: "4.0.0" }))).toContain(
       "this server reports 4.0.0",
     );
+  });
+
+  test("a foreign major is refused as a major Studio does not read, never as a server before 3.0", () => {
+    const refusal = versionGateRefusal("orderByFields", readMilvusVersion({ version: "4.0.0" }));
+    expect(refusal).toBe(
+      "orderByFields needs Milvus 3.0 or later, and this server reports 4.0.0, a major Studio does not read (it reads 2 and 3), so Studio takes the pre-3.0 answer and does not send it.",
+    );
+    expect(refusal).not.toContain("before 3.0 ignores");
+  });
+
+  test("the refusal names only the numbers it read, never the server's suffix (VF9, E20)", () => {
+    const TEST_PASSWORD = "password";
+    const credential = Buffer.from(`root:${TEST_PASSWORD}`, "utf8").toString("base64");
+    const forms = secretForms([TEST_PASSWORD, `root:${TEST_PASSWORD}`]);
+    for (const text of [`v2.6.25-${credential}`, `4.0.0+${credential}`, `v2.6.25-${TEST_PASSWORD}`]) {
+      const refusal = versionGateRefusal("orderByFields", readMilvusVersion({ version: text })) ?? "";
+      expect(refusal).toStartWith("orderByFields needs Milvus 3.0 or later, and this server reports ");
+      for (const form of forms) expect(refusal).not.toContain(form);
+    }
+    expect(versionGateRefusal("orderByFields", readMilvusVersion({ version: "v2.6.25-rc.1" }))).toContain(
+      "this server reports 2.6.25:",
+    );
+  });
+
+  test("a version text past 64 characters is not read, and the refusal stays short", () => {
+    const long = `2.6.25-${"x".repeat(1_000_000)}`;
+    expect(readMilvusVersion({ version: long })).toMatchObject({ major: undefined, minor: undefined });
+    const refusal = versionGateRefusal("orderByFields", readMilvusVersion({ version: long })) ?? "";
+    expect(refusal).toContain("this server reports a version Studio could not read");
+    expect(refusal.length).toBeLessThan(300);
+    expect(readMilvusVersion({ version: `3.0.2-${"x".repeat(58)}` }).major).toBe(3);
+    expect(readMilvusVersion({ version: `3.0.2-${"x".repeat(59)}` }).major).toBeUndefined();
   });
 });

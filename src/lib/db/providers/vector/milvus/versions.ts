@@ -21,12 +21,19 @@ export interface MilvusVersion {
 }
 
 /** `3.0.2`, `v3.0.2` and a pre-release or build suffix; anything else is not read. */
-const VERSION = /^v?(\d+)\.(\d+)(?:\.\d+)?(?:[-+]\S*)?$/;
+const VERSION = /^v?(\d+)\.(\d+)(\.\d+)?(?:[-+]\S*)?$/;
+/** A longer text is not read as a version, so no sentence can carry a server's oversized answer (VF7). */
+const VERSION_MAX_LENGTH = 64;
+
+function versionMatch(reported: string | undefined): RegExpExecArray | null {
+  if (reported === undefined || reported.length > VERSION_MAX_LENGTH) return null;
+  return VERSION.exec(reported);
+}
 
 export function readMilvusVersion(response: { readonly version?: string } | undefined): MilvusVersion {
   const text = response?.version?.trim();
   const reported = text === undefined || text === "" ? undefined : text;
-  const match = reported === undefined ? null : VERSION.exec(reported);
+  const match = versionMatch(reported);
   if (match === null) return { reported, major: undefined, minor: undefined };
   return { reported, major: Number(match[1]), minor: Number(match[2]) };
 }
@@ -54,7 +61,13 @@ export function versionGateRefusal(gate: MilvusVersionGate, version: MilvusVersi
   // Only majors 2 and 3 are read as versions; any other takes the pre-3.0 answer (5.9).
   const comparable = major !== undefined && minor !== undefined && (major === 2 || major === 3);
   if (comparable && (major > sinceMajor || (major === sinceMajor && minor >= sinceMinor))) return undefined;
-  const named =
-    major !== undefined && version.reported !== undefined ? version.reported : "a version Studio could not read";
-  return `${row.key} needs Milvus ${sinceMajor}.${sinceMinor} or later, and this server reports ${named}: ${row.before}.`;
+  const lead = `${row.key} needs Milvus ${sinceMajor}.${sinceMinor} or later, and this server reports`;
+  // Only the numbers Studio read are named: a suffix is the server's own text, which may carry anything (VF9, E20).
+  const match = versionMatch(version.reported);
+  if (match === null) return `${lead} a version Studio could not read: ${row.before}.`;
+  const named = `${match[1]}.${match[2]}${match[3] ?? ""}`;
+  if (!comparable) {
+    return `${lead} ${named}, a major Studio does not read (it reads 2 and 3), so Studio takes the pre-${sinceMajor}.${sinceMinor} answer and does not send it.`;
+  }
+  return `${lead} ${named}: ${row.before}.`;
 }
