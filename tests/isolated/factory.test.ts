@@ -649,6 +649,12 @@ describe("createDatabaseProvider", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
+  test("a milvus connection with readOnly: true is built, since its provider keeps the mode (vector-family E8)", async () => {
+    const conn = { ...makeConnection("milvus", { port: 19530, database: undefined }), readOnly: true };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("milvus");
+  });
+
   test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bneo4j, milvus, qdrant, libredb$/);

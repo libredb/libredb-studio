@@ -24,6 +24,7 @@ mock.module("@/components/QuerySafetyDialog", () => ({
 }));
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
+import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
@@ -4075,8 +4076,8 @@ describe("useQueryExecution", () => {
 // A statement the connection type's editor refuses
 // =============================================================================
 //
-// Qdrant's row declares `refuse` and `maxTextBytes` (describe("the real qdrant row") below), and the stand-in row drives
-// every case here, so each rule is pinned apart from any engine's grammar. The refusal runs before
+// Milvus's and Qdrant's rows declare `refuse` and `maxTextBytes` (describe("the real milvus row") and describe("the
+// real qdrant row") below), and the stand-in row drives every case here, so each rule is pinned apart from any engine's grammar. The refusal runs before
 // the confirmation gate, which is why `isDangerousQueryMock` is never consulted, and before every condition that
 // Proceed, an explain run, a page and playground mode skip.
 describe("a statement the connection type's editor refuses", () => {
@@ -4373,6 +4374,110 @@ describe("the real qdrant row", () => {
     // guard.ts cannot see the schema or the server's version, so it passes both; the provider refuses after its
     // metadata read or at its version gate, and the route answers with Studio's sentence (vector-family spec 4.2).
     expect(qdrantRefusal(text)).toBeUndefined();
+    const SENTENCE = "Studio refuses this request before running it.";
+    const { result, fetchMock } = mount({ status: 400, json: { error: SENTENCE } });
+    await act(async () => {
+      await result.current.executeQuery(text);
+    });
+    expect(fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://localhost:3000").pathname)).toEqual([
+      "/api/db/query",
+    ]);
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(history.mock.calls[0][0]).toMatchObject({ status: "error", errorMessage: SENTENCE, query: text });
+  });
+});
+
+// =============================================================================
+// The real milvus row (vector-family E10, E34, VF9)
+// =============================================================================
+//
+// A request that could make the server call another service is a phase 0 refusal of guard.ts, which the real
+// vocabulary row applies in the browser: nothing is posted to any route, the query-safety route included, and no
+// history is written. A phase 1 refusal needs the schema, so it reaches the route once and is written to history as
+// an error carrying Studio's sentence.
+describe("the real milvus row", () => {
+  const milvusConnection: DatabaseConnection = { ...mockConnection, id: "qe-milvus", name: "Vectors", type: "milvus" };
+  const ENDPOINT = "http://127.0.0.1:9/";
+  const E34_CORPUS: readonly (readonly [string, string])[] = [
+    [
+      "a model ranker in functionScore on search",
+      `POST /v2/vectordb/entities/search\n{"collectionName": "docs_int64", "annsField": "vec", "data": [[0.1, 0.2]], "limit": 5, "functionScore": {"functions": [{"name": "r", "type": "Rerank", "inputFieldNames": ["title"], "params": {"reranker": "model", "provider": "tei", "endpoint": "${ENDPOINT}"}}]}}`,
+    ],
+    [
+      "a model ranker in functionScore on hybrid search",
+      `POST /v2/vectordb/entities/hybrid_search\n{"collectionName": "docs_varchar", "search": [{"annsField": "f16", "data": [[0.1, 0.2]], "limit": 10}], "rerank": {"strategy": "rrf", "params": {"k": 60}}, "limit": 5, "functionScore": {"functions": [{"name": "m", "type": "Rerank", "params": {"reranker": "model", "endpoint": "${ENDPOINT}"}}]}}`,
+    ],
+    [
+      "functionChains with an endpoint parameter",
+      `POST /v2/vectordb/entities/search\n{"collectionName": "docs_int64", "annsField": "vec", "data": [[0.1, 0.2]], "limit": 5, "functionChains": [{"params": {"endpoint": "${ENDPOINT}"}}]}`,
+    ],
+    [
+      "an endpoint key nested in searchParams",
+      `POST /v2/vectordb/entities/search\n{"collectionName": "docs_int64", "annsField": "vec", "data": [[0.1, 0.2]], "limit": 5, "searchParams": {"params": {"ef": 64, "endpoint": "${ENDPOINT}"}}}`,
+    ],
+    [
+      "a url key in rerank.params",
+      `POST /v2/vectordb/entities/hybrid_search\n{"collectionName": "docs_varchar", "search": [{"annsField": "f16", "data": [[0.1, 0.2]], "limit": 10}], "rerank": {"strategy": "rrf", "params": {"k": 60, "url": "${ENDPOINT}"}}, "limit": 5}`,
+    ],
+    ["a write route", 'POST /v2/vectordb/entities/insert\n{"collectionName": "docs_int64", "data": [{"seq": 1}]}'],
+  ];
+  let history: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    history = spyOn(storage, "addToHistory").mockImplementation(() => {});
+    isDangerousQueryMock.mockClear();
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    history.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  function mount(route: MockFetchResponse) {
+    const tabs = [createTab({ result: { ...mockQueryResult } })];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    const fetchMock = mockGlobalFetch({ "/api/": route });
+    const params = createDefaultParams({ activeConnection: milvusConnection, tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+    return { result, tabs, fetchMock };
+  }
+
+  test.each(E34_CORPUS)("refuses %s in the browser, with zero fetch and zero history entries", async (_label, text) => {
+    const sentence = milvusRefusal(text);
+    expect(sentence).toBeDefined();
+    const { result, tabs, fetchMock } = mount({ json: mockQueryResult });
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery(text);
+    });
+    expect(returned).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+    expect(isDangerousQueryMock).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+  });
+
+  test.each(E34_CORPUS)("Proceed and an explain run refuse %s, with zero fetch", async (_label, text) => {
+    const { result, fetchMock } = mount({ json: mockQueryResult });
+    await act(async () => {
+      result.current.forceExecuteQuery(text);
+    });
+    await act(async () => {
+      await result.current.executeQuery(text, undefined, true);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+  });
+
+  test("a phase 1 refusal reaches the route once and is written to history as an error with Studio's sentence", async () => {
+    // Text aimed at a field an embedding function produces passes guard.ts, which cannot see the schema; the
+    // provider refuses it after its metadata read, and the route answers with Studio's sentence (VF9).
+    const text =
+      'POST /v2/vectordb/entities/search\n{"collectionName": "docs_semantic", "annsField": "embedding", "data": ["what is a vector index"], "limit": 5}';
+    expect(milvusRefusal(text)).toBeUndefined();
     const SENTENCE = "Studio refuses this request before running it.";
     const { result, fetchMock } = mount({ status: 400, json: { error: SENTENCE } });
     await act(async () => {

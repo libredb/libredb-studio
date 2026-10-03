@@ -707,6 +707,20 @@ describe("SeedConnectionSchema: a milvus seed (vector-family spec 5.2)", () => {
   it("accepts the milvus type", () => {
     expect(SeedConnectionSchema.safeParse(milvus).success).toBe(true);
   });
+
+  it("loads a managed read-only milvus seed with a credential of its own", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [
+        { ...milvus, user: "reader", password: "${MILVUS_READER_PASSWORD}", readOnly: true, managed: true },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("loads a milvus seed with mcp: true, since MCP is offered for Milvus (vector-family E17)", () => {
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...milvus, mcp: true }] }).success).toBe(true);
+  });
 });
 
 describe("SeedConnectionSchema: a qdrant seed", () => {

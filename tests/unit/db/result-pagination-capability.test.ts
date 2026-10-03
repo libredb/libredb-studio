@@ -70,6 +70,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   kafka: false,
   etcd: false,
   neo4j: false,
+  milvus: false,
   qdrant: false,
 });
 

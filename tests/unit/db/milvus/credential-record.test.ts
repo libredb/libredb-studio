@@ -3,7 +3,7 @@
  * refusal's sentence, and the provider's own connect() stage with zero client calls. The documented default pair is
  * read from the record by reference and never written here.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 
 const debug = mock(() => {});
 const info = mock(() => {});
@@ -19,6 +19,8 @@ import {
 } from "@/lib/db/credential-warnings";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
+import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
+import { SeedConnectionSchema } from "@/lib/seed/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 const TEST_PASSWORD = "password";
@@ -114,5 +116,68 @@ describe("connect(): the provider's own stage, after resolution", () => {
     const provider = new MilvusProvider(seed({ user: "reader", password: TEST_PASSWORD }), {}, {}, createClient);
     await expect(provider.connect()).rejects.toThrow();
     expect(createClient).toHaveBeenCalledTimes(1);
+  });
+});
+
+const seedRow = {
+  id: "vectors-read",
+  name: "Vectors",
+  type: "milvus",
+  host: "milvus.internal",
+  port: 19530,
+  roles: ["*"],
+  managed: true,
+  readOnly: true,
+} as const;
+
+function issuesOf(candidate: Record<string, unknown>): [string, string][] {
+  const result = SeedConnectionSchema.safeParse(candidate);
+  return result.success ? [] : result.error.issues.map((issue) => [issue.path.join("."), issue.message]);
+}
+
+function refusedAtLoad(refusal: string): string {
+  return `Seed connection "vectors-read": ${refusal} readOnly: true is refused with this credential, because the mode would promise a boundary the server does not keep. Give this connection a credential of its own, or remove readOnly.`;
+}
+
+describe("load: the seed file refuses what it shows (vector-family spec 3.12)", () => {
+  test("the literal pair on a read-only seed is refused naming the connection and the field, never the pair", () => {
+    const issues = issuesOf({ ...seedRow, user: pair.user, password: pair.password });
+    expect(issues).toEqual([["password", refusedAtLoad(PAIR_SENTENCE)]]);
+    for (const form of [`${pair.user}:${pair.password}`, `${pair.user}/${pair.password}`, `"${pair.password}"`]) {
+      expect(JSON.stringify(issues)).not.toContain(form);
+    }
+  });
+
+  test("the pair written as one token in the password with no user is refused", () => {
+    expect(issuesOf({ ...seedRow, password: `${pair.user}:${pair.password}` })).toEqual([
+      ["password", refusedAtLoad(PAIR_SENTENCE)],
+    ]);
+  });
+
+  test("the declared user with another password loads", () => {
+    expect(issuesOf({ ...seedRow, user: pair.user, password: TEST_PASSWORD })).toEqual([]);
+  });
+
+  test("a read-only seed with no password is refused, and one without readOnly loads", () => {
+    expect(issuesOf({ ...seedRow, user: "reader" })).toEqual([["password", refusedAtLoad(NO_SECRET_SENTENCE)]]);
+    expect(issuesOf({ ...seedRow, readOnly: undefined, user: "reader" })).toEqual([]);
+  });
+});
+
+describe("resolution: what the file does not show (vector-family spec 3.12)", () => {
+  afterEach(() => {
+    delete process.env.MILVUS_SEED_PASSWORD;
+  });
+
+  test("a ${ENV} reference that resolves to the pair is refused after resolution", () => {
+    process.env.MILVUS_SEED_PASSWORD = pair.password;
+    const parsed = SeedConnectionSchema.parse({ ...seedRow, user: pair.user, password: "${MILVUS_SEED_PASSWORD}" });
+    expect(readOnlySeedRefusal("milvus", resolveConnectionCredentials(parsed))).toBe(PAIR_SENTENCE);
+  });
+
+  test("a ${ENV} reference that resolves to the token form is refused after resolution", () => {
+    process.env.MILVUS_SEED_PASSWORD = `${pair.user}:${pair.password}`;
+    const parsed = SeedConnectionSchema.parse({ ...seedRow, password: "${MILVUS_SEED_PASSWORD}" });
+    expect(readOnlySeedRefusal("milvus", resolveConnectionCredentials(parsed))).toBe(PAIR_SENTENCE);
   });
 });

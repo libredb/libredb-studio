@@ -46,6 +46,8 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "kafka",
   "libredb",
   "libsql",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 writes no data (vector-family spec 5.7), which docs/providers/milvus.md names.
+  "milvus",
   "mongodb",
   "mssql",
   "mysql",

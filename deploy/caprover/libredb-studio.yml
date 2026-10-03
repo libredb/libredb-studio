@@ -74,10 +74,10 @@ caproverOneClickApp:
     instructions:
         start: |-
             LibreDB Studio is a modern, open-source, web-based SQL IDE for the cloud era.
-            Query twenty-two engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
+            Query twenty-three engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
             Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
             Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus,
-            Apache Kafka, etcd, Neo4j and Qdrant - from your browser, with an ERD viewer, schema diff and optional
+            Apache Kafka, etcd, Neo4j, Milvus and Qdrant - from your browser, with an ERD viewer, schema diff and optional
             read-only AI on your own model key.
 
             What you can set below (defaults are sensible - you can usually just click Deploy):
@@ -163,5 +163,5 @@ caproverOneClickApp:
             See https://github.com/libredb/libredb-studio
     displayName: LibreDB Studio
     isOfficial: false
-    description: Open-source web-based SQL IDE. Query twenty-two engines - PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Redis and more - from your browser, with an ERD viewer, schema diff and optional read-only AI.
+    description: Open-source SQL IDE. Query twenty-three engines - PostgreSQL, MySQL, Oracle, SQL Server, MongoDB, Redis and more - from your browser, with an ERD viewer, schema diff and optional read-only AI.
     documentation: Image and docs - https://github.com/libredb/libredb-studio . Uses ghcr.io/libredb/libredb-studio. Deploys with SQLite persistence; supports OIDC SSO and multiple AI providers via extra env vars.

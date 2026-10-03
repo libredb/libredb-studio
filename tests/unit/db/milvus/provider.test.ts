@@ -121,6 +121,7 @@ describe("the declarations, with no client", () => {
       statementTerminator: "none",
       defaultPort: 19530,
       containerLevels: MILVUS_CONTAINER_LEVELS,
+      containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
       enforcesReadOnly: true,
       schemaRefreshPattern: "(?!)",

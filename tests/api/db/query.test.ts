@@ -1336,8 +1336,8 @@ describe("POST /api/db/query — the database a run reads", () => {
 /**
  * A connection type's console text bound. It is read after `resolveConnection` and the
  * `!sql` check and before the bound parameters, the provider and the statement cache, and the answer never repeats
- * the text. Qdrant declares one; the stand-in below pins the rule apart from it, and the 9 MiB case pins an engine
- * that declares none.
+ * the text. Milvus and Qdrant declare one; the stand-in below pins the rule apart from them, and the 9 MiB case pins
+ * an engine that declares none.
  */
 describe("POST /api/db/query: a declared console text bound", () => {
   const LIMIT = 64;

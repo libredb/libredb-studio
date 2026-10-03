@@ -11,7 +11,7 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  * `containerPathShapes` as every shipped type-id declares it (#1147).
  *
  * The expectation is transcribed from the issue's table and never derived from the build.
- * The sixteen providers that call `assertContainerPathShape` declare a value explicitly; the
+ * The seventeen providers that call `assertContainerPathShape` declare a value explicitly; the
  * six that call no kernel check and declare no container level (elasticsearch, opensearch,
  * prometheus, kafka, etcd, qdrant) leave it absent, which the kernel reads as `exact`: the same `[]`-only set
  * their own `container.length !== 0` checks accept. neo4j leaves it absent too: its one level is the
@@ -41,6 +41,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   cassandra: "exact",
   mongodb: "exact",
   redis: "exact",
+  milvus: "exact",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",
@@ -138,7 +139,7 @@ describe("the declaration follows the check (#1147)", () => {
     expect(unknownTypeIds(callerFiles)).toEqual([]);
     const callers = callerFiles.map(providerTypeId).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
-    expect(callers).toHaveLength(16);
+    expect(callers).toHaveLength(17);
     expect(callers).toEqual(declaring);
   });
 });

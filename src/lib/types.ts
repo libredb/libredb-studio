@@ -113,6 +113,12 @@ export type DatabaseType =
   // with none, the server's home database is used. Every write is refused before it is sent,
   // whatever `readOnly` says.
   | "neo4j"
+  // Milvus (vector-family spec 5). A vector database read over its gRPC API by a client of this repository's own,
+  // the first member of the `vector/` family. Its editor text is Milvus's own `POST /v2/vectordb/<route>` request
+  // with one JSON body, so it declares `queryLanguage: "json"` with a `queryDialect` of its own. The connection is
+  // one endpoint plus TLS, an optional user and a password or token, and an optional database; `readOnly` is a mode
+  // its provider enforces.
+  | "milvus"
   // Qdrant (vector-family spec 6). A vector database read over its REST API by a client of this repository's own on
   // the shared node transport (`src/lib/db/http/node-transport.ts`), a member of the `vector/` family. Its editor
   // text is Qdrant's own `METHOD /path` request with one JSON body, so it declares `queryLanguage: "json"` with a

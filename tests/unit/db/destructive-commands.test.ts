@@ -11,6 +11,8 @@ import {
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
+import { MILVUS_CONSOLE } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
@@ -315,12 +317,13 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka, etcd, neo4j and qdrant and for no other type", () => {
+  test("is true for prometheus, kafka, etcd, neo4j, milvus and qdrant and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
       "etcd",
       "neo4j",
+      "milvus",
       "qdrant",
     ]);
   });
@@ -331,10 +334,11 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the seven types whose text is not SQL", () => {
+  test("carries a row for exactly the eight types whose text is not SQL", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
       "etcd",
       "kafka",
+      "milvus",
       "mongodb",
       "neo4j",
       "prometheus",
@@ -445,8 +449,12 @@ describe("vocabularySendsToModel", () => {
 
   // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
   // values included, on this deployment (#1089 E10).
-  test("keeps etcd's and Qdrant's statements from the AI analysis, and no other shipped type's", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual(["etcd", "qdrant"]);
+  test("keeps etcd's, Milvus's and Qdrant's statements from the AI analysis, and no other shipped type's", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual([
+      "etcd",
+      "milvus",
+      "qdrant",
+    ]);
   });
 
   test("sends with no type at all", () => {
@@ -525,9 +533,9 @@ describe("the etcd row", () => {
 
 /**
  * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
- * and never stored. Qdrant's row is the one shipped row that declares both fields; every rule here is driven by
- * the stand-in row, so it is pinned apart from any engine's grammar, and Qdrant's own is pinned in
- * describe("the qdrant row").
+ * and never stored. Milvus's and Qdrant's rows are the shipped rows that declare both fields; every rule here is
+ * driven by the stand-in row, so it is pinned apart from any engine's grammar, and each engine's own is pinned in
+ * describe("the milvus row") and describe("the qdrant row").
  */
 describe("statementRefusal and the console text bound", () => {
   const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
@@ -538,13 +546,14 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("only qdrant's row declares a refusal and a bound, so no other shipped type changes", () => {
+  test("only milvus's and qdrant's rows declare a refusal and a bound, so no other shipped type changes", () => {
+    const declaring: readonly string[] = ["milvus", "qdrant"];
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
-      if (type === "qdrant") continue;
+      if (declaring.includes(type)) continue;
       expect(row?.refuse).toBeUndefined();
       expect(row?.maxTextBytes).toBeUndefined();
     }
-    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => candidate !== "qdrant")) {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => !declaring.includes(candidate))) {
       expect(consoleTextByteLimit(type)).toBeUndefined();
       expect(statementRefusal("x".repeat(10_000), type)).toBeUndefined();
     }
@@ -648,5 +657,45 @@ describe("the qdrant row", () => {
   test("refuses a text one byte past the bound before guard.ts reads it", () => {
     const over = `# ${"x".repeat(QDRANT_CONSOLE.maxTextBytes)}\n${READ}`;
     expect(statementRefusal(over, "qdrant")).toContain(`over the ${QDRANT_CONSOLE.maxTextBytes}-byte limit`);
+  });
+});
+
+/**
+ * Milvus's row (vector-family spec 5.7, E10): the provider's own guard.ts decides, a v1 request only reads, so no
+ * operation asks, the row keeps every statement from the AI analysis, and the editor refuses what guard.ts refuses,
+ * before the lexer, past the dialect's own byte bound.
+ */
+describe("the milvus row", () => {
+  const READ = 'POST /v2/vectordb/entities/query\n{"collectionName": "docs_int64", "filter": "seq > 1", "limit": 5}';
+  const WRITE = 'POST /v2/vectordb/entities/insert\n{"collectionName": "docs_int64", "data": [{"seq": 1}]}';
+
+  test("decides alone, names no destructive operation and asks about no read", () => {
+    const row = NON_SQL_DESTRUCTIVE_VOCABULARY.milvus;
+    expect(row?.decidesAlone).toBe(true);
+    expect(row?.operations.size).toBe(0);
+    // guard.ts answers the route's class, and no class a v1 route has is a destructive operation.
+    expect(row?.read(READ)).toEqual(["read"]);
+    expect(row?.operations.has("read")).toBe(false);
+    expect(isDestructiveNonSqlQuery(READ, "milvus")).toBe(false);
+    expect(row?.typedConfirmation).toBeUndefined();
+  });
+
+  test("keeps every statement from the AI analysis", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.milvus?.safetyAnalysis).toBe(false);
+    expect(vocabularySendsToModel("milvus")).toBe(false);
+  });
+
+  test("refuses with guard.ts's verdict, by reference, and declares the dialect's byte bound", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.milvus?.refuse).toBe(milvusRefusal);
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.milvus?.maxTextBytes).toBe(MILVUS_CONSOLE.maxTextBytes);
+    expect(consoleTextByteLimit("milvus")).toBe(1_048_576);
+    expect(statementRefusal(WRITE, "milvus")).toBe(milvusRefusal(WRITE));
+    expect(statementRefusal(WRITE, "milvus")).toBeDefined();
+    expect(statementRefusal(READ, "milvus")).toBeUndefined();
+  });
+
+  test("refuses a text one byte past the bound before guard.ts reads it", () => {
+    const over = `# ${"x".repeat(MILVUS_CONSOLE.maxTextBytes)}\n${READ}`;
+    expect(statementRefusal(over, "milvus")).toContain(`over the ${MILVUS_CONSOLE.maxTextBytes}-byte limit`);
   });
 });

@@ -23,10 +23,10 @@ section: database
 priority: optional
 maintainer: cevheri <cevheribozoglan@gmail.com>
 description: |
-  Web-based SQL IDE for twenty-two engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB,
+  Web-based SQL IDE for twenty-three engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB,
   Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
   Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus,
-  Apache Kafka, etcd, Neo4j and Qdrant - with AI query assistance.
+  Apache Kafka, etcd, Neo4j, Milvus and Qdrant - with AI query assistance.
   Ships the standalone Next.js server with a bundled private Node.js
   runtime (no external dependencies) and a systemd unit (libredb-studio)
   serving the app on port 3000; enable it with

@@ -166,6 +166,8 @@ export class MilvusProvider extends BaseDatabaseProvider {
       statementTerminator: "none",
       defaultPort: MILVUS_DEFAULT_PORT,
       containerLevels: MILVUS_CONTAINER_LEVELS,
+      // One level, the database, and every address names it: the shape assertContainerPathShape checks (#1147).
+      containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
       enforcesReadOnly: true,
       schemaRefreshPattern: MILVUS_SCHEMA_REFRESH_PATTERN,

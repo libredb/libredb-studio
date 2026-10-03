@@ -251,6 +251,18 @@
   "selectQuery": "",
   "countQuery": null
  },
+ "milvus": {
+  "queryLanguage": "json",
+  "queryDialect": "milvus",
+  "tabType": "milvus",
+  "monacoLanguage": "milvus",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "POST /v2/vectordb/entities/query\n{\"dbName\": \"c0\", \"collectionName\": \"Order\\\"Items\", \"filter\": \"\", \"limit\": 100}",
+  "selectQuery": "# Collection Order\"Items has no vector field, so there is nothing to search: this reads its entities.\nPOST /v2/vectordb/entities/query\n{\"dbName\": \"c0\", \"collectionName\": \"Order\\\"Items\", \"filter\": \"\", \"limit\": 100}",
+  "countQuery": null
+ },
  "qdrant": {
   "queryLanguage": "json",
   "queryDialect": "qdrant",

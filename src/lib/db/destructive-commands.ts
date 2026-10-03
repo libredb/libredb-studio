@@ -6,6 +6,12 @@ import {
   readEtcdOperations,
 } from "@/lib/db/providers/keyvalue/etcd/guard";
 import {
+  MILVUS_DESTRUCTIVE_OPERATIONS,
+  milvusRefusal,
+  readMilvusOperations,
+} from "@/lib/db/providers/vector/milvus/guard";
+import { MILVUS_CONSOLE } from "@/lib/db/providers/vector/milvus/routes";
+import {
   QDRANT_DESTRUCTIVE_OPERATIONS,
   qdrantRefusal,
   readQdrantOperations,
@@ -473,6 +479,18 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
     safetyAnalysis: false,
   },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
+  // Milvus (vector-family spec 5.7, E10): the provider's own guard.ts reads the text with the parser the provider
+  // runs, so what asks and what runs are one parse. A v1 request only reads, so nothing asks; what guard.ts refuses
+  // (a write route, a server-side function, an endpoint-bearing key) the editor refuses before anything is sent.
+  milvus: {
+    operations: MILVUS_DESTRUCTIVE_OPERATIONS,
+    read: readMilvusOperations,
+    decidesAlone: true,
+    // A request carries vectors, filters and values, so no Milvus statement is posted for an AI analysis.
+    safetyAnalysis: false,
+    refuse: milvusRefusal,
+    maxTextBytes: MILVUS_CONSOLE.maxTextBytes,
+  },
   mongodb: { operations: MONGODB_DESTRUCTIVE_OPERATIONS, read: readMongodbOperations, decidesAlone: false },
   // The provider refuses every write before sending it, so a confirmation would ask about a statement that
   // cannot run (Neo4j spec 5.5).

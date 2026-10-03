@@ -420,11 +420,26 @@ describe("wire-compatibility registry", () => {
     expect(compatibleEnginesFor("qdrant")).toEqual([]);
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
     expect(MCP_EXPOSABLE.qdrant).toBe(true);
-    // The counts of vector-family spec 10.2, from the sets they count: PREV plus one external engine and no relative.
+    // The counts of vector-family spec 10.2, from the sets they count, with Milvus shipped too: each vector engine
+    // adds one external engine and no relative.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      23, 22, 28,
+      24, 23, 28,
     ]);
-    expect(connectableProductCount()).toBe(50);
+    expect(connectableProductCount()).toBe(51);
+  });
+
+  test("milvus ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 5.7, 10.2)", () => {
+    // A server or cluster the user already runs, reached over its gRPC API. No relative is recorded: Zilliz Cloud
+    // speaks the same API and is claimed nowhere until a test cluster passes gate 4 (vector-family spec 5.2).
+    expect(SHIPPED_DATABASE_TYPES).toContain("milvus");
+    expect(isExternalDatabaseType("milvus")).toBe(true);
+    expect(compatibleEnginesFor("milvus")).toEqual([]);
+    expect(READ_ONLY_ENFORCED.milvus).toBe(true);
+    expect(MCP_EXPOSABLE.milvus).toBe(true);
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      24, 23, 28,
+    ]);
+    expect(connectableProductCount()).toBe(51);
   });
 
   test("duckdb ships as a driver and is a relative of nothing", () => {
