@@ -886,7 +886,7 @@ Every request that reaches the provider's `runMaintenance` writes one audit even
 A run the engine completed records `result: "success"`, and a run the engine answered with `success: false` records `result: "failure"` with no reason.
 A run that throws records `result: "failure"` with the reason `maintenance_execution_failed` and the time the call took, never the thrown message, and the response is the one the thrown error maps to, as it was before the event existed.
 A request refused before the provider is called writes no maintenance event.
-An event also carries `engineUser`, the engine principal the connection acts as, when the provider implements the optional `engineUser()` method: on the completed, the refused and the thrown rows alike.
+An event also carries `engineUser`, the engine principal the connection acts as, when the provider implements the optional `engineUser()` method: on the completed, the failed (`success: false`) and the thrown rows alike.
 It is a user name and never any part of a secret.
 On the authoritative stdout line, `libredb.audit.v1`, it appears as `engine_user`, and the key is absent from every row whose provider names no engine principal.
 No shipped provider implements `engineUser()` yet.
@@ -1010,7 +1010,8 @@ Whether the object exists is the provider's to say: its `previewMaintenance` rai
 **Declaring a per-object operation.** A provider declares it on the operation's `MaintenanceOperationSpec` in `maintenanceOperationSpecs`:
 
 - `perEntity: true` on an operation outside the six of `MaintenanceType` gives it a control of its own on the Operations tab, the monitoring Tables tab and both row menus, after their own controls, in declaration order, under the spec's `label`.
-- `confirmation: "typed-target"` makes that control ask for the object's own name, typed exactly and case-sensitively, before it sends anything; never a fixed word and never the connection's name. Such a spec declares `perEntity: true` and `global: false`.
+- `confirmation: "typed-target"` makes that control ask for the object's own name, typed exactly and case-sensitively, before it sends anything; never a fixed word and never the connection's name.
+  Such a spec declares `perEntity: true` and `global: false`.
 - `preview: true` makes the control's dialog read this route and show the preview before it offers the confirm button; the provider implements the optional `DatabaseProvider.previewMaintenance(type, path)`.
   A preview belongs to the per-row control, so it is declared beside `perEntity: true`, and this route answers no preview for a spec that offers no row.
 
