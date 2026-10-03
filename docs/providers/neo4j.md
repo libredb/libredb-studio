@@ -152,7 +152,8 @@ Widening the allowlist with a measured APOC subset is filed as D140.
 
 ### 3.5 The statement gate
 
-After the policy allows a statement, the provider sends it prefixed with `EXPLAIN` in a READ session, with the run's own timeout and cancel, and reads `summary.queryType`; a version prefix stays first, as `CYPHER 5 EXPLAIN <rest>`.
+After the policy allows a statement, the provider sends it prefixed with `EXPLAIN` in a READ session, with the run's own timeout and cancel, and reads `summary.queryType`; a version prefix stays first, as `CYPHER 5 EXPLAIN <rest>`, and so do the options after `CYPHER`, as `CYPHER 5 runtime=slotted EXPLAIN <rest>`.
+Measured on 5.26.31 on 2026-10-03: `CYPHER 5 EXPLAIN runtime=slotted MATCH (n) RETURN n` is a syntax error at `runtime`, while `CYPHER runtime=slotted EXPLAIN MATCH (n) RETURN n`, `EXPLAIN CYPHER runtime=slotted MATCH (n) RETURN n` and `CYPHER 5 runtime=slotted EXPLAIN MATCH (n) RETURN n` each parse and classify as a read.
 `r` runs.
 `s` runs only when the statement calls an allowlisted procedure, because the policy has already refused every other procedure: `CALL dbms.components()` is classified `s` and runs.
 Every other type, a plan with no type, and an `EXPLAIN` that failed refuse the statement, and nothing is run.

@@ -81,6 +81,28 @@ describe("neo4jStatementGate", () => {
     expect(sent).toEqual(["CYPHER 5 EXPLAIN"]);
   });
 
+  test.each([
+    // 5.26.31 rejects `CYPHER 5 EXPLAIN runtime=slotted ...` ("Invalid input 'runtime'") and parses each form
+    // below, EXPLAIN after the whole option block (measured 2026-10-03).
+    ["CYPHER 5 runtime=slotted MATCH (n) RETURN n", "CYPHER 5 runtime=slotted EXPLAIN MATCH (n) RETURN n"],
+    ["CYPHER runtime=slotted MATCH (n) RETURN n", "CYPHER runtime=slotted EXPLAIN MATCH (n) RETURN n"],
+    [
+      "CYPHER 5 planner=cost  runtime = slotted MATCH (n) RETURN n",
+      "CYPHER 5 planner=cost  runtime = slotted EXPLAIN MATCH (n) RETURN n",
+    ],
+    ["CYPHER runtime=slotted", "CYPHER runtime=slotted EXPLAIN"],
+  ])("puts EXPLAIN after the whole CYPHER option block: %s", async (text, expected) => {
+    const sent: string[] = [];
+    const client = {
+      async run(statement: string): Promise<GraphRunResult> {
+        sent.push(statement);
+        return { fields: [], rows: [], truncated: false, queryType: "r" };
+      },
+    };
+    await neo4jStatementGate(client, allowed(text), OPTIONS);
+    expect(sent).toEqual([expected]);
+  });
+
   test("refuses a write the server classifies as w", async () => {
     const refusal = await neo4jStatementGate(recordedGraphClient(), allowed("CREATE (n)", OPEN_PROFILE), OPTIONS);
     expect(refusal).toEqual({
