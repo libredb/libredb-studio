@@ -69,6 +69,8 @@ const DENIED_WORDS = [
   "ENABLE",
   "TERMINATE",
   "USE",
+  // GQL's spelling of CREATE, accepted since Neo4j 5.18.
+  "INSERT",
   "IN TRANSACTIONS",
 ];
 

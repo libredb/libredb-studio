@@ -113,6 +113,7 @@ describe("NEO4J_POLICY_PROFILE", () => {
       "ENABLE",
       "TERMINATE",
       "USE",
+      "INSERT",
       "IN TRANSACTIONS",
     ]);
     for (const words of policy.deniedWords) {
@@ -120,6 +121,12 @@ describe("NEO4J_POLICY_PROFILE", () => {
       expect(refusal.code).toBe("denied-word");
       expect(refusal.subject).toBe(words.join(" "));
     }
+  });
+
+  test("refuses GQL's INSERT, which Neo4j 5.18 and later accept in place of CREATE", () => {
+    const refusal = refusalOf("INSERT (n:X) RETURN n");
+    expect(refusal.code).toBe("denied-word");
+    expect(refusal.subject).toBe("INSERT");
   });
 
   test("refuses the apoc and gds namespaces as procedures and as functions", () => {
