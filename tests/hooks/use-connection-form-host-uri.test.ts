@@ -6,6 +6,8 @@ import { renderHook, act } from "@testing-library/react";
 import { useConnectionForm } from "@/hooks/use-connection-form";
 import type { DatabaseConnection } from "@/lib/types";
 import { declareHostUri } from "../helpers/synthetic-host-uri";
+import { credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import { declareCredentialWarnings, SYNTHETIC_PAIR } from "../helpers/synthetic-credential-warnings";
 
 /**
  * The Host box of an engine that declares `hostAcceptsUri`, through the real form hook and the real
@@ -180,5 +182,70 @@ describe("useConnectionForm: an address in the Host box", () => {
       "localhost",
       "6333",
     ]);
+  });
+});
+
+describe("useConnectionForm: the declared credential warning", () => {
+  const PAIR_SENTENCE = `Credential warning: ${SYNTHETIC_PAIR.message}`;
+
+  test("warns for the declared pair, with the sentence the seed refusal uses", () => {
+    restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setUser("root"));
+    act(() => result.current.setPassword("Milvus"));
+    const credential = { user: "root", password: "Milvus" };
+    expect(result.current.credentialWarning).toBe(PAIR_SENTENCE);
+    expect(result.current.credentialWarning).toBe(credentialWarningFor("etcd", credential));
+    expect(result.current.credentialWarning).toBe(readOnlySeedRefusal("etcd", credential));
+  });
+
+  test("no warning for the declared user with another password", () => {
+    restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setUser("root"));
+    act(() => result.current.setPassword("Other1"));
+    expect(result.current.credentialWarning).toBeUndefined();
+  });
+
+  test("an empty user with the password root:Milvus is read as the pair", () => {
+    restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setPassword("root:Milvus"));
+    expect(result.current.credentialWarning).toBe(PAIR_SENTENCE);
+  });
+
+  test("a user left from another engine does not count where this engine takes no user", () => {
+    restores.push(declareCredentialWarnings("libsql", [SYNTHETIC_PAIR]));
+    const { result } = renderForm();
+    act(() => result.current.setUser("root"));
+    act(() => result.current.setType("libsql"));
+    act(() => result.current.setPassword("Milvus"));
+    expect(result.current.credentialWarning).toBeUndefined();
+  });
+
+  test("the warning blocks nothing: Test Connection and Establish Connection still run", async () => {
+    restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
+    const { result, onTestConnection, onConnect } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setUser("root"));
+    act(() => result.current.setPassword("Milvus"));
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onTestConnection).toHaveBeenCalledTimes(2);
+    expect(onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  test("an engine that declares nothing never warns", () => {
+    const { result } = renderForm();
+    act(() => result.current.setUser("root"));
+    act(() => result.current.setPassword("Milvus"));
+    expect(result.current.credentialWarning).toBeUndefined();
   });
 });

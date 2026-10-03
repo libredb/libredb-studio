@@ -16,6 +16,7 @@ import { parseConnectionString } from "@/lib/connection-string-parser";
 import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
 import { newLocalId } from "@/lib/ids";
 import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { credentialWarningFor } from "@/lib/db/credential-warnings";
 
 /**
  * Whether this editor OWNS a connection field or merely carries it.
@@ -976,6 +977,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
   });
   const readOnlyOffered = offersReadOnlyToggle(READ_ONLY_ENFORCED[type], editConnection);
+  // The warning reads the credential `buildConnection` would send: a user left in state by another engine is not
+  // this engine's, so it does not count where this engine takes no user name. It blocks nothing.
+  const credentialWarning = credentialWarningFor(type, {
+    user: getDBConfig(type).connectionFields.includes("user") ? user : "",
+    password,
+  });
 
   return {
     // Connection fields
@@ -1076,5 +1083,6 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     // Derived data
     dbTypes,
     readOnlyOffered,
+    credentialWarning,
   };
 }
