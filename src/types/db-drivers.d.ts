@@ -30,6 +30,8 @@ declare module "oracledb" {
     readonly DB_TYPE_BLOB: oracledb.DbType;
     readonly DB_TYPE_INTERVAL_YM: oracledb.DbType;
     readonly DB_TYPE_INTERVAL_DS: oracledb.DbType;
+    readonly DB_TYPE_DATE: oracledb.DbType;
+    readonly DB_TYPE_TIMESTAMP: oracledb.DbType;
     /** Fetch-target identities, the value side of a `fetchTypeHandler` answer. */
     readonly STRING: number;
     readonly BUFFER: number;
@@ -66,8 +68,11 @@ declare module "oracledb" {
       scale?: number;
     }
 
-    /** What a `fetchTypeHandler` may answer: a fetch target, or nothing to keep the default. */
-    type FetchType = { type: number } | undefined;
+    /**
+     * What a `fetchTypeHandler` may answer: a fetch target, a converter the driver puts each
+     * fetched value through (NULL included, as `null`), or nothing to keep the default.
+     */
+    type FetchType = { type: number } | { converter: (value: unknown) => unknown } | undefined;
 
     type FetchTypeHandler = (metaData: Metadata) => FetchType;
 

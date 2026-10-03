@@ -373,7 +373,7 @@ fabricated zeros. `POST /api/db/test-connection` reports that as a **degraded** 
 green tick and not a failure: the connection is real, the health read is not. Grant `+info`,
 or expect the monitoring panels to stay empty for that user.
 
-### 4.2 Connection-string nuance ⚠️
+### 4.2 Connection-string nuance
 
 `getCapabilities().supportsConnectionString` is **`false`** — the provider itself only consumes
 discrete fields. However, the UI connection-string parser

@@ -1401,6 +1401,54 @@ const normalizeIntervals = (
   });
 };
 
+/**
+ * A DATE or a TIMESTAMP (without time zone) as the engine's own wall clock (#1131):
+ * `2026-09-01 10:30:00`, and `2026-09-01 10:30:00.345` when the value has a fraction.
+ *
+ * Neither type holds a zone, so there is no `Date` that is right for one. oracledb, in Thin
+ * and Thick mode alike, builds the `Date` by reading the stored fields as LOCAL time of the
+ * Node process (`makeDate(useLocal)` in oracledb/lib/util.js), and every row path then
+ * serialised it as ISO UTC, so the value moved with the server's TZ. Measured in #1131 on
+ * Oracle Free through this provider: `DATE '2026-09-01'` arrived as
+ * `2026-08-31T21:00:00.000Z` under TZ=Europe/Istanbul, the previous day, and the SQL INSERT
+ * export of that row over HTTP was refused on replay (ORA-01861).
+ *
+ * The LOCAL getters are the inverse of what the driver did, so they give back the stored
+ * fields in every zone. Asking the driver for a string does not: in Thin mode a fetch type
+ * of `oracledb.STRING` for these types is that same `Date` put through `toString()`
+ * (oracledb/lib/impl/resultset.js), and the session's NLS formats are never consulted.
+ *
+ * What the `Date` lost before this runs stays lost: digits past the millisecond, a wall
+ * clock inside the Node zone's spring-forward gap (it exists in the table but not in that
+ * zone, so the driver's `Date` is an hour later), and a year below 100, which the `Date`
+ * constructor reads as 19xx.
+ */
+const formatZonelessDate = (value: Date, withFraction: boolean): string => {
+  const year = value.getFullYear();
+  const day = `${year < 0 ? "-" : ""}${String(Math.abs(year)).padStart(4, "0")}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+  const clock = `${pad2(value.getHours())}:${pad2(value.getMinutes())}:${pad2(value.getSeconds())}`;
+  const fraction = withFraction ? String(value.getMilliseconds()).padStart(3, "0").replace(/0+$/, "") : "";
+  return `${day} ${clock}${fraction === "" ? "" : `.${fraction}`}`;
+};
+
+/**
+ * The per-call handler of the two row paths, `query()` and `queryInTransaction()`: the LOB
+ * mapping, plus DATE and TIMESTAMP read as their wall clock (`formatZonelessDate`).
+ *
+ * A converter rather than a fetch type, because the fetch type is `Date.toString()`. The
+ * two zoned types are left alone: each names an instant, the driver hands over that
+ * instant, and its ISO form is the same in every TZ.
+ */
+const rowFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
+  if (metaData.dbType === oracledb.DB_TYPE_DATE || metaData.dbType === oracledb.DB_TYPE_TIMESTAMP) {
+    const withFraction = metaData.dbType === oracledb.DB_TYPE_TIMESTAMP;
+    // The driver calls a converter for every value, a NULL as `null`, so anything that is
+    // not a `Date` is handed on as it came.
+    return { converter: (value) => (value instanceof Date ? formatZonelessDate(value, withFraction) : value) };
+  }
+  return lobFetchTypeHandler(metaData);
+};
+
 // ============================================================================
 // Oracle Provider
 // ============================================================================
@@ -1787,7 +1835,7 @@ export class OracleProvider extends SQLBaseProvider {
           const res = await conn.execute(sql, bindParams, {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: true,
-            fetchTypeHandler: lobFetchTypeHandler,
+            fetchTypeHandler: rowFetchTypeHandler,
           });
 
           return res;
@@ -1915,7 +1963,7 @@ export class OracleProvider extends SQLBaseProvider {
           return await this.txConn!.execute(sql, params || [], {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: false,
-            fetchTypeHandler: lobFetchTypeHandler,
+            fetchTypeHandler: rowFetchTypeHandler,
           });
         } catch (error) {
           throw mapDatabaseError(error, "oracle", sql);
