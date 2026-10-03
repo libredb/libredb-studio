@@ -1,7 +1,8 @@
 /**
  * What the vector evidence harness derives from the seeds' manifests (tests/live/vector-evidence-derive.ts;
  * vector-family spec 7.3): the expected VectorFieldInfo[] per collection, the expected cells in Studio's cell form,
- * the Milvus non-finite score REST cannot encode, and the float32 comparison of a derived cell with a REST cell.
+ * the Milvus non-finite score REST cannot encode, the float32 comparison of a derived cell with a REST cell, and the
+ * build each manifest records, which every capture of its engine records too.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -15,6 +16,7 @@ import {
   expectedQdrantCells,
   expectedQdrantFields,
   float32SelfInnerProduct,
+  manifestProvenance,
   type MilvusManifest,
   type MilvusManifestCollection,
   type MilvusManifestField,
@@ -35,9 +37,16 @@ import {
   type VectorMetricJson,
 } from "../../../live/vector-evidence-derive";
 
+const BUILD = {
+  image: "milvusdb/milvus:v3.0.2",
+  digest: "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+  date: "2026-10-03T11:34:50.000Z",
+};
+
 const MILVUS: MilvusManifest = {
   engine: "milvus",
   server_version: "v3.0.2",
+  ...BUILD,
   databases: {
     default: {
       docs_varchar: {
@@ -117,6 +126,9 @@ const MILVUS: MilvusManifest = {
 const QDRANT: QdrantManifest = {
   engine: "qdrant",
   server_version: "1.19.1",
+  image: "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+  digest: "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  date: "2026-10-03T11:34:51.000Z",
   collections: {
     docs: {
       points: 1,
@@ -442,6 +454,27 @@ describe("the non-finite score", () => {
     delete without.databases.default.edge_values;
     expect(() => milvusNonFiniteScore(without as unknown as MilvusManifest)).toThrow(
       "the Milvus manifest has no edge_values row labelled non-finite-score",
+    );
+  });
+});
+
+describe("manifestProvenance", () => {
+  const pinned = { image: BUILD.image, digest: BUILD.digest };
+
+  test("the build the manifest records is what every capture of its engine records", () => {
+    expect(manifestProvenance("milvus", MILVUS, pinned)).toEqual({
+      image: "milvusdb/milvus:v3.0.2",
+      digest: "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+      version: "v3.0.2",
+    });
+  });
+
+  test("a manifest of another build than the running server's stops the run by name", () => {
+    expect(() => manifestProvenance("milvus", { ...MILVUS, digest: "sha256:00" }, pinned)).toThrow(
+      `the milvus manifest records milvusdb/milvus:v3.0.2@sha256:00, not milvusdb/milvus:v3.0.2@${BUILD.digest}: nothing written`,
+    );
+    expect(() => manifestProvenance("qdrant", QDRANT, pinned)).toThrow(
+      `the qdrant manifest records ${QDRANT.image}@${QDRANT.digest}, not milvusdb/milvus:v3.0.2@${BUILD.digest}: nothing written`,
     );
   });
 });

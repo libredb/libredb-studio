@@ -3,7 +3,9 @@
 
   seed.py --uri URI --credentials DIR    create what is missing; a second run on a seeded server does no work
   seed.py --uri URI --verify             read every seeded object back, print a report, exit 1 on a difference
-  seed.py --uri URI --manifest           print the manifest of what the seed inserts, as JSON on stdout
+  seed.py --uri URI --manifest --image IMAGE@DIGEST
+                                         print the manifest of what the seed inserts, as JSON on stdout, with the
+                                         server's pinned image, its digest and the date
 
 Ported from the design research's seed. The data is deterministic (fixed numpy seeds) apart from the auto_id keys
 of docs_int64, so every fixture addresses rows by seq. root signs in with Milvus's documented default password,
@@ -13,6 +15,7 @@ the first run. Progress goes to stderr, so --manifest prints nothing but the man
 """
 
 import argparse
+import datetime
 import json
 import math
 import secrets
@@ -544,9 +547,18 @@ def verify(uri):
         sys.exit(1)
 
 
-def manifest(uri):
+def pinned_build(reference):
+    """The image and digest of the server's pinned reference IMAGE@DIGEST, with the date the manifest is printed."""
+    image, _, digest = reference.partition("@")
+    if not digest.startswith("sha256:"):
+        sys.exit(f"--image {reference} is not pinned by digest")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return {"image": image, "digest": digest, "date": now.isoformat(timespec="milliseconds").replace("+00:00", "Z")}
+
+
+def manifest(uri, reference):
     out = {"engine": "milvus", "seed": "docker/milvus/seed.py", "server_version": connect(uri).get_server_version(),
-           "databases": {}}
+           **pinned_build(reference), "databases": {}}
     for spec in COLLECTIONS:
         out["databases"].setdefault(spec.db, {})[spec.name] = spec.manifest()
     print(json.dumps(out, indent=1, sort_keys=True))
@@ -559,9 +571,12 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--verify", action="store_true")
     mode.add_argument("--manifest", action="store_true")
+    parser.add_argument("--image", help="the server's pinned reference IMAGE@DIGEST, which --manifest records")
     args = parser.parse_args()
+    if args.manifest and args.image is None:
+        parser.error("--image IMAGE@DIGEST is required with --manifest")
     if args.manifest:
-        manifest(args.uri)
+        manifest(args.uri, args.image)
     elif args.verify:
         verify(args.uri)
     elif args.credentials is None:

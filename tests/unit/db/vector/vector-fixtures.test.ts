@@ -220,7 +220,30 @@ interface QdrantManifestJson {
   >;
 }
 
+/** What every manifest records of the build it was printed from (vector-family spec 7.3), beside its contents. */
+interface ManifestBuildJson {
+  readonly image: string;
+  readonly digest: string;
+  readonly server_version: string;
+  readonly date: string;
+}
+
 describe("the seeds' manifests", () => {
+  test("each names the pinned build it was printed from and its date, which comes before the engine's first capture", () => {
+    for (const engine of ["milvus", "qdrant"] as const) {
+      const manifest = read(`${engine}/manifest.json`) as ManifestBuildJson;
+      expect({ engine, image: manifest.image, digest: manifest.digest, version: manifest.server_version }).toEqual({
+        engine,
+        ...BUILDS[engine],
+      });
+      expect(manifest.date).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      const first = captures(engine)
+        .map(([, capture]) => capture.$captured.date)
+        .sort()[0];
+      expect({ engine, printedFirst: manifest.date <= first }).toEqual({ engine, printedFirst: true });
+    }
+  });
+
   test("Milvus holds the research's objects and the four the fixtures add, each with its row count and load state", () => {
     const manifest = read("milvus/manifest.json") as MilvusManifestJson;
     const rows = Object.fromEntries(

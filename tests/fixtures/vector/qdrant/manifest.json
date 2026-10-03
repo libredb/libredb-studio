@@ -1593,7 +1593,10 @@
    ]
   }
  },
+ "date": "2026-10-03T12:30:30.337Z",
+ "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
  "engine": "qdrant",
+ "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
  "seed": "docker/qdrant/seed.py",
  "server_version": "1.19.1"
 }

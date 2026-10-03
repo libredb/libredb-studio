@@ -57,8 +57,10 @@ To read a seeded server back without writing to it, and to print the manifest th
 docker compose -p libredb-studio -f database-compose.yml run --rm --no-deps -T milvus-seed \
   --uri http://milvus:19530 --verify
 docker compose -p libredb-studio -f database-compose.yml run --rm --no-deps -T milvus-seed \
-  --uri http://milvus:19530 --manifest
+  --uri http://milvus:19530 --manifest --image "$(docker inspect --format '{{.Config.Image}}' libredb-milvus)"
 ```
+
+`--manifest` requires `--image`, the server's reference pinned by digest, and records that image, its digest and the date it printed the manifest.
 
 To start one fixture over, remove its containers by name, then its volumes, whose names carry the project's prefix:
 

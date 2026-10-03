@@ -70,7 +70,31 @@ export interface MilvusManifestCollection {
   readonly sample: readonly MilvusManifestRow[];
 }
 
-export interface MilvusManifest {
+/** The build a seed's manifest was printed from: the server's pinned image, its digest, and the date it was printed. */
+export interface ManifestBuild {
+  readonly image: string;
+  readonly digest: string;
+  readonly date: string;
+}
+
+/**
+ * The build a manifest records, which every capture of its engine records too. A manifest printed from another build
+ * than the running server's, which `pinned` names, stops the run.
+ */
+export function manifestProvenance(
+  engine: string,
+  manifest: ManifestBuild & { readonly server_version: string },
+  pinned: { readonly image: string; readonly digest: string },
+): { readonly image: string; readonly digest: string; readonly version: string } {
+  if (manifest.image !== pinned.image || manifest.digest !== pinned.digest) {
+    throw new Error(
+      `the ${engine} manifest records ${manifest.image}@${manifest.digest}, not ${pinned.image}@${pinned.digest}: nothing written`,
+    );
+  }
+  return { image: manifest.image, digest: manifest.digest, version: manifest.server_version };
+}
+
+export interface MilvusManifest extends ManifestBuild {
   readonly engine: "milvus";
   readonly server_version: string;
   readonly databases: Readonly<Record<string, Readonly<Record<string, MilvusManifestCollection>>>>;
@@ -111,7 +135,7 @@ export interface QdrantManifestCollection {
   readonly sample: readonly QdrantManifestPoint[];
 }
 
-export interface QdrantManifest {
+export interface QdrantManifest extends ManifestBuild {
   readonly engine: "qdrant";
   readonly server_version: string;
   readonly collections: Readonly<Record<string, QdrantManifestCollection>>;

@@ -15,8 +15,8 @@ It calls one surface per file, records a pass or the verbatim failure, and rende
 <!-- generated:provenance -->
 | Engine | Image | Digest | Server version | Captured | Runtime |
 |---|---|---|---|---|---|
-| milvus | `milvusdb/milvus:v3.0.2` | `sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0` | 3.0.2 | 2026-10-03T11:34:52.102Z to 2026-10-03T11:34:52.143Z | bun 1.4.2 |
-| qdrant | `ghcr.io/qdrant/qdrant/qdrant:v1.19.1` | `sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822` | 1.19.1 | 2026-10-03T11:34:52.144Z to 2026-10-03T11:34:52.154Z | bun 1.4.2 |
+| milvus | `milvusdb/milvus:v3.0.2` | `sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0` | 3.0.2 | 2026-10-03T12:30:30.704Z to 2026-10-03T12:30:30.810Z | bun 1.4.2 |
+| qdrant | `ghcr.io/qdrant/qdrant/qdrant:v1.19.1` | `sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822` | 1.19.1 | 2026-10-03T12:30:30.811Z to 2026-10-03T12:30:30.840Z | bun 1.4.2 |
 <!-- /generated:provenance -->
 
 ### How they were captured
@@ -30,13 +30,13 @@ bun tests/live/vector-evidence.ts --readme --report <the same report file>
 ```
 
 The harness first requires both servers to be running and healthy, and stops with no retry when one is not.
-It reads each seed's manifest by running the seed's one-shot with `--manifest`, then sends every request one at a time.
+It reads each seed's manifest by running the seed's one-shot with `--manifest` and the server's pinned image, stops when the manifest records another build, then sends every request one at a time.
 Every answer must have the outcome its capture declares and hold the claim its capture states, and every derived cell must equal its REST cell as float32 where the two have the same shape; otherwise nothing is written.
 A run replaces `milvus/`, `qdrant/` and `expected-scores.json` whole.
 
 ### The files
 
-- `manifest.json`: the seed's manifest as the seed printed it: each collection's declaration, its row or point count, and its first rows (every row of `edge_values`) with every vector as the server stores it.
+- `manifest.json`: the seed's manifest as the seed printed it: the server's pinned image, its digest, its version and the date the seed printed it, then each collection's declaration, its row or point count, and its first rows (every row of `edge_values`) with every vector as the server stores it.
 - `describe-*.json`: the describe answer of every seeded collection.
 - `query-*.json` (Milvus), `scroll-docs.json` and `retrieve-*.json` (Qdrant): cells of every vector type as each engine returns them.
   Milvus REST returns `Float16Vector`, `BFloat16Vector`, `BinaryVector` and `Int8Vector` cells as base64, which is why no expected cell is derived from REST.

@@ -32,6 +32,7 @@ import {
   expectedQdrantCells,
   expectedQdrantFields,
   type MilvusManifest,
+  manifestProvenance,
   milvusNonFiniteScore,
   type QdrantHnswConfig,
   type QdrantManifest,
@@ -100,9 +101,13 @@ function pinnedImage(container: string): { image: string; digest: string } {
   return { image, digest };
 }
 
-/** The seed's manifest, printed by its one-shot run with --manifest; pip's output goes to stderr. */
-function seedManifest(engine: Engine): string {
-  return `${docker([...COMPOSE, "run", "--rm", "--no-deps", "-T", ...SEED_ARGS[engine]])}\n`;
+/**
+ * The seed's manifest, printed by its one-shot run with --manifest, which records the server's pinned image, its
+ * digest and the date beside what the seed inserted; pip's output goes to stderr.
+ */
+function seedManifest(engine: Engine, pinned: { image: string; digest: string }): string {
+  const image = `${pinned.image}@${pinned.digest}`;
+  return `${docker([...COMPOSE, "run", "--rm", "--no-deps", "-T", ...SEED_ARGS[engine], "--image", image])}\n`;
 }
 
 // -- requests -----------------------------------------------------------------------------------------------------
@@ -663,12 +668,13 @@ function argument(name: string): string {
 async function captureRun(): Promise<number> {
   const reportFile = argument("--report");
   for (const engine of ENGINES) requireHealthy(ENDPOINTS[engine].container);
-  const manifestText = { milvus: seedManifest("milvus"), qdrant: seedManifest("qdrant") };
+  const pinned = { milvus: pinnedImage(ENDPOINTS.milvus.container), qdrant: pinnedImage(ENDPOINTS.qdrant.container) };
+  const manifestText = { milvus: seedManifest("milvus", pinned.milvus), qdrant: seedManifest("qdrant", pinned.qdrant) };
   const milvus = parse(manifestText.milvus) as MilvusManifest;
   const qdrant = parse(manifestText.qdrant) as QdrantManifest;
   const provenance: Record<Engine, Provenance> = {
-    milvus: { ...pinnedImage(ENDPOINTS.milvus.container), version: milvus.server_version },
-    qdrant: { ...pinnedImage(ENDPOINTS.qdrant.container), version: qdrant.server_version },
+    milvus: manifestProvenance("milvus", milvus, pinned.milvus),
+    qdrant: manifestProvenance("qdrant", qdrant, pinned.qdrant),
   };
   const recorded = await runCaptures([...milvusCaptures(milvus), ...qdrantCaptures(qdrant)]);
   const problems = problemsOf(recorded);

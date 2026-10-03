@@ -51,8 +51,10 @@ To read a seeded server back without writing to it, and to print the manifest th
 docker compose -p libredb-studio -f database-compose.yml run --rm --no-deps -T qdrant-seed \
   --url http://qdrant:6333 --verify
 docker compose -p libredb-studio -f database-compose.yml run --rm --no-deps -T qdrant-seed \
-  --url http://qdrant:6333 --manifest
+  --url http://qdrant:6333 --manifest --image "$(docker inspect --format '{{.Config.Image}}' libredb-qdrant)"
 ```
+
+`--manifest` requires `--image`, the server's reference pinned by digest, and records that image, its digest and the date it printed the manifest.
 
 To start the keyed fixtures over, remove their containers by name, then the keys volume, whose name carries the project's prefix:
 

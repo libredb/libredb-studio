@@ -4,7 +4,7 @@
     "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
     "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
     "version": "1.19.1",
-    "date": "2026-10-03T11:34:52.153Z",
+    "date": "2026-10-03T12:30:30.836Z",
     "runtime": "bun 1.4.2",
     "surface": "points/query, Dot, plain, the vector of id 1",
     "request": {
@@ -18,6 +18,6 @@
   "payload": {
     "status": 200,
     "bodyBytes": 177,
-    "body": "{\"result\":{\"points\":[{\"id\":55,\"version\":1,\"score\":1.6944418},{\"id\":225,\"version\":1,\"score\":1.5955397},{\"id\":43,\"version\":1,\"score\":1.5091078}]},\"status\":\"ok\",\"time\":0.000082267}"
+    "body": "{\"result\":{\"points\":[{\"id\":55,\"version\":1,\"score\":1.6944418},{\"id\":225,\"version\":1,\"score\":1.5955397},{\"id\":43,\"version\":1,\"score\":1.5091078}]},\"status\":\"ok\",\"time\":0.000074295}"
   }
 }

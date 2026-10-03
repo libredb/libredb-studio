@@ -3,7 +3,9 @@
 
   seed.py --url URL [--api-key-file FILE]              create what is missing; a second run does no work
   seed.py --url URL [--api-key-file FILE] --verify     read every seeded object back, print a report, exit 1 on a difference
-  seed.py --url URL [--api-key-file FILE] --manifest   print the manifest of what the seed inserts, as JSON on stdout
+  seed.py --url URL [--api-key-file FILE] --manifest --image IMAGE@DIGEST
+                                                       print the manifest of what the seed inserts, as JSON on
+                                                       stdout, with the server's pinned image, its digest and the date
 
 Ported from the design research's seed. Every vector and payload value comes from numpy default_rng with fixed
 seeds (20261002, 7 and 11 for the research's collections, 20261003 for payload_spread), UUID ids are uuid5 of a
@@ -12,6 +14,7 @@ to stderr, so --manifest prints nothing but the manifest on stdout.
 """
 
 import argparse
+import datetime
 import json
 import math
 import sys
@@ -391,7 +394,16 @@ def stored_vectors(name, vectors):
     return out
 
 
-def manifest(url, api_key):
+def pinned_build(reference):
+    """The image and digest of the server's pinned reference IMAGE@DIGEST, with the date the manifest is printed."""
+    image, _, digest = reference.partition("@")
+    if not digest.startswith("sha256:"):
+        sys.exit(f"--image {reference} is not pinned by digest")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return {"image": image, "digest": digest, "date": now.isoformat(timespec="milliseconds").replace("+00:00", "Z")}
+
+
+def manifest(url, api_key, reference):
     collections = {}
     for name in COLLECTIONS:
         points = DATA[name]()
@@ -409,7 +421,8 @@ def manifest(url, api_key):
             entry["payload_keys"] = payload_keys(points)
         collections[name] = entry
     print(json.dumps({"engine": "qdrant", "seed": "docker/qdrant/seed.py",
-                      "server_version": server_version(url, api_key), "collections": collections},
+                      "server_version": server_version(url, api_key), **pinned_build(reference),
+                      "collections": collections},
                      indent=1, sort_keys=True))
 
 
@@ -420,13 +433,16 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--verify", action="store_true")
     mode.add_argument("--manifest", action="store_true")
+    parser.add_argument("--image", help="the server's pinned reference IMAGE@DIGEST, which --manifest records")
     args = parser.parse_args()
+    if args.manifest and args.image is None:
+        parser.error("--image IMAGE@DIGEST is required with --manifest")
     api_key = None
     if args.api_key_file:
         with open(args.api_key_file, encoding="utf-8") as file:
             api_key = file.read().strip()
     if args.manifest:
-        manifest(args.url, api_key)
+        manifest(args.url, api_key, args.image)
         return
     c = connect(args.url, api_key)
     if args.verify:
