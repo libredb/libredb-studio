@@ -3,7 +3,8 @@
  * mutating call whose target lies outside the harness prefix throws before the wire, so the harness can only ever
  * write what it owns. Every method the client exposes must be declared a read or a mutation; an undeclared one
  * throws when it is reached for, and a mutation whose targets cannot be named throws too, because a target that
- * cannot be proved inside the prefix is outside it.
+ * cannot be proved inside the prefix is outside it. A wrapped method runs with the wrapper as `this`, so a call it
+ * makes to a sibling method passes the same checks.
  */
 
 type MethodOf<T> = {
@@ -46,21 +47,29 @@ export function guardMutations<T extends object>(client: T, rules: MutationRules
   if (rules.prefix === "") throw new Error("the harness prefix must not be empty");
   const both = rules.reads.filter((method) => rules.mutating.includes(method));
   if (both.length > 0) throw new Error(`declared both a read and a mutation: ${both.join(", ")}`);
-  return new Proxy(client, {
+  const guard: T = new Proxy(client, {
     get(target, property, receiver) {
       const value: unknown = Reflect.get(target, property, receiver);
-      if (typeof value !== "function" || typeof property !== "string") return value;
+      if (typeof value !== "function") return value;
+      // Every object inherits these, and none of them reaches the wire, so String(client) and the like stay usable.
+      if (value === Reflect.get(Object.prototype, property)) return value;
+      if (typeof property !== "string") throw new UndeclaredMethodError(String(property));
       const method = property as MethodOf<T>;
       const call = value as (...args: unknown[]) => unknown;
-      if (rules.reads.includes(method)) return (...args: unknown[]) => call.apply(target, args);
+      // The guard is the receiver, so a call the method makes through `this` is guarded as well.
+      if (rules.reads.includes(method)) return (...args: unknown[]) => Reflect.apply(call, guard, args);
       if (!rules.mutating.includes(method)) throw new UndeclaredMethodError(property);
       return (...args: unknown[]) => {
-        const targets = rules.targetsOf(method, args);
-        if (targets.length === 0 || targets.some((name) => !name.startsWith(rules.prefix))) {
-          throw new MutationOutsidePrefixError(property, targets, rules.prefix);
+        const targets: readonly unknown[] = rules.targetsOf(method, args);
+        if (
+          targets.length === 0 ||
+          targets.some((name) => typeof name !== "string" || !name.startsWith(rules.prefix))
+        ) {
+          throw new MutationOutsidePrefixError(property, targets.map(String), rules.prefix);
         }
-        return call.apply(target, args);
+        return Reflect.apply(call, guard, args);
       };
     },
   });
+  return guard;
 }

@@ -110,4 +110,71 @@ describe("guardMutations", () => {
       }),
     ).toThrow("declared both a read and a mutation: createCollection");
   });
+  test("a call a wrapped method makes through this is guarded too", () => {
+    const wire: string[] = [];
+    const client = {
+      drop(name: string): void {
+        wire.push(`drop ${name}`);
+      },
+      setup(name: string): void {
+        wire.push(`setup ${name}`);
+        this.drop("production");
+      },
+      describe(name: string): void {
+        this.drop(name);
+      },
+    };
+    const guard = guardMutations(client, {
+      prefix: PREFIX,
+      reads: ["describe"],
+      mutating: ["drop", "setup"],
+      targetsOf: (_method, args) => args.filter((arg): arg is string => typeof arg === "string"),
+    });
+    expect(() => guard.describe("docs")).toThrow(
+      "drop would write docs, outside libredb_live_: refused before the wire",
+    );
+    expect(wire).toEqual([]);
+    expect(() => guard.setup(`${PREFIX}a`)).toThrow(
+      "drop would write production, outside libredb_live_: refused before the wire",
+    );
+    expect(wire).toEqual([`setup ${PREFIX}a`]);
+  });
+
+  test("a method keyed by a symbol is undeclared and throws when it is reached for", () => {
+    const wire: string[] = [];
+    const key = Symbol("drop");
+    const client = {
+      [key](name: string): void {
+        wire.push(`symbol ${name}`);
+      },
+    };
+    const guard = guardMutations(client, { prefix: PREFIX, reads: [], mutating: [], targetsOf: () => [] });
+    expect(() => guard[key]("docs")).toThrow(UndeclaredMethodError);
+    expect(() => guard[key]("docs")).toThrow(
+      "Symbol(drop) is declared neither a read nor a mutation of the harness client",
+    );
+    expect(wire).toEqual([]);
+  });
+
+  test("a target that is not a string is refused with the guard's own error, before the wire", () => {
+    const client = new FakeAdminClient();
+    const guard = guardMutations(client, {
+      prefix: PREFIX,
+      reads: [],
+      mutating: ["createCollection"],
+      targetsOf: () => [undefined as unknown as string],
+    });
+    expect(() => guard.createCollection(`${PREFIX}copy`)).toThrow(MutationOutsidePrefixError);
+    expect(() => guard.createCollection(`${PREFIX}copy`)).toThrow(
+      "createCollection would write undefined, outside libredb_live_: refused before the wire",
+    );
+    expect(client.wire).toEqual([]);
+  });
+
+  test("the methods every object inherits, such as toString, stay usable on a guarded client", () => {
+    const { guard } = guarded();
+    expect(String(guard)).toBe("[object Object]");
+    expect(Object.prototype.hasOwnProperty.call(guard, "wire")).toBe(true);
+    expect(guard.hasOwnProperty("wire")).toBe(true);
+  });
 });
