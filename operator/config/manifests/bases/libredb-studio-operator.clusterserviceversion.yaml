@@ -9,8 +9,7 @@ metadata:
     description: Open-source web-based SQL IDE for twenty engines - PostgreSQL,
       MySQL, Oracle, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase, ClickHouse,
       Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL,
-      Prometheus, Apache Kafka and openGauss - with AI-powered query assistance.
-      Prometheus, Apache Kafka and etcd - with AI-powered query assistance.
+      Prometheus, Apache Kafka, openGauss and etcd - with AI-powered query assistance.
     olm.skipRange: '>=0.0.0 <0.0.0'
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
@@ -34,7 +33,7 @@ spec:
     LibreDB Studio is an open-source, web-based SQL IDE. Query PostgreSQL,
     MySQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase,
     ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache
-    Cassandra, Prometheus, Apache Kafka and etcd from the browser,
+    Cassandra, Prometheus, Apache Kafka, openGauss and etcd from the browser,
     with AI-powered query assistance (natural-language-to-SQL, explain, fix),
     an ERD viewer, schema diff and a data profiler. No desktop client required.
 
@@ -91,6 +90,7 @@ spec:
   - prometheus
   - promql
   - kafka
+  - opengauss
   - etcd
   links:
   - name: Website
