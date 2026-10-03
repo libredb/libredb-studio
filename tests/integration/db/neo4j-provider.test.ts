@@ -44,8 +44,7 @@ import {
 } from "../../helpers/neo4j-fixtures";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
-// The type-id joins the union in the registration task; until then it is spelled through string.
-const NEO4J = "neo4j" as string as DatabaseType;
+const NEO4J: DatabaseType = "neo4j";
 
 const CONNECTION: DatabaseConnection = {
   id: "neo4j-live",

@@ -26,8 +26,7 @@ import { neo4jStatementGate } from "@/lib/db/providers/graph/neo4j/statement-gat
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import { recordedGraphClient } from "../../../helpers/neo4j-fixtures";
 
-// The type-id joins the union in the registration task; until then it is spelled through string.
-const NEO4J = "neo4j" as string as DatabaseType;
+const NEO4J: DatabaseType = "neo4j";
 
 const CONNECTION: DatabaseConnection = {
   id: "c1",

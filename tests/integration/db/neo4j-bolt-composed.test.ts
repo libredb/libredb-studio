@@ -27,8 +27,7 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 
 const { Node, Relationship, Path, PathSegment, DateTime, Record: DriverRecord } = neo4j.types;
 
-// The type-id joins the union in the registration task; until then it is spelled through string.
-const NEO4J = "neo4j" as string as DatabaseType;
+const NEO4J: DatabaseType = "neo4j";
 
 const CONNECTION: DatabaseConnection = {
   id: "composed",
