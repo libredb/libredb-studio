@@ -199,3 +199,18 @@ for (const engine of ENGINES) {
     });
   });
 }
+
+describe("a binary field whose dimension is not whole bytes", () => {
+  test("is refused as a shape, with no fractional byte count", () => {
+    const target = { name: "b", kind: "dense", dtype: "binary", dimension: 12 } as const;
+    for (const values of [[1], [1, 2]]) {
+      expect(checkDenseElements(target, values)).toEqual({
+        field: "b",
+        dtype: "binary",
+        index: null,
+        sentence:
+          'Vector field "b" (binary): the field\'s dimension is 12 bits, which is not a whole number of bytes, so no byte vector fits it.',
+      });
+    }
+  });
+});

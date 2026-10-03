@@ -5,8 +5,9 @@ import type { VectorTarget } from "./dense";
  * A probe vector for a field (vector-family spec 3.3), which Generate Command writes into a search template: every
  * element of a float vector `Math.fround(1 / Math.sqrt(dimension))`, a unit vector; an int8 or uint8 element 1;
  * every byte of a binary vector 0x55, because an all-zero probe is degenerate under the set and angle metrics; a
- * sparse probe index 0 with value 1; a multivector one row of the dense probe. Null where the dimension is unknown,
- * and the provider then writes a template of comments only.
+ * sparse probe index 0 with value 1; a multivector one row of the dense probe. Null where the dimension is unknown
+ * or is one no vector can have (not a positive integer, or a binary dimension that is not whole bytes), and the
+ * provider then writes a template of comments only.
  */
 export type ProbeVector =
   | { readonly kind: "dense"; readonly values: readonly number[] }
@@ -21,7 +22,9 @@ function denseProbe(target: VectorTarget, dimension: number): readonly number[] 
 
 export function probeVector(target: VectorTarget): ProbeVector | null {
   if (target.kind === "sparse") return { kind: "sparse", vector: { indices: [0], values: [1] } };
-  if (target.dimension === null) return null;
-  const values = denseProbe(target, target.dimension);
+  const { dimension } = target;
+  if (dimension === null || !Number.isInteger(dimension) || dimension < 1) return null;
+  if (target.dtype === "binary" && dimension % 8 !== 0) return null;
+  const values = denseProbe(target, dimension);
   return target.kind === "multi" ? { kind: "multi", rows: [values] } : { kind: "dense", values };
 }

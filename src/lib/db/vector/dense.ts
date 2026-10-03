@@ -104,6 +104,13 @@ function elementRefusal(target: VectorTarget, index: number, value: number, labe
 /** The length against the field's dimension (bytes for a binary field), then every element against its range. */
 export function checkDenseElements(target: VectorTarget, values: readonly number[]): VectorRefusal | null {
   if (target.dimension !== null) {
+    if (target.dtype === "binary" && target.dimension % 8 !== 0) {
+      return refusal(
+        target,
+        null,
+        `the field's dimension is ${target.dimension} bits, which is not a whole number of bytes, so no byte vector fits it.`,
+      );
+    }
     const expected = target.dtype === "binary" ? target.dimension / 8 : target.dimension;
     if (values.length !== expected) {
       const unit = target.dtype === "binary" ? "bytes" : "elements";

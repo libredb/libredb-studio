@@ -45,6 +45,16 @@ describe("probeVector", () => {
     expect(probeVector({ name: "v", kind: "dense", dtype: "float32", dimension: null })).toBeNull();
     expect(probeVector({ name: "m", kind: "multi", dtype: "float32", dimension: null })).toBeNull();
   });
+
+  test("no probe exists for a dimension no vector can have: a binary one that is not whole bytes, zero, or a fraction", () => {
+    for (const dimension of [12, 7, 0, -8, 1.5]) {
+      expect(probeVector({ name: "v", kind: "dense", dtype: "binary", dimension }), String(dimension)).toBeNull();
+    }
+    for (const dimension of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(probeVector({ name: "v", kind: "dense", dtype: "float32", dimension }), String(dimension)).toBeNull();
+      expect(probeVector({ name: "m", kind: "multi", dtype: "float32", dimension }), String(dimension)).toBeNull();
+    }
+  });
 });
 
 for (const engine of ENGINES) {
