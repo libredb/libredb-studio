@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D158, U17 · 102
+- [Drivers and connections](#drivers-and-connections) — D1-D161, U17 · 105
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X23, U2-U74 · 65
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U74 · 69
 - [Dependencies](#dependencies) — P1-P8 · 8
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -2186,6 +2186,37 @@ Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 
 
 **Done when:** users paste commented Milvus bodies; then the dialect declares `bodyComments: true` in one data change, with corpus cases for a comment inside a string, after a value and at the end of the body.
 
+### D159. db2-node refuses a password holding `!` that the server accepts
+
+The Db2 compose service sets `DB2INST1_PASSWORD=Password123!`, and the server takes it: `CONNECT TO TESTDB USER db2inst1 USING "Password123!"` succeeds in the container's own command line processor.
+Studio, over `db2-node` 1.0.22 with the insecure opt-in, is refused with "Authentication failed: Security check failed: severity=8, check_code=0x0F (user id or password invalid), requested_secmec=0x0009, accepted_secmec=0x0003, credential_encoding=Ebcdic037", and `db2diag` logs "Password validation for user db2inst1 failed".
+After the password is changed to letters and digits only, the same connection succeeds at once.
+The likely cause is how the driver encodes `!` in EBCDIC code page 037 (K11 in `docs/providers/db2.md` already says the password travels as EBCDIC without TLS); the characters affected, and whether a TLS connection meets the same refusal, were not measured.
+
+Found 2026-10-03 by the browser pass of #1246, whose change does not touch Db2.
+
+**Done when:** the password characters `db2-node` encodes differently from the server are measured with and without TLS, the result goes upstream with that evidence, and either the pinned `db2-node` carries the fix or `docs/providers/db2.md` names the characters a password must not hold.
+
+### D160. The Db2 compose service can skip its object fixture on a fresh volume
+
+On the first start of a fresh volume, `docker/db2-init/01-object-fixture.sh` printed "db2-init: fixture already loaded", yet `SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TABSCHEMA IN ('APP','REPORTING')` returned 0.
+Running `/var/custom-fixture/01-object-fixture.sql` by hand then loaded it with no SQL error.
+The script loads the fixture only when its count query prints exactly `0`, and prints the skip message for anything else, so a query that fails or warns at that point of the start reads as a loaded fixture.
+
+Found 2026-10-03 by the browser pass of #1246.
+
+**Done when:** the script tells a failed or warning count query from a non-zero count and fails loudly on the first, a fresh volume gets the fixture, and the check that the fixture loaded is part of the service's own start.
+
+### D161. A PostgreSQL session's duration can read below zero
+
+The sessions query in `src/lib/db/providers/sql/postgres.ts` (lines 1779-1792) reads each session's duration as `now() - query_start`, or `now() - xact_start` for a session in a transaction, and the slow-query list (lines 1752-1753) reads `total_time` and `avg_time` the same way.
+`now()` is the time the reading transaction started, so a statement or transaction that began after it reads below zero.
+Measured 2026-10-03 in the acceptance pass of the vector-family work: with Studio's own monitoring statements in flight on other pooled connections, the Sessions tab of /monitoring showed `-0.002352s`, `-0.001511s`, `-0.001256s` and `-0.000480s` beside four of them.
+
+Found by the acceptance pass of the vector-family work; the arithmetic predates it.
+
+**Done when:** the durations count to `clock_timestamp()`, so no session reads below zero, and an integration test reads the sessions of a live PostgreSQL while another connection runs a statement and finds no negative duration.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -2611,11 +2642,55 @@ Measured 2026-10-03: `src/app/api/db/query/route.ts` holds no reference to `sign
 ### X23. The multi-statement route drops a result's vector columns
 
 `POST /api/db/multi-query` builds each statement's result and the main result through `carriedChannels` in `src/app/api/db/multi-query/route.ts`, which carries `warnings` and `columnTypes` only, so a `vectorColumns` declaration a provider returns never reaches the grid on that route.
-No shipped engine declares vector columns yet, and the two that will, Milvus and Qdrant, declare a console text bound, which the route refuses with 400 before it runs anything, so neither meets the gap.
+Milvus and Qdrant, the two shipped engines that declare vector columns, also declare a console text bound, which the route refuses with 400 before it runs anything, so neither meets the gap.
 A later engine that declares vector columns and accepts multi-statement text would show its vectors there as plain JSON, and Copy Cell would copy the JSON text rather than the engine's encoding.
 Measured 2026-10-03: `vectorColumns` appears neither in `StatementResult` nor in `carriedChannels`.
 
 **Done when:** the route carries `vectorColumns` on each statement's result and on the main result, with a route test that a declared column reaches both, or a type that declares vector columns is refused on the route by name.
+
+### X24. The Operations and Tables tabs keep the previous connection's rows when the next connection's table read fails
+
+Selecting a connection whose table read fails leaves the Operations and Tables tabs showing the previous connection's rows, under the new connection's name, with the new engine's maintenance controls on them and no error.
+Measured 2026-10-03 in the browser pass of #1246, on the CI images of that branch and of `main` before it: with a DuckDB connection whose file another process had locked ("DuckDB file ... is locked by another process" in the server log), the Operations tab showed SQLite's 10 tables and the SQLite session under the DuckDB connection's name, each row with DuckDB's Analyze Table and Vacuum Table; a Db2 connection failing on a configuration error showed the same.
+A click on one of those controls would send the new engine's maintenance with another connection's table name.
+
+Found by the browser pass of the maintenance extensions (#1246).
+Not fixed there: the defect predates that PR, and its cause is in how the tabs keep their rows across a connection change, not in the maintenance controls.
+
+**Done when:** a failed table read clears the previous connection's rows and shows the error in both tabs, and a test switches from a connection with tables to one whose table read fails and asserts that no row and no maintenance control remain.
+
+### X25. A PostgreSQL or SQLite view's row menu offers Analyze Table and Vacuum Table
+
+The object tree's row menu offers "Analyze Table" and "Vacuum Table" on a PostgreSQL view and "Analyze Table" on a SQLite view, because neither provider's `maintenanceOperationSpecs` declares `kinds`, and an absent `kinds` means every relation kind (`MaintenanceOperationSpec.kinds` in `src/lib/db/types.ts`).
+On PostgreSQL the entry opens `/admin/operations?path=public&path=big_orders`, which says "this page has no row for "big_orders" to run it on", and nothing is sent.
+Measured 2026-10-03 in the acceptance pass of the vector-family work, on a PostgreSQL view `big_orders` and a SQLite view `open_loans`.
+Db2 declares `kinds` for the same reason: RUNSTATS and REORG are refused on a view.
+
+Found by the acceptance pass of the vector-family work; the menu entries predate it.
+
+**Done when:** PostgreSQL and SQLite declare `kinds` on the operations their row menus offer, naming the kinds each engine runs them on, measured on a PostgreSQL materialized view and on SQLite's `ANALYZE` of a view, and a test asserts that a view's row menu offers no maintenance entry its engine would not run.
+
+### X26. The /monitoring Tables and Sessions tabs offer maintenance and Terminate to a non-admin, and the server refuses them
+
+`MonitoringDashboard` (`src/components/monitoring/MonitoringDashboard.tsx:304-310`) renders `SessionsTab` and `TablesTab` without `isAdmin`, and both default it to `true`, so a signed-in user who is not an admin sees every per-row Analyze, Vacuum and Reindex control and every Terminate button on /monitoring.
+Each click is sent, and `POST /api/db/maintenance` answers `403 {"error":"Unauthorized. Admin access required."}`, shown as a toast, while the object tree's row menus already hide these entries from the same user.
+Measured 2026-10-03 in the acceptance pass of the vector-family work, signed in with the user role on a PostgreSQL connection: 6 maintenance buttons and 7 Terminate buttons, each click answered 403.
+`TablesTab`'s docblock already names that default as older behaviour and leaves it alone.
+
+Found by the acceptance pass of the vector-family work; the default predates it.
+
+**Done when:** `MonitoringDashboard` passes the signed-in role to both tabs, a non-admin sees no maintenance or Terminate control on /monitoring, and a component test renders the dashboard as a non-admin and finds none.
+
+### X27. A JSON export writes a binary value in Node's Buffer form
+
+`buildResultExport` (`src/lib/export/result-export.ts:892-893`) writes the JSON export as `jsonText(rows)`, the raw rows, so a PostgreSQL `bytea` or SQL Server `varbinary` value is written as `{"type":"Buffer","data":[0,1,...]}`.
+The grid, Copy Cell, the row detail and the CSV export show the same value as `\x` hex, through `asBytes` in `src/lib/export/binary.ts`.
+Measured 2026-10-03 in the acceptance pass of the vector-family work: a 100-byte `bytea` and a 100-byte `varbinary` each exported to JSON as the Buffer object with 100 numbers, and copied as `\x00010203...`.
+D152 has a separate cause: a SQLite BLOB never reaches the export as bytes at all.
+
+Found by the acceptance pass of the vector-family work; the JSON writer dates from #422.
+
+**Done when:** the owner has decided the JSON form of a binary value (a hex string, a base64 string, or the Buffer form kept and documented), the JSON export writes it for every engine whose driver hands back bytes, and an export test pins it for `bytea` and `varbinary`.
 
 ---
 

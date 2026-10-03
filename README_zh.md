@@ -887,7 +887,7 @@ extraEnvFrom:
 | `defaults` | 否 | 合并进所有连接的默认值 |
 | `connections[].id` | 是 | 唯一 slug（`[a-z0-9-]+`，最多 64 字符） |
 | `connections[].name` | 是 | UI 中显示的名称 |
-| `connections[].type` | 是 | `postgres`、`mysql`、`sqlite`、`libsql`、`duckdb`、`oracle`、`mssql`、`clickhouse`、`druid`、`trino`、`cassandra`、`elasticsearch`、`opensearch`、`mongodb`、`couchbase`、`redis`、`prometheus`、`kafka`、`etcd`、`neo4j`、`milvus`、`qdrant`、`libredb` |
+| `connections[].type` | 是 | `postgres`、`mysql`、`sqlite`、`libsql`、`duckdb`、`oracle`、`db2`、`mssql`、`clickhouse`、`druid`、`trino`、`cassandra`、`elasticsearch`、`opensearch`、`mongodb`、`couchbase`、`redis`、`prometheus`、`kafka`、`etcd`、`neo4j`、`milvus`、`qdrant`、`libredb` |
 | `connections[].roles` | 是 | `["*"]`（所有人）、`["admin"]`、`["user"]` 或 `["admin", "user"]` |
 | `connections[].managed` | 否 | `true` = 由管理员控制，界面中不可编辑（默认），`false` = 给用户一份可编辑的副本 |
 | `connections[].readOnly` | 否 | `true` 时拒绝该连接上的所有写入（仅在执行该模式的引擎上，即 etcd）；在非托管连接上会被拒绝 |
