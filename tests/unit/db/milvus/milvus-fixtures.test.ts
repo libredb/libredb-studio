@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import type { CallOptions, MilvusClient, WireStatus } from "@/lib/db/providers/vector/milvus/client";
+import type { CallOptions, MilvusClient, MilvusTlsFailure, WireStatus } from "@/lib/db/providers/vector/milvus/client";
 import type { MilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
 import { statusFailure, toMilvusError, toProviderError } from "@/lib/db/providers/vector/milvus/errors";
 import { createGrpcMilvusClient, type MilvusRpc } from "@/lib/db/providers/vector/milvus/grpc-client";
@@ -264,7 +264,11 @@ describe("what the captures decode to through the real adapter (5.1, 5.9, E20)",
 });
 
 describe("every error row classifies as 5.10 says (E6, E7, E13, E14, E20)", () => {
-  type Expected = { readonly categories: readonly string[]; readonly status?: number; readonly tlsFailure?: string };
+  type Expected = {
+    readonly categories: readonly string[];
+    readonly status?: number;
+    readonly tlsFailure?: MilvusTlsFailure;
+  };
   const ROWS: Readonly<Record<string, (runtime: "bun" | "node") => Expected>> = {
     "milvus/error-unauthenticated": () => ({ categories: ["unauthenticated"] }),
     "milvus/error-permission-denied": () => ({ categories: ["permission-denied"] }),
