@@ -13,6 +13,7 @@ import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
 import { rowWritableObjects } from "@/lib/db/detailed-object";
 import type { ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
+import { SAMPLED_MARKER } from "../fixtures/sampled-schema";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -476,6 +477,29 @@ describe("useConnectionManager", () => {
     expect(result.current.schema[0]?.readRanges).toEqual(ranges);
     expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
     expect(result.current.schemaContext).not.toContain("grant-");
+  });
+
+  /**
+   * Vector family, PR 1v: a column the provider only inferred from sampled data stays in `schema`, which the human
+   * views read, and never reaches `schemaContext`, which the AI panels send to a model.
+   */
+  test("schemaContext leaves out a column the engine only inferred from sampled data", async () => {
+    const sampled = { name: SAMPLED_MARKER, type: "text", nullable: true, isPrimary: false, provenance: "sampled" };
+    const details = [{ ...DETAILS[0], columns: [...DETAILS[0].columns, sampled] }, DETAILS[1]];
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, [], {}, PG_OBJECT_KINDS, details),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema[0]?.columns.map((column) => column.name)).toContain(SAMPLED_MARKER);
+    expect(result.current.schemaContext).not.toContain(SAMPLED_MARKER);
+    expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
   });
 
   // ── isLoadingSchema during fetch ──────────────────────────────────────────

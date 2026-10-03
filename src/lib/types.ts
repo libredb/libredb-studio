@@ -423,6 +423,16 @@ export interface ColumnSchema {
    * not model; see {@link defaultValue} and issue #1032.
    */
   defaultExpression?: string;
+  /**
+   * How the engine knows this column: `"sampled"` where the provider inferred it from rows it read rather than
+   * from a declaration the engine holds, so another row may carry a key this list lacks and a listed one may be
+   * absent from most rows.
+   *
+   * Absent means declared, which is every column of every engine that shipped before the field existed. Optional
+   * because this type is part of the published package surface. `machineColumns` in `src/lib/db/detailed-object.ts`
+   * keeps a sampled column from every model and MCP surface, because its name was read out of the data.
+   */
+  provenance?: "sampled";
 }
 
 export interface IndexSchema {

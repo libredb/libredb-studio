@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VisualExplain, type ExplainPlanResult } from "@/components/VisualExplain";
+import { schemaContextOf } from "@/lib/db/detailed-object";
+import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 
 let originalFetch: typeof globalThis.fetch;
 
@@ -1126,5 +1128,41 @@ describe("tree render model (sqlite-queryplan)", () => {
   test("tagged postgres-json input with an empty plan falls back to the empty state", () => {
     const { getByText } = render(<VisualExplain plan={{ kind: "postgres-json", plan: [] }} />);
     expect(getByText("No execution plan")).toBeTruthy();
+  });
+});
+
+describe("VisualExplain and a column the engine only inferred from sampled data", () => {
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+
+  test("the AI explanation request carries no byte of it", async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = mockFetchStream("## Analysis") as unknown as typeof fetch;
+    const { queryByText } = render(
+      <VisualExplain
+        plan={samplePlan}
+        query="SELECT * FROM articles"
+        databaseType="postgres"
+        schemaContext={schemaContextOf(sampledSchema)}
+      />,
+    );
+    fireEvent.click(queryByText("AI Explain")!);
+    await user.click(queryByText("Analyze with AI")!);
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalled();
+    });
+    const [url, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("/api/ai/explain");
+    expect(String(init.body)).toContain("category");
+    expect(String(init.body)).not.toContain(SAMPLED_MARKER);
   });
 });

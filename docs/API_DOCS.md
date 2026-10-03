@@ -1928,6 +1928,7 @@ interface ColumnSchema {
   nullable: boolean;       // Allows NULL
   isPrimary: boolean;      // Primary key
   defaultValue?: string;   // Default value
+  provenance?: "sampled";  // Inferred from sampled rows rather than declared; never sent to MCP or a model
 }
 
 interface IndexSchema {
