@@ -1001,7 +1001,7 @@ A dialog that receives a `refusal` shows it and offers no confirm button.
 | Condition | Body |
 |---|---|
 | `target` absent, empty or not a string | `{ "error": "\"target\" must name the object the operation would run on" }` |
-| The operation's spec does not declare `preview: true`, or the provider does not implement `previewMaintenance` | `{ "error": "This operation has no preview" }` |
+| The operation's spec does not declare `perEntity: true` and `preview: true`, or the provider does not implement `previewMaintenance` | `{ "error": "This operation has no preview" }` |
 
 A missing `type`, a non-string `container` and a missing `target` are refused before any provider is opened.
 Whether the object exists is the provider's to say: its `previewMaintenance` raises a `QueryError` naming what is missing, answered with `400`.
@@ -1011,6 +1011,7 @@ Whether the object exists is the provider's to say: its `previewMaintenance` rai
 - `perEntity: true` on an operation outside the six of `MaintenanceType` gives it a control of its own on the Operations tab, the monitoring Tables tab and both row menus, after their own controls, in declaration order, under the spec's `label`.
 - `confirmation: "typed-target"` makes that control ask for the object's own name, typed exactly and case-sensitively, before it sends anything; never a fixed word and never the connection's name. Such a spec declares `perEntity: true` and `global: false`.
 - `preview: true` makes the control's dialog read this route and show the preview before it offers the confirm button; the provider implements the optional `DatabaseProvider.previewMaintenance(type, path)`.
+  A preview belongs to the per-row control, so it is declared beside `perEntity: true`, and this route answers no preview for a spec that offers no row.
 
 No shipped provider declares any of these yet.
 

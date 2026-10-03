@@ -80,7 +80,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (perEntityControl.preview !== true || provider.previewMaintenance === undefined) {
+    // A preview belongs to the per-row dialog, so a spec that offers no row has none, whatever it declares: the
+    // maintenance route lets a spec with both halves false through, and this route does not follow it there.
+    if (!perEntityControl.offered || perEntityControl.preview !== true || provider.previewMaintenance === undefined) {
       return NextResponse.json({ error: "This operation has no preview" }, { status: 400 });
     }
 

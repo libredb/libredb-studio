@@ -257,6 +257,22 @@ describe("POST /api/db/maintenance/preview", () => {
     expect(calledMethods()).toEqual(["getCapabilities"]);
   });
 
+  test("a preview declared on an operation no row offers answers 400 and previews nothing", async () => {
+    const specs = declaredCapabilities.maintenanceOperationSpecs ?? {};
+    const compact = specs.compact;
+    if (compact === undefined) throw new Error("the fixture declares no compact spec");
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementation(() => ({
+      ...declaredCapabilities,
+      maintenanceOperationSpecs: { ...specs, compact: { ...compact, perEntity: false, global: false } },
+    }));
+
+    const res = await preview({ type: "compact", target: "orders", connection: validConnection });
+
+    expect(res.status).toBe(400);
+    expect(await errorOf(res)).toBe("This operation has no preview");
+    expect(mockPreviewMaintenance).not.toHaveBeenCalled();
+  });
+
   test("a provider that declares a preview but lacks previewMaintenance answers 400", async () => {
     delete (mockProvider as { previewMaintenance?: unknown }).previewMaintenance;
 

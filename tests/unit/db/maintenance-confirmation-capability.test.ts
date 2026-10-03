@@ -129,3 +129,45 @@ describe("typedConfirmationProblems for a typed-target confirmation (spec 3.11)"
     ]);
   });
 });
+
+/**
+ * Every reason one spec's preview could not be shown (spec 3.11). The preview is drawn by the per-row dialog and served
+ * by the provider's `previewMaintenance`, so a spec that offers no row, or a provider without the method, declares a
+ * preview nothing can show.
+ */
+function previewProblems(spec: MaintenanceOperationSpec, hasPreviewMethod: boolean): string[] {
+  if (spec.preview !== true) return [];
+  const problems: string[] = [];
+  if (!spec.perEntity) problems.push("perEntity is false, and the preview is drawn by a per-row control only");
+  if (!hasPreviewMethod) problems.push("the provider has no previewMaintenance to answer it");
+  return problems;
+}
+
+describe("previewProblems (spec 3.11)", () => {
+  test("a per-row preview from a provider that answers it has nothing wrong with it", () => {
+    expect(previewProblems({ ...ASKS_FROM_ITS_ROW, preview: true }, true)).toEqual([]);
+  });
+
+  test("a spec that declares no preview is not held to the method", () => {
+    expect(previewProblems(ASKS_FROM_ITS_ROW, false)).toEqual([]);
+  });
+
+  test("refuses a preview no row offers, and one no method answers", () => {
+    expect(previewProblems({ ...ASKS_FROM_ITS_ROW, perEntity: false, preview: true }, false)).toEqual([
+      "perEntity is false, and the preview is drawn by a per-row control only",
+      "the provider has no previewMaintenance to answer it",
+    ]);
+  });
+});
+
+describe("every shipped provider's previews can be shown (spec 3.11)", () => {
+  test.each([...SHIPPED_DATABASE_TYPES])("%s", async (type) => {
+    const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
+    const specs = provider.getCapabilities().maintenanceOperationSpecs ?? {};
+    const hasPreviewMethod = typeof provider.previewMaintenance === "function";
+    const problems = Object.entries(specs).flatMap(([operation, spec]) =>
+      spec === undefined ? [] : previewProblems(spec, hasPreviewMethod).map((problem) => `${operation}: ${problem}`),
+    );
+    expect(problems).toEqual([]);
+  });
+});
