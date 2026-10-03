@@ -19,6 +19,7 @@ import { pageOfferFor } from "@/components/results-grid/page-offer";
 import type { ResultExportFormat } from "@/lib/export/result-export";
 
 import { resolveExplainPlan } from "@/lib/explain";
+import { hasGraphValues } from "@/lib/db/graph/result-graph";
 import { cn } from "@/lib/utils";
 import {
   ChartColumn,
@@ -30,6 +31,7 @@ import {
   GitCompare,
   LayoutDashboard,
   LayoutGrid,
+  Network,
   Terminal,
   TriangleAlert,
   X,
@@ -73,6 +75,7 @@ const SQL_TABLE_FORMATS: ReadonlySet<ResultExportFormat> = new Set<ResultExportF
 
 export type BottomPanelMode =
   | "results"
+  | "graph"
   | "explain"
   | "history"
   | "saved"
@@ -118,6 +121,11 @@ const DataCharts = React.lazy(
 );
 const SchemaDiff = React.lazy(
   lazyRetry(() => import("@/components/SchemaDiff").then((m) => ({ default: m.SchemaDiff }))),
+);
+// The canvas library itself is a further dynamic import inside the view, so this
+// chunk is the view's own code and the library arrives only once the tab is opened.
+const GraphView = React.lazy(
+  lazyRetry(() => import("@/components/results-graph/GraphView").then((m) => ({ default: m.GraphView }))),
 );
 
 // The saved-chart dashboard. Its data is read on mount, not its module — the module
@@ -236,7 +244,7 @@ interface BottomPanelProps {
 }
 
 export const BottomPanel = React.memo(function BottomPanel({
-  mode,
+  mode: requestedMode,
   onSetMode,
   result,
   explainPlan,
@@ -267,6 +275,15 @@ export const BottomPanel = React.memo(function BottomPanel({
   onDismissAgentArtifact,
 }: BottomPanelProps) {
   const explainInput = useMemo(() => resolveExplainPlan(explainPlan), [explainPlan]);
+  /*
+    The Graph tab is offered by the result's shape, not by the engine: only a result
+    that holds a node, a relationship or a path at any depth has anything to draw.
+    The mode is shell state and outlives the result it was chosen for (switching to a
+    tab whose result has none keeps it), so it is read as Results until a graph is
+    back, rather than leaving the panel on a tab the strip no longer shows.
+  */
+  const offersGraph = useMemo(() => hasGraphValues(result?.rows ?? []), [result]);
+  const mode = requestedMode === "graph" && !offersGraph ? "results" : requestedMode;
 
   /*
     An agent artifact is shown in ONE surface — the one the RUN's own record names,
@@ -352,6 +369,12 @@ export const BottomPanel = React.memo(function BottomPanel({
       activeClass: "text-hue-blue border-hue-blue-tint bg-fill",
     },
     {
+      key: "graph",
+      label: "Graph",
+      icon: <Network strokeWidth={1.5} className="w-3 h-3" />,
+      activeClass: "text-hue-green border-hue-green-tint bg-fill",
+    },
+    {
       key: "explain",
       label: "Explain",
       icon: <Zap strokeWidth={1.5} className="w-3 h-3" />,
@@ -401,7 +424,10 @@ export const BottomPanel = React.memo(function BottomPanel({
     },
   ];
 
-  const visibleTabs = metadata?.capabilities.explainFormat ? tabs : tabs.filter((tab) => tab.key !== "explain");
+  const visibleTabs = tabs.filter(
+    (tab) =>
+      (tab.key !== "explain" || Boolean(metadata?.capabilities.explainFormat)) && (tab.key !== "graph" || offersGraph),
+  );
 
   return (
     /*
@@ -581,6 +607,13 @@ export const BottomPanel = React.memo(function BottomPanel({
               />
             ) : mode === "charts" ? (
               <DataCharts result={hydratedChart ?? result} spec={hydratedChartSpec} />
+            ) : mode === "graph" && result ? (
+              <GraphView
+                result={result}
+                maskingEnabled={maskingEnabled}
+                userRole={userRole}
+                maskingConfig={maskingConfig}
+              />
             ) : mode === "schemadiff" ? (
               <SchemaDiff schema={schema} connection={activeConnection} />
             ) : mode === "dashboard" ? (

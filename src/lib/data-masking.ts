@@ -376,6 +376,15 @@ export function canReveal(role: string | undefined, config: MaskingConfig): bool
   return config.roleSettings.admin.canReveal;
 }
 
+/**
+ * Whether a result surface masks right now: the role and config allow it, and the
+ * shell's switch (or, with none, the config's own flag) has it on. The grid and the
+ * graph both read this, so the two can never disagree about one result.
+ */
+export function maskingInForce(role: string | undefined, config: MaskingConfig, enabled: boolean | undefined): boolean {
+  return shouldMask(role, config) && (enabled ?? config.enabled);
+}
+
 // ─── Config Persistence ──────────────────────────────────────────────────────
 
 import { storage } from "@/lib/storage";

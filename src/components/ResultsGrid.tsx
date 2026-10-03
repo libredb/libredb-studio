@@ -22,7 +22,7 @@ import {
   type MaskingConfig,
   detectSensitiveColumnsFromConfig,
   maskValueByPattern,
-  shouldMask,
+  maskingInForce,
   canToggleMasking,
   canReveal,
   loadMaskingConfig,
@@ -219,7 +219,7 @@ export function ResultsGrid({
 
   // Effective masking state (RBAC-aware)
   const effectiveMaskingEnabled = useMemo(() => {
-    return shouldMask(userRole, resolvedConfig) && (maskingEnabled ?? resolvedConfig.enabled);
+    return maskingInForce(userRole, resolvedConfig, maskingEnabled);
   }, [userRole, resolvedConfig, maskingEnabled]);
 
   const userCanToggle = useMemo(() => canToggleMasking(userRole, resolvedConfig), [userRole, resolvedConfig]);

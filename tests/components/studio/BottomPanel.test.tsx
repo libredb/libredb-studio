@@ -136,6 +136,19 @@ mock.module("@/components/SchemaDiff", () => ({
   },
 }));
 
+// Captured: the graph tests assert the masking inputs reach it exactly as they reach
+// the grid. Its own behaviour is tested against a headless canvas in GraphView.test.tsx.
+let capturedGraphViewProps: Record<string, unknown> = {};
+
+mock.module("@/components/results-graph/GraphView", () => ({
+  GraphView: (props: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const React = require("react");
+    capturedGraphViewProps = props;
+    return React.createElement("div", { "data-testid": "graphview" }, "GraphView");
+  },
+}));
+
 // ---- Mock storage so the ChartDashboardLazy saved-charts grid is controllable ----
 
 const mockGetSavedCharts = mock(() => [] as SavedChartConfig[]);
@@ -225,6 +238,13 @@ function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
+const GRAPH_RESULT = {
+  rows: [{ n: { "~graph": "node", elementId: "4:a", labels: ["Person"], properties: { name: "Alice" } } }],
+  fields: ["n"],
+  rowCount: 1,
+  executionTime: 2,
+};
+
 describe("BottomPanel", () => {
   /*
     The panel's heavy views are code-split (`React.lazy` in BottomPanel.tsx), so the
@@ -234,8 +254,8 @@ describe("BottomPanel", () => {
     more importantly, stay independent of the order the tests happen to run in.
   */
   beforeAll(async () => {
-    for (const mode of ["charts", "pivot", "docs", "schemadiff", "explain"] as const) {
-      const props = createDefaultProps({ mode });
+    for (const mode of ["charts", "pivot", "docs", "schemadiff", "explain", "graph"] as const) {
+      const props = createDefaultProps({ mode, currentTab: { result: GRAPH_RESULT } });
       await act(async () => {
         render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
       });
@@ -472,6 +492,78 @@ describe("BottomPanel", () => {
       } else {
         expect(scope.textContent).toContain(shortfall);
       }
+    });
+  });
+
+  describe("the Graph tab (graph view spec)", () => {
+    const PLAIN_RESULT = { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 };
+
+    test("is offered only when the result holds a graph value", () => {
+      const plain = createDefaultProps({ currentTab: { result: PLAIN_RESULT } });
+      const { queryByText, rerender } = render(
+        <BottomPanel {...(plain as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(queryByText("Graph")).toBeNull();
+
+      const empty = createDefaultProps();
+      rerender(<BottomPanel {...(empty as React.ComponentProps<typeof BottomPanel>)} />);
+      expect(queryByText("Graph")).toBeNull();
+
+      // Found at any depth, here a node inside a list.
+      const nested = createDefaultProps({
+        currentTab: { result: { ...GRAPH_RESULT, rows: [{ n: [GRAPH_RESULT.rows[0].n] }] } },
+      });
+      rerender(<BottomPanel {...(nested as React.ComponentProps<typeof BottomPanel>)} />);
+      expect(queryByText("Graph")).not.toBeNull();
+    });
+
+    test("sits right after Results, and a click asks for the graph mode", () => {
+      const onSetMode = mock(() => {});
+      const props = createDefaultProps({ onSetMode, currentTab: { result: GRAPH_RESULT } });
+      const { getByText, getAllByRole } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(
+        getAllByRole("button")
+          .map((button) => button.textContent?.trim())
+          .slice(0, 2),
+      ).toEqual(["Results", "Graph"]);
+      fireEvent.click(getByText("Graph"));
+      expect(onSetMode).toHaveBeenCalledWith("graph");
+    });
+
+    test("draws the tab's result with the grid's own masking inputs", () => {
+      const maskingConfig = { ...createDefaultProps().maskingConfig, enabled: true };
+      const props = createDefaultProps({
+        mode: "graph",
+        currentTab: { result: GRAPH_RESULT },
+        maskingEnabled: true,
+        userRole: "user",
+        maskingConfig,
+      });
+      const { getByTestId, getByText, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(getByTestId("graphview")).not.toBeNull();
+      expect(queryByTestId("resultsgrid")).toBeNull();
+      expect(getByText("Graph").closest("button")?.className).toContain("text-hue-green");
+      expect(capturedGraphViewProps.result).toBe(GRAPH_RESULT);
+      expect(capturedGraphViewProps.maskingEnabled).toBe(true);
+      expect(capturedGraphViewProps.userRole).toBe("user");
+      expect(capturedGraphViewProps.maskingConfig).toBe(maskingConfig);
+      // The result's own export menu belongs to the grid; the graph has its own.
+      expect(queryByTestId("export-row-count")).toBeNull();
+    });
+
+    test("a graph mode left over from a graph result shows the grid for a result without one", () => {
+      const props = createDefaultProps({ mode: "graph", currentTab: { result: PLAIN_RESULT } });
+      const { getByTestId, queryByTestId, getByText } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(queryByTestId("graphview")).toBeNull();
+      expect(getByTestId("resultsgrid")).not.toBeNull();
+      expect(getByText("Results").closest("button")?.className).toContain("text-hue-blue");
+      expect(queryByTestId("export-row-count")).not.toBeNull();
     });
   });
 

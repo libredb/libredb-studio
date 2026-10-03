@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef, type Dispatch, type SetStateA
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { QueryEditorRef } from "@/components/QueryEditor";
+import type { BottomPanelMode } from "@/components/studio/BottomPanel";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
@@ -214,9 +215,7 @@ export function useQueryExecution({
     tabId: string;
   } | null>(null);
   const [historyKey, setHistoryKey] = useState(0);
-  const [bottomPanelMode, setBottomPanelMode] = useState<
-    "results" | "explain" | "history" | "saved" | "charts" | "pivot" | "docs" | "schemadiff" | "dashboard"
-  >("results");
+  const [bottomPanelMode, setBottomPanelMode] = useState<BottomPanelMode>("results");
 
   // Capability honesty: if the active provider has no explainFormat (e.g. the
   // user switched connections), never leave the panel stuck on a hidden tab.

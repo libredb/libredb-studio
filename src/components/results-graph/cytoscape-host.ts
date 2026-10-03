@@ -13,6 +13,9 @@
  */
 import type { BaseLayoutOptions, Core, CytoscapeOptions } from "cytoscape";
 
+/** The library's own types, re-exported so the rest of the view never names the package. */
+export type { Core, ElementDefinition, EventObject, StylesheetJson } from "cytoscape";
+
 /** Builds one Cytoscape instance from its options. */
 export type CreateCytoscape = (options: CytoscapeOptions) => Core;
 

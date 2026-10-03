@@ -16,6 +16,7 @@ import {
   shouldMask,
   canToggleMasking,
   canReveal,
+  maskingInForce,
   loadMaskingConfig,
   saveMaskingConfig,
   getPreviewMasked,
@@ -357,6 +358,25 @@ describe("shouldMask", () => {
 
   test("undefined role is treated as user", () => {
     expect(shouldMask(undefined, mockMaskingConfigEnabled)).toBe(true);
+  });
+});
+
+// ─── maskingInForce ─────────────────────────────────────────────────────────
+
+describe("maskingInForce", () => {
+  test("is off whenever the role and config say no masking, whatever the shell's switch says", () => {
+    expect(maskingInForce("admin", mockMaskingConfigDisabled, true)).toBe(false);
+    expect(maskingInForce("admin", mockMaskingConfigDisabled, undefined)).toBe(false);
+  });
+
+  test("follows the shell's switch when the role and config allow masking", () => {
+    expect(maskingInForce("admin", mockMaskingConfigEnabled, true)).toBe(true);
+    expect(maskingInForce("admin", mockMaskingConfigEnabled, false)).toBe(false);
+  });
+
+  test("falls back to the config's own flag when the shell passes no switch", () => {
+    expect(maskingInForce("user", mockMaskingConfigEnabled, undefined)).toBe(true);
+    expect(maskingInForce("user", { ...mockMaskingConfigUserCanToggle, enabled: false }, undefined)).toBe(false);
   });
 });
 
