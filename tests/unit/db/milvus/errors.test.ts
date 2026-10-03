@@ -506,6 +506,25 @@ describe("toProviderError: Load and Release whose outcome is unknown (E7)", () =
     },
   );
 
+  test("a call grpc-js never gave a transport, ended by a cancel or a timeout, is no unknown outcome", () => {
+    const unsent = new MilvusUnsentStatus({
+      code: 1,
+      details: "Cancelled on client",
+      message: "1 CANCELLED: Cancelled on client",
+    });
+    const cancel = new AbortController();
+    cancel.abort();
+    const timeout = new AbortController();
+    timeout.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    for (const signal of [cancel.signal, timeout.signal]) {
+      for (const error of [toMilvusError(unsent, signal), toMilvusError(signal.reason, signal)]) {
+        const message = mapped(error, write).message;
+        expect(message).not.toContain("may have been applied");
+        expect(message).not.toContain("after it was sent");
+      }
+    }
+  });
+
   test.each(["not-connected", "closed", "unauthenticated", "permission-denied", "status"] as const)(
     "%s says nothing was applied: no unknown-outcome sentence",
     (category) => {

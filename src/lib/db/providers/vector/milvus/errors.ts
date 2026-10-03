@@ -176,7 +176,12 @@ export function toMilvusError(error: unknown, signal?: AbortSignal): MilvusError
   if (signal?.aborted === true && ((isGrpcStatus(error) && error.code === CANCELLED) || error === signal.reason)) {
     const timedOut = (signal.reason as { name?: unknown } | undefined)?.name === "TimeoutError";
     const detail = isGrpcStatus(error) ? error.details : error instanceof Error ? error.message : String(error);
-    const extra = isGrpcStatus(error) ? { grpcCode: error.code } : {};
+    // The signal's own reason is thrown before the request is handed to the channel, so it, too, never left.
+    const unsent = error instanceof MilvusUnsentStatus || error === signal.reason;
+    const extra = {
+      ...(isGrpcStatus(error) ? { grpcCode: error.code } : {}),
+      ...(unsent ? { unsent: true as const } : {}),
+    };
     if (timedOut && error instanceof MilvusUnsentStatus) return new MilvusError("not-connected", detail, extra);
     return new MilvusError(timedOut ? "deadline-exceeded" : "cancelled", detail, extra);
   }
@@ -390,7 +395,7 @@ export function toProviderError(error: unknown, context: MilvusErrorContext): Er
     return new Error(`The Milvus provider received a thrown value that is not an Error: ${String(error)}`);
   }
   const { operation, connection } = context;
-  if (context.write && AFTER_SEND.has(error.category)) {
+  if (context.write && AFTER_SEND.has(error.category) && error.unsent !== true) {
     return unknownOutcome(error, context, `Milvus did not confirm the ${operation}: the call ended after it was sent.`);
   }
   const { host, port } = connection;

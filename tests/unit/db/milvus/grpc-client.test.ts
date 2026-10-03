@@ -831,6 +831,33 @@ describe("the adapter over the recorded wire (5.1, E15, E16)", () => {
     expectCalls(wire, []);
   });
 
+  test("a Load whose signal aborted before the send sends nothing and never reads may have been applied (E7)", async () => {
+    const { wire, client } = await recorded();
+    const timeout = new AbortController();
+    timeout.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    const cancel = new AbortController();
+    cancel.abort();
+    for (const signal of [timeout.signal, cancel.signal]) {
+      const error = await failure(client.loadCollection({ collection_name: "c" }, call("default", signal)));
+      const message = toProviderError(error, {
+        operation: "Load of c",
+        write: true,
+        collection: "c",
+        connection: {
+          host: "milvus.test",
+          port: 19530,
+          runtimeReportsTlsCause: true,
+          receiveCapBytes: CAP,
+          timeoutMs: 5000,
+        },
+        secretForms: [],
+      }).message;
+      expect(message).not.toContain("may have been applied");
+      expect(message).not.toContain("after it was sent");
+    }
+    expectCalls(wire, []);
+  });
+
   test("a call's own abort while it waits cancels it (E14)", async () => {
     const { client } = await recorded(PLAINTEXT, { Search: () => new Promise(() => undefined) });
     const controller = new AbortController();

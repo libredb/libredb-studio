@@ -630,6 +630,8 @@ export interface MilvusErrorExtra {
   readonly grpcCode?: number;
   readonly status?: { readonly code: number; readonly errorCode: string };
   readonly tlsFailure?: MilvusTlsFailure;
+  /** The call's signal ended it before its request left Studio, so nothing it asked for can have been applied. */
+  readonly unsent?: true;
 }
 
 /**
@@ -643,6 +645,7 @@ export class MilvusError extends Error {
   declare readonly grpcCode?: number;
   declare readonly status?: { readonly code: number; readonly errorCode: string };
   declare readonly tlsFailure?: MilvusTlsFailure;
+  declare readonly unsent?: true;
   constructor(category: MilvusErrorCategory, detail: string, extra: MilvusErrorExtra = {}) {
     if (extra.tlsFailure !== undefined && category !== "tls") {
       throw new TypeError(`A MilvusError of category ${category} cannot carry a TLS failure`);
@@ -654,6 +657,7 @@ export class MilvusError extends Error {
     if (extra.grpcCode !== undefined) this.grpcCode = extra.grpcCode;
     if (extra.status !== undefined) this.status = extra.status;
     if (extra.tlsFailure !== undefined) this.tlsFailure = extra.tlsFailure;
+    if (extra.unsent === true) this.unsent = true;
   }
 }
 
