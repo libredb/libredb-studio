@@ -269,7 +269,7 @@ The `"~graph"` tag is how a later graph view finds graph values in any result wi
 | `DEFAULT_QUERY_LIMIT` | 500 | The rows of one result; the driver fetches one more, and on that record the session is closed and the result marked limited |
 | `MAX_CELL_JSON_BYTES` | 1,048,576 | One cell's converted JSON in bytes; a larger value becomes `"<value too large: N bytes>"` and a warning names the column |
 | `MAX_CELL_DEPTH` | 32 | How deep one cell's lists and maps nest; a deeper value is replaced the same way |
-| `CATALOG_ROW_BOUND` | 10,000 | The rows of one catalog read; a cut listing is counted as a floor, never cut silently |
+| `CATALOG_ROW_BOUND` | 10,000 | The rows of one catalog read; a cut listing is counted as a floor and a cut detail is refused, while the tree shows a cut listing's rows with no marker, since its object type has none, and the server log records the cut |
 | `CATALOG_CACHE_MS` | 60,000 | How long the property and index reads are kept, in milliseconds (section 6.1) |
 | `CATALOG_TIMEOUT_MS` | 30,000 | The Bolt transaction timeout of one catalog read |
 | `MONITORING_TIMEOUT_MS` | 30,000 | The Bolt transaction timeout of one monitoring read |

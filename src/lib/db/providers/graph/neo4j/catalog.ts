@@ -3,9 +3,10 @@
  *
  * Each read is one fixed statement, exported for the tests and the evidence harness, run through the
  * client in a READ session on the connection's database and bounded by `CATALOG_ROW_BOUND` rows. A cut
- * answer is returned with `truncated` set, never cut silently and never thrown, so the tree can say it
- * shows a floor. A row of the wrong shape is a `QueryError` naming the statement: the captures of
- * 5.26.31 fix every shape read here, and a server that answers otherwise is not one this provider knows.
+ * answer is returned with `truncated` set and never thrown: a count reports it as a floor, a detail is
+ * refused, and the tree listing, whose object type has no field for it, logs it on the server. A row of
+ * the wrong shape is a `QueryError` naming the statement: the captures of 5.26.31 fix every shape read
+ * here, and a server that answers otherwise is not one this provider knows.
  *
  * Shapes the captures show: the default `LOOKUP` indexes have no labels and no properties and are not
  * listed; `db.schema.nodeTypeProperties()` answers a label with no property as one row whose
@@ -20,7 +21,7 @@ import type { GraphCatalog } from "@/lib/db/graph/graph-base-provider";
 import type { GraphCatalogEntry, GraphIndexRow, GraphKindId, GraphPropertyRow } from "@/lib/db/graph/objects";
 import { PROVIDER } from "./errors";
 
-/** The most rows one catalog read takes; a longer answer is reported as cut, never silently. */
+/** The most rows one catalog read takes; a longer answer is returned with `truncated` set. */
 export const CATALOG_ROW_BOUND = 10_000;
 
 /** The Bolt transaction timeout of one catalog read. */

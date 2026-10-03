@@ -425,7 +425,15 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     const id = this.graphKind(kind);
     const database = this.databaseOf(container);
-    const { entries } = await this.mapped(() => this.profile.catalog.listKind(this.client(), database, id));
+    const { entries, truncated } = await this.mapped(() => this.profile.catalog.listKind(this.client(), database, id));
+    // DatabaseObject[] has no field to say a listing was cut, so the cut is logged, as the table stats log the
+    // labels they leave out, and the tree shows the rows read.
+    if (truncated) {
+      this.logError(
+        "object listing",
+        `the ${id} listing of ${database} was cut at the catalog's bound, so the tree shows its first ${entries.length} entries only`,
+      );
+    }
     return toDatabaseObjects(container, id, entries);
   }
 

@@ -818,6 +818,26 @@ describe("listObjects", () => {
     ]);
   });
 
+  test("a listing the catalog cut is answered with the rows read, and the cut is logged", async () => {
+    const { provider, catalog } = await connected();
+    catalog.lists.relationship_type = { entries: [{ name: "OWNS" }, { name: "USES" }], truncated: true };
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect((await provider.listObjects(CONTAINER, "relationship_type")).map((object) => object.name)).toEqual([
+        "OWNS",
+        "USES",
+      ]);
+      expect(logged.mock.calls.map((call) => String(call[0]))).toEqual([
+        "[DB:neo4j] object listing failed: the relationship_type listing of movies was cut at the catalog's bound, so the tree shows its first 2 entries only",
+      ]);
+      catalog.lists.relationship_type = { entries: [{ name: "OWNS" }], truncated: false };
+      await provider.listObjects(CONTAINER, "relationship_type");
+      expect(logged).toHaveBeenCalledTimes(1);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
   test("an unknown kind is refused", async () => {
     const { provider, catalog } = await connected();
     const error = await rejectionOf(provider.listObjects(CONTAINER, "table"));
