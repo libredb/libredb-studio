@@ -63,6 +63,18 @@ const NO_LOGGER = [
   `${MILVUS}/errors.ts`,
   `${MILVUS}/connection-options.ts`,
   ADAPTER,
+  `${MILVUS}/schema.ts`,
+  `${MILVUS}/type-spelling.ts`,
+  `${MILVUS}/execute.ts`,
+  `${MILVUS}/objects.ts`,
+  `${MILVUS}/source.ts`,
+  `${MILVUS}/labels.ts`,
+  `${MILVUS}/generators.ts`,
+  `${MILVUS}/monitoring.ts`,
+  `${MILVUS}/monitoring-reads.ts`,
+  `${MILVUS}/maintenance.ts`,
+  `${MILVUS}/write-policy.ts`,
+  `${MILVUS}/index.ts`,
 ];
 
 interface RepositoryFile {
@@ -277,5 +289,92 @@ describe("E3 and E15: the method set", () => {
     expect(strings.filter((text) => rpcs.includes(text) && !allowed.includes(text))).toEqual([]);
     const telemetry = ["ClientHeartbeat", "GetClientTelemetry", "PushClientCommand", "DeleteClientCommand", "Connect"];
     expect(strings.filter((text) => telemetry.includes(text))).toEqual([]);
+  });
+});
+
+/**
+ * Who may name each narrow client method: the seam that declares it, the adapter that implements it, and its one
+ * consumer. Load and Release are maintenance.ts's alone, the bulk describe is objects.ts's alone, and GetMetrics is
+ * read by the Load preview alone, so no other module can send any of them.
+ */
+const METHOD_HOLDERS: Readonly<Record<string, readonly string[]>> = {
+  loadCollection: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/maintenance.ts`],
+  releaseCollection: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/maintenance.ts`],
+  batchDescribeCollection: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/objects.ts`],
+  getMetricsSystemInfo: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/maintenance.ts`],
+};
+
+/** Whether a file names `method` as an identifier or as a string, which is how a `Pick<MilvusClient, "x">` names it. */
+function namesMethod(file: RepositoryFile, method: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node) => {
+    if (
+      (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+      node.text === method
+    ) {
+      found = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file.sf);
+  return found;
+}
+
+function holderFindings(files: readonly RepositoryFile[]): string[] {
+  const modules = files.filter(
+    (file) => file.path.startsWith(`${MILVUS}/`) && !file.path.startsWith(`${MILVUS}/proto/`),
+  );
+  return Object.entries(METHOD_HOLDERS).flatMap(([method, holders]) => {
+    const naming = modules.filter((file) => namesMethod(file, method)).map((file) => file.path);
+    return [
+      ...naming
+        .filter((path) => !holders.includes(path))
+        .map((path) => `${method}: ${path} names it and is not one of its holders`),
+      ...holders
+        .filter((path) => !naming.includes(path))
+        .map((path) => `${method}: ${path} is a holder and does not name it`),
+    ];
+  });
+}
+
+describe("only the modules that own them hold the narrow client methods", () => {
+  test("the real sources pass", () => {
+    expect(holderFindings(REAL)).toEqual([]);
+  });
+
+  test("a planted call fails by name", () => {
+    const planted = "export const run = (client: { loadCollection(): void }) => client.loadCollection();\n";
+    expect(holderFindings(replaced(`${MILVUS}/monitoring-reads.ts`, planted))).toEqual([
+      `loadCollection: ${MILVUS}/monitoring-reads.ts names it and is not one of its holders`,
+    ]);
+  });
+
+  test("a planted slice fails by name, and a holder that stops naming its method fails too", () => {
+    const slice = 'export type Wide = Pick<{ batchDescribeCollection(): void }, "batchDescribeCollection">;\n';
+    expect(holderFindings(replaced(`${MILVUS}/source.ts`, slice))).toEqual([
+      `batchDescribeCollection: ${MILVUS}/source.ts names it and is not one of its holders`,
+    ]);
+    expect(holderFindings(replaced(`${MILVUS}/objects.ts`, "export {};\n"))).toEqual([
+      `batchDescribeCollection: ${MILVUS}/objects.ts is a holder and does not name it`,
+    ]);
+  });
+});
+
+describe("the surfaces hold no logger and write nothing to the console", () => {
+  test.each([
+    "schema.ts",
+    "type-spelling.ts",
+    "execute.ts",
+    "objects.ts",
+    "source.ts",
+    "labels.ts",
+    "generators.ts",
+    "monitoring.ts",
+    "monitoring-reads.ts",
+    "maintenance.ts",
+    "write-policy.ts",
+    "index.ts",
+  ])("%s is held by the no-logger rule", (module) => {
+    expect(NO_LOGGER).toContain(`${MILVUS}/${module}`);
   });
 });

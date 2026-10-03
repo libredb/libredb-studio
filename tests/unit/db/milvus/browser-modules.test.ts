@@ -13,8 +13,21 @@ import ts from "typescript";
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const MILVUS_DIR = "src/lib/db/providers/vector/milvus";
 
-/** The browser-shipped set, as 5.11 names it plus the two modules request.ts's phase 1 half reaches. */
-const BROWSER_MODULES = ["routes", "request", "expr", "placeholder-group", "guard", "float32-text"];
+/**
+ * The browser-shipped set, as 5.11 names it plus the two modules request.ts's phase 1 half reaches, and the
+ * generators, the type text they read back and the labels.
+ */
+const BROWSER_MODULES = [
+  "routes",
+  "request",
+  "expr",
+  "placeholder-group",
+  "guard",
+  "float32-text",
+  "generators",
+  "type-spelling",
+  "labels",
+];
 
 const SHARED = [/^@\/lib\/db\/console\/[a-z-]+$/, /^@\/lib\/db\/vector\/[a-z0-9-]+$/];
 
