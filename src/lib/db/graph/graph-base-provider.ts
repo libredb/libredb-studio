@@ -115,6 +115,10 @@ const RUN_METADATA: Readonly<Record<string, string>> = Object.freeze({ app: PROD
 const CATALOG_CUT_SAMPLE = "one catalog read that stopped at its row bound";
 /** The same cut as a bulk describe's own bound, joined after the caller's one when both bit. */
 const CATALOG_CUT_REASON = "the catalog's listing stopped at its row bound";
+/** A property read the row bound cut: any object's columns may be missing some, or all. */
+const PROPERTY_CUT_REASON = "the catalog's property read stopped at its row bound";
+/** An index read the row bound cut: any object's indexes may be missing some, or all. */
+const INDEX_CUT_REASON = "the catalog's index read stopped at its row bound";
 
 const RELATION_ENTITY = { label: "NODE", relationship_type: "RELATIONSHIP" } as const;
 
@@ -433,7 +437,16 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     if (parsed === undefined || parsed.kind !== id) {
       throw new QueryError(`${JSON.stringify(segment)} does not address a ${kind}`, this.type);
     }
-    return this.detailOf(database, path, id, parsed.name);
+    const { detail, cuts } = await this.detailOf(database, path, id, parsed.name);
+    // ObjectDetail has no truncation form, so a detail a cut read may have shortened is refused
+    // rather than answered as an object with fewer columns or indexes than it has (SR16).
+    if (cuts.length > 0) {
+      throw new QueryError(
+        `The columns and indexes of ${JSON.stringify(segment)} cannot be listed whole: ${cuts.join("; ")}.`,
+        this.type,
+      );
+    }
+    return detail;
   }
 
   /** One listing, then every object from one read of each catalog call (the cache shares them). */
@@ -443,32 +456,41 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     const listing = await this.mapped(() => this.profile.catalog.listKind(this.client(), database, id));
     const objects = toDatabaseObjects(container, id, listing.entries);
     const kept = limit === undefined ? objects : objects.slice(0, limit);
-    const details = await Promise.all(kept.map((object) => this.detailOf(database, object.path, id, object.name)));
+    const described = await Promise.all(kept.map((object) => this.detailOf(database, object.path, id, object.name)));
+    const details = described.map(({ detail }) => detail);
     const reasons = [
       ...(kept.length < objects.length ? [callerBoundTruncationReason(limit as number)] : []),
       ...(listing.truncated ? [CATALOG_CUT_REASON] : []),
+      // Every object is read from the same cached reads, so a cut is named once, not per object.
+      ...new Set(described.flatMap(({ cuts }) => cuts)),
     ];
     return reasons.length === 0
       ? { details }
       : { details, truncated: { limit: details.length, reason: reasons.join("; ") } };
   }
 
-  /** Columns and indexes for a label or a relationship type; an index or a constraint has neither. */
+  /**
+   * Columns and indexes for a label or a relationship type; an index or a constraint has neither.
+   * `cuts` names each read the catalog's row bound cut, so the caller reports it (SR16).
+   */
   private async detailOf(
     database: string,
     path: readonly string[],
     kind: GraphKindId,
     name: string,
-  ): Promise<ObjectDetail> {
+  ): Promise<{ detail: ObjectDetail; cuts: readonly string[] }> {
     if (kind !== "label" && kind !== "relationship_type") {
-      return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
+      return { detail: { path: [...path], columns: [], indexes: [], foreignKeys: [] }, cuts: [] };
     }
     const [properties, indexes] = await Promise.all([this.propertyRows(database, kind), this.indexRows(database)]);
     return {
-      path: [...path],
-      columns: columnsOf(name, properties.rows),
-      indexes: indexesOf(name, RELATION_ENTITY[kind], indexes.rows),
-      foreignKeys: [],
+      detail: {
+        path: [...path],
+        columns: columnsOf(name, properties.rows),
+        indexes: indexesOf(name, RELATION_ENTITY[kind], indexes.rows),
+        foreignKeys: [],
+      },
+      cuts: [...(properties.truncated ? [PROPERTY_CUT_REASON] : []), ...(indexes.truncated ? [INDEX_CUT_REASON] : [])],
     };
   }
 

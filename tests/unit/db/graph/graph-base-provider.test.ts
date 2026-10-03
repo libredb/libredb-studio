@@ -885,6 +885,26 @@ describe("describeObject", () => {
     expect(await rejectionOf(provider.describeObject([], "label"))).toBeInstanceOf(QueryError);
   });
 
+  test("refuses an object when a property or index read was cut, rather than answer too few columns (SR16)", async () => {
+    const { provider, catalog } = await connected();
+    const properties = catalog.properties;
+    provider.clock = 0;
+    catalog.properties = async () => ({ ...(await properties()), truncated: true });
+    const error = await rejectionOf(provider.describeObject(["movies", "(:Service)"], "label"));
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      'The columns and indexes of "(:Service)" cannot be listed whole: the catalog\'s property read stopped at its row bound.',
+    );
+    catalog.properties = properties;
+    catalog.indexes = async () => ({ rows: [], truncated: true });
+    provider.clock = 1_000_000;
+    expect(
+      ((await rejectionOf(provider.describeObject(["movies", "[:OWNS]"], "relationship_type"))) as Error).message,
+    ).toBe(
+      'The columns and indexes of "[:OWNS]" cannot be listed whole: the catalog\'s index read stopped at its row bound.',
+    );
+  });
+
   test("concurrent describes share one read of each catalog call (SR17)", async () => {
     const { provider, catalog } = await connected();
     await Promise.all([
@@ -958,6 +978,31 @@ describe("describeObjects", () => {
     expect((await provider.describeObjects(CONTAINER, "label", 2)).truncated).toEqual({
       limit: 2,
       reason: `${callerBoundTruncationReason(2)}; the catalog's listing stopped at its row bound`,
+    });
+  });
+
+  test("a property or index read cut by the catalog is reported, never answered as fewer columns (SR16)", async () => {
+    const { provider, catalog } = await connected();
+    const properties = catalog.properties;
+    const indexes = catalog.indexes;
+    provider.clock = 0;
+    catalog.properties = async () => ({ ...(await properties()), truncated: true });
+    expect((await provider.describeObjects(CONTAINER, "label")).truncated).toEqual({
+      limit: 2,
+      reason: "the catalog's property read stopped at its row bound",
+    });
+    catalog.indexes = async () => ({ ...(await indexes()), truncated: true });
+    catalog.lists.label = { entries: entries("Service", "Team"), truncated: true };
+    provider.clock = 1_000_000;
+    expect((await provider.describeObjects(CONTAINER, "label", 1)).truncated).toEqual({
+      limit: 1,
+      reason: `${callerBoundTruncationReason(1)}; the catalog's listing stopped at its row bound; the catalog's property read stopped at its row bound; the catalog's index read stopped at its row bound`,
+    });
+    catalog.properties = properties;
+    provider.clock = 2_000_000;
+    expect((await provider.describeObjects(CONTAINER, "relationship_type")).truncated).toEqual({
+      limit: 1,
+      reason: "the catalog's index read stopped at its row bound",
     });
   });
 
