@@ -6,14 +6,15 @@
  * true. So the read policy's lists are read back from `NEO4J_POLICY_PROFILE`, every refusal sentence from a run
  * of the real policy, gate, provider or error table, the TLS table from `boltEndpointOf`, the dialog's hints
  * from `DB_UI_CONFIG`, the bounds from their constants, the catalog and monitoring statements from the modules
- * that run them, and the measured values from the capture README and the compose file. The repository docs
- * that name the provider (the provider index, the seed recipe, the backlog entries the doc cites) are pinned
- * where they stand.
+ * that run them, the Graph tab's node cap, notices and caption length from the view's own code, and the measured
+ * values from the capture README and the compose file. The repository docs that name the provider (the provider
+ * index, the seed recipe, the backlog entries the doc cites) are pinned where they stand.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYAML } from "yaml";
+import { MAX_GRAPH_NODES, capNotice, droppedNotice } from "@/components/results-graph/graph-canvas";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG, readOnlyHint } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
@@ -22,6 +23,7 @@ import { MAX_CELL_DEPTH, MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
 import { GRAPH_SAMPLE_LIMIT } from "@/lib/db/graph/cypher/generators";
 import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
+import { type ResultGraph, buildResultGraph } from "@/lib/db/graph/result-graph";
 import { GRAPH_TAG } from "@/lib/db/graph/values";
 import { CATALOG_ROW_BOUND, NEO4J_CATALOG_STATEMENTS } from "@/lib/db/providers/graph/neo4j/catalog";
 import { mapNeo4jError } from "@/lib/db/providers/graph/neo4j/errors";
@@ -122,6 +124,7 @@ const VERSIONS = docSection(DOC, "4.6 Server versions") ?? "";
 const RESULT = docSection(DOC, "5.2 Result shape") ?? "";
 const BOUNDS = docSection(DOC, "5.3 Bounds") ?? "";
 const CANCEL = docSection(DOC, "5.4 Cancellation and the confirmation gate") ?? "";
+const GRAPH_TAB = docSection(DOC, "5.6 The Graph tab") ?? "";
 const SCHEMA = docSection(DOC, "6. Schema introspection") ?? "";
 const MONITORING = docSection(DOC, "7. Monitoring & health") ?? "";
 const CAPABILITIES = docSection(DOC, "9. Capabilities & labels") ?? "";
@@ -145,6 +148,7 @@ describe("the readers find what exists and nothing that does not", () => {
       RESULT,
       BOUNDS,
       CANCEL,
+      GRAPH_TAB,
       SCHEMA,
       MONITORING,
       CAPABILITIES,
@@ -542,6 +546,41 @@ describe("docs/providers/neo4j.md section 5 states the result forms and the boun
       "`session.close()` returns in 1 to 3 ms and the transaction leaves `SHOW TRANSACTIONS` within 1.5 s";
     expect(read("src/lib/db/graph/bolt/bolt-client.ts").replaceAll("\n * ", " ")).toContain(wording);
     expect(CANCEL).toContain(wording);
+  });
+});
+
+describe("docs/providers/neo4j.md section 5.6 states the Graph tab's bound, notices and caption", () => {
+  /** A result of `count` distinct nodes, one per row, and `orphans` relationships to a node it never returns. */
+  const resultGraph = (count: number, orphans: number, maxNodes = MAX_GRAPH_NODES): ResultGraph => {
+    const node = (id: string) => ({ [GRAPH_TAG]: "node", elementId: id, labels: ["Person"], properties: {} });
+    const rows = Array.from({ length: count }, (_, at) => ({ n: node(`n${at}`) }));
+    const relationships = Array.from({ length: orphans }, (_, at) => ({
+      [GRAPH_TAG]: "relationship",
+      elementId: `r${at}`,
+      type: "KNOWS",
+      startNodeElementId: "n0",
+      endNodeElementId: "missing",
+      properties: {},
+    }));
+    return buildResultGraph([...rows, { n: relationships }], ["n"], { maxNodes });
+  };
+
+  test("the node cap is MAX_GRAPH_NODES, and the notice is the one the tab prints", () => {
+    expect(GRAPH_TAB).toContain(`the first ${en(MAX_GRAPH_NODES)} distinct nodes in row order`);
+    const notice = capNotice(resultGraph(412, 0));
+    expect(notice).not.toBeNull();
+    expect(GRAPH_TAB).toContain(`"${notice}"`);
+  });
+
+  test("the dropped-relationship notice is the one the tab prints", () => {
+    const notice = droppedNotice(resultGraph(2, 2));
+    expect(notice).not.toBeNull();
+    expect(GRAPH_TAB).toContain(`"${notice}"`);
+  });
+
+  test("the caption length is the model's", () => {
+    const length = privateConstant("src/lib/db/graph/result-graph.ts", "CAPTION_LENGTH");
+    expect(GRAPH_TAB).toContain(`at most ${length} characters`);
   });
 });
 

@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D164, U17 · 108
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U74 · 69
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U78 · 72
 - [Dependencies](#dependencies) — P1-P9 · 9
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -3476,15 +3476,6 @@ Not fixed there: the tab's columns are not declared per provider anywhere, and a
 
 **Done when:** the provider declares which table-stat columns it fills, as other capability-driven surfaces do, the tab draws only those, and a test renders it for an engine that fills none of the four.
 
-### U72. Graph results are JSON cells, with no graph view
-
-A Neo4j result shows nodes, relationships and paths as tagged JSON cells (`"~graph"`, `src/lib/db/graph/values.ts`) with `Node`, `Relationship`, `Path` or `Mixed` in the column header, and nothing draws them as a graph.
-The tag was added so that a renderer can find graph values in any `QueryResult` without a provider change.
-
-Found 2026-10-03 while designing the Neo4j provider (decision N7).
-
-**Done when:** a result holding graph values offers a graph tab beside the grid that draws its nodes and relationships, bounded by the result's own rows, and a component test renders a path result in it.
-
 ### U73. The object tree hides the parenthesised part of every column type
 
 `TreeRow` in `src/components/object-tree/TreeRow.tsx` draws a column's type as `row.column.type.split("(")[0]` and keeps the whole type only in the row's `title` tooltip and a screen-reader span, so whatever an engine writes in parentheses after a type name never reaches the screen.
@@ -3509,6 +3500,42 @@ Found by the browser pass of the vector-family foundation (#1247).
 Not fixed there: the reads predate that PR.
 
 **Done when:** the package mounts in a host that defines no `process`, because the build replaces those reads or they go through a guarded accessor, and a check over the built package fails on an unguarded `process` read.
+
+### U75. The Graph tab cannot connect the result's nodes the statement returned unlinked
+
+`MATCH (n:Person) RETURN n` draws its nodes with no relationship between them, because the Graph tab (`src/components/results-graph/GraphView.tsx`, model `src/lib/db/graph/result-graph.ts`) draws only what the statement returned.
+Neo4j Browser's "Connect result nodes" fills those in with a second read of the relationships among the returned ids, and sends it without showing it.
+Studio runs no statement of its own from the tab, because every extra statement has to pass the engine's read policy and the audit trail as a user's does.
+
+Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+
+**Done when:** an opt-in control builds the read on the server from a typed request (the drawn node ids and a limit), never from client text, runs it through the same read policy and audit as an editor statement, shows the statement in the history, adds the relationships it finds to the drawn graph, and a test pins that the request carries no Cypher text and that a refused read draws nothing.
+
+### U76. The Graph tab cannot expand a node's neighbours
+
+A drawn node shows only the relationships the statement returned, and there is no way to ask for the rest from the tab: no double-click expand, no "show all relationships", and no count of the neighbours not drawn.
+Each needs a read per expansion, ordered and limited, with an engine-specific way to name the node (`elementId()` on Neo4j 5), so it meets the same read-only policy question as U75.
+
+Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+
+**Done when:** expanding a node runs one server-built read from a typed request (node id, direction, optional relationship type, limit) through the read policy and the audit trail, shows it in the history, adds its nodes and relationships within the tab's node cap with the cap notice when it bites, and a test pins the limit and a refused read.
+
+### U77. The Graph tab keeps no style a user chooses
+
+A label's colour is assigned from the chart palette by order of first appearance in each result (`buildResultGraph` in `src/lib/db/graph/result-graph.ts`), so one label can take a different colour in two results, and a user cannot pick a colour, a caption property or a node size for a label.
+Neo4j Browser keeps such choices in its GraSS style sheet; the cheap step the research names is a per-connection, per-label colour and caption override kept in the existing storage layer.
+
+Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+
+**Done when:** a user can set a label's colour and caption property from the legend, the choice is stored through the storage layer per connection and survives a reload and a second result, a label with no choice keeps the palette rule, and a test pins both.
+
+### U78. The Graph tab offers one layout
+
+The tab runs fcose and only fcose (`fcoseLayout` in `src/components/results-graph/cytoscape-host.ts`), and Re-layout reruns the same layout, so a tree, a hierarchy or a radial picture of a result cannot be asked for.
+
+Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+
+**Done when:** the toolbar offers at least a hierarchical (breadth-first or dagre-style) layout beside fcose, with an accessible name on the control, any new layout package pinned with its licence checked as cytoscape's were, and a test that switching layouts reruns the chosen one.
 
 ## Dependencies
 

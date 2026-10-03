@@ -96,6 +96,7 @@
     *   **Neo4j:** Read-only Cypher over Bolt through `neo4j-driver-lite`, tested on Neo4j 5.26 LTS, on a shared graph layer a second Cypher engine can join.
         Node labels and relationship types with their properties as columns, indexes and constraints are browsable, and a click on a label or a relationship type writes a bounded sample read.
         Nodes, relationships and paths reach the grid as tagged JSON cells with the graph type in the column header, and a 64-bit integer or a temporal value keeps every digit.
+        A Graph tab beside the grid draws a result's nodes and relationships, with no statement of its own.
         Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification (which an allowlisted SHOW form skips), then a READ session.
         See [`providers/neo4j.md`](providers/neo4j.md).
 *   **Vector Databases:**
@@ -174,6 +175,10 @@ Two components are described below and a claim true of one can be false of the o
 *   **Tabbed Workspace:** Professional interface managing Results, History, and Saved Queries in one unified panel.
 *   **Live Metrics:** Real-time feedback on query performance and status directly in the results header.
 *   **Editor Integration:** Seamlessly save current editor content or load previous scripts with dedicated UI controls.
+*   **Graph View:** A result that holds graph values (Neo4j nodes, relationships and paths, at any depth in a cell) offers a Graph tab beside Results.
+    It draws only what the statement returned, at most 300 nodes with a notice naming the total, with a colour and a legend count per label, a caption per node, arrows with the relationship type, and an inspector listing every property of the clicked element.
+    Pan, zoom and fit work by mouse and by keyboard, a dragged node stays where it is dropped, PNG and JSON export the drawn graph, and the grid's data masking applies to captions, the inspector and both exports.
+    See [`providers/neo4j.md`](providers/neo4j.md#56-the-graph-tab).
 
 ### 15. Professional Data Export
 *   **Format Versatility:** Instantly export query result sets to CSV, JSON, SQL `INSERT` statements, or a generated `CREATE TABLE` DDL.

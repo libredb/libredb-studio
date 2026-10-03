@@ -8,7 +8,7 @@ Tests: [`tests/unit/db/neo4j/`](../../tests/unit/db/neo4j/), [`tests/unit/db/gra
 
 Studio reads a Neo4j database through Cypher typed in the editor, shows its node labels, relationship types, indexes and constraints in the object tree, and reads the monitoring panels Community serves.
 It writes nothing: every statement passes a read policy before anything is sent, then the server's own classification (an allowlisted SHOW form skips it, and an allowlisted procedure call classified `s` runs, section 3.5), and then runs in a READ session, so a write has to defeat three layers (section 3.1).
-Nodes, relationships and paths reach the grid as tagged JSON cells, and the column header names the graph type (section 5.2).
+Nodes, relationships and paths reach the grid as tagged JSON cells, and the column header names the graph type (section 5.2); a Graph tab beside the grid draws them (section 5.6).
 Plan mode drafts Cypher and the MCP metadata tools list Neo4j connections and their shape, while agent execution and MCP `run_read_query` do not serve Neo4j (section 3.6).
 
 ### Concept mapping
@@ -20,7 +20,7 @@ Plan mode drafts Cypher and the MCP metadata tools list Neo4j connections and th
 | A relationship type | A row of Relationship types, with its properties as columns |
 | An index, a constraint | A row of Indexes or Constraints, listed with no click action |
 | A Cypher read | One statement per run in the editor |
-| A node, a relationship, a path in a result | A JSON cell tagged `"~graph"` |
+| A node, a relationship, a path in a result | A JSON cell tagged `"~graph"`, drawn by the Graph tab |
 
 ## 2. Architecture
 
@@ -40,6 +40,7 @@ The graph layer is split by what may reach the browser: `src/lib/db/graph/cypher
 | `graph/cypher/read-policy.ts` | The read policy over tokens, driven by a `GraphPolicyProfile` |
 | `graph/cypher/generators.ts` | The tree click's sample reads |
 | `graph/objects.ts`, `graph/values.ts`, `graph/profile.ts` | The object kinds and their path segments, the JSON forms of graph values, and the policy profile's types |
+| `graph/result-graph.ts` | The Graph tab's model of a result: its nodes, relationships, captions, label colours and counts |
 | `graph/bolt/client.ts`, `uri.ts`, `bolt-client.ts`, `record-values.ts` | The `GraphClient` seam, the panel to a Bolt URI, the one driver client, and driver values to JSON |
 | `graph/graph-base-provider.ts` | The base class every graph engine extends |
 | `neo4j/profile.ts` | `NEO4J_POLICY_PROFILE`: every list of the read policy |
@@ -262,7 +263,7 @@ Every value is converted on the server before it leaves the transport, so the re
 
 The deprecated numeric `identity` is never emitted, and `elementId` is stable only within one transaction: do not keep one to find the same node later.
 `columnTypes` names `Node`, `Relationship` or `Path` for a column whose every non-null value has that form, `Mixed` when graph forms mix or meet other values, and nothing for a scalar column; the grid shows it in the header.
-The `"~graph"` tag is how a later graph view finds graph values in any result without a provider change; the view itself is filed as U72.
+The `"~graph"` tag is how the Graph tab finds graph values in any result without a provider change (section 5.6).
 
 ### 5.3 Bounds
 
@@ -290,6 +291,25 @@ The confirmation gate asks nothing: the destructive vocabulary row for `neo4j` d
 ### 5.5 EXPLAIN and PROFILE
 
 `supportsExplain` is false and a typed `EXPLAIN` or `PROFILE` is refused, because the product has no plan view for Cypher and `PROFILE` runs the statement.
+
+### 5.6 The Graph tab
+
+A result that holds a node, a relationship or a path in any cell, at any depth inside lists and maps, offers a Graph tab beside Results; the default view stays Results.
+The tab is offered by the result's shape and not by the engine, so any provider that emits the `"~graph"` forms gets it; the model is `src/lib/db/graph/result-graph.ts` and the view is `src/components/results-graph/`.
+It draws only what the statement returned and runs no statement of its own, so the read policy's surface is unchanged.
+Nodes and relationships are taken from every cell, paths included, and each is drawn once per result, by `elementId`.
+A cell cut to `"<value too large: N bytes>"` (section 5.3) is text, so it draws nothing.
+The tab draws the first 300 distinct nodes in row order, and when a result holds more it says so: "Showing 300 of 412 nodes. The graph draws at most 300 nodes; the Results tab holds every row."
+A relationship is drawn only when both its endpoints are drawn, and the ones left out are counted: "2 relationships are not drawn because an endpoint is not among the drawn nodes."
+Each label gets a colour of the chart palette in order of first appearance, cycling when labels outnumber colours, and a node takes its first label's.
+A node's caption is the first present property among `name`, `title` and `label`, then a key ending in `name`, then `description`, then the first string property, else the first label, else the `elementId`, compared without case and cut to at most 24 characters with an ellipsis.
+A relationship's caption is its type, and an arrow shows its direction.
+The legend lists the labels with their colour and count, and the relationship types with their count.
+A click on a node or a relationship opens the inspector beside the canvas, under it on a narrow screen, with its labels or type, its `elementId` and every property; Escape clears the selection.
+The layout is fcose, rerun by Re-layout; a dragged node stays where it is dropped, and the toolbar holds Fit, Zoom in, Zoom out, Re-layout, Export PNG and Export JSON.
+The canvas takes focus and is named "Graph of N nodes and M relationships"; there `+` and `-` zoom, `0` fits and the arrow keys pan.
+Export PNG draws the whole graph on the theme's background, and Export JSON writes `{ "nodes": [...], "relationships": [...] }` of the drawn elements in their tagged forms.
+Masking follows the grid's rule: when the grid would mask, a property whose key the masking config flags is masked in the captions, the inspector and both exports.
 
 ## 6. Schema introspection
 
@@ -441,7 +461,7 @@ Each line is one run.
 - `db.schema.nodeTypeProperties()` scans data on a large graph, measured at 708 ms at 2 million nodes in the design's research; it runs when a label is described, the cache keeps its answer for up to a minute per database, and a tree refresh or a reconnect drops the cache, so the next describe reads it again; the inventory a plan run reads when it starts reads it once.
 - 2025.x and 2026.x servers connect untested, and their constraint type names and `propertyTypes` strings are shown as returned.
 - The graph layer is designed from one shipped engine and one probe, Memgraph 3.13.1, which showed that READ mode, cancellation and the catalog differ there; a second engine adds what it needs in its own PR, and the Memgraph provider is filed as D141.
-- No result graph view: graph values are JSON cells, filed as U72.
+- The Graph tab draws only the result: it does not connect result nodes the statement left unlinked (U75) or expand a node's neighbours (U76), keeps no style a user sets (U77) and offers one layout (U78).
 - No APOC, GDS or custom procedure, and no `LOAD CSV`: a measured APOC subset is filed as D140.
 - No agent execution and no MCP `run_read_query`, filed as B93.
 - One database per connection, filed as D143.
