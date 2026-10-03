@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ConsoleDialectSpec, RouteSpec } from "@/lib/db/console/dialect";
 import { RequestRefusal } from "@/lib/db/console/dialect";
+import { QueryError } from "@/lib/db/errors";
 import {
   ConsoleRefusal,
   type ConsoleRefusalCode,
@@ -314,6 +315,13 @@ describe("every refusal code, by name, at its line and column", () => {
   test("a duplicate key and a prototype key name the key", () => {
     expect(refusalOf(...M, 'POST entities/search\n{"a": 1, "a": 2}').key).toBe("a");
     expect(refusalOf(...M, 'POST entities/search\n{"__proto__": 1}').key).toBe("__proto__");
+  });
+
+  test("the grammar's code is `reason`, and `code` stays the API error code every database error carries", () => {
+    const refusal = refusalOf(...M, "POST entities/search\n{,}");
+    expect(refusal.reason).toBe("malformed-json");
+    expect(refusal.code).toBe(new QueryError("x").code);
+    expect(refusal.code).not.toBe(refusal.reason as string);
   });
 
   test("every refusal is a phase 0 RequestRefusal with the line and column it names", () => {

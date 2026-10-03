@@ -55,7 +55,13 @@ export type ConsoleRefusalCode =
   | "duplicate-key"
   | "prototype-key";
 
-/** A console text the grammar refuses, with the rule's code and the 1-based line and column it names. */
+/**
+ * A console text the grammar refuses, with the rule's code and the 1-based line and column it names.
+ *
+ * The rule's code is `reason`, not `code`: every `DatabaseError` already carries `code`, the API error code the
+ * routes map, which a `ConsoleRefusalCode` cannot replace. A reader that branches on the grammar's rule reads
+ * `reason`.
+ */
 export class ConsoleRefusal extends RequestRefusal {
   constructor(
     public readonly reason: ConsoleRefusalCode,
