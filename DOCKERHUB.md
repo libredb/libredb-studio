@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j and Qdrant** from your browser, with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus and Qdrant** from your browser, with AI-powered query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -109,8 +109,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Twenty-two external engines share one interface.
-The twenty-third row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
+Twenty-three external engines share one interface.
+The twenty-fourth row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -135,6 +135,7 @@ The twenty-third row is the embedded LibreDB store: it ships inside the image, n
 | **Apache Kafka** | `@platformatic/kafka` | Topic, group and broker browser, reads by offset or time |
 | **etcd** | `@grpc/grpc-js` | etcdctl command editor, key-prefix browser, guarded value edits |
 | **Neo4j** | `neo4j-driver-lite` | Read-only Cypher editor, label and relationship-type browser |
+| **Milvus** | `@grpc/grpc-js` | Read-only REST v2 request editor, vector search, admin Load and Release |
 | **Qdrant** | none, HTTP | Read-only REST request editor, vector search, collection browser |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
@@ -143,7 +144,7 @@ Prometheus and Apache Kafka are read-only too: Studio calls only their read APIs
 
 ### Engines with no provider of their own
 
-Twenty-eight further engines speak the wire protocol of one of the twenty-two drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much of the product worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the twenty-three drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

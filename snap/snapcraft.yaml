@@ -37,7 +37,7 @@ description: |
   Web-based SQL IDE for PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
   Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
   Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus,
-  Apache Kafka, etcd, Neo4j and Qdrant
+  Apache Kafka, etcd, Neo4j, Milvus and Qdrant
   with AI query assistance.
 
   Installing the snap starts a background service that serves the app on

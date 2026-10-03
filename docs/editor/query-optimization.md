@@ -187,8 +187,8 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-**MongoDB, Redis, Prometheus, Kafka, etcd, Neo4j and Qdrant are the seven types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those seven, which is what `readsSqlText()` reports on.
-Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, a Kafka read request, an etcdctl command, a Cypher statement or a Qdrant request is not judged by a SQL reader that cannot parse it.
+**MongoDB, Redis, Prometheus, Kafka, etcd, Neo4j, Milvus and Qdrant are the eight types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those eight, which is what `readsSqlText()` reports on.
+Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request or a Qdrant request is not judged by a SQL reader that cannot parse it.
 
 The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).
 Beyond it, each type whose text is not SQL has a row of its own in `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts`, and a test holds that table to the set `readsSqlText()` reports on.
@@ -570,7 +570,7 @@ ordering notice beside it cannot disagree:
 
 | Condition | Where it comes from | Why |
 |-----------|--------------------|-----|
-| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Ten providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, Kafka, etcd, Neo4j and Qdrant answer it with page one. An absent flag reads as unsupported |
+| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Eleven providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, Kafka, etcd, Neo4j, Milvus and Qdrant answer it with page one. An absent flag reads as unsupported |
 | `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a full page — see below |
 | the surface supplies `onLoadMore` | `BottomPanel` | A result hydrated from an agent run has no statement of its own to page |
 

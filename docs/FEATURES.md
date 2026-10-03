@@ -99,6 +99,11 @@
         Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification (which an allowlisted SHOW form skips), then a READ session.
         See [`providers/neo4j.md`](providers/neo4j.md).
 *   **Vector Databases:**
+    *   **Milvus:** Read-only over Milvus's gRPC API through a client of Studio's own, tested on Milvus 3.0.2.
+        Milvus's own REST v2 requests in the editor, fifteen read routes: reads, exact counts and vector searches over every vector type, BM25 and hybrid search included.
+        Databases and collections are browsable with their fields, partitions, indexes and load state, and vectors reach the grid as vector cells with their dimension and full-value copy.
+        Load and Release for admins, each with a preview and a typed collection name; the default `root` password is warned about, and no server-side function, ranker or inference is run, in any release.
+        See [`providers/milvus.md`](providers/milvus.md).
     *   **Qdrant:** Read-only over Qdrant's REST API through a client of Studio's own, tested on Qdrant 1.19.1.
         Qdrant's own REST requests in the editor, seventeen read routes: queries, batches and grouped queries over dense, sparse and multivector data, the local BM25 model included.
         Collections are browsable with their vectors, payload indexes and a sampled view of payload keys, and vectors reach the grid as vector cells with their dimension and full-value copy.
@@ -130,7 +135,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Contextual Actions (schema tab):** Quick access menus for each table including "Select Top 50", "Generate Query", "Generate Count Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
 *   **Generate Count Query (both explorers):** Opens an editable count statement in a new tab without running it, so a filter can be added before Run.
     SQL engines get a qualified, dialect-quoted `SELECT COUNT(*)` (`COUNT_BIG(*)` on SQL Server), and MongoDB gets its `count` document.
-    Redis, LibreDB, Prometheus, Apache Kafka, etcd, Neo4j and Qdrant have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
+    Redis, LibreDB, Prometheus, Apache Kafka, etcd, Neo4j, Milvus and Qdrant have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
 *   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu, on the providers whose rows are real objects. A key-value provider such as Redis, whose rows are derived key-prefix groupings, offers neither -- there is no table for the maintenance page to act on.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.

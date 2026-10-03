@@ -122,6 +122,7 @@ src/lib/db/
 │   │       ├── errors.ts       #   GraphClientError category -> the repository's error classes
 │   │       └── labels.ts       #   labels, and the plan-mode statement language
 │   ├── vector/                 # Vector Providers
+│   │   ├── milvus/             # Milvus Strategy (Milvus REST v2 requests run over its own gRPC client)
 │   │   └── qdrant/             # Qdrant Strategy (read-only REST over the shared node transport)
 │   └── embedded/               # Embedded (in-process) Providers
 │       └── libredb.ts          # LibreDB Strategy
@@ -157,6 +158,7 @@ BaseDatabaseProvider (abstract)
 ├── EtcdProvider ───────────────────────────┤ Key-Value Store (etcdctl commands over gRPC)
 ├── GraphBaseProvider (abstract)
 │   └── Neo4jProvider ──────────────────────┤ Graph (read-only Cypher over Bolt)
+├── MilvusProvider ─────────────────────────┤ Vector (Milvus REST v2 requests over gRPC)
 ├── QdrantProvider ─────────────────────────┤ Vector (Qdrant REST requests, read-only)
 └── LibreDBProvider ────────────────────────┘ Embedded (key-value)
 ```
@@ -217,7 +219,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Twenty-three type-ids are supported by twenty-two provider modules: `elasticsearch` and `opensearch` share
+Twenty-four type-ids are supported by twenty-three provider modules: `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -246,6 +248,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Apache Kafka | `kafka` | Stream (JSON read requests over the Kafka protocol, read-only) | [providers/kafka.md](./providers/kafka.md) |
 | etcd | `etcd` | Key-Value (etcdctl commands over gRPC) | [providers/etcd.md](./providers/etcd.md) |
 | Neo4j | `neo4j` | Graph (Cypher over Bolt, read-only) | [providers/neo4j.md](./providers/neo4j.md) |
+| Milvus | `milvus` | Vector (Milvus REST v2 requests over gRPC) | [providers/milvus.md](./providers/milvus.md) |
 | Qdrant | `qdrant` | Vector (Qdrant REST requests, read-only) | [providers/qdrant.md](./providers/qdrant.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
@@ -354,6 +357,7 @@ examples live in their prime docs:
 - **Apache Kafka** (a JSON read request): [providers/kafka.md](./providers/kafka.md).
 - **etcd** (one etcdctl command): [providers/etcd.md](./providers/etcd.md).
 - **Neo4j** (one read-only Cypher statement): [providers/neo4j.md](./providers/neo4j.md).
+- **Milvus** (one Milvus REST v2 request): [providers/milvus.md](./providers/milvus.md).
 - **Qdrant** (one Qdrant REST request): [providers/qdrant.md](./providers/qdrant.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
@@ -431,7 +435,7 @@ Provider-specific behaviour — pooling model, SSL/encryption, pagination, monit
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
 Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
-Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Qdrant, or LibreDB.
+Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

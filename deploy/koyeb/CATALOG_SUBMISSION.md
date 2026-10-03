@@ -53,7 +53,7 @@ a backup.
 > We maintain **LibreDB Studio**, an open-source, web-based SQL IDE for
 > cloud-native teams (PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server,
 > MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch,
-> Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Qdrant, with AI-assisted querying). It's free and MIT licensed:
+> Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, with AI-assisted querying). It's free and MIT licensed:
 > https://github.com/libredb/libredb-studio
 >
 > We already ship a working **Deploy to Koyeb** button (prebuilt GHCR image
