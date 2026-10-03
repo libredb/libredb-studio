@@ -1529,4 +1529,25 @@ describe("a statement the connection type's editor refuses", () => {
     expect(tabs[0].runError).toBe(REFUSAL);
     expect(tabs[0].result).toBeNull();
   });
+
+  test("a refusal leaves every other tab as it was", async () => {
+    const other = makeTab({ id: "tab-2", name: "Query 2" });
+    const onQueryExecute = mock(() => Promise.resolve(makeQueryResult()));
+    const { tabs, setTabs } = createMutableTabs([makeTab({ query: REFUSED }), other]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: STAND_IN_TYPE }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+
+    expectRefused(tabs, onQueryExecute);
+    expect(tabs[1]).toBe(other);
+  });
 });

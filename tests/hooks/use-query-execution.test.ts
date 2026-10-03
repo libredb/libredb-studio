@@ -4141,4 +4141,22 @@ describe("a statement the connection type's editor refuses", () => {
     expect(mockToastSuccess).not.toHaveBeenCalled();
     expect(history).not.toHaveBeenCalled();
   });
+
+  test("a refusal leaves every other tab as it was", async () => {
+    const other = createTab({ id: "tab-2", name: "Query 2", result: { ...mockQueryResult } });
+    const tabs = [createTab({ result: { ...mockQueryResult } }), other];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    const fetchMock = mockGlobalFetch({ "/api/db/": { json: mockQueryResult } });
+    const params = createDefaultParams({ activeConnection: standInConnection, tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      expect(await result.current.executeQuery(REFUSED)).toBe(false);
+    });
+
+    expectRefused(tabs, fetchMock);
+    expect(tabs[1]).toBe(other);
+  });
 });
