@@ -89,7 +89,7 @@
     *   **Neo4j:** Read-only Cypher over Bolt through `neo4j-driver-lite`, tested on Neo4j 5.26 LTS, on a shared graph layer a second Cypher engine can join.
         Node labels and relationship types with their properties as columns, indexes and constraints are browsable, and a click on a label or a relationship type writes a bounded sample read.
         Nodes, relationships and paths reach the grid as tagged JSON cells with the graph type in the column header, and a 64-bit integer or a temporal value keeps every digit.
-        Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification, then a READ session.
+        Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification (which an allowlisted SHOW form skips), then a READ session.
         See [`providers/neo4j.md`](providers/neo4j.md).
 *   **Embedded Stores:**
     *   **LibreDB:** Support for embedded, server-less `.libredb` files via the `@libredb/libredb` package — a small get/put/delete/prefix/range command grammar over the key-value lens, with catalog-aware schema views for relational and document namespaces.
