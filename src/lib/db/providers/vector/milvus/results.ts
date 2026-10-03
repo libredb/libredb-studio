@@ -49,6 +49,17 @@ function vectorColumnOf(field: WireCollectionSchema["fields"][number]): VectorCo
     : { kind: target.kind, dtype: target.dtype, dimension: target.dimension };
 }
 
+/**
+ * Every static name of the schema, whether or not this answer carries its column, so a dynamic key that shares one is
+ * shown as `$meta.<key>` under every projection of the same rows (5.5 item 3).
+ */
+function schemaStaticNames(schema: WireCollectionSchema): readonly string[] {
+  return [
+    ...schema.fields.filter((field) => !field.is_dynamic).map((field) => field.name),
+    ...schema.struct_array_fields.map((struct) => struct.name),
+  ];
+}
+
 /** The static columns of an answer in schema order, then any column the description did not list, by name. */
 function staticColumns(schema: WireCollectionSchema, readers: readonly ColumnReader[]): Column[] {
   const byName = new Map(readers.filter((reader) => !reader.isDynamic).map((reader) => [reader.name, reader]));
@@ -77,6 +88,8 @@ interface Assembly {
   readonly rows: number;
   readonly leading: readonly Column[];
   readonly statics: readonly Column[];
+  /** The names a dynamic key is shadowed by: the schema's static fields, or the statics where no schema exists. */
+  readonly staticNames: readonly string[];
   readonly trailing: readonly Column[];
   readonly dynamic: ColumnReader | undefined;
   readonly notes: DecodeNotes;
@@ -106,8 +119,8 @@ function assemble(input: Assembly): QueryResult {
   }
   const mergeWarnings: QueryWarning[] = [];
 
-  const staticNames = new Set(input.statics.map((column) => column.name));
-  const taken = new Set(fixed.map((column) => column.name));
+  const staticNames = new Set(input.staticNames);
+  const taken = new Set([...fixed.map((column) => column.name), ...staticNames]);
   const dynamicNames = new Map<string, string>();
   const duplicates = new Set<string>();
   for (const { dynamic } of kept) {
@@ -197,6 +210,7 @@ export function queryResult(answer: QueryResults, shape: RowShape, options: Resu
     ),
     leading: [],
     statics: staticColumns(shape.schema, readers),
+    staticNames: schemaStaticNames(shape.schema),
     trailing: [],
     dynamic: readers.find((reader) => reader.isDynamic),
     notes,
@@ -219,6 +233,7 @@ export function tableResult(
     rows: rows.length,
     leading: [],
     statics: columns.map((column, index) => ({ ...column, cell: (row: number) => rows[row][index] })),
+    staticNames: columns.map((column) => column.name),
     trailing: [],
     dynamic: undefined,
     notes: new DecodeNotes(),
@@ -266,7 +281,8 @@ export function searchResult(answer: SearchResults, shape: SearchShape, options:
   sameLength([hits, ids.length, scores.length, ...readers.map((reader) => reader.length)], "search columns");
 
   const statics = staticColumns(shape.schema, [idReader, ...readers]);
-  const distanceName = statics.some((column) => column.name === "distance") ? "$distance" : "distance";
+  const staticNames = schemaStaticNames(shape.schema);
+  const distanceName = staticNames.includes("distance") ? "$distance" : "distance";
   const trailing: Column[] = [
     { name: distanceName, typeText: scoreColumnText(shape.score), cell: (row) => scoreCell(scores[row]) },
   ];
@@ -291,6 +307,7 @@ export function searchResult(answer: SearchResults, shape: SearchShape, options:
     rows: hits,
     leading,
     statics,
+    staticNames,
     trailing,
     dynamic: readers.find((reader) => reader.isDynamic),
     notes,

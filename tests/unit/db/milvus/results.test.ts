@@ -202,6 +202,20 @@ describe("the dynamic-field merge rule (5.5, R40 M19, R51 U14m)", () => {
     }
   });
 
+  test("a dynamic key named as a static field the answer does not carry is still shown as $meta.<key>, with one warning", () => {
+    for (const order of permutations([ids(1), dynamicColumn(['{"zeta": 8}'])])) {
+      const result = queryResult(answer(order), shadowedShape, OPTIONS);
+      expect(result.fields).toEqual(["id", "$meta.zeta"]);
+      expect({ ...result.rows[0] }).toEqual({ id: "1", "$meta.zeta": 8 });
+      expect(result.warnings).toEqual([
+        {
+          message:
+            'The dynamic key zeta is shadowed by the static field of the same name: it is shown as $meta.zeta, and only $meta["zeta"] in a filter reaches the dynamic value.',
+        },
+      ]);
+    }
+  });
+
   test("a dynamic key literally named $meta.zeta beside a shadowed zeta takes the next free suffix, named in a warning", () => {
     const zeta = scalarColumn("zeta", "Int64", scalars("long_data", ["0"]), { valid: [false] });
     const result = queryResult(
@@ -453,6 +467,31 @@ describe("searchResult (5.5)", () => {
     expect({ ...result.rows[0] }).toEqual({ id: "7", distance: 42, $distance: 0.5, "$distance (2)": 1 });
     expect(result.warnings?.map((warning) => warning.message)).toEqual([
       "The dynamic key $distance is shown as $distance (2), because another column has its name.",
+    ]);
+  });
+
+  test("a static distance the answer does not carry still moves the score to $distance, under every projection", () => {
+    const schema = collectionSchema("d", [
+      fieldSchema({ name: "id", data_type: "Int64", is_primary_key: true }),
+      fieldSchema({ name: "distance", data_type: "Double" }),
+      fieldSchema({ name: "$meta", data_type: "JSON", is_dynamic: true }),
+    ]);
+    const base = hits([1], [], [0.5], [dynamicColumn(['{"distance": 3}'])]);
+    const result = searchResult(
+      {
+        ...base,
+        results: {
+          ...(base.results as NonNullable<SearchResults["results"]>),
+          ids: { int_id: { data: ["7"] }, id_field: "int_id" },
+        },
+      },
+      searchShape({ schema }),
+      OPTIONS,
+    );
+    expect(result.fields).toEqual(["id", "$distance", "$meta.distance"]);
+    expect({ ...result.rows[0] }).toEqual({ id: "7", $distance: 0.5, "$meta.distance": 3 });
+    expect(result.warnings?.map((warning) => warning.message)).toEqual([
+      'The dynamic key distance is shadowed by the static field of the same name: it is shown as $meta.distance, and only $meta["distance"] in a filter reaches the dynamic value.',
     ]);
   });
 
