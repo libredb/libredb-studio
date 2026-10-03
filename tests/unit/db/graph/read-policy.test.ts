@@ -121,7 +121,7 @@ function expectedMessage(code: string, subject: string | undefined, typed: strin
     case "denied-procedure":
       return `CALL ${subject} is not allowed: a read-only Neo4j connection can call only ${ALLOWED_PROCEDURES.join(", ")}.`;
     case "denied-namespace":
-      return `${subject}* is not allowed on Neo4j connections in this version, because its procedures and functions can reach the network or the file system.`;
+      return `${subject}* is not allowed on Neo4j connections in this version, because its procedures and functions can reach the network or the file system. A name starting ${subject} is refused in any position, called or not, so a variable named ${subject?.slice(0, -1)} must be renamed.`;
     case "denied-show":
       return `${subject} is not allowed on a read-only Neo4j connection.`;
     case "denied-function":
@@ -323,6 +323,12 @@ describe("qualified names", () => {
   test("one backticked name holding dots, not called, is a plain name", () => {
     expect(allowedOf("MATCH (`apoc.x`) RETURN `apoc.x`").allowed).toBe(true);
     expect(allowedOf("MATCH (n) RETURN n.`custom.fetch`").allowed).toBe(true);
+  });
+
+  test("a name starting a denied namespace is refused uncalled too, and the refusal says to rename it", () => {
+    expect(refusalOf("MATCH (`apoc`) RETURN `apoc`.name").message).toBe(
+      "apoc.* is not allowed on Neo4j connections in this version, because its procedures and functions can reach the network or the file system. A name starting apoc. is refused in any position, called or not, so a variable named apoc must be renamed.",
+    );
   });
 
   test("CALL and SHOW after a dot or before a colon are names, not clauses", () => {

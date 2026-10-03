@@ -94,7 +94,8 @@ DEALLOCATE, REALLOCATE and DRYRUN are the commands that move databases between t
 5.26.31 rejects `IN 4 ROWS` and `IN 4 TRANSACTIONS` as syntax errors (measured on 2026-10-03), while `EXPLAIN` classifies the batch forms it accepts, `IN TRANSACTIONS OF 4 ROWS` and `IN 4 CONCURRENT TRANSACTIONS`, as reads, so the gate would not stop them and the words are the only layer.
 A property, a map key or a label spelled like a denied word is written in backticks, `` n.`set` ``, and the refusal says so.
 
-Denied namespaces, called as a procedure or a function, compared without case: `apoc.` and `gds.`.
+Denied namespaces, refused for every qualified name that starts with one, called or not, compared without case: `apoc.` and `gds.`.
+The check is fail-closed: `` `apoc`.name ``, a property of a variable named `apoc`, is refused too, and no backtick spelling passes, so such a variable must be renamed; one backticked name holding dots and not called, `` `apoc.x` ``, is a plain name.
 
 Procedures `CALL` may name, compared as Neo4j spells them, a backticked part unquoted first: `db.labels`, `db.relationshipTypes`, `db.propertyKeys`, `db.schema.visualization`, `db.schema.nodeTypeProperties`, `db.schema.relTypeProperties`, `db.ping` and `dbms.components`.
 `CALL {` and `CALL (vars) {` open a subquery, whose body the same rules read.
@@ -125,7 +126,7 @@ Every refusal is a `QueryError` whose sentence names what was refused; a policy 
 | A denied word | `MATCH (n) SET n.seen = true` | SET is not allowed: Neo4j connections are read-only in this version. If SET is a name here (a property, a map key or a label), write it in backticks, as `SET`. |
 | A denied word used as a name | `MATCH (n) RETURN n.set` | SET is not allowed: Neo4j connections are read-only in this version. If SET is a name here (a property, a map key or a label), write it in backticks, as `set`. |
 | A procedure outside the allowlist | `CALL dbms.listConfig()` | CALL dbms.listConfig is not allowed: a read-only Neo4j connection can call only db.labels, db.relationshipTypes, db.propertyKeys, db.schema.visualization, db.schema.nodeTypeProperties, db.schema.relTypeProperties, db.ping, dbms.components. |
-| A denied namespace | `CALL apoc.load.json('http://10.0.0.5/')` | apoc.* is not allowed on Neo4j connections in this version, because its procedures and functions can reach the network or the file system. |
+| A denied namespace | `CALL apoc.load.json('http://10.0.0.5/')` | apoc.* is not allowed on Neo4j connections in this version, because its procedures and functions can reach the network or the file system. A name starting apoc. is refused in any position, called or not, so a variable named apoc must be renamed. |
 | A SHOW form outside the allowlist | `SHOW USERS` | SHOW USERS is not allowed on a read-only Neo4j connection. |
 | `SHOW TRANSACTIONS` | `SHOW TRANSACTIONS` | SHOW TRANSACTIONS is not allowed on a read-only Neo4j connection. |
 | A qualified function outside the allowlist | `RETURN my.custom(1)` | my.custom() is not allowed: a read-only Neo4j connection calls only built-in functions. |

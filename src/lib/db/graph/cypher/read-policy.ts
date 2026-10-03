@@ -170,6 +170,8 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
     start += 1;
   }
 
+  // Every qualified name is checked, called or not, so `apoc`.name, a property of a variable named apoc, is
+  // refused too: fail closed, since telling a property path from a call to a namespaced name is the parser's work.
   const refuseNamespace = (name: QualifiedName, position: number): CypherReadVerdict | undefined => {
     const lower = name.joined.toLowerCase();
     const namespace = policy.deniedNamespaces.find((prefix) => lower.startsWith(prefix));
@@ -177,7 +179,7 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
     return refuse(
       "denied-namespace",
       namespace,
-      `${namespace}* is not allowed on ${engine} connections in this version, because its procedures and functions can reach the network or the file system.`,
+      `${namespace}* is not allowed on ${engine} connections in this version, because its procedures and functions can reach the network or the file system. A name starting ${namespace} is refused in any position, called or not, so a variable named ${namespace.replace(/\.$/, "")} must be renamed.`,
       position,
     );
   };
