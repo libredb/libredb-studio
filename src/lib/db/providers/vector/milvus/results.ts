@@ -6,7 +6,8 @@
  * keys in first-seen order, a static name always winning its own name, and every name allocated once, so the same
  * answer gives the same grid whatever order the server sent its columns in (R40 M19, R51 U14m). A search adds
  * `$query` when it asks more than one query, the `distance` column with the text of 3.3, and `$group` for a grouped
- * search. Conversion stops at the byte budget, dropping the remaining rows whole (5.6).
+ * search; a score, a float32 on the wire, is printed as every Float cell is. Conversion stops at the byte budget,
+ * dropping the remaining rows whole (5.6).
  */
 import { utf8ByteLength } from "@/lib/db/console/bounds";
 import { QueryError } from "@/lib/db/errors";
@@ -16,6 +17,7 @@ import type { VectorColumn } from "@/lib/db/vector/types";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 import type { QueryResults, SearchResults, WireCollectionSchema } from "./client";
 import { type ColumnReader, cutString, DecodeNotes, type DynamicCell, readColumn } from "./field-data";
+import { shortestFloat32 } from "./float32-text";
 import { fieldTypeText, scoreColumnText } from "./milvus-vocabulary";
 import { type RowShape, type SearchShape, vectorTargetOf } from "./request";
 import { MILVUS_BOUNDS } from "./routes";
@@ -284,7 +286,11 @@ export function searchResult(answer: SearchResults, shape: SearchShape, options:
   const staticNames = schemaStaticNames(shape.schema);
   const distanceName = staticNames.includes("distance") ? "$distance" : "distance";
   const trailing: Column[] = [
-    { name: distanceName, typeText: scoreColumnText(shape.score), cell: (row) => scoreCell(scores[row]) },
+    {
+      name: distanceName,
+      typeText: scoreColumnText(shape.score),
+      cell: (row) => scoreCell(shortestFloat32(scores[row])),
+    },
   ];
   const groups = data?.group_by_field_value ?? data?.group_by_field_values[0] ?? null;
   if (shape.groupingField !== undefined && groups !== null) {

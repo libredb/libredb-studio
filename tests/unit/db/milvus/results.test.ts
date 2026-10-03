@@ -410,6 +410,16 @@ describe("searchResult (5.5)", () => {
     expect(result.columnTypes?.$group).toBe("VarChar(64)");
   });
 
+  test("a score is the double nearest the shortest decimal of its float32, as every Float cell is (5.5, R15 F16)", () => {
+    const result = searchResult(
+      hits([2], ["a", "b"], [Math.fround(0.1), Math.fround(0.99999994)]),
+      searchShape({ score: { kind: "metric", metric: "COSINE" } }),
+      OPTIONS,
+    );
+    expect(result.rows.map((row) => row.distance)).toEqual([0.1, 0.99999994]);
+    expect(result.warnings).toBeUndefined();
+  });
+
   test("a non-finite score is written as a word with one warning counting the rows (3.3, R45 F7)", () => {
     const result = searchResult(
       hits([2], ["a", "b"], [Number.POSITIVE_INFINITY, 1]),
