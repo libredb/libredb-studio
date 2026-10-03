@@ -193,8 +193,8 @@ export function offersNewTableImport(capabilities: ProviderCapabilities | undefi
  * An import writes rows into an existing object of a kind that accepts row writes, or into a table
  * it creates. An engine that declares neither has nothing an import could write into, so the dialog
  * refuses up front rather than walking a reader through three steps to a statement it must not run.
- * Db2 is the engine this was written for: db2-node 1.0.22 misreads non-ASCII text, so no Db2 kind
- * accepts row writes and Db2 declares no create-table.
+ * Db2 is the engine this was written for: on db2-node 1.0.22, which misread non-ASCII text, no Db2
+ * kind accepted row writes and Db2 declared no create-table.
  */
 export function importRefusal(capabilities: ProviderCapabilities | undefined): string | null {
   if (capabilities === undefined || offersNewTableImport(capabilities)) return null;

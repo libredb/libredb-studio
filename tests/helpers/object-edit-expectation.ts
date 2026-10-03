@@ -34,9 +34,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "cassandra",
   "clickhouse",
   "couchbase",
-  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: db2-node 1.0.22 decodes non-ASCII
-  // text as EBCDIC 037, so a read-then-write-back would store corrupted text (#786), which
-  // docs/providers/db2.md names.
+  // No kind declares `acceptsSourceEdits`: replacing a view leaves its dependent views invalid until
+  // their next use, so an edit would break objects the editor never showed (#786), which
+  // docs/providers/db2.md names under "Object edit".
   "db2",
   "druid",
   "duckdb",
