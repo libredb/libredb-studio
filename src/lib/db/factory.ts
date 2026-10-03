@@ -266,6 +266,14 @@ export async function createDatabaseProvider(
       return new Neo4jProvider(connection, options);
     }
 
+    // Vector databases - dynamically imported
+    case "qdrant": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
+      // rides along, so an execution profile opens it read-only, as etcd's does.
+      const { QdrantProvider } = await import("./providers/vector/qdrant/index");
+      return new QdrantProvider(connection, options, execution);
+    }
+
     // Embedded databases - dynamically imported
     case "libredb": {
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
@@ -277,7 +285,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, neo4j, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, neo4j, qdrant, libredb`,
         connection.type,
       );
   }

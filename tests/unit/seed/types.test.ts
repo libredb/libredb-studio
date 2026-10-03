@@ -700,3 +700,11 @@ describe("SeedConfigSchema: MCP is not offered for etcd (#1089 E12)", () => {
     expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: false }] }).success).toBe(true);
   });
 });
+
+describe("SeedConnectionSchema: a qdrant seed", () => {
+  const qdrant = { id: "vectors", name: "Vectors", type: "qdrant", host: "qdrant.internal", roles: ["*"] };
+
+  it("accepts the qdrant type, with no user and no database", () => {
+    expect(SeedConnectionSchema.safeParse(qdrant).success).toBe(true);
+  });
+});
