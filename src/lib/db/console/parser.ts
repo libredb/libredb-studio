@@ -103,7 +103,31 @@ const SHOWN = 40;
 const BLANK_LINE = /^[ \t\r]*$/;
 const NO_TOKENS: readonly ConsoleToken[] = Object.freeze([]);
 
-const shown = (text: string): string => (text.length > SHOWN ? `${text.slice(0, SHOWN)}...` : text);
+/** A character that draws nothing or draws as a plain space: a control, a no-break or wide space, a mark, a BOM. */
+const drawsNothing = (code: number): boolean =>
+  code < 0x20 ||
+  (code >= 0x7f && code <= 0xa0) ||
+  code === 0xad ||
+  code === 0x1680 ||
+  (code >= 0x2000 && code <= 0x200f) ||
+  (code >= 0x2028 && code <= 0x202f) ||
+  (code >= 0x205f && code <= 0x2064) ||
+  code === 0x3000 ||
+  code === 0xfeff;
+
+/**
+ * A piece of the text as a refusal quotes it: cut at a bound, and each character that draws nothing written as its
+ * code point, `<U+00A0>`, so a text pasted with a BOM or no-break spaces is told what was found.
+ */
+function shown(text: string): string {
+  const cut = text.length > SHOWN ? `${text.slice(0, SHOWN)}...` : text;
+  let out = "";
+  for (let at = 0; at < cut.length; at++) {
+    const code = cut.charCodeAt(at);
+    out += drawsNothing(code) ? `<U+${code.toString(16).toUpperCase().padStart(4, "0")}>` : cut[at];
+  }
+  return out;
+}
 
 /** What an open object or array may hold next: its first member or its close, a key, a colon, a value, or a separator. */
 type Expected = "first" | "key" | "colon" | "value" | "separator";
@@ -647,9 +671,12 @@ export function parseConsole<Op extends string>(
     throw at("unknown-route", `${request.method} ${shown(path)} is not a route this console runs.`, targetAt);
   }
   const template = /\{([^}]*)\}?/.exec(relative);
-  if (template !== null || relative.includes("}")) {
-    const name = template?.[1] ?? "";
+  if (template !== null) {
+    const name = template[1];
     throw at("path-template", `Replace {${name}} with ${humanised(name || "value")}.`, targetAt);
+  }
+  if (relative.includes("}")) {
+    throw at("path-template", "The route holds a } with no { before it: write the value alone.", targetAt);
   }
   const matched = matchRoute(routes, request.method, relative);
   if (matched === undefined) {
@@ -688,6 +715,9 @@ export function parseConsole<Op extends string>(
       const equals = pair.indexOf("=");
       const key = decoded(equals === -1 ? pair : pair.slice(0, equals));
       const value = equals === -1 ? undefined : decoded(pair.slice(equals + 1));
+      if (key === "") {
+        throw at("query-key", "The query string holds an empty key: write key=value pairs joined by &.", queryAt);
+      }
       if (key === undefined || !Object.hasOwn(route.query, key)) {
         throw at("query-key", `${route.method} ${route.template} takes no query key ${shown(key ?? pair)}.`, queryAt);
       }

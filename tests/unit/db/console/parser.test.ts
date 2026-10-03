@@ -335,6 +335,50 @@ describe("every refusal code, by name, at its line and column", () => {
   });
 });
 
+describe("a refusal shows what it found", () => {
+  test("a character that draws nothing, or draws as a space, is written as its code point", () => {
+    expect(refusalOf(...Q, "\uFEFFGET collections").message).toBe(
+      "<U+FEFF>GET is not a method this console takes: it takes GET and POST. (line 1, column 1)",
+    );
+    expect(refusalOf(...Q, "GET\u00A0collections").message).toBe(
+      "GET<U+00A0>collections is not a method this console takes: it takes GET and POST. (line 1, column 1)",
+    );
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{\n\u00A0\u00A0"limit": 3\n}').message).toBe(
+      "Expected a key in double quotes, found <U+00A0><U+00A0>. (line 3, column 1)",
+    );
+    expect(refusalOf(...Q, "POST collections/docs/points/query\n{}\u00A0").message).toBe(
+      "Expected nothing after the body, found <U+00A0>. (line 2, column 3)",
+    );
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{"a": \u200B1}').message).toBe(
+      "Expected a value, found <U+200B>1. (line 2, column 7)",
+    );
+    expect(refusalOf(...Q, "GET collections/do\u0000cs/nowhere").message).toBe(
+      "GET collections/do<U+0000>cs/nowhere is not a route this console runs. (line 1, column 5)",
+    );
+  });
+
+  test("an empty query key and a lone closing brace are named, never quoted as nothing", () => {
+    for (const target of [
+      "collections/c/points/1?",
+      "collections/c/points/1?timeout=5&",
+      "collections/c/points/1?=5",
+    ]) {
+      const refusal = refusalOf(...Q, `GET ${target}`);
+      expect({ target, reason: refusal.reason, message: refusal.message }).toEqual({
+        target,
+        reason: "query-key",
+        message: "The query string holds an empty key: write key=value pairs joined by &. (line 1, column 28)",
+      });
+    }
+    const brace = refusalOf(...Q, "GET collections/a}");
+    expect({ reason: brace.reason, message: brace.message }).toEqual({
+      reason: "path-template",
+      message: "The route holds a } with no { before it: write the value alone. (line 1, column 5)",
+    });
+    expect(refusalOf(...Q, "GET collections/{}").message).toBe("Replace {} with a value. (line 1, column 5)");
+  });
+});
+
 describe("the order of the rules", () => {
   test("the text bound comes before the lexer, so an oversize text is never tokenised", () => {
     expect(refusalOf(...M, `${"[".repeat(1_048_577)}`).reason).toBe("too-large");
