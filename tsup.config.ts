@@ -48,6 +48,8 @@ export default defineConfig({
     // The etcd provider's gRPC client and the loader that reads its generated descriptor.
     "@grpc/grpc-js",
     "@grpc/proto-loader",
+    // The neo4j provider's Bolt driver, exact-pinned like the other measured drivers.
+    "neo4j-driver-lite",
     "@libredb/libredb",
     // SSH and crypto
     "ssh2",
