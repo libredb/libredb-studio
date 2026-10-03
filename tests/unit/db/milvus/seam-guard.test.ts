@@ -25,6 +25,7 @@ const MILVUS = "src/lib/db/providers/vector/milvus";
 const ADAPTER = `${MILVUS}/grpc-client.ts`;
 const DESCRIPTOR = `${MILVUS}/proto/descriptor.ts`;
 const GENERATOR = "scripts/generate-milvus-descriptor.mjs";
+const HARNESS = "tests/live/milvus-evidence.ts";
 const ADAPTER_TEST = "tests/unit/db/milvus/grpc-client.test.ts";
 const TLS_TEST = "tests/unit/db/milvus/tls-handshake.test.ts";
 const HANDSHAKE_CASES = "tests/helpers/milvus-handshake-cases.ts";
@@ -42,11 +43,19 @@ const MILVUS_HELD: readonly RegExp[] = [
   /^tests\/live\/milvus-/,
 ];
 
-const GRPC_IMPORTERS = [ADAPTER, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
-const PROTO_LOADER_IMPORTERS = [ADAPTER, ADAPTER_TEST, HANDSHAKE_CASES, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST];
+const GRPC_IMPORTERS = [ADAPTER, HARNESS, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
+const PROTO_LOADER_IMPORTERS = [
+  ADAPTER,
+  HARNESS,
+  ADAPTER_TEST,
+  HANDSHAKE_CASES,
+  DESCRIPTOR,
+  GENERATOR,
+  DESCRIPTOR_TEST,
+];
 const DESCRIPTOR_IMPORTERS = [ADAPTER];
 const DESCRIPTOR_READERS = [GENERATOR, DESCRIPTOR_TEST, WIRE_FIELDS_TEST, THIS_FILE];
-const GENERATOR_IMPORTERS = [DESCRIPTOR_TEST];
+const GENERATOR_IMPORTERS = [HARNESS, DESCRIPTOR_TEST];
 /** The modules with no logger and no console output (E19). */
 const NO_LOGGER = [
   `${MILVUS}/client.ts`,
