@@ -101,7 +101,8 @@ export interface ConsoleText {
 /** Every HTTP method, so a second request line is named as one whatever the dialect's own method set. */
 const HTTP_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
 const HEADER_LINE = /^\s*[A-Za-z][A-Za-z0-9-]*:\s/;
-const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+/** A UUID in the two forms a server reads in a path and a body alike: hyphenated, or its 32 hex digits alone. */
+const UUID = /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
 const UINT64_MAX = "18446744073709551615";
 const POSITIVE_INT = /^[1-9][0-9]*$/;
 const SHOWN = 40;

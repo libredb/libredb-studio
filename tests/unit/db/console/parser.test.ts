@@ -216,6 +216,12 @@ describe("every refusal code, by name, at its line and column", () => {
       "path-param",
       "The point id -1 is neither an unsigned 64-bit integer nor a UUID. (line 1, column 5)",
     ],
+    [
+      Q,
+      "GET collections/docs/points/8d8f53130a2e-4c3b-9f1e-2b7c1d0e5a44",
+      "path-param",
+      "The point id 8d8f53130a2e-4c3b-9f1e-2b7c1d0e5a44 is neither an unsigned 64-bit integer nor a UUID. (line 1, column 5)",
+    ],
     [Q, "GET collections//points/1", "path-param", "The path parameter collection_name is empty. (line 1, column 5)"],
     [
       Q,
@@ -536,6 +542,16 @@ describe("an accepted request", () => {
     );
     expect(request.params).toEqual({ collection_name: "my docs", id: "550e8400-e29b-41d4-a716-446655440000" });
     expect(request.query).toEqual({ consistency: "2", timeout: "30" });
+  });
+
+  test("a UUID point id is taken hyphenated or as its 32 hex digits, in either case", () => {
+    for (const id of [
+      "8d8f53130a2e4c3b9f1e2b7c1d0e5a44",
+      "8D8F53130A2E4C3B9F1E2B7C1D0E5A44",
+      "8D8F5313-0A2E-4C3B-9F1E-2B7C1D0E5A44",
+    ]) {
+      expect(parseConsole(...Q, `GET collections/docs/points/${id}`).params.id).toBe(id);
+    }
   });
 
   test("a literal segment wins over a parameter", () => {
