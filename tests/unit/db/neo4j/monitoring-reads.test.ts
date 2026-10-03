@@ -244,9 +244,14 @@ describe("readActiveSessions", () => {
 });
 
 describe("readTableStats", () => {
+  /** A report that fails the test: every label of these cases can be named. */
+  const noSkip = (names: readonly string[]): void => {
+    throw new Error(`no label should be skipped, got ${JSON.stringify(names)}`);
+  };
+
   test("one node count per seeded label, sorted by name, from the captures", async () => {
     const { client, calls } = replacing();
-    const stats = await readTableStats(client, DATABASE);
+    const stats = await readTableStats(client, DATABASE, noSkip);
     expect(stats.map((row) => [row.tableName, row.rowCount])).toEqual([
       ["Back`tick", 2],
       ["Marker", 2],
@@ -269,9 +274,12 @@ describe("readTableStats", () => {
       [NEO4J_CATALOG_STATEMENTS.label]: rows(...[...labels].reverse().map((label) => ({ label }))),
       ...counts,
     });
-    const stats = await readTableStats(client, DATABASE);
-    // "A\u0001bad" sorts first, takes a place among the fifty and is left out: TableStats has no notice field.
+    const skipped: (readonly string[])[] = [];
+    const stats = await readTableStats(client, DATABASE, (names) => skipped.push(names));
+    // "A\u0001bad" sorts first, takes a place among the fifty and is left out: TableStats has no notice field,
+    // so the skip is reported to the caller, once, with every label it left out.
     expect(stats.map((row) => row.tableName)).toEqual(labels.slice(0, TABLE_STATS_LABEL_BOUND - 1));
+    expect(skipped).toEqual([["A\u0001bad"]]);
     expect(calls.filter((call) => call.statement.startsWith("MATCH")).length).toBe(TABLE_STATS_LABEL_BOUND - 1);
   });
 
@@ -291,17 +299,17 @@ describe("readTableStats", () => {
         }
       },
     };
-    expect((await readTableStats(client, DATABASE)).length).toBe(7);
+    expect((await readTableStats(client, DATABASE, noSkip)).length).toBe(7);
     expect(most).toBe(1);
   });
 
   test("a refused listing or count is no rows; an unreachable server is thrown", async () => {
-    expect(await readTableStats(replacing({ [NEO4J_CATALOG_STATEMENTS.label]: refused() }).client, DATABASE)).toEqual(
-      [],
-    );
+    expect(
+      await readTableStats(replacing({ [NEO4J_CATALOG_STATEMENTS.label]: refused() }).client, DATABASE, noSkip),
+    ).toEqual([]);
     const person = "MATCH (n:`Person`) RETURN count(n) AS c";
-    expect(await readTableStats(replacing({ [person]: refused() }).client, DATABASE)).toEqual([]);
-    await expect(readTableStats(replacing({ [person]: unreachable() }).client, DATABASE)).rejects.toThrow(
+    expect(await readTableStats(replacing({ [person]: refused() }).client, DATABASE, noSkip)).toEqual([]);
+    await expect(readTableStats(replacing({ [person]: unreachable() }).client, DATABASE, noSkip)).rejects.toThrow(
       GraphClientError,
     );
   });

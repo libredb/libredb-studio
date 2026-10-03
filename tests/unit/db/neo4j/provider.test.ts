@@ -16,7 +16,7 @@ import {
   type GraphRunResult,
 } from "@/lib/db/graph/bolt/client";
 import { GRAPH_CONTAINER_LEVELS, GRAPH_OBJECT_KINDS } from "@/lib/db/graph/objects";
-import { neo4jCatalog } from "@/lib/db/providers/graph/neo4j/catalog";
+import { NEO4J_CATALOG_STATEMENTS, neo4jCatalog } from "@/lib/db/providers/graph/neo4j/catalog";
 import { mapNeo4jError } from "@/lib/db/providers/graph/neo4j/errors";
 import { NEO4J_ENGINE_PROFILE, Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { neo4jLabels } from "@/lib/db/providers/graph/neo4j/labels";
@@ -219,6 +219,26 @@ describe("the monitoring reads", () => {
     expect((await provider.getActiveSessions()).map((session) => session.pid)).toEqual(["neo4j-transaction-18"]);
     expect((await provider.getTableStats()).map((row) => row.tableName)).toHaveLength(7);
     expect((await provider.getIndexStats()).map((row) => row.indexName)).toEqual(["person_name", "service_id"]);
+  });
+
+  test("table stats log the labels no Cypher name can spell, which they leave out", async () => {
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { provider } = await connected({
+        [NEO4J_CATALOG_STATEMENTS.label]: {
+          fields: ["label"],
+          rows: [{ label: "A\u0001bad" }, { label: "Person" }],
+          truncated: false,
+        },
+      });
+      expect((await provider.getTableStats()).map((row) => row.tableName)).toEqual(["Person"]);
+      expect(logged).toHaveBeenCalledTimes(1);
+      expect(String(logged.mock.calls[0]?.[0])).toBe(
+        '[DB:neo4j] table stats failed: 1 label no Cypher name can spell was left out: "A\\u0001bad"',
+      );
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   test("slow queries, storage and performance have nothing to report", async () => {

@@ -119,7 +119,7 @@ async function readCount(client: Runner, statement: string, database: string, fi
 
 /**
  * `MATCH (n:<quoted label>) RETURN count(n) AS c`, checked by the read policy (SR11); undefined for a label
- * `quoteCypherName` refuses, which is then left out of the table stats.
+ * `quoteCypherName` refuses, which the table stats then skip and report.
  */
 export function labelCountStatement(label: string): string | undefined {
   let quoted: string;
@@ -215,8 +215,16 @@ export function readActiveSessions(client: Runner, database: string): Promise<Ac
  * each in its own READ session, so a monitoring refresh holds one session at a time rather than fifty; each
  * is an O(1) read of the count store. The panel is all or nothing: one refused count, like a refused label
  * listing, empties it, since a partial list would read as the whole graph.
+ *
+ * A label `quoteCypherName` refuses has no statement that names it, so it is skipped (SR11). `TableStats` has
+ * no field to say so, so `reportSkipped` is called once with every label skipped, before the rows are
+ * returned, and never when none was.
  */
-export function readTableStats(client: Runner, database: string): Promise<TableStats[]> {
+export function readTableStats(
+  client: Runner,
+  database: string,
+  reportSkipped: (labels: readonly string[]) => void,
+): Promise<TableStats[]> {
   return orEmpty(async () => {
     const { entries } = await neo4jCatalog.listKind(client, database, "label");
     const labels = entries
@@ -224,11 +232,17 @@ export function readTableStats(client: Runner, database: string): Promise<TableS
       .sort()
       .slice(0, TABLE_STATS_LABEL_BOUND);
     const counts: Neo4jLabelCount[] = [];
+    const skipped: string[] = [];
     for (const label of labels) {
       const statement = labelCountStatement(label);
+      if (statement === undefined) {
+        skipped.push(label);
+        continue;
+      }
       // oxlint-disable-next-line no-await-in-loop -- one session at a time, as the docblock says.
-      if (statement !== undefined) counts.push({ label, count: await readCount(client, statement, database, "c") });
+      counts.push({ label, count: await readCount(client, statement, database, "c") });
     }
+    if (skipped.length > 0) reportSkipped(skipped);
     return toTableStats(database, counts);
   }, []);
 }

@@ -322,7 +322,7 @@ No kind declares `acceptsSourceEdits` or `acceptsRowWrites`: there is no source 
 | Storage stats | none | Bolt reports no store size |
 
 The transactions read names its columns, never the `parameters` column, which can hold a secret, and never `YIELD *`.
-Each label in a count statement is backticked by the quoting module and checked by the read policy before it runs; a label the quoting refuses is left out.
+Each label in a count statement is backticked by the quoting module and checked by the read policy before it runs; a label the quoting refuses is left out, and the server log names every label left out, since the table stats have no field to say so.
 The monitoring reads run through the same READ session path without the user's policy, and a unit test checks every one against the policy: every monitoring read but the transactions read passes it.
 The transactions read stays out of the user allowlist (section 3.2), since a user's `SHOW TRANSACTIONS YIELD *` returns other sessions' query text and parameters, and the monitoring read keeps a fixed column list that names no `parameters` column.
 A read the server refuses yields that panel's empty answer, never a throw, while an unreachable server, a timeout or a cancel is raised; a refused overview figure is shown as unreadable and leaves the others standing.

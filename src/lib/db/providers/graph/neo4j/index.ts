@@ -166,7 +166,16 @@ export class Neo4jProvider extends GraphBaseProvider {
   }
 
   public async getTableStats(): Promise<TableStats[]> {
-    return this.monitored(readTableStats);
+    return this.monitored((client, database) =>
+      readTableStats(client, database, (labels) => {
+        const counted =
+          labels.length === 1
+            ? "1 label no Cypher name can spell was"
+            : `${labels.length} labels no Cypher name can spell were`;
+        const names = labels.map((label) => JSON.stringify(label)).join(", ");
+        this.logError("table stats", `${counted} left out: ${names}`);
+      }),
+    );
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
