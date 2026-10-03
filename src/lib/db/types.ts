@@ -723,6 +723,10 @@ export interface ProviderCapabilities {
    * read by the provider's own parser. It landed the way Kafka's did: an explicit arm in every reader
    * of either field, or a test pinning that the branch it falls into is right for etcd.
    *
+   * `"milvus"` is the Milvus provider's (vector-family spec 5.7): its editor text is one `POST /v2/vectordb/<route>`
+   * line and one JSON body, the closed console the provider lowers to typed gRPC calls. It landed through one record
+   * in each registry and no arm anywhere else.
+   *
    * `"qdrant"` is the Qdrant provider's (vector-family spec 6.4): its editor text is one `METHOD /path` request
    * line and one JSON body, the closed console the provider re-serialises from its own parse. It landed through
    * one record in each registry and no arm anywhere else.
@@ -732,7 +736,7 @@ export interface ProviderCapabilities {
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "qdrant";
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).

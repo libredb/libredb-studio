@@ -106,7 +106,7 @@ mock.module("@monaco-editor/react", () => ({
           // The etcd language's tokens provider is the provider's own lexer, not a Monarch grammar (#1089).
           setTokensProvider: mock(() => {}),
           setLanguageConfiguration: mock(() => {}),
-          // The Qdrant console language registers its route completion before the editor mounts (vector-family spec 3.5).
+          // The Milvus and Qdrant console languages register their route completion before the editor mounts (vector-family spec 3.5).
           registerCompletionItemProvider: mock(() => ({ dispose: () => {} })),
         },
       };
@@ -1963,11 +1963,20 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("graph-cypher");
   });
 
-  test("registers the Qdrant console language after the custom languages, before the editor mounts (vector-family spec 3.8)", () => {
+  test("registers the Milvus and Qdrant console languages after the custom languages, before the editor mounts (vector-family spec 3.8)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", value: "SELECT 1" })));
 
-    // registerDialectConsoles runs on every mount, and the Qdrant record is the one that carries a console language.
-    expect(capturedLanguageRegistrations).toEqual(["libredb", "redis", "promql", "etcd", "graph-cypher", "qdrant"]);
+    // registerDialectConsoles runs on every mount, and the Milvus and Qdrant records are the ones that carry a console
+    // language, registered in the record's order.
+    expect(capturedLanguageRegistrations).toEqual([
+      "libredb",
+      "redis",
+      "promql",
+      "etcd",
+      "graph-cypher",
+      "milvus",
+      "qdrant",
+    ]);
   });
 
   describe("the Cypher completion provider registers for a graph-cypher editor only", () => {

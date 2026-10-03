@@ -64,6 +64,10 @@ describe("offersSqlExport", () => {
     }
   });
 
+  test("withholds them from milvus, whose record declines them (vector-family spec 5.7)", () => {
+    expect(offersSqlExport(makeCaps({ queryDialect: "milvus" }))).toBe(false);
+  });
+
   test("withholds them from qdrant, whose record declines them (vector-family spec 3.10)", () => {
     expect(offersSqlExport(makeCaps({ queryDialect: "qdrant" }))).toBe(false);
   });

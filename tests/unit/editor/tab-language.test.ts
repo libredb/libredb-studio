@@ -54,6 +54,12 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
   });
 
+  test("Milvus gets a milvus tab, not the MongoDB one its queryLanguage json would give (vector-family spec 5.7)", () => {
+    expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "milvus" }))).toBe("milvus");
+    // The control: the same declaration with the dialect removed is MongoDB's.
+    expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
+  });
+
   test("Qdrant gets a qdrant tab, not the MongoDB one its queryLanguage json would give (vector-family spec 6.7)", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "qdrant" }))).toBe("qdrant");
     // The control: the same declaration with the dialect removed is MongoDB's.
@@ -93,6 +99,13 @@ describe("editorLanguageForTabType", () => {
   test("an etcd tab renders in the etcd language this repository registers over the provider's lexer (#1089)", () => {
     expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "etcd" })))).toBe(
       "etcd",
+    );
+  });
+
+  test("a milvus tab renders in the milvus console language, restored with no capabilities (vector-family spec 3.8)", () => {
+    expect(editorLanguageForTabType("milvus")).toBe("milvus");
+    expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "milvus" })))).toBe(
+      "milvus",
     );
   });
 

@@ -138,6 +138,10 @@ describe("the result export menu offers the SQL formats where the dialect says t
     expect(await exportMenuItems(null)).toEqual(ALL_ITEMS);
   });
 
+  test("milvus, whose record declines them, loses both from the Export and the Copy items (vector-family spec 5.7)", async () => {
+    expect(await exportMenuItems(capabilitiesOf({ queryDialect: "milvus" }))).toEqual(WITHOUT_SQL);
+  });
+
   test("qdrant, whose record declines them, loses both from the Export and the Copy items (vector-family spec 3.10)", async () => {
     expect(await exportMenuItems(capabilitiesOf({ queryDialect: "qdrant" }))).toEqual(WITHOUT_SQL);
   });

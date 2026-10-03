@@ -25,8 +25,8 @@ function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabi
 
 describe("a tab restored from storage with a type this release has no record for", () => {
   test("renders in sql, as it did before the registry, and never throws", () => {
-    // A later release persists `milvus` tabs; a host on this package version may restore them.
-    for (const type of ["milvus", "a-later-engine", "", "constructor", "toString", "__proto__"]) {
+    // A later release persists tabs of a type this one lacks; a host on this package version may restore them.
+    for (const type of ["a-later-engine", "another-later-engine", "", "constructor", "toString", "__proto__"]) {
       expect(editorLanguageForTabType(type as QueryTab["type"])).toBe("sql");
     }
   });
@@ -34,7 +34,7 @@ describe("a tab restored from storage with a type this release has no record for
 
 describe("a host declaring a dialect this release has no record for", () => {
   test("gets the tab type its language gives, as before the registry", () => {
-    for (const dialect of ["milvus", "constructor", "__proto__"]) {
+    for (const dialect of ["a-later-engine", "constructor", "__proto__"]) {
       const caps = makeCaps({ queryDialect: dialect as ProviderCapabilities["queryDialect"] });
       expect(resolveTabType(caps)).toBe("mongodb");
       expect(resolveTabType({ ...caps, queryLanguage: "promql" })).toBe("promql");

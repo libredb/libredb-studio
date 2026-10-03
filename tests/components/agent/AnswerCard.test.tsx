@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "qdrant",
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant",
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -131,7 +131,7 @@ function draftEvent(options: {
     | { readonly kind: "no-inventory" }
     | { readonly kind: "not-applicable" };
   /** The editor language the server recorded with the draft; absent, as a ledger written before it. */
-  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher" | "qdrant";
+  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher" | "milvus" | "qdrant";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -357,6 +357,33 @@ describe("AnswerCard — a plan run's statement", () => {
     ] as const) {
       const other = render(<AnswerCard timeline={cypherDraft} capabilities={capabilitiesFor(language, dialect)} />);
       expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-purple/40");
+      cleanup();
+    }
+  });
+
+  test("tints a Milvus request in the milvus language its tab renders in, in an accent of its own (vector-family spec 5.7)", () => {
+    // No guard here reads a Milvus request either, so the draft is shown beside the "not checked" chip.
+    const milvusDraft = planTimeline({
+      sql: 'POST /v2/vectordb/entities/query\n{"collectionName": "docs_int64", "filter": "seq > 1", "limit": 5}',
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const milvus = render(<AnswerCard timeline={milvusDraft} capabilities={capabilitiesFor("json", "milvus")} />);
+    const block = milvus.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("milvus");
+    expect(block.className).toContain("border-hue-teal/40");
+    cleanup();
+
+    // The controls: SQL's blue, JSON's cyan, etcd's sky and Qdrant's pink are not it, so the class above is Milvus's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["json", "etcd"],
+      ["json", "qdrant"],
+    ] as const) {
+      const other = render(<AnswerCard timeline={milvusDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-teal/40");
       cleanup();
     }
   });

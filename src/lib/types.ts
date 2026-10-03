@@ -653,7 +653,7 @@ export interface QueryTab {
    */
   runError?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka" | "etcd" | "cypher" | "qdrant";
+  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka" | "etcd" | "cypher" | "milvus" | "qdrant";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

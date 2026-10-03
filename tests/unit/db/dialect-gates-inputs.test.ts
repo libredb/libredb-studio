@@ -55,7 +55,7 @@ describe("a dialect declared beside SQL", () => {
 
 describe("a host declaring a dialect this release has no record for", () => {
   test("is withheld Profile and the count and offered the code generator, as before the registry", () => {
-    for (const dialect of ["milvus", "constructor", "toString", "__proto__"]) {
+    for (const dialect of ["a-later-engine", "constructor", "toString", "__proto__"]) {
       const caps = makeCaps({ queryDialect: dialect as ProviderCapabilities["queryDialect"] });
       expect(gates(caps)).toEqual({ profile: false, code: true, count: false });
       expect(gates({ ...caps, queryLanguage: "promql" })).toEqual({ profile: false, code: false, count: false });

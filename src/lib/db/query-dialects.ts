@@ -4,7 +4,7 @@ import type { QueryTab } from "@/lib/types";
 /**
  * The dialect registry: what each query dialect a provider may declare means for the editor's readers.
  *
- * A dialect is JSON or a command line that is not MongoDB's JSON (Redis, LibreDB, Kafka, etcd, Qdrant), so every reader
+ * A dialect is JSON or a command line that is not MongoDB's JSON (Redis, LibreDB, Kafka, etcd, Milvus, Qdrant), so every reader
  * keyed on the language alone would treat its text as a MongoDB document, which is the #427 class. Before this
  * module each reader carried an arm per dialect, about twenty of them, and a missed arm made a tree click
  * auto-run a MongoDB `find`. Each dialect is now one record here, one in `DIALECT_EDITORS`
@@ -30,7 +30,7 @@ export interface DialectSpec {
   readonly offersCountQuery: boolean;
   /**
    * Whether the result export menu offers SQL `INSERT` and `CREATE TABLE` DDL (`offersSqlExport` in
-   * `src/lib/db/types.ts`). Absent means it does; Qdrant's record is the one that declines them.
+   * `src/lib/db/types.ts`). Absent means it does; Milvus's and Qdrant's records are the ones that decline them.
    */
   readonly offersSqlExport?: boolean;
 }
@@ -66,6 +66,16 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersColumnProfiling: false,
     offersCodeGeneration: false,
     offersCountQuery: false,
+  }),
+  // Milvus (vector-family spec 5.7): a collection's columns include vectors, so neither a profile, a model nor a
+  // count statement of its grammar applies (a count is the documented count(*) request), and neither SQL export
+  // format applies to its rows (`offersSqlExport`).
+  milvus: Object.freeze({
+    tabType: "milvus",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: false,
   }),
   // Qdrant (vector-family spec 6.7): a collection's columns include vectors and sampled payload keys, so neither a
   // profile, a model nor a count statement of its grammar applies (a count is the documented count request), and

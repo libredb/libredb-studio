@@ -1,6 +1,7 @@
 import type * as Monaco from "monaco-editor";
 import { format } from "sql-formatter";
 import { formatConsole } from "@/lib/db/console/format";
+import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { type ConsoleLanguage, registerConsoleLanguage } from "@/lib/editor/console-language";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
@@ -11,7 +12,7 @@ import type { QueryTab } from "@/lib/types";
  *
  * Keyed by tab type rather than by dialect, because the tab type is the value a tab persists: a restored tab
  * resolves its language from this record without the connection's capabilities. It therefore holds the tab types
- * no dialect declares too (`sql`, `mongodb`, `promql`), beside the four dialects' (`src/lib/db/query-dialects.ts`).
+ * no dialect declares too (`sql`, `mongodb`, `promql`), beside the six dialects' (`src/lib/db/query-dialects.ts`).
  */
 export interface DialectEditor {
   /** The Monaco language id a tab of this type renders in. */
@@ -46,14 +47,18 @@ const formatSql = (text: string): string =>
  */
 const formatJson = (text: string): string => JSON.stringify(JSON.parse(text), null, 2);
 
+/** The Milvus console: its dialect and its route table, which register the Monaco language `milvus` (3.5, 5.4). */
+const MILVUS_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: MILVUS_CONSOLE, routes: MILVUS_ROUTES });
+
 /** The Qdrant console: its dialect and its route table, which register the Monaco language `qdrant` (3.5, 6.4). */
 const QDRANT_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: QDRANT_CONSOLE, routes: QDRANT_ROUTES });
 
 /**
  * Every tab type's editor, as `editorLanguageForTabType` and `QueryEditor` read it. Kafka's read request renders in
  * Monaco's built-in `json` mode and registers no language of its own (#1088); PromQL, Redis, LibreDB and etcd have
- * no formatter, because the SQL formatter rewrites their text (`up == 0` became `up = = 0`, #1085). Qdrant renders
- * in its own console language and formats through the console formatter (vector-family spec 3.4, 6.7).
+ * no formatter, because the SQL formatter rewrites their text (`up == 0` became `up = = 0`, #1085). Milvus and
+ * Qdrant each render in their own console language and format through the console formatter (vector-family spec
+ * 3.4, 5.7, 6.7).
  */
 export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> = Object.freeze({
   sql: Object.freeze({ monacoId: "sql", format: formatSql }),
@@ -66,6 +71,13 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // Cypher declares a language and no dialect, as PromQL does, and has no formatter: no Format for a Cypher tab
   // (Neo4j spec 6.5). `graph-cypher` and not `cypher`, which Monaco's own bundle registers.
   cypher: Object.freeze({ monacoId: "graph-cypher" }),
+  // A Milvus request renders in its own console language, which `registerDialectConsoles` registers from this
+  // record, and formats through the console formatter, which keeps every literal's bytes (vector-family spec 3.4, 5.7).
+  milvus: Object.freeze({
+    monacoId: "milvus",
+    format: (text: string) => formatConsole(MILVUS_CONSOLE, text),
+    console: MILVUS_CONSOLE_LANGUAGE,
+  }),
   // A Qdrant request renders in its own console language, which `registerDialectConsoles` registers from this
   // record, and formats through the console formatter, which keeps every literal's bytes (vector-family spec 3.4, 6.7).
   qdrant: Object.freeze({

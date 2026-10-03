@@ -120,6 +120,7 @@ type StatementLanguage =
   | "promql"
   | "etcd"
   | "graph-cypher"
+  | "milvus"
   | "qdrant"
   | "unknown";
 
@@ -141,6 +142,9 @@ type StatementLanguage =
  * status hues above. No guard here reads Cypher either, so its draft too stands beside the amber "not
  * checked" chip.
  *
+ * Milvus takes teal (vector-family spec 5.7): a hue no other language here uses and none of the three status hues
+ * above. Its console request is no SQL and no MongoDB JSON, and no guard here reads it either.
+ *
  * Qdrant takes pink (vector-family spec 6.7): a hue no other language here uses and none of the three status hues
  * above. No guard here reads a Qdrant request either, so its draft too stands beside the amber "not checked" chip.
  */
@@ -152,6 +156,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   promql: "border-hue-indigo/40",
   etcd: "border-hue-sky/40",
   "graph-cypher": "border-hue-purple/40",
+  milvus: "border-hue-teal/40",
   qdrant: "border-hue-pink/40",
   unknown: "border-hairline-strong",
 });

@@ -42,7 +42,7 @@ describe("an address with no segments", () => {
 
 describe("a host declaring a dialect this release has no record for", () => {
   test("gets the statement its language gives, as before the registry", () => {
-    for (const dialect of ["milvus", "constructor", "__proto__"]) {
+    for (const dialect of ["a-later-engine", "constructor", "__proto__"]) {
       const caps = makeCaps({ queryDialect: dialect as ProviderCapabilities["queryDialect"] });
       expect(JSON.parse(generateTableQuery(["orders"], caps, COLUMNS))).toEqual({
         collection: "orders",

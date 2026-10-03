@@ -27,6 +27,8 @@ import { type GraphKindId, graphObjectSegment } from "@/lib/db/graph/objects";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { parseConsole } from "@/lib/db/console/parser";
 import { toJsonText } from "@/lib/db/console/tagged-json";
+import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
+import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
@@ -2051,6 +2053,46 @@ describe("Cypher tree click and Generate Query (Neo4j spec 6.5)", () => {
   test("quoteIdentifier writes a Cypher name in backticks, a backtick doubled", () => {
     expect(quoteIdentifier("Person", neo4jCaps)).toBe("`Person`");
     expect(quoteIdentifier("Back`tick", neo4jCaps)).toBe("`Back``tick`");
+  });
+});
+
+// Milvus (vector-family spec 5.7): both generators read the DIALECT_GENERATORS record, which writes the provider's own
+// browser-safe text, and every output is a request the real console parser accepts.
+describe("generateTableQuery and generateSelectQuery: Milvus", () => {
+  const milvusCaps = makeCaps({ queryLanguage: "json", queryDialect: "milvus", supportsExplain: false });
+  const path = ["default", "docs_int64"];
+  const columns: ColumnSchema[] = [
+    { name: "id", type: "Int64", nullable: false, isPrimary: true },
+    { name: "seq", type: "Int64", nullable: false, isPrimary: false },
+    { name: "vec", type: "FloatVector(8)", nullable: false, isPrimary: false },
+    { name: "title", type: "VarChar(256)", nullable: false, isPrimary: false },
+  ];
+
+  test("the tree click on a Milvus collection writes the entities/query request, never a MongoDB find", () => {
+    const text = generateTableQuery(path, milvusCaps, columns);
+    expect(text).toBe(milvusTableQuery(path));
+    const request = parseConsole(MILVUS_CONSOLE, MILVUS_ROUTES, text);
+    expect(request.route.template).toBe("entities/query");
+    expect(JSON.parse(toJsonText(request.body))).toEqual({
+      dbName: "default",
+      collectionName: "docs_int64",
+      filter: "",
+      limit: 100,
+    });
+  });
+
+  test("Generate Command on a Milvus collection writes a runnable search over its first dense vector field", () => {
+    const text = generateSelectQuery(path, columns, milvusCaps);
+    expect(text).toBe(milvusSelectQuery(path, columns));
+    const request = parseConsole(MILVUS_CONSOLE, MILVUS_ROUTES, text);
+    expect(request.route.template).toBe("entities/search");
+    const body = JSON.parse(toJsonText(request.body)) as Record<string, unknown>;
+    expect([body.dbName, body.collectionName, body.annsField, (body.data as number[][])[0].length]).toEqual([
+      "default",
+      "docs_int64",
+      "vec",
+      8,
+    ]);
   });
 });
 
