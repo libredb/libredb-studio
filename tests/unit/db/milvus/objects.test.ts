@@ -22,6 +22,7 @@ import {
   MILVUS_OBJECT_KINDS,
   milvusCause,
   readCollectionIndexes,
+  readMilvusCollectionSource,
   refusedForPrivilege,
   refusedStatusCode,
   surfaceCall,
@@ -29,6 +30,7 @@ import {
   unimplementedByServer,
 } from "@/lib/db/providers/vector/milvus/objects";
 import { collectionColumns } from "@/lib/db/providers/vector/milvus/schema";
+import { milvusSourceParts } from "@/lib/db/providers/vector/milvus/source";
 import { engineLimiter, LimiterFullError } from "@/lib/db/utils/bounded-limiter";
 import { expectCalls } from "../../../helpers/call-log";
 import {
@@ -490,5 +492,70 @@ describe("describeMilvusCollections", () => {
     await expect(describeMilvusCollections(denied, testSurface(), "default", namesOf(2))).rejects.toThrow(
       "The Milvus user lacks the privilege",
     );
+  });
+});
+
+describe("readMilvusCollectionSource", () => {
+  const catalog = {
+    databases: {
+      default: [
+        {
+          describe: { ...DOCS_INT64, aliases: ["docs"] },
+          indexes: [DOCS_INT64_INDEX],
+          rowCount: "2000",
+          partitions: ["_default", "part_a", "part_b"],
+        },
+        { describe: plainCollection("unloaded_big"), loadState: "LoadStateNotLoad" },
+      ],
+    },
+  };
+
+  test("DescribeCollection first, then the five reads, shaped by source.ts", async () => {
+    const client = createFakeMilvusClient(catalog);
+    const document = await readMilvusCollectionSource(client, testSurface(), "default", "docs_int64");
+    expect(document).toEqual({
+      path: ["default", "docs_int64"],
+      kind: "collection",
+      parts: milvusSourceParts({
+        describe: { ...DOCS_INT64, aliases: ["docs"] },
+        indexes: [DOCS_INT64_INDEX],
+        loadState: "LoadStateLoaded",
+        rowCount: "2000",
+        partitions: ["_default", "part_a", "part_b"],
+        aliases: ["docs"],
+        secretForms: [],
+      }),
+    });
+    expect(client.calls[0]).toEqual({
+      method: "describeCollection",
+      args: ["default", { collection_name: "docs_int64" }],
+    });
+    expect(
+      client.calls
+        .slice(1)
+        .map((call) => call.method)
+        .sort(),
+    ).toEqual(["describeIndex", "getCollectionStatistics", "getLoadState", "listAliases", "showPartitions"]);
+  });
+
+  test("an unloaded collection is fully browsable, and nothing loads it", async () => {
+    const client = createFakeMilvusClient(catalog);
+    const document = await readMilvusCollectionSource(client, testSurface(), "default", "unloaded_big");
+    expect(JSON.parse((document.parts[1] as { text: string }).text).load).toBe("LoadStateNotLoad");
+    expect(client.calls.map((call) => call.method)).not.toContain("loadCollection");
+  });
+
+  test("an unknown collection is refused with the collection sentence after one DescribeCollection and no other read", async () => {
+    const client = createFakeMilvusClient(catalog);
+    await expect(readMilvusCollectionSource(client, testSurface(), "default", "gone")).rejects.toThrow(
+      "Collection gone does not exist in database default.",
+    );
+    expectCalls(client, ["describeCollection"]);
+  });
+
+  test("the caller's bound reaches both parts", async () => {
+    const client = createFakeMilvusClient(catalog);
+    const document = await readMilvusCollectionSource(client, testSurface(), "default", "docs_int64", 30);
+    expect(document.parts.every((sourcePart) => "truncated" in sourcePart)).toBe(true);
   });
 });

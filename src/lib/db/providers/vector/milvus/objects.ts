@@ -26,6 +26,7 @@ import type {
   ObjectDetail,
   ObjectDetailBatch,
   ObjectKindSpec,
+  ObjectSourceDocument,
 } from "@/lib/db/types";
 import { LimiterFullError, type LimiterTicket, type ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
 import {
@@ -42,7 +43,9 @@ import {
   toMilvusError,
   toProviderError,
 } from "./errors";
+import { statisticsRowCount } from "./monitoring";
 import { collectionColumns } from "./schema";
+import { milvusSourceParts } from "./source";
 
 const PROVIDER: DatabaseType = "milvus";
 
@@ -409,4 +412,63 @@ export async function describeMilvusCollections(
     details = await describeEach(client, context, database, kept);
   }
   return cut ? { details, truncated: { limit, reason: callerBoundTruncationReason(limit) } } : { details };
+}
+
+// -- the Source -------------------------------------------------------------------------------------------
+
+export type MilvusSourceClient = Pick<
+  MilvusClient,
+  "describeCollection" | "describeIndex" | "getLoadState" | "getCollectionStatistics" | "showPartitions" | "listAliases"
+>;
+
+/**
+ * The reads of a collection's Source: DescribeCollection first, which is the existence check, so an unknown collection
+ * or database is refused with errors.ts's sentence before any other read; then DescribeIndex, GetLoadState,
+ * GetCollectionStatistics, ShowPartitions and ListAliases together, each under its own permit. All of them answer on
+ * an unloaded collection, so nothing here loads one.
+ */
+export async function readMilvusCollectionSource(
+  client: MilvusSourceClient,
+  context: MilvusSurfaceContext,
+  database: string,
+  collection: string,
+  limit?: number,
+): Promise<ObjectSourceDocument> {
+  const target: MilvusTarget = { database, collection };
+  const named = { collection_name: collection };
+  const describe = await surfaceCall(context, `Source read of collection ${collection}`, target, (options) =>
+    client.describeCollection(named, options),
+  );
+  const [indexes, load, statistics, partitions, aliases] = await Promise.all([
+    readCollectionIndexes(client, context, database, collection),
+    surfaceCall(context, `load state read of collection ${collection}`, target, (options) =>
+      client.getLoadState(named, options),
+    ),
+    surfaceCall(context, `statistics read of collection ${collection}`, target, (options) =>
+      client.getCollectionStatistics(named, options),
+    ),
+    surfaceCall(context, `partition listing of collection ${collection}`, target, (options) =>
+      client.showPartitions(named, options),
+    ),
+    surfaceCall(context, `alias listing of collection ${collection}`, target, (options) =>
+      client.listAliases(named, options),
+    ),
+  ]);
+  const rowCount = statisticsRowCount(statistics.stats);
+  return {
+    path: [database, collection],
+    kind: MILVUS_COLLECTION_KIND,
+    parts: milvusSourceParts(
+      {
+        describe,
+        indexes,
+        loadState: load.state,
+        ...(rowCount === undefined ? {} : { rowCount }),
+        partitions: partitions.partition_names,
+        aliases: aliases.aliases,
+        secretForms: context.secretForms,
+      },
+      limit,
+    ),
+  };
 }
