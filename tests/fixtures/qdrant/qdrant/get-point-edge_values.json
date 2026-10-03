@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.238Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/{collection_name}/points/{id} on edge_values",
+    "op": "get_point",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/collections/edge_values/points/1",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 305,
+    "body": "{\"result\":{\"id\":1,\"payload\":{\"label\":\"range-ends\"},\"vector\":{\"u8\":[0.0,255.0,128.0,1.0],\"multi\":[[1.0,2.0],[3.0,4.0]],\"sp\":{\"indices\":[0,4294967295],\"values\":[1e-30,0.5]},\"f16\":[65504.0,-65504.0,0.000061035156,5.9604645e-8],\"f32\":[3.4028235e+38,1e-45,1.1754944e-38,0.1]}},\"status\":\"ok\",\"time\":0.000095877}"
+  }
+}

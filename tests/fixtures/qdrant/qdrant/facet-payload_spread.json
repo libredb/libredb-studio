@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.259Z",
+    "runtime": "bun 1.4.2",
+    "surface": "POST /collections/{collection_name}/facet on payload_spread",
+    "op": "facet",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "POST",
+      "path": "/collections/payload_spread/facet",
+      "headers": {},
+      "body": "{\"key\":\"category\",\"limit\":10}"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "status": 400,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 270,
+    "body": "{\"status\":{\"error\":\"Wrong input: No appropriate index for faceting: `category`. Please create one to facet on this field. Check https://qdrant.tech/documentation/concepts/indexing/#payload-index to see which payload schemas support Match conditions\"},\"time\":0.000055192}"
+  }
+}

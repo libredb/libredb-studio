@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.250Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/{collection_name}/points/{id} on empty_novec",
+    "op": "get_point",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/collections/empty_novec/points/1",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "status": 404,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 85,
+    "body": "{\"status\":{\"error\":\"Not found: Point with id 1 does not exists!\"},\"time\":0.000049581}"
+  }
+}

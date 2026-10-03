@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.253Z",
+    "runtime": "bun 1.4.2",
+    "surface": "POST /collections/{collection_name}/points/query on empty_novec",
+    "op": "query_points",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "POST",
+      "path": "/collections/empty_novec/points/query",
+      "headers": {},
+      "body": "{\"limit\":3,\"with_payload\":true}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 57,
+    "body": "{\"result\":{\"points\":[]},\"status\":\"ok\",\"time\":0.000062593}"
+  }
+}

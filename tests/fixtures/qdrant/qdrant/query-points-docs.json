@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.224Z",
+    "runtime": "bun 1.4.2",
+    "surface": "POST /collections/{collection_name}/points/query on docs",
+    "op": "query_points",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "POST",
+      "path": "/collections/docs/points/query",
+      "headers": {},
+      "body": "{\"limit\":3,\"with_payload\":true}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 2142,
+    "body": "{\"result\":{\"points\":[{\"id\":0,\"version\":0,\"score\":1.0,\"payload\":{\"seq\":0,\"id_kind\":\"uint\",\"title\":\"Document 0000 alpha\",\"body\":\"vector search engine payload number 0\",\"category\":\"alpha\",\"big_int\":9007199254740993,\"price\":627.17,\"ratio\":0.23738482873560085,\"active\":false,\"tags\":[\"alpha\",\"vector\",\"even\"],\"scores\":[0.813,0.408,0.17],\"meta\":{\"source\":\"libredb-seed\",\"version\":1,\"owner\":{\"name\":\"user00\",\"team\":\"core\"},\"flags\":{\"reviewed\":true,\"lang\":\"tr\"}},\"items\":[],\"location\":{\"lon\":35.92462,\"lat\":36.988593},\"created_at\":\"2026-01-01T00:00:00.000Z\",\"ref_uuid\":\"ffb5e0fe-abd8-512f-9fa5-199b8ea5a6a0\",\"mixed\":0,\"maybe\":null,\"empty_list\":[],\"empty_obj\":{},\"unicode\":\"Istanbul, İstanbul, şğüöç, 日本語\"}},{\"id\":42,\"version\":0,\"score\":1.0,\"payload\":{\"seq\":1,\"id_kind\":\"uint\",\"title\":\"Document 0001 beta\",\"body\":\"cosine shard segment point number 1\",\"category\":\"beta\",\"big_int\":9007199254740994,\"price\":151.33,\"ratio\":0.8778458394315499,\"active\":true,\"tags\":[\"beta\",\"search\"],\"scores\":[0.985,0.133,0.344],\"meta\":{\"source\":\"libredb-seed\",\"version\":2,\"owner\":{\"name\":\"user01\",\"team\":\"search\"},\"flags\":{\"reviewed\":false,\"lang\":\"en\"}},\"items\":[{\"sku\":\"SKU-0001-0\",\"qty\":1}],\"location\":{\"lon\":39.854424,\"lat\":41.948285},\"created_at\":\"2026-02-02T01:01:00.001Z\",\"ref_uuid\":\"f5ffcf7e-5a4d-5bd5-9139-8bfc54550941\",\"mixed\":\"1\",\"i64_max\":9223372036854775807,\"i64_min\":-9223372036854775808,\"float_tiny\":5e-324,\"float_big\":1.7976931348623157e+308}},{\"id\":9007199254740993,\"version\":0,\"score\":1.0,\"payload\":{\"seq\":2,\"id_kind\":\"uint\",\"title\":\"Document 0002 gamma\",\"body\":\"cluster replica quantize sparse number 2\",\"category\":\"gamma\",\"big_int\":9007199254740995,\"price\":235.0,\"ratio\":0.3769477179416332,\"active\":true,\"tags\":[\"gamma\",\"engine\",\"even\"],\"scores\":[0.166,0.109,0.917],\"meta\":{\"source\":\"libredb-seed\",\"version\":3,\"owner\":{\"name\":\"user02\",\"team\":\"infra\"},\"flags\":{\"reviewed\":false,\"lang\":\"en\"}},\"items\":[{\"sku\":\"SKU-0002-0\",\"qty\":1},{\"sku\":\"SKU-0002-1\",\"qty\":2}],\"location\":{\"lon\":42.839334,\"lat\":36.705084},\"created_at\":\"2026-03-03T02:02:00.002Z\",\"ref_uuid\":\"354b76c8-a94c-596f-9d78-23b3718e31e6\",\"mixed\":2.5}}]},\"status\":\"ok\",\"time\":0.000164925}"
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant-auth",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.335Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /aliases with jwt-no-access-claim",
+    "op": "get_collections_aliases",
+    "credential": "jwt-no-access-claim",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/aliases",
+      "headers": {
+        "api-key": "<token>"
+      },
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 162,
+    "body": "{\"result\":{\"aliases\":[{\"alias_name\":\"docs_alias\",\"collection_name\":\"docs\"},{\"alias_name\":\"plain_alias\",\"collection_name\":\"plain\"}]},\"status\":\"ok\",\"time\":5.551e-6}"
+  }
+}

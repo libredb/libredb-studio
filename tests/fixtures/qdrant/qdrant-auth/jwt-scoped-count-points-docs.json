@@ -1,0 +1,31 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant-auth",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.330Z",
+    "runtime": "bun 1.4.2",
+    "surface": "POST /collections/docs/points/count with jwt-scoped",
+    "op": "count_points",
+    "credential": "jwt-scoped",
+    "attempts": 1,
+    "request": {
+      "method": "POST",
+      "path": "/collections/docs/points/count",
+      "headers": {
+        "api-key": "<token>"
+      },
+      "body": "{\"exact\":true}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 58,
+    "body": "{\"result\":{\"count\":2000},\"status\":\"ok\",\"time\":0.000228121}"
+  }
+}

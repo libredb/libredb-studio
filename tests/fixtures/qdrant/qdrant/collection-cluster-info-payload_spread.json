@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.255Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/{collection_name}/cluster on payload_spread",
+    "op": "collection_cluster_info",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/collections/payload_spread/cluster",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 198,
+    "body": "{\"result\":{\"peer_id\":8507471082012614,\"shard_count\":1,\"local_shards\":[{\"shard_id\":0,\"points_count\":20000,\"state\":\"Active\"}],\"remote_shards\":[],\"shard_transfers\":[]},\"status\":\"ok\",\"time\":0.000033811}"
+  }
+}
