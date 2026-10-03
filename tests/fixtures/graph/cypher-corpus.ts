@@ -18,7 +18,9 @@ export interface CorpusCase {
   /** Significant tokens (no whitespace) as [kind, text]. */
   readonly tokens?: readonly (readonly [CypherTokenKind, string])[];
   /**
-   * What `checkCypherRead` answers under the test profile in tests/unit/db/graph/read-policy.test.ts.
+   * What `checkCypherRead` answers, held both under the test profile in
+   * tests/unit/db/graph/read-policy.test.ts and under the shipped Neo4j profile in
+   * tests/unit/db/neo4j/profile.test.ts, so a verdict is never true only of a hand-written list.
    * A text the lexer refuses has no place here, because every reader lexes every case.
    */
   readonly verdict?: "allowed" | CypherRefusalCode;
@@ -554,6 +556,18 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
     text: "MATCH (n) CALL { WITH n RETURN n } IN TRANSACTIONS RETURN n",
     verdict: "denied-word",
     subject: "IN TRANSACTIONS",
+  },
+  {
+    name: "CALL IN CONCURRENT TRANSACTIONS",
+    text: "MATCH (n) CALL { WITH n RETURN n } IN CONCURRENT TRANSACTIONS RETURN n",
+    verdict: "denied-word",
+    subject: "CONCURRENT TRANSACTIONS",
+  },
+  {
+    name: "CALL IN a number of CONCURRENT TRANSACTIONS",
+    text: "MATCH (n) CALL { WITH n RETURN n } IN 4 CONCURRENT TRANSACTIONS RETURN n",
+    verdict: "denied-word",
+    subject: "CONCURRENT TRANSACTIONS",
   },
   {
     name: "USE before SHOW",

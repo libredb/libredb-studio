@@ -1,7 +1,11 @@
 /**
  * The Cypher read policy (spec 5.2): every corpus case's verdict, subject and message under a test
- * profile that mirrors the Neo4j lists, the details a caller reads (isShow, callsProcedure,
- * positions), and an empty profile that proves the policy holds no engine names of its own.
+ * profile, the details a caller reads (isShow, callsProcedure, positions), and an empty profile that
+ * proves the policy holds no engine names of its own.
+ *
+ * The test profile is this file's own fixed list, written so each rule of the policy has a case; it
+ * is not the shipped Neo4j profile and claims no parity with it. The shipped lists are held to the
+ * same corpus verdicts by tests/unit/db/neo4j/profile.test.ts.
  */
 import { describe, expect, test } from "bun:test";
 import { type CypherReadVerdict, type CypherRefusal, checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
@@ -40,7 +44,8 @@ const TEST_PROFILE: GraphPolicyProfile = {
       ["START"],
       ["STOP"],
       ["IN", "TRANSACTIONS"],
-      ["IN", "CONCURRENT", "TRANSACTIONS"],
+      // `IN [n] CONCURRENT TRANSACTIONS`: the optional number sits between IN and CONCURRENT.
+      ["CONCURRENT", "TRANSACTIONS"],
     ],
     deniedNamespaces: ["apoc.", "gds."],
     allowedProcedures: ALLOWED_PROCEDURES,
@@ -357,8 +362,9 @@ describe("denied words", () => {
   test("a sequence matches only consecutive words", () => {
     expect(allowedOf("MATCH (n) WHERE n.x IN [1] RETURN n").allowed).toBe(true);
     expect(refusalOf("MATCH (n) CALL { RETURN n } IN CONCURRENT TRANSACTIONS RETURN n").subject).toBe(
-      "IN CONCURRENT TRANSACTIONS",
+      "CONCURRENT TRANSACTIONS",
     );
+    expect(allowedOf("MATCH (n) WITH n AS CONCURRENT RETURN CONCURRENT").allowed).toBe(true);
   });
 
   test("a sequence typed in mixed case advises the backtick form as typed", () => {
