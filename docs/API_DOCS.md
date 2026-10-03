@@ -903,7 +903,7 @@ A request refused before the provider is called writes no maintenance event.
 An event also carries `engineUser`, the engine principal the connection acts as, when the provider implements the optional `engineUser()` method: on the completed, the failed (`success: false`) and the thrown rows alike.
 It is a user name and never any part of a secret.
 On the authoritative stdout line, `libredb.audit.v1`, it appears as `engine_user`, and the key is absent from every row whose provider names no engine principal.
-No shipped provider implements `engineUser()` yet.
+Milvus's provider implements `engineUser()`: the Milvus user name, or the word `token` when Password or token carries a token with User empty.
 
 **Maintenance Types:**
 
@@ -918,6 +918,8 @@ No shipped provider implements `engineUser()` yet.
 | `compact` | - | - | - | etcd: compact history to the current revision |
 | `defragment` | - | - | - | etcd: defragment the member the connection reaches |
 | `disarm` | - | - | - | etcd: disarm every raised alarm |
+| `load` | - | - | - | Milvus: load a collection into query-node memory, after a preview |
+| `release` | - | - | - | Milvus: release a collection, confirmed by typing its exact name |
 
 **Response (200 OK):**
 ```json
@@ -1950,7 +1952,7 @@ interface DatabaseConnection {
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'qdrant';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 

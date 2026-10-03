@@ -295,13 +295,13 @@ describe("docs/SECURITY.md states Qdrant's control, its limits and its plaintext
     expect(bullet).toContain(
       "A Qdrant API key or JWT over no TLS is refused unless the host is a loopback address or `localhost`, or an SSH tunnel carries the connection.",
     );
-    expect(SECURITY).toContain("etcd's, Neo4j's and Qdrant's providers keep the mode today");
+    expect(SECURITY).toContain("etcd's, Neo4j's, Milvus's and Qdrant's providers keep the mode today");
   });
 });
 
 describe("docs/SEED_CONNECTIONS.md names the Qdrant refusal", () => {
   test("Qdrant is a type the file takes, and its no-key refusal is stated", () => {
-    expect(SEEDS).toContain("`etcd`, `neo4j`, `qdrant`");
+    expect(SEEDS).toContain("`neo4j`, `milvus`, `qdrant`");
     expect(SEEDS).toContain(
       "Qdrant declares the second: a read-only Qdrant seed with no key is refused, because a Qdrant server without a key accepts any key or none ([providers/qdrant.md](providers/qdrant.md), section 4.2).",
     );
