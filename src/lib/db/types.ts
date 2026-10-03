@@ -439,6 +439,24 @@ export function offersCountQuery(capabilities: ProviderCapabilities | undefined)
 }
 
 /**
+ * Whether the result export menu offers SQL `INSERT` and `CREATE TABLE` DDL, asked by `BottomPanel` for both its
+ * Export and its Copy items (BACKLOG U69).
+ *
+ * Both formats write a table of rows for a SQL database. A result whose records are not rows of such a table
+ * cannot become one: a vector cell is written as quoted text into a `TEXT` column, a file that loads nowhere as a
+ * vector. A dialect declines them through its record's `offersSqlExport: false` in `QUERY_DIALECTS`
+ * (`src/lib/db/query-dialects.ts`).
+ *
+ * Everything else keeps them, unlike the row-menu gates above: an absent field, no dialect, a dialect with no
+ * record, and capabilities that have not arrived. The menu offered both to every engine before the field existed,
+ * so each of those answers is the menu as it was, and an export the user asks for writes a file from rows already
+ * on screen, which is no permission this gate guards.
+ */
+export function offersSqlExport(capabilities: ProviderCapabilities | undefined): boolean {
+  return dialectSpec(capabilities)?.offersSqlExport !== false;
+}
+
+/**
  * Whether the schema diagram (ERD) may be offered for this engine, asked by every entry point that opens
  * it: the sidebar button and the command palette item, in both shells.
  *

@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { storage } from "@/lib/storage";
+import { offersSqlExport } from "@/lib/db/types";
 
 /**
  * Every form a result can leave this panel in, in the order the menu offers them.
@@ -66,6 +67,9 @@ const RESULT_FORMATS: readonly {
   { format: "sql-insert", label: "SQL INSERT" },
   { format: "sql-ddl", label: "DDL (CREATE TABLE)" },
 ];
+
+/** The two formats that write a SQL table, offered only where the dialect says they apply (`offersSqlExport`, BACKLOG U69). */
+const SQL_TABLE_FORMATS: ReadonlySet<ResultExportFormat> = new Set<ResultExportFormat>(["sql-insert", "sql-ddl"]);
 
 export type BottomPanelMode =
   | "results"
@@ -320,6 +324,10 @@ export const BottomPanel = React.memo(function BottomPanel({
   // How much of the result an export would write — the count the button carries and
   // the shortfall the menu states. Derived here so both read the same numbers.
   const exportScope = describeExportScope(displayedResult ?? { rows: [] }, gridPageOffer !== undefined);
+  // One list for both menus, filtered once, so the file items and the clipboard items cannot disagree (#701).
+  const resultFormats = offersSqlExport(metadata?.capabilities)
+    ? RESULT_FORMATS
+    : RESULT_FORMATS.filter((entry) => !SQL_TABLE_FORMATS.has(entry.format));
 
   /**
    * Hands one format entry to whichever destination the user chose.
@@ -472,7 +480,7 @@ export const BottomPanel = React.memo(function BottomPanel({
                   </div>
                 )}
                 <DropdownMenuSeparator className="bg-hairline" />
-                {RESULT_FORMATS.map((entry) => (
+                {resultFormats.map((entry) => (
                   <DropdownMenuItem
                     key={`export-${entry.label}`}
                     onClick={() => runResultFormat(onExportResults, entry)}
@@ -488,7 +496,7 @@ export const BottomPanel = React.memo(function BottomPanel({
                   answer than a file does, having no name to carry a caveat.
                 */}
                 <DropdownMenuLabel className="text-xs font-normal text-fg-muted">To clipboard</DropdownMenuLabel>
-                {RESULT_FORMATS.map((entry) => (
+                {resultFormats.map((entry) => (
                   <DropdownMenuItem
                     key={`copy-${entry.label}`}
                     onClick={() => runResultFormat(onCopyResults, entry)}
