@@ -480,6 +480,38 @@ describe("connect", () => {
     }
   });
 
+  test("an overlapping connect awaits the attempt in flight: one client, none orphaned", async () => {
+    const { provider, transport } = setup();
+    const held = deferred<GraphServerInfo>();
+    transport.verify = () => held.promise;
+    const first = provider.connect();
+    const second = provider.connect();
+    held.resolve(SERVER);
+    await Promise.all([first, second]);
+    expect(transport.configs).toHaveLength(1);
+    expect(transport.closes).toBe(0);
+    expect(provider.isConnected()).toBe(true);
+    // Once settled, a connect is a reconnect again: it closes the one client and builds the next.
+    transport.verify = async () => SERVER;
+    await provider.connect();
+    expect([transport.configs.length, transport.closes]).toEqual([2, 1]);
+  });
+
+  test("an overlapping connect shares a failed attempt, and the next connect tries again", async () => {
+    const { provider, transport } = setup();
+    const held = deferred<GraphServerInfo>();
+    transport.verify = () => held.promise;
+    const first = rejectionOf(provider.connect());
+    const second = rejectionOf(provider.connect());
+    held.reject(new GraphClientError("connection", "unreachable"));
+    const [one, two] = await Promise.all([first, second]);
+    expect(one).toBe(two);
+    expect([transport.configs.length, transport.closes]).toEqual([1, 1]);
+    transport.verify = async () => SERVER;
+    await provider.connect();
+    expect(provider.isConnected()).toBe(true);
+  });
+
   test("disconnect before connect closes nothing", async () => {
     const { provider, transport } = setup();
     await provider.disconnect();

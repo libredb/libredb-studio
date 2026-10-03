@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D143, U17 · 87
+- [Drivers and connections](#drivers-and-connections) — D1-D144, U17 · 88
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U72 · 59
@@ -2033,6 +2033,16 @@ One container was chosen so that a statement can never run against a database th
 Found 2026-10-03 while designing the Neo4j provider.
 
 **Done when:** a connection lists every database the user may read as its containers, each statement runs on the database its tab names and on no other, the database a statement ran on is shown with its result, and a test drives two databases through one connection.
+
+### D144. Two first requests for one connection can orphan a connected provider
+
+`getOrCreateProvider` in `src/lib/db/factory.ts` awaits `providerCacheKey`, `createSSHTunnel` and `provider.connect()` between its cache lookup and its `providerCache.set`, and nothing records a creation in flight.
+Two requests that miss the cache for the same connection at once each build and connect a provider, and the later `providerCache.set` overwrites the earlier entry, whose provider is never disconnected and is out of reach of the idle sweep.
+It predates the Neo4j provider, but a Bolt provider now leaks a driver holding up to four pooled sockets rather than only HTTP handles; `GraphBaseProvider.connect` already makes an overlapping connect on one instance await the attempt in flight, which this race does not reach.
+
+Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
+
+**Done when:** concurrent `getOrCreateProvider` calls for one cache key share one creation, or the loser disconnects its provider and closes a tunnel it created, and a test drives two overlapping first calls with a provider that counts its connects and disconnects.
 
 ## Value interpolation
 

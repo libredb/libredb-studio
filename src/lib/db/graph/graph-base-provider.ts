@@ -182,6 +182,8 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   protected readonly profile: GraphEngineProfile;
   private readonly transport: GraphTransport;
   private session: GraphSession | null = null;
+  /** The connect attempt in flight, which an overlapping `connect()` awaits. */
+  private connecting: Promise<void> | null = null;
   /**
    * Statements in flight under the caller's id, so `cancelQuery` reaches them (spec 5.5). An id
    * holds a set: two runs sent under one id are both cancelled, never only the later one.
@@ -249,7 +251,20 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   // Lifecycle
   // ==========================================================================
 
-  public async connect(): Promise<void> {
+  /**
+   * An overlapping `connect()` awaits the attempt in flight rather than starting its own: two attempts would
+   * each build a client, and the second session written would orphan the first one's driver unclosed.
+   */
+  public connect(): Promise<void> {
+    if (this.connecting !== null) return this.connecting;
+    const attempt = this.connectOnce().finally(() => {
+      this.connecting = null;
+    });
+    this.connecting = attempt;
+    return attempt;
+  }
+
+  private async connectOnce(): Promise<void> {
     // A connect on a connected provider replaces the session, so the previous client is closed
     // first and its statements aborted: no driver is left open, and a failed reconnect leaves no
     // stale session behind. A close that fails is logged; the new connect is what the caller asked.

@@ -53,6 +53,7 @@ The constructor validates nothing and opens nothing, so a provider built from an
 Connectivity verification never touches that database, so this read is the first that does: a database the server does not hold (`Neo.ClientError.Database.DatabaseNotFound`) fails the connect, so Test Connection refuses a misspelled database name.
 Any other failed version read leaves the version unknown and does not fail the connection.
 A second `connect()` closes the previous driver first and aborts its statements.
+A `connect()` that overlaps one still in flight awaits that attempt instead of starting its own, so two calls build one driver.
 `disconnect()` aborts every statement in flight and closes the driver.
 
 ### 2.4 The client, and why
