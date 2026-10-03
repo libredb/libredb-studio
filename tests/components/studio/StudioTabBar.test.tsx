@@ -147,6 +147,22 @@ describe("StudioTabBar", () => {
     expect(icons).toEqual(["lucide-hash", "lucide-file-braces"]);
   });
 
+  test("a Cypher tab takes the icon every non-SQL query tab takes, and a SQL tab keeps its own (Neo4j spec 6.5)", () => {
+    // Correct as is: the last arm means "a query language that is not SQL", which Cypher is.
+    const props = createDefaultProps({
+      tabs: [
+        createTab({ id: "tab-1", name: "Query 1", type: "sql" }),
+        createTab({ id: "tab-2", name: "(:Person)", type: "cypher" }),
+      ],
+    });
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+
+    const icons = getAllByRole("tab").map(
+      (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
+    );
+    expect(icons).toEqual(["lucide-hash", "lucide-file-braces"]);
+  });
+
   // ── Click → activate tab ──────────────────────────────────────────────
 
   test("click on tab fires onSetActiveTabId with tab id", () => {

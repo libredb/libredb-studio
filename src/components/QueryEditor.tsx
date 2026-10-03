@@ -15,6 +15,9 @@ import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { registerEtcdLanguage } from "@/lib/editor/etcd-language";
 import { registerPromqlLanguage } from "@/lib/editor/promql-language";
+import { CYPHER_LANGUAGE_ID, registerCypherLanguage } from "@/lib/editor/cypher-language";
+import { cypherCompletionSchemaOf, registerCypherCompletionProvider } from "@/lib/editor/cypher-completions";
+import { graphPolicyProfileOf } from "@/lib/db/graph-policy-profiles";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 import { useEffectiveTheme } from "@/hooks/use-effective-theme";
@@ -72,7 +75,7 @@ interface QueryEditorProps {
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
   onContentChange?: (val: string) => void;
   onExplain?: () => void;
-  language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd";
+  language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
@@ -86,6 +89,8 @@ interface QueryEditorProps {
 
 interface ParsedTable {
   name: string;
+  /** The object's address; Cypher completion reads a label or relationship type from its last segment. */
+  path?: string[];
   rowCount?: number;
   columns?: Array<{
     name: string;
@@ -499,13 +504,14 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB, Redis and etcd command languages and PromQL (each idempotent)
+      // Register the LibreDB, Redis and etcd command languages, PromQL and Cypher (each idempotent)
       // so their tabs highlight correctly instead of being treated as JSON or SQL
-      // (#427, #1085, #1089).
+      // (#427, #1085, #1089, Neo4j spec 6.5).
       registerLibreDBLanguage(monacoInstance);
       registerRedisLanguage(monacoInstance);
       registerPromqlLanguage(monacoInstance);
       registerEtcdLanguage(monacoInstance);
+      registerCypherLanguage(monacoInstance);
 
       // Suppress Monaco's "Canceled" errors in console (with cleanup tracking)
       if (!originalConsoleErrorRef.current) {
@@ -546,6 +552,22 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         return () => disposable.dispose();
       }
     }, [monaco, language, schemaCompletionCache, completesMongoDB]);
+
+    // Cypher completion provider (Neo4j spec 6.5, SR6). Its names are read from the schema objects'
+    // kind-qualified paths, never from the SQL cache's lowercased table names, and its CALL and SHOW
+    // allowlists from the connected engine's policy profile, looked up by type as the SQL provider
+    // gets its dialect.
+    const graphPolicy = graphPolicyProfileOf(databaseType);
+    useEffect(() => {
+      if (monaco && language === CYPHER_LANGUAGE_ID) {
+        const disposable = registerCypherCompletionProvider(
+          monaco,
+          cypherCompletionSchemaOf(parsedSchema),
+          graphPolicy,
+        );
+        return () => disposable.dispose();
+      }
+    }, [monaco, language, parsedSchema, graphPolicy]);
 
     // Every model change reaches here: a keystroke, and equally the writes Format, Clear
     // and the imperative setValue make, since Monaco reports those through the same

@@ -74,6 +74,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { CYPHER_LANGUAGE_ID } from "@/lib/editor/cypher-language";
 import { ETCD_LANGUAGE_ID } from "@/lib/editor/etcd-language";
 import { PROMQL_LANGUAGE_ID } from "@/lib/editor/promql-language";
 import type { DatabaseType } from "@/lib/types";
@@ -288,6 +289,16 @@ describe("the installed editor's language ids", () => {
     expect(basic.has(ETCD_LANGUAGE_ID)).toBe(false);
     expect(rich).not.toContain(ETCD_LANGUAGE_ID);
     expect(core.has(ETCD_LANGUAGE_ID)).toBe(false);
+  });
+
+  test("no id the installed editor registers is graph-cypher, so the Cypher language's tokens provider is the one in charge (Neo4j spec 6.5)", () => {
+    // `registerCypherLanguage` returns early when its id is already registered, as `registerEtcdLanguage`
+    // does. The control is why the id is not `cypher`: the basic contribution ships a `cypher` of its own,
+    // and registering under that id would leave Monaco's tokenizer in charge of every Cypher tab.
+    expect(basic.has(CYPHER_LANGUAGE_ID)).toBe(false);
+    expect(rich).not.toContain(CYPHER_LANGUAGE_ID);
+    expect(core.has(CYPHER_LANGUAGE_ID)).toBe(false);
+    expect(basic.has("cypher")).toBe(true);
   });
 
   test("every declared sourceLanguage is an id the installed editor registers", async () => {

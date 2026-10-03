@@ -1939,6 +1939,87 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("etcd");
   });
 
+  // -----------------------------------------------------------------------
+  // Cypher (Neo4j spec 6.5)
+  // -----------------------------------------------------------------------
+
+  test("registers the graph-cypher language before the editor mounts, beside the other custom languages", () => {
+    render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "graph-cypher", value: "MATCH (n) RETURN n" })),
+    );
+    // The languages registered before it are the control: a missing "graph-cypher" is the component.
+    expect(capturedLanguageRegistrations).toContain("etcd");
+    expect(capturedLanguageRegistrations).toContain("graph-cypher");
+  });
+
+  describe("the Cypher completion provider registers for a graph-cypher editor only", () => {
+    type Provider = {
+      triggerCharacters?: string[];
+      provideCompletionItems: (model: unknown, position: unknown) => { suggestions: Array<{ label: string }> };
+    };
+    let cypherRegistrations: Array<{ languageId: string; provider: Provider; dispose: Mock<() => void> }> = [];
+    const graphSchema = JSON.stringify([
+      { name: "Person", kind: "label", path: ["neo4j", "(:Person)"], columns: [{ name: "name", type: "STRING" }] },
+      { name: "ACTED_IN", kind: "relationship_type", path: ["neo4j", "[:ACTED_IN]"], columns: [] },
+    ]);
+    const modelOf = (text: string) => ({
+      getValue: () => text,
+      getOffsetAt: () => text.length,
+      getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+    });
+
+    beforeEach(() => {
+      cypherRegistrations = [];
+      mockRegisterSQLCompletionProvider.mockClear();
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockUseMonacoReturn = {
+        Range: class {},
+        languages: {
+          CompletionItemKind: { Keyword: 17, Class: 5, Struct: 6, Field: 3, Function: 1 },
+          registerCompletionItemProvider: (languageId: string, provider: Provider) => {
+            const dispose = mock(() => {});
+            cypherRegistrations.push({ languageId, provider, dispose });
+            return { dispose };
+          },
+        },
+      };
+    });
+
+    test("a graph-cypher editor completes labels from the schema it holds and procedures from its engine's profile", () => {
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "graph-cypher", databaseType: "neo4j", schemaContext: graphSchema }),
+        ),
+      );
+      expect(cypherRegistrations.map((entry) => entry.languageId)).toEqual(["graph-cypher"]);
+      expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+      const provider = cypherRegistrations[0]!.provider;
+      const at = (text: string) =>
+        provider
+          .provideCompletionItems(modelOf(text), { lineNumber: 1, column: text.length + 1 })
+          .suggestions.map((item) => item.label);
+      expect(at("MATCH (n:")).toEqual(["Person"]);
+      expect(at("MATCH ()-[r:")).toEqual(["ACTED_IN"]);
+      expect(at("CALL ")).toContain("db.labels");
+    });
+
+    test("without a graph engine's type, CALL offers nothing, and a sql editor registers no Cypher completion", () => {
+      const { unmount } = render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "graph-cypher", schemaContext: graphSchema })),
+      );
+      const provider = cypherRegistrations[0]!.provider;
+      expect(provider.provideCompletionItems(modelOf("CALL "), { lineNumber: 1, column: 6 }).suggestions).toEqual([]);
+      unmount();
+      expect(cypherRegistrations[0]!.dispose).toHaveBeenCalledTimes(1);
+
+      cypherRegistrations = [];
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", databaseType: "neo4j" })));
+      expect(cypherRegistrations).toEqual([]);
+    });
+  });
+
   test("an etcd buffer runs whole, and draws no Format control and no SQL completions (#1089)", () => {
     // The provider reads the whole buffer as one command (#1089 5.1.2): a `;` inside a quoted value is
     // data, and a leading comment line is skipped, where the SQL splitter would cut the text at the `;`.
@@ -2139,6 +2220,7 @@ describe("QueryEditor", () => {
       ["redis", false],
       ["libredb", false],
       ["etcd", false],
+      ["graph-cypher", false],
       ["sql", true],
     ] as const;
     for (const [language, offered] of steps) {

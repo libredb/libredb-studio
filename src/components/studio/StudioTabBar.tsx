@@ -21,7 +21,7 @@ import { FileBraces, FileCode, Hash, Plus, X } from "lucide-react";
  * picks a tab from. Nothing errors if the arm is missing, which is exactly why it is tested.
  *
  * The last arm means "a query language that is not SQL", not "JSON": Redis and LibreDB commands
- * take it, and so do PromQL (#1085), Kafka's read request (#1088) and an etcdctl command (#1089),
+ * take it, and so do PromQL (#1085), Kafka's read request (#1088), an etcdctl command (#1089) and Cypher,
  * decided rather than defaulted and pinned in `tests/components/studio/StudioTabBar.test.tsx`.
  */
 function tabIcon(tab: StudioTabSummary): React.JSX.Element {

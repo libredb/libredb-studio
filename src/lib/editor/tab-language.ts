@@ -25,6 +25,11 @@ import type { QueryTab } from "@/lib/types";
  * `"etcd"` (#1089) has a rung of its own above the json rung for the same reason: an etcdctl command
  * line is no MongoDB document. It renders in the `etcd` language `etcd-language.ts` registers over the
  * provider's own lexer (#1089, section 3.3).
+ *
+ * `"cypher"` (Neo4j spec 6.5) has a rung of its own for PromQL's reason: Cypher declares no dialect
+ * and is not JSON, so without the rung a Neo4j tab would be typed `sql`. It renders in the
+ * `graph-cypher` language `cypher-language.ts` registers over the graph layer's own lexer; the id is not
+ * `cypher`, which Monaco's own bundle registers.
  */
 export function resolveTabType(capabilities?: ProviderCapabilities | null): QueryTab["type"] {
   if (capabilities?.queryDialect === "libredb") return "libredb";
@@ -33,18 +38,20 @@ export function resolveTabType(capabilities?: ProviderCapabilities | null): Quer
   if (capabilities?.queryDialect === "etcd") return "etcd";
   if (capabilities?.queryLanguage === "json") return "mongodb";
   if (capabilities?.queryLanguage === "promql") return "promql";
+  if (capabilities?.queryLanguage === "cypher") return "cypher";
   return "sql";
 }
 
-/** The Monaco language id a tab type renders in (#427, #1085, #1088, #1089). */
+/** The Monaco language id a tab type renders in (#427, #1085, #1088, #1089, Neo4j spec 6.5). */
 export function editorLanguageForTabType(
   type: QueryTab["type"],
-): "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" {
+): "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher" {
   if (type === "libredb") return "libredb";
   if (type === "redis") return "redis";
   if (type === "kafka") return "json";
   if (type === "etcd") return "etcd";
   if (type === "mongodb") return "json";
   if (type === "promql") return "promql";
+  if (type === "cypher") return "graph-cypher";
   return "sql";
 }

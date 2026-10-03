@@ -623,6 +623,18 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
     expect(validatePlanStatement(PROMQL, INVENTORY, "sql").guardViolation).toBe("NON_READ_STATEMENT");
   });
 
+  test("a Cypher draft is declined the same way: the reader speaks SQL and nothing else (Neo4j spec 6.5)", () => {
+    // Correct as a fall-through: `language !== "sql"` declines every language the guard cannot read.
+    const CYPHER = "MATCH (n:`Person`) RETURN n LIMIT 100";
+
+    expect(validatePlanStatement(CYPHER, INVENTORY, "cypher")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(CYPHER, null, "cypher").identifiers).toEqual({ kind: "not-applicable" });
+  });
+
   test("a Kafka read request is declined the same way: it is JSON, and the reader speaks SQL (#1088)", () => {
     // Kafka declares `queryLanguage: "json"`, and its dialect never reaches this guard: the language
     // alone answers not-applicable, which is correct for a read request as it is for MongoDB's JSON.

@@ -22,6 +22,10 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredLevels } from "@/lib/db/object-kinds";
+import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
+import { type GraphKindId, graphObjectSegment } from "@/lib/db/graph/objects";
+import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
+import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 
 // ============================================================================
 // Helpers
@@ -1893,5 +1897,67 @@ describe("the module's exports, for a PromQL connection (#1085)", () => {
       "quoteObjectPath",
       "shouldRefreshSchema",
     ]);
+  });
+});
+
+// ============================================================================
+// Cypher (Neo4j spec 6.5, SR5): a tree click writes a bounded Cypher read
+// ============================================================================
+
+/** The real provider's declaration: its constructor validates and opens nothing. */
+const neo4jCaps = new Neo4jProvider(CENSUS_CONNECTION.neo4j).getCapabilities();
+const graphPath = (kind: GraphKindId, name: string): string[] => ["neo4j", graphObjectSegment(kind, name)];
+
+describe("Cypher tree click and Generate Query (Neo4j spec 6.5)", () => {
+  test("a node label's click reads a bounded sample of its nodes, and never writes SQL", () => {
+    const text = generateTableQuery(graphPath("label", "Person"), neo4jCaps, sampleColumns);
+    expect(text).toBe("MATCH (n:`Person`) RETURN n LIMIT 100");
+    expect(text.startsWith("SELECT")).toBe(false);
+    // The control: the same path on an SQL declaration is the SELECT this arm keeps a graph tab from.
+    expect(generateTableQuery(graphPath("label", "Person"), makeCaps()).startsWith("SELECT")).toBe(true);
+  });
+
+  test("a relationship type's click reads its relationships with their ends", () => {
+    expect(generateTableQuery(graphPath("relationship_type", "ACTED_IN"), neo4jCaps)).toBe(
+      "MATCH (a)-[r:`ACTED_IN`]->(b) RETURN a, r, b LIMIT 100",
+    );
+  });
+
+  test("a label and a relationship type of one name are read as what they are (SR5)", () => {
+    expect(generateTableQuery(graphPath("label", "KNOWS"), neo4jCaps)).toBe("MATCH (n:`KNOWS`) RETURN n LIMIT 100");
+    expect(generateTableQuery(graphPath("relationship_type", "KNOWS"), neo4jCaps)).toBe(
+      "MATCH (a)-[r:`KNOWS`]->(b) RETURN a, r, b LIMIT 100",
+    );
+  });
+
+  test("a name with a space, a backtick or non-ASCII letters generates a read the read policy allows (Review focus 2)", () => {
+    for (const name of ["Weird Label", "Back`tick", "Şehir", "set"]) {
+      for (const kind of ["label", "relationship_type"] as const) {
+        const text = generateTableQuery(graphPath(kind, name), neo4jCaps);
+        expect({ name, kind, allowed: checkCypherRead(text, NEO4J_POLICY_PROFILE).allowed }).toEqual({
+          name,
+          kind,
+          allowed: true,
+        });
+      }
+    }
+  });
+
+  test("an index or a constraint has no generator in v1, so neither writes a statement (SR5)", () => {
+    expect(generateTableQuery(graphPath("index", "person_name"), neo4jCaps)).toBe("");
+    expect(generateTableQuery(graphPath("constraint", "person_key"), neo4jCaps)).toBe("");
+    expect(generateSelectQuery(graphPath("index", "person_name"), [], neo4jCaps)).toBe("");
+  });
+
+  test("Generate Query writes the click's read, the columns not spelled, and Count writes nothing", () => {
+    for (const path of [graphPath("label", "Person"), graphPath("relationship_type", "ACTED_IN")]) {
+      expect(generateSelectQuery(path, sampleColumns, neo4jCaps)).toBe(generateTableQuery(path, neo4jCaps));
+    }
+    expect(generators.generateCountQuery(graphPath("label", "Person"), neo4jCaps)).toBeNull();
+  });
+
+  test("quoteIdentifier writes a Cypher name in backticks, a backtick doubled", () => {
+    expect(quoteIdentifier("Person", neo4jCaps)).toBe("`Person`");
+    expect(quoteIdentifier("Back`tick", neo4jCaps)).toBe("`Back``tick`");
   });
 });

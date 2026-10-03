@@ -1,3 +1,5 @@
+import { cypherForSegment } from "@/lib/db/graph/cypher/generators";
+import { quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { declaredLevels } from "@/lib/db/object-kinds";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
@@ -80,6 +82,8 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
   // The JSON-language engines don't use SQL identifier quoting: MongoDB, and Redis, LibreDB, Kafka
   // and etcd, which declare a JSON dialect of their own (#1088, #1089).
   if (capabilities.queryLanguage === "json") return name;
+  // Cypher writes every name in backticks, a backtick doubled, as its generators do (Neo4j spec 6.5).
+  if (capabilities.queryLanguage === "cypher") return quoteCypherName(name);
 
   // An explicit declaration wins over the port heuristic below, because the port
   // stopped being a faithful proxy for the dialect: Elasticsearch and OpenSearch
@@ -677,6 +681,14 @@ export function generateTableQuery(
   if (capabilities.queryLanguage === "promql") {
     return metricSelector(tableName);
   }
+  // Cypher (Neo4j spec 6.5, SR5). A label or a relationship type is addressed by its kind-qualified
+  // segment, so the two of one name never read each other's rows: a label reads a bounded sample of its
+  // nodes and a relationship type its relationships with their ends, each name backticked. Without this
+  // arm a tree click would auto-execute `SELECT * FROM ...`. An index or a constraint has no generator
+  // in v1 and no click action (role `config`), so its segment writes no statement.
+  if (capabilities.queryLanguage === "cypher") {
+    return cypherForSegment(tableName) ?? "";
+  }
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++). The one SQL branch left, and it is about the PROJECTION: the
   // document key is not a column, so the grid has nothing to show without the alias.
@@ -887,6 +899,11 @@ export function generateSelectQuery(
       "# Every series of the metric as of now, one row per series:",
       selector,
     ].join("\n");
+  }
+  // Cypher (Neo4j spec 6.5): the click's read, which keeps its own `LIMIT 100` for the reason the SQL
+  // one does below. The columns are not spelled: a node is returned whole, its properties in one cell.
+  if (capabilities.queryLanguage === "cypher") {
+    return cypherForSegment(tableName) ?? "";
   }
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++): every field is reached through the keyspace alias, and the

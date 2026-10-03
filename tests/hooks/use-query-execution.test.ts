@@ -1277,6 +1277,43 @@ describe("useQueryExecution", () => {
     expect(JSON.parse(singleCall![1]!.body as string).sql).toBe(buffer);
   });
 
+  test("executeQuery keeps a Cypher buffer on /api/db/query whole, semicolons and all (Neo4j spec 6.5)", async () => {
+    // Correct as is: `dialectIsSql` is false for every declared language but SQL. The buffer reaches the
+    // provider as written, whose read policy reads it with the Cypher lexer and refuses a second statement
+    // by name, rather than the SQL splitter cutting it under the connection's SQL grammar.
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const buffer = "// one; two\nMATCH (n) RETURN n;\nMATCH (m) RETURN m";
+    const params = createDefaultParams({
+      metadata: {
+        ...mockMetadata,
+        capabilities: {
+          ...mockMetadata.capabilities,
+          queryLanguage: "cypher",
+          supportsExplain: false,
+          explainFormat: undefined,
+        },
+      },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery(buffer);
+    });
+
+    const multiCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query"),
+    );
+    expect(multiCall).toBeUndefined();
+    const singleCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(JSON.parse(singleCall![1]!.body as string).sql).toBe(buffer);
+  });
+
   test("executeQuery keeps a Kafka buffer on /api/db/query whole, semicolons and all (#1088)", async () => {
     // A Kafka tab's whole buffer is ONE read request, which the provider parses as JSON. Under the
     // connection's SQL grammar the `;` below separates two statements, so a splitter that ran
