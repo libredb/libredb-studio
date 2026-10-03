@@ -337,7 +337,7 @@ None: `supportsMaintenance` is false, no operation is declared, and a maintenanc
 ## 9. Capabilities & labels
 
 `queryLanguage: "cypher"` with no `queryDialect`, `defaultPort: 7687`, `enforcesReadOnly: true`, `supportsMaintenance: false`, `statementTerminator: "none"`, one container level (`Database`), the four kinds of section 6.1, `schemaRefreshPattern: "(?!)"`, which no statement matches, and `false` for explain, external query limiting, table creation, inline row edits, result pagination, transactions, connection strings, foreign keys and derived groupings.
-A label row is a "node label" whose rows are each a "node"; its read is "Match Nodes" and its generator "Generate Cypher".
+Each object of the tree is a "graph object", the noun plan mode counts the whole inventory under, and a label's rows are each a "node"; its read is "Match Nodes" and its generator "Generate Cypher".
 The editor's Cypher language is the shared lexer as a Monaco tokens provider, with completion of the schema's labels and relationship types, the allowlisted procedures after `CALL` and the allowed forms after `SHOW`; there is no Cypher formatter, so the SQL Format action does not apply to a Cypher tab.
 
 ## 10. Error handling

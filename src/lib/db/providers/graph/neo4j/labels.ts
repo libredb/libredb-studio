@@ -27,8 +27,9 @@ const STATEMENT_LANGUAGE = [
 
 export function neo4jLabels(): ProviderLabels {
   return {
-    entityName: "node label",
-    entityNamePlural: "node labels",
+    // The noun plan mode counts the whole inventory under: labels, relationship types, indexes and constraints.
+    entityName: "graph object",
+    entityNamePlural: "graph objects",
     rowName: "node",
     rowNamePlural: "nodes",
     selectAction: "Match Nodes",

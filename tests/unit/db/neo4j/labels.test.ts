@@ -12,9 +12,11 @@ const STATEMENT_LANGUAGE =
 describe("neo4jLabels", () => {
   const labels = neo4jLabels();
 
-  test("names node labels and nodes", () => {
-    expect(labels.entityName).toBe("node label");
-    expect(labels.entityNamePlural).toBe("node labels");
+  // The inventory is labels, relationship types, indexes and constraints, and plan mode counts them all
+  // under this noun ("14 graph objects read"), so it names the four kinds, never only the first.
+  test("names graph objects and nodes", () => {
+    expect(labels.entityName).toBe("graph object");
+    expect(labels.entityNamePlural).toBe("graph objects");
     expect(labels.rowName).toBe("node");
     expect(labels.rowNamePlural).toBe("nodes");
   });
