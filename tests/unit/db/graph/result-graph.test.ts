@@ -421,19 +421,20 @@ describe("walk depth", () => {
 
 describe("without Intl.Segmenter", () => {
   test("the module loads, finds graph values and still cuts captions by code point", async () => {
-    const segmenter = Intl.Segmenter;
+    // A query string makes bun evaluate the module afresh, with no segmenter in reach.
+    const freshCopy = new URL("../../../../src/lib/db/graph/result-graph.ts?without-segmenter", import.meta.url).href;
+    const segmenter = Object.getOwnPropertyDescriptor(Intl, "Segmenter");
+    if (!segmenter) throw new Error("expected this runtime to have Intl.Segmenter");
     Reflect.deleteProperty(Intl, "Segmenter");
     try {
-      const fresh: typeof import("@/lib/db/graph/result-graph") = await import(
-        "../../../../src/lib/db/graph/result-graph.ts?without-segmenter"
-      );
+      const fresh: typeof import("@/lib/db/graph/result-graph") = await import(freshCopy);
       expect(fresh.hasGraphValues([{ x: a }], ["x"])).toBe(true);
       expect(fresh.captionOf(node("n:1", ["L"], { name: "Alice" }))).toBe("Alice");
       expect(fresh.captionOf(node("n:1", ["L"], { name: `${"x".repeat(23)}\u{1F600}\u{1F600}` }))).toBe(
         `${"x".repeat(23)}…`,
       );
     } finally {
-      Intl.Segmenter = segmenter;
+      Object.defineProperty(Intl, "Segmenter", segmenter);
     }
   });
 });

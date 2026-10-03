@@ -301,6 +301,7 @@ describe("GraphView: masking, exactly the grid's rule", () => {
             const expected = maskingInForce(userRole, maskingConfig, maskingEnabled);
             outcomes.add(expected);
             h = harness();
+            // oxlint-disable-next-line no-await-in-loop -- one view at a time, so each state's canvas is its own.
             const { cy, unmount } = await mount({ result, userRole, maskingConfig, maskingEnabled });
             expect({
               userRole,
