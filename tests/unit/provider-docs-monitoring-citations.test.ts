@@ -205,6 +205,7 @@ const NAMED_CITATIONS = [
       "rollbackTransaction",
       "isInTransaction",
       "queryInTransaction",
+      "readColumns",
       "listContainers",
       "countObjects",
       "listObjects",

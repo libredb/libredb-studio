@@ -345,6 +345,7 @@ fifth of five instances of one gap, and the fix already exists in the codebase.
 Amended 2026-09-23: the fix now exists twice, and the second copy is deliberate.
 Amended 2026-09-25: the mapping now exists three times, the third in the Kafka provider (#1088), deliberate for the same reason.
 Amended 2026-09-30: the mapping now exists four times, the fourth in the etcd provider (#1089), `connection-options.ts`, deliberate for the same reason; like Kafka's it is a mapping only, over grpc-js's own TLS, and it adds the IP-identity rule of the etcd design's E5.
+Amended 2026-10-03: the shared helper this entry asks for now exists outside any provider directory, `src/lib/db/http/node-transport.ts`: `createNodeTransport` is the request path for plaintext and TLS alike, built on the Prometheus shape with `rejectRedirect` on both, and `nodeTlsMaterial` is the one TLS mapping a REST provider takes, so later providers reuse it instead of adding a copy; no provider uses it yet, the Qdrant provider will be its first consumer, and moving Couchbase and Prometheus onto it, and the five `fetch` transports, stays open under this entry.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global

@@ -1711,6 +1711,9 @@ describe("an Oracle column's declared type reaches the DDL (#1139)", () => {
         { name: "C_FLOAT", type: "FLOAT(10)", baseType: "FLOAT", nullable: true, isPrimary: false },
         { name: "C_TIMESTAMP", type: "TIMESTAMP(3)", nullable: true, isPrimary: false },
         { name: "C_DATE", type: "DATE", nullable: true, isPrimary: false },
+        { name: "C_UROWID", type: "UROWID(100)", baseType: "UROWID", nullable: true, isPrimary: false },
+        // 26ai only, so it is not in the fixture: tests/live/oracle-column-type.ts creates it.
+        { name: "V_3_FLOAT32", type: "VECTOR(3,FLOAT32,DENSE)", baseType: "VECTOR", nullable: true, isPrimary: false },
       ],
       indexes: [],
     },
@@ -1729,6 +1732,10 @@ describe("an Oracle column's declared type reaches the DDL (#1139)", () => {
     expect(sql).toContain(`"C_FLOAT" FLOAT(10)`);
     expect(sql).toContain(`"C_TIMESTAMP" TIMESTAMP(3)`);
     expect(sql).toContain(`"C_DATE" DATE`);
+    // #1209: a bare UROWID is accepted, and creates a UROWID(4000).
+    expect(sql).toContain(`"C_UROWID" UROWID(100)`);
+    // A bare VECTOR is accepted too, and creates a VECTOR(*,*,DENSE).
+    expect(sql).toContain(`"V_3_FLOAT32" VECTOR(3,FLOAT32,DENSE)`);
     // The defect this replaces: a bare DATA_TYPE. `CREATE TABLE t (x VARCHAR2)` is ORA-00906.
     expect(sql).not.toMatch(/"C_VARCHAR2" VARCHAR2[^(]/);
   });

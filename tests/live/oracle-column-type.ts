@@ -29,6 +29,13 @@
  * column per row of the rule in `docs/providers/oracle.md` §7. It is NOT in `bun run test`: the
  * runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  *
+ * THE VECTOR CASE (#1209). `VECTOR` is a 23ai type, and the compose image is 21c, so the fixture
+ * cannot hold it. On 23ai or later this script creates its own vector table, runs steps 1 to 3
+ * over it with `VECTOR_INFO` in the compared row, and requires that the `DATA_TYPE`-only
+ * definition, which the server accepts, creates different columns. On an older server it prints
+ * that it skipped the case. There, steps 1 to 4 also show that neither read fails on the
+ * `VECTOR_INFO` column the server does not have.
+ *
  *   LIBREDB_LIVE_ORACLE_URL=oracle://app:Password123!@127.0.0.1:1521/XEPDB1 \
  *     bun tests/live/oracle-column-type.ts
  *
@@ -52,6 +59,28 @@ const SHAPE_SQL = `SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, D
          FROM USER_TAB_COLUMNS
          WHERE TABLE_NAME = :1
          ORDER BY COLUMN_ID`;
+
+/** The same, plus `VECTOR_INFO`, which is the only column that holds a vector's format (#1209). */
+const VECTOR_SHAPE_SQL = `SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, CHAR_LENGTH, CHAR_USED,
+                VECTOR_INFO
+         FROM USER_TAB_COLUMNS
+         WHERE TABLE_NAME = :1
+         ORDER BY COLUMN_ID`;
+
+/**
+ * The vector columns #1209 names: the bare type, a fixed dimension count and format, a free
+ * dimension count, a BINARY format, and a sparse vector.
+ */
+const VECTOR_COLUMNS = [
+  `"V_DEFAULT" VECTOR`,
+  `"V_3_FLOAT32" VECTOR(3, FLOAT32)`,
+  `"V_ANY_FLOAT64" VECTOR(*, FLOAT64)`,
+  `"V_16_BINARY" VECTOR(16, BINARY)`,
+  `"V_SPARSE" VECTOR(100, FLOAT32, SPARSE)`,
+];
+
+/** The first release with the `VECTOR` type is 23ai. `PRODUCT_COMPONENT_VERSION.VERSION_FULL` is `21.3.0.0.0` on 21c XE. */
+const FIRST_VECTOR_MAJOR = 23;
 
 function url(): URL {
   const raw = process.env.LIBREDB_LIVE_ORACLE_URL;
@@ -81,8 +110,8 @@ function connectionOf(parsed: URL): DatabaseConnection {
 
 type Row = Record<string, unknown>;
 
-async function shape(conn: oracledb.Connection, table: string): Promise<Row[]> {
-  const result = await conn.execute(SHAPE_SQL, [table], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+async function shape(conn: oracledb.Connection, table: string, sql = SHAPE_SQL): Promise<Row[]> {
+  const result = await conn.execute(sql, [table], { outFormat: oracledb.OUT_FORMAT_OBJECT });
   return (result.rows ?? []) as Row[];
 }
 
@@ -106,6 +135,7 @@ async function replayGenerated(
   columns: readonly ColumnSchema[],
   table: string,
   original: readonly Row[],
+  shapeSql = SHAPE_SQL,
 ): Promise<string[]> {
   const target: StoredObject[] = [{ name: table, columns: [...columns], indexes: [] }];
   const sql = generateMigrationSQL(diffSchemas([], target), "oracle");
@@ -134,7 +164,7 @@ async function replayGenerated(
       }
     }
     if (ran > 0 && failures.length === 0) {
-      const replayed = await shape(conn, table);
+      const replayed = await shape(conn, table, shapeSql);
       if (replayed.length !== original.length) {
         failures.push(`the replayed table has ${replayed.length} columns, and the fixture has ${original.length}.`);
       }
@@ -159,6 +189,114 @@ async function replayGenerated(
   // A run that replayed NOTHING would pass every assertion above, so it is a failure: the
   // generator emitted no CREATE TABLE, and this half of the guard measured nothing.
   if (ran === 0) failures.push(`the migration generator produced no CREATE TABLE to replay:\n${sql}`);
+  return failures;
+}
+
+/** Step 1: both reads agree, and `baseType` is DATA_TYPE exactly where `type` differs from it. */
+function checkReads(
+  single: readonly ColumnSchema[],
+  bulk: readonly ColumnSchema[] | undefined,
+  original: readonly Row[],
+): string[] {
+  const failures: string[] = [];
+  const dataType = new Map(original.map((row) => [String(row.COLUMN_NAME), String(row.DATA_TYPE)]));
+  if (JSON.stringify(single) !== JSON.stringify(bulk)) {
+    failures.push(
+      `describeObject() and describeObjects() disagree:\n${JSON.stringify(single)}\n${JSON.stringify(bulk)}`,
+    );
+  }
+  for (const column of single) {
+    const family = dataType.get(column.name);
+    console.log(`${column.name}: DATA_TYPE=${family} type=${column.type} baseType=${column.baseType}`);
+    const wantBase = column.type === family ? undefined : family;
+    if (column.baseType !== wantBase) {
+      failures.push(
+        `${column.name} has baseType ${JSON.stringify(column.baseType)}, expected ${JSON.stringify(wantBase)}. ` +
+          `baseType is DATA_TYPE, and it is absent exactly where the declaration IS DATA_TYPE.`,
+      );
+    }
+  }
+  return failures;
+}
+
+/**
+ * The vector case (#1209), on a server that has the `VECTOR` type.
+ *
+ * `VECTOR_INFO` is the only dictionary column that holds a vector's format, so it is in the
+ * compared row. The control is different from the fixture's: a bare `VECTOR` is ACCEPTED, so
+ * the `DATA_TYPE`-only definition is replayed and must create a different column for every
+ * vector declared with a size.
+ */
+async function probeVectors(conn: oracledb.Connection, provider: OracleProvider, owner: string): Promise<string[]> {
+  const version = await conn.execute("SELECT VERSION_FULL FROM PRODUCT_COMPONENT_VERSION", [], {
+    outFormat: oracledb.OUT_FORMAT_OBJECT,
+  });
+  const full = String(((version.rows ?? []) as Row[])[0]?.VERSION_FULL);
+  if (Number(full.split(".")[0]) < FIRST_VECTOR_MAJOR) {
+    console.log(
+      `\nSKIPPED the VECTOR case: this server is ${full}, and the VECTOR type ` +
+        `arrived in ${FIRST_VECTOR_MAJOR}ai. Both reads above ran without VECTOR_INFO.`,
+    );
+    return [];
+  }
+
+  const failures: string[] = [];
+  const table = `LIBREDB_VECTOR_PROBE_${process.pid}`;
+  console.log(`\n=== the VECTOR case, on ${table} ===`);
+  try {
+    // Create table with 5 test vector columns
+    await conn.execute(`CREATE TABLE "${table}" (${VECTOR_COLUMNS.join(", ")})`);
+    const original = await shape(conn, table, VECTOR_SHAPE_SQL);
+    for (const row of original) console.log(`${String(row.COLUMN_NAME)}: VECTOR_INFO=${String(row.VECTOR_INFO)}`);
+
+    const single = await provider.describeObject([owner, table], "table");
+    const batch = await provider.describeObjects([owner], "table");
+    const bulk = batch.details.find((detail) => detail.path[1] === table);
+    failures.push(...checkReads(single.columns, bulk?.columns, original));
+    for (const column of single.columns) {
+      if (column.baseType !== "VECTOR") failures.push(`${column.name} read back as ${column.type}, without its size.`);
+    }
+
+    failures.push(
+      ...(await replayGenerated(
+        conn,
+        single.columns,
+        `LIBREDB_VECTOR_REPLAY_${process.pid}`,
+        original,
+        VECTOR_SHAPE_SQL,
+      )),
+    );
+
+    // The control: the DATA_TYPE-only definition is accepted, and creates different columns.
+    const familyOnly = `LIBREDB_VECTOR_FAMILY_${process.pid}`;
+    try {
+      await conn.execute(
+        `CREATE TABLE "${familyOnly}" (${original.map((row) => `"${String(row.COLUMN_NAME)}" VECTOR`).join(", ")})`,
+      );
+      const created = await shape(conn, familyOnly, VECTOR_SHAPE_SQL);
+      for (const [index, want] of original.entries()) {
+        const got = created[index];
+        if (want.COLUMN_NAME === "V_DEFAULT") continue;
+        if (got?.VECTOR_INFO === want.VECTOR_INFO) {
+          failures.push(
+            `the DATA_TYPE-only definition created ${String(want.COLUMN_NAME)} with the declared VECTOR_INFO ` +
+              `${String(want.VECTOR_INFO)}, so this control no longer shows what the VECTOR_INFO reading adds.`,
+          );
+        } else {
+          console.log(
+            `the DATA_TYPE-only definition created ${String(want.COLUMN_NAME)} as ${String(got?.VECTOR_INFO)}, ` +
+              `not ${String(want.VECTOR_INFO)}, as it must.`,
+          );
+        }
+      }
+    } finally {
+      await dropQuietly(conn, familyOnly);
+    }
+  } catch (error) {
+    failures.push(`the VECTOR case could not run: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    await dropQuietly(conn, table);
+  }
   return failures;
 }
 
@@ -201,23 +339,7 @@ async function probe(): Promise<string[]> {
     }
 
     // 1: both reads agree, and `baseType` is DATA_TYPE exactly where `type` differs from it.
-    const dataType = new Map(original.map((row) => [String(row.COLUMN_NAME), String(row.DATA_TYPE)]));
-    if (JSON.stringify(single.columns) !== JSON.stringify(bulk.columns)) {
-      failures.push(
-        `describeObject() and describeObjects() disagree:\n${JSON.stringify(single.columns)}\n${JSON.stringify(bulk.columns)}`,
-      );
-    }
-    for (const column of single.columns) {
-      const family = dataType.get(column.name);
-      console.log(`${column.name}: DATA_TYPE=${family} type=${column.type} baseType=${column.baseType}`);
-      const wantBase = column.type === family ? undefined : family;
-      if (column.baseType !== wantBase) {
-        failures.push(
-          `${column.name} has baseType ${JSON.stringify(column.baseType)}, expected ${JSON.stringify(wantBase)}. ` +
-            `baseType is DATA_TYPE, and it is absent exactly where the declaration IS DATA_TYPE.`,
-        );
-      }
-    }
+    failures.push(...checkReads(single.columns, bulk.columns, original));
 
     // 2 and 3: the generated CREATE TABLE is accepted, and it creates the same columns.
     failures.push(...(await replayGenerated(conn, single.columns, `LIBREDB_TYPE_REPLAY_${process.pid}`, original)));
@@ -240,6 +362,8 @@ async function probe(): Promise<string[]> {
     } finally {
       await dropQuietly(conn, refusedTable);
     }
+
+    failures.push(...(await probeVectors(conn, provider, owner)));
   } finally {
     await provider.disconnect();
     await conn.close();
@@ -259,5 +383,6 @@ if (failures.length > 0) {
 console.log(
   "Both column reads report the declaration with DATA_TYPE beside it, the generated CREATE TABLE was accepted " +
     "by the server that supplied its columns and created the same columns, and the DATA_TYPE-only definition it " +
-    "replaces was refused with ORA-00906.",
+    "replaces was refused with ORA-00906. On 23ai or later, the same holds for the VECTOR columns, whose " +
+    "DATA_TYPE-only definition creates different columns.",
 );

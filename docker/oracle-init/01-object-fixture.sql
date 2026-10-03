@@ -73,6 +73,10 @@ CREATE INDEX app.app_orders_total_ix ON app.app_orders (total);
 -- and BINARY_DOUBLE columns are the controls: DATA_TYPE already is their declaration.
 -- tests/live/oracle-column-type.ts replays the generated CREATE TABLE and compares the new
 -- table's ALL_TAB_COLUMNS rows with these.
+--
+-- The two UROWID columns are #1209: DATA_TYPE leaves out their size, and a bare UROWID is
+-- created with DATA_LENGTH 4000. This image is 21c, which has no VECTOR type, so the live
+-- guard creates its own vector table on 23ai or later.
 CREATE TABLE app.column_types (
   c_varchar2       VARCHAR2(20),
   c_varchar2_byte  VARCHAR2(20 BYTE),
@@ -96,7 +100,9 @@ CREATE TABLE app.column_types (
   c_date           DATE,
   c_clob           CLOB,
   c_blob           BLOB,
-  c_binary_double  BINARY_DOUBLE
+  c_binary_double  BINARY_DOUBLE,
+  c_urowid         UROWID(100),
+  c_urowid_default UROWID
 );
 
 CREATE TABLE reporting.report_daily (

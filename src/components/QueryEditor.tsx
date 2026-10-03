@@ -7,7 +7,7 @@ import type * as Monaco from "monaco-editor";
 import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { format } from "sql-formatter";
+import { formatterForLanguage } from "@/lib/editor/dialect-editors";
 import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
 import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
 import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
@@ -310,32 +310,18 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       return { tableItems, columnMap, allColumns };
     }, [parsedSchema]);
 
+    // The formatter of the tab's language, from its `DIALECT_EDITORS` record: SQL's, the JSON one MongoDB and
+    // Kafka share, or none, in which case the toolbar draws no Format button and the shortcut does nothing.
+    const formatter = formatterForLanguage(language);
+
     const handleFormat = () => {
       if (!editorRef.current) return;
       const currentValue = editorRef.current.getValue();
       if (!currentValue) return;
+      if (formatter === undefined) return;
 
       try {
-        let formatted: string;
-        if (language === "json") {
-          // JSON formatting, for MongoDB queries and Kafka read requests alike. A read request is
-          // read from JSON.parse's value alone, so its formatted text reads as the typed one (#1088).
-          const parsed = JSON.parse(currentValue);
-          formatted = JSON.stringify(parsed, null, 2);
-        } else if (language === "sql") {
-          formatted = format(currentValue, {
-            language: "postgresql",
-            keywordCase: "upper",
-            dataTypeCase: "upper",
-            indentStyle: "tabularLeft",
-            logicalOperatorNewline: "before",
-            expressionWidth: 100,
-            tabWidth: 2,
-            linesBetweenQueries: 2,
-          });
-        } else {
-          return;
-        }
+        const formatted = formatter(currentValue);
         editorRef.current.setValue(formatted);
         onChange?.(formatted);
       } catch (e) {
@@ -644,7 +630,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
             </Button>
           )}
 
-          {(language === "sql" || language === "json") && (
+          {formatter !== undefined && (
             <Button
               variant="ghost"
               size="sm"

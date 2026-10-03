@@ -1,6 +1,7 @@
 import { cypherForSegment } from "@/lib/db/graph/cypher/generators";
 import { quoteCypherName } from "@/lib/db/graph/cypher/quote";
 import { declaredLevels } from "@/lib/db/object-kinds";
+import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
@@ -598,6 +599,80 @@ export interface GeneratorScope {
 }
 
 /**
+ * What one query dialect writes for a tree click (`table`, run on the user's behalf) and for "Generate Query"
+ * (`select`, written into a tab and not run), each from the object's path.
+ */
+export interface DialectGenerators {
+  readonly table: (
+    path: readonly string[],
+    columns: readonly ColumnSchema[] | undefined,
+    scope: GeneratorScope | undefined,
+  ) => string;
+  readonly select: (
+    path: readonly string[],
+    columns: readonly ColumnSchema[],
+    scope: GeneratorScope | undefined,
+  ) => string;
+}
+
+/**
+ * Every query dialect's generators, read by `generateTableQuery` and `generateSelectQuery` BEFORE their JSON arm:
+ * each dialect declares `queryLanguage: "json"` too, and without its record a tree click auto-executes a MongoDB
+ * `find` its provider refuses (#427, #1088, #1089). A `Record` over `QueryDialect`, so a dialect added to the
+ * union does not compile until it has its generators. Module-internal: the two generators are its only readers,
+ * and this module's export list is pinned (`tests/unit/lib/query-generators.test.ts`).
+ */
+const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Object.freeze({
+  // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL and not MongoDB JSON. "Scan"
+  // lists everything under the group's prefix, and "Scan Keys" AUTO-EXECUTES, so a newline in the name, which
+  // used to leave a second, plausible command one "Run Selected" away, gets the shared refusal (U11). "Generate
+  // Command" writes an explanatory cheatsheet, a use-case comment above each command and every command line a
+  // concrete, directly runnable example; the provider skips `#` comment and blank lines, so running the whole
+  // buffer runs its first real command.
+  libredb: {
+    table: (path) => {
+      const { isPrefixGroup, base } = prefixGroup(objectSegment(path));
+      const note = libredbNewlineNote(base);
+      if (note !== null) return note;
+      return isPrefixGroup ? `prefix ${base}` : `get ${base}`;
+    },
+    select: (path, columns) => libredbCheatsheet(objectSegment(path), columns),
+  },
+  // Redis speaks its own command grammar, and it silently got MongoDB documents its driver answered with HTTP 400
+  // before it had a record (#427). A prefix group is not addressable (`tablesAreDerivedGroupings`), so it always
+  // SCANs; a bare key gets the reader its sampled type calls for, or `TYPE` when unknown.
+  redis: {
+    table: (path, columns) => {
+      const { isPrefixGroup, base } = prefixGroup(objectSegment(path));
+      if (isPrefixGroup) return redisScan(base);
+      const keyType = redisKeyType(columns);
+      return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(base) : ["TYPE", base]);
+    },
+    select: (path, columns) => redisCheatsheet(objectSegment(path), columns),
+  },
+  // Kafka reads a topic through a JSON read request (#1088 3.3), and the name goes through JSON.stringify with the
+  // rest, so no topic name leaves its string. "Generate Query" writes ONE read request, because the tab's whole
+  // buffer is sent as one request (`handleGenerateSelect` in use-tab-manager.ts) and JSON has no comments to hold
+  // the other forms: it names a partition and reads it from its earliest offset, which exists on any retention,
+  // and the result's `offset` column shows the offsets the `{"offset": n}` form takes. The offset and timestamp
+  // forms are documented in docs/providers/kafka.md. The columns are the fields each message comes back with, not
+  // keys of the request, so none is written.
+  kafka: {
+    table: (path) => JSON.stringify({ topic: objectSegment(path), from: "latest", limit: 50 }, null, 2),
+    select: (path) =>
+      JSON.stringify({ topic: objectSegment(path), partition: 0, from: "earliest", limit: 50 }, null, 2),
+  },
+  // etcd reads a group through an etcdctl command (#1089, section 6.4). A row is one group, so the click reads its
+  // prefix, or the first piece of it this connection may read, bounded by the command's own `--limit`; "Generate
+  // Command" writes that read on the first line and the other forms as comments below it. A group's columns are
+  // the fixed shape of a get row, so none reaches the text.
+  etcd: {
+    table: (path, _columns, scope) => etcdReadText(objectSegment(path), scope),
+    select: (path, _columns, scope) => etcdCommandText(objectSegment(path), scope),
+  },
+});
+
+/**
  * The statement behind "Select Top 50", the one a CLICK on a tree row runs (#789).
  *
  * It takes the object's PATH, because that is what addresses an object; `name` is what
@@ -632,40 +707,9 @@ export function generateTableQuery(
   scope?: GeneratorScope,
 ): string {
   const tableName = objectSegment(path);
-  // LibreDB speaks its own command grammar (get/put/delete/prefix/range), not SQL
-  // and not MongoDB JSON. "Scan" lists everything under the group's prefix.
-  if (capabilities.queryDialect === "libredb") {
-    const { isPrefixGroup, base } = prefixGroup(tableName);
-    // "Scan Keys" AUTO-EXECUTES, and a newline in the name used to leave a second,
-    // plausible command sitting in the editor one "Run Selected" away (U11).
-    const note = libredbNewlineNote(base);
-    if (note !== null) return note;
-    return isPrefixGroup ? `prefix ${base}` : `get ${base}`;
-  }
-  // Redis speaks its own command grammar. It must be checked BEFORE the JSON
-  // branch below: it declares `queryLanguage: "json"` too, so it silently got
-  // MongoDB documents its driver answered with HTTP 400 (#427). A prefix group
-  // is not addressable (`tablesAreDerivedGroupings`), so it always SCANs; a bare
-  // key gets the reader its sampled type calls for, or `TYPE` when unknown.
-  if (capabilities.queryDialect === "redis") {
-    const { isPrefixGroup, base } = prefixGroup(tableName);
-    if (isPrefixGroup) return redisScan(base);
-    const keyType = redisKeyType(columns);
-    return renderRedisCommand(keyType ? REDIS_COMMANDS[keyType].read(base) : ["TYPE", base]);
-  }
-  // Kafka reads a topic through a JSON read request, not a MongoDB document: without
-  // this arm a tree click would auto-execute a `find` the provider refuses (#1088 3.3).
-  // The name goes through JSON.stringify with the rest, so no topic name leaves its string.
-  if (capabilities.queryDialect === "kafka") {
-    return JSON.stringify({ topic: tableName, from: "latest", limit: 50 }, null, 2);
-  }
-  // etcd reads a group through an etcdctl command, not a MongoDB document: without this arm a tree
-  // click would auto-execute a `find` the provider refuses (#1089, section 6.4). A row is one group,
-  // so the click reads its prefix, or the first piece of it this connection may read, bounded by the
-  // command's own `--limit`.
-  if (capabilities.queryDialect === "etcd") {
-    return etcdReadText(tableName, scope);
-  }
+  // A query dialect's own command, from its `DIALECT_GENERATORS` record, BEFORE the JSON arm below.
+  const dialect = registeredDialect(capabilities);
+  if (dialect !== undefined) return DIALECT_GENERATORS[dialect].table(path, columns, scope);
   if (capabilities.queryLanguage === "json") {
     return JSON.stringify(
       { ...jsonCommandAddress(path, capabilities), operation: "find", filter: {}, options: { limit: 50 } },
@@ -831,31 +875,9 @@ export function generateSelectQuery(
   scope?: GeneratorScope,
 ): string {
   const tableName = objectSegment(path);
-  // LibreDB: emit an explanatory cheatsheet — a use-case comment above each
-  // command — where every command line is a concrete, directly-runnable example
-  // (so "Run Selected" on any line works as-is). The provider skips `#` comment
-  // and blank lines, so running the whole buffer runs its first real command.
-  if (capabilities.queryDialect === "libredb") {
-    return libredbCheatsheet(tableName, columns);
-  }
-  if (capabilities.queryDialect === "redis") {
-    return redisCheatsheet(tableName, columns);
-  }
-  // Kafka (#1088): ONE read request, because the tab's whole buffer is sent as one request
-  // (`handleGenerateSelect` in use-tab-manager.ts) and JSON has no comments to hold the other forms.
-  // The click reads the latest messages; this names a partition and reads it from its earliest
-  // offset, which exists on any retention, and the result's `offset` column shows the offsets the
-  // `{"offset": n}` form takes. The offset and timestamp forms are documented in
-  // docs/providers/kafka.md. The columns are the fields each message comes back with, not keys of
-  // the request, so none is written; the name goes through JSON.stringify with the rest.
-  if (capabilities.queryDialect === "kafka") {
-    return JSON.stringify({ topic: tableName, partition: 0, from: "earliest", limit: 50 }, null, 2);
-  }
-  // etcd (#1089, section 6.4): one runnable read on the first line, the click's, and the other forms as
-  // comments below it. A group's columns are the fixed shape of a get row, so none reaches the text.
-  if (capabilities.queryDialect === "etcd") {
-    return etcdCommandText(tableName, scope);
-  }
+  // A query dialect's own text, from its `DIALECT_GENERATORS` record, BEFORE the JSON arm below.
+  const dialect = registeredDialect(capabilities);
+  if (dialect !== undefined) return DIALECT_GENERATORS[dialect].select(path, columns, scope);
   if (capabilities.queryLanguage === "json") {
     const projection: Record<string, number> = {};
     columns.forEach((c) => {

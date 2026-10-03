@@ -4679,6 +4679,33 @@ describe("Oracle column type declaration (#1139)", () => {
       },
       type: "CLOB",
     },
+    {
+      // #1209: DATA_TYPE leaves out the size, and a bare UROWID is created with DATA_LENGTH 4000.
+      name: "C_UROWID",
+      row: {
+        DATA_TYPE: "UROWID",
+        DATA_LENGTH: 100,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "UROWID(100)",
+      baseType: "UROWID",
+    },
+    {
+      name: "C_UROWID_DEFAULT",
+      row: {
+        DATA_TYPE: "UROWID",
+        DATA_LENGTH: 4000,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "UROWID(4000)",
+      baseType: "UROWID",
+    },
   ];
 
   const expected = cases.map(({ name, type, baseType }) => ({
@@ -4743,10 +4770,295 @@ describe("Oracle column type declaration (#1139)", () => {
     await provider.describeObjects(["APP"], "table");
     expect(columnReads).toHaveLength(2);
     for (const sql of columnReads) {
-      for (const column of ["DATA_TYPE", "DATA_LENGTH", "DATA_PRECISION", "DATA_SCALE", "CHAR_LENGTH", "CHAR_USED"]) {
+      for (const column of [
+        "DATA_TYPE",
+        "DATA_LENGTH",
+        "DATA_PRECISION",
+        "DATA_SCALE",
+        "CHAR_LENGTH",
+        "CHAR_USED",
+        "VECTOR_INFO",
+      ]) {
         expect(sql).toContain(column);
       }
     }
+    await provider.disconnect();
+  });
+});
+
+/**
+ * #1209: a vector column's declaration is `ALL_TAB_COLUMNS.VECTOR_INFO`.
+ *
+ * Every row below is the dictionary row Oracle AI Database 26ai Free 23.26.3 answers for the
+ * column `tests/live/oracle-column-type.ts` creates with the same name. Each `VECTOR_INFO`
+ * spelling, replayed on that server, creates a column with the same `VECTOR_INFO`. A bare
+ * `VECTOR` creates `VECTOR(*,*,DENSE)` whatever the declaration was.
+ */
+describe("Oracle vector column declaration (#1209)", () => {
+  beforeEach(() => {
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  const cases: Array<{ name: string; charLength: number; vectorInfo: string }> = [
+    { name: "V_DEFAULT", charLength: 0, vectorInfo: "VECTOR(*,*,DENSE)" },
+    { name: "V_3_FLOAT32", charLength: 3, vectorInfo: "VECTOR(3,FLOAT32,DENSE)" },
+    { name: "V_ANY_FLOAT64", charLength: 0, vectorInfo: "VECTOR(*,FLOAT64,DENSE)" },
+    { name: "V_16_BINARY", charLength: 16, vectorInfo: "VECTOR(16,BINARY,DENSE)" },
+    { name: "V_SPARSE", charLength: 100, vectorInfo: "VECTOR(100,FLOAT32,SPARSE)" },
+  ];
+
+  function columnRows(objectName?: string): Record<string, unknown>[] {
+    const rows: Record<string, unknown>[] = cases.map(({ name, charLength, vectorInfo }) => ({
+      COLUMN_NAME: name,
+      DATA_TYPE: "VECTOR",
+      DATA_LENGTH: 8200,
+      DATA_PRECISION: null,
+      DATA_SCALE: null,
+      CHAR_LENGTH: charLength,
+      CHAR_USED: null,
+      VECTOR_INFO: vectorInfo,
+      NULLABLE: "Y",
+      DATA_DEFAULT: null,
+    }));
+    // A column of another type on the same server: VECTOR_INFO is null there.
+    rows.push({
+      COLUMN_NAME: "C_UROWID",
+      DATA_TYPE: "UROWID",
+      DATA_LENGTH: 100,
+      DATA_PRECISION: null,
+      DATA_SCALE: null,
+      CHAR_LENGTH: 0,
+      CHAR_USED: null,
+      VECTOR_INFO: null,
+      NULLABLE: "Y",
+      DATA_DEFAULT: null,
+    });
+    return objectName === undefined ? rows : rows.map((row) => Object.assign({ OBJECT_NAME: objectName }, row));
+  }
+
+  const expected = [
+    ...cases.map(({ name, vectorInfo }) => ({
+      name,
+      type: vectorInfo,
+      baseType: "VECTOR",
+      nullable: true,
+      isPrimary: false,
+      defaultValue: undefined,
+    })),
+    {
+      name: "C_UROWID",
+      type: "UROWID(100)",
+      baseType: "UROWID",
+      nullable: true,
+      isPrimary: false,
+      defaultValue: undefined,
+    },
+  ];
+
+  test("describeObject() reports VECTOR_INFO as the type, with VECTOR as baseType", async () => {
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      return sql.includes("ALL_TAB_COLUMNS") ? { rows: columnRows() } : { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    expect((await provider.describeObject(["APP", "LIBREDB_VECTOR_PROBE"], "table")).columns).toEqual(expected);
+    // One column read, not a refused one and a retry.
+    expect(asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"))).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("describeObjects() reports the same declarations", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("WITH described AS")) return { rows: [] };
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "LIBREDB_VECTOR_PROBE" }] };
+      if (sql.includes("ALL_TAB_COLUMNS")) return { rows: columnRows("LIBREDB_VECTOR_PROBE") };
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.details).toHaveLength(1);
+    expect(batch.details[0].columns).toEqual(expected);
+    await provider.disconnect();
+  });
+});
+
+/**
+ * #1209, on a server whose `ALL_TAB_COLUMNS` has no `VECTOR_INFO`.
+ *
+ * The refusals are the ones Oracle Database 21c XE 21.3 answers, measured: the single read names
+ * the column bare, and the bulk read names it through the `c` alias.
+ */
+describe("Oracle column reads without VECTOR_INFO (#1209)", () => {
+  beforeEach(() => {
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  const URowId100 = {
+    DATA_TYPE: "UROWID",
+    DATA_LENGTH: 100,
+    DATA_PRECISION: null,
+    DATA_SCALE: null,
+    CHAR_LENGTH: 0,
+    CHAR_USED: null,
+    NULLABLE: "Y",
+    DATA_DEFAULT: null,
+  };
+
+  /** A 21c double: every statement that names VECTOR_INFO is refused the way 21c refuses it. */
+  function server21c(asked: string[]) {
+    return async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("c.VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "C"."VECTOR_INFO": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "VECTOR_INFO": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "COLUMN_TYPES" }] };
+      if (sql.includes("WITH described AS") && sql.includes("ALL_TAB_COLUMNS")) {
+        return { rows: [{ OBJECT_NAME: "COLUMN_TYPES", COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      }
+      if (sql.includes("ALL_TAB_COLUMNS")) return { rows: [{ COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      return { rows: [] };
+    };
+  }
+
+  const expected = [
+    {
+      name: "C_UROWID",
+      type: "UROWID(100)",
+      baseType: "UROWID",
+      nullable: true,
+      isPrimary: false,
+      defaultValue: undefined,
+    },
+  ];
+
+  test("describeObject() answers, and one refused read is all the server pays", async () => {
+    const asked: string[] = [];
+    mockExecuteFn = server21c(asked);
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    expect((await provider.describeObject(["APP", "COLUMN_TYPES"], "table")).columns).toEqual(expected);
+    const columnReads = asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"));
+    expect(columnReads).toHaveLength(2);
+    expect(columnReads[0]).toContain("VECTOR_INFO");
+    expect(columnReads[1]).not.toContain("VECTOR_INFO");
+
+    // The provider remembers the refusal, so neither read asks for the column again.
+    asked.length = 0;
+    expect((await provider.describeObject(["APP", "COLUMN_TYPES"], "table")).columns).toEqual(expected);
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.details[0].columns).toEqual(expected);
+    expect(asked.filter((sql) => sql.includes("VECTOR_INFO"))).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("describeObjects() answers when it is the first read to meet the refusal", async () => {
+    const asked: string[] = [];
+    mockExecuteFn = server21c(asked);
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.details[0].columns).toEqual(expected);
+    const columnReads = asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"));
+    expect(columnReads).toHaveLength(2);
+    expect(columnReads[0]).toContain("c.VECTOR_INFO");
+    expect(columnReads[1]).not.toContain("VECTOR_INFO");
+
+    asked.length = 0;
+    await provider.describeObject(["APP", "COLUMN_TYPES"], "table");
+    expect(asked.filter((sql) => sql.includes("VECTOR_INFO"))).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("an ORA-00904 that does not name VECTOR_INFO is raised, with no retry", async () => {
+    // The retry repairs nothing when the missing column is one the fallback keeps. The
+    // statement WITHOUT VECTOR_INFO answers here, which is the control: without the retry
+    // guard, the read would succeed.
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "CHAR_USED": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("ALL_TAB_COLUMNS")) return { rows: [{ COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    await expect(provider.describeObject(["APP", "COLUMN_TYPES"], "table")).rejects.toThrow(
+      /"CHAR_USED": invalid identifier/,
+    );
+    expect(asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"))).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("describeObjects() raises an ORA-00904 that does not name VECTOR_INFO, with no retry", async () => {
+    // The same rule through the bulk read, which names its columns through the `c` alias.
+    // The statement WITHOUT VECTOR_INFO answers here too, which is the control.
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("c.VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "C"."CHAR_USED": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "COLUMN_TYPES" }] };
+      if (sql.includes("ALL_TAB_COLUMNS")) {
+        return { rows: [{ OBJECT_NAME: "COLUMN_TYPES", COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      }
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    await expect(provider.describeObjects(["APP"], "table")).rejects.toThrow(/"C"."CHAR_USED": invalid identifier/);
+    expect(asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"))).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("a VECTOR row without VECTOR_INFO keeps DATA_TYPE", async () => {
+    // Not a state a measured server produces, because 21c has no VECTOR type. The rule still
+    // has to say something, and DATA_TYPE is what the provider reported before #1209.
+    mockExecuteFn = async (sql: string) =>
+      sql.includes("ALL_TAB_COLUMNS")
+        ? {
+            rows: [
+              {
+                COLUMN_NAME: "V",
+                DATA_TYPE: "VECTOR",
+                DATA_LENGTH: 0,
+                DATA_PRECISION: null,
+                DATA_SCALE: null,
+                CHAR_LENGTH: 0,
+                CHAR_USED: null,
+                VECTOR_INFO: null,
+                NULLABLE: "Y",
+                DATA_DEFAULT: null,
+              },
+            ],
+          }
+        : { rows: [] };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const [column] = (await provider.describeObject(["APP", "T"], "table")).columns;
+    expect(column.type).toBe("VECTOR");
+    expect(Object.hasOwn(column, "baseType")).toBe(false);
     await provider.disconnect();
   });
 });

@@ -991,7 +991,7 @@ The dictionary views every object read draws on:
 | Data | Source view(s) |
 |------|----------------|
 | Tables + row estimate | `ALL_TABLES` (`NUM_ROWS`) |
-| Columns | `ALL_TAB_COLUMNS` (`type` built from `DATA_TYPE` and its length, precision and scale columns, #1139; `isPrimary` derived from PK set; `nullable` = `NULLABLE = 'Y'`) |
+| Columns | `ALL_TAB_COLUMNS` (`type` built from `DATA_TYPE` and its length, precision and scale columns, #1139, and from `VECTOR_INFO` where the server has it, #1209; `isPrimary` derived from PK set; `nullable` = `NULLABLE = 'Y'`) |
 | Primary keys | `ALL_CONSTRAINTS` + `ALL_CONS_COLUMNS` (`CONSTRAINT_TYPE = 'P'`) |
 | Foreign keys | `ALL_CONSTRAINTS` (type `'R'`) joined to the referenced constraint's columns |
 | Indexes | `ALL_INDEXES` + `ALL_IND_COLUMNS` (`unique` = `UNIQUENESS = 'UNIQUE'`) |
@@ -1390,6 +1390,8 @@ and `CHAR_USED`, and `declaredType()` in `oracle.ts` builds the declaration with
 | `RAW` | `RAW(<DATA_LENGTH>)` |
 | `NUMBER` | `NUMBER` when precision and scale are both null, `NUMBER(*,<s>)` when only precision is null, `NUMBER(<p>)` when scale is 0, otherwise `NUMBER(<p>,<s>)` |
 | `FLOAT` | `FLOAT(<DATA_PRECISION>)` |
+| `UROWID` | `UROWID(<DATA_LENGTH>)` (#1209) |
+| `VECTOR` | `VECTOR_INFO` as it is, where the server has that column (#1209) |
 | anything else | `DATA_TYPE` as it is |
 
 `ColumnSchema.type` is that declaration, and `ColumnSchema.baseType` is `DATA_TYPE`.
@@ -1422,11 +1424,55 @@ Measured on Oracle Database 21c Express Edition over `APP.COLUMN_TYPES`, which t
 | `TIMESTAMP(6) WITH TIME ZONE` | the same | the same | absent |
 | `INTERVAL DAY(3) TO SECOND(2)` | the same | the same | absent |
 | `DATE`, `CLOB`, `BLOB`, `BINARY_DOUBLE` | the same | the same | absent |
+| `UROWID(100)` | `UROWID` | `UROWID(100)` | `UROWID` |
+| `UROWID` | `UROWID` | `UROWID(4000)` | `UROWID` |
 
 A table created from the built declarations has `ALL_TAB_COLUMNS` rows identical to the fixture's,
-23 of 23.
+25 of 25, on 21c XE and on Oracle AI Database 26ai Free 23.26.3.
 The `TIMESTAMP` and `INTERVAL` types need no rule, because `DATA_TYPE` already carries their
 precision.
+
+##### `UROWID` and `VECTOR` (#1209)
+
+Both types carry a size that `DATA_TYPE` leaves out, and a bare `DATA_TYPE` is accepted for both.
+So before #1209 a migration created a different column without an error, the same class of defect
+as a `CHAR(2)` read back as `CHAR`.
+A bare `UROWID` is created with `DATA_LENGTH` 4000, so `UROWID(100)` needs its `DATA_LENGTH`.
+A bare `UROWID` reads as `UROWID(4000)`, and that declaration creates the same column.
+
+A vector's dimension count and format are in no length, precision or scale column.
+`CHAR_LENGTH` holds the dimension count, and nothing but `VECTOR_INFO` holds the format.
+So the declaration of a vector column is `VECTOR_INFO` as it is.
+Measured on Oracle AI Database 26ai Free 23.26.3.
+The fixture cannot hold these columns because the compose image is 21c, so the live guard creates
+them:
+
+| Declared | `CHAR_LENGTH` | `VECTOR_INFO`, which is `type` | Bare `VECTOR` creates |
+| --- | --- | --- | --- |
+| `VECTOR` | 0 | `VECTOR(*,*,DENSE)` | the same |
+| `VECTOR(3, FLOAT32)` | 3 | `VECTOR(3,FLOAT32,DENSE)` | `VECTOR(*,*,DENSE)` |
+| `VECTOR(*, FLOAT64)` | 0 | `VECTOR(*,FLOAT64,DENSE)` | `VECTOR(*,*,DENSE)` |
+| `VECTOR(16, BINARY)` | 16 | `VECTOR(16,BINARY,DENSE)` | `VECTOR(*,*,DENSE)` |
+| `VECTOR(100, FLOAT32, SPARSE)` | 100 | `VECTOR(100,FLOAT32,SPARSE)` | `VECTOR(*,*,DENSE)` |
+
+`baseType` is `VECTOR` for each of them.
+Each `VECTOR_INFO` spelling, replayed on the same server, creates a column with the same
+`VECTOR_INFO`, `CHAR_LENGTH` and `DATA_LENGTH`.
+`VECTOR(5, INT8)` and `VECTOR(3)` read as `VECTOR(5,INT8,DENSE)` and `VECTOR(3,*,DENSE)`, and they
+replay the same too.
+
+`VECTOR_INFO` is a `VARCHAR2` column on 26ai, and it does not exist on 21c XE: a read that names it
+is `ORA-00904: "VECTOR_INFO": invalid identifier`, or `"C"."VECTOR_INFO"` in the bulk read.
+Both column reads therefore name it only where the server has it.
+`readColumns()` asks for it first, and on an ORA-00904 that names `VECTOR_INFO` it reads the columns
+again without it.
+This is the repair `listContainers()` makes for `ALL_USERS.ORACLE_MAINTAINED`.
+The provider instance also remembers the refusal, so a server without the column pays for one
+refused read for each provider instance, not one for each describe.
+An ORA-00904 that names another column is raised, because reading without `VECTOR_INFO` repairs
+nothing there.
+A `VECTOR` row without `VECTOR_INFO` keeps `DATA_TYPE`, which is what the provider reported before
+#1209.
 
 `BYTE` is written even though `DBMS_METADATA.GET_DDL` leaves it out.
 Under `NLS_LENGTH_SEMANTICS = CHAR`, a bare `VARCHAR2(20)` is created with `CHAR_USED = C`, measured,
@@ -2171,6 +2217,17 @@ and DROPS throwaway tables in the connecting user's schema, so point it at a dis
 
 ```bash
 LIBREDB_LIVE_ORACLE_URL='oracle://app:Password123!@127.0.0.1:1521/XEPDB1' \
+  bun tests/live/oracle-column-type.ts
+```
+
+On 21c the guard prints that it skipped the `VECTOR` case (#1209). To run that case, use 26ai Free.
+The fixture does not run there, so create `APP.COLUMN_TYPES` from the `CREATE TABLE` in
+`docker/oracle-init/01-object-fixture.sql` as `APP` first, without the `app.` prefix:
+
+```bash
+docker run -d -e ORACLE_PASSWORD=Password123! -e APP_USER=app -e APP_USER_PASSWORD=Password123! \
+  -p 1522:1521 gvenzl/oracle-free:slim
+LIBREDB_LIVE_ORACLE_URL='oracle://app:Password123!@127.0.0.1:1522/FREEPDB1' \
   bun tests/live/oracle-column-type.ts
 ```
 

@@ -473,12 +473,19 @@ const LIST_TRIGGERS_SQL = `SELECT o.OBJECT_NAME AS NAME, t.TABLE_NAME AS PARENT,
 // what makes that true.
 // ----------------------------------------------------------------------------
 
-/** Columns. Answers for a table, a view and a materialized view's container alike. */
-const OBJECT_COLUMNS_SQL = `SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, CHAR_LENGTH, CHAR_USED,
+/**
+ * Columns. Answers for a table, a view and a materialized view's container alike.
+ *
+ * `vectorInfo` adds `VECTOR_INFO`, which only a server with the `VECTOR` type has (#1209). See
+ * `OracleProvider.readColumns()` for how a server without it is read.
+ */
+function objectColumnsSql(vectorInfo: boolean): string {
+  return `SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, CHAR_LENGTH, CHAR_USED,${vectorInfo ? " VECTOR_INFO," : ""}
                 NULLABLE, DATA_DEFAULT
          FROM ALL_TAB_COLUMNS
          WHERE OWNER = :1 AND TABLE_NAME = :2
          ORDER BY COLUMN_ID`;
+}
 
 const OBJECT_PRIMARY_KEY_SQL = `SELECT acc.COLUMN_NAME
          FROM ALL_CONSTRAINTS ac
@@ -866,19 +873,21 @@ function bulkTargetSql(kind: string, bounded: boolean): string {
  * Nothing here caps a column list. An unreported bound is the defect
  * `ObjectDetailBatch.truncated` exists to prevent; what is bounded here is the number of
  * OBJECTS, by the caller, and it is reported.
+ *
+ * `columns` takes the flag `objectColumnsSql()` takes, for the same reason.
  */
 function bulkDetailSql(
   kind: string,
   bounded: boolean,
-): { columns: string; primaryKey: string; foreignKeys: string; indexes: string } {
+): { columns: (vectorInfo: boolean) => string; primaryKey: string; foreignKeys: string; indexes: string } {
   const described = describedSql(kind, bounded);
   // The next free placeholder after the target's own, which is what the owner's second
   // appearance has to use: see the note on `describedSql()` above.
   const owner = bounded ? ":4" : ":3";
   return {
-    columns: `${described}
+    columns: (vectorInfo) => `${described}
          SELECT d.NAME AS OBJECT_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.DATA_LENGTH, c.DATA_PRECISION, c.DATA_SCALE,
-                c.CHAR_LENGTH, c.CHAR_USED, c.NULLABLE, c.DATA_DEFAULT
+                c.CHAR_LENGTH, c.CHAR_USED,${vectorInfo ? " c.VECTOR_INFO," : ""} c.NULLABLE, c.DATA_DEFAULT
          FROM described d
          JOIN ALL_TAB_COLUMNS c ON c.OWNER = ${owner} AND c.TABLE_NAME = d.NAME
          ORDER BY d.NAME, c.COLUMN_ID`,
@@ -1219,6 +1228,20 @@ function isMissingOracleMaintainedError(error: unknown): boolean {
 }
 
 /**
+ * Whether `ALL_TAB_COLUMNS` has no `VECTOR_INFO` column on this server (#1209).
+ *
+ * The column came with the `VECTOR` type. Measured: Oracle AI Database 26ai Free 23.26.3 has it,
+ * as a `VARCHAR2`, and on Oracle Database 21c XE 21.3 the single read answers `ORA-00904: "VECTOR_INFO": invalid
+ * identifier` and the bulk read answers `ORA-00904: "C"."VECTOR_INFO": invalid identifier`. Keyed
+ * on the column name as well as on ORA-00904, for the reason `isMissingOracleMaintainedError()`
+ * gives.
+ */
+function isMissingVectorInfoError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes("ORA-00904") && error.message.includes("VECTOR_INFO");
+}
+
+/**
  * A column's type as a `CREATE TABLE` writes it, built from one `ALL_TAB_COLUMNS` row (#1139).
  *
  * `DATA_TYPE` alone has no length, precision or scale. A bare `VARCHAR2`, `NVARCHAR2` or `RAW`
@@ -1229,6 +1252,12 @@ function isMissingOracleMaintainedError(error: unknown): boolean {
  * `NUMBER` with a null precision and scale stays bare, which is also what a computed view
  * column such as `COUNT(*)` reports. The `TIMESTAMP` and `INTERVAL` types already carry
  * their precision in `DATA_TYPE`, so they are returned as they are.
+ *
+ * `UROWID` and `VECTOR` also carry a size that `DATA_TYPE` leaves out (#1209). A bare `UROWID`
+ * is created with `DATA_LENGTH` 4000, and a bare `VECTOR` with any dimension count and any
+ * format, so both are accepted and create a different column. `VECTOR_INFO` is the whole
+ * declaration of a vector column. A row without it, from a server that has no such column,
+ * keeps `DATA_TYPE`.
  */
 function declaredType(row: Record<string, unknown>): string {
   const dataType = String(row.DATA_TYPE);
@@ -1248,6 +1277,10 @@ function declaredType(row: Record<string, unknown>): string {
       return Number(scale) === 0 ? `NUMBER(${String(precision)})` : `NUMBER(${String(precision)},${String(scale)})`;
     case "FLOAT":
       return `FLOAT(${String(precision)})`;
+    case "UROWID":
+      return `UROWID(${String(row.DATA_LENGTH)})`;
+    case "VECTOR":
+      return typeof row.VECTOR_INFO === "string" ? row.VECTOR_INFO : dataType;
     default:
       return dataType;
   }
@@ -1469,6 +1502,10 @@ export class OracleProvider extends SQLBaseProvider {
 
   // Track running connections for cancellation
   private runningConns = new Map<string, oracledb.Connection>();
+
+  // False once this server answered that `ALL_TAB_COLUMNS` has no `VECTOR_INFO` (#1209).
+  // See `readColumns()`.
+  private vectorInfo = true;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
@@ -1992,6 +2029,36 @@ export class OracleProvider extends SQLBaseProvider {
   }
 
   /**
+   * One of the two column reads, with `VECTOR_INFO` where this server has it (#1209).
+   *
+   * The column came with the `VECTOR` type, and a server before 23ai refuses a read that
+   * names it with ORA-00904. That refusal is retried without the column, the same repair
+   * `listContainers()` makes for `ORACLE_MAINTAINED`. The provider also remembers it, so a
+   * server without the column pays for ONE refused read for this provider instance, and every
+   * later describe asks for the columns it has. A vector read there keeps `DATA_TYPE`, which
+   * is what this provider reported before #1209. On the servers measured that costs nothing:
+   * 21c has neither the column nor the type.
+   */
+  private async readColumns(
+    conn: oracledb.Connection,
+    statement: (vectorInfo: boolean) => string,
+    binds: unknown[],
+  ): Promise<Record<string, unknown>[]> {
+    if (this.vectorInfo) {
+      try {
+        return ((await this.runObjectQuery(conn, statement(true), binds)).rows ?? []) as Record<string, unknown>[];
+      } catch (error) {
+        // `runObjectQuery()` has already mapped the error, and the mapped error keeps Oracle's text.
+        if (!isMissingVectorInfoError(error)) throw error;
+        // Set 'vectorInfo' false only when actual isMissingVectorInfoError is thrown, else throw
+        // To be handled by the caller
+        this.vectorInfo = false;
+      }
+    }
+    return ((await this.runObjectQuery(conn, statement(false), binds)).rows ?? []) as Record<string, unknown>[];
+  }
+
+  /**
    * The owners this connection can see. One level, so `parent` can only ever name an
    * owner, and nothing nests under one here - that answers `[]` rather than raising,
    * because "this level has no children" is a true statement about Oracle and not a
@@ -2160,10 +2227,7 @@ export class OracleProvider extends SQLBaseProvider {
     const binds = [owner, path[path.length - 1]];
     const conn = await this.pool!.getConnection();
     try {
-      const columns = ((await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds)).rows ?? []) as Record<
-        string,
-        unknown
-      >[];
+      const columns = await this.readColumns(conn, objectColumnsSql, binds);
       const primaryKey = ((await this.runObjectQuery(conn, OBJECT_PRIMARY_KEY_SQL, binds)).rows ?? []) as Record<
         string,
         unknown
@@ -2252,7 +2316,9 @@ export class OracleProvider extends SQLBaseProvider {
         byObjectName(
           ((await this.runObjectQuery(conn, sql, detailBinds)).rows ?? []) as (BulkRow & Record<string, unknown>)[],
         );
-      const columns = await read(statements.columns);
+      const columns = byObjectName(
+        (await this.readColumns(conn, statements.columns, detailBinds)) as (BulkRow & Record<string, unknown>)[],
+      );
       const primaryKey = await read(statements.primaryKey);
       const foreignKeys = await read(statements.foreignKeys);
       const indexes = await read(statements.indexes);

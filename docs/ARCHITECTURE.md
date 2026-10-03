@@ -173,6 +173,12 @@ PostgreSQL's `containerSchema()` is the example: it refuses a declaration that n
 A descriptor field that only one engine sets is a sign that its rule belongs in that engine.
 `ObjectPathShapeEngine.attachedSegment` (#978) is the one pre-existing exception: a per-engine acceptance policy carried in provider descriptors rather than in the declaration, and moving it into the declaration is separate work.
 
+The editor's query dialects follow the same rule through three registries, each a `Record` the compiler holds complete.
+`QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`) gives each declared `queryDialect` its tab type and its three row-menu answers.
+`DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`) gives each tab type its Monaco language and its formatter, keyed by tab type because that is what a restored tab carries.
+`DIALECT_GENERATORS` (`src/lib/query-generators.ts`) gives each dialect what a tree click and Generate Query write.
+A dialect is one record in each, and no reader branches on its name: `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of `queryDialect` and of the JSON language to a closed list with its owner.
+
 ### 4.2. Authentication Flow
 
 ```mermaid
@@ -334,16 +340,17 @@ src/
     │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators), objects.ts, values.ts and
     │   │                    #   profile.ts are pure and browser-safe; bolt/ (the GraphClient seam, the URI, the one
     │   │                    #   neo4j-driver-lite client, driver values to JSON) and graph-base-provider.ts are server only
-    │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects)
+    │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap)
     │   ├── factory.ts       # Provider factory
+    │   ├── query-dialects.ts # The dialect registry: each queryDialect's tab type and row-menu answers
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
     ├── passkey/             # Passkey sign-in (docs/PASSKEYS.md): config (PASSKEY_ORIGIN reader), policy, ceremony
     │                        #   cookie, WebAuthn wrapper, management and sign-in services, browser client
     ├── llm/                 # LLM provider module
-    ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder,
-    │                       # the LibreDB, Redis and etcd command languages, and Cypher
+    ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder, the
+    │                       # editor registry (dialect-editors.ts), the LibreDB, Redis and etcd command languages, and Cypher
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path

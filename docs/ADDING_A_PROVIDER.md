@@ -121,6 +121,13 @@ interface XTransport {
 }
 ```
 
+**Send the requests through the shared REST transport.**
+A new provider that speaks HTTP builds the HTTP side of its transport seam on `createNodeTransport` in [`node-transport.ts`](../src/lib/db/http/node-transport.ts), so the provider's own transport file is a thin adapter.
+It dials through `node:http` or `node:https` with one keep-alive Agent per connection and `maxSockets` set to the provider's in-flight bound, so no proxy variable can route a request, no redirect is followed, a request whose answer was lost is never sent again, and an answer stops at the byte cap the provider passes.
+It maps the SSL / TLS panel through `nodeTlsMaterial`, the one TLS mapping a new provider takes, and checks the certificate against the far end of an SSH tunnel rather than the local forward.
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
+The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.
+
 **Make the result type neutral, not the wire envelope.** An interface shaped like the HTTP response
 (`{ results, signature, status, metrics, errors }`) would force any future driver adapter to
 fabricate fields that only the REST API produces naturally. Define the shape both sources could
@@ -236,9 +243,9 @@ export interface QueryTab {
 For most SQL databases, the existing `'sql'` type is sufficient. You only need a new tab type if your database uses a fundamentally different query language.
 
 A new tab type is reached one of two ways, and both are wired in `src/lib/editor/tab-language.ts` and its neighbours.
-A language that is a kind of JSON declares a `queryDialect` on the provider and gets an arm in `resolveTabType()` **above** the `queryLanguage === 'json'` rung; skipping the dialect leaves the tab typed `mongodb` and the arm unreachable, which is exactly what #427 fixed.
+A language that is a kind of JSON declares a `queryDialect` on the provider and gets a record in `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), whose `tabType` `resolveTabType()` reads **before** the `queryLanguage === 'json'` rung; skipping the dialect leaves the tab typed `mongodb`, which is exactly what #427 fixed.
 A language that is neither SQL nor JSON widens `ProviderCapabilities.queryLanguage` instead, as PromQL did (#1085), and every reader of that union then needs an explicit arm or a test pinning that its branch is right, because a reader written `=== 'json'` sends the new member into its SQL branch and one written `!== 'sql'` into its JSON branch.
-Either way the type is mapped to a Monaco language in `editorLanguageForTabType()`, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage`, `registerPromqlLanguage`, `registerEtcdLanguage` and `registerCypherLanguage`.
+Either way the type gets a record in `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`), its Monaco language for `editorLanguageForTabType()` and its formatter, if any, for `QueryEditor`'s Format button, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage`, `registerPromqlLanguage`, `registerEtcdLanguage` and `registerCypherLanguage`.
 A JSON kind may instead render in Monaco's built-in `json` mode and register no module, as Kafka's read request does (#1088).
 Then the MongoDB completion provider `QueryEditor` registers for `json` must stay off it: it registers only where the declared capabilities name no JSON dialect, so its MongoDB snippets and column completions never reach a tab whose parser refuses them.
 
@@ -728,7 +735,7 @@ Every field and what it controls:
 | Field | Type | Controls |
 |-------|------|----------|
 | `queryLanguage` | `'sql' \| 'json' \| 'promql' \| 'cypher'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
-| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| undefined` | Optional. Opts a provider's tables into a custom client-side query generator (see `query-generators.ts`) and picks the editor tab type and Monaco language. Checked **before** `queryLanguage` everywhere: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
+| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| undefined` | Optional. Names the dialect's records in three registries, which every reader consults **before** `queryLanguage`: `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
@@ -969,12 +976,17 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] The identity colour: `src/styles/theme.css` declares a finite set of hues, `tests/unit/lib/db-ui-config.test.ts` requires every engine's colour to differ, and a second step of a used hue must pass the separation test of `tests/unit/theme-accent-contrast.test.ts` by joining `IDENTITY_ALTS`, or be a new token with its theme and contrast entries.
 - [ ] A read-write key-value engine may need the declarations etcd added: `ObjectKindSpec.enumeratedBy` and `countIsListing`, the `KeyScanCapability` shape fields, `READ_ONLY_ENFORCED`, `MCP_EXPOSABLE`, a declared maintenance card (`title`, `description`, `confirmation`), and a vocabulary row with `typedConfirmation` and `safetyAnalysis`; each is read by one helper and every existing engine's answer stays unchanged.
 
-**For a JSON dialect**, every reader of `queryDialect` and `queryLanguage` needs an arm or a test pinning that its branch is right, because a reader keyed on `"json"` alone treats the text as MongoDB (#427):
+**For a JSON dialect**, a reader keyed on `"json"` alone treats the text as MongoDB (#427), so the dialect is one record in each of three registries, and the build fails until all three exist:
 
-- [ ] `src/components/QueryEditor.tsx`: the MongoDB completion provider registers only where the declared capabilities name no JSON dialect.
-- [ ] `src/lib/db/types.ts`: `offersColumnProfiling`, `offersCodeGeneration` and `offersCountQuery`, the action gates of both row menus; each answers from the declared language and dialect, and the one that would offer something the engine cannot do needs an explicit arm.
-- [ ] `src/lib/query-generators.ts`: an arm before the `json` arm in `generateTableQuery` and `generateSelectQuery`, or a tree click auto-executes a MongoDB document.
+- [ ] `src/lib/db/query-dialects.ts`: a record in `QUERY_DIALECTS`, the dialect's tab type and its answers for the row menus' `offersColumnProfiling`, `offersCodeGeneration` and `offersCountQuery`.
+      Profiling reads a dialect only beside `"json"`, while the count reads any declared dialect.
+- [ ] `src/lib/editor/dialect-editors.ts`: a record in `DIALECT_EDITORS` for the dialect's tab type, the Monaco language it renders in and its formatter, if it has one.
+      Tab types that render in one Monaco language share its formatter, which `tests/unit/editor/dialect-editors.test.ts` holds.
+- [ ] `src/lib/query-generators.ts`: a record in `DIALECT_GENERATORS`, what a tree click and Generate Query write, read before the `json` arm, or a tree click auto-executes a MongoDB document.
       `docs/providers/kafka.md` section 3.1 is the worked case.
+- [ ] `src/components/QueryEditor.tsx`: the MongoDB completion provider registers only where the declared capabilities name no JSON dialect.
+- [ ] `tests/unit/lib/dialect-reader-allowlist.test.ts`: every other line under `src/` that compares `queryDialect` or reads `queryLanguage === "json"` is on its closed list with its owner.
+      A new reader goes into a registry, or onto the list with the reason it is not one.
 
 **For a new connection field**, beside the three `Record<keyof DatabaseConnection, ...>` maps and `connection-filter.ts` that the note below names:
 
