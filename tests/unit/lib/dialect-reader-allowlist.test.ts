@@ -83,6 +83,12 @@ const ALLOWED: readonly Reader[] = [
     owner: "offersCountQuery: the language half, after the registry record's refusal",
   },
   {
+    path: "src/lib/db/types.ts",
+    text: 'return capabilities?.queryLanguage !== "cypher";',
+    owner:
+      "offersSchemaDiagram: every language but Cypher keeps the diagram it had before the gate (Neo4j spec SR20); a new language lands with the diagram, which is the shape this read decides",
+  },
+  {
     path: "src/lib/editor/tab-language.ts",
     text: 'if (capabilities?.queryLanguage === "json") return "mongodb";',
     owner: "resolveTabType: MongoDB's rung, below the registry record's tabType",
