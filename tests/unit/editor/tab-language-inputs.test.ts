@@ -26,7 +26,7 @@ function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabi
 describe("a tab restored from storage with a type this release has no record for", () => {
   test("renders in sql, as it did before the registry, and never throws", () => {
     // A later release persists `milvus` tabs; a host on this package version may restore them.
-    for (const type of ["milvus", "qdrant", "", "constructor", "toString", "__proto__"]) {
+    for (const type of ["milvus", "a-later-engine", "", "constructor", "toString", "__proto__"]) {
       expect(editorLanguageForTabType(type as QueryTab["type"])).toBe("sql");
     }
   });
