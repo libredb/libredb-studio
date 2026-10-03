@@ -295,13 +295,13 @@ describe("POST /api/db/cancel", () => {
     const first = provider.query(QUERY, [], "q-1759400000000-a").catch((error: unknown) => error);
     const second = provider.query(QUERY, [], "q-1759400000000-b").catch((error: unknown) => error);
     await settle();
-    const cancelled = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-a" }));
+    const cancelled = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-a" }) as never);
     expect(await parseResponseJSON<{ cancelled: boolean }>(cancelled)).toEqual({ cancelled: true });
     expect(await first).toBeInstanceOf(QueryCancelledError);
     expect(client.inFlight()).toBe(1);
-    const unknown = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-z" }));
+    const unknown = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-z" }) as never);
     expect(await parseResponseJSON<{ cancelled: boolean }>(unknown)).toEqual({ cancelled: false });
-    const other = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-b" }));
+    const other = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-b" }) as never);
     expect(await parseResponseJSON<{ cancelled: boolean }>(other)).toEqual({ cancelled: true });
     expect(await second).toBeInstanceOf(QueryCancelledError);
     expect(client.inFlight()).toBe(0);
@@ -311,7 +311,7 @@ describe("POST /api/db/cancel", () => {
     const connection = await serve();
     await provider.query(QUERY, [], "q-1759400000000-c");
     mockGetSession.mockImplementation(async () => ({ role: "user", username: "ulf" }));
-    const response = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-c" }));
+    const response = await cancel(post("/api/db/cancel", { connection, queryId: "q-1759400000000-c" }) as never);
     expect(response.status).toBe(200);
     expect(await parseResponseJSON<{ cancelled: boolean }>(response)).toEqual({ cancelled: false });
   });
