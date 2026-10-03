@@ -89,20 +89,23 @@ function stringEnd(line: string, from: number): number {
  * The tokens of one line, read in the state the line before left, and the state this line leaves.
  *
  * `lineNumber` is the token's `line`; `charge`, when given, sees every token before it joins the line's list, which
- * is where the parser charges its bounds, so an oversize text is refused before its tokens are kept.
+ * is where the parser charges its bounds, so an oversize text is refused before its tokens are kept. A charge that
+ * returns false stops the line after that token: the rest of the line is not read, and the state returned is the
+ * state at the stop.
  */
 export function tokenizeLine(
   spec: ConsoleDialectSpec,
   line: string,
   state: ConsoleLineState,
   lineNumber = 1,
-  charge?: (token: ConsoleToken, line: string) => void,
+  charge?: (token: ConsoleToken, line: string) => unknown,
 ): { readonly tokens: readonly ConsoleToken[]; readonly state: ConsoleLineState } {
   const tokens: ConsoleToken[] = [];
+  let reading = true;
   const push = (kind: ConsoleTokenKind, start: number, end: number) => {
     if (end <= start) return;
     const token: ConsoleToken = { kind, line: lineNumber, start, end };
-    charge?.(token, line);
+    if (charge?.(token, line) === false) reading = false;
     tokens.push(token);
   };
   let { section, inString, depth } = state;
@@ -139,7 +142,7 @@ export function tokenizeLine(
     depth = 0;
   }
 
-  while (at < line.length) {
+  while (at < line.length && reading) {
     const character = line[at];
     if (isWhitespace(character)) {
       const end = skipWhitespace(line, at);

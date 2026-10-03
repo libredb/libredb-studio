@@ -178,6 +178,22 @@ function exactlyOneMebibyteOfZeros(): string {
   return body + " ".repeat(1_048_576 - body.length);
 }
 
+/** A Qdrant text of exactly the stand-in's 2,097,152-byte bound: an open list, then one unit repeated to the end. */
+function floodOf(unit: string): string {
+  const head = 'POST /collections/docs/points/query\n{"a": [';
+  const body = head + unit.repeat(Math.floor((2_097_152 - head.length) / unit.length));
+  return body + " ".repeat(2_097_152 - body.length);
+}
+/** Texts at the bound made of what no count charges on its own: separators, empty arrays, comments and blank lines. */
+const FLOODS: readonly { readonly name: string; readonly unit: string; readonly verdict: string }[] = [
+  { name: "2 MiB of colons in a list", unit: ":", verdict: "malformed-json" },
+  { name: "2 MiB of commas in a list", unit: ",", verdict: "malformed-json" },
+  { name: "2 MiB of empty arrays in a list", unit: "[],", verdict: "too-many-nodes" },
+  { name: "2 MiB of comment lines in a list", unit: "//\n", verdict: "malformed-json" },
+  { name: "2 MiB of blank lines in a list", unit: "\n", verdict: "malformed-json" },
+  { name: "2 MiB of whitespace lines in a list", unit: " \n", verdict: "malformed-json" },
+];
+
 const BOUNDS: readonly (CorpusCase & { readonly verdict: string })[] = [
   { name: "arrays 32 deep", table: "milvus", text: nested(32), full: false, verdict: "accepted" },
   { name: "arrays 33 deep", table: "milvus", text: nested(33), full: false, verdict: "too-deep" },
@@ -204,6 +220,27 @@ const BOUNDS: readonly (CorpusCase & { readonly verdict: string })[] = [
     full: false,
     verdict: "too-many-nodes",
   },
+  {
+    name: "4,097 empty arrays in one list",
+    table: "milvus",
+    text: `POST /v2/vectordb/entities/search\n{"data": [${"[],".repeat(4_096)}[]]}`,
+    full: false,
+    verdict: "too-many-nodes",
+  },
+  {
+    name: "an object of 4,097 keys with [] values",
+    table: "milvus",
+    text: `POST /v2/vectordb/entities/search\n{${Array.from({ length: 4_097 }, (_, index) => `"k${index}": []`).join(",")}}`,
+    full: false,
+    verdict: "too-many-nodes",
+  },
+  ...FLOODS.map((flood) => ({
+    name: flood.name,
+    table: "qdrant",
+    text: floodOf(flood.unit),
+    full: false,
+    verdict: flood.verdict,
+  })),
   { name: "10,000 UUIDs in has_id", table: "qdrant", text: hasId(10_000), full: false, verdict: "accepted" },
   { name: "32,769 UUIDs in has_id", table: "qdrant", text: hasId(32_769), full: false, verdict: "too-many-scalars" },
 ];
@@ -405,6 +442,28 @@ describe("the bounds", () => {
     );
     expect((refusal as ConsoleRefusal).reason).toBe("too-many-numbers");
   });
+});
+
+describe("a text at the bound made of separators, empty arrays, comments or blank lines", () => {
+  test.each(FLOODS.map((flood) => [flood.name, flood.verdict, flood.unit] as const))(
+    "%s is refused as %s without holding a token for each, and its peak memory is recorded",
+    (name, verdict, unit) => {
+      const text = floodOf(unit);
+      expect(new TextEncoder().encode(text).length).toBe(2_097_152);
+      const before = process.memoryUsage().rss;
+      let refusal: unknown;
+      try {
+        parseConsole(QDRANT_STAND_IN, TABLES.qdrant.routes, text);
+      } catch (error) {
+        refusal = error;
+      }
+      const grown = process.memoryUsage().rss - before;
+      console.info(`console corpus: ${name} grew the RSS by ${Math.round(grown / 1_048_576)} MiB`);
+      expect((refusal as ConsoleRefusal).reason).toBe(verdict as ConsoleRefusal["reason"]);
+      // Reading every such text to its end kept a token or an array for each unit, 150 MiB and more.
+      expect(grown).toBeLessThan(128 * 1_048_576);
+    },
+  );
 });
 
 describe("tag-shaped objects", () => {

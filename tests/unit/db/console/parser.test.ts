@@ -353,6 +353,96 @@ describe("the order of the rules", () => {
   });
 });
 
+describe("what the bounds charge, and where the read stops", () => {
+  test("an array that closes empty is a node, so empty arrays meet the node bound as empty objects do", () => {
+    const inList = refusalOf(...M, `POST entities/search {"a":[${Array(4_097).fill("[]").join(",")}]}`);
+    expect(inList.reason).toBe("too-many-nodes");
+    const members = Array.from({ length: 4_097 }, (_, index) => `"k${index}":[]`).join(",");
+    expect(refusalOf(...M, `POST entities/search {${members}}`).reason).toBe("too-many-nodes");
+    expect(toJsonText(parseConsole(...M, 'POST entities/search {"a":[[],[]],"b":[]}').body)).toBe(
+      '{"a":[[],[]],"b":[]}',
+    );
+  });
+
+  test("the read stops at the first token the body's grammar cannot take, so the rest of the text is never tokenised", () => {
+    const kept = (text: string) => consoleTokens(QDRANT_STAND_IN, text).tokens.flat().length;
+    const head = 'POST collections/docs/points/query {"a": [';
+    const wellFormed = kept(head);
+    for (const flood of [":", ",", '"k":', "x ", "}", "# ", "1 "]) {
+      const text = head + flood.repeat(100_000);
+      expect({ flood, kept: kept(text) - wellFormed <= 3 }).toEqual({ flood, kept: true });
+    }
+    expect(kept(`POST collections ${"x ".repeat(100_000)}`)).toBeLessThanOrEqual(5);
+    expect(kept(`POST collections {}${" x".repeat(100_000)}`)).toBeLessThanOrEqual(8);
+    expect(kept(`POST collections\n{"a": 1,\n,${"\n:".repeat(100_000)}`)).toBeLessThanOrEqual(12);
+  });
+
+  test("a blank line and a line of whitespace keep no token, so a text of them costs its lines alone", () => {
+    const read = consoleTokens(QDRANT_STAND_IN, `POST collections {\n\n \t\r\n${" \n".repeat(1_000)}}`);
+    expect(read.tokens.length).toBe(1_004);
+    expect(read.tokens.flat().length).toBe(4);
+    expect(new Set(read.tokens.slice(1, 1_003)).size).toBe(1);
+    expect(toJsonText(readConsoleBody(QDRANT_STAND_IN, read) ?? "none")).toBe("{}");
+  });
+
+  test("whitespace is never kept, and comments only for a reader that asks, so neither grows what a request holds", () => {
+    const text = '// a\nPOST collections/docs/points/query // b\n{ "a" : 1 // c\n// d\n}\n// e';
+    const kinds = (comments?: boolean) =>
+      consoleTokens(QDRANT_STAND_IN, text, comments).tokens.map((line) => line.map((token) => token.kind).join(" "));
+    expect(kinds()).toEqual(["", "method path", "punctuation key punctuation number", "", "punctuation", ""]);
+    expect(kinds(true)).toEqual([
+      "comment",
+      "method path comment",
+      "punctuation key punctuation number comment",
+      "comment",
+      "punctuation",
+      "comment",
+    ]);
+    const flood = consoleTokens(QDRANT_STAND_IN, `POST collections {${"\n//".repeat(100_000)}\n}`);
+    expect(flood.tokens.flat().length).toBe(4);
+    expect(
+      toJsonText(parseConsole(...Q, `POST collections/docs/points/scroll {${"\n// note".repeat(10_000)}\n}`).body),
+    ).toBe("{}");
+  });
+
+  test("a text read short is refused with the sentence the whole text would get", () => {
+    const head = 'POST collections/docs/points/query\n{"a": [';
+    expect(refusalOf(...Q, `${head}${":".repeat(1_000)}`).message).toBe(
+      "Expected a value, found :. (line 2, column 8)",
+    );
+    expect(refusalOf(...Q, `${head}1 2`).message).toBe("Expected , or ], found 2. (line 2, column 10)");
+    expect(refusalOf(...Q, `${head}1,]}`).reason).toBe("trailing-comma");
+    expect(refusalOf(...Q, `${head}1}`).message).toBe("Expected , or ], found }. (line 2, column 9)");
+    expect(refusalOf(...Q, `${head}"k": 1]}`).message).toBe('Expected a value, found "k". (line 2, column 8)');
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{"a" 1}').message).toBe(
+      "Expected :, found 1. (line 2, column 6)",
+    );
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{"a": 1 "b": 2}').message).toBe(
+      'Expected , or }, found "b". (line 2, column 9)',
+    );
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{"a": 1,}').reason).toBe("trailing-comma");
+    expect(refusalOf(...Q, "POST collections/docs/points/query\n{1: 2}").message).toBe(
+      "Expected a key in double quotes, found 1. (line 2, column 2)",
+    );
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{"a": 1, 2}').message).toBe(
+      "Expected a key in double quotes, found 2. (line 2, column 10)",
+    );
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{"a": ]}').message).toBe(
+      "Expected a value, found ]. (line 2, column 7)",
+    );
+    expect(refusalOf(...Q, 'POST collections/docs/points/query\n{"a": 1}\n{"b": 2}').message).toBe(
+      'Expected nothing after the body, found {"b": 2}. (line 3, column 1)',
+    );
+    expect(refusalOf(...Q, "POST collections/docs/points/query\n[1]").message).toBe(
+      "Expected the body, one JSON object starting with {, found [. (line 2, column 1)",
+    );
+  });
+
+  test("a grammar error before a bound is named as the grammar error, the first thing wrong with the text", () => {
+    expect(refusalOf(...M, `POST entities/search\n{"a": [:${"[".repeat(40)}`).reason).toBe("malformed-json");
+  });
+});
+
 describe("an accepted request", () => {
   test("with the prefix and in the short form, a comment before it, and a body on the request line", () => {
     for (const text of [

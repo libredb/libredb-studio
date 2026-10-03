@@ -73,6 +73,11 @@ export class ConsoleRefusal extends RequestRefusal {
 /** A text the lexer has read within the dialect's bounds, and where its request line is. */
 export interface ConsoleText {
   readonly lines: readonly string[];
+  /**
+   * Each line's tokens, up to the first token the body's grammar cannot take when there is one: the read stops
+   * there, and `readConsoleBody` refuses the text at that token. Whitespace is never kept, and a comment only when
+   * the caller asks for comments, so a line of either alone costs a request no token.
+   */
   readonly tokens: readonly (readonly ConsoleToken[])[];
   readonly request: {
     /** The request line's 0-based index. */
@@ -94,45 +99,118 @@ const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a
 const UINT64_MAX = "18446744073709551615";
 const POSITIVE_INT = /^[1-9][0-9]*$/;
 const SHOWN = 40;
+/** A line of nothing but whitespace, which the lexer need not read: it holds no token that is kept. */
+const BLANK_LINE = /^[ \t\r]*$/;
+const NO_TOKENS: readonly ConsoleToken[] = Object.freeze([]);
 
 const shown = (text: string): string => (text.length > SHOWN ? `${text.slice(0, SHOWN)}...` : text);
+
+/** What an open object or array may hold next: its first member or its close, a key, a colon, a value, or a separator. */
+type Expected = "first" | "key" | "colon" | "value" | "separator";
+
+interface Frame {
+  readonly array: boolean;
+  numbers: number;
+  strings: number;
+  mixed: boolean;
+  expected: Expected;
+}
+
+const SCALAR_KINDS: ReadonlySet<ConsoleToken["kind"]> = new Set(["string", "number", "keyword"]);
 
 /**
  * The four body bounds, charged token by token while the lexer reads, before a line's tokens are kept: depth, and
  * three counts. A structural node is an object, an array that is neither all numbers nor all strings, and any
  * value outside such an array; a number inside an array of numbers is a numeric leaf, and a string inside an array
  * of strings a scalar leaf. An array is counted as a list until its first element of another kind, when its
- * elements and the array itself move to the node count.
+ * elements and the array itself move to the node count, and an array that closes empty is a node.
+ *
+ * It also follows the body's grammar far enough to say where a token cannot stand, and `charge` answers false
+ * there, so the read stops at that token: a text of separators, keys or stray words is not tokenised to its end
+ * before the reader refuses it at the same token.
  */
 class BodyBounds {
-  private readonly frames: { array: boolean; numbers: number; strings: number; mixed: boolean }[] = [];
+  private readonly frames: Frame[] = [];
   private nodes = 0;
   private numbers = 0;
   private scalars = 0;
+  /** The request line's 1-based number and the column its body may start at, known from its first token. */
+  private requestLine = 0;
+  private bodyColumn = 0;
+  private closed = false;
 
   constructor(private readonly spec: ConsoleDialectSpec) {}
 
-  charge(token: ConsoleToken, line: string): void {
-    if (token.kind === "punctuation") {
-      const character = line[token.start];
-      if (character === "{" || character === "[") {
-        this.element(token);
-        if (character === "{") this.node(token);
-        this.frames.push({ array: character === "[", numbers: 0, strings: 0, mixed: character === "{" });
-        if (this.frames.length > this.spec.maxDepth) {
-          throw new ConsoleRefusal(
-            "too-deep",
-            `The body nests objects and arrays deeper than the console's bound of ${this.spec.maxDepth}.`,
-            token.line,
-            token.start + 1,
-          );
-        }
-      } else if (character === "}" || character === "]") {
-        this.frames.pop();
+  /** Charges one token against the bounds; false when the body's grammar cannot take the token where it stands. */
+  charge(token: ConsoleToken, line: string): boolean {
+    if (token.kind === "whitespace" || token.kind === "comment") return true;
+    if (this.requestLine === 0) {
+      this.requestLine = token.line;
+      this.bodyColumn = wordEnd(line, skipWhitespace(line, wordEnd(line, token.start)));
+    }
+    if (token.line === this.requestLine && token.start < this.bodyColumn) return true;
+    const character = token.kind === "punctuation" ? line[token.start] : "";
+    if (!this.fits(token, character)) return false;
+    if (character === "{" || character === "[") {
+      this.element(token);
+      if (character === "{") this.node(token);
+      this.frames.push({
+        array: character === "[",
+        numbers: 0,
+        strings: 0,
+        mixed: character === "{",
+        expected: "first",
+      });
+      if (this.frames.length > this.spec.maxDepth) {
+        throw new ConsoleRefusal(
+          "too-deep",
+          `The body nests objects and arrays deeper than the console's bound of ${this.spec.maxDepth}.`,
+          token.line,
+          token.start + 1,
+        );
       }
+    } else if (character === "}" || character === "]") {
+      const frame = this.frames.pop() as Frame;
+      if (frame.array && !frame.mixed && frame.numbers === 0 && frame.strings === 0) this.node(token);
+      this.closed = this.frames.length === 0;
     } else if (token.kind === "number") this.leaf("number", token);
-    else if (token.kind === "string") this.leaf("string", token);
-    else if (token.kind === "keyword") this.leaf("other", token);
+    else if (token.kind === "string" && this.frames[this.frames.length - 1].expected !== "colon") {
+      this.leaf("string", token);
+    } else if (token.kind === "keyword") this.leaf("other", token);
+    return true;
+  }
+
+  /** Whether the grammar takes the token where it stands, moving the open container on to what it expects next. */
+  private fits(token: ConsoleToken, character: string): boolean {
+    const frame = this.frames[this.frames.length - 1];
+    if (frame === undefined) return !this.closed && character === "{";
+    const value = SCALAR_KINDS.has(token.kind) || character === "{" || character === "[";
+    const { expected } = frame;
+    if (frame.array) {
+      if (expected === "separator") {
+        if (character === ",") frame.expected = "value";
+        return character === "," || character === "]";
+      }
+      if (value) frame.expected = "separator";
+      return value || (expected === "first" && character === "]");
+    }
+    if (expected === "separator") {
+      if (character === ",") frame.expected = "key";
+      return character === "," || character === "}";
+    }
+    if (expected === "colon") {
+      frame.expected = "value";
+      return character === ":";
+    }
+    if (expected === "value") {
+      frame.expected = "separator";
+      return value;
+    }
+    if (token.kind === "key" || token.kind === "string") {
+      frame.expected = "colon";
+      return true;
+    }
+    return expected === "first" && character === "}";
   }
 
   private leaf(kind: "number" | "string" | "other", token: ConsoleToken): void {
@@ -213,9 +291,10 @@ function skipWhitespace(line: string, from: number): number {
 /**
  * The text read within the dialect's bounds: the text bound in UTF-8 bytes before anything else, then every line
  * through the lexer with the body bounds charged as it reads, then the request line found. Refuses an empty text,
- * an oversize one, a body past a bound, and a text that holds no request line.
+ * an oversize one, a body past a bound, and a text that holds no request line. `comments` keeps the comment tokens,
+ * which only a reader that writes the text back needs.
  */
-export function consoleTokens(spec: ConsoleDialectSpec, text: string): ConsoleText {
+export function consoleTokens(spec: ConsoleDialectSpec, text: string, comments = false): ConsoleText {
   if (text.trim() === "") {
     throw new ConsoleRefusal(
       "empty",
@@ -237,11 +316,23 @@ export function consoleTokens(spec: ConsoleDialectSpec, text: string): ConsoleTe
   const tokens: (readonly ConsoleToken[])[] = [];
   let state = INITIAL_CONSOLE_STATE;
   let requestLine = -1;
+  let reading = true;
+  const charge = (token: ConsoleToken, line: string) => {
+    reading = bounds.charge(token, line);
+    return reading;
+  };
+  const dropped = (token: ConsoleToken) => token.kind === "whitespace" || (!comments && token.kind === "comment");
   for (let index = 0; index < lines.length; index++) {
-    const read = tokenizeLine(spec, lines[index], state, index + 1, (token, line) => bounds.charge(token, line));
+    if (!state.inString && BLANK_LINE.test(lines[index])) {
+      tokens.push(NO_TOKENS);
+      continue;
+    }
+    const read = tokenizeLine(spec, lines[index], state, index + 1, charge);
     if (requestLine === -1 && read.state.section !== "before-request") requestLine = index;
-    tokens.push(read.tokens);
+    const kept = read.tokens.some(dropped) ? read.tokens.filter((token) => !dropped(token)) : read.tokens;
+    tokens.push(kept.length === 0 ? NO_TOKENS : kept);
     state = read.state;
+    if (!reading) break;
   }
   if (requestLine === -1) {
     throw new ConsoleRefusal(
@@ -270,7 +361,7 @@ export function consoleTokens(spec: ConsoleDialectSpec, text: string): ConsoleTe
   };
 }
 
-/** Reads the body's tokens in order, skipping whitespace and comments, from the end of the request line's target. */
+/** Reads the body's tokens in order, skipping comments, from the end of the request line's target. */
 class BodyCursor {
   private lineIndex: number;
   private tokenIndex = 0;
@@ -295,7 +386,7 @@ class BodyCursor {
         continue;
       }
       this.tokenIndex++;
-      if (token.kind !== "whitespace" && token.kind !== "comment") return token;
+      if (token.kind !== "comment") return token;
     }
   }
 

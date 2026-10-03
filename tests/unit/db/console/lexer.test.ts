@@ -248,6 +248,14 @@ describe("the line number and the charge", () => {
     expect(seen).toEqual([...result.tokens]);
   });
 
+  test("a charge that returns false stops the line after its token is kept", () => {
+    const body = { section: "body", inString: false, depth: 0 } as const;
+    const result = tokenizeLine(QDRANT_STAND_IN, "[1, 2, 3]", body, 1, (token) => token.kind !== "number");
+    expect(result.tokens.map((token) => token.kind)).toEqual(["punctuation", "number"]);
+    const whole = tokenizeLine(QDRANT_STAND_IN, "[1, 2, 3]", body, 1, () => true);
+    expect(whole.tokens.length).toBe(9);
+  });
+
   test("a charge that throws stops the line before its token is kept", () => {
     expect(() =>
       tokenizeLine(QDRANT_STAND_IN, "[1, 2]", { section: "body", inString: false, depth: 0 }, 1, (token) => {

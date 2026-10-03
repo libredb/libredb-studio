@@ -34,7 +34,7 @@ function inlineArray(pieces: readonly Piece[], open: number): number | undefined
 }
 
 export function formatConsole(spec: ConsoleDialectSpec, text: string): string {
-  const read = consoleTokens(spec, text);
+  const read = consoleTokens(spec, text, true);
   readConsoleBody(spec, read);
   const { lines, tokens, request } = read;
   const out: string[] = lines.slice(0, request.line);
@@ -44,7 +44,6 @@ export function formatConsole(spec: ConsoleDialectSpec, text: string): string {
   for (let index = request.line; index < tokens.length; index++) {
     for (const token of tokens[index]) {
       if (index === request.line && token.start < request.bodyColumn) continue;
-      if (token.kind === "whitespace") continue;
       pieces.push({ kind: token.kind, text: lines[index].slice(token.start, token.end) });
     }
   }
