@@ -12,8 +12,10 @@
  * does not fail the connection, so the overview then says the version is unknown, unless the server answers
  * that the connection's database does not exist.
  */
+import { createBoltClient } from "@/lib/db/graph/bolt/bolt-client";
 import type { GraphClientFactory } from "@/lib/db/graph/bolt/client";
 import { GraphClientError } from "@/lib/db/graph/bolt/client";
+import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
 import { type GraphEngineProfile, GraphBaseProvider } from "@/lib/db/graph/graph-base-provider";
 import { GRAPH_CONTAINER_LEVELS, GRAPH_OBJECT_KINDS } from "@/lib/db/graph/objects";
 import type {
@@ -70,7 +72,11 @@ export class Neo4jProvider extends GraphBaseProvider {
   private server: Neo4jServerVersion | undefined;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, createClient?: GraphClientFactory) {
-    super(config, options, NEO4J_ENGINE_PROFILE, createClient);
+    // The composition root chooses the transport: Bolt, with the client factory a test injects.
+    super(config, options, NEO4J_ENGINE_PROFILE, {
+      endpointOf: boltEndpointOf,
+      createClient: createClient ?? createBoltClient,
+    });
   }
 
   // ==========================================================================
