@@ -27,9 +27,11 @@ import type {
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import type { DatabaseType } from "@/lib/types";
 import type { QdrantAnswer, QdrantOp, QdrantRequest, QdrantSend } from "./client";
+import type { QdrantCollectionFacts } from "./request";
 import { type QdrantPayloadSample, qdrantSampledColumns, qdrantSampleRead, readQdrantPayloadSample } from "./sample";
 import {
   type QdrantCollection,
+  qdrantCollectionFacts,
   qdrantCount,
   qdrantDeclaredColumns,
   qdrantIndexes,
@@ -98,13 +100,26 @@ export type QdrantObjectContext = QdrantSurfaceContext<QdrantObjectOp>;
 
 /** An answer's `result`, its integers above 2^53 kept as exact digits; an answer that is not JSON is refused. */
 export function readResult(answer: QdrantAnswer, what: string): unknown {
+  return resultOfText(answer.text, what);
+}
+
+function resultOfText(text: string, what: string): unknown {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(quoteUnsafeIntegers(answer.text));
+    parsed = JSON.parse(quoteUnsafeIntegers(text));
   } catch {
     throw new QueryError(`Qdrant's answer to ${what} is not JSON Studio can read.`, PROVIDER);
   }
   return typeof parsed === "object" && parsed !== null ? (parsed as { readonly result?: unknown }).result : undefined;
+}
+
+/**
+ * The facts a console request reads from a `GET /collections/{collection_name}` answer's text: `execute.ts` takes
+ * this as its `factsOf`. The request's own text names the collection, so a refusal here says "this request".
+ */
+export function readQdrantConsoleFacts(text: string): QdrantCollectionFacts {
+  const result = resultOfText(text, "the description of the collection this request names");
+  return qdrantCollectionFacts(readQdrantCollection("", result));
 }
 
 /** The names of the collections the credential may see, in the order Qdrant lists them. */

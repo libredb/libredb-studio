@@ -14,6 +14,7 @@ import type { VectorColumn, VectorFieldInfo, VectorIndexKind } from "@/lib/db/ve
 import type { ColumnSchema, DatabaseType, IndexSchema } from "@/lib/types";
 import { payloadColumnName } from "./columns";
 import { qdrantMetric } from "./qdrant-vocabulary";
+import type { QdrantCollectionFacts } from "./request";
 import {
   QDRANT_ELEMENT_DTYPE,
   type QdrantDatatype,
@@ -61,13 +62,15 @@ function isObject(value: unknown): value is JsonObject {
 }
 
 function unreadable(collection: string, what: string): QueryError {
-  return new QueryError(
-    `Qdrant's description of collection ${JSON.stringify(collection)} is not one Studio can read: ${what}.`,
-    PROVIDER,
-  );
+  // Qdrant names no collection "", so the name "" stands for the collection a console request names itself.
+  const named = collection === "" ? "the collection this request names" : `collection ${JSON.stringify(collection)}`;
+  return new QueryError(`Qdrant's description of ${named} is not one Studio can read: ${what}.`, PROVIDER);
 }
 
-/** The description of a collection, or a refusal naming the part that is missing. */
+/**
+ * The description of a collection, or a refusal naming the part that is missing. `name` is "" where the caller is
+ * a console request, which shows its own text beside the refusal.
+ */
 export function readQdrantCollection(name: string, result: unknown): QdrantCollection {
   if (!isObject(result)) throw unreadable(name, "the answer holds no result object");
   const { config } = result;
@@ -268,4 +271,20 @@ export function qdrantIndexes(collection: QdrantCollection): readonly IndexSchem
     ),
     ...qdrantVectors(collection).map(({ column }): IndexSchema => ({ name: column, columns: [column], unique: false })),
   ];
+}
+
+/**
+ * What a console request reads from the description (part B's `QdrantCollectionFacts`): each vector's shared field,
+ * the vectors whose datatype is turbo4, which the server answers as a reconstruction, and each payload index's type.
+ */
+export function qdrantCollectionFacts(collection: QdrantCollection): QdrantCollectionFacts {
+  return {
+    vectors: qdrantVectorFields(collection),
+    reconstructed: new Set(
+      qdrantVectors(collection)
+        .filter((vector) => vector.shape.datatype === "turbo4")
+        .map((vector) => vector.name),
+    ),
+    payloadIndexTypes: new Map(qdrantPayloadIndexes(collection).map((index) => [index.key, index.type])),
+  };
 }

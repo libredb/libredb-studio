@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import {
+  qdrantCollectionFacts,
   qdrantCount,
   qdrantDeclaredColumns,
   qdrantIndexes,
@@ -270,6 +271,12 @@ describe("readQdrantCollection and qdrantCount", () => {
     expect(() => readQdrantCollection("docs", result)).toThrow(`collection "docs" is not one Studio can read: ${part}`);
   });
 
+  test("a description read for a console request, which names the collection itself, is refused naming the request", () => {
+    expect(() => readQdrantCollection("", { status: "green" })).toThrow(
+      "Qdrant's description of the collection this request names is not one Studio can read: it holds no config.",
+    );
+  });
+
   test("a count is a number, the exact digits of one past 2^53, or absent", () => {
     expect(qdrantCount(2000)).toBe(2000);
     expect(qdrantCount(0)).toBe(0);
@@ -277,5 +284,33 @@ describe("readQdrantCollection and qdrantCount", () => {
     expect(qdrantCount(null)).toBeNull();
     expect(qdrantCount(undefined)).toBeNull();
     expect(qdrantCount("many")).toBeNull();
+  });
+});
+
+describe("qdrantCollectionFacts", () => {
+  test.each([...SEEDED_COLLECTIONS])(
+    "%s: the facts a console request reads are the seed's fields and indexes",
+    (collection) => {
+      const described = seeded(collection);
+      const facts = qdrantCollectionFacts(described);
+      expect(facts.vectors).toEqual(qdrantVectorFields(described));
+      expect([...facts.payloadIndexTypes]).toEqual(
+        qdrantPayloadIndexes(described).map((index) => [index.key, index.type]),
+      );
+    },
+  );
+
+  test("small_dtypes: only the turbo4 vector is answered as a reconstruction", () => {
+    const turbo4 = qdrantVectors(seeded("small_dtypes"))
+      .filter((vector) => vector.shape.datatype === "turbo4")
+      .map((vector) => vector.name);
+    expect(turbo4.length).toBeGreaterThan(0);
+    expect([...qdrantCollectionFacts(seeded("small_dtypes")).reconstructed]).toEqual(turbo4);
+  });
+
+  test("docs: no vector is reconstructed, and each payload index is typed by its index", () => {
+    const facts = qdrantCollectionFacts(seeded("docs"));
+    expect(facts.reconstructed.size).toBe(0);
+    expect(facts.payloadIndexTypes.size).toBeGreaterThan(0);
   });
 });

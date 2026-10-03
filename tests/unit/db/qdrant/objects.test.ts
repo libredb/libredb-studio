@@ -16,12 +16,13 @@ import {
   QDRANT_DESCRIBE_CONCURRENCY,
   QDRANT_OBJECT_KINDS,
   type QdrantObjectContext,
+  readQdrantConsoleFacts,
   readQdrantObjectSource,
   readResult,
   VISIBLE_TO_CREDENTIAL,
 } from "@/lib/db/providers/vector/qdrant/objects";
 import { readQdrantPayloadSample } from "@/lib/db/providers/vector/qdrant/sample";
-import { readQdrantCollection } from "@/lib/db/providers/vector/qdrant/schema";
+import { qdrantCollectionFacts, readQdrantCollection } from "@/lib/db/providers/vector/qdrant/schema";
 import { qdrantSourceParts } from "@/lib/db/providers/vector/qdrant/source";
 import type { QdrantAnswer, QdrantRequest } from "@/lib/db/providers/vector/qdrant/client";
 import { expectCalls } from "../../../helpers/call-log";
@@ -362,5 +363,23 @@ describe("readResult", () => {
 
   test("a JSON answer with no result reads as undefined", () => {
     expect(readResult({ ...json(0), text: "null" }, "x")).toBeUndefined();
+  });
+});
+
+describe("readQdrantConsoleFacts", () => {
+  test("a description's text is the facts schema.ts reads from its result, integers past 2^53 kept exact", () => {
+    const text = vectorCapture("describe-docs").payload.body;
+    expect(readQdrantConsoleFacts(text)).toEqual(
+      qdrantCollectionFacts(readQdrantCollection("", resultOf(vectorCapture("describe-docs")))),
+    );
+  });
+
+  test("a text that is not JSON, or a result with no config, is refused naming the request's collection", () => {
+    expect(() => readQdrantConsoleFacts("<html>")).toThrow(
+      "Qdrant's answer to the description of the collection this request names is not JSON Studio can read.",
+    );
+    expect(() => readQdrantConsoleFacts('{"result":{"status":"green"}}')).toThrow(
+      "Qdrant's description of the collection this request names is not one Studio can read: it holds no config.",
+    );
   });
 });
