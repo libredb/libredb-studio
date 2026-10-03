@@ -28,11 +28,11 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D161, U17 · 105
+- [Drivers and connections](#drivers-and-connections) — D1-D164, U17 · 108
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U74 · 69
-- [Dependencies](#dependencies) — P1-P8 · 8
+- [Dependencies](#dependencies) — P1-P9 · 9
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
@@ -2217,6 +2217,40 @@ Found by the acceptance pass of the vector-family work; the arithmetic predates 
 
 **Done when:** the durations count to `clock_timestamp()`, so no session reads below zero, and an integration test reads the sessions of a live PostgreSQL while another connection runs a statement and finds no negative duration.
 
+### D162. Under Bun, the plaintext path of seven HTTP providers follows proxy variables and sends a PUT twice
+
+`httpTransportFetch` (`src/lib/db/http/egress-policy.ts:123-124`) returns `globalThis.fetch(input, init)` while `DB_HTTP_BLOCK_PRIVATE_HOSTS` is off, so when the server runs under Bun, every plaintext request of ClickHouse, Couchbase, Elasticsearch and OpenSearch, libSQL, Prometheus, Trino and Druid goes through Bun's `fetch`.
+Measured 2026-10-02 on Bun 1.4.2 for the Qdrant provider research, against a counting proxy and a cut-connection proxy: Bun's `fetch` sends the request through `HTTP_PROXY` or `HTTPS_PROXY` and hands the proxy the credential header in clear text for an `http://` target, `127.0.0.1` included, and it sends a PUT a second time when its reused keep-alive connection drops after the server applied it; Node 24.14.0 and 26.10.0 did neither, and `node:http` with an explicit agent did neither on any runtime.
+The production image runs Node 26 (`Dockerfile`, `CMD ["node", "server.js"]`), so today this reaches the test suite and anyone who runs the server under Bun; it was not measured provider by provider.
+Re-read 2026-10-03 on `main` after the vector-family work: the seven transports still call `httpTransportFetch`, and only the Qdrant provider dials through the shared `src/lib/db/http/node-transport.ts`.
+
+Found while researching the Qdrant provider, whose transport is `node:http(s)` with an explicit agent for this reason.
+Not fixed there: the path serves seven providers.
+
+**Done when:** the plaintext path of every HTTP provider dials through `node:http` with an explicit agent, for example through `src/lib/db/http/node-transport.ts`, and a test under Bun with proxy variables naming a counting listener records zero proxy connections, and a cut-connection proxy sees exactly one PUT.
+
+### D163. The Prometheus TLS path uses the global https agent while the egress guard is off
+
+`sendOverTls` (`src/lib/db/providers/timeseries/prometheus/request.ts:278-288`) builds its `node:https` request from `...tls` and `...guardedNodeOptions(hostname)`, and with `DB_HTTP_BLOCK_PRIVATE_HOSTS` off `guardedNodeOptions` (`src/lib/db/http/egress-policy.ts:111-116`) returns `{}`, so no `agent` is set and the process-wide global agent carries the request.
+Measured 2026-10-03 for `http:` only, on Node 24.14.0, Node 26.10.0 and Bun 1.4.2: with `NODE_USE_ENV_PROXY=1` the global agent sends through `HTTP_PROXY`, while `agent: false` and an explicit agent never do.
+Whether an `https:` request through the global agent goes through a proxy under `NODE_USE_ENV_PROXY=1` was not measured.
+
+Found while researching the Qdrant provider's transport.
+Not fixed there: the Prometheus provider is outside that work.
+
+**Done when:** the Prometheus TLS request is measured under `NODE_USE_ENV_PROXY=1` with `HTTPS_PROXY` naming a counting listener, and it either carries an explicit agent of the provider, pinned by that test, or the measured behaviour is stated in `docs/providers/prometheus.md`.
+
+### D164. A pasted http or https URL loses an explicit default port
+
+`parseGenericURL` (`src/lib/connection-string-parser.ts:657-668`) takes the port as `url.port || defaultPort`, and the WHATWG URL parser reports an explicit default port of a special scheme as an empty string, so `https://host:443` pasted into the connection-string box becomes ClickHouse on port 8443 and `http://host:80` becomes port 8123.
+Measured 2026-10-03 on Node 24.14.0: `new URL("https://h.example:443").port` and `new URL("http://h.example:80").port` are both `""`, while `new URL("https://h.example:8443").port` is `"8443"`.
+Only `http:` and `https:` are affected, because other schemes have no default port in the URL standard; the user who typed the port explicitly gets another one with no notice.
+
+Found while designing the address paste of the vector providers, whose Host-box parser (`src/lib/connection-host-uri.ts`) reads the port from the address text for this reason.
+Not fixed there: the ClickHouse paste path is outside that work.
+
+**Done when:** a port typed in a pasted `http://` or `https://` URL is kept as typed, including 80 and 443, and a test pastes `https://host:443` and `http://host:80` and pins both ports.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -3625,6 +3659,15 @@ Bumping the pin is a provider change, not a routine bump.
 P7 closes with the same release if its `Cargo.lock` carries the patched TLS crates.
 
 **Done when:** the pin in `package.json` moves to the published release; `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run against Db2 12.1 and 11.5 and each K row in `docs/providers/db2.md` is removed or kept on that evidence; `allowInsecureAuth` maps to the driver's explicit plaintext mechanism; inline edit, data import and Create Table are re-enabled only if K1 and K22 measure as gone; and each workaround the fix makes redundant (the compound block around `CALL`, HEX catalog names, the preview casts) is removed or its reason restated.
+
+### P9. Two dev dependencies resolve undici 7.28.0, inside a high advisory
+
+`bun.lock` resolves `undici@7.28.0` for `@workflow/world-local` 4.2.4 and `@workflow/world-vercel` 4.6.2 (`bun.lock:1233,1237,2665`), which arrive through the devDependencies `workflow` 4.8.1 and `@workflow/world-local`, and 7.28.0 is inside the range of GHSA-w293-vg96-wgc3 (high, from 7.24.1 below 7.29.1).
+Nothing under `src/` imports a `workflow` package, and the runtime image carries only the standalone output while the npm package installs no devDependencies, so the exposure is development, CI and the image's build stage; no Dependabot alert was open for it on 2026-10-03.
+
+Found while measuring the official Qdrant client, which pins undici 7.29.0.
+
+**Done when:** the lockfile resolves undici at 7.29.1 or later for both packages, by updating them or by an override with its `//overrides` note, and the regenerated `bun.lock` holds no undici copy inside the advisory's range.
 
 ## Documentation
 
