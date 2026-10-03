@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections): D1-D140, U17 · 84
+- [Drivers and connections](#drivers-and-connections) — D1-D140, U17 · 84
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution): X2-X20, U2-U71 · 59
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X20, U2-U71 · 59
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
