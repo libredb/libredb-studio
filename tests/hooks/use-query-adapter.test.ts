@@ -174,6 +174,155 @@ describe("useQueryAdapter", () => {
     expect(params.tabs[0].result?.columnTypes).toEqual({ id: "INTEGER" });
   });
 
+  // ── Vector columns reach the tab result on every path (vector-family spec 3.10) ──
+  //
+  // A host declares its vector columns on the result, and the grid draws a declared column's cells as vector
+  // cells. The adapter builds the tab result at four sites, so the declaration has to survive each one.
+
+  const VECTOR_COLUMNS: NonNullable<WorkspaceQueryResult["vectorColumns"]> = {
+    embedding: { kind: "dense", dtype: "float32", dimension: 3 },
+  };
+
+  test("executeQuery carries the host's vector columns", async () => {
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(makeQueryResult({ vectorColumns: VECTOR_COLUMNS }))),
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    expect(params.tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+  });
+
+  test("forceExecuteQuery carries them too", async () => {
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(makeQueryResult({ vectorColumns: VECTOR_COLUMNS }))),
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      result.current.forceExecuteQuery("DELETE FROM users");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(params.tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+  });
+
+  test("a page that declares none keeps the rows' declaration, so Load More does not turn vectors back into JSON", async () => {
+    const firstPage = makeTab({
+      result: {
+        rows: [{ id: 1, embedding: [0.1, 0.2, 0.3] }],
+        fields: ["id", "embedding"],
+        rowCount: 1,
+        executionTime: 1,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+        vectorColumns: VECTOR_COLUMNS,
+      },
+    });
+    const { tabs, setTabs } = createMutableTabs([firstPage]);
+    const nextPage = makeQueryResult({
+      rows: [{ id: 2, embedding: [0.4, 0.5, 0.6] }],
+      fields: ["id", "embedding"],
+      pagination: { limit: 1, offset: 1, hasMore: false, totalReturned: 2, wasLimited: false },
+    });
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(nextPage)),
+      tabs,
+      setTabs,
+      currentTab: firstPage,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    await act(async () => {
+      result.current.handleLoadMore();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(tabs[0].result?.rows).toHaveLength(2);
+    expect(tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+  });
+
+  test("a page that declares its own is believed", async () => {
+    const pageColumns: NonNullable<WorkspaceQueryResult["vectorColumns"]> = {
+      embedding: { kind: "dense", dtype: "float16", dimension: 3 },
+    };
+    const firstPage = makeTab({
+      result: {
+        rows: [{ id: 1 }],
+        fields: ["id", "embedding"],
+        rowCount: 1,
+        executionTime: 1,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+        vectorColumns: VECTOR_COLUMNS,
+      },
+    });
+    const { tabs, setTabs } = createMutableTabs([firstPage]);
+    const nextPage = makeQueryResult({
+      rows: [{ id: 2 }],
+      fields: ["id", "embedding"],
+      pagination: { limit: 1, offset: 1, hasMore: false, totalReturned: 2, wasLimited: false },
+      vectorColumns: pageColumns,
+    });
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(nextPage)),
+      tabs,
+      setTabs,
+      currentTab: firstPage,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    await act(async () => {
+      result.current.handleLoadMore();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(tabs[0].result?.vectorColumns).toEqual(pageColumns);
+  });
+
+  test("handleUnlimitedQuery carries the vector columns, and the warnings and declared types it used to drop", async () => {
+    const targetTab = makeTab();
+    const { tabs, setTabs } = createMutableTabs([targetTab]);
+    const onQueryExecute = mock(() =>
+      Promise.resolve(
+        makeQueryResult({
+          vectorColumns: VECTOR_COLUMNS,
+          warnings: [{ message: "truncated" }],
+          columns: [{ name: "id", type: "INTEGER" }],
+        }),
+      ),
+    );
+    const params = makeHookParams({ onQueryExecute, tabs, setTabs, currentTab: targetTab });
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    act(() => {
+      result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM big", tabId: "tab-1" });
+    });
+    await act(async () => {
+      result.current.handleUnlimitedQuery();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+    expect(tabs[0].result?.warnings).toEqual([{ message: "truncated" }]);
+    expect(tabs[0].result?.columnTypes).toEqual({ id: "INTEGER" });
+  });
+
+  test("a result that declares no vector column leaves the field absent, never an empty object", async () => {
+    const params = makeHookParams();
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    expect(params.tabs[0].result).not.toBeNull();
+    expect(Object.hasOwn(params.tabs[0].result as object, "vectorColumns")).toBe(false);
+  });
+
   // ── executeQuery calls onQueryExecute with correct connectionId and sql ────
 
   test("executeQuery calls onQueryExecute with correct connectionId and sql", async () => {

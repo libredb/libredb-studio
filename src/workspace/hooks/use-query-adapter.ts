@@ -23,16 +23,28 @@ import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
  * Both stay ABSENT when the host sent nothing: the grid decides whether to render
  * from the field's presence, so an empty array would announce a section with
  * nothing in it.
+ *
+ * The host's vector columns ride the same channel (vector-family spec 3.10), so
+ * every path that builds a tab result carries them: a run, a confirmed run, a page
+ * and an unlimited run. A page of the same statement names the same columns, so a
+ * page that declares none keeps the declaration of the rows already on screen
+ * (`previous`), which is what keeps a vector column from turning back into JSON
+ * after Load More; a page that declares its own is believed.
  */
-function carriedChannels(result: WorkspaceQueryResult): Pick<QueryTab["result"] & object, "warnings" | "columnTypes"> {
+function carriedChannels(
+  result: WorkspaceQueryResult,
+  previous?: QueryTab["result"],
+): Pick<QueryTab["result"] & object, "warnings" | "columnTypes" | "vectorColumns"> {
   // A column the host declared without a type contributes no entry rather than an
   // undefined one every reader would have to test for.
   const declared = (result.columns ?? []).filter((column) => column.type !== undefined);
+  const vectorColumns = result.vectorColumns ?? previous?.vectorColumns;
   return {
     ...(result.warnings && { warnings: result.warnings }),
     ...(declared.length > 0 && {
       columnTypes: Object.fromEntries(declared.map((column) => [column.name, column.type as string])),
     }),
+    ...(vectorColumns !== undefined && { vectorColumns }),
   };
 }
 
@@ -567,7 +579,7 @@ export function useQueryAdapter({
                 // The first-page commit above carries these, and this one did not: a
                 // paged result silently lost the engine warnings and the declared column
                 // types the first page had shown (#285's class, on the paging path).
-                ...carriedChannels(result),
+                ...carriedChannels(result, t.result),
               },
               resultQuery: pagedStatement,
               allRows: newAllRows,
@@ -658,6 +670,10 @@ export function useQueryAdapter({
                 rowCount: result.rowCount,
                 executionTime: result.executionTime,
                 pagination: result.pagination,
+                // The other three paths carry these and this one did not: an unlimited run
+                // dropped the host's warnings and declared types (#285's class), and would
+                // have dropped its vector columns.
+                ...carriedChannels(result),
               },
               // The rows and the statement that fetched them are committed together, the way
               // `use-query-execution` does it: a reader of one must never be handed the other's
