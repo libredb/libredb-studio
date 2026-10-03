@@ -6,6 +6,7 @@ import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import type { DatabaseType, QueryWarning } from "@/lib/types";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
@@ -119,6 +120,19 @@ export async function POST(req: NextRequest) {
 
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
+    }
+
+    // A type that declares a console text bound runs one statement per request. The SQL splitter below would turn
+    // one console text into several requests, so such a type is sent to the single-statement route before anything
+    // is split or acquired.
+    if (consoleTextByteLimit(connection.type) !== undefined) {
+      return NextResponse.json(
+        {
+          error:
+            "This connection type runs one statement per request: send it to POST /api/db/query, because this route would split its text into several requests.",
+        },
+        { status: 400 },
+      );
     }
 
     // The resolved connection's dialect, not the compatibility default: this is the

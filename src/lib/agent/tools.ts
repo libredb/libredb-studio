@@ -94,6 +94,7 @@ import {
   kindCountIsListing,
 } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
+import { machineColumns } from "@/lib/db/detailed-object";
 // The inventory route's bounds, and now nobody's second copy of them: one owner, so the
 // agent's grounding walk and `POST /api/db/objects/inventory` cannot come to disagree about
 // how much of a database an inventory is. They used to be declared again here, because
@@ -3006,7 +3007,9 @@ async function walkObjectInventory(
           // bulk read the provider bounded before it reached this object. Neither may be shown
           // to a model as a column list that was read and found empty, which is why `truncated`
           // above travels with the inventory.
-          columns: detail?.columns ?? [],
+          // A column the engine only inferred from sampled data is named by the data, so it never enters the
+          // inventory a model is grounded on.
+          columns: machineColumns(detail?.columns ?? []),
           indexes: detail?.indexes ?? [],
           foreignKeys: detail?.foreignKeys ?? [],
           // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the

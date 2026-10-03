@@ -147,3 +147,19 @@ describe("ColumnList", () => {
     expect(queryByText("boolean")).not.toBeNull();
   });
 });
+
+describe("ColumnList and a column the engine only inferred from sampled data", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("adds (sampled) to the type it shows and to its title, and leaves a declared column as it was", () => {
+    const columns: DetailedObject["columns"] = [
+      { name: "category", type: "KEYWORD", nullable: true, isPrimary: false },
+      { name: "payload_tag", type: "TEXT(64)", nullable: true, isPrimary: false, provenance: "sampled" },
+    ];
+    const { getByTitle, getByText } = render(<ColumnList columns={columns} indexes={[]} />);
+    expect(getByTitle("TEXT(64) (sampled)").textContent).toBe("TEXT (sampled)");
+    expect(getByText("KEYWORD").getAttribute("title")).toBe("KEYWORD");
+  });
+});

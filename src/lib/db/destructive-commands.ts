@@ -270,6 +270,22 @@ interface DestructiveVocabulary {
    * through the gate.
    */
   readonly safetyAnalysis?: false;
+  /**
+   * The sentence this connection type's editor refuses a statement with, or undefined to send it.
+   *
+   * Absent means the editor sends every statement, as it does for every engine today. A row declares it where the
+   * dialect has a browser-safe verdict of its own, and a statement it refuses is never sent to any route or host
+   * callback and never written to query history, on every path either shell can take (`statementRefusal`).
+   */
+  readonly refuse?: (text: string) => string | undefined;
+  /**
+   * The bound on a statement's text in UTF-8 bytes, the same constant the provider's own dialect declares.
+   *
+   * Absent means no bound of this kind. A row that declares it is refused past it in the browser, answered 413 by
+   * `POST /api/db/query`, and refused by `POST /api/db/multi-query` outright, whose SQL splitter would turn one
+   * console text into several requests.
+   */
+  readonly maxTextBytes?: number;
 }
 
 /**
@@ -487,4 +503,59 @@ export function vocabularyTypedConfirmation(
 export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
   const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
   return facts?.safetyAnalysis !== false;
+}
+
+/**
+ * The UTF-8 length of a text, counted without encoding it: a surrogate pair is one code point of four bytes, and a
+ * lone surrogate counts three, as `TextEncoder` and `Buffer.byteLength` write it as U+FFFD.
+ */
+function utf8Bytes(text: string): number {
+  let bytes = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    const unit = text.charCodeAt(index);
+    if (unit < 0x80) {
+      bytes += 1;
+    } else if (unit < 0x800) {
+      bytes += 2;
+    } else if (unit >= 0xd800 && unit <= 0xdbff && (text.charCodeAt(index + 1) & 0xfc00) === 0xdc00) {
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+/**
+ * The console text bound this connection type declares, in UTF-8 bytes, or undefined where it declares none.
+ *
+ * Undefined for every type with no row, including no type at all, and for every row that declares no bound.
+ */
+export function consoleTextByteLimit(databaseType?: DatabaseType): number | undefined {
+  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  return facts?.maxTextBytes;
+}
+
+/** The sentence a text over `limit` bytes is refused with, naming its size and the bound and never quoting it. */
+export function consoleTextOverLimit(text: string, limit: number): string | undefined {
+  const bytes = utf8Bytes(text);
+  if (bytes <= limit) return undefined;
+  return `The statement is ${bytes} bytes in UTF-8, over the ${limit}-byte limit for this connection type. Shorten it to run it.`;
+}
+
+/**
+ * Why this connection type's editor refuses this statement, or undefined to send it.
+ *
+ * The bound first, so a row's own verdict never reads an oversize text; then the row's `refuse`. Undefined for
+ * every type with no row, including no type at all, and for every row that declares neither field.
+ */
+export function statementRefusal(query: string, databaseType?: DatabaseType): string | undefined {
+  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  if (facts === undefined) return undefined;
+  if (facts.maxTextBytes !== undefined) {
+    const over = consoleTextOverLimit(query, facts.maxTextBytes);
+    if (over !== undefined) return over;
+  }
+  return facts.refuse?.(query);
 }

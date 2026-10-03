@@ -146,6 +146,27 @@ export function detailedObjects(
 }
 
 /**
+ * The columns a machine-facing surface may receive: every column but the ones a provider only inferred from
+ * sampled data, whose names were read out of the data.
+ *
+ * It runs before any slice, cap or count, at exactly three places: MCP `inspect_schema`, the agent's inventory
+ * walk, and `schemaContextOf` below, which every AI panel and an embedding host's `onAnalyzeSafety` and
+ * `onDescribeSchema` read. It answers the same array when no column is marked, so every engine that marks nothing
+ * is unchanged. Human views (the tree, the mobile list, the Source, the documentation table, Schema Diff) read the
+ * unprojected schema.
+ */
+export function machineColumns(columns: readonly ColumnSchema[]): readonly ColumnSchema[] {
+  return columns.some((column) => column.provenance === "sampled")
+    ? columns.filter((column) => column.provenance !== "sampled")
+    : columns;
+}
+
+/** What a human view adds to a column's type text: " (sampled)" for a sampled column, nothing for a declared one. */
+export function sampledMark(column: Pick<ColumnSchema, "provenance">): string {
+  return column.provenance === "sampled" ? " (sampled)" : "";
+}
+
+/**
  * The schema as the AI panels are handed it, which is `schemaContext` on both shells: its JSON,
  * with every `readRanges` left out (etcd spec 3.4, E13).
  *
@@ -157,9 +178,15 @@ export function detailedObjects(
  * A REPLACER rather than a projection, and the choice is what keeps every other engine's context
  * byte for byte the `JSON.stringify(schema)` it has always been: the replacer answers every other
  * key's value unchanged, so the output differs only where a range was.
+ * A column `machineColumns` withholds is left out the same way, and only where one is marked.
  */
 export function schemaContextOf(objects: readonly DetailedObject[]): string {
-  return JSON.stringify(objects, (key: string, value: unknown) => (key === "readRanges" ? undefined : value));
+  // An object with no sampled column is handed on as it is, so an engine that marks nothing keeps its bytes.
+  const projected = objects.map((object) => {
+    const columns = machineColumns(object.columns);
+    return columns === object.columns ? object : { ...object, columns };
+  });
+  return JSON.stringify(projected, (key: string, value: unknown) => (key === "readRanges" ? undefined : value));
 }
 
 /**

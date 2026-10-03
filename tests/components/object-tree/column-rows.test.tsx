@@ -342,6 +342,28 @@ describe("a column row draws the column and nothing of its parent", () => {
     expect(type.textContent).toContain("NUMERIC(10,2)");
   });
 
+  test("a column the engine only inferred from sampled data says so in its type text and its name", async () => {
+    routesFor(() => ({
+      ...ordersDetail,
+      columns: [
+        ...ordersColumns,
+        { name: "payload_tag", type: "keyword", nullable: true, isPrimary: false, provenance: "sampled" as const },
+      ],
+    }));
+    await openTables();
+    await pressTwisty(/orders/);
+    await screen.findByText("payload_tag");
+
+    const tag = row("payload_tag keyword (sampled)");
+    const type = within(tag).getByTestId("tree-row-column-type");
+    expect(type.getAttribute("title")).toBe("keyword (sampled)");
+    expect(type.querySelector("[aria-hidden='true']")?.textContent).toBe("keyword (sampled)");
+    // A declared column is unchanged.
+    expect(within(row("total NUMERIC(10,2)")).getByTestId("tree-row-column-type").getAttribute("title")).toBe(
+      "NUMERIC(10,2)",
+    );
+  });
+
   test("a column whose type the engine did not give renders no type slot", async () => {
     routesFor(() => ordersDetail);
     await openTables();

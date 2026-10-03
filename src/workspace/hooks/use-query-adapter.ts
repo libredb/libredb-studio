@@ -7,6 +7,7 @@ import type { BottomPanelMode } from "@/components/studio/BottomPanel";
 import { useToast } from "@/hooks/use-toast";
 import { newLocalId } from "@/lib/ids";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { statementRefusal } from "@/lib/db/destructive-commands";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 
 /**
@@ -127,6 +128,37 @@ export function useQueryAdapter({
 
   const { toast } = useToast();
 
+  /**
+   * Shows a statement this connection type's editor refuses on the tab it was run in, and hands the host nothing.
+   *
+   * It counts as the tab's newest run, so `beginRun` disowns a run still in flight there and that run's late answer
+   * cannot land over the sentence. The failure takes the place of the rows on screen because this shell mounts no
+   * Toaster: `runError` is the signal a host's user sees, and the toast reaches only a host that mounts one.
+   */
+  const refuseRun = useCallback(
+    (tabId: string, sentence: string) => {
+      beginRun(tabId);
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                result: null,
+                resultQuery: undefined,
+                allRows: undefined,
+                currentOffset: 0,
+                runError: sentence,
+                isExecuting: false,
+                isLoadingMore: false,
+              }
+            : t,
+        ),
+      );
+      toast({ title: "Statement Refused", description: sentence, variant: "destructive" });
+    },
+    [beginRun, setTabs, toast],
+  );
+
   const executeQuery = useCallback(
     async (
       overrideQuery?: string,
@@ -152,6 +184,13 @@ export function useQueryAdapter({
 
       if (!activeConnection) {
         toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        return;
+      }
+
+      // Before the gate and before anything reaches the host, which owns the fetch.
+      const refusal = statementRefusal(queryToExecute, activeConnection.type);
+      if (refusal !== undefined) {
+        refuseRun(targetTabId, refusal);
         return;
       }
 
@@ -279,7 +318,7 @@ export function useQueryAdapter({
         toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
       }
     },
-    [activeConnection, tabs, currentTab, activeTabId, toast, onQueryExecute, setTabs, beginRun],
+    [activeConnection, tabs, currentTab, activeTabId, toast, onQueryExecute, setTabs, beginRun, refuseRun],
   );
 
   // Force execute (bypass safety check)
@@ -289,6 +328,13 @@ export function useQueryAdapter({
 
       if (!activeConnection) {
         toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        return;
+      }
+
+      // Proceed skips the gate, never this check.
+      const refusal = statementRefusal(query, activeConnection.type);
+      if (refusal !== undefined) {
+        refuseRun(activeTabId, refusal);
         return;
       }
 
@@ -385,7 +431,7 @@ export function useQueryAdapter({
           toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
         });
     },
-    [activeConnection, activeTabId, toast, onQueryExecute, setTabs, beginRun],
+    [activeConnection, activeTabId, toast, onQueryExecute, setTabs, beginRun, refuseRun],
   );
 
   // Cancel running query (best-effort via ref flag)
@@ -432,6 +478,14 @@ export function useQueryAdapter({
     // pass. It is a second line behind the disabled control, not a replacement for it, and
     // a caller that renders no such control has to enforce the invariant itself (#816).
     if (currentTab.isLoadingMore) return;
+
+    // The statement this page would re-run, checked here because paging calls the host itself and never re-enters
+    // `executeQuery`.
+    const pageRefusal = statementRefusal(currentTab.resultQuery ?? currentTab.query, activeConnection.type);
+    if (pageRefusal !== undefined) {
+      refuseRun(currentTab.id, pageRefusal);
+      return;
+    }
 
     // The same reset `executeQuery`, `forceExecuteQuery` and `handleUnlimitedQuery` make,
     // and for the same reason: `cancelledRef` is one sticky hook-wide boolean, and a page
@@ -544,7 +598,7 @@ export function useQueryAdapter({
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         toast({ title: "Load More Error", description: errorMessage, variant: "destructive" });
       });
-  }, [currentTab, activeConnection, onQueryExecute, setTabs, toast, beginRun]);
+  }, [currentTab, activeConnection, onQueryExecute, setTabs, toast, beginRun, refuseRun]);
 
   // Unlimited query handler
   const handleUnlimitedQuery = useCallback(() => {
@@ -552,6 +606,14 @@ export function useQueryAdapter({
     if (!activeConnection) return;
 
     const { query, tabId } = pendingUnlimitedQuery;
+
+    const refusal = statementRefusal(query, activeConnection.type);
+    if (refusal !== undefined) {
+      refuseRun(tabId, refusal);
+      setUnlimitedWarningOpen(false);
+      setPendingUnlimitedQuery(null);
+      return;
+    }
 
     cancelledRef.current = false;
     const ownsTab = beginRun(tabId);
@@ -641,7 +703,7 @@ export function useQueryAdapter({
 
     setUnlimitedWarningOpen(false);
     setPendingUnlimitedQuery(null);
-  }, [pendingUnlimitedQuery, activeConnection, onQueryExecute, setTabs, toast, beginRun]);
+  }, [pendingUnlimitedQuery, activeConnection, onQueryExecute, setTabs, toast, beginRun, refuseRun]);
 
   return {
     executeQuery,

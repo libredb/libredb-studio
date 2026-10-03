@@ -60,6 +60,7 @@ import {
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+import { SAMPLED_MARKER } from "../../../fixtures/sampled-schema";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
 import { etcdWalkSpace } from "../../../helpers/etcd-walk-space";
 import type {
@@ -1748,6 +1749,33 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect(snapshot.objects.find((object) => object.kind === "table")?.indexes).toEqual([
       { name: "orders_pkey", columns: ["id"], unique: true },
     ]);
+  });
+
+  /**
+   * A column a provider only inferred from sampled data is named by the data, so the walk
+   * builds no inventory object with it, and neither the snapshot nor the context a model is handed holds it.
+   */
+  test("a column the engine only inferred from sampled data reaches neither the inventory nor the packed context", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        schema: [
+          {
+            ...COLUMNS[0],
+            columns: [
+              ...COLUMNS[0].columns,
+              { name: SAMPLED_MARKER, type: "text", nullable: true, isPrimary: false, provenance: "sampled" },
+            ],
+          },
+          COLUMNS[1],
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.find((object) => object.kind === "table")?.columns).toEqual([
+      { name: "id", type: "integer", nullable: false, isPrimary: true },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain(SAMPLED_MARKER);
+    expect(packContextForTask(snapshot, "orders")).not.toContain(SAMPLED_MARKER);
   });
 
   /**

@@ -20,6 +20,8 @@ import { DataProfiler } from "@/components/DataProfiler";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
 import { mockPostgresConnection } from "../fixtures/connections";
 import { mockUsersTable } from "../fixtures/schemas";
+import { schemaContextOf } from "@/lib/db/detailed-object";
+import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 
 // =============================================================================
 // DataProfiler Tests
@@ -1010,5 +1012,101 @@ describe("DataProfiler", () => {
     } finally {
       download.restore();
     }
+  });
+});
+
+describe("DataProfiler and a column the engine only inferred from sampled data", () => {
+  afterEach(() => {
+    cleanup();
+    restoreGlobalFetch();
+  });
+
+  test("the AI summary request carries no byte of it", async () => {
+    const bodies: string[] = [];
+    mockGlobalFetch({
+      "/api/db/profile": { ok: true, json: mockProfileResponse },
+      "/api/ai/describe-schema": async (req) => {
+        bodies.push(await req.text());
+        return { ok: false, status: 500, json: { error: "AI not configured" } };
+      },
+    });
+    render(<DataProfiler {...createDefaultProps({ schemaContext: schemaContextOf(sampledSchema) })} />);
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    expect(bodies[0]).toContain("category");
+    expect(bodies[0]).not.toContain(SAMPLED_MARKER);
+  });
+
+  test("the host's onDescribeSchema receives no byte of it", async () => {
+    mockGlobalFetch({ "/api/db/profile": { ok: true, json: mockProfileResponse } });
+    const onDescribeSchema = mock(async () => "Adapter AI summary");
+    render(
+      <DataProfiler {...createDefaultProps({ onDescribeSchema, schemaContext: schemaContextOf(sampledSchema) })} />,
+    );
+    await waitFor(() => {
+      expect(onDescribeSchema).toHaveBeenCalledTimes(1);
+    });
+    const argument = (onDescribeSchema.mock.calls as unknown as [{ tableName: string; schemaContext: string }][])[0][0];
+    expect(argument.schemaContext).toContain("category");
+    expect(argument.schemaContext).not.toContain(SAMPLED_MARKER);
+  });
+
+  // The profile itself is a human view and still profiles every column; its summary for the model holds only the
+  // columns the engine declares, so a sampled key's name and its real min and max never reach a model.
+  const profileOf = (names: readonly string[]) => ({
+    tableName: "articles",
+    totalRows: 3,
+    columns: names.map((name) => ({
+      name,
+      type: "text",
+      totalRows: 3,
+      nullCount: 0,
+      nullPercent: 0,
+      distinctCount: 3,
+      minValue: `${name}_min`,
+      maxValue: `${name}_max`,
+      sampleValues: [],
+    })),
+  });
+  const sampledProps = (overrides: Partial<Parameters<typeof DataProfiler>[0]> = {}) =>
+    createDefaultProps({
+      tablePath: ["articles"],
+      tableSchema: sampledSchema[0],
+      schemaContext: schemaContextOf(sampledSchema),
+      ...overrides,
+    });
+
+  test("the column profiles in the AI summary request leave it out, and the profile table still lists it", async () => {
+    const bodies: string[] = [];
+    mockGlobalFetch({
+      "/api/db/profile": async (req) => {
+        const { columns } = JSON.parse(await req.text()) as { columns: string[] };
+        return { ok: true, json: profileOf(columns) };
+      },
+      "/api/ai/describe-schema": async (req) => {
+        bodies.push(await req.text());
+        return { ok: false, status: 500, json: { error: "AI not configured" } };
+      },
+    });
+    const { container } = render(<DataProfiler {...sampledProps()} />);
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    expect(bodies[0]).toContain("category_min");
+    expect(bodies[0]).not.toContain(SAMPLED_MARKER);
+    expect(container.textContent).toContain(SAMPLED_MARKER);
+  });
+
+  test("the host's onDescribeSchema receives column profiles without it", async () => {
+    const onProfile = mock(async () => profileOf(["category", SAMPLED_MARKER]));
+    const onDescribeSchema = mock(async () => "Adapter AI summary");
+    render(<DataProfiler {...sampledProps({ onProfile, onDescribeSchema })} />);
+    await waitFor(() => {
+      expect(onDescribeSchema).toHaveBeenCalledTimes(1);
+    });
+    const argument = (onDescribeSchema.mock.calls as unknown as [{ tableName: string; schemaContext: string }][])[0][0];
+    expect(argument.schemaContext).toContain("category_min");
+    expect(argument.schemaContext).not.toContain(SAMPLED_MARKER);
   });
 });

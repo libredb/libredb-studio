@@ -458,6 +458,20 @@ The declaration is read without connecting, so each refusal costs no socket, and
 | The provider declares `keyScan` and no container level (etcd) | `400` | `{ "error": "<type> walks one key space and declares no database level: \"database\" names the numbered database a key was walked in, and this engine has none to name" }` |
 | The server has no such database | `400` | `{ "error": "Redis refused database <n>: ERR DB index is out of range", "code": "QUERY_ERROR", "statusCode": 400 }`, never a read of database 0 |
 
+**A connection type's console text bound:**
+
+A connection type can declare a bound on its statement text in UTF-8 bytes, on its row in `src/lib/db/destructive-commands.ts`.
+For such a type this route counts the bytes of `sql` after resolving the connection and before reading `params`, building the provider or preparing the statement, so an oversize text opens no socket.
+The bound is read after the request body is parsed, because the type that selects it is inside the body.
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| `sql` is over the declared bound | `413` | `{ "error": "The statement is <n> bytes in UTF-8, over the <limit>-byte limit for this connection type. Shorten it to run it." }`, which never repeats the text |
+| `sql` is not a string | `400` | `{ "error": "sql must be a string" }` |
+
+`POST /api/db/multi-query` refuses every connection whose type declares such a bound with `400 { "error": "This connection type runs one statement per request: send it to POST /api/db/query, because this route would split its text into several requests." }`, before it splits anything.
+No shipped engine declares a bound, so neither answer changes anything for an existing connection.
+
 **Bound parameters (optional):**
 ```json
 {
@@ -1914,6 +1928,7 @@ interface ColumnSchema {
   nullable: boolean;       // Allows NULL
   isPrimary: boolean;      // Primary key
   defaultValue?: string;   // Default value
+  provenance?: "sampled";  // Inferred from sampled rows rather than declared; never sent to MCP or a model
 }
 
 interface IndexSchema {
@@ -2005,7 +2020,7 @@ interface ActiveSession {
 | `401` | Unauthorized - Missing or invalid authentication |
 | `403` | Forbidden - Insufficient permissions, or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
 | `408` | Request Timeout - Query exceeded time limit |
-| `413` | Payload Too Large - the request body, or one part's text, is above the object edit routes' own bound |
+| `413` | Payload Too Large - the request body, or one part's text, is above the object edit routes' own bound, or a statement is above the console text bound its connection type declares (`POST /api/db/query`) |
 | `429` | Too Many Requests - Rate limit exceeded. Applies to `POST /api/auth/login` and every session-guarded route (see "Rate Limiting" below), not only the AI endpoints |
 | `499` | Client Closed Request - Query cancelled by the client |
 | `500` | Internal Server Error |

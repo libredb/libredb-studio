@@ -11,6 +11,8 @@ import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/ind
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
+import { schemaContextOf } from "@/lib/db/detailed-object";
+import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 
 function createStreamResponse({
   chunks,
@@ -2089,5 +2091,68 @@ describe("isDangerousQuery", () => {
     // And the everyday read that motivated the narrowing still does not prompt: the
     // SQL inside the filter is a value, and `find` is not in the vocabulary.
     expect(isDangerousQuery('{"operation":"find","filter":{"note":"; drop table t"}}', "mongodb")).toBe(false);
+  });
+});
+
+describe("QuerySafetyDialog and a column the engine only inferred from sampled data", () => {
+  const QUERY = "DELETE FROM articles WHERE category = 'x'";
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+
+  test("the safety analysis request carries no byte of it", async () => {
+    const fetchMock = mock(async () => createStreamResponse({ chunks: ["Plain text analysis output"] }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext={schemaContextOf(sampledSchema)}
+        databaseType="postgres"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
+    const body = String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body);
+    expect(body).toContain("category");
+    expect(body).not.toContain(SAMPLED_MARKER);
+  });
+
+  test("the host's onAnalyzeSafety receives no byte of it", async () => {
+    const onAnalyzeSafety = mock(async () => ({
+      riskLevel: "low" as const,
+      summary: "Deletes the rows of one category.",
+      warnings: [],
+      affectedRows: "unknown",
+      cascadeEffects: "none",
+      recommendation: "Proceed.",
+    }));
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext={schemaContextOf(sampledSchema)}
+        databaseType="postgres"
+        onClose={() => {}}
+        onProceed={() => {}}
+        onAnalyzeSafety={onAnalyzeSafety}
+      />,
+    );
+    await waitFor(() => {
+      expect(onAnalyzeSafety).toHaveBeenCalled();
+    });
+    const argument = (onAnalyzeSafety.mock.calls[0] as unknown as [{ query: string; schemaContext: string }])[0];
+    expect(argument.schemaContext).toContain("category");
+    expect(argument.schemaContext).not.toContain(SAMPLED_MARKER);
   });
 });

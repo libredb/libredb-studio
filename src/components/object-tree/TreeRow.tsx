@@ -11,6 +11,7 @@
  */
 
 import { formatRowCount, formatRowCountTitle } from "@/lib/db/utils/pool-manager";
+import { sampledMark } from "@/lib/db/detailed-object";
 import {
   ChevronDown,
   ChevronRight,
@@ -333,11 +334,11 @@ export function TreeRow({
         <span
           id={rowNameId("type", row.id)}
           data-testid="tree-row-column-type"
-          title={row.column.type}
+          title={row.column.type + sampledMark(row.column)}
           className="ml-auto min-w-0 pl-2 max-w-[40%] truncate font-mono text-[10px] uppercase text-muted-foreground"
         >
-          <span aria-hidden="true">{row.column.type.split("(")[0]}</span>
-          <span className="sr-only">{row.column.type}</span>
+          <span aria-hidden="true">{row.column.type.split("(")[0] + sampledMark(row.column)}</span>
+          <span className="sr-only">{row.column.type + sampledMark(row.column)}</span>
         </span>
       )}
       {/*

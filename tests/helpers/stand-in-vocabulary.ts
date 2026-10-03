@@ -6,7 +6,8 @@ import type { DatabaseType } from "@/lib/types";
  * A confirmation-gate vocabulary row of a test's own, under a key no `DatabaseType` spells.
  *
  * A row of `NON_SQL_DESTRUCTIVE_VOCABULARY` is the only input the readers of the gate's `typedConfirmation` and
- * `safetyAnalysis` fields and `QuerySafetyDialog` take (#1089). So a test installs one here, which pins each rule
+ * `safetyAnalysis` fields, `QuerySafetyDialog`, and the editor's `refuse` and `maxTextBytes` readers take (#1089;
+ * no shipped row declares the last two). So a test installs one here, which pins each rule
  * apart from any engine's grammar, and removes it when it ends; every test file runs in a bun process of its own,
  * so no other file ever reads the table while the row is in it. etcd's row, the one shipped row that declares both
  * fields, is pinned with its own commands in describe("the etcd row") of `tests/unit/db/destructive-commands.test.ts`
@@ -14,10 +15,12 @@ import type { DatabaseType } from "@/lib/types";
  */
 export const STAND_IN_TYPE = "stand-in-typed-engine" as string as DatabaseType;
 
-/** The two fields a stand-in row declares; the rest of the row asks about nothing and decides alone. */
+/** The fields a stand-in row declares; the rest of the row asks about nothing and decides alone. */
 export interface StandInFields {
   readonly typedConfirmation?: (text: string) => TypedConfirmationAsk | undefined;
   readonly safetyAnalysis?: false;
+  readonly refuse?: (text: string) => string | undefined;
+  readonly maxTextBytes?: number;
 }
 
 /** Installs the stand-in row with `fields` and returns the function that removes it. */

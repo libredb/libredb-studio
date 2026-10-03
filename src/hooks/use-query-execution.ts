@@ -8,6 +8,7 @@ import type { QueryEditorRef } from "@/components/QueryEditor";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-commands";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
@@ -272,6 +273,36 @@ export function useQueryExecution({
         return false;
       }
 
+      // A statement this connection type's editor refuses never becomes a request and never enters history. The
+      // check runs before the confirmation gate and before every condition that Proceed (`skipSafety`), an explain
+      // run, a page (`offset`) or playground mode skips, so none of those paths can carry it to a route. It counts as
+      // the tab's newest run: a run still in flight there is superseded, as a new run supersedes it, so its late
+      // answer cannot land over the refusal.
+      const refusal = statementRefusal(queryToExecute, activeConnection.type);
+      if (refusal !== undefined) {
+        runsRef.current.get(targetTabId)?.controller.abort();
+        runsRef.current.delete(targetTabId);
+        lastRunRef.current.set(targetTabId, `refused-${newLocalId()}`);
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.id === targetTabId
+              ? {
+                  ...t,
+                  result: null,
+                  resultQuery: undefined,
+                  allRows: undefined,
+                  currentOffset: 0,
+                  runError: refusal,
+                  isExecuting: false,
+                  isLoadingMore: false,
+                }
+              : t,
+          ),
+        );
+        toast({ title: "Statement Refused", description: refusal, variant: "destructive" });
+        return false;
+      }
+
       // The connection this run reaches, and the database it reads when the tab was opened in one: a
       // tab opened from a key browser walked ONE numbered database, so every run of that tab - the
       // initial read, a re-run, a selection, an inline edit, the next page - names it. See
@@ -396,7 +427,12 @@ export function useQueryExecution({
         // keeps the pre-existing behaviour, since only a declared language is known
         // not to be SQL: JSON, and PromQL since #1085, whose single expression the
         // splitter would cut at a `;` inside a `#` comment exactly as it cut Redis's.
-        const dialectIsSql = (metadata?.capabilities.queryLanguage ?? "sql") === "sql";
+        // A type whose vocabulary row declares a console text bound is never SQL, and that declaration is static,
+        // so it holds while the metadata above is still null, the window in which the default of "sql" would send
+        // one console text to the splitter.
+        const dialectIsSql =
+          consoleTextByteLimit(activeConnection.type) === undefined &&
+          (metadata?.capabilities.queryLanguage ?? "sql") === "sql";
         const useMultiQuery =
           !isExplain &&
           !isLoadMore &&

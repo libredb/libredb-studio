@@ -12,12 +12,20 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const BLOCKED_HOST = "Invalid host: this HTTP database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const BLOCKED_CONFIG = `Invalid ${FLAG}: expected true or false`;
 
+/**
+ * The loopback networks, read by two rules: the blocked list below, and `plaintextSecretRefusal` in `./endpoint`,
+ * which lets a secret travel without TLS only to these addresses.
+ */
+export const LOOPBACK_NETWORKS: readonly (readonly [network: string, prefix: number, family: "ipv4" | "ipv6"])[] = [
+  ["127.0.0.0", 8, "ipv4"],
+  ["::1", 128, "ipv6"],
+];
+
 const blocked = new BlockList();
 for (const [network, prefix] of [
   ["0.0.0.0", 8],
   ["10.0.0.0", 8],
   ["100.64.0.0", 10],
-  ["127.0.0.0", 8],
   ["169.254.0.0", 16],
   ["172.16.0.0", 12],
   ["192.0.0.0", 24],
@@ -33,7 +41,6 @@ for (const [network, prefix] of [
   blocked.addSubnet(network, prefix, "ipv4");
 for (const [network, prefix] of [
   ["::", 96],
-  ["::1", 128],
   ["64:ff9b::", 96],
   ["64:ff9b:1::", 48],
   ["100::", 64],
@@ -50,6 +57,7 @@ for (const [network, prefix] of [
   ["ff00::", 8],
 ] as const)
   blocked.addSubnet(network, prefix, "ipv6");
+for (const [network, prefix, family] of LOOPBACK_NETWORKS) blocked.addSubnet(network, prefix, family);
 
 /** Unset and false preserve local-first connections. Invalid opt-in values fail closed. */
 function blockPrivateHttpHosts(): boolean {

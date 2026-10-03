@@ -2,7 +2,10 @@ import { afterEach, describe, test, expect } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
+  consoleTextByteLimit,
+  consoleTextOverLimit,
   isDestructiveNonSqlQuery,
+  statementRefusal,
   vocabularyDecidesAlone,
   vocabularySendsToModel,
   vocabularyTypedConfirmation,
@@ -490,5 +493,90 @@ describe("the etcd row", () => {
     // Read as SQL, the key names below are a DELETE and a DROP; read as etcdctl, they are keys a get reads.
     expect(isDestructiveNonSqlQuery("get DELETE FROM users", "etcd")).toBe(false);
     expect(isDestructiveNonSqlQuery("get /drop/table --prefix", "etcd")).toBe(false);
+  });
+});
+
+/**
+ * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
+ * and never stored. No shipped row declares either field, so every rule here is driven by the stand-in row.
+ */
+describe("statementRefusal and the console text bound", () => {
+  const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
+  let remove: () => void = () => {};
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  test("no shipped row declares a refusal or a bound, so no shipped type changes", () => {
+    for (const row of Object.values(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
+      expect(row?.refuse).toBeUndefined();
+      expect(row?.maxTextBytes).toBeUndefined();
+    }
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      expect(consoleTextByteLimit(type)).toBeUndefined();
+      expect(statementRefusal("x".repeat(10_000), type)).toBeUndefined();
+    }
+    expect(consoleTextByteLimit()).toBeUndefined();
+    expect(statementRefusal("FLUSHALL")).toBeUndefined();
+  });
+
+  test("answers the row's own sentence, handing it the text as written", () => {
+    const seen: string[] = [];
+    remove = installStandInVocabulary({
+      refuse: (text) => {
+        seen.push(text);
+        return text.includes("FORBIDDEN") ? REFUSAL : undefined;
+      },
+    });
+    expect(statementRefusal(" FORBIDDEN\n", STAND_IN_TYPE)).toBe(REFUSAL);
+    expect(statementRefusal("allowed", STAND_IN_TYPE)).toBeUndefined();
+    expect(seen).toEqual([" FORBIDDEN\n", "allowed"]);
+  });
+
+  test("checks the bound before the row's refusal, which never reads an oversize text", () => {
+    const seen: string[] = [];
+    remove = installStandInVocabulary({
+      maxTextBytes: 8,
+      refuse: (text) => {
+        seen.push(text);
+        return undefined;
+      },
+    });
+    expect(consoleTextByteLimit(STAND_IN_TYPE)).toBe(8);
+    expect(statementRefusal("123456789", STAND_IN_TYPE)).toBe(
+      "The statement is 9 bytes in UTF-8, over the 8-byte limit for this connection type. Shorten it to run it.",
+    );
+    expect(statementRefusal("12345678", STAND_IN_TYPE)).toBeUndefined();
+    expect(seen).toEqual(["12345678"]);
+  });
+
+  test("a row with a bound and no refusal sends every text within the bound", () => {
+    remove = installStandInVocabulary({ maxTextBytes: 4 });
+    expect(statementRefusal("abcd", STAND_IN_TYPE)).toBeUndefined();
+  });
+
+  test("counts UTF-8 bytes: an accent is two, an emoji four, a lone surrogate three", () => {
+    expect(consoleTextOverLimit("é".repeat(4), 7)).toBe(
+      "The statement is 8 bytes in UTF-8, over the 7-byte limit for this connection type. Shorten it to run it.",
+    );
+    expect(consoleTextOverLimit("é".repeat(4), 8)).toBeUndefined();
+    expect(consoleTextOverLimit("\u{1F600}\u{1F600}", 8)).toBeUndefined();
+    expect(consoleTextOverLimit("\u{1F600}\u{1F600}", 7)).toContain("8 bytes");
+    expect(consoleTextOverLimit("\ud800", 2)).toContain("3 bytes");
+    expect(consoleTextOverLimit("€", 2)).toContain("3 bytes");
+  });
+
+  test("counts what Buffer.byteLength counts", () => {
+    for (const text of ["", "ascii", "çğış", "日本語", "\u{1F600} ok", "\ud800x", "x\udc00", "a߿bࠀc"]) {
+      const bytes = Buffer.byteLength(text, "utf8");
+      expect(consoleTextOverLimit(text, bytes)).toBeUndefined();
+      if (bytes > 0) expect(consoleTextOverLimit(text, bytes - 1)).toContain(`${bytes} bytes`);
+    }
+  });
+
+  test("never quotes the text it refuses", () => {
+    expect(consoleTextOverLimit("SECRET-TEXT", 3)).not.toContain("SECRET");
   });
 });

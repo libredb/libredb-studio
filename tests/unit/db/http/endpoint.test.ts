@@ -12,6 +12,7 @@ import {
   endpointUrl,
   httpOrigin,
   type HttpOrigin,
+  plaintextSecretRefusal,
   rejectRedirect,
   validateHost,
   validatePort,
@@ -301,5 +302,66 @@ describe("validateHost and validatePort are exported for non-HTTP transports", (
 
   test.each([0, 65536, "90a", -1, 1.5])("the port %p is refused", (port) => {
     expect(refusal(() => validatePort(port))).toBeInstanceOf(DatabaseConfigError);
+  });
+});
+
+/**
+ * A non-empty secret never travels without TLS outside the machine, unless an SSH tunnel carries it.
+ * The vector providers' connection checks run their own rows of this table through `connect()`.
+ */
+describe("plaintextSecretRefusal", () => {
+  const PASSWORD_REFUSAL =
+    "This connection would send its password without TLS to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS, connect through an SSH tunnel, or, if authentication is off on this server, clear the password.";
+
+  const inTheClear = (host: string, extra: Partial<Parameters<typeof plaintextSecretRefusal>[0]> = {}) =>
+    plaintextSecretRefusal({ host: validateHost(host), tunnelled: false, tls: false, hasSecret: true, ...extra });
+
+  test.each([
+    "127.0.0.1",
+    "127.255.0.1",
+    "::1",
+    "[::1]",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+    "::ffff:7f00:1",
+    "localhost",
+    "LOCALHOST",
+  ])("lets a secret travel in the clear to the loopback host %s", (host) => {
+    expect(inTheClear(host)).toBeUndefined();
+  });
+
+  test("reads localhost case-insensitively before validation too", () => {
+    expect(
+      plaintextSecretRefusal({ host: "LocalHost", tunnelled: false, tls: false, hasSecret: true }),
+    ).toBeUndefined();
+  });
+
+  test.each([
+    "db.example.com",
+    "10.0.0.5",
+    "localhost.example",
+    "localhost.",
+    "128.0.0.1",
+    "::ffff:10.0.0.1",
+    "::2",
+    "2001:db8::1",
+  ])("refuses a secret in the clear to %s, naming the three ways out", (host) => {
+    expect(inTheClear(host)).toBe(PASSWORD_REFUSAL);
+  });
+
+  test("never names the host it refuses", () => {
+    expect(inTheClear("db.example.com")).not.toContain("db.example.com");
+  });
+
+  test("opens through an SSH tunnel, over TLS, and with no secret, whatever the host", () => {
+    expect(inTheClear("db.example.com", { tunnelled: true })).toBeUndefined();
+    expect(inTheClear("db.example.com", { tls: true })).toBeUndefined();
+    expect(inTheClear("db.example.com", { hasSecret: false })).toBeUndefined();
+  });
+
+  test("names the secret the engine sends", () => {
+    expect(inTheClear("db.example.com", { secretLabel: "API key" })).toBe(
+      "This connection would send its API key without TLS to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS, connect through an SSH tunnel, or, if authentication is off on this server, clear the API key.",
+    );
   });
 });

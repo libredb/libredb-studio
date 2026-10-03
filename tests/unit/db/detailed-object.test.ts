@@ -1,12 +1,16 @@
 import { describe, test, expect } from "bun:test";
 import {
   detailedObjects,
+  machineColumns,
+  sampledMark,
   objectAtPath,
   relationObjects,
   rowWritableObjects,
   schemaContextOf,
   type DetailedObject,
 } from "@/lib/db/detailed-object";
+import type { ColumnSchema } from "@/lib/types";
+import { SAMPLED_MARKER, sampledSchema } from "../../fixtures/sampled-schema";
 import type { DatabaseObject, ObjectDetail, ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 
 /**
@@ -260,5 +264,51 @@ describe("objectAtPath", () => {
     const nested: DetailedObject = { name: "b", kind: "table", path: ["demo", "a", "b"], columns: [], indexes: [] };
     expect(objectAtPath([dotted, nested], ["demo", "a", "b"])).toBe(nested);
     expect(objectAtPath([dotted, nested], ["demo", "a.b"])).toBe(dotted);
+  });
+});
+
+/**
+ * The machine-facing projection: a column a provider only inferred from sampled data is named
+ * by the data, so no model and no MCP client receives it. Human views read the unprojected schema.
+ */
+describe("machineColumns", () => {
+  test("answers the same array when no column is marked", () => {
+    const columns: ColumnSchema[] = [{ name: "id", type: "integer", nullable: false, isPrimary: true }];
+    expect(machineColumns(columns)).toBe(columns);
+    const none: ColumnSchema[] = [];
+    expect(machineColumns(none)).toBe(none);
+  });
+
+  test("drops every sampled column and keeps the declared ones in order", () => {
+    const columns: ColumnSchema[] = [
+      { name: "a", type: "keyword", nullable: true, isPrimary: false },
+      { name: "b", type: "text", nullable: true, isPrimary: false, provenance: "sampled" },
+      { name: "c", type: "integer", nullable: true, isPrimary: false },
+    ];
+    expect(machineColumns(columns).map((column) => column.name)).toEqual(["a", "c"]);
+  });
+});
+
+describe("schemaContextOf over a sampled column", () => {
+  test("drops the sampled column, marker and all, and keeps the declared one", () => {
+    const context = schemaContextOf(sampledSchema);
+    expect(context).not.toContain(SAMPLED_MARKER);
+    expect(context).not.toContain("provenance");
+    expect(JSON.parse(context)[0].columns).toEqual([
+      { name: "category", type: "keyword", nullable: true, isPrimary: false },
+    ]);
+    expect(JSON.parse(context)[0].indexes).toEqual([{ name: "category_idx", columns: ["category"], unique: false }]);
+  });
+
+  test("leaves the schema it was handed unchanged for the human views", () => {
+    schemaContextOf(sampledSchema);
+    expect(sampledSchema[0].columns.map((column) => column.name)).toEqual(["category", SAMPLED_MARKER]);
+  });
+});
+
+describe("sampledMark", () => {
+  test("is the suffix the human views add to a sampled column's type, and nothing for a declared one", () => {
+    expect(sampledMark({ provenance: "sampled" })).toBe(" (sampled)");
+    expect(sampledMark({})).toBe("");
   });
 });

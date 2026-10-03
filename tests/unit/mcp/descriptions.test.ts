@@ -52,6 +52,12 @@ describe("the tool descriptions", () => {
     expect(INSPECT_SCHEMA_DESCRIPTION).toContain("Works on every engine.");
     expect(LIST_CONNECTIONS_DESCRIPTION).toContain("Works for every engine.");
   });
+
+  test("inspect_schema says, in static words, that sampled columns are left out", () => {
+    expect(INSPECT_SCHEMA_DESCRIPTION).toContain(
+      "Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show.",
+    );
+  });
 });
 
 describe("the instructions", () => {
