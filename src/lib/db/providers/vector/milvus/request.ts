@@ -220,16 +220,72 @@ function namedRoute(text: string): string | undefined {
   return ROUTE_WORDS.test(route) ? route : undefined;
 }
 
+const DATA_ARRAY = /"data"\s*:\s*\[/;
+const NUMBER_START = /[-+0-9.]/;
+
+/**
+ * The query vectors of the first `data` array of a text too large to parse, when they are dense: how many, and the
+ * element count of the first. One pass over the characters, no parse; anything that is not an array of number arrays
+ * (a base64 string, a sparse map, an embedding list) gives undefined.
+ */
+function denseDataShape(text: string): { readonly nq: number; readonly dimension: number } | undefined {
+  const match = DATA_ARRAY.exec(text);
+  if (match === null) return undefined;
+  let depth = 1;
+  let nq = 0;
+  let dimension = 0;
+  let inNumber = false;
+  for (let index = match.index + match[0].length; index < text.length && depth > 0; index += 1) {
+    const char = text[index];
+    const numeric = NUMBER_START.test(char) || (inNumber && (char === "e" || char === "E"));
+    if (numeric && depth === 2 && !inNumber && nq === 1) dimension += 1;
+    inNumber = numeric;
+    if (numeric || char === "," || char.trim() === "") continue;
+    if (char === "[") {
+      depth += 1;
+      if (depth > 2) return undefined;
+      nq += 1;
+    } else if (char === "]") {
+      depth -= 1;
+    } else {
+      return undefined;
+    }
+  }
+  return nq === 0 || dimension === 0 ? undefined : { nq, dimension };
+}
+
+const grouped = (value: number) => value.toLocaleString("en-US");
+
+/**
+ * The shared refusal of a text past the console's bound, with what has to shrink when the text is vector-heavy: the
+ * number of query vectors times the dimension (5.6, R42 F16).
+ */
+function tooLargeRefusal(error: ConsoleRefusal, text: string): ConsoleRefusal {
+  const shape = denseDataShape(text);
+  if (shape === undefined) return error;
+  const sentence = error.message.slice(0, error.message.lastIndexOf(" (line "));
+  return new ConsoleRefusal(
+    "too-large",
+    `${sentence} Its data holds ${grouped(shape.nq)} query vector${shape.nq === 1 ? "" : "s"} of dimension ${grouped(shape.dimension)}, ${grouped(shape.nq)} times ${grouped(shape.dimension)} = ${grouped(shape.nq * shape.dimension)} numbers: send fewer query vectors or a smaller dimension, since nq 10 fits up to about dimension 8,192 and nq 1 or 2 fits dimension 32,768.`,
+    error.line,
+    error.column,
+    error.key,
+  );
+}
+
 /**
  * The console text read by the shared grammar against the Milvus table (3.4). A route the table does not hold is
  * refused with Milvus's own sentence: the Operations routes point at the Operations controls (E9), a write says the
- * provider reads only, and any other names the routes Studio runs (5.4).
+ * provider reads only, and any other names the routes Studio runs (5.4). A text past the byte bound whose data is
+ * dense query vectors is refused naming their count times their dimension (5.6).
  */
 export function parseMilvusRequest(text: string): ConsoleRequest<MilvusOp> {
   try {
     return parseConsole(MILVUS_CONSOLE, MILVUS_ROUTES, text);
   } catch (error) {
-    if (!(error instanceof ConsoleRefusal) || error.reason !== "unknown-route") throw error;
+    if (!(error instanceof ConsoleRefusal)) throw error;
+    if (error.reason === "too-large") throw tooLargeRefusal(error, text);
+    if (error.reason !== "unknown-route") throw error;
     const route = namedRoute(text);
     if (route === undefined) throw error;
     throw refusal(0, null, routeRefusalSentence(route, routeListText(MILVUS_CONSOLE, MILVUS_ROUTES, ["read"])));

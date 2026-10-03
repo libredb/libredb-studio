@@ -92,6 +92,70 @@ describe("parseMilvusRequest (3.4, 5.4)", () => {
     expect((error as ConsoleRefusal).reason).toBe("unknown-route");
   });
 
+  describe("a text past the console's bound (5.6, R42 F16)", () => {
+    const vector = (dimension: number) => Array.from({ length: dimension }, (_, index) => 0.123456789 + index / 1e9);
+    const heavy = (nq: number, dimension: number) =>
+      request("entities/search", {
+        collectionName: "docs_int64",
+        annsField: "vec",
+        data: Array.from({ length: nq }, () => vector(dimension)),
+        limit: 5,
+      });
+    const sizeSentence = (text: string) =>
+      `The text is ${new TextEncoder().encode(text).length} bytes, above the console's bound of 1048576 bytes.`;
+
+    test("a vector-heavy text names nq times the dimension, which is what has to shrink", () => {
+      const text = heavy(10, 16_384);
+      const error = refusalOf(text);
+      expect(error).toBeInstanceOf(ConsoleRefusal);
+      expect((error as ConsoleRefusal).reason).toBe("too-large");
+      expect(error.phase).toBe(0);
+      expect(error.message).toBe(
+        `${sizeSentence(text)} Its data holds 10 query vectors of dimension 16,384, 10 times 16,384 = 163,840 numbers: send fewer query vectors or a smaller dimension, since nq 10 fits up to about dimension 8,192 and nq 1 or 2 fits dimension 32,768. (line 1, column 1)`,
+      );
+    });
+
+    test("a hybrid sub-request's data is read the same way", () => {
+      const text = request("entities/hybrid_search", {
+        collectionName: "docs_int64",
+        search: [{ annsField: "vec", data: [vector(50_000), vector(50_000)], limit: 5 }],
+        limit: 5,
+      });
+      expect(refusalOf(text).message).toContain(
+        "Its data holds 2 query vectors of dimension 50,000, 2 times 50,000 = 100,000 numbers",
+      );
+    });
+
+    test("one query vector is named in the singular", () => {
+      expect(refusalOf(heavy(1, 100_000)).message).toContain(
+        "Its data holds 1 query vector of dimension 100,000, 1 times 100,000 = 100,000 numbers",
+      );
+    });
+
+    test("an over-size text with no dense data keeps the shared byte sentence", () => {
+      const noted = `# ${"x".repeat(1_048_576)}\n${request("collections/list", {})}`;
+      expect(refusalOf(noted).message).toBe(`${sizeSentence(noted)} (line 1, column 1)`);
+      const binary = request("entities/search", {
+        collectionName: "docs_int64",
+        annsField: "bin",
+        data: ["A".repeat(1_100_000)],
+      });
+      expect(refusalOf(binary).message).toBe(`${sizeSentence(binary)} (line 1, column 1)`);
+      const others = [
+        // an embedding list: rows of vectors in each query
+        { annsField: "chunks[emb]", data: [Array.from({ length: 10 }, () => vector(10_000))] },
+        // a sparse index map
+        { annsField: "sp", data: [Object.fromEntries(Array.from({ length: 100_000 }, (_, index) => [index, 0.5]))] },
+        // no query vector at all, and a long filter
+        { annsField: "vec", data: [], filter: `id in [${Array.from({ length: 200_000 }, (_, index) => index)}]` },
+      ];
+      for (const body of others) {
+        const text = request("entities/search", { collectionName: "docs_int64", ...body });
+        expect(refusalOf(text).message).toBe(`${sizeSentence(text)} (line 1, column 1)`);
+      }
+    });
+  });
+
   test("a refusal that is not about the route passes through", () => {
     expect((refusalOf(`GET /v2/vectordb/collections/list`) as ConsoleRefusal).reason).toBe("unknown-method");
   });
