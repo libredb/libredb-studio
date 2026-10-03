@@ -14,7 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYAML } from "yaml";
-import { MAX_GRAPH_NODES, capNotice, droppedNotice } from "@/components/results-graph/graph-canvas";
+import { MAX_GRAPH_NODES, capNotice, droppedNotice, graphAriaLabel } from "@/components/results-graph/graph-canvas";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG, readOnlyHint } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
@@ -581,6 +581,23 @@ describe("docs/providers/neo4j.md section 5.6 states the Graph tab's bound, noti
   test("the caption length is the model's", () => {
     const length = privateConstant("src/lib/db/graph/result-graph.ts", "CAPTION_LENGTH");
     expect(GRAPH_TAB).toContain(`at most ${length} characters`);
+  });
+
+  test("the canvas name is the shape of graphAriaLabel", () => {
+    const label = graphAriaLabel(resultGraph(2, 0));
+    expect(label).toBe("Graph of 2 nodes and 0 relationships");
+    expect(GRAPH_TAB).toContain(
+      `"${label.replace("2 nodes", "N nodes").replace("0 relationships", "M relationships")}"`,
+    );
+  });
+
+  test("the toolbar list is every button's accessible name, in order", () => {
+    const view = read("src/components/results-graph/GraphView.tsx");
+    const tools = [...(/const TOOLS[^=]*= \[([^\]]*)\]/.exec(view)?.[1] ?? "").matchAll(/label: "([^"]+)"/g)];
+    const exports = [...view.matchAll(/aria-label="(Export [^"]+)"/g)];
+    const names = [...tools, ...exports].map((match) => match[1]);
+    expect(names).toHaveLength(6);
+    expect(GRAPH_TAB).toContain(`the toolbar holds ${names.slice(0, -1).join(", ")} and ${names.at(-1)}.`);
   });
 });
 

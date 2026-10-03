@@ -306,7 +306,7 @@ A node's caption is the first present property among `name`, `title` and `label`
 A relationship's caption is its type, and an arrow shows its direction.
 The legend lists the labels with their colour and count, and the relationship types with their count.
 A click on a node or a relationship opens the inspector beside the canvas, under it on a narrow screen, with its labels or type, its `elementId` and every property; Escape clears the selection.
-The layout is fcose, rerun by Re-layout; a dragged node stays where it is dropped, and the toolbar holds Fit, Zoom in, Zoom out, Re-layout, Export PNG and Export JSON.
+The layout is fcose, rerun by Re-layout; a dragged node stays where it is dropped, and the toolbar holds Fit the graph, Zoom in, Zoom out, Re-layout, Export PNG and Export JSON.
 The canvas takes focus and is named "Graph of N nodes and M relationships"; there `+` and `-` zoom, `0` fits and the arrow keys pan.
 Export PNG draws the whole graph on the theme's background, and Export JSON writes `{ "nodes": [...], "relationships": [...] }` of the drawn elements in their tagged forms.
 Masking follows the grid's rule: when the grid would mask, a property whose key the masking config flags is masked in the captions, the inspector and both exports.

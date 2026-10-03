@@ -3507,7 +3507,7 @@ Not fixed there: the reads predate that PR.
 Neo4j Browser's "Connect result nodes" fills those in with a second read of the relationships among the returned ids, and sends it without showing it.
 Studio runs no statement of its own from the tab, because every extra statement has to pass the engine's read policy and the audit trail as a user's does.
 
-Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 states what the tab draws and why it runs no statement of its own.
 
 **Done when:** an opt-in control builds the read on the server from a typed request (the drawn node ids and a limit), never from client text, runs it through the same read policy and audit as an editor statement, shows the statement in the history, adds the relationships it finds to the drawn graph, and a test pins that the request carries no Cypher text and that a refused read draws nothing.
 
@@ -3516,7 +3516,7 @@ Deferred by the graph view design of 2026-10-03, which added the Graph tab, in i
 A drawn node shows only the relationships the statement returned, and there is no way to ask for the rest from the tab: no double-click expand, no "show all relationships", and no count of the neighbours not drawn.
 Each needs a read per expansion, ordered and limited, with an engine-specific way to name the node (`elementId()` on Neo4j 5), so it meets the same read-only policy question as U75.
 
-Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 states what the tab draws and why it runs no statement of its own.
 
 **Done when:** expanding a node runs one server-built read from a typed request (node id, direction, optional relationship type, limit) through the read policy and the audit trail, shows it in the history, adds its nodes and relationships within the tab's node cap with the cap notice when it bites, and a test pins the limit and a refused read.
 
@@ -3525,7 +3525,7 @@ Deferred by the graph view design of 2026-10-03, which added the Graph tab, in i
 A label's colour is assigned from the chart palette by order of first appearance in each result (`buildResultGraph` in `src/lib/db/graph/result-graph.ts`), so one label can take a different colour in two results, and a user cannot pick a colour, a caption property or a node size for a label.
 Neo4j Browser keeps such choices in its GraSS style sheet; the cheap step the research names is a per-connection, per-label colour and caption override kept in the existing storage layer.
 
-Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 states what the tab draws and why it runs no statement of its own.
 
 **Done when:** a user can set a label's colour and caption property from the legend, the choice is stored through the storage layer per connection and survives a reload and a second result, a label with no choice keeps the palette rule, and a test pins both.
 
@@ -3533,7 +3533,7 @@ Deferred by the graph view design of 2026-10-03, which added the Graph tab, in i
 
 The tab runs fcose and only fcose (`fcoseLayout` in `src/components/results-graph/cytoscape-host.ts`), and Re-layout reruns the same layout, so a tree, a hierarchy or a radial picture of a result cannot be asked for.
 
-Deferred by the graph view design of 2026-10-03, which added the Graph tab, in its UX research's "Defer" list.
+Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 states what the tab draws and why it runs no statement of its own.
 
 **Done when:** the toolbar offers at least a hierarchical (breadth-first or dagre-style) layout beside fcose, with an accessible name on the control, any new layout package pinned with its licence checked as cytoscape's were, and a test that switching layouts reruns the chosen one.
 
