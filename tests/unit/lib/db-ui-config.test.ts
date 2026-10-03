@@ -19,6 +19,11 @@ import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@
 import type { DatabaseType } from "@/lib/types";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { declareHostUri } from "../../helpers/synthetic-host-uri";
+import {
+  declareCredentialWarnings,
+  SYNTHETIC_NO_SECRET,
+  SYNTHETIC_PAIR,
+} from "../../helpers/synthetic-credential-warnings";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
@@ -676,5 +681,18 @@ describe("Host box addresses and credential warnings", () => {
         same: true,
       });
     }
+  });
+
+  test("an entry's credentialWarnings is the shared record's array once a type declares one", () => {
+    const declared = [SYNTHETIC_PAIR, SYNTHETIC_NO_SECRET];
+    const restore = declareCredentialWarnings("etcd", declared);
+    try {
+      expect(getDBConfig("etcd").credentialWarnings).toBe(declared);
+      expect(getDBConfig("etcd").credentialWarnings).toBe(CREDENTIAL_WARNINGS.etcd);
+      expect(getDBConfig("postgres").credentialWarnings).toBeUndefined();
+    } finally {
+      restore();
+    }
+    expect(getDBConfig("etcd").credentialWarnings).toBeUndefined();
   });
 });

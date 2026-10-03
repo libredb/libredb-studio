@@ -23,7 +23,7 @@ import {
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
-import type { CredentialWarning } from "@/lib/db/credential-warnings";
+import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
 export type DBIcon = LucideIcon | React.FC<React.SVGAttributes<SVGSVGElement> & { className?: string }>;
@@ -94,8 +94,8 @@ export interface DatabaseUIConfig {
   hostAcceptsUri?: readonly HostUriScheme[];
   /**
    * The credentials this engine warns about, taken by reference from `CREDENTIAL_WARNINGS` in
-   * src/lib/db/credential-warnings.ts and never written out here, so the dialog's warning and the seed loader's
-   * refusal read one record. That module holds the data because this one imports React icons, which the seed
+   * src/lib/db/credential-warnings.ts through a getter every entry is given below, and never written out in an
+   * entry, so the dialog's warning and the seed loader's refusal read one record. That module holds the data because this one imports React icons, which the seed
    * loader must not.
    */
   credentialWarnings?: readonly CredentialWarning[];
@@ -428,6 +428,15 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ["database"],
   },
 };
+
+// Every entry's `credentialWarnings` reads its type's array from the shared record on each access, so no entry
+// writes one out or holds a copy, and a declaration added to the record is the entry's at once.
+for (const type of Object.keys(DB_UI_CONFIG) as DatabaseType[]) {
+  Object.defineProperty(DB_UI_CONFIG[type], "credentialWarnings", {
+    get: () => CREDENTIAL_WARNINGS[type],
+    enumerable: true,
+  });
+}
 
 export function getDBConfig(type: DatabaseType): DatabaseUIConfig {
   return DB_UI_CONFIG[type];

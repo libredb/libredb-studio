@@ -424,7 +424,7 @@ The dialog splits it into Host and Port, keeps an explicit port such as 443 or 8
 An address with a user name or password, a path, a query string or a fragment is refused, naming the part to remove.
 The connection-string box is a different reader and keeps reading `http://` and `https://` as ClickHouse, so the provider doc points users to the Host box.
 The provider still validates the host and port with `validateHost` and `validatePort` when it connects.
-`credentialWarnings` takes its entries by reference from `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, a module with no React or Node import, so the dialog and the seed loader read one record.
+Credential warnings are declared as the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, a module with no React or Node import, and every entry's `credentialWarnings` reads that row by reference, so the dialog and the seed loader read one record and the entry itself declares nothing.
 An entry is a `pair` (a published default user and password), a `jwt` (a token that declares no expiry, manage access, or no access claim) or `no-secret` (the engine accepts a connection with no secret).
 The dialog draws a `pair` or `jwt` warning beside the password before Test Connection, and blocks nothing.
 The seed loader refuses a `readOnly: true` seed whose literal credential matches a `pair` entry, or that has no password where the type declares `no-secret`, and the provider runs `readOnlySeedRefusal` on a seed connection once its references resolve, before it dials.
@@ -997,7 +997,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       `docs/providers/prometheus.md` section 3.1 is the worked case.
 - [ ] `src/lib/db-ui-config.ts`: `fieldLabels` and `fieldHints`, when a connection field needs its own label or hint.
       Declare them there rather than adding a type test to `src/components/ConnectionModal.tsx`, which already carries five (`docs/BACKLOG.md` U36).
-- [ ] `src/lib/db-ui-config.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address, and `credentialWarnings`, taken by reference from `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
+- [ ] `src/lib/db-ui-config.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address; and the type's row of `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, which the entry's `credentialWarnings` reads by reference, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
       Each needs a test that the real record declares it, and a declared `pair` or `no-secret` entry needs the provider's own `readOnlySeedRefusal` check in `connect()` for a seed connection.
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
