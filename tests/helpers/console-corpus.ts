@@ -1,8 +1,8 @@
 /**
  * What the console grammar makes of a corpus, as data two runtimes can compare (vector-family spec 3.4): each
  * case's verdict and message from the parser, its formatted text, a digest of the tokens the editor's tokens
- * provider draws, and, for a case that names a field where an integer is required, the shared integer reader's
- * verdict. The corpus test computes this under Bun and again in a Node child process from a bundle of this file,
+ * provider draws, and, for a case that names a place where an integer is required, the verdict of an integer rule
+ * composed from the shared tag check and range check. The corpus test computes this under Bun and again in a Node child process from a bundle of this file,
  * and the two must be equal.
  */
 import { createHash } from "node:crypto";
@@ -10,8 +10,7 @@ import type * as Monaco from "monaco-editor";
 import type { ConsoleDialectSpec, RouteSpec } from "@/lib/db/console/dialect";
 import { formatConsole } from "@/lib/db/console/format";
 import { ConsoleRefusal, parseConsole } from "@/lib/db/console/parser";
-import { type TaggedJson, toJsonText } from "@/lib/db/console/tagged-json";
-import { vectorNumbers } from "@/lib/db/vector/dense";
+import { checkIntRange, type IntRange, isTaggedInt, type TaggedJson, toJsonText } from "@/lib/db/console/tagged-json";
 import { registerConsoleLanguage } from "@/lib/editor/console-language";
 
 export interface CorpusTable {
@@ -26,8 +25,15 @@ export interface CorpusCase {
   readonly text: string;
   /** False for the bound cases, whose texts are too large to format and draw: only the verdict is kept. */
   readonly full: boolean;
-  /** A body key whose value is read as an integer, as a field that requires one reads it. */
-  readonly integerAt?: string;
+  /** A place in the body whose value is read as an integer, as a field that requires one reads it. */
+  readonly integerAt?: IntegerPlace;
+}
+
+/** Where an integer is required: the path to the value from the body, the name a refusal gives it, and its range. */
+export interface IntegerPlace {
+  readonly path: readonly (string | number)[];
+  readonly field: string;
+  readonly range: IntRange;
 }
 
 export interface CorpusOutcome {
@@ -41,8 +47,31 @@ export interface CorpusOutcome {
   readonly formatted: string | null;
   /** The sha256 of every line's tokens as the tokens provider draws them. */
   readonly tokens: string | null;
-  /** The integer reader's sentence for `integerAt`'s value, or `accepted`. */
+  /** The integer rule's sentence for the value at `integerAt`, or `accepted`. */
   readonly integer: string | null;
+}
+
+function kindOf(value: TaggedJson | undefined): string {
+  if (value === undefined) return "nothing";
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "a list";
+  if (typeof value === "object") return "an object";
+  return `a ${typeof value}`;
+}
+
+/**
+ * What a field that requires an integer makes of a parsed value: a stand-in for the integer rule each provider's
+ * request rules write, composed from the two shared pieces such a rule reads, `isTaggedInt` and `checkIntRange`.
+ * Only a literal the lexer read as an integer is one; an object shaped like a tag is an object.
+ */
+function integerVerdict(body: TaggedJson, place: IntegerPlace): string {
+  let value: TaggedJson | undefined = body;
+  for (const step of place.path) {
+    value = (value as Readonly<Record<string | number, TaggedJson>> | undefined)?.[step];
+  }
+  if (value === undefined || !isTaggedInt(value)) return `${place.field} must be an integer, found ${kindOf(value)}.`;
+  if (!checkIntRange(value, place.range)) return `${place.field} is ${value.digits}, outside the ${place.range} range.`;
+  return "accepted";
 }
 
 function refusalOrThrow(error: unknown): ConsoleRefusal {
@@ -101,11 +130,7 @@ export function corpusOutcomes(
       const request = parseConsole(table.spec, table.routes, entry.text);
       op = request.route.op;
       body = toJsonText(request.body);
-      if (entry.integerAt !== undefined) {
-        const value: TaggedJson = request.body[entry.integerAt] ?? null;
-        const read = vectorNumbers({ name: entry.integerAt, kind: "dense", dtype: "int8", dimension: 1 }, [value]);
-        integer = Array.isArray(read) ? "accepted" : (read as { sentence: string }).sentence;
-      }
+      if (entry.integerAt !== undefined) integer = integerVerdict(request.body, entry.integerAt);
     } catch (error) {
       const refusal = refusalOrThrow(error);
       verdict = refusal.reason;

@@ -18,6 +18,7 @@ import { pathToFileURL } from "node:url";
 import type { ConsoleDialectSpec, RouteSpec } from "@/lib/db/console/dialect";
 import { classifyConsole } from "@/lib/db/console/guard";
 import { ConsoleRefusal, parseConsole } from "@/lib/db/console/parser";
+import { isTaggedFloat, isTaggedInt, type TaggedJson } from "@/lib/db/console/tagged-json";
 import { type CorpusCase, type CorpusOutcome, type CorpusTable, corpusOutcomes } from "../../../helpers/console-corpus";
 import {
   type FixtureRouteJson,
@@ -251,14 +252,35 @@ const TAG_SHAPED: readonly CorpusCase[] = [
     table: "milvus",
     text: 'POST /v2/vectordb/entities/query\n{"collectionName": "docs", "limit": {"kind":"int","digits":"42"}}',
     full: true,
-    integerAt: "limit",
+    integerAt: { path: ["limit"], field: "limit", range: "int64" },
   },
   {
     name: "a float-shaped object as a Qdrant point id",
     table: "qdrant",
-    text: 'POST /collections/docs/points/query\n{"query": {"kind":"float","text":"1.5","value":1.5}}',
+    text: 'POST /collections/docs/points\n{"ids": [7, {"kind":"float","text":"1.5","value":1.5}]}',
     full: true,
-    integerAt: "query",
+    integerAt: { path: ["ids", 1], field: "ids[1]", range: "uint64" },
+  },
+  {
+    name: "an int-shaped object as a Qdrant point id",
+    table: "qdrant",
+    text: 'POST /collections/docs/points\n{"ids": [{"kind":"int","digits":"42"}]}',
+    full: true,
+    integerAt: { path: ["ids", 0], field: "ids[0]", range: "uint64" },
+  },
+  {
+    name: "an integer literal as a Milvus limit",
+    table: "milvus",
+    text: 'POST /v2/vectordb/entities/query\n{"collectionName": "docs", "limit": 42}',
+    full: true,
+    integerAt: { path: ["limit"], field: "limit", range: "int64" },
+  },
+  {
+    name: "integer literals as Qdrant point ids, one past the range",
+    table: "qdrant",
+    text: 'POST /collections/docs/points\n{"ids": [18446744073709551615, 18446744073709551616]}',
+    full: true,
+    integerAt: { path: ["ids", 1], field: "ids[1]", range: "uint64" },
   },
 ];
 
@@ -471,28 +493,71 @@ describe("tag-shaped objects", () => {
     const limit = outcome("an int-shaped object as a Milvus limit");
     expect(limit.body).toBe('{"collectionName":"docs","limit":{"kind":"int","digits":"42"}}');
     expect(limit.formatted).toContain('"limit": {\n    "kind": "int",\n    "digits": "42"\n  }');
-    expect(limit.integer).toBe('Vector field "limit" (int8): element 0 is an object, not a number.');
-    const id = outcome("a float-shaped object as a Qdrant point id");
-    expect(id.body).toBe('{"query":{"kind":"float","text":"1.5","value":1.5}}');
-    expect(id.integer).toBe('Vector field "query" (int8): element 0 is an object, not a number.');
+    expect(limit.integer).toBe("limit must be an integer, found an object.");
+    const floatId = outcome("a float-shaped object as a Qdrant point id");
+    expect(floatId.op).toBe("get_points");
+    expect(floatId.body).toBe('{"ids":[7,{"kind":"float","text":"1.5","value":1.5}]}');
+    expect(floatId.integer).toBe("ids[1] must be an integer, found an object.");
+    const intId = outcome("an int-shaped object as a Qdrant point id");
+    expect(intId.body).toBe('{"ids":[{"kind":"int","digits":"42"}]}');
+    expect(intId.integer).toBe("ids[0] must be an integer, found an object.");
+  });
+
+  test("the same rule takes an integer literal, and refuses one past the field's range by name", () => {
+    expect(outcome("an integer literal as a Milvus limit").integer).toBe("accepted");
+    expect(outcome("integer literals as Qdrant point ids, one past the range").integer).toBe(
+      "ids[1] is 18446744073709551616, outside the uint64 range.",
+    );
+  });
+
+  test("the tag checks are false on the parsed values themselves", () => {
+    const body = parseConsole(
+      QDRANT_STAND_IN,
+      TABLES.qdrant.routes,
+      'POST /collections/docs/points\n{"ids": [{"kind":"int","digits":"42"}, {"kind":"float","text":"1.5","value":1.5}, 7]}',
+    ).body;
+    const ids = body.ids as readonly TaggedJson[];
+    expect(ids.map((id) => [isTaggedInt(id), isTaggedFloat(id)])).toEqual([
+      [false, false],
+      [false, false],
+      [true, false],
+    ]);
   });
 });
 
+/** A request for a route: its template with every placeholder filled, and an empty body where it takes one. */
+function requestFor(table: CorpusTable, route: RouteSpec): string {
+  const path = route.template
+    .replace(/\{collection_name\}/g, "docs")
+    .replace(/\{id\}/g, "42")
+    .replace(/\{[a-z_]+\}/g, "x");
+  return `${route.method} ${table.spec.pathPrefix}${path}${route.body === "none" ? "" : "\n{}"}`;
+}
+
 describe("classifyConsole over both tables", () => {
-  test("every v1 route of both tables classifies as read", () => {
+  // The route fixtures carry no class, so the two v1 stand-in tables declare every route a read themselves. What
+  // this holds is that each v1 route's own request parses and is classified by the class its table declares; that
+  // a provider's own route table declares each v1 route a read is held beside that table, by its own test.
+  test("every v1 route of both tables parses and classifies as the read its table declares", () => {
     for (const [name, table] of [
       ["milvus", TABLES.milvus],
       ["qdrant", TABLES.qdrant],
     ] as const) {
       for (const route of table.routes) {
-        const path = route.template
-          .replace(/\{collection_name\}/g, "docs")
-          .replace(/\{id\}/g, "42")
-          .replace(/\{[a-z_]+\}/g, "x");
-        const text = `${route.method} ${table.spec.pathPrefix}${path}${route.body === "none" ? "" : "\n{}"}`;
-        expect(classifyConsole(table.spec, table.routes, text), `${name} ${route.op}`).toBe("read");
+        expect(route.class, `${name} ${route.op}`).toBe("read");
+        expect(classifyConsole(table.spec, table.routes, requestFor(table, route)), `${name} ${route.op}`).toBe("read");
       }
     }
+  });
+
+  test("the class is the matched route's own: over the full table, each route answers the class it declares", () => {
+    const table = TABLES["qdrant-full"];
+    const classes = new Set<string>();
+    for (const route of table.routes) {
+      classes.add(route.class);
+      expect(classifyConsole(table.spec, table.routes, requestFor(table, route)), route.op).toBe(route.class);
+    }
+    expect([...classes].sort()).toEqual(["read", "write"]);
   });
 
   test("a write route in a synthetic table classifies as write", () => {
