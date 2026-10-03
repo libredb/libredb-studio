@@ -20,9 +20,10 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  * monitoring Tables tab (`MAINTENANCE_ACTIONS`) over the same five candidates in the same order, and both row menus
  * over `analyze` and the provider's `vacuumActionOperation` redirect. The table below is the one measured over these
  * questions at `42050550` (R46 C3): ten type-ids offer per-row controls on the two tabs, nine on the row menus, and
- * none declares a per-row operation outside `MaintenanceType`. `neo4j`, which joined after that measurement (#1239),
- * offers none. Nothing here connects: `CENSUS_CONNECTION` builds each provider unconnected, and `getCapabilities()`
- * and `getLabels()` are declarations.
+ * none declares a per-row operation outside `MaintenanceType`. Two type-ids joined after that measurement: `neo4j`
+ * (#1239) offers none, and `db2` (#1238) offers analyze and optimize on both. Db2 also names the kinds its two
+ * operations run on, which these questions do not pass: they ask as a table row does. Nothing here connects:
+ * `CENSUS_CONNECTION` builds each provider unconnected, and `getCapabilities()` and `getLabels()` are declarations.
  */
 
 /** The candidates of both tabs, in their display order. */
@@ -91,6 +92,7 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   kafka: NONE,
   etcd: NONE,
   neo4j: NONE,
+  db2: { tabs: "analyze,optimize", tree: "analyze+vacuum(optimize)", outsideMaintenanceType: "" },
   libredb: NONE,
 };
 
@@ -104,11 +106,11 @@ describe("every shipped provider's per-row maintenance controls (R46 C3)", () =>
     expect(surfacesOf(provider.getCapabilities(), provider.getLabels())).toEqual(EXPECTED[type]);
   });
 
-  test("10 of 21 type-ids offer per-row controls on the two tabs, 9 on the row menus, none outside MaintenanceType", () => {
+  test("11 of 22 type-ids offer per-row controls on the two tabs, 10 on the row menus, none outside MaintenanceType", () => {
     const rows = Object.values(EXPECTED);
-    expect(rows.length).toBe(21);
-    expect(rows.filter((row) => row.tabs !== "").length).toBe(10);
-    expect(rows.filter((row) => row.tree !== "").length).toBe(9);
+    expect(rows.length).toBe(22);
+    expect(rows.filter((row) => row.tabs !== "").length).toBe(11);
+    expect(rows.filter((row) => row.tree !== "").length).toBe(10);
     expect(rows.filter((row) => row.outsideMaintenanceType !== "").length).toBe(0);
   });
 });
