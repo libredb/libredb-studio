@@ -139,7 +139,10 @@ describe("mintJwt", () => {
     const [header, claims, signature] = token.split(".");
     expect(JSON.parse(Buffer.from(header, "base64url").toString())).toEqual({ alg: "HS256", typ: "JWT" });
     expect(JSON.parse(Buffer.from(claims, "base64url").toString())).toEqual({ access: "r", exp: 1 });
-    expect(signature).toBe(createHmac("sha256", SIGNER).update(`${header}.${claims}`).digest("base64url"));
+    // The expected token is built here from the known header and claims, so the check never re-signs what it reads.
+    const encode = (value: object) => Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
+    const signed = `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ access: "r", exp: 1 })}`;
+    expect(token).toBe(`${signed}.${createHmac("sha256", SIGNER).update(signed).digest("base64url")}`);
     expect(mintJwt({ access: "r", exp: 1 }, TEST_PASSWORD_SECOND).split(".")[2]).not.toBe(signature);
   });
 
