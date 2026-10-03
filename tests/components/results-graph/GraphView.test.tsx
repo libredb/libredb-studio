@@ -445,6 +445,74 @@ describe("GraphView: exports", () => {
   });
 });
 
+describe("GraphView: the canvas takes its size from its parent", () => {
+  /*
+    A `ResizeObserver` the test can fire. happy-dom lays nothing out, so the height
+    itself is proven in a real browser; what is pinned here is that the container
+    never depends on its own `position` (Cytoscape sets it to `relative` with an
+    unlayered rule that beats Tailwind's layered `.absolute`), and that a size change
+    reaches the canvas.
+  */
+  const observers: { callback: () => void; observed: Element[]; disconnected: boolean }[] = [];
+  class TestResizeObserver {
+    private readonly record: (typeof observers)[number];
+    constructor(callback: () => void) {
+      this.record = { callback, observed: [], disconnected: false };
+      observers.push(this.record);
+    }
+    observe(element: Element) {
+      this.record.observed.push(element);
+    }
+    unobserve() {}
+    disconnect() {
+      this.record.disconnected = true;
+    }
+  }
+  let original: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    observers.length = 0;
+    original = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+    Object.defineProperty(globalThis, "ResizeObserver", { value: TestResizeObserver, configurable: true });
+  });
+
+  afterEach(() => {
+    if (original) Object.defineProperty(globalThis, "ResizeObserver", original);
+  });
+
+  test("the container fills its parent in flow, with no absolute positioning of its own", async () => {
+    const { getByRole } = await mount();
+    const canvas = getByRole("application");
+    const classes = canvas.className.split(/\s+/);
+    expect(classes).not.toContain("absolute");
+    expect(classes).not.toContain("inset-0");
+    expect(classes).toContain("h-full");
+    expect(classes).toContain("w-full");
+    const parent = (canvas.parentElement as HTMLElement).className.split(/\s+/);
+    for (const name of ["relative", "flex-1", "min-h-0", "min-w-0"]) expect(parent).toContain(name);
+  });
+
+  test("a change of the container's size resizes the canvas and fits the graph again", async () => {
+    const { cy, getByRole } = await mount();
+    expect(observers).toHaveLength(1);
+    expect(observers[0].observed).toEqual([getByRole("application")]);
+    const resize = spyOn(cy, "resize");
+    const fit = spyOn(cy, "fit");
+    observers[0].callback();
+    expect(resize).toHaveBeenCalledTimes(1);
+    expect(fit).toHaveBeenCalledTimes(1);
+  });
+
+  test("unmounting stops observing, and a new result observes with a new observer", async () => {
+    const { rerender, unmount } = await mount();
+    rerender(view({ result: resultOf([{ n: alice }]) }));
+    await waitFor(() => expect(h.instances).toHaveLength(2));
+    expect(observers.map((observer) => observer.disconnected)).toEqual([true, false]);
+    unmount();
+    expect(observers.map((observer) => observer.disconnected)).toEqual([true, true]);
+  });
+});
+
 describe("GraphView: lifecycle", () => {
   test("unmounting destroys the canvas", async () => {
     const { cy, unmount } = await mount();

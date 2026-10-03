@@ -141,6 +141,7 @@ export function GraphView({
   useEffect(() => {
     let cancelled = false;
     let cy: Core | null = null;
+    let observer: ResizeObserver | null = null;
     loadCytoscape().then(
       (create) => {
         if (cancelled) return;
@@ -161,6 +162,13 @@ export function GraphView({
         instance.on("tap", (event: EventObject) => {
           if (event.target === instance) setSelection(null);
         });
+        // A panel resize or the stacked layout changes the container, never the window alone.
+        const container = containerRef.current;
+        observer = new ResizeObserver(() => {
+          instance.resize();
+          instance.fit(undefined, FIT_PADDING);
+        });
+        if (container) observer.observe(container);
         cyRef.current = instance;
         setReadyFor(graph);
       },
@@ -170,6 +178,7 @@ export function GraphView({
     );
     return () => {
       cancelled = true;
+      observer?.disconnect();
       cy?.destroy();
       cyRef.current = null;
     };
@@ -264,6 +273,11 @@ export function GraphView({
 
       {/* The inspector stacks under the canvas below `md`, beside it from `md` up. */}
       <div className="flex-1 min-h-0 flex flex-col md:flex-row">
+        {/*
+          The canvas takes its size from this box, in flow. Cytoscape gives its container
+          `position: relative` with an unlayered rule, which beats Tailwind's layered
+          `.absolute`, so a container stretched by `absolute inset-0` collapses to no height.
+        */}
         <div className="relative flex-1 min-h-0 min-w-0">
           {/*
             oxlint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex --
@@ -276,7 +290,7 @@ export function GraphView({
             aria-label={graphAriaLabel(graph)}
             tabIndex={0}
             onKeyDown={onKeyDown}
-            className="absolute inset-0 bg-sunken focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-hue-blue"
+            className="h-full w-full bg-sunken focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-hue-blue"
           />
           {/* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           {!ready && <ViewLoading label="Drawing the graph" className="absolute inset-0" />}
