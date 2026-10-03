@@ -458,12 +458,11 @@ async function main(): Promise<void> {
       const names: string[] = [];
       for (let attempt = 0; attempt < 8; attempt++) {
         // oxlint-disable-next-line no-await-in-loop -- one waiting call at a time.
-        names.push(
-          await client.query(waitingQuery(collection), call()).then(
-            () => "answered",
-            (error: unknown) => sentence(error, opts).name,
-          ),
+        const name = await client.query(waitingQuery(collection), call()).then(
+          () => "answered",
+          (error: unknown) => sentence(error, opts).name,
         );
+        names.push(name);
       }
       client.close();
       report(
