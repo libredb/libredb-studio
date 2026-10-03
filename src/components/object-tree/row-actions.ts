@@ -68,10 +68,12 @@ import {
   Search,
   Trash2,
   WandSparkles,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { findKind, kindAcceptsRowWrites, kindHasSource } from "@/lib/db/object-kinds";
 import {
+  declaredEntityOperations,
   maintenanceControl,
   offersCodeGeneration,
   offersColumnProfiling,
@@ -250,6 +252,16 @@ function objectActions(
         id: "maintenance-vacuum",
         label: vacuum.label ?? labels?.vacuumAction ?? `Vacuum ${kind.label}`,
         icon: Trash2,
+        run: () => maintenance(object),
+      });
+    }
+    // Every declared operation outside `MaintenanceType` that runs on one object, in declaration order and in the
+    // provider's words (spec 3.11). Each opens the same page on the same row as the two items above.
+    for (const operation of declaredEntityOperations(capabilities)) {
+      actions.push({
+        id: `maintenance-${operation.type}`,
+        label: operation.label,
+        icon: Wrench,
         run: () => maintenance(object),
       });
     }

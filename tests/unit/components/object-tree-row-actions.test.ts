@@ -6,6 +6,8 @@ import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { graphObjectSegment } from "@/lib/db/graph/objects";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { Wrench } from "lucide-react";
+import { SYNTHETIC_ENTITY_CAPABILITIES } from "../../fixtures/maintenance-entity-operations";
 
 /**
  * What one object row may be offered, and why (U22, #789).
@@ -792,5 +794,44 @@ describe("the actions whose destination speaks only some query languages", () =>
       "generate-code",
       "browse-keys",
     ]);
+  });
+});
+
+describe("rowActions and declared per-row operations (spec 3.11)", () => {
+  const declared = capabilitiesOf({ objectKinds: [table, view, routine], ...SYNTHETIC_ENTITY_CAPABILITIES });
+  const maintenanceIds = (ids: string[]) => ids.filter((id) => id.startsWith("maintenance-"));
+
+  test("a relation row offers each declared operation after the provider's own, in declaration order", () => {
+    expect(maintenanceIds(idsFor(objectRow("table"), declared))).toEqual([
+      "maintenance-analyze",
+      "maintenance-disarm",
+      "maintenance-compact",
+    ]);
+  });
+
+  test("each item carries the spec's label and a generic icon, and opens the maintenance page on the row's object", () => {
+    const opened: DatabaseObject[] = [];
+    const actions = rowActions({
+      row: objectRow("table"),
+      object: orders,
+      capabilities: declared,
+      handlers: { onOpenMaintenance: (object) => opened.push(object) },
+    });
+    const declaredItems = actions.filter((action) => ["maintenance-disarm", "maintenance-compact"].includes(action.id));
+
+    expect(declaredItems.map((action) => action.label)).toEqual(["Release Object", "Load Object"]);
+    expect(declaredItems.map((action) => action.icon)).toEqual([Wrench, Wrench]);
+    for (const action of declaredItems) action.run();
+    expect(opened).toEqual([orders, orders]);
+  });
+
+  test("a shell with no maintenance page, a routine row and a column row offer none of them", () => {
+    expect(maintenanceIds(idsFor(objectRow("table"), declared, { onGenerateSelect: () => {} }))).toEqual([]);
+    expect(maintenanceIds(idsFor(objectRow("function"), declared))).toEqual([]);
+    expect(idsFor(columnRow(), declared)).toEqual([]);
+  });
+
+  test("a whole-database operation outside MaintenanceType is not a row item", () => {
+    expect(idsFor(objectRow("table"), declared)).not.toContain("maintenance-defragment");
   });
 });
