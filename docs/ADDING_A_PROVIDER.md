@@ -418,6 +418,18 @@ const selectableTypes: DatabaseType[] = [
 
 That's it. The ConnectionModal reads `getDBConfig(type)` for everything else — port, form fields, connection string toggle — automatically.
 
+Two optional declarations on the same entry change what the dialog does with the Host box and the credential.
+`hostAcceptsUri: ["http", "https"]` lets a user paste a whole address such as `https://host:443` into Host, for an engine whose own documentation writes its endpoint that way.
+The dialog splits it into Host and Port, keeps an explicit port such as 443 or 80 as typed, takes 80 or 443 when the address names none, and never lowers the SSL mode: `https://` raises a disabled mode to `verify-system`.
+An address with a user name or password, a path, a query string or a fragment is refused, naming the part to remove.
+The connection-string box is a different reader and keeps reading `http://` and `https://` as ClickHouse, so the provider doc points users to the Host box.
+The provider still validates the host and port with `validateHost` and `validatePort` when it connects.
+`credentialWarnings` takes its entries by reference from `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, a module with no React or Node import, so the dialog and the seed loader read one record.
+An entry is a `pair` (a published default user and password), a `jwt` (a token that declares no expiry, manage access, or no access claim) or `no-secret` (the engine accepts a connection with no secret).
+The dialog draws a `pair` or `jwt` warning beside the password before Test Connection, and blocks nothing.
+The seed loader refuses a `readOnly: true` seed whose literal credential matches a `pair` entry, or that has no password where the type declares `no-secret`, and the provider runs `readOnlySeedRefusal` on a seed connection once its references resolve, before it dials.
+Add a test that the real record declares each entry you add.
+
 ## Step 5: Install the Driver
 
 ```bash
@@ -985,6 +997,8 @@ Those three reach code and tests only; the four prose greps of the published blo
       `docs/providers/prometheus.md` section 3.1 is the worked case.
 - [ ] `src/lib/db-ui-config.ts`: `fieldLabels` and `fieldHints`, when a connection field needs its own label or hint.
       Declare them there rather than adding a type test to `src/components/ConnectionModal.tsx`, which already carries five (`docs/BACKLOG.md` U36).
+- [ ] `src/lib/db-ui-config.ts`: `hostAcceptsUri`, when the engine's documentation gives its endpoint as an `http://` or `https://` address, and `credentialWarnings`, taken by reference from `CREDENTIAL_WARNINGS` in `src/lib/db/credential-warnings.ts`, when the engine ships a default credential, accepts no secret, or takes a token whose claims say how far it reaches.
+      Each needs a test that the real record declares it, and a declared `pair` or `no-secret` entry needs the provider's own `readOnlySeedRefusal` check in `connect()` for a seed connection.
 
 **Published where a human reads it, and this is the block with the fewest gates.** `readme:check`
 compares the translated READMEs against `README.md` and `chart:check` compares versions. The catalog
