@@ -78,15 +78,15 @@ export default defineConfig({
       // bucket, and on the shared server it met the budget the specs before it had spent: CI run
       // 36263561882 answered its refusal check "Too many requests. Try again in 38 seconds." on all
       // three attempts. It runs against the second server for the reason offline-editor.spec.ts
-      // does; the specs on that server together stay far below that bucket's 120 requests a minute.
+      // does. The specs on that server together no longer fit in that bucket's 120 requests a
+      // minute, so the second server raises it (#1293, see its webServer entry below).
       name: "chromium-kafka",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /kafka-provider\.spec\.ts/,
     },
     {
       // etcd-provider.spec.ts drives Test Connection too, so it takes the second server for the reason
-      // kafka-provider.spec.ts does; the three specs together stay far below that bucket's 120
-      // requests a minute.
+      // kafka-provider.spec.ts does.
       name: "chromium-etcd",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /etcd-provider\.spec\.ts/,
@@ -151,6 +151,14 @@ export default defineConfig({
       // sample takes an exclusive single-writer file lock (src/lib/db/providers/embedded/libredb.ts)
       // that a second process cannot also hold - pointing this server at a separate data dir avoids
       // fighting the primary server for that file (and for the SQLite sample file alongside it).
+      //
+      // RATE_LIMIT_QUERY_MAX is raised because the specs here share two accounts and the
+      // production budget of 120 requests a minute is sized for one person, not for a suite
+      // (#1293). Measured on 2026-10-04: one `beforeEach` that signs in and opens the editor spends
+      // 7 slots before the test does anything, so the admin account's eighteen tests and their
+      // retries ran past 120 in one window and a Test Connection assertion read "Too many
+      // requests". Raised rather than set to 0, so the limiter still runs on every request; no
+      // spec on this server asserts its refusal (tests/unit/e2e-project-servers.test.ts).
       command: "until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
       url: `http://localhost:${offlinePort}`,
       reuseExistingServer: !process.env.CI,
@@ -158,6 +166,7 @@ export default defineConfig({
       env: {
         PORT: String(offlinePort),
         STORAGE_SQLITE_PATH: "./data-e2e-offline/libredb-storage.db",
+        RATE_LIMIT_QUERY_MAX: "10000",
         ...testCredentials,
       },
     },
