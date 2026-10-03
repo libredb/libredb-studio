@@ -49,7 +49,13 @@ export interface CypherToken {
   readonly end: number;
 }
 
-/** What a line starts inside: code, or a construct an earlier line left open. */
+/**
+ * What a line starts inside: code, or a construct an earlier line left open.
+ *
+ * A backticked parameter (`` $`name` ``) left open carries over as `backtick`, so `tokenizeCypherLine`
+ * gives its later lines' pieces the kind `backtick`. `lexCypher` still joins them into one `parameter`
+ * token, because the kind of the joined token is the kind of its first piece.
+ */
 export type CypherLineState =
   | { readonly in: "code" }
   | { readonly in: "block-comment" }
@@ -110,6 +116,11 @@ const ONE_CHARACTER_PUNCTUATION: ReadonlySet<string> = new Set("()[]{},.:;=<>+-*
 const WHITESPACE = /\s+/y;
 const WORD = /[\p{L}_][\p{L}\p{Nd}_]*/uy;
 const PARAMETER_NAME = /\$[\p{L}\p{Nd}_]+/uy;
+/**
+ * The number forms spec 3.2 names. Cypher 5's digit-group underscores (`1_000`) are not among them:
+ * such a literal reads as the number `1` then the word `_000`, which the policy judges the same way
+ * and the editor colours as two tokens.
+ */
 const NUMBER = /0x[0-9a-fA-F]+|0o[0-7]+|(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?/y;
 const NUMBER_START = /\d|\.\d/y;
 

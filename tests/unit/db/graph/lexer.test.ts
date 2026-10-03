@@ -123,7 +123,7 @@ describe("strings", () => {
     const [, single, , double] = significant(
       CYPHER_CORPUS.find((entry) => entry.name === "strings with each escape")!.text,
     );
-    expect(single.value).toBe("a\\b'c\"d\ne\rf\tg\bh\fiçj😀k");
+    expect(single.value).toBe("a\\b'c\"d\ne\rf\tg\bh\fiçj\u{1F600}k");
     expect(double.value).toBe("x\"y'z");
     expect(only('"plain"').value).toBe("plain");
   });
@@ -276,9 +276,9 @@ describe("punctuation", () => {
   });
 
   test("an unexpected character outside the basic plane is one token of two code units", () => {
-    const [token] = tokenizeCypherLine("😀", CYPHER_INITIAL_STATE).tokens;
-    expect(token).toEqual({ kind: "punct", text: "😀", value: "😀", start: 0, end: 2 });
-    expect(lexErrorOf("1 😀").position).toBe(2);
+    const [token] = tokenizeCypherLine("\u{1F600}", CYPHER_INITIAL_STATE).tokens;
+    expect(token).toEqual({ kind: "punct", text: "\u{1F600}", value: "\u{1F600}", start: 0, end: 2 });
+    expect(lexErrorOf("1 \u{1F600}").position).toBe(2);
   });
 });
 
