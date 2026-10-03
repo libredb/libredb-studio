@@ -23,11 +23,18 @@ export interface CypherReadPolicy {
   readonly refusedPrefixes: readonly ("EXPLAIN" | "PROFILE")[];
 }
 
-/** The Cypher an engine accepts where engines differ, read by the statement generators. */
+/** The Cypher an engine accepts where engines differ. */
 export interface GraphDialect {
-  /** A leading `CYPHER 5` or `CYPHER 25` is accepted. */
+  /**
+   * A leading `CYPHER 5` or `CYPHER 25` is accepted. When false, `checkCypherRead` refuses the
+   * prefix as `denied-prefix`, so a text the engine cannot parse never reaches it.
+   */
   readonly supportsVersionPrefix: boolean;
-  /** Generators write SKIP, which every measured engine accepts. */
+  /**
+   * The one offset keyword every measured engine accepts. The generators write SKIP unconditionally
+   * and read no profile, so this literal records the fact and offers no choice; widen the type, and
+   * make the generators read it, only when an engine needs another keyword.
+   */
   readonly offsetKeyword: "SKIP";
 }
 

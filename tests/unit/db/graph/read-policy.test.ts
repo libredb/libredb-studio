@@ -216,6 +216,22 @@ describe("prefixes", () => {
     expect(allowedOf("EXPLAIN SHOW INDEXES", profile).isShow).toBe(true);
     expect(refusalOf("EXPLAIN CREATE (n)", profile).subject).toBe("CREATE");
   });
+
+  test("a CYPHER version prefix is refused where the dialect has none, and allowed where it has one", () => {
+    const profile: GraphPolicyProfile = {
+      ...TEST_PROFILE,
+      engineLabel: "Memgraph",
+      dialect: { ...TEST_PROFILE.dialect, supportsVersionPrefix: false },
+    };
+    expect(refusalOf("  CYPHER 5 MATCH (n) RETURN n", profile)).toEqual({
+      code: "denied-prefix",
+      subject: "CYPHER 5",
+      position: 2,
+      message: "CYPHER 5 is not supported on Memgraph connections in this version.",
+    });
+    expect(allowedOf("MATCH (n) RETURN n", profile).statement.cypherVersion).toBeUndefined();
+    expect(allowedOf("CYPHER 25 MATCH (n) RETURN n").statement.cypherVersion).toBe("25");
+  });
 });
 
 describe("isShow and callsProcedure", () => {

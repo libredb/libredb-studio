@@ -8,7 +8,8 @@
  *
  * The policy holds no engine's names. Every list it compares against comes from the profile, so an
  * empty deny list refuses nothing and an empty allow list allows nothing; what it refuses on its own
- * is text that does not lex, an empty text, more than one statement, and parameters.
+ * is text that does not lex, an empty text, more than one statement, and parameters. A leading
+ * `CYPHER <n>` is refused when the profile's dialect has no version prefix.
  */
 
 import type { GraphPolicyProfile } from "../profile";
@@ -124,6 +125,15 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
 
   const statement = statements[0];
   const tokens = statement.tokens;
+  if (statement.cypherVersion !== undefined && !profile.dialect.supportsVersionPrefix) {
+    const prefix = `CYPHER ${statement.cypherVersion}`;
+    return refuse(
+      "denied-prefix",
+      prefix,
+      `${prefix} is not supported on ${engine} connections in this version.`,
+      tokens[0].start,
+    );
+  }
   let start = statement.cypherVersion === undefined ? 0 : 2;
   for (const prefix of ["EXPLAIN", "PROFILE"] as const) {
     if (!(prefix === "EXPLAIN" ? statement.explain : statement.profile)) continue;
