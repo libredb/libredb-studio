@@ -97,17 +97,3 @@ dfb4a9af0dcf58a7042b138d9d710a011041fb1a:docs/kubernetes-helm-chart-artifacthub-
 # never needs to know it. History keeps the commit, so the two findings stay.
 2ff08e3ac284bfbd9e3275f6b6c04b5dcf3081f6:.claude/skills/cut-release/SKILL.md:generic-api-key:247
 2ff08e3ac284bfbd9e3275f6b6c04b5dcf3081f6:.claude/skills/cut-release/SKILL.md:generic-api-key:307
-
-# The server-text test's fabricated JWT (header `alg: HS256`, payload `sub: x`,
-# and the word "signature" as its third segment), used twice to check that each
-# segment of a configured token is withheld from a server's text. Nothing ever
-# signed it and it has never authenticated anywhere. Reported for the commit
-# that added the test and again for the merge commit that brought it onto the
-# vector foundation branch, which a first-parent diff shows as adding it.
-#
-# HISTORY ONLY. The working tree builds the value from its parts now, so no
-# later commit, a squash included, holds the literal.
-63221c35fb536d608e266571470a3b8d2c51bbdd:tests/unit/db/server-text.test.ts:generic-api-key:19
-63221c35fb536d608e266571470a3b8d2c51bbdd:tests/unit/db/server-text.test.ts:generic-api-key:48
-8a9591f1e99686e2dce48ebb1eff320bf413f059:tests/unit/db/server-text.test.ts:generic-api-key:19
-8a9591f1e99686e2dce48ebb1eff320bf413f059:tests/unit/db/server-text.test.ts:generic-api-key:53
