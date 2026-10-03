@@ -424,10 +424,9 @@ export const BottomPanel = React.memo(function BottomPanel({
     },
   ];
 
-  const visibleTabs = tabs.filter(
-    (tab) =>
-      (tab.key !== "explain" || Boolean(metadata?.capabilities.explainFormat)) && (tab.key !== "graph" || offersGraph),
-  );
+  const explainTabs = metadata?.capabilities.explainFormat ? tabs : tabs.filter((tab) => tab.key !== "explain");
+  // The Graph tab is offered only for a result that holds a graph value (U72); every other tab is unaffected.
+  const visibleTabs = offersGraph ? explainTabs : explainTabs.filter((tab) => tab.key !== "graph");
 
   return (
     /*
