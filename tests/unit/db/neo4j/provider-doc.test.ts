@@ -40,6 +40,7 @@ const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 
 const DOC = read("docs/providers/neo4j.md");
+const SECURITY = read("docs/SECURITY.md");
 const PROVIDERS_README = read("docs/providers/README.md");
 const SEEDS = read("docs/SEED_CONNECTIONS.md");
 const BACKLOG = read("docs/BACKLOG.md");
@@ -69,6 +70,16 @@ function docSection(text: string, heading: string): string | undefined {
       at > start && /^#+ /.test(line) && (/^#+/.exec(line)?.[0].length ?? 9) <= level && !inFence(lines, at),
   );
   return lines.slice(start, end < 0 ? undefined : end).join("\n");
+}
+
+/**
+ * The backticked items of the line of `text` that starts with `lead`, after that line's last ": ": section 3.2 states
+ * each list on one line, "Procedures `CALL` may name, ...: `db.labels`, `db.ping` and `dbms.components`.".
+ */
+function listedOn(text: string, lead: string): string[] {
+  const line = text.split("\n").find((candidate) => candidate.startsWith(lead)) ?? "";
+  const list = line.slice(line.lastIndexOf(": ") + 2);
+  return [...list.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
 }
 
 /** The table row of `text` whose first cell is exactly `cell`, or undefined. */
@@ -154,6 +165,8 @@ describe("the readers find what exists and nothing that does not", () => {
     expect(rowOf(FIELDS, "Host")).toBeDefined();
     expect(rowOf(FIELDS, "No such field")).toBeUndefined();
     expect(yamlBlockOf("no block")).toBeUndefined();
+    expect(listedOn("Lead: `a`, `b` and `c`.\nOther: `d`", "Lead")).toEqual(["a", "b", "c"]);
+    expect(listedOn(POLICY_SECTION, "No such list")).toEqual([]);
     expect(() => privateConstant("src/lib/db/graph/graph-base-provider.ts", "NO_SUCH_CONSTANT")).toThrow();
   });
 });
@@ -172,31 +185,39 @@ describe("the claim: Neo4j 5.26 LTS, later calendar releases untested", () => {
   });
 });
 
-describe("docs/providers/neo4j.md section 3.2 states every list of the read policy", () => {
-  test("every denied word or word sequence", () => {
-    const missing = POLICY.deniedWords
-      .map((words) => words.join(" "))
-      .filter((w) => !POLICY_SECTION.includes(`\`${w}\``));
-    expect(missing).toEqual([]);
-  });
+describe("docs/providers/neo4j.md section 3.2 states every list of the read policy, and nothing beyond it", () => {
+  /** Set equality: a list the doc states is the profile's, with no entry missing and none the code would refuse. */
+  const sameSet = (stated: readonly string[], owned: readonly string[]): void => {
+    expect([...stated].sort()).toEqual([...owned].sort());
+    expect(new Set(stated).size).toBe(stated.length);
+  };
 
-  test("every denied namespace", () => {
-    expect(POLICY.deniedNamespaces.filter((ns) => !POLICY_SECTION.includes(`\`${ns}\``))).toEqual([]);
-  });
-
-  test("every allowlisted procedure", () => {
-    expect(POLICY.allowedProcedures.filter((name) => !POLICY_SECTION.includes(`\`${name}\``))).toEqual([]);
-  });
-
-  test("every allowlisted qualified function", () => {
-    expect(POLICY.allowedQualifiedFunctions.filter((name) => !POLICY_SECTION.includes(`\`${name}\``))).toEqual([]);
-  });
-
-  test("every allowed SHOW form, a name written <name>", () => {
-    const forms = POLICY.allowedShowForms.map((form) =>
-      ["SHOW", ...form.map((word) => (word === "*" ? "<name>" : word))].join(" "),
+  test("the denied words and word sequences", () => {
+    sameSet(
+      listedOn(POLICY_SECTION, "Denied words,"),
+      POLICY.deniedWords.map((words) => words.join(" ")),
     );
-    expect(forms.filter((form) => !POLICY_SECTION.includes(`\`${form}\``))).toEqual([]);
+  });
+
+  test("the denied namespaces", () => {
+    sameSet(listedOn(POLICY_SECTION, "Denied namespaces,"), POLICY.deniedNamespaces);
+  });
+
+  test("the allowlisted procedures", () => {
+    sameSet(listedOn(POLICY_SECTION, "Procedures `CALL` may name,"), POLICY.allowedProcedures);
+  });
+
+  test("the allowlisted qualified functions", () => {
+    sameSet(listedOn(POLICY_SECTION, "Qualified functions,"), POLICY.allowedQualifiedFunctions);
+  });
+
+  test("the allowed SHOW forms, a name written <name>", () => {
+    sameSet(
+      listedOn(POLICY_SECTION, "SHOW forms,"),
+      POLICY.allowedShowForms.map((form) =>
+        ["SHOW", ...form.map((word) => (word === "*" ? "<name>" : word))].join(" "),
+      ),
+    );
   });
 
   test("every refused prefix", () => {
@@ -214,13 +235,10 @@ describe("docs/providers/neo4j.md section 3.2 states every list of the read poli
   });
 });
 
-/** A client whose every run answers `answer`, or throws it when it is an Error. */
-function answering(answer: Partial<GraphRunResult> | Error): Pick<GraphClient, "run"> {
+/** A client whose every run answers `answer`. */
+function answering(answer: Partial<GraphRunResult>): Pick<GraphClient, "run"> {
   return {
-    run: async () => {
-      if (answer instanceof Error) throw answer;
-      return { fields: [], rows: [], truncated: false, ...answer };
-    },
+    run: async () => ({ fields: [], rows: [], truncated: false, ...answer }),
   };
 }
 
@@ -278,10 +296,13 @@ async function connectedProvider(): Promise<Neo4jProvider> {
 async function providerRefusal(text: string, params?: unknown[]): Promise<string> {
   const provider = await connectedProvider();
   try {
-    await provider.query(text, params);
-    throw new Error(`the provider ran ${text}`);
-  } catch (error) {
-    return (error as Error).message;
+    // The rejection is captured, not caught, so a statement the provider ran fails here and not as a row mismatch.
+    const failure = await provider.query(text, params).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    if (!(failure instanceof Error)) throw new Error(`the provider ran ${text}`);
+    return failure.message;
   } finally {
     await provider.disconnect();
   }
@@ -365,6 +386,21 @@ describe("docs/providers/neo4j.md section 3.4 states why LOAD CSV and APOC are r
     expect(capture.result.queryType).toBe("r");
     expect(WHY_LOAD_CSV).toContain("classifies `LOAD CSV` as `r`");
     expect(WHY_LOAD_CSV).toContain("private address");
+  });
+});
+
+describe("docs/SECURITY.md note 3.10 names only what the policy profile refuses", () => {
+  test("every name the note gives is a denied word or a denied namespace of NEO4J_POLICY_PROFILE", () => {
+    const sentence = SECURITY.split("\n").find((line) =>
+      line.includes("are refused by the policy before anything is sent"),
+    );
+    expect(sentence).toBeDefined();
+    const named = [...(sentence ?? "").slice((sentence ?? "").indexOf(", so ")).matchAll(/`([^`]+)`/g)].map(
+      (match) => match[1],
+    );
+    expect(named).toEqual(["LOAD", "TERMINATE", "apoc.", "gds."]);
+    const refused = [...POLICY.deniedWords.map((words) => words.join(" ")), ...POLICY.deniedNamespaces];
+    expect(named.filter((name) => !refused.includes(name))).toEqual([]);
   });
 });
 

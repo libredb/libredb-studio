@@ -809,8 +809,8 @@ docs — they are the single source of truth and are kept in sync with the code:
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), a
-graph engine on the graph layer (neo4j), or a driverless provider reached over HTTP (clickhouse, druid or trino for SQL, couchbase for a
-document store).
+graph engine on the graph layer (neo4j), or a driverless provider reached over HTTP (clickhouse,
+druid or trino for SQL, couchbase for a document store).
 
 ## Driver-free candidates
 
