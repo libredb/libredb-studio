@@ -113,6 +113,7 @@ docker cp libredb-milvus-seed:/credentials "$dir/credentials"
 | `large_topk` | 100 rows; the property `query_mode` is `large_topk` | `large_topk` detected by its exact property |
 | `shadowed` | six rows: four written while `zeta` was a dynamic key, then `AddCollectionField` added a static `zeta`, then two more | the merge rule's live collision of a static and a dynamic key |
 | `wide_768` | 1,000 normalised embeddings of 768 dimensions | the result byte budget |
+| `emb_list` | three rows, each with a 4-dimension `FloatVector` (`L2`) and a struct array `chunks` of one to three elements, whose `FloatVector` subfield `chunks[emb]` is an embedding list (HNSW, `MAX_SIM_COSINE`) | an embedding list's multivector cells and a MAX_SIM search |
 | `probe_db.notes` | 100 rows in a second database | a database other than `default`, which `reader` may not read |
 
 Every collection but `unloaded_big` is loaded.
