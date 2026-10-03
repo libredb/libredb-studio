@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D154, U17 · 98
+- [Drivers and connections](#drivers-and-connections) — D1-D158, U17 · 102
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X23, U2-U74 · 65
@@ -346,6 +346,7 @@ Amended 2026-09-23: the fix now exists twice, and the second copy is deliberate.
 Amended 2026-09-25: the mapping now exists three times, the third in the Kafka provider (#1088), deliberate for the same reason.
 Amended 2026-09-30: the mapping now exists four times, the fourth in the etcd provider (#1089), `connection-options.ts`, deliberate for the same reason; like Kafka's it is a mapping only, over grpc-js's own TLS, and it adds the IP-identity rule of the etcd design's E5.
 Amended 2026-10-03: the shared helper this entry asks for now exists outside any provider directory, `src/lib/db/http/node-transport.ts`: `createNodeTransport` is the request path for plaintext and TLS alike, built on the Prometheus shape with `rejectRedirect` on both, and `nodeTlsMaterial` is the one TLS mapping a REST provider takes, so later providers reuse it instead of adding a copy; no provider uses it yet, the Qdrant provider will be its first consumer, and moving Couchbase and Prometheus onto it, and the five `fetch` transports, stays open under this entry.
+Amended 2026-10-03 again: the mapping now exists five times, the fifth in the Milvus provider's `connection-options.ts` (vector-family spec 5.1, decision Q1a), deliberate for the reason the fourth was; like etcd's it is a mapping over grpc-js's own TLS, with the IP-identity rule, and the copied channel options add `grpc.enable_retries: 0`, which is an addition and not a copy.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -1183,7 +1184,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 41 hits, re-measured 2026-10-03. Nine of
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 42 hits, re-measured 2026-10-03. Ten of
 them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`,
 the agent routes' pattern). Thirty write out the same five-key object - `getSession`, `signJWT`,
 `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token
@@ -2147,6 +2148,43 @@ Its strict mode answers "Limit exceeded", "Index required but not found", "Exact
 Found 2026-10-03 while designing the Qdrant provider (vector-family spec 6.2).
 
 **Done when:** a Qdrant Cloud test cluster passes gate 4 of #424 (captures, the live check and the browser pass), and the provider doc, the README and the listings name it with the tier it measured.
+
+### D155. The gRPC transport exists twice, in the etcd and Milvus providers
+
+`src/lib/db/providers/keyvalue/etcd/grpc-client.ts` and `src/lib/db/providers/vector/milvus/grpc-client.ts` each carry the channel options, the IP-identity rule, the closing-credentials wrapper, the TLS mapping and the call wrapper, because the Milvus provider copied etcd's under the isolation rule (vector-family spec 5.1, decision Q1a: copied, not extracted).
+Two copies are cheaper than a shared module whose first change would touch both providers.
+
+Found 2026-10-03 while building the Milvus provider (vector-family spec 10.4).
+
+**Done when:** a third gRPC provider is designed; its PR first extracts one shared gRPC transport outside any provider directory, moves etcd and Milvus onto it with their own suites unchanged, and adds no third copy.
+
+### D156. The etcd provider sets no `grpc.enable_retries`
+
+The etcd channel options (`src/lib/db/providers/keyvalue/etcd/grpc-client.ts`, `channelOptions`) leave `grpc.enable_retries` at grpc-js's default, while the Milvus copy sets it to 0.
+With the default and no service config, grpc-js 1.14.5 retries only a call that was never sent or whose stream the server refused (`TRANSPARENT_ONLY`, `retrying-call.js` near 131-150), both safe, so no etcd write is sent twice today; the option would make every failure an explicit error and guard against a service config that ever loads.
+Recorded as defence, not as a defect.
+
+Found 2026-10-03 while copying etcd's transport into the Milvus provider (vector-family spec E7, R51 U31).
+
+**Done when:** etcd's `channelOptions()` sets `grpc.enable_retries: 0` with its exact-equality test updated and a fake server that drops the connection after a write sees exactly one call, or this entry is closed by the shared transport of D155.
+
+### D157. Zilliz Cloud is not claimed
+
+Zilliz Cloud speaks the Milvus API and connects as a `milvus` connection (its address pasted into the Host box, SSL mode `verify-system`, an API key in Password or token, or `db_admin` and its password), and the provider doc says how to try it, but no test cluster has passed gate 4 of #424, so no listing, README or doc claims it (vector-family decision Q13).
+Its known gaps (no GetMetrics or GetReplicas, databases only on Dedicated) are found by the server's answer, never by the host name.
+
+Found 2026-10-03 while designing the Milvus provider (vector-family spec 5.2).
+
+**Done when:** a Zilliz Cloud test cluster passes gate 4 of #424 (captures, the live check and the browser pass), and the provider doc, the README and the listings name it with the tier it measured.
+
+### D158. A Milvus request body takes no `//` comment
+
+The Milvus dialect declares `bodyComments: false` (`src/lib/db/providers/vector/milvus/routes.ts`, `MILVUS_CONSOLE`), so a pasted Milvus body with a `//` comment is refused before anything is sent, while the Qdrant dialect accepts one; `#` comment lines before the request line work in both.
+Measured 2026-10-03 on the branch: `parseConsole` refuses `{"dbName": "default" // the default}` with the reason `body-comment`.
+
+Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 5).
+
+**Done when:** users paste commented Milvus bodies; then the dialect declares `bodyComments: true` in one data change, with corpus cases for a comment inside a string, after a value and at the end of the body.
 
 ## Value interpolation
 
