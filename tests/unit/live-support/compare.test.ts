@@ -31,7 +31,7 @@ function record(collections: readonly CollectionSnapshot[]): SnapshotRecord {
     harness: "test",
     takenAt: "2026-10-03T12:00:00.000Z",
     prefix: "libredb_live_",
-    scratch: ["scratch"],
+    scratch: ["milvus:default/scratch"],
     collections,
   };
 }
@@ -96,6 +96,51 @@ describe("compareSnapshots", () => {
       schema: { value: { fields: ["id", "vec", "note", "x"] } },
     });
     expect(compareSnapshots(record([SCRATCH]), record([newField]), CLASSES).differences).toHaveLength(1);
+  });
+
+  test("a scratch collection is compared on its four fields even when the caller classifies one volatile", () => {
+    const loadVolatile = {
+      stable: ["schema", "configuration", "aliases", "rowCount"],
+      volatile: ["loadState", "memory"],
+    };
+    const loaded = collection("scratch", { ...SCRATCH.fields, loadState: { value: "Loaded" } });
+    const released = collection("scratch", { ...SCRATCH.fields, loadState: { value: "NotLoad" } });
+    expect(compareSnapshots(record([loaded]), record([released]), loadVolatile).differences).toEqual([
+      {
+        collection: "milvus:default/scratch",
+        field: "loadState",
+        before: { value: "Loaded" },
+        after: { value: "NotLoad" },
+      },
+    ]);
+  });
+
+  test("scratch names one collection by engine, database and name, not every collection called scratch", () => {
+    const elsewhere: CollectionSnapshot = { ...SCRATCH, database: "probe_db" };
+    const written: CollectionSnapshot = { ...elsewhere, fields: { ...SCRATCH.fields, rowCount: { value: 1 } } };
+    expect(compareSnapshots(record([elsewhere]), record([written]), CLASSES).differences).toEqual([
+      { collection: "milvus:probe_db/scratch", field: "rowCount", before: { value: 0 }, after: { value: 1 } },
+    ]);
+    const qdrant: CollectionSnapshot = { ...SCRATCH, engine: "qdrant", database: null };
+    const qdrantWritten: CollectionSnapshot = { ...qdrant, fields: { ...SCRATCH.fields, rowCount: { value: 1 } } };
+    expect(compareSnapshots(record([qdrant]), record([qdrantWritten]), CLASSES).differences).toHaveLength(1);
+  });
+
+  test("a record that holds the same collection twice cannot be compared", () => {
+    const again = collection("docs_int64", { ...DOCS.fields, rowCount: { value: 1 } });
+    expect(() => compareSnapshots(record([DOCS, again]), record([DOCS]), CLASSES)).toThrow(
+      "the record taken before the run holds milvus:default/docs_int64 twice",
+    );
+    expect(() => compareSnapshots(record([DOCS]), record([again, DOCS]), CLASSES)).toThrow(
+      "the record taken after the run holds milvus:default/docs_int64 twice",
+    );
+  });
+
+  test("a non-finite number is not equal to null", () => {
+    const infinite = collection("docs_int64", { ...DOCS.fields, rowCount: { value: Number.POSITIVE_INFINITY } });
+    const empty = collection("docs_int64", { ...DOCS.fields, rowCount: { value: null } });
+    expect(compareSnapshots(record([infinite]), record([empty]), CLASSES).differences).toHaveLength(1);
+    expect(compareSnapshots(record([infinite]), record([infinite]), CLASSES).differences).toEqual([]);
   });
 
   test("an unavailable reading equals only the same reason, and becoming readable is a difference", () => {

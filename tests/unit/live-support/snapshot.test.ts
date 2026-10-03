@@ -17,7 +17,7 @@ const RECORD = {
   harness: "milvus-live-check",
   takenAt: "2026-10-03T12:00:00.000Z",
   prefix: "libredb_live_",
-  scratch: ["scratch"],
+  scratch: ["milvus:default/scratch"],
   collections: [
     {
       engine: "milvus",
@@ -200,6 +200,23 @@ describe("parseSnapshotRecord", () => {
         }),
       ),
     ).toThrow('collections[0].fields.rowCount.unavailable: "timeout" is not one of the closed unavailable reasons');
+  });
+
+  test("a Qdrant collection names no database and a Milvus collection names one", () => {
+    expect(() =>
+      parseSnapshotRecord(
+        variant((r) => {
+          (r.collections as Record<string, unknown>[])[2].database = "x";
+        }),
+      ),
+    ).toThrow("collections[2].database must be null on Qdrant, which has no databases");
+    expect(() =>
+      parseSnapshotRecord(
+        variant((r) => {
+          firstCollection(r).database = null;
+        }),
+      ),
+    ).toThrow("collections[0].database must be a string");
   });
 
   test("the same collection twice is refused", () => {

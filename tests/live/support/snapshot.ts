@@ -40,7 +40,10 @@ export interface SnapshotRecord {
   readonly takenAt: string;
   /** Every collection whose name starts with it is the harness's own and is not snapshotted. */
   readonly prefix: string;
-  /** The shared writable collections, compared on schema, configuration, aliases and load state only. */
+  /**
+   * The shared writable collections, each named by its `collectionKey` (`milvus:default/scratch`, `qdrant:/scratch`),
+   * compared on schema, configuration, aliases and load state only.
+   */
   readonly scratch: readonly string[];
   readonly collections: readonly CollectionSnapshot[];
 }
@@ -123,6 +126,12 @@ function fieldReading(value: unknown, where: string): FieldReading {
   throw new Error(`${where} must be exactly { value } or { unavailable }`);
 }
 
+function databaseOf(engine: SnapshotEngine, value: unknown, where: string): string | null {
+  if (engine === "milvus") return text(value, where);
+  if (value !== null) throw new Error(`${where} must be null on Qdrant, which has no databases`);
+  return null;
+}
+
 /** Parses a written record, refusing anything the schema above does not allow, and names where. */
 export function parseSnapshotRecord(json: string): SnapshotRecord {
   const record = object(JSON.parse(json) as unknown, "the record");
@@ -143,7 +152,7 @@ export function parseSnapshotRecord(json: string): SnapshotRecord {
     );
     const snapshot: CollectionSnapshot = {
       engine: raw.engine,
-      database: raw.database === null ? null : text(raw.database, `${where}.database`),
+      database: databaseOf(raw.engine, raw.database, `${where}.database`),
       name: text(raw.name, `${where}.name`),
       fields,
     };

@@ -2,8 +2,8 @@
  * The comparator of two snapshot records, one taken before a live run and one after (vector-family spec 4.2
  * VF10, R51 U19). Collections under the harness prefix are the harness's own and are skipped. Every other
  * collection's stable fields must be equal; its volatile fields are recorded for information only; the shared
- * writable scratch collections are compared on schema, configuration, aliases and load state only, because other
- * agents write rows there. A field the caller classified as neither stable nor volatile, or as both, fails the
+ * writable scratch collections, named by their collection keys, are compared on schema, configuration, aliases and
+ * load state only, whatever class the caller gives those four, because other agents write rows there. A field the caller classified as neither stable nor volatile, or as both, fails the
  * comparison loudly instead of being skipped.
  */
 import { collectionKey, type CollectionSnapshot, type FieldReading, type SnapshotRecord } from "./snapshot";
@@ -43,15 +43,19 @@ function canonical(value: unknown): string {
     const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
     return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(",")}}`;
   }
+  // JSON.stringify writes Infinity and NaN as null; a non-finite number keeps its own text, which no JSON value has.
+  if (typeof value === "number" && !Number.isFinite(value)) return String(value);
   return JSON.stringify(value);
 }
 
-function outside(record: SnapshotRecord): Map<string, CollectionSnapshot> {
-  return new Map(
-    record.collections
-      .filter((collection) => !collection.name.startsWith(record.prefix))
-      .map((collection) => [collectionKey(collection), collection]),
-  );
+function outside(record: SnapshotRecord, when: string): Map<string, CollectionSnapshot> {
+  const collections = new Map<string, CollectionSnapshot>();
+  for (const collection of record.collections) {
+    const key = collectionKey(collection);
+    if (collections.has(key)) throw new Error(`the record taken ${when} the run holds ${key} twice`);
+    if (!collection.name.startsWith(record.prefix)) collections.set(key, collection);
+  }
+  return collections;
 }
 
 function classOf(classes: FieldClasses, field: string, collection: string): "stable" | "volatile" {
@@ -75,8 +79,8 @@ export function compareSnapshots(
   }
   const differences: SnapshotDifference[] = [];
   const volatile: VolatileReading[] = [];
-  const earlier = outside(before);
-  const later = outside(after);
+  const earlier = outside(before, "before");
+  const later = outside(after, "after");
   const keys = [...new Set([...earlier.keys(), ...later.keys()])].sort();
   for (const key of keys) {
     const was = earlier.get(key);
@@ -90,7 +94,7 @@ export function compareSnapshots(
       });
       continue;
     }
-    const scratch = before.scratch.includes(was.name);
+    const scratch = before.scratch.includes(key);
     const fields = [...new Set([...Object.keys(was.fields), ...Object.keys(is.fields)])].sort();
     for (const field of fields) {
       const fieldClass = classOf(classes, field, key);
@@ -100,7 +104,7 @@ export function compareSnapshots(
         differences.push({ collection: key, field, before: readBefore ?? "absent", after: readAfter ?? "absent" });
         continue;
       }
-      const compared = fieldClass === "stable" && (!scratch || (SCRATCH_FIELDS as readonly string[]).includes(field));
+      const compared = scratch ? (SCRATCH_FIELDS as readonly string[]).includes(field) : fieldClass === "stable";
       if (!compared) {
         volatile.push({ collection: key, field, before: readBefore, after: readAfter });
       } else if (canonical(readBefore) !== canonical(readAfter)) {
