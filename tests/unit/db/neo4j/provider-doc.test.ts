@@ -584,8 +584,7 @@ describe("docs/providers/neo4j.md section 5.6 states the Graph tab's bound, noti
   });
 
   test("the caption order is the model's, key by key", () => {
-    const caption = (properties: Record<string, unknown>) =>
-      captionOf({ elementId: "e", labels: ["L"], properties });
+    const caption = (properties: Record<string, unknown>) => captionOf({ elementId: "e", labels: ["L"], properties });
     const stated = /A node's caption is ([^\n]*)\n/.exec(GRAPH_TAB)?.[1] ?? "";
     expect(stated).toContain(
       "the first present property among `name`, `title` and `label`, then a key ending in `name`, then `description`, then `id`, then the first string property that is not a non-finite float (`NaN`, `Infinity`, `-Infinity`), else the first label, else the `elementId`",
