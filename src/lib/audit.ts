@@ -244,6 +244,12 @@ export interface AuditEvent {
    * and `bucket` are omitted, so the line's shape does not grow a null.
    */
   container?: string;
+  /**
+   * The engine principal a maintenance run acted as, when its provider names one through the optional
+   * `DatabaseProvider.engineUser()` (spec 3.11): a user name, never any part of a secret. Set by the maintenance route
+   * only, and omitted by `toAuditLine` when unset, as `container` is.
+   */
+  engineUser?: string;
   connectionName?: string;
   user: string;
   result: "success" | "failure";
@@ -573,6 +579,7 @@ interface AuditLogLine {
   ip?: string;
   connection?: string;
   container?: string;
+  engine_user?: string;
   duration_ms?: number;
   bucket?: string;
   correlation_id?: string;
@@ -595,6 +602,8 @@ function toAuditLine(event: AuditEvent): AuditLogLine {
     // The container beside the route, and omitted on the same terms: an event that named none
     // must not publish a `container: null` a parser would read as a value (#1091 review).
     ...(event.container ? { container: event.container } : {}),
+    // The engine principal beside the container, omitted on the same terms (spec 3.11).
+    ...(event.engineUser ? { engine_user: event.engineUser } : {}),
     // Omitted when unset, like container: most events concern no passkey.
     ...(event.passkey ? { passkey: event.passkey } : {}),
     ...(event.bucket ? { bucket: event.bucket } : {}),

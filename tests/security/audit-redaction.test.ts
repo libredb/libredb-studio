@@ -24,6 +24,7 @@ const ALLOWED_KEYS = new Set([
   "ip",
   "connection",
   "container",
+  "engine_user",
   "duration_ms",
   "bucket",
   "correlation_id",
@@ -719,5 +720,50 @@ describe("emitAuditEvent", () => {
     );
 
     expect("duration_ms" in line).toBe(false);
+  });
+});
+
+describe("the engine principal on the audit line (spec 3.11)", () => {
+  test("a maintenance row that names its engine principal prints engine_user, under the key allowlist", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "maintenance",
+        action: "COMPACT",
+        target: "orders",
+        container: "app",
+        engineUser: "app_maintainer",
+        user: "admin",
+        result: "success",
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(line.engine_user).toBe("app_maintainer");
+    expect(line.container).toBe("app");
+  });
+
+  test("a row that names no engine principal prints no engine_user key", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({ type: "maintenance", action: "VACUUM", target: "orders", user: "admin", result: "success" }),
+    );
+
+    expect(Object.hasOwn(line, "engine_user")).toBe(false);
+  });
+
+  test("engine_user is held to the bound every other field is held to", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "maintenance",
+        action: "COMPACT",
+        target: "orders",
+        engineUser: "u".repeat(10_000),
+        user: "admin",
+        result: "success",
+      }),
+    );
+
+    expect(String(line.engine_user).length).toBe(254);
   });
 });
