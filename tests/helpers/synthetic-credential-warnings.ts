@@ -6,10 +6,17 @@ import type { DatabaseType } from "@/lib/types";
  * one on a real type for its own duration. `etcd` carries the pair and no-secret cases because it is the one
  * type whose provider enforces `readOnly`, so a read-only seed of it reaches the credential check at all.
  */
+/**
+ * The synthetic pair's password: a named stand-in, as every new test fixture in this repository uses, and never a
+ * realistic value such as a vendor's published default. It differs from the field name `password`, so a test can
+ * prove that a refusal never echoes it.
+ */
+export const SYNTHETIC_PASSWORD = "password-second";
+
 export const SYNTHETIC_PAIR = {
   kind: "pair",
   user: "root",
-  password: "Milvus",
+  password: SYNTHETIC_PASSWORD,
   message: "This user and password are a published default, so anyone who knows the product knows them.",
 } as const satisfies CredentialWarning;
 

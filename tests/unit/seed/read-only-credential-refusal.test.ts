@@ -20,6 +20,7 @@ import {
   declareCredentialWarnings,
   SYNTHETIC_NO_SECRET,
   SYNTHETIC_PAIR,
+  SYNTHETIC_PASSWORD,
 } from "../../helpers/synthetic-credential-warnings";
 
 /**
@@ -76,26 +77,28 @@ afterEach(() => {
 });
 
 describe("load: what the file shows", () => {
-  it("refuses a literal root/Milvus on a read-only seed, naming the connection and the field, never the value", () => {
-    const issues = issuesOf({ ...base, user: "root", password: "Milvus" });
+  it("refuses a literal root and the declared password on a read-only seed, naming the connection and the field, never the value", () => {
+    const issues = issuesOf({ ...base, user: "root", password: SYNTHETIC_PASSWORD });
     expect(issues).toEqual([["password", refusedAtLoad(PAIR_SENTENCE)]]);
-    expect(JSON.stringify(issues)).not.toContain("Milvus");
+    expect(JSON.stringify(issues)).not.toContain(SYNTHETIC_PASSWORD);
   });
 
   it("accepts root with another password", () => {
     expect(issuesOf({ ...base, user: "root", password: "Other1" })).toEqual([]);
   });
 
-  it("accepts root/Milvus on a seed that is not read-only", () => {
-    expect(issuesOf({ ...base, readOnly: false, user: "root", password: "Milvus" })).toEqual([]);
-    expect(issuesOf({ ...base, readOnly: undefined, user: "root", password: "Milvus" })).toEqual([]);
+  it("accepts root and the declared password on a seed that is not read-only", () => {
+    expect(issuesOf({ ...base, readOnly: false, user: "root", password: SYNTHETIC_PASSWORD })).toEqual([]);
+    expect(issuesOf({ ...base, readOnly: undefined, user: "root", password: SYNTHETIC_PASSWORD })).toEqual([]);
   });
 
-  it("refuses an empty user with the password root:Milvus", () => {
-    expect(issuesOf({ ...base, user: "", password: "root:Milvus" })).toEqual([
+  it("refuses an empty user with the password root:<the declared password>", () => {
+    expect(issuesOf({ ...base, user: "", password: `root:${SYNTHETIC_PASSWORD}` })).toEqual([
       ["password", refusedAtLoad(PAIR_SENTENCE)],
     ]);
-    expect(issuesOf({ ...base, password: "root:Milvus" })).toEqual([["password", refusedAtLoad(PAIR_SENTENCE)]]);
+    expect(issuesOf({ ...base, password: `root:${SYNTHETIC_PASSWORD}` })).toEqual([
+      ["password", refusedAtLoad(PAIR_SENTENCE)],
+    ]);
   });
 
   it("refuses a read-only seed with no password, or an empty one, where the type declares no-secret", () => {
@@ -108,7 +111,7 @@ describe("load: what the file shows", () => {
   it("passes a ${ENV} or ${vault:...} reference, which the file cannot show", () => {
     expect(issuesOf({ ...base, user: "root", password: "${SYNTH_SEED_PASSWORD}" })).toEqual([]);
     expect(issuesOf({ ...base, user: "root", password: VAULT_REFERENCE })).toEqual([]);
-    expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}", password: "Milvus" })).toEqual([]);
+    expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}", password: SYNTHETIC_PASSWORD })).toEqual([]);
   });
 
   it("refuses a read-only seed with no password, or an empty one, even when its user is a reference", () => {
@@ -138,7 +141,7 @@ describe("load: what the file shows", () => {
   it("refuses inside a whole seed file under the connection's own path", () => {
     const result = SeedConfigSchema.safeParse({
       version: "1",
-      connections: [{ ...base, user: "root", password: "Milvus" }],
+      connections: [{ ...base, user: "root", password: SYNTHETIC_PASSWORD }],
     });
     expect(result.success ? [] : result.error.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
       ["connections.0.password", refusedAtLoad(PAIR_SENTENCE)],
@@ -148,7 +151,7 @@ describe("load: what the file shows", () => {
   it("refuses nothing on a type that declares nothing", () => {
     restore();
     restore = () => {};
-    expect(issuesOf({ ...base, user: "root", password: "Milvus" })).toEqual([]);
+    expect(issuesOf({ ...base, user: "root", password: SYNTHETIC_PASSWORD })).toEqual([]);
     expect(issuesOf({ ...base, user: "reader" })).toEqual([]);
   });
 });
@@ -157,7 +160,7 @@ describe("resolution: what the references become", () => {
   it("refuses a ${ENV} password that resolves to the declared pair, with no request sent", () => {
     const fetchSpy = spyOn(globalThis, "fetch");
     try {
-      process.env.SYNTH_SEED_PASSWORD = "Milvus";
+      process.env.SYNTH_SEED_PASSWORD = SYNTHETIC_PASSWORD;
       const parsed = SeedConnectionSchema.parse({ ...base, user: "root", password: "${SYNTH_SEED_PASSWORD}" });
       const resolved = resolveConnectionCredentials(parsed);
       expect(readOnlySeedRefusal(resolved.type, resolved)).toBe(PAIR_SENTENCE);
@@ -167,8 +170,8 @@ describe("resolution: what the references become", () => {
     }
   });
 
-  it("refuses a ${ENV} token that resolves to root:Milvus with an empty user", () => {
-    process.env.SYNTH_SEED_PASSWORD = "root:Milvus";
+  it("refuses a ${ENV} token that resolves to root:<the declared password> with an empty user", () => {
+    process.env.SYNTH_SEED_PASSWORD = `root:${SYNTHETIC_PASSWORD}`;
     const parsed = SeedConnectionSchema.parse({ ...base, user: "", password: "${SYNTH_SEED_PASSWORD}" });
     expect(readOnlySeedRefusal(parsed.type, resolveConnectionCredentials(parsed))).toBe(PAIR_SENTENCE);
   });
@@ -182,7 +185,7 @@ describe("resolution: what the references become", () => {
   it("refuses a ${vault:...} password that resolves to the pair, after one Vault read and nothing else", async () => {
     process.env.VAULT_ADDR = "http://127.0.0.1:8200";
     process.env.VAULT_TOKEN = "root";
-    const vaultFetch = mock(async () => secretResponse("Milvus"));
+    const vaultFetch = mock(async () => secretResponse(SYNTHETIC_PASSWORD));
     const globalFetch = spyOn(globalThis, "fetch");
     try {
       const parsed = SeedConnectionSchema.parse({ ...base, user: "root", password: VAULT_REFERENCE });

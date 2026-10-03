@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { credentialWarningFor } from "@/lib/db/credential-warnings";
 import { checkLibClosure, CREDENTIAL_WARNING_FRAME, moduleClosure } from "../../scripts/check-lib-closure.mjs";
-import { declareCredentialWarnings, SYNTHETIC_PAIR } from "../helpers/synthetic-credential-warnings";
+import {
+  declareCredentialWarnings,
+  SYNTHETIC_PAIR,
+  SYNTHETIC_PASSWORD,
+} from "../helpers/synthetic-credential-warnings";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -36,7 +40,7 @@ describe("CREDENTIAL_WARNING_FRAME", () => {
   test("is the frame credentialWarningFor builds its sentence from, so the check looks for the string it ships", () => {
     const restore = declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]);
     try {
-      expect(credentialWarningFor("etcd", { user: "root", password: "Milvus" })).toBe(
+      expect(credentialWarningFor("etcd", { user: "root", password: SYNTHETIC_PASSWORD })).toBe(
         `${CREDENTIAL_WARNING_FRAME}${SYNTHETIC_PAIR.message}`,
       );
     } finally {

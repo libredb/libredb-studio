@@ -7,7 +7,11 @@ import { useConnectionForm } from "@/hooks/use-connection-form";
 import type { DatabaseConnection } from "@/lib/types";
 import { declareHostUri } from "../helpers/synthetic-host-uri";
 import { credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
-import { declareCredentialWarnings, SYNTHETIC_PAIR } from "../helpers/synthetic-credential-warnings";
+import {
+  declareCredentialWarnings,
+  SYNTHETIC_PAIR,
+  SYNTHETIC_PASSWORD,
+} from "../helpers/synthetic-credential-warnings";
 
 /**
  * The Host box of an engine that declares `hostAcceptsUri`, through the real form hook and the real
@@ -260,8 +264,8 @@ describe("useConnectionForm: the declared credential warning", () => {
     const { result } = renderForm();
     act(() => result.current.setType("etcd"));
     act(() => result.current.setUser("root"));
-    act(() => result.current.setPassword("Milvus"));
-    const credential = { user: "root", password: "Milvus" };
+    act(() => result.current.setPassword(SYNTHETIC_PASSWORD));
+    const credential = { user: "root", password: SYNTHETIC_PASSWORD };
     expect(result.current.credentialWarning).toBe(PAIR_SENTENCE);
     expect(result.current.credentialWarning).toBe(credentialWarningFor("etcd", credential));
     expect(result.current.credentialWarning).toBe(readOnlySeedRefusal("etcd", credential));
@@ -276,11 +280,11 @@ describe("useConnectionForm: the declared credential warning", () => {
     expect(result.current.credentialWarning).toBeUndefined();
   });
 
-  test("an empty user with the password root:Milvus is read as the pair", () => {
+  test("an empty user with the password root:<the declared password> is read as the pair", () => {
     restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
     const { result } = renderForm();
     act(() => result.current.setType("etcd"));
-    act(() => result.current.setPassword("root:Milvus"));
+    act(() => result.current.setPassword(`root:${SYNTHETIC_PASSWORD}`));
     expect(result.current.credentialWarning).toBe(PAIR_SENTENCE);
   });
 
@@ -289,7 +293,7 @@ describe("useConnectionForm: the declared credential warning", () => {
     const { result } = renderForm();
     act(() => result.current.setUser("root"));
     act(() => result.current.setType("libsql"));
-    act(() => result.current.setPassword("Milvus"));
+    act(() => result.current.setPassword(SYNTHETIC_PASSWORD));
     expect(result.current.credentialWarning).toBeUndefined();
   });
 
@@ -298,7 +302,7 @@ describe("useConnectionForm: the declared credential warning", () => {
     const { result, onTestConnection, onConnect } = renderForm();
     act(() => result.current.setType("etcd"));
     act(() => result.current.setUser("root"));
-    act(() => result.current.setPassword("Milvus"));
+    act(() => result.current.setPassword(SYNTHETIC_PASSWORD));
     await act(async () => {
       await result.current.handleTestConnection();
     });
@@ -312,7 +316,7 @@ describe("useConnectionForm: the declared credential warning", () => {
   test("an engine that declares nothing never warns", () => {
     const { result } = renderForm();
     act(() => result.current.setUser("root"));
-    act(() => result.current.setPassword("Milvus"));
+    act(() => result.current.setPassword(SYNTHETIC_PASSWORD));
     expect(result.current.credentialWarning).toBeUndefined();
   });
 });

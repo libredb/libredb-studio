@@ -48,7 +48,7 @@ const ACCEPTED: [string, HostUriScheme, string, number][] = [
 ];
 
 const REFUSED: [string, keyof typeof SENTENCES][] = [
-  ["http://root:Milvus@localhost:19530", "userinfo"],
+  ["http://root:password-second@localhost:19530", "userinfo"],
   ["http://@localhost:19530", "userinfo"],
   ["http://localhost:6333/collections", "path"],
   ["http://localhost:6333//", "path"],

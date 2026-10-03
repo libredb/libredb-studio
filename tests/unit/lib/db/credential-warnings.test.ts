@@ -5,6 +5,7 @@ import {
   SYNTHETIC_JWT,
   SYNTHETIC_NO_SECRET,
   SYNTHETIC_PAIR,
+  SYNTHETIC_PASSWORD,
 } from "../../../helpers/synthetic-credential-warnings";
 
 const restores: (() => void)[] = [];
@@ -32,13 +33,17 @@ describe("CREDENTIAL_WARNINGS", () => {
 
 describe("credentialWarningFor: a declared pair", () => {
   const CASES: [string, Credential, string | undefined][] = [
-    ["the declared pair", { user: "root", password: "Milvus" }, PAIR_SENTENCE],
+    ["the declared pair", { user: "root", password: SYNTHETIC_PASSWORD }, PAIR_SENTENCE],
     ["the declared user with another password", { user: "root", password: "Other1" }, undefined],
-    ["another user with the declared password", { user: "alice", password: "Milvus" }, undefined],
-    ["an empty user with user:password as the password", { user: "", password: "root:Milvus" }, PAIR_SENTENCE],
-    ["no user with user:password as the password", { password: "root:Milvus" }, PAIR_SENTENCE],
-    ["user:password split at the first colon only", { user: "", password: "root:Milvus:x" }, undefined],
-    ["a named user keeps a colon in its password", { user: "root", password: "root:Milvus" }, undefined],
+    ["another user with the declared password", { user: "alice", password: SYNTHETIC_PASSWORD }, undefined],
+    [
+      "an empty user with user:password as the password",
+      { user: "", password: `root:${SYNTHETIC_PASSWORD}` },
+      PAIR_SENTENCE,
+    ],
+    ["no user with user:password as the password", { password: `root:${SYNTHETIC_PASSWORD}` }, PAIR_SENTENCE],
+    ["user:password split at the first colon only", { user: "", password: `root:${SYNTHETIC_PASSWORD}:x` }, undefined],
+    ["a named user keeps a colon in its password", { user: "root", password: `root:${SYNTHETIC_PASSWORD}` }, undefined],
     ["nothing typed", {}, undefined],
   ];
   test.each(CASES)("%s", (_label, credential, expected) => {
@@ -47,7 +52,7 @@ describe("credentialWarningFor: a declared pair", () => {
   });
 
   test("a type that declares nothing never warns", () => {
-    expect(credentialWarningFor("postgres", { user: "root", password: "Milvus" })).toBeUndefined();
+    expect(credentialWarningFor("postgres", { user: "root", password: SYNTHETIC_PASSWORD })).toBeUndefined();
   });
 });
 
@@ -110,7 +115,7 @@ describe("credentialWarningFor: a declared jwt entry", () => {
 
   test("a type with no pair entry does not read user:password", () => {
     restores.push(declareCredentialWarnings("druid", [SYNTHETIC_JWT]));
-    expect(credentialWarningFor("druid", { user: "", password: "root:Milvus" })).toBeUndefined();
+    expect(credentialWarningFor("druid", { user: "", password: `root:${SYNTHETIC_PASSWORD}` })).toBeUndefined();
   });
 });
 
@@ -126,14 +131,14 @@ describe("credentialWarningFor: a no-secret entry", () => {
 describe("readOnlySeedRefusal", () => {
   test("refuses the declared pair with the dialog's own sentence", () => {
     restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
-    const credential = { user: "root", password: "Milvus" };
+    const credential = { user: "root", password: SYNTHETIC_PASSWORD };
     expect(readOnlySeedRefusal("etcd", credential)).toBe(PAIR_SENTENCE);
     expect(readOnlySeedRefusal("etcd", credential)).toBe(credentialWarningFor("etcd", credential));
   });
 
   test("refuses the pair written as user:password with an empty user", () => {
     restores.push(declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]));
-    expect(readOnlySeedRefusal("etcd", { user: "", password: "root:Milvus" })).toBe(PAIR_SENTENCE);
+    expect(readOnlySeedRefusal("etcd", { user: "", password: `root:${SYNTHETIC_PASSWORD}` })).toBe(PAIR_SENTENCE);
   });
 
   test("accepts the declared user with another password", () => {
