@@ -29,6 +29,8 @@ const isSeparator = (token: CypherToken): boolean => token.kind === "punct" && t
  * One statement from the tokens between two separators, or undefined when none is significant.
  * `CYPHER` followed by anything but a number (an option such as `runtime=slotted`) sets no version,
  * and its words stay in the tokens for the policy to read.
+ * `text` joins the run's token texts rather than slicing the source, which is the same string only
+ * because `lexCypher` is lossless: every character lands in exactly one token (lexer.test.ts pins it).
  */
 function statementOf(run: readonly CypherToken[]): CypherStatement | undefined {
   const tokens = run.filter(isSignificant);
