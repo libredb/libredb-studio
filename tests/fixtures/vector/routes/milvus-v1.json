@@ -1,0 +1,511 @@
+{
+  "$generated": {
+    "by": "tests/live/vector-routes.ts",
+    "source": "rest-summary-v3.0.x.tsv: one row per endpoint of Milvus's REST reference, milvus-io/web-content v3.0.x at 78d9def7",
+    "sha256": "e85963fdb0aaf506f89ba0cc3825fbd480d61c671fa08b7ef7f6245acdabb723",
+    "scope": "v1"
+  },
+  "engine": "milvus",
+  "prefix": "/v2/vectordb/",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/databases/list",
+      "op": "databases/list",
+      "params": {},
+      "query": [],
+      "body": "optional",
+      "bodyKeys": []
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/databases/describe",
+      "op": "databases/describe",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/collections/list",
+      "op": "collections/list",
+      "params": {},
+      "query": [],
+      "body": "optional",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/collections/describe",
+      "op": "collections/describe",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/collections/get_stats",
+      "op": "collections/get_stats",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/collections/get_load_state",
+      "op": "collections/get_load_state",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "partitionNames",
+          "type": "array<?>",
+          "required": false
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/partitions/list",
+      "op": "partitions/list",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/indexes/list",
+      "op": "indexes/list",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/indexes/describe",
+      "op": "indexes/describe",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "indexName",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/aliases/list",
+      "op": "aliases/list",
+      "params": {},
+      "query": [],
+      "body": "optional",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": false
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/aliases/describe",
+      "op": "aliases/describe",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "aliasName",
+          "type": "string",
+          "required": true
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/query",
+      "op": "entities/query",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "filter",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "outputFields",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "partitionNames",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "offset",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "exprParams",
+          "type": "object",
+          "required": false
+        },
+        {
+          "name": "consistencyLevel",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "orderByFields",
+          "type": "array<string>",
+          "required": false
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/get",
+      "op": "entities/get",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "id",
+          "type": "object",
+          "required": true
+        },
+        {
+          "name": "outputFields",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "partitionNames",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "consistencyLevel",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "partitionName",
+          "type": "string",
+          "required": false
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/search",
+      "op": "entities/search",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "data",
+          "type": "array<array>",
+          "required": true
+        },
+        {
+          "name": "ids",
+          "type": "array<any>",
+          "required": false
+        },
+        {
+          "name": "annsField",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "filter",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "groupingField",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "groupSize",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "strictGroupSize",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "offset",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "outputFields",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "searchParams",
+          "type": "object",
+          "required": false
+        },
+        {
+          "name": "partitionNames",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "consistencyLevel",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "exprParams",
+          "type": "object",
+          "required": false
+        },
+        {
+          "name": "functionScore",
+          "type": "object",
+          "required": false
+        },
+        {
+          "name": "params",
+          "type": "object",
+          "required": false
+        },
+        {
+          "name": "functionChains",
+          "type": "array<object>",
+          "required": false
+        },
+        {
+          "name": "searchAggregation",
+          "type": "object",
+          "required": false
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/hybrid_search",
+      "op": "entities/hybrid_search",
+      "params": {},
+      "query": [],
+      "body": "required",
+      "bodyKeys": [
+        {
+          "name": "dbName",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "collectionName",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "partitionNames",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "search",
+          "type": "array<object>",
+          "required": true
+        },
+        {
+          "name": "rerank",
+          "type": "object",
+          "required": false
+        },
+        {
+          "name": "limit",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "groupSize",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "strictGroupSize",
+          "type": "boolean",
+          "required": false
+        },
+        {
+          "name": "outputFields",
+          "type": "array<string>",
+          "required": false
+        },
+        {
+          "name": "consistencyLevel",
+          "type": "string",
+          "required": false
+        },
+        {
+          "name": "functionScore",
+          "type": "object",
+          "required": false
+        },
+        {
+          "name": "offset",
+          "type": "integer",
+          "required": false
+        },
+        {
+          "name": "groupingField",
+          "type": "string",
+          "required": false
+        }
+      ]
+    }
+  ]
+}

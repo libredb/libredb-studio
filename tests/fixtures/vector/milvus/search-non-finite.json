@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T11:34:52.143Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/search, IP, edge_values.sp, the self-search of the 3.4e38 row",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/search",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"edge_values\",\"annsField\":\"sp\",\"data\":[{\"1\":3.3999999521443642e+38}],\"filter\":\"id == 3\",\"outputFields\":[\"id\"],\"limit\":1}"
+    }
+  },
+  "outcome": "empty-body",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 0,
+    "body": ""
+  }
+}

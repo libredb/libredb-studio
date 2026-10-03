@@ -1,0 +1,44 @@
+{
+  "$generated": {
+    "by": "tests/live/vector-corpus.ts",
+    "source": "the vector-family design's Milvus console examples"
+  },
+  "requests": [
+    {
+      "name": "collections-list",
+      "text": "POST /v2/vectordb/collections/list\n{\"dbName\": \"default\"}"
+    },
+    {
+      "name": "collections-describe",
+      "text": "POST /v2/vectordb/collections/describe\n{\"collectionName\": \"unloaded_big\"}"
+    },
+    {
+      "name": "query-filter",
+      "text": "POST /v2/vectordb/entities/query\n{\"collectionName\": \"docs_int64\", \"filter\": \"seq >= 10 and title like \\\"doc 001%\\\"\",\n \"outputFields\": [\"id\", \"seq\", \"title\", \"tags\", \"big_int\"], \"limit\": 5}"
+    },
+    {
+      "name": "query-count",
+      "text": "POST /v2/vectordb/entities/query\n{\"collectionName\": \"docs_int64\", \"filter\": \"maybe_count is null\", \"outputFields\": [\"count(*)\"]}"
+    },
+    {
+      "name": "get-short-form",
+      "text": "POST entities/get\n{\"collectionName\": \"docs_varchar\", \"id\": [\"vc-0001\", \"vc-0002\"], \"outputFields\": [\"pk\", \"label\"]}"
+    },
+    {
+      "name": "search-commented",
+      "text": "# nearest neighbours of a unit vector, filtered by seq\nPOST /v2/vectordb/entities/search\n{\"collectionName\": \"docs_int64\", \"annsField\": \"vec\",\n \"data\": [[0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339]],\n \"filter\": \"seq >= 100\", \"searchParams\": {\"params\": {\"ef\": 64}}, \"outputFields\": [\"seq\", \"title\"], \"limit\": 5}"
+    },
+    {
+      "name": "search-bm25",
+      "text": "POST /v2/vectordb/entities/search\n{\"collectionName\": \"fts\", \"annsField\": \"text_sparse\", \"data\": [\"vector index\"], \"outputFields\": [\"id\", \"text\"], \"limit\": 5}"
+    },
+    {
+      "name": "hybrid-rrf",
+      "text": "POST /v2/vectordb/entities/hybrid_search\n{\"collectionName\": \"docs_varchar\",\n \"search\": [{\"annsField\": \"f16\", \"data\": [[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]], \"limit\": 10},\n            {\"annsField\": \"sparse\", \"data\": [{\"17\": 0.4, \"230\": 0.2}], \"limit\": 10}],\n \"rerank\": {\"strategy\": \"rrf\", \"params\": {\"k\": 60}}, \"outputFields\": [\"pk\", \"label\"], \"limit\": 5}"
+    },
+    {
+      "name": "generated-search",
+      "text": "# Replace data with your query vector: vec, FloatVector, dim 8\nPOST /v2/vectordb/entities/search\n{\"dbName\": \"default\", \"collectionName\": \"docs_int64\", \"annsField\": \"vec\",\n \"data\": [[0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339, 0.35355339]],\n \"outputFields\": [\"id\", \"seq\", \"title\"], \"limit\": 10}"
+    }
+  ]
+}

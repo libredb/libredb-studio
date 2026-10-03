@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T11:34:52.153Z",
+    "runtime": "bun 1.4.2",
+    "surface": "points/query, Manhattan, small_dtypes.manhattan, the vector of id 0",
+    "request": {
+      "method": "POST",
+      "path": "/collections/small_dtypes/points/query",
+      "headers": {},
+      "body": "{\"query\":[-0.743272602558136,0.5229289531707764,0.8347684144973755,0.8408697843551636],\"using\":\"manhattan\",\"limit\":3}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 173,
+    "body": "{\"result\":{\"points\":[{\"id\":0,\"version\":1,\"score\":0.0},{\"id\":126,\"version\":1,\"score\":0.46432245},{\"id\":138,\"version\":1,\"score\":0.63332486}]},\"status\":\"ok\",\"time\":0.000075625}"
+  }
+}

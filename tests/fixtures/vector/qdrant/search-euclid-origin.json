@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T11:34:52.154Z",
+    "runtime": "bun 1.4.2",
+    "surface": "points/query, Euclid, edge_values.f32, (3,4) of the metric-probe point against the origin",
+    "request": {
+      "method": "POST",
+      "path": "/collections/edge_values/points/query",
+      "headers": {},
+      "body": "{\"query\":[0.0,0.0,0.0,0.0],\"using\":\"f32\",\"filter\":{\"must\":[{\"has_id\":[3]}]},\"limit\":1}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 89,
+    "body": "{\"result\":{\"points\":[{\"id\":3,\"version\":1,\"score\":5.0}]},\"status\":\"ok\",\"time\":0.000039651}"
+  }
+}

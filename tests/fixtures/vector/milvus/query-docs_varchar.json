@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T11:34:52.132Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/query of docs_varchar vc-0000 to vc-0004 with every vector field",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/query",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"docs_varchar\",\"filter\":\"pk in [\\\"vc-0000\\\", \\\"vc-0001\\\", \\\"vc-0002\\\", \\\"vc-0003\\\", \\\"vc-0004\\\"]\",\"outputFields\":[\"pk\",\"f16\",\"bf16\",\"bin\",\"sparse\",\"i8\"],\"limit\":5}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 926,
+    "body": "{\"code\":0,\"cost\":0,\"data\":[{\"bf16\":\"Qj4Gv9O+HMDmP5I/p75GPw==\",\"bin\":\"CQ0=\",\"f16\":\"DTIvuJy24sAzP5Q8NbUxOg==\",\"i8\":\"khn9mVSEbYI=\",\"pk\":\"vc-0000\",\"sparse\":{\"233\":0.3809,\"299\":0.6161,\"307\":0.9208,\"56\":0.2138}},{\"bf16\":\"kD4Ov3o/n76ovku/6T7LvQ==\",\"bin\":\"x/o=\",\"f16\":\"gDRuuNI7+LRDtVa6SDdZrg==\",\"i8\":\"HbCqh0wSuCw=\",\"pk\":\"vc-0001\",\"sparse\":{\"139\":0.1363,\"152\":0.6281,\"441\":0.9986,\"494\":0.2594}},{\"bf16\":\"DD8bvwI+ZL9XP0E+qT7SPg==\",\"bin\":\"tD4=\",\"f16\":\"XTjcuA8wI7u7OgQySjWRNg==\",\"i8\":\"0zTGq8ktYJQ=\",\"pk\":\"vc-0002\",\"sparse\":{\"583\":0.5953,\"726\":0.8145,\"760\":0.4396,\"918\":0.2652}},{\"bf16\":\"gb9IPwRA0r/dv8G/Vz8EPg==\",\"bin\":\"IXU=\",\"f16\":\"C7xEOh1Ajr7rvgW+uzoeMA==\",\"i8\":\"YRt2yt47Htg=\",\"pk\":\"vc-0003\",\"sparse\":{\"107\":0.5232,\"210\":0.233,\"293\":0.8805,\"586\":0.9268}},{\"bf16\":\"ij85P1g+kT4uvl4/kb/Yvg==\",\"bin\":\"ut0=\",\"f16\":\"UDzIOb0yizRvsfM6hbzAtg==\",\"i8\":\"Aqfj8AgIXcg=\",\"pk\":\"vc-0004\",\"sparse\":{\"114\":0.2801,\"427\":0.8429,\"428\":0.3587,\"461\":0.912}}]}\n"
+  }
+}

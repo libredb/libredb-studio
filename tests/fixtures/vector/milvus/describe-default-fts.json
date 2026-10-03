@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T11:34:52.117Z",
+    "runtime": "bun 1.4.2",
+    "surface": "collections/describe of default.fts",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/collections/describe",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"dbName\":\"default\",\"collectionName\":\"fts\"}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 1347,
+    "body": "{\"code\":0,\"data\":{\"aliases\":[],\"autoId\":false,\"collectionID\":469506719193920230,\"collectionName\":\"fts\",\"consistencyLevel\":\"Bounded\",\"description\":\"BM25 full text search\",\"enableDynamicField\":false,\"externalSource\":\"\",\"externalSpec\":\"\",\"fields\":[{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":100,\"name\":\"id\",\"nullable\":false,\"partitionKey\":false,\"primaryKey\":true,\"type\":\"Int64\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":101,\"name\":\"text\",\"nullable\":false,\"params\":[{\"key\":\"max_length\",\"value\":\"1024\"},{\"key\":\"enable_analyzer\",\"value\":\"true\"},{\"key\":\"analyzer_params\",\"value\":\"{\\\"type\\\":\\\"english\\\"}\"}],\"partitionKey\":false,\"primaryKey\":false,\"type\":\"VarChar\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":102,\"isFunctionOutput\":true,\"name\":\"text_sparse\",\"nullable\":false,\"partitionKey\":false,\"primaryKey\":false,\"type\":\"SparseFloatVector\"}],\"functions\":[{\"description\":\"\",\"id\":100,\"inputFieldNames\":[\"text\"],\"name\":\"text_bm25\",\"outputFieldNames\":[\"text_sparse\"],\"params\":null,\"type\":1}],\"indexes\":[{\"fieldName\":\"text_sparse\",\"indexName\":\"text_sparse\",\"metricType\":\"BM25\"}],\"load\":\"LoadStateLoaded\",\"partitionsNum\":1,\"properties\":[{\"key\":\"timezone\",\"value\":\"UTC\"},{\"key\":\"namespace.sharding.enabled\",\"value\":\"false\"},{\"key\":\"max_field_id\",\"value\":\"102\"}],\"shardsNum\":1,\"structFields\":[]},\"message\":\"\"}"
+  }
+}
