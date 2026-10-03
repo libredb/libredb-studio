@@ -8,7 +8,7 @@ import { MILVUS_ROUTES, MILVUS_STAND_IN, QDRANT_ROUTES, QDRANT_STAND_IN } from "
 describe("routeCompletions", () => {
   test("offers every route of the method, in table order, its template inserted as plain text", () => {
     expect(routeCompletions(QDRANT_STAND_IN, QDRANT_ROUTES, "GET").map((completion) => completion.insertText)).toEqual([
-      "",
+      "/",
       "collections",
       "collections/aliases",
       "collections/{collection_name}",
@@ -17,6 +17,30 @@ describe("routeCompletions", () => {
     ]);
     const search = routeCompletions(MILVUS_STAND_IN, MILVUS_ROUTES, "POST")[1];
     expect(search).toEqual({ label: "entities/search", insertText: "entities/search", route: MILVUS_ROUTES[1] });
+  });
+
+  test("the root route is offered as the prefix, never as a blank item, and what it inserts parses", () => {
+    const [root] = routeCompletions(QDRANT_STAND_IN, QDRANT_ROUTES, "GET");
+    expect(root).toEqual({ label: "/", insertText: "/", route: QDRANT_ROUTES[0] });
+    expect(parseConsole(QDRANT_STAND_IN, QDRANT_ROUTES, `GET ${root.insertText}`).route.op).toBe("root");
+  });
+
+  test("a dialect without the short form gets every route with its prefix, so each completion parses", () => {
+    const strict = { ...QDRANT_STAND_IN, id: "strict-stand-in", pathPrefix: "/api/", shortForm: false };
+    const completions = routeCompletions(strict, QDRANT_ROUTES, "GET");
+    expect(completions.map((completion) => completion.insertText)).toEqual([
+      "/api/",
+      "/api/collections",
+      "/api/collections/aliases",
+      "/api/collections/{collection_name}",
+      "/api/collections/{collection_name}/points/{id}",
+      "/api/collections/{collection_name}/optimizations",
+    ]);
+    for (const completion of completions) {
+      expect(completion.label).toBe(completion.insertText);
+      const filled = completion.insertText.replace("{collection_name}", "docs").replace("{id}", "42");
+      expect(parseConsole(strict, QDRANT_ROUTES, `GET ${filled}`).route).toBe(completion.route);
+    }
   });
 
   test("offers nothing after a method the dialect does not take", () => {

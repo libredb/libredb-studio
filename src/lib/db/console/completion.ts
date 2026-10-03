@@ -5,7 +5,9 @@ import type { ConsoleDialectSpec, RouteClass, RouteSpec } from "./dialect";
  *
  * A completion inserts the route template as plain text, braces included: one accepted unedited meets the
  * parser's template refusal, "Replace {name} with ...", rather than running against an object literally named
- * after the placeholder.
+ * after the placeholder. The template goes in alone where the dialect takes the short form, and after the
+ * dialect's prefix where it does not; the route whose template is empty is always the prefix, so no completion
+ * is blank and each one, its placeholders filled, is a route the parser reads.
  */
 
 export interface RouteCompletion {
@@ -23,7 +25,10 @@ export function routeCompletions(
   if (!spec.methods.includes(method)) return [];
   return routes
     .filter((route) => route.method === method)
-    .map((route) => ({ label: route.template, insertText: route.template, route }));
+    .map((route) => {
+      const text = spec.shortForm && route.template !== "" ? route.template : `${spec.pathPrefix}${route.template}`;
+      return { label: text, insertText: text, route };
+    });
 }
 
 /** The routes of the given classes as `METHOD template`, in table order, for a provider's statement-language sentence. */

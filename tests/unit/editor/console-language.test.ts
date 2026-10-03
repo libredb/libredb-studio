@@ -165,7 +165,7 @@ describe("the route completion provider", () => {
     registerConsoleLanguage(monaco, SYNTHETIC);
     const suggestions = complete(monaco, ["// list", "GET coll"], 2, 9);
     expect(suggestions.map((suggestion) => suggestion.insertText)).toEqual([
-      "",
+      "/",
       "collections",
       "collections/aliases",
       "collections/{collection_name}",
