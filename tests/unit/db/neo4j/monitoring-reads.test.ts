@@ -213,7 +213,7 @@ describe("readActiveSessions", () => {
         pid: "neo4j-transaction-18",
         user: "neo4j",
         database: "neo4j",
-        state: "Running",
+        state: "active",
         query: transactions,
         queryStart: new Date("2026-10-03T05:18:20.881Z"),
         duration: "101ms",
