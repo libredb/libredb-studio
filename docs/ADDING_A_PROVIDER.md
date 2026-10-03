@@ -374,6 +374,20 @@ for worked, code-verified examples see each provider's **Design decisions** sect
 [`docs/providers/`](./providers/README.md).
 
 
+### A per-entity maintenance operation with a preview
+
+An operation that runs on one object, and that an admin should see described before it runs, is declared rather than coded into a surface.
+
+- Add it to `maintenanceOperations`, and give it a `maintenanceOperationSpecs` entry with `perEntity: true` and `global: false`.
+  An operation outside the six of `MaintenanceType` then gets a control of its own on the Operations tab, the monitoring Tables tab and both row menus, after their own controls, in declaration order, under the spec's `label` and a generic icon; `declaredEntityOperations()` in `src/lib/db/types.ts` is its one reader.
+- `confirmation: "typed-target"` makes that control ask for the object's own name, typed exactly and case-sensitively, before it sends anything.
+  `tests/unit/db/maintenance-confirmation-capability.test.ts` holds such a spec to `perEntity: true` and `global: false`.
+- `preview: true` makes the control's dialog read `POST /api/db/maintenance/preview` and show the answer before it offers the confirm button.
+  Implement `previewMaintenance(type, path)` with it: `path` is the object's address, container levels then the object; the method reads only, checks that the object exists, raises a `QueryError` naming what is missing, and answers a `MaintenancePreview` whose `refusal`, when set, withholds the confirm button.
+- Implement `engineUser()` when the engine has a principal to name: the maintenance route writes it on every audit row, as `engine_user` on the stdout line, so it is a user name and never any part of a secret.
+
+`tests/unit/db/maintenance-surface-census.test.ts` pins what every shipped provider offers today, and that none declares any of this; a provider that adds such an operation updates its row there in the same change.
+
 ### What the base class gives you for free
 
 | Method | What it does |

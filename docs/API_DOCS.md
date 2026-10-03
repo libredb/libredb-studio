@@ -886,6 +886,10 @@ Every request that reaches the provider's `runMaintenance` writes one audit even
 A run the engine completed records `result: "success"`, and a run the engine answered with `success: false` records `result: "failure"` with no reason.
 A run that throws records `result: "failure"` with the reason `maintenance_execution_failed` and the time the call took, never the thrown message, and the response is the one the thrown error maps to, as it was before the event existed.
 A request refused before the provider is called writes no maintenance event.
+An event also carries `engineUser`, the engine principal the connection acts as, when the provider implements the optional `engineUser()` method: on the completed, the refused and the thrown rows alike.
+It is a user name and never any part of a secret.
+On the authoritative stdout line, `libredb.audit.v1`, it appears as `engine_user`, and the key is absent from every row whose provider names no engine principal.
+No shipped provider implements `engineUser()` yet.
 
 **Maintenance Types:**
 
@@ -954,6 +958,61 @@ is not refused: its target is a session or query id that neither half describes 
 A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
 
 A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
+
+#### POST /api/db/maintenance/preview
+
+Read what one per-object maintenance operation will do, before an admin confirms it.
+
+**Authentication:** Required (Admin only), on the same rate-limit bucket as `POST /api/db/maintenance`.
+No session returns `401`; a valid session with a non-admin role returns `403` with `{ "error": "Unauthorized. Admin access required." }` and writes a `permission_denied` audit event with the reason `insufficient_role`.
+
+**Request:** the body of `POST /api/db/maintenance`, with `target` required.
+
+```json
+{
+  "connection": { "id": "conn-123", "type": "postgres", "host": "localhost", "port": 5432, "database": "mydb" },
+  "type": "<operation>",
+  "target": "orders",
+  "container": "app"
+}
+```
+
+The route maps the request to the object's path, container levels then the object: `[container, target]`, or `[target]` when `container` is absent or empty.
+It calls the provider's `previewMaintenance(type, path)` and nothing else, and writes no audit event for a preview it answers, because a preview changes nothing.
+
+**Response (200 OK):**
+
+```json
+{
+  "preview": {
+    "summary": "One sentence saying what the operation will do to this object.",
+    "facts": [{ "label": "Rows (estimate)", "value": "1,200" }],
+    "refusal": "Present only when a preflight refuses the operation.",
+    "note": "How fresh or exact the facts are."
+  }
+}
+```
+
+`preview` is a `MaintenancePreview`, published from `@libredb/studio/types`.
+A dialog that receives a `refusal` shows it and offers no confirm button.
+
+**Response (400 Bad Request):** the checks of `POST /api/db/maintenance`, made in the same order before the provider's method runs (a missing `type`, a non-string `container`, maintenance unsupported, an operation the provider does not declare, an operation that takes no target), and these two:
+
+| Condition | Body |
+|---|---|
+| `target` absent, empty or not a string | `{ "error": "\"target\" must name the object the operation would run on" }` |
+| The operation's spec does not declare `preview: true`, or the provider does not implement `previewMaintenance` | `{ "error": "This operation has no preview" }` |
+
+A missing `type`, a non-string `container` and a missing `target` are refused before any provider is opened.
+Whether the object exists is the provider's to say: its `previewMaintenance` raises a `QueryError` naming what is missing, answered with `400`.
+
+**Declaring a per-object operation.** A provider declares it on the operation's `MaintenanceOperationSpec` in `maintenanceOperationSpecs`:
+
+- `perEntity: true` on an operation outside the six of `MaintenanceType` gives it a control of its own on the Operations tab, the monitoring Tables tab and both row menus, after their own controls, in declaration order, under the spec's `label`.
+- `confirmation: "typed-target"` makes that control ask for the object's own name, typed exactly and case-sensitively, before it sends anything; never a fixed word and never the connection's name. Such a spec declares `perEntity: true` and `global: false`.
+- `preview: true` makes the control's dialog read this route and show the preview before it offers the confirm button; the provider implements the optional `DatabaseProvider.previewMaintenance(type, path)`.
+
+No shipped provider declares any of these yet.
 
 #### Container paths on the object routes
 

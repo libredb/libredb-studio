@@ -194,8 +194,8 @@ audited. A forged, tampered or truncated `auth-token` reaches the trailing `catc
 other two refusals both emit: `origin_mismatch` and `insufficient_role`. See
 [`docs/BACKLOG.md`](./BACKLOG.md) H12.
 
-Everything the row once described short of that is audited. Role failures are recorded at all five
-sites that refuse on role, four in handlers and one in the proxy, and the four handler sites are the
+Everything the row once described short of that is audited. Role failures are recorded at all six
+sites that refuse on role, five in handlers and one in the proxy, and the five handler sites are the
 ones the Admin Audit tab can read:
 
 | site | call |
@@ -203,12 +203,13 @@ ones the Admin Audit tab can read:
 | `GET` in `src/app/api/admin/audit/route.ts` | `auditRoleDenial` |
 | `POST` in `src/app/api/admin/audit/route.ts` | `auditRoleDenial` |
 | `src/app/api/db/maintenance/route.ts` | `auditRoleDenial` |
+| `src/app/api/db/maintenance/preview/route.ts` | `auditRoleDenial` |
 | `src/app/api/admin/fleet-health/route.ts` | `auditRoleDenial` |
 | `src/proxy.ts` | `emitAuditEvent`, `insufficient_role` |
 
 `auditRoleDenial`
 ([`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts)) emits `permission_denied`
-with `reason: "insufficient_role"`, so those four reach the tab. An earlier version of this note
+with `reason: "insufficient_role"`, so those five reach the tab. An earlier version of this note
 claimed the opposite and pointed at an `H12` that did not exist.
 
 Two qualifiers the grade rests on, both deliberate and documented at each call site:
@@ -297,6 +298,10 @@ the application's main runtime, so the module-level ring buffer it pushes to is 
 `insufficient_role` line, when the anon rate limit under 1.2 lets it through, reaches stdout and
 never the Admin Audit tab. The tab discloses that rather than presenting its buffer as the whole
 log.
+
+A maintenance row names the engine principal the connection acts as, when the provider implements `engineUser()`: `engineUser` on the event and `engine_user` on the `libredb.audit.v1` stdout line, on the completed, refused and thrown rows of `POST /api/db/maintenance` alike.
+It is a user name and never any part of a secret, and a row whose provider names no engine principal carries no such key.
+No shipped provider implements it yet.
 
 **3.4.** WRITES are refused by the database itself, and each engine's boundary is its own. A
 PostgreSQL read-only transaction carrying exactly one statement, run by a role verified at open to
