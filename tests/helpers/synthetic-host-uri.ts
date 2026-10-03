@@ -4,7 +4,7 @@ import type { DatabaseType } from "@/lib/types";
 
 /**
  * Declares `hostAcceptsUri` on one real `DB_UI_CONFIG` entry for one test and returns the undo, which the test
- * runs in `afterEach`. Qdrant is the one shipped entry that declares it, so the mechanism is proven on another entry this way.
+ * runs in `afterEach`. Milvus and Qdrant are the shipped entries that declare it, so the mechanism is proven on an entry that does not.
  */
 export function declareHostUri(type: DatabaseType, schemes: readonly HostUriScheme[]): () => void {
   const entry = DB_UI_CONFIG[type];
