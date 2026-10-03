@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T11:34:52.134Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/search, COSINE, docs_int64.vec, the vector of seq 0",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/search",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"docs_int64\",\"annsField\":\"vec\",\"data\":[[0.1676955372095108,0.39869213104248047,0.16034536063671112,-0.6323601007461548,0.43932607769966125,0.2166043072938919,-0.26055780053138733,0.2819889187812805]],\"outputFields\":[\"seq\"],\"limit\":3}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 204,
+    "body": "{\"code\":0,\"cost\":0,\"data\":[{\"distance\":1,\"id\":469506719193499079,\"seq\":0},{\"distance\":0.91641223,\"id\":469506719193499176,\"seq\":194},{\"distance\":0.9157284,\"id\":469506719193499583,\"seq\":1008}],\"topks\":[3]}\n"
+  }
+}

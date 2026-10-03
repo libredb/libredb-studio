@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T11:34:52.154Z",
+    "runtime": "bun 1.4.2",
+    "surface": "points/query, sparse, docs.keywords, the sparse vector of id 0",
+    "request": {
+      "method": "POST",
+      "path": "/collections/docs/points/query",
+      "headers": {},
+      "body": "{\"query\":{\"indices\":[5375,15052,16618,20317,29085],\"values\":[2.585400104522705,2.616300106048584,0.5123999714851379,1.1712000370025635,1.780400037765503]},\"using\":\"keywords\",\"limit\":3,\"with_payload\":[\"seq\"]}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 294,
+    "body": "{\"result\":{\"points\":[{\"id\":0,\"version\":23,\"score\":123.39569,\"payload\":{\"seq\":0}},{\"id\":\"cab10c92-1a3f-5558-897b-bba9f2440ee0\",\"version\":29,\"score\":40.7774,\"payload\":{\"seq\":1629}},{\"id\":1152921504606847672,\"version\":25,\"score\":39.246387,\"payload\":{\"seq\":701}}]},\"status\":\"ok\",\"time\":0.000076149}"
+  }
+}
