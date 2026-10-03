@@ -473,12 +473,25 @@ describe("GraphView: lifecycle", () => {
     }
   });
 
-  test("a failure that lands after the view is gone is dropped", async () => {
+  test("a failure of a load the view has moved on from is dropped, so it never replaces a drawn graph", async () => {
     let fail: (error: Error) => void = () => {};
-    const pending: CytoscapeFactory = () => new Promise((_, reject) => (fail = reject));
-    const { unmount } = render(view({ loadCytoscape: pending }));
-    unmount();
+    let calls = 0;
+    const firstFailsLate: CytoscapeFactory = () => {
+      calls += 1;
+      return calls === 1 ? new Promise((_, reject) => (fail = reject)) : h.factory();
+    };
+    const { rerender, queryByTestId, findByRole } = render(
+      <ChunkBoundary label="The graph">{view({ loadCytoscape: firstFailsLate })}</ChunkBoundary>,
+    );
+    rerender(
+      <ChunkBoundary label="The graph">
+        {view({ loadCytoscape: firstFailsLate, result: resultOf([{ n: alice }]) })}
+      </ChunkBoundary>,
+    );
+    await findByRole("application", { name: "Graph of 1 node and 0 relationships" });
+    await waitFor(() => expect(h.instances).toHaveLength(1));
     await act(async () => fail(new Error("late")));
-    expect(h.instances).toHaveLength(0);
+    expect(queryByTestId("chunk-error")).toBeNull();
+    expect(h.instances[0].destroyed()).toBe(false);
   });
 });
