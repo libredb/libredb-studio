@@ -929,7 +929,8 @@ describe("spec E11: who may import the client packages, the descriptor and its g
 
   test("the detector reads real code: each named file holds its rule, and the lists overlap as E11 says", () => {
     const files = filesOf(ROOT);
-    const holding = (rule: ImportRule) => files.filter((file) => rule.holds(file, ROOT)).map((file) => file.path);
+    const holding = (rule: ImportRule) =>
+      files.filter((file) => !heldByTheMilvusGuard(file.path) && rule.holds(file, ROOT)).map((file) => file.path);
     expect(holding(IMPORT_RULES[0])).toEqual([...IMPORT_RULES[0].named].sort());
     expect(files.length).toBeGreaterThan(1000);
     // The evidence harness builds its definition from the generator, never from an import of the descriptor.
