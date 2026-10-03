@@ -13,8 +13,13 @@
 
 const WITHHELD = "(the server's text was withheld because it contained the configured credential)";
 
-/** A value shaped as a JSON Web Token: three base64url segments, the signature segment possibly empty. */
-const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
+/**
+ * A value shaped as a JSON Web Token: three base64url segments, the signature segment possibly empty, and the
+ * header and claims each a JSON object, whose base64url starts `eyJ` (the encoding of `{"`). Any dotted value,
+ * such as a password `my.company.com`, would otherwise add pieces as short as `com`, which nearly every server
+ * text holds.
+ */
+const JWT_SHAPE = /^eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*$/;
 
 /**
  * Each non-empty secret, its base64, its `encodeURIComponent` form, and each dot-separated segment of a value

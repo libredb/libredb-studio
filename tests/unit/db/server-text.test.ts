@@ -26,6 +26,11 @@ describe("secretForms", () => {
     expect(secretForms(["my.pass"])).toEqual(["my.pass", "bXkucGFzcw"]);
   });
 
+  test("adds no segment of a dotted value whose segments are not base64url JSON, as a JWT's header and claims are", () => {
+    expect(secretForms(["my.company.com"])).toEqual(["my.company.com", "bXkuY29tcGFueS5jb20"]);
+    expect(secretForms(["a.b.c"])).toEqual(["a.b.c", "YS5iLmM"]);
+  });
+
   test("skips an empty secret", () => {
     expect(secretForms([""])).toEqual([]);
   });
@@ -47,6 +52,12 @@ describe("serverText", () => {
   test("withholds a text holding one segment of a configured JWT", () => {
     const token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl";
     expect(serverText("bad signature c2lnbmF0dXJl", secretForms([token]))).toBe(WITHHELD);
+  });
+
+  test("returns a text unchanged when only a short piece of a dotted password occurs in it", () => {
+    const raw = "collection not found: comments";
+    expect(serverText(raw, secretForms(["my.company.com"]))).toBe(raw);
+    expect(serverText("unknown database", secretForms(["a.b.c"]))).toBe("unknown database");
   });
 
   test("returns a text with no form byte-identical", () => {
