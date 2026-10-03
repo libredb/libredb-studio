@@ -10,14 +10,18 @@
  * [kind, exact source text]. A token that spans lines holds its newlines.
  */
 import type { CypherTokenKind } from "@/lib/db/graph/cypher/lexer";
+import type { CypherRefusalCode } from "@/lib/db/graph/cypher/read-policy";
 
 export interface CorpusCase {
   readonly name: string;
   readonly text: string;
   /** Significant tokens (no whitespace) as [kind, text]. */
   readonly tokens?: readonly (readonly [CypherTokenKind, string])[];
-  /** "allowed" or a refusal code; the read policy's task narrows this to its refusal code type. */
-  readonly verdict?: string;
+  /**
+   * What `checkCypherRead` answers under the test profile in tests/unit/db/graph/read-policy.test.ts.
+   * A text the lexer refuses has no place here, because every reader lexes every case.
+   */
+  readonly verdict?: "allowed" | CypherRefusalCode;
   /** The word, procedure, namespace, form or prefix a refusal names. */
   readonly subject?: string;
 }
@@ -25,6 +29,7 @@ export interface CorpusCase {
 export const CYPHER_CORPUS: readonly CorpusCase[] = [
   {
     name: "a simple MATCH",
+    verdict: "allowed",
     text: "MATCH (n:Person) RETURN n.name LIMIT 10",
     tokens: [
       ["word", "MATCH"],
@@ -43,6 +48,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a label with a space in backticks",
+    verdict: "allowed",
     text: "MATCH (n:`Weird Label`) RETURN n",
     tokens: [
       ["word", "MATCH"],
@@ -57,6 +63,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a backticked name with a doubled backtick",
+    verdict: "allowed",
     text: "MATCH (n:`Back``tick`) RETURN n",
     tokens: [
       ["word", "MATCH"],
@@ -71,6 +78,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "strings with each escape",
+    verdict: "allowed",
     text: String.raw`RETURN 'a\\b\'c\"d\ne\rf\tg\bh\fiçj\U0001F600k', "x\"y\'z"`,
     tokens: [
       ["word", "RETURN"],
@@ -81,6 +89,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a line comment hiding CREATE",
+    verdict: "allowed",
     text: "MATCH (n) // CREATE (m)\nRETURN n",
     tokens: [
       ["word", "MATCH"],
@@ -94,6 +103,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a block comment over two lines hiding DELETE",
+    verdict: "allowed",
     text: "MATCH (n) /* first\nDELETE n */ RETURN n",
     tokens: [
       ["word", "MATCH"],
@@ -107,6 +117,8 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a comment between LOAD and CSV",
+    verdict: "denied-word",
+    subject: "LOAD",
     text: "LOAD /* x */ CSV FROM 'file:///a.csv' AS row RETURN row",
     tokens: [
       ["word", "LOAD"],
@@ -122,6 +134,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a number set, the minus sign apart",
+    verdict: "allowed",
     text: "RETURN 123, 1.5, .5, 1e10, 1.5E-3, 0x1F, 0o17, -7",
     tokens: [
       ["word", "RETURN"],
@@ -145,6 +158,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a range in a variable-length pattern",
+    verdict: "allowed",
     text: "MATCH p=(a)-[*1..3]->(b) RETURN p",
     tokens: [
       ["word", "MATCH"],
@@ -170,6 +184,8 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "parameters plain and backticked",
+    verdict: "parameters-unsupported",
+    subject: "$name",
     text: "RETURN $name, $0, $`odd name`",
     tokens: [
       ["word", "RETURN"],
@@ -182,6 +198,8 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a lone parameter",
+    verdict: "parameters-unsupported",
+    subject: "$p",
     text: "RETURN $p",
     tokens: [
       ["word", "RETURN"],
@@ -190,6 +208,8 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a denied word as a property and as a map key",
+    verdict: "denied-word",
+    subject: "SET",
     text: "MATCH (n) RETURN n.set, {create: 1}",
     tokens: [
       ["word", "MATCH"],
@@ -210,6 +230,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a semicolon inside a string",
+    verdict: "allowed",
     text: "RETURN 'a;b'",
     tokens: [
       ["word", "RETURN"],
@@ -218,6 +239,8 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "two statements",
+    verdict: "multiple-statements",
+    subject: "2",
     text: "RETURN 1; RETURN 2",
     tokens: [
       ["word", "RETURN"],
@@ -229,6 +252,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a Unicode label",
+    verdict: "allowed",
     text: "MATCH (k:Kişi) RETURN k",
     tokens: [
       ["word", "MATCH"],
@@ -243,6 +267,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a qualified procedure call",
+    verdict: "allowed",
     text: "CALL db.labels()",
     tokens: [
       ["word", "CALL"],
@@ -255,6 +280,8 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "an unqualified procedure call",
+    verdict: "denied-procedure",
+    subject: "ping",
     text: "CALL ping()",
     tokens: [
       ["word", "CALL"],
@@ -265,6 +292,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a CALL subquery",
+    verdict: "allowed",
     text: "CALL { MATCH (n) RETURN n } RETURN 1",
     tokens: [
       ["word", "CALL"],
@@ -282,6 +310,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a scoped CALL subquery with an undirected-then-directed arrow",
+    verdict: "allowed",
     text: "CALL (n) { MATCH (n)-->(m) RETURN m } RETURN 1",
     tokens: [
       ["word", "CALL"],
@@ -307,6 +336,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a qualified built-in function",
+    verdict: "allowed",
     text: "RETURN date.truncate('day', date())",
     tokens: [
       ["word", "RETURN"],
@@ -324,6 +354,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "two quotes in a row end a string and start another",
+    verdict: "allowed",
     text: "RETURN 'it''s'",
     tokens: [
       ["word", "RETURN"],
@@ -333,6 +364,7 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "a word that only looks outside a string",
+    verdict: "allowed",
     text: "RETURN 'a'' CREATE (n) //'",
     tokens: [
       ["word", "RETURN"],
@@ -342,6 +374,8 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   },
   {
     name: "block comments do not nest",
+    verdict: "denied-word",
+    subject: "CREATE",
     text: "/* a /* b */ CREATE */",
     tokens: [
       ["comment", "/* a /* b */"],
@@ -349,5 +383,270 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
       ["punct", "*"],
       ["punct", "/"],
     ],
+  },
+  {
+    name: "a labelled MATCH with a limit",
+    text: "MATCH (n:Person) RETURN n LIMIT 5",
+    verdict: "allowed",
+  },
+  {
+    name: "a denied word as a backticked property",
+    text: "MATCH (n) RETURN n.`set`",
+    verdict: "allowed",
+  },
+  {
+    name: "a denied word inside a string",
+    text: "RETURN 'CREATE'",
+    verdict: "allowed",
+  },
+  {
+    name: "a line comment holding CREATE before the statement",
+    text: "// CREATE\nMATCH (n) RETURN n",
+    verdict: "allowed",
+  },
+  {
+    name: "an allowed procedure with backticked parts",
+    text: "CALL `db`.`labels`()",
+    verdict: "allowed",
+  },
+  {
+    name: "an allowed procedure with three parts",
+    text: "CALL db.schema.nodeTypeProperties()",
+    verdict: "allowed",
+  },
+  {
+    name: "a CALL subquery that counts",
+    text: "CALL { MATCH (n) RETURN count(n) AS c } RETURN c",
+    verdict: "allowed",
+  },
+  {
+    name: "SHOW INDEXES",
+    text: "SHOW INDEXES",
+    verdict: "allowed",
+  },
+  {
+    name: "SHOW INDEXES with YIELD and WHERE",
+    text: "SHOW INDEXES YIELD name WHERE name STARTS WITH 'a'",
+    verdict: "allowed",
+  },
+  {
+    name: "SHOW DATABASE with a bare name",
+    text: "SHOW DATABASE neo4j",
+    verdict: "allowed",
+  },
+  {
+    name: "SHOW DATABASE with a backticked name",
+    text: "SHOW DATABASE `neo4j`",
+    verdict: "allowed",
+  },
+  {
+    name: "a CYPHER version prefix",
+    text: "CYPHER 5 MATCH (n) RETURN n",
+    verdict: "allowed",
+  },
+  {
+    name: "a trailing semicolon",
+    text: "MATCH (n) RETURN n;",
+    verdict: "allowed",
+  },
+  {
+    name: "a qualified built-in function, allowed",
+    text: "RETURN date.truncate('day', date())",
+    verdict: "allowed",
+  },
+  {
+    name: "a scoped CALL subquery reading its variable",
+    text: "MATCH (n) CALL (n) { MATCH (n)-->(m) RETURN m } RETURN m",
+    verdict: "allowed",
+  },
+  {
+    name: "CREATE",
+    text: "CREATE (n)",
+    verdict: "denied-word",
+    subject: "CREATE",
+  },
+  {
+    name: "create in lower case",
+    text: "create (n)",
+    verdict: "denied-word",
+    subject: "CREATE",
+  },
+  {
+    name: "SET",
+    text: "MATCH (n) SET n.x = 1",
+    verdict: "denied-word",
+    subject: "SET",
+  },
+  {
+    name: "a denied word as a bare property",
+    text: "MATCH (n) RETURN n.set",
+    verdict: "denied-word",
+    subject: "SET",
+  },
+  {
+    name: "a denied word as a map key",
+    text: "RETURN {create: 1}",
+    verdict: "denied-word",
+    subject: "CREATE",
+  },
+  {
+    name: "DETACH DELETE",
+    text: "MATCH (n) DETACH DELETE n",
+    verdict: "denied-word",
+    subject: "DETACH",
+  },
+  {
+    name: "LOAD CSV from the network",
+    text: "LOAD CSV FROM 'http://10.0.0.1/x' AS r RETURN r",
+    verdict: "denied-word",
+    subject: "LOAD",
+  },
+  {
+    name: "LOAD and CSV split by a comment",
+    text: "LOAD /* x */ CSV FROM 'x' AS r RETURN r",
+    verdict: "denied-word",
+    subject: "LOAD",
+  },
+  {
+    name: "an APOC procedure",
+    text: "CALL apoc.load.json('http://x')",
+    verdict: "denied-namespace",
+    subject: "apoc.",
+  },
+  {
+    name: "an APOC procedure with backticked parts",
+    text: "CALL `apoc`.`load`.`json`('x')",
+    verdict: "denied-namespace",
+    subject: "apoc.",
+  },
+  {
+    name: "an APOC function",
+    text: "RETURN apoc.text.join(['a'], ',')",
+    verdict: "denied-namespace",
+    subject: "apoc.",
+  },
+  {
+    name: "a GDS procedure",
+    text: "CALL gds.graph.list()",
+    verdict: "denied-namespace",
+    subject: "gds.",
+  },
+  {
+    name: "a dbms procedure outside the allowlist",
+    text: "CALL dbms.listConfig()",
+    verdict: "denied-procedure",
+    subject: "dbms.listConfig",
+  },
+  {
+    name: "a db procedure that writes",
+    text: "CALL db.createLabel('X')",
+    verdict: "denied-procedure",
+    subject: "db.createLabel",
+  },
+  {
+    name: "a write inside a CALL subquery",
+    text: "CALL { CREATE (n) } IN TRANSACTIONS",
+    verdict: "denied-word",
+    subject: "CREATE",
+  },
+  {
+    name: "CALL IN TRANSACTIONS",
+    text: "MATCH (n) CALL { WITH n RETURN n } IN TRANSACTIONS RETURN n",
+    verdict: "denied-word",
+    subject: "IN TRANSACTIONS",
+  },
+  {
+    name: "USE before SHOW",
+    text: "USE system SHOW USERS",
+    verdict: "denied-word",
+    subject: "USE",
+  },
+  {
+    name: "SHOW USERS",
+    text: "SHOW USERS",
+    verdict: "denied-show",
+    subject: "SHOW USERS",
+  },
+  {
+    name: "SHOW SETTINGS",
+    text: "SHOW SETTINGS",
+    verdict: "denied-show",
+    subject: "SHOW SETTINGS",
+  },
+  {
+    name: "SHOW SERVERS",
+    text: "SHOW SERVERS",
+    verdict: "denied-show",
+    subject: "SHOW SERVERS",
+  },
+  {
+    name: "SHOW TRANSACTIONS",
+    text: "SHOW TRANSACTIONS",
+    verdict: "denied-show",
+    subject: "SHOW TRANSACTIONS",
+  },
+  {
+    name: "TERMINATE TRANSACTIONS",
+    text: "TERMINATE TRANSACTIONS 'neo4j-transaction-1'",
+    verdict: "denied-word",
+    subject: "TERMINATE",
+  },
+  {
+    name: "an EXPLAIN prefix",
+    text: "EXPLAIN MATCH (n) RETURN n",
+    verdict: "denied-prefix",
+    subject: "EXPLAIN",
+  },
+  {
+    name: "a PROFILE prefix",
+    text: "PROFILE MATCH (n) RETURN n",
+    verdict: "denied-prefix",
+    subject: "PROFILE",
+  },
+  {
+    name: "two MATCH statements",
+    text: "MATCH (n) RETURN n; MATCH (m) RETURN m",
+    verdict: "multiple-statements",
+    subject: "2",
+  },
+  {
+    name: "an empty text",
+    text: "",
+    verdict: "empty",
+  },
+  {
+    name: "a comment and nothing else",
+    text: "// only a comment",
+    verdict: "empty",
+  },
+  {
+    name: "FOREACH",
+    text: "FOREACH (x IN [1] | CREATE (n))",
+    verdict: "denied-word",
+    subject: "FOREACH",
+  },
+  {
+    name: "MERGE",
+    text: "MERGE (n:A)",
+    verdict: "denied-word",
+    subject: "MERGE",
+  },
+  {
+    name: "DROP INDEX",
+    text: "DROP INDEX x",
+    verdict: "denied-word",
+    subject: "DROP",
+  },
+  {
+    name: "ALTER DATABASE",
+    text: "ALTER DATABASE neo4j SET ACCESS READ ONLY",
+    verdict: "denied-word",
+    subject: "ALTER",
+  },
+  {
+    name: "a qualified function outside the allowlist",
+    text: "RETURN custom.fetch('http://x')",
+    verdict: "denied-function",
+    subject: "custom.fetch",
   },
 ];
