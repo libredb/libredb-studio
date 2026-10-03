@@ -2,7 +2,7 @@
   "$captured": {
     "image": "neo4j:5.26.31-community",
     "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
-    "date": "2026-10-03T05:07:38.078Z",
+    "date": "2026-10-03T05:18:21.806Z",
     "database": "neo4j"
   },
   "statement": "MATCH (s:Service {id: 'types'}) MATCH p = (:Person)-[:MEMBER_OF]->(:Team) RETURN s.aString AS aString, s.anInteger AS anInteger, s.beyondDoubles AS beyondDoubles, s.minInteger AS minInteger, s.aFloat AS aFloat, s.notANumber AS notANumber, s.aBoolean AS aBoolean, s.aList AS aList, s.aDate AS aDate, s.aLocalTime AS aLocalTime, s.aTime AS aTime, s.aLocalDateTime AS aLocalDateTime, s.aDateTime AS aDateTime, s.aDuration AS aDuration, s.aCartesianPoint AS aCartesianPoint, s.aWgs84Point AS aWgs84Point, s AS node, p AS path LIMIT 1",

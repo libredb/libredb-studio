@@ -2,7 +2,7 @@
   "$captured": {
     "image": "neo4j:5.26.31-community",
     "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
-    "date": "2026-10-03T05:07:37.881Z",
+    "date": "2026-10-03T05:18:20.880Z",
     "database": "neo4j"
   },
   "statement": "SHOW TRANSACTIONS YIELD database, transactionId, username, currentQuery, startTime, status, elapsedTime",
@@ -24,12 +24,12 @@
     "rows": [
       {
         "database": "neo4j",
-        "transactionId": "neo4j-transaction-117",
+        "transactionId": "neo4j-transaction-18",
         "username": "neo4j",
         "currentQuery": "SHOW TRANSACTIONS YIELD database, transactionId, username, currentQuery, startTime, status, elapsedTime",
-        "startTime": "2026-10-03T05:07:37.882Z",
+        "startTime": "2026-10-03T05:18:20.881Z",
         "status": "Running",
-        "elapsedTime": "PT0.001000000S"
+        "elapsedTime": "PT0.101000000S"
       }
     ],
     "truncated": false,

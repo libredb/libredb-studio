@@ -76,7 +76,8 @@ export type RecordedGraphClient = GraphClient & {
  * A client answering from every statement capture of `dir`: rows cut to the run's `maxRows`, `truncated`
  * recomputed (and `queryType` dropped on a cut, as the Bolt client never reads the summary then), a captured
  * failure thrown as its `GraphClientError`, an aborted signal as a cancel, and `Error("no capture for: ...")`
- * for any other statement. `verify` answers from `verify.json`. An override answers in place of a method;
+ * for any other statement. Two files capturing one database and statement are refused when the client is
+ * built, so no capture answers for another. `verify` answers from `verify.json`. An override answers in place of a method;
  * runs are recorded either way.
  */
 export function recordedGraphClient(
@@ -84,13 +85,20 @@ export function recordedGraphClient(
   overrides: RecordedGraphClientOverrides = {},
 ): RecordedGraphClient {
   const captures = new Map<string, Neo4jCapture>();
+  const files = new Map<string, string>();
   for (const file of readdirSync(dir)) {
     if (!file.endsWith(".json") || file === "verify.json") continue;
     const capture = neo4jCapture(file.slice(0, -".json".length), dir);
     if (capture.statement === undefined || capture.options === undefined) {
       throw new Error(`${file} is not a statement capture`);
     }
-    captures.set(keyOf(capture.options.database, capture.statement), capture);
+    const key = keyOf(capture.options.database, capture.statement);
+    const earlier = files.get(key);
+    if (earlier !== undefined) {
+      throw new Error(`${earlier} and ${file} both capture ${JSON.stringify(capture.statement)} on one database`);
+    }
+    files.set(key, file);
+    captures.set(key, capture);
   }
   const calls: { statement: string; options: GraphRunOptions }[] = [];
 

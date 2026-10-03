@@ -15,7 +15,7 @@ No value in these files was typed by hand.
 | Seed | `docker/neo4j/seed.cypher` |
 | Captured | 2026-10-03 |
 
-There are 78 statement captures, plus `verify.json` and three transport captures under `transport/`.
+There are 77 statement captures, plus `verify.json` and three transport captures under `transport/`.
 The node and relationship counts and the index and constraint names were read before and after the run, and were the same.
 
 ## Encoding
@@ -34,9 +34,10 @@ The `explain-*` captures ran with `maxRows: 0`, as the statement gate runs them.
 Neo.ClientError.Statement.AccessMode: Writing in read access mode not allowed. Attempted write to neo4j
 ```
 
-`session.close()` on a READ session running `UNWIND range(1, 2000000000) AS x RETURN count(x)` returned in 2.5 ms.
-The transaction left `SHOW TRANSACTIONS` 7 ms after the close started, and the run ended with:
+An abort of the Bolt client's run of `UNWIND range(1, 2000000000) AS x RETURN count(x)` rejected the run 1.9 ms later, with:
 
 ```text
-Neo.ClientError.Transaction.Terminated: The transaction has been terminated. Retry your operation in a new transaction, and you should see a successful result. Explicitly terminated by the user.
+cancelled: The query was cancelled
 ```
+
+The client closed the session on the abort, and the transaction left `SHOW TRANSACTIONS` 5 ms after the abort.

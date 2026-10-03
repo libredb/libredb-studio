@@ -27,6 +27,9 @@ describe("mapNeo4jError", () => {
   });
 
   test("tls: a ConnectionError naming the TLS failure", () => {
+    // Built by hand: the only TLS capture, transport/error-tls (bolt+s:// to the plaintext server), comes back
+    // from the transport as category "connection", so no captured error carries category "tls".
+    expect(capturedErrorOf("transport/error-tls").category).toBe("connection");
     const source = new GraphClientError(
       "tls",
       "self-signed certificate in certificate chain",

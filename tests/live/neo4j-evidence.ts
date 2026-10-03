@@ -16,9 +16,9 @@
  * server) go to the `transport/` subdirectory, beside the statement captures and never keyed as one.
  *
  * Two measurements go into the fixture README instead of a capture: the server's refusal of `CREATE (n)` in a
- * READ session, and how long `session.close()` takes to stop a long read, with the time until the transaction
- * leaves `SHOW TRANSACTIONS`. The cancel is measured on the driver itself, because the Bolt client answers an
- * abort at once and closes the session behind it.
+ * READ session, and a cancel as the query route sends it: an abort of the Bolt client's run of a long read,
+ * with the time until the run rejects and the time until the transaction leaves `SHOW TRANSACTIONS`. The
+ * client closes the session on the abort, so the second time is how long the server takes to stop the read.
  *
  * Read-only check: the node and relationship counts and the index and constraint names are read before and
  * after the whole run, and the run fails when they differ.
@@ -33,7 +33,6 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import neo4j from "neo4j-driver-lite";
 import { createBoltClient } from "@/lib/db/graph/bolt/bolt-client";
 import { type GraphClient, GraphClientError, type GraphRunResult } from "@/lib/db/graph/bolt/client";
 import { cypherSelectLabel, cypherSelectRelationship } from "@/lib/db/graph/cypher/generators";
@@ -263,7 +262,6 @@ async function main(): Promise<void> {
   // The statement gate's classification (SR10): maxRows 0, as the gate runs it.
   await capture("explain-read", "EXPLAIN MATCH (n) RETURN n", home, 0);
   await capture("explain-write", "EXPLAIN CREATE (n)", home, 0);
-  await capture("explain-show", "EXPLAIN SHOW INDEXES", home, 0);
   await capture("explain-load-csv", `EXPLAIN LOAD CSV FROM 'http://${HOST}:9/x.csv' AS row RETURN row`, home, 0);
   await capture("explain-terminate", "EXPLAIN TERMINATE TRANSACTIONS 'x'", home, 0);
   await capture("explain-version-prefix-first", "CYPHER 5 EXPLAIN MATCH (n) RETURN n", home, 0);
@@ -317,30 +315,32 @@ async function main(): Promise<void> {
     accessMode = errorOf(error);
   }
 
-  // How long session.close() takes to stop a long read, measured on the driver (README only).
-  const driver = neo4j.driver(URI, neo4j.auth.basic(USER, PASSWORD), {
-    telemetryDisabled: true,
-    disableAutoCommitRetries: true,
-    maxTransactionRetryTime: 0,
-  });
-  const session = driver.session({ database: home, defaultAccessMode: neo4j.session.READ });
-  const ended = session
-    .run(LONG_READ, undefined, { metadata: { app: CANCEL_APP } })
-    .summary()
+  // How long an abort takes to stop a long read, through the Bolt client as the query route cancels (README only).
+  const abort = new AbortController();
+  const ended = client
+    .run(LONG_READ, {
+      database: home,
+      timeoutMs: TIMEOUT_MS,
+      maxRows: DEFAULT_QUERY_LIMIT,
+      signal: abort.signal,
+      metadata: { app: CANCEL_APP },
+    })
     .then(
       () => "completed",
-      (error: { code?: string; message?: string }) => `${error.code ?? "no code"}: ${error.message ?? ""}`,
+      (error: unknown) => {
+        const caught = errorOf(error);
+        return `${caught.category}: ${caught.message}`;
+      },
     );
   const running = `SHOW TRANSACTIONS YIELD transactionId, metaData WHERE metaData.app = '${CANCEL_APP}' RETURN transactionId`;
   await poll(async () => ((await run(running, home)).rows.length > 0 ? true : undefined), 10_000);
   await new Promise((resolve) => setTimeout(resolve, 1000));
-  const closeStart = performance.now();
-  await session.close();
-  const closeMs = performance.now() - closeStart;
-  await poll(async () => ((await run(running, home)).rows.length === 0 ? true : undefined), 30_000);
-  const goneMs = performance.now() - closeStart;
+  const abortStart = performance.now();
+  abort.abort();
   const endedAs = await ended;
-  await driver.close();
+  const rejectMs = performance.now() - abortStart;
+  await poll(async () => ((await run(running, home)).rows.length === 0 ? true : undefined), 30_000);
+  const goneMs = performance.now() - abortStart;
 
   const after = await snapshot();
   await client.close();
@@ -384,16 +384,17 @@ async function main(): Promise<void> {
     `${accessMode.code}: ${accessMode.message}`,
     "```",
     "",
-    `\`session.close()\` on a READ session running \`${LONG_READ}\` returned in ${closeMs.toFixed(1)} ms.`,
-    `The transaction left \`SHOW TRANSACTIONS\` ${goneMs.toFixed(0)} ms after the close started, and the run ended with:`,
+    `An abort of the Bolt client's run of \`${LONG_READ}\` rejected the run ${rejectMs.toFixed(1)} ms later, with:`,
     "",
     "```text",
     endedAs.trim(),
     "```",
     "",
+    `The client closed the session on the abort, and the transaction left \`SHOW TRANSACTIONS\` ${goneMs.toFixed(0)} ms after the abort.`,
+    "",
   ].join("\n");
   writeFileSync(join(out, "README.md"), readme);
-  console.log(JSON.stringify({ out, files, accessMode, closeMs, goneMs, endedAs }, null, 2));
+  console.log(JSON.stringify({ out, files, accessMode, rejectMs, goneMs, endedAs }, null, 2));
 }
 
 await main();
