@@ -44,6 +44,7 @@ import {
 } from "./errors";
 import { fieldTypeText } from "./milvus-vocabulary";
 import { loadStateWord, statisticsRowCount } from "./monitoring";
+import { NO_DATABASE_VISIBLE } from "./objects";
 import {
   type IndexReading,
   type MilvusOperation,
@@ -285,6 +286,15 @@ const bool = (name: string) => ({ name, typeText: "Bool" });
 /** A list Milvus filters by the user's privileges says so in its column's type. */
 const visible = (name: string) => ({ name, typeText: "VarChar, visible to this user" });
 
+/**
+ * The same list with no row says so in a warning: the grid shows no column type for an empty result, and its empty
+ * state alone would read as a database or server with none (4.10).
+ */
+function visibleList(result: QueryResult, emptySentence: string): QueryResult {
+  if (result.rowCount > 0) return result;
+  return { ...result, warnings: [...(result.warnings ?? []), { message: emptySentence }] };
+}
+
 const DESCRIBE_COLUMNS = [
   text("fieldName"),
   text("dataType"),
@@ -338,10 +348,13 @@ async function runMetadata(run: Run, operation: MetadataOperation): Promise<Quer
   switch (operation.kind) {
     case "listDatabases": {
       const answer = await send(run, (call) => client.listDatabases(call));
-      return tableResult(
-        [visible("dbName")],
-        answer.db_names.map((name) => [name]),
-        options(),
+      return visibleList(
+        tableResult(
+          [visible("dbName")],
+          answer.db_names.map((name) => [name]),
+          options(),
+        ),
+        NO_DATABASE_VISIBLE,
       );
     }
     case "describeDatabase": {
@@ -354,10 +367,13 @@ async function runMetadata(run: Run, operation: MetadataOperation): Promise<Quer
     }
     case "showCollections": {
       const answer = await send(run, (call) => client.showCollections(call));
-      return tableResult(
-        [visible("collectionName")],
-        answer.collection_names.map((name) => [name]),
-        options(),
+      return visibleList(
+        tableResult(
+          [visible("collectionName")],
+          answer.collection_names.map((name) => [name]),
+          options(),
+        ),
+        `Milvus lists no collection of database ${operation.db} visible to this Milvus user: a user sees only the collections it holds a privilege on.`,
       );
     }
     case "describeCollection": {
