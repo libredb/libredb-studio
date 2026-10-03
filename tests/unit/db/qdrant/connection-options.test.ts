@@ -289,7 +289,7 @@ describe("QE6: the SSL / TLS panel through nodeTlsMaterial, never retried weaker
 describe("the read-only source, the bounds and the query timeout", () => {
   test("read-only comes from the connection, a seed, or the execution profile, in that order", () => {
     expect(build({ readOnly: true }).readOnly).toBe("connection");
-    expect(build({ readOnly: true, seedId: "s1" }).readOnly).toBe("seed");
+    expect(build({ readOnly: true, seedId: "s1", host: "127.0.0.1", password: TEST_PASSWORD }).readOnly).toBe("seed");
     expect(build({ readOnly: true, seedId: "" }).readOnly).toBe("connection");
     expect(build({}, { ...CONTEXT, executionReadOnly: true }).readOnly).toBe("execution-profile");
     expect(build({ readOnly: false }, { ...CONTEXT, executionReadOnly: true }).readOnly).toBe("execution-profile");
@@ -336,7 +336,10 @@ describe("QE22: the seed stage of 3.12, after resolution, before any socket", ()
     expect(build({ seedId: "s1", host: "127.0.0.1" }).headers).toEqual({});
   });
 
-  test("with no declaration for the type, a read-only seed without a secret passes this stage", () => {
-    expect(build({ readOnly: true, seedId: "s1" }).readOnly).toBe("seed");
+  test("the qdrant record's no-secret entry refuses a read-only seed without a key, before any client exists", () => {
+    expect(refusal({ readOnly: true, seedId: "s1" }).message).toBe(
+      "Credential warning: A Qdrant server without an API key, its default, accepts any key or none, so a read-only seed without a key promises a boundary the server does not keep. This read-only seed connection is refused with this credential, because the mode would promise a boundary the server does not keep; nothing was sent.",
+    );
+    expect(build({ readOnly: true, seedId: "s1", host: "127.0.0.1", password: TEST_PASSWORD }).readOnly).toBe("seed");
   });
 });
