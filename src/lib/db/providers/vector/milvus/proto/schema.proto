@@ -1,0 +1,531 @@
+syntax = "proto3";
+package milvus.proto.schema;
+
+option go_package = "github.com/milvus-io/milvus-proto/go-api/v3/schemapb";
+
+option java_multiple_files = true;
+option java_package = "io.milvus.grpc";
+option java_outer_classname = "SchemaProto";
+option java_generate_equals_and_hash = true;
+
+option csharp_namespace = "Milvus.Client.Grpc";
+
+import "common.proto";
+import "google/protobuf/descriptor.proto";
+
+/**
+ * @brief Field data type
+ */
+enum DataType {
+  None = 0;
+  Bool = 1;
+  Int8 = 2;
+  Int16 = 3;
+  Int32 = 4;
+  Int64 = 5;
+
+  Float = 10;
+  Double = 11;
+
+  String = 20;
+  VarChar = 21; // variable-length strings with a specified maximum length
+  Array = 22;
+  JSON = 23;
+  Geometry = 24;
+  Text = 25;
+  Timestamptz = 26;
+  Mol = 27; // Molecular data type
+  Date = 28;
+  Time = 29;
+  Decimal = 30;
+
+  BinaryVector = 100;
+  FloatVector = 101;
+  Float16Vector = 102;
+  BFloat16Vector = 103;
+  SparseFloatVector = 104;
+  Int8Vector = 105;
+  ArrayOfVector = 106;
+
+  ArrayOfStruct = 200;  // internal types, not used in user interface
+  Struct = 201;
+}
+
+enum FunctionType{
+  Unknown =0;
+  BM25 =1;
+  TextEmbedding =2;
+  Rerank =3;
+  MinHash =4;
+  MolFingerprint =5;
+}
+
+enum FieldState {
+  FieldCreated = 0;
+  FieldCreating = 1;
+  FieldDropping = 2;
+  FieldDropped = 3;
+}
+
+/**
+ * @brief Field schema
+ */
+message FieldSchema {
+  int64 fieldID = 1;
+  string name = 2;
+  bool is_primary_key = 3;
+  string description = 4;
+  DataType data_type = 5;
+  repeated common.KeyValuePair type_params = 6;
+  repeated common.KeyValuePair index_params = 7;
+  bool autoID = 8;
+  FieldState state = 9; // To keep compatible with older version, the default
+                        // state is `Created`.
+  DataType element_type = 10; // For array type, the element type is stored here
+  ValueField default_value = 11; // default_value only support scalars except array, json, date, time and timestamptz for now
+  bool is_dynamic = 12; // mark whether this field is the dynamic field
+  bool is_partition_key = 13; // enable logic partitions
+  bool is_clustering_key = 14;
+  bool nullable = 15; // enable set null as field value
+  bool is_function_output =16;
+  string external_field = 17; // external field name 
+}
+
+message FunctionSchema {
+  string name = 1;
+  int64 id =2;
+  string description = 3;
+  FunctionType type = 4;
+  repeated string input_field_names = 5;
+  repeated int64 input_field_ids = 6;
+  repeated string output_field_names = 7;
+  repeated int64 output_field_ids = 8;
+  repeated common.KeyValuePair params = 9;
+}
+
+message FunctionScore {
+    repeated FunctionSchema functions = 1; // Currently only a single function is supported, and multiple functions
+                                           // may be supported in the future, so repeated is used here.
+    repeated common.KeyValuePair params = 2;
+};
+
+// beta, api may change
+// Function chain APIs, including FunctionChainStage and related FunctionChain messages,
+// are experimental and may change in future releases.
+enum FunctionChainStage {
+  FunctionChainStageUnspecified = 0;
+  FunctionChainStageIngestion = 1;
+  FunctionChainStagePreProcess = 2;
+  FunctionChainStageL0Rerank = 3;
+  FunctionChainStageL1Rerank = 4;
+  FunctionChainStageL2Rerank = 5;
+  FunctionChainStagePostProcess = 6;
+}
+
+// FunctionChain is an ordered public plan for function-based processing.
+message FunctionChain {
+  // Optional SDK/debug name.
+  string name = 1;
+
+  // Function chain execution stage.
+  FunctionChainStage stage = 2;
+
+  // Ordered operations. The server executes ops in this order.
+  repeated FunctionChainOp ops = 3;
+}
+
+message FunctionChainOp {
+  // Operation name, e.g. "map", "filter", "sort", "limit", "merge".
+  string op = 1;
+
+  // Optional function expression configured for this operation.
+  // Expr-based ops such as map/filter use this field.
+  // Non-expr ops such as sort/limit may leave it empty.
+  FunctionChainExpr expr = 2;
+
+  // Optional op-level input names.
+  // Mainly used by non-expr ops that still need caller-declared inputs,
+  // for example sort.inputs = ["$score"].
+  // For expr-based ops, inputs are collected from expr.args column references.
+  repeated string inputs = 3;
+
+  // Optional operation output names.
+  // Outputs may be temporary variables or system names such as "$score".
+  // Writing collection fields is not supported.
+  repeated string outputs = 4;
+
+  // Optional operation-level typed parameters.
+  map<string, FunctionParamValue> params = 5;
+}
+
+message FunctionChainExpr {
+  // Expression implementation name, e.g. "decay", "sum", "expr", "rerank_model", "udf_xxx".
+  // For fn.expr(col("$score") * 100), name is "expr" and the inner expression
+  // can be carried by params, for example params["expr"] = "$0 * 100".
+  string name = 1;
+
+  // Ordered expression arguments. Args may be collection fields, temporary values,
+  // system names, or literals. Function expr implementations interpret args by position.
+  repeated FunctionChainExprArg args = 2;
+
+  // Optional expression-level typed parameters.
+  map<string, FunctionParamValue> params = 3;
+}
+
+message FunctionChainExprArg {
+  oneof arg {
+    // Collection field, temporary variable, or system name.
+    FunctionChainColumnArg column = 1;
+
+    // Literal argument.
+    FunctionParamValue literal = 2;
+  }
+}
+
+message FunctionChainColumnArg {
+  // Examples: "doc", "ts", "score1", "$score", "$seg_offset".
+  string name = 1;
+}
+
+message FunctionParamValue {
+  oneof value {
+    bool bool_value = 1;
+    int64 int64_value = 2;
+    double double_value = 3;
+    string string_value = 4;
+    FunctionParamArray array_value = 5;
+    FunctionParamObject object_value = 6;
+    bytes bytes_value = 7;
+  }
+}
+
+message FunctionParamArray {
+  repeated FunctionParamValue values = 1;
+}
+
+message FunctionParamObject {
+  map<string, FunctionParamValue> fields = 1;
+}
+
+/**
+ * @brief Collection schema
+ */
+message CollectionSchema {
+  string name = 1;
+  string description = 2;
+  bool autoID = 3 [deprecated=true]; // deprecated later, keep compatible with c++ part now
+  repeated FieldSchema fields = 4;
+  bool enable_dynamic_field = 5; // mark whether this table has the dynamic field function enabled.
+  repeated common.KeyValuePair properties = 6;
+  repeated FunctionSchema functions = 7;
+  string dbName = 8;
+  repeated StructArrayFieldSchema struct_array_fields = 9;
+  int32 version = 10; // The version of current collection schema updates, increment every time the schema content is updating, 
+                      // 0 when the collection is created or the collection schema is updated before 2.6.5.
+                      // the name dbName and description take no effect to it.
+  string external_source = 11;
+  string external_spec = 12;
+  bool do_physical_backfill = 13;
+  repeated int64 file_resource_ids = 14;
+  bool enable_namespace = 15;
+}
+
+message StructArrayFieldSchema {
+  int64 fieldID = 1;
+  string name = 2;
+  string description = 3;
+  repeated FieldSchema fields = 4;
+  repeated common.KeyValuePair type_params = 5;
+  bool nullable = 6;
+
+  // TODO: STRUCT type may also need to support Function in the future
+}
+
+message BoolArray { repeated bool data = 1; }
+
+message IntArray { repeated int32 data = 1; }
+
+message LongArray { repeated int64 data = 1; }
+
+message FloatArray { repeated float data = 1; }
+
+message DoubleArray { repeated double data = 1; }
+
+// General-purpose byte-string array.
+// Used for: Decimal (big-endian unscaled integer, 8 or 16 bytes per element),
+// and other variable-width binary fields such as Array and raw binary blobs.
+message BytesArray { repeated bytes data = 1; }
+
+message StringArray { repeated string data = 1; }
+
+message ArrayArray {
+  repeated ScalarField data = 1;
+  DataType element_type = 2;
+}
+
+message JSONArray { repeated bytes data = 1; }
+
+message GeometryArray { repeated bytes data = 1; }
+
+message TimestamptzArray { repeated int64 data = 1; }
+
+message DateArray { repeated int32 data = 1; }
+
+message TimeArray { repeated int64 data = 1; }
+
+message GeometryWktArray { repeated string data = 1; }
+
+// MolArray stores processed molecular data in a serialized binary format.
+message MolArray { repeated bytes data = 1; }
+
+// MolSmilesArray stores user-provided SMILES strings for molecular data.
+message MolSmilesArray { repeated string data = 1; }
+
+message ValueField {
+  oneof data {
+    bool bool_data = 1;
+    int32 int_data = 2;
+    int64 long_data = 3;
+    float float_data = 4;
+    double double_data = 5;
+    string string_data = 6;
+    bytes bytes_data = 7;
+    int64 timestamptz_data = 8;
+    int32 date_data = 9;
+    int64 time_data = 10;
+  }
+}
+
+message ScalarField {
+  oneof data {
+    BoolArray bool_data = 1;
+    IntArray int_data = 2;
+    LongArray long_data = 3;
+    FloatArray float_data = 4;
+    DoubleArray double_data = 5;
+    StringArray string_data = 6;
+    BytesArray bytes_data = 7;
+    ArrayArray array_data = 8;
+    JSONArray json_data = 9;
+    GeometryArray geometry_data = 10;
+    TimestamptzArray timestamptz_data = 11;
+    GeometryWktArray geometry_wkt_data = 12;
+    MolArray mol_data = 13;
+    MolSmilesArray mol_smiles_data = 14;
+    DateArray date_data = 15;
+    TimeArray time_data = 16;
+  }
+}
+
+// beta, api may change
+message SparseFloatArray {
+  repeated bytes contents = 1;
+  // dim is the max dimension of the current batch of vectors
+  int64 dim = 2;
+}
+
+message VectorField {
+  // For sparse vector, dim is the max dimension of the current batch of vectors
+  int64 dim = 1;
+  oneof data {
+    FloatArray float_vector = 2;
+    bytes binary_vector = 3;
+    bytes float16_vector = 4;
+    bytes bfloat16_vector = 5;
+    SparseFloatArray sparse_float_vector = 6;
+    bytes int8_vector = 7;
+    VectorArray vector_array = 8;
+  }
+}
+
+message VectorArray {
+  int64 dim = 1;
+  repeated VectorField data = 2;
+  DataType element_type = 3;
+}
+
+message StructArrayField {
+  repeated FieldData fields = 1;
+}
+
+// FieldPartialUpdateOp describes how the values carried by the matching
+// FieldData should be applied against the existing row during a partial
+// upsert.
+//
+// The message is referenced from UpsertRequest.field_ops rather than
+// embedded in FieldData to keep FieldData a pure data carrier — FieldData
+// flows through InsertRequest, QueryResults, SearchResultData and
+// internal msgstream paths where an op directive would be meaningless
+// and risk accidental echo-back on client-side read-modify-write flows.
+//
+// Ops are matched to FieldData entries by field_name. When no op message
+// targets a given field, that field is merged with REPLACE semantics
+// (full overwrite), preserving backward compatibility.
+message FieldPartialUpdateOp {
+  enum OpType {
+    // REPLACE overwrites the field with the new values. Default behavior
+    // when no op targets a field. Applicable to all field types.
+    REPLACE = 0;
+    // ARRAY_APPEND appends the new values to the tail of the existing
+    // array. Requires DataType_Array. The resulting length must not
+    // exceed the field's max_capacity.
+    ARRAY_APPEND = 1;
+    // ARRAY_REMOVE removes every occurrence of each provided value from
+    // the existing array. Requires DataType_Array. No-op when the base
+    // array is empty or no element matches.
+    ARRAY_REMOVE = 2;
+  }
+  // field_name identifies the FieldData this op targets. Must match a
+  // field carried by UpsertRequest.fields_data; unknown field names are
+  // rejected by the server.
+  string field_name = 1;
+  OpType op = 2;
+}
+
+message FieldData {
+  DataType type = 1;
+  string field_name = 2;
+  oneof field {
+    ScalarField scalars = 3;
+    VectorField vectors = 4;
+    StructArrayField struct_arrays = 8;
+  }
+  int64 field_id = 5;
+  bool is_dynamic = 6;
+  repeated bool valid_data = 7;
+}
+
+message IDs {
+  oneof id_field {
+    LongArray int_id = 1;
+    StringArray str_id = 2;
+  }
+}
+
+message SearchIteratorV2Results {
+  string token = 1;
+  float last_bound = 2;
+}
+
+message SearchResultData {
+  int64 num_queries = 1;
+  int64 top_k = 2;
+  repeated FieldData fields_data = 3;
+  repeated float scores = 4;
+  IDs ids = 5;
+  repeated int64 topks = 6;
+  repeated string output_fields = 7;
+  FieldData group_by_field_value = 8;
+  int64 all_search_count = 9;
+  repeated float distances = 10;
+  optional SearchIteratorV2Results search_iterator_v2_results = 11;
+  repeated float recalls = 12;
+  string primary_field_name = 13;
+  repeated common.HighlightResult highlight_results = 14;
+  LongArray element_indices = 15;
+  reserved 16; // was order_by_field_values, never used, reserved to avoid wire conflict
+  repeated FieldData group_by_field_values = 17;
+  repeated AggBucket agg_buckets = 18;
+  repeated int64 agg_topks = 19;
+}
+
+message AggBucket {
+  repeated BucketKeyEntry key = 1;
+  int64 count = 2;
+  // metrics carries a typed metric result per alias. min/max may yield
+  // string/bool values when the source field has those types; count/sum/avg
+  // stay numeric. The MetricValue oneof avoids a lossy all-double encoding.
+  map<string, MetricValue> metrics = 3;
+  repeated AggHit hits = 4;
+  repeated AggBucket sub_groups = 5;
+}
+
+// MetricValue is the typed result of a single metric aggregation.
+message MetricValue {
+  oneof value {
+    int64  int_val    = 1;
+    double double_val = 2;
+    string string_val = 3;
+    bool   bool_val   = 4;
+  }
+}
+
+message BucketKeyEntry {
+  int64 field_id = 1;
+  string field_name = 2;
+  oneof value {
+    int64 int_val = 3;
+    string string_val = 4;
+    bool bool_val = 5;
+  }
+}
+
+message AggHit {
+  oneof pk {
+    int64 int_pk = 1;
+    string str_pk = 2;
+  }
+  float score = 3;
+  repeated AggHitField fields = 4;
+}
+
+message AggHitField {
+  int64 field_id = 1;
+  string field_name = 2;
+  oneof value {
+    int64 int_val = 3;
+    bool bool_val = 4;
+    float float_val = 5;
+    double double_val = 6;
+    string string_val = 7;
+    bytes bytes_val = 8;
+  }
+}
+
+// vector field clustering info
+message VectorClusteringInfo {
+  // for multi vectors
+  string field = 1;
+  schema.VectorField centroid = 2;
+}
+
+// Scalar field clustering info
+// todo more definitions: min/max, etc
+message ScalarClusteringInfo {
+  string field = 1;
+}
+
+// clustering distribution info of a certain data unit, it can be segment, partition, etc.
+message ClusteringInfo {
+  repeated VectorClusteringInfo vector_clustering_infos = 1;
+  repeated ScalarClusteringInfo scalar_clustering_infos = 2;
+}
+
+message TemplateValue {
+  oneof val {
+    bool bool_val = 1;
+    int64 int64_val = 2;
+    double float_val = 3;
+    string string_val = 4;
+    TemplateArrayValue array_val = 5;
+    // Raw binary payload (proto3 bytes, no UTF-8 constraint). Used to carry a
+    // client pre-built filter blob (e.g. a bloom/roaring/bitset membership
+    // filter) into an expression without base64 inflation of a string field.
+    bytes bytes_val = 6;
+  };
+}
+
+message TemplateArrayValue {
+  oneof data {
+    BoolArray bool_data = 1;
+    LongArray long_data = 2;
+    DoubleArray double_data = 3;
+    StringArray string_data = 4;
+    TemplateArrayValueArray array_data = 5;
+    JSONArray json_data = 6;
+  }
+}
+
+message TemplateArrayValueArray {
+  repeated TemplateArrayValue data = 1;
+}
