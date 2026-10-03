@@ -64,6 +64,9 @@ describe("cypherSelectLabel and cypherSelectRelationship", () => {
       for (const text of [cypherSelectLabel(name), cypherSelectRelationship(name)]) {
         const verdict = checkCypherRead(text, TEST_PROFILE);
         expect(verdict.allowed).toBe(true);
+        if (!verdict.allowed) continue;
+        // The whole generated text is the one statement the lexer read, so nothing was split off.
+        expect(verdict.statement.text).toBe(text);
       }
     }
   });
