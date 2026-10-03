@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {
+  declaredEntityOperations,
   maintenanceControl,
   type MaintenanceOperation,
   type MaintenanceType,
@@ -107,5 +108,26 @@ describe("every shipped provider's per-row maintenance controls (R46 C3)", () =>
     expect(rows.filter((row) => row.tabs !== "").length).toBe(10);
     expect(rows.filter((row) => row.tree !== "").length).toBe(9);
     expect(rows.filter((row) => row.outsideMaintenanceType !== "").length).toBe(0);
+  });
+});
+
+describe("no shipped provider declares a maintenance extension of spec 3.11", () => {
+  test.each([...SHIPPED_DATABASE_TYPES])("%s", async (type) => {
+    const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
+    const capabilities = provider.getCapabilities();
+    const specs = Object.values(capabilities.maintenanceOperationSpecs ?? {});
+    expect({
+      entityOperations: declaredEntityOperations(capabilities),
+      previews: specs.filter((spec) => spec?.preview === true).length,
+      typedTargets: specs.filter((spec) => spec?.confirmation === "typed-target").length,
+      previewMaintenance: typeof provider.previewMaintenance,
+      engineUser: typeof provider.engineUser,
+    }).toEqual({
+      entityOperations: [],
+      previews: 0,
+      typedTargets: 0,
+      previewMaintenance: "undefined",
+      engineUser: "undefined",
+    });
   });
 });

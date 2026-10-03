@@ -164,12 +164,25 @@ export interface MaintenanceOperationSpec {
   /** The body of this operation's card, and of its typed dialog when it asks for one (#1089, section 7.2). */
   description?: string;
   /**
-   * `"typed"`: the operation's card asks for the connection's name, typed exactly, before it sends anything
-   * (#1089, section 7.2). Honoured on a declared card only, so a spec that asks declares `title`, `description`
-   * and `perEntity: false`: no per-row control asks, and the typed dialog takes its title and body from those two
-   * fields. `tests/unit/db/maintenance-confirmation-capability.test.ts` holds every shipped provider to that.
+   * How a control of this operation is confirmed before it sends anything.
+   *
+   * `"typed"`: the operation's card asks for the connection's name, typed exactly (#1089, section 7.2). Honoured on a
+   * declared card only, so a spec that asks declares `title`, `description` and `perEntity: false`: no per-row
+   * control asks, and the typed dialog takes its title and body from those two fields.
+   *
+   * `"typed-target"`: a per-row control asks for its target object's own name, typed exactly and case-sensitively,
+   * never a fixed word and never the connection's name (spec 3.11). Honoured on a per-row control only, so a spec
+   * that asks declares `perEntity: true` and `global: false`: a whole-database run has no object to name.
+   *
+   * `tests/unit/db/maintenance-confirmation-capability.test.ts` holds every shipped provider to both rules.
    */
-  confirmation?: "typed";
+  confirmation?: "typed" | "typed-target";
+  /**
+   * The per-row control's dialog reads `POST /api/db/maintenance/preview` and shows the provider's
+   * `MaintenancePreview` before it offers the confirm button (spec 3.11). Declared only beside an implemented
+   * `DatabaseProvider.previewMaintenance`: the route answers 400 for an operation whose spec does not declare it.
+   */
+  preview?: true;
   /**
    * The object kinds a per-entity control of this operation runs on, by kind id (#786).
    *
@@ -178,6 +191,23 @@ export interface MaintenanceOperationSpec {
    * table and are refused on a view (SQLSTATE 428DY), and its views are relations too.
    */
   kinds?: readonly string[];
+}
+
+/**
+ * What one per-row maintenance operation will do, as its provider reads it before an admin confirms (spec 3.11).
+ *
+ * Answered by `DatabaseProvider.previewMaintenance` through `POST /api/db/maintenance/preview`, and published:
+ * `src/exports/types.ts` names it.
+ */
+export interface MaintenancePreview {
+  /** One sentence saying what the operation will do to this object. */
+  readonly summary: string;
+  /** The figures the summary rests on, each printed as a label and its value. */
+  readonly facts: readonly { readonly label: string; readonly value: string }[];
+  /** A preflight that refuses the operation: the dialog shows it and offers no confirm button. */
+  readonly refusal?: string;
+  /** How fresh or exact the facts are, for example "as reported by the server, possibly several seconds old". */
+  readonly note?: string;
 }
 
 /** One rule of a `PreviewProjection`: which declared types it reads, and how. */
@@ -222,14 +252,21 @@ export type MaintenancePlacement = "perEntity" | "global";
  * A spec's card fields, `title`, `description` and `confirmation`, travel with the answer
  * only where the spec declares them, for the Operations tab's declared cards (#1089,
  * section 7.2): a spec that declares none answers exactly what it answered before they
- * existed.
+ * existed. `preview` travels on the same terms, for the per-row dialog (spec 3.11).
  */
 export function maintenanceControl(
   capabilities: ProviderCapabilities | undefined,
   type: MaintenanceOperation,
   placement: MaintenancePlacement,
   kind?: string,
-): { offered: boolean; label?: string; title?: string; description?: string; confirmation?: "typed" } {
+): {
+  offered: boolean;
+  label?: string;
+  title?: string;
+  description?: string;
+  confirmation?: "typed" | "typed-target";
+  preview?: true;
+} {
   // Unknown capabilities are not a permission: `/api/db/provider-meta` answers with
   // nothing both while it is in flight and when it failed, and failing open there
   // puts the dead buttons back on exactly the connections the #272/#282 gates exist
@@ -253,7 +290,47 @@ export function maintenanceControl(
     ...(spec.title === undefined ? {} : { title: spec.title }),
     ...(spec.description === undefined ? {} : { description: spec.description }),
     ...(spec.confirmation === undefined ? {} : { confirmation: spec.confirmation }),
+    ...(spec.preview === undefined ? {} : { preview: spec.preview }),
   };
+}
+
+/**
+ * The six members of `MaintenanceType`, as a value. A record rather than a list, so a seventh member of the type
+ * fails to compile here until it is placed.
+ */
+const MAINTENANCE_TYPE_MEMBERS: Readonly<Record<MaintenanceType, true>> = {
+  vacuum: true,
+  analyze: true,
+  reindex: true,
+  kill: true,
+  optimize: true,
+  check: true,
+};
+
+/** One per-row control a provider declares outside `MaintenanceType` (spec 3.11). */
+export interface DeclaredEntityOperation {
+  readonly type: MaintenanceOperation;
+  /** The spec's `label`, the only wording the control has: no surface has a generic verb for it. */
+  readonly label: string;
+}
+
+/**
+ * Every declared operation outside `MaintenanceType` that a per-row control may offer, in declaration order (spec 3.11).
+ *
+ * The four per-row surfaces, the Operations tab, the monitoring Tables tab and both row menus, draw their own
+ * candidates from `MaintenanceType`, with their own icons and fallback verbs, and append these after them under a
+ * generic icon. An operation is listed only where `maintenanceControl` offers it per row and its spec names it:
+ * unknown capabilities, an engine with no maintenance and an operation with no spec list nothing, because an operation
+ * outside `MaintenanceType` has no generic wording to fall back on. etcd's three declare `perEntity: false`.
+ */
+export function declaredEntityOperations(
+  capabilities: ProviderCapabilities | undefined,
+): readonly DeclaredEntityOperation[] {
+  return [...new Set(capabilities?.maintenanceOperations ?? [])].flatMap((type): DeclaredEntityOperation[] => {
+    if (Object.hasOwn(MAINTENANCE_TYPE_MEMBERS, type)) return [];
+    const control = maintenanceControl(capabilities, type, "perEntity");
+    return control.offered && control.label !== undefined ? [{ type, label: control.label }] : [];
+  });
 }
 
 /**
@@ -1541,6 +1618,25 @@ export interface DatabaseProvider {
    * rather than guessing a dialect from the target string.
    */
   runMaintenance(type: MaintenanceOperation, target?: string, container?: string): Promise<MaintenanceResult>;
+
+  /**
+   * What one per-row maintenance operation will do, read before an admin confirms it (spec 3.11).
+   *
+   * Optional, as `readObjectSource` is: a provider implements it exactly when it declares `preview: true` on an
+   * operation's spec, and `POST /api/db/maintenance/preview` answers 400 for a spec that does not declare it or a
+   * provider without this method. `path` is the object's address, container levels then the object, rather than
+   * `runMaintenance`'s `(target, container)`, because a later engine's tenant, namespace and two container levels
+   * cannot be named by one container string. It reads only, checks that the object exists and raises a `QueryError`
+   * naming what is missing, and sets `refusal` on its answer for a preflight that refuses.
+   */
+  previewMaintenance?(type: MaintenanceOperation, path: readonly string[]): Promise<MaintenancePreview>;
+
+  /**
+   * The engine principal this connection acts as, written on every maintenance audit row as `engineUser`
+   * (spec 3.11): a user name, never any part of a secret. Optional: a provider that cannot name one omits it, and
+   * its rows carry no such key.
+   */
+  engineUser?(): string | undefined;
 
   /**
    * Validate provider configuration

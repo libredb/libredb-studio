@@ -23,7 +23,12 @@ export type {
 } from "../lib/types";
 
 // Also export provider types
-export type { ProviderCapabilities, ProviderLabels, MaintenanceOperationSpec } from "../lib/db/types";
+export type {
+  ProviderCapabilities,
+  ProviderLabels,
+  MaintenanceOperationSpec,
+  MaintenancePreview,
+} from "../lib/db/types";
 
 /**
  * The shape a consumer of `StudioWorkspaceProps.onSchemaFetch` returns (#789).
