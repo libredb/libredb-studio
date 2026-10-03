@@ -12,12 +12,16 @@ import {
   MILVUS_MAINTENANCE_SPECS,
   METRICS_NOTE,
   MilvusLoadLock,
+  type MilvusMaintenanceContext,
   maintenanceTarget,
   previewMilvusMaintenance,
   RELEASE_DESCRIPTION,
+  runMilvusMaintenance,
   STILL_LOADING,
 } from "@/lib/db/providers/vector/milvus/maintenance";
+import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import { vectorFieldInfos } from "@/lib/db/providers/vector/milvus/schema";
+import { readOnlySentence } from "@/lib/db/providers/vector/milvus/write-policy";
 import { declaredEntityOperations, maintenanceControl, type ProviderCapabilities } from "@/lib/db/types";
 import { expectCalls } from "../../../helpers/call-log";
 import {
@@ -26,6 +30,8 @@ import {
   DOCS_INT64_INDEX,
   describeAnswer,
   type FakeCatalog,
+  type FakeMilvusClient,
+  failedStatus,
   kv,
   OK,
   permissionDenied,
@@ -441,6 +447,280 @@ describe("a preview of an operation Milvus does not run", () => {
     const client = createFakeMilvusClient(CATALOG);
     await expect(previewMilvusMaintenance(client, testSurface(), "vacuum", ["default", "docs_int64"])).rejects.toThrow(
       "Milvus runs Load and Release, and not vacuum.",
+    );
+    expect(client.calls).toEqual([]);
+  });
+});
+
+/** A maintenance context over a clock the sleep advances, so a 10 second poll runs in no time. */
+function maintenance(over: Partial<MilvusMaintenanceContext> = {}, perProvider = 4) {
+  let time = 0;
+  const closing = new AbortController();
+  const sleeps: number[] = [];
+  const context: MilvusMaintenanceContext = {
+    ...testSurface({}, perProvider),
+    lock: new MilvusLoadLock(),
+    lifetime: closing.signal,
+    now: () => time,
+    sleep: async (ms) => {
+      sleeps.push(ms);
+      time += ms;
+    },
+    ...over,
+  };
+  return { context, closing, sleeps };
+}
+
+const count = (client: FakeMilvusClient, method: string) =>
+  client.calls.filter((call) => call.method === method).length;
+const failure = (pending: Promise<unknown>): Promise<Error> =>
+  pending.then(
+    () => {
+      throw new Error("it succeeded");
+    },
+    (error: unknown) => error as Error,
+  );
+
+describe("Load", () => {
+  test("the load state, LoadCollection, then the progress at once: Loaded", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context, sleeps } = maintenance();
+    const result = await runMilvusMaintenance(client, context, "load", "docs_int64", "default");
+    expect(result).toEqual({
+      success: true,
+      executionTime: 0,
+      message: "Loaded: collection docs_int64 of database default is in query-node memory.",
+    });
+    expectCalls(client, [
+      { method: "getLoadState", args: ["default", { collection_name: "docs_int64" }] },
+      { method: "loadCollection", args: ["default", { collection_name: "docs_int64" }] },
+      { method: "getLoadingProgress", args: ["default", { collection_name: "docs_int64" }] },
+    ]);
+    expect(sleeps).toEqual([]);
+    expect(context.lock.held).toBe(false);
+  });
+
+  test("it asks for the progress every second until Milvus reports 100", async () => {
+    const client = createFakeMilvusClient({ ...CATALOG, progress: ["0", "50", "100"] });
+    const { context, sleeps } = maintenance();
+    const result = await runMilvusMaintenance(client, context, "load", "docs_int64", "default");
+    expect(result.message).toStartWith("Loaded:");
+    expect(result.executionTime).toBe(2_000);
+    expect(sleeps).toEqual([1_000, 1_000]);
+    expect(count(client, "getLoadingProgress")).toBe(3);
+  });
+
+  test("after 10 seconds it stops watching and says the load continues on the server; the lock is released", async () => {
+    const client = createFakeMilvusClient({ ...CATALOG, progress: ["0", "50"] });
+    const { context, sleeps } = maintenance();
+    const result = await runMilvusMaintenance(client, context, "load", "docs_int64", "default");
+    expect(result).toEqual({
+      success: true,
+      executionTime: 10_000,
+      message:
+        "Loading 50%, continues on the server: Studio stopped watching after 10 seconds, and collection docs_int64 reads Loaded once Milvus finishes.",
+    });
+    expect(sleeps).toHaveLength(10);
+    expect(count(client, "getLoadingProgress")).toBe(11);
+    expect(context.lock.held).toBe(false);
+  });
+
+  test("without a container it loads in the connection's database", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context } = maintenance({ database: "probe_db" });
+    await runMilvusMaintenance(client, context, "load", "notes");
+    expect(client.calls.every((call) => call.args?.[0] === "probe_db")).toBe(true);
+  });
+
+  test("Load refuses while the server reports Loading and sends no LoadCollection; Release is still allowed", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context } = maintenance();
+    const error = await failure(runMilvusMaintenance(client, context, "load", "loading", "default"));
+    expect(error.message).toBe(STILL_LOADING);
+    expectCalls(client, ["getLoadState"]);
+    expect(context.lock.held).toBe(false);
+    const released = await runMilvusMaintenance(client, context, "release", "loading", "default");
+    expect(released.success).toBe(true);
+    expect(count(client, "releaseCollection")).toBe(1);
+  });
+
+  test("a second Load waits for the first without a permit, and after a poll that ended mid-load it sends nothing", async () => {
+    const client = createFakeMilvusClient({ ...CATALOG, progress: ["50"] });
+    let reads = 0;
+    client.on("getLoadState", () => {
+      reads += 1;
+      return { status: OK, state: reads === 1 ? "LoadStateNotLoad" : "LoadStateLoading" };
+    });
+    // One permit for the whole provider: a waiter that held it would stop the first Load's own calls for ever.
+    const { context } = maintenance({}, 1);
+    const first = runMilvusMaintenance(client, context, "load", "docs_int64", "default");
+    const second = failure(runMilvusMaintenance(client, context, "load", "docs_int64", "default"));
+    expect((await first).message).toStartWith("Loading 50%, continues on the server");
+    expect((await second).message).toBe(STILL_LOADING);
+    expect(count(client, "loadCollection")).toBe(1);
+    expect(reads).toBe(2);
+    expect(context.lock.held).toBe(false);
+  });
+
+  test("the second Load makes no call while the first holds the lock", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context } = maintenance();
+    const release = client.hold("loadCollection");
+    const first = runMilvusMaintenance(client, context, "load", "docs_int64", "default");
+    await settle();
+    const second = runMilvusMaintenance(client, context, "load", "docs_int64", "default");
+    await settle();
+    expect(count(client, "getLoadState")).toBe(1);
+    release();
+    await Promise.all([first, second]);
+    expect(count(client, "getLoadState")).toBe(2);
+    expect(count(client, "loadCollection")).toBe(2);
+  });
+
+  test("a LoadCollection the server refuses is raised, and the lock is released", async () => {
+    const thrown = createFakeMilvusClient(CATALOG);
+    thrown.on("loadCollection", () => failedStatus(700, "IndexNotExist", "index not found[collection=noidx]"));
+    const first = maintenance();
+    const error = await failure(runMilvusMaintenance(thrown, first.context, "load", "noidx", "default"));
+    expect(error.message).toStartWith("Milvus refused the Load of collection noidx with code 700 (IndexNotExist).");
+    expect(first.context.lock.held).toBe(false);
+
+    const answered = createFakeMilvusClient(CATALOG);
+    answered.on("loadCollection", () => ({
+      ...OK,
+      code: 1100,
+      error_code: "IllegalArgument",
+      reason: "there is no vector index on field: [b]",
+    }));
+    const second = maintenance();
+    const refused = await failure(runMilvusMaintenance(answered, second.context, "load", "halfidx", "default"));
+    expect(refused.message).toStartWith("Milvus refused the Load of collection halfidx's input");
+    expect(count(answered, "getLoadingProgress")).toBe(0);
+    expect(second.context.lock.held).toBe(false);
+  });
+
+  test("a lost answer is sent once, reads 'may have been applied', and releases the lock", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    client.on("loadCollection", () => new MilvusError("connection-dropped", "Connection dropped", { grpcCode: 14 }));
+    const { context } = maintenance();
+    const error = await failure(runMilvusMaintenance(client, context, "load", "docs_int64", "default"));
+    expect(error.message).toContain("Milvus did not confirm the Load of collection docs_int64");
+    expect(error.message).toContain("It may have been applied");
+    expect(count(client, "loadCollection")).toBe(1);
+    expect(context.lock.held).toBe(false);
+  });
+
+  test("a connection closed during the poll stops it with a sentence, and the lock is released", async () => {
+    const client = createFakeMilvusClient({ ...CATALOG, progress: ["0"] });
+    const { context, closing } = maintenance({ sleep: abortableSleep });
+    const pending = failure(runMilvusMaintenance(client, context, "load", "docs_int64", "default"));
+    await settle();
+    closing.abort(new Error("disconnected"));
+    expect((await pending).message).toBe(
+      "Studio stopped watching the load because the connection closed; Milvus continues the load on the server.",
+    );
+    expect(context.lock.held).toBe(false);
+  });
+
+  test("a Load that waits for the lock when the connection closes sends nothing", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context, closing } = maintenance();
+    const holder = await context.lock.acquire(new AbortController().signal);
+    const pending = failure(runMilvusMaintenance(client, context, "load", "docs_int64", "default"));
+    await settle();
+    closing.abort(new Error("disconnected"));
+    expect((await pending).message).toBe(
+      "This Load waited for another Load on this connection, and the connection closed first; nothing was sent.",
+    );
+    expect(client.calls).toEqual([]);
+    holder();
+  });
+
+  test("a progress answer that is no percentage is refused, and the lock is released", async () => {
+    const client = createFakeMilvusClient({ ...CATALOG, progress: ["soon"] });
+    const { context } = maintenance();
+    const error = await failure(runMilvusMaintenance(client, context, "load", "docs_int64", "default"));
+    expect(error.message).toBe(
+      "Milvus answered the load progress of collection docs_int64 with no percentage; the load continues on the server.",
+    );
+    expect(context.lock.held).toBe(false);
+  });
+
+  test("an unknown collection is refused by the first read, with no LoadCollection", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context } = maintenance();
+    const error = await failure(runMilvusMaintenance(client, context, "load", "gone", "default"));
+    expect(error.message).toStartWith("Collection gone does not exist in database default.");
+    expectCalls(client, ["getLoadState"]);
+  });
+});
+
+describe("Release", () => {
+  test("one ReleaseCollection, and what it does to every other client", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context } = maintenance();
+    const result = await runMilvusMaintenance(client, context, "release", "docs_int64", "default");
+    expect(result).toEqual({
+      success: true,
+      executionTime: 0,
+      message:
+        "Released: collection docs_int64 of database default left query-node memory; every other client's search and query on it now fails with code 101 until it is loaded again.",
+    });
+    expectCalls(client, [{ method: "releaseCollection", args: ["default", { collection_name: "docs_int64" }] }]);
+  });
+
+  test("it does not wait for a Load that holds the lock", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context } = maintenance();
+    const holder = await context.lock.acquire(new AbortController().signal);
+    expect((await runMilvusMaintenance(client, context, "release", "docs_int64", "default")).success).toBe(true);
+    holder();
+  });
+
+  test("a refused Release is raised, and a lost answer reads 'may have been applied'", async () => {
+    const refused = createFakeMilvusClient(CATALOG);
+    refused.on("releaseCollection", () => ({ ...OK, code: 65535, error_code: "UnexpectedError", reason: "busy" }));
+    const error = await failure(
+      runMilvusMaintenance(refused, maintenance().context, "release", "docs_int64", "default"),
+    );
+    expect(error.message).toStartWith("Milvus refused the Release of collection docs_int64 with code 65535");
+    const lost = createFakeMilvusClient(CATALOG);
+    lost.on("releaseCollection", () => new MilvusError("unavailable", "upstream reset", { grpcCode: 14 }));
+    const unknown = await failure(
+      runMilvusMaintenance(lost, maintenance().context, "release", "docs_int64", "default"),
+    );
+    expect(unknown.message).toContain("It may have been applied");
+    expect(count(lost, "releaseCollection")).toBe(1);
+  });
+});
+
+describe("what is refused before any request", () => {
+  test.each(["seed", "connection", "execution-profile"] as const)(
+    "a read-only connection (%s) refuses Load and Release with the sentence of where the mode was set",
+    async (readOnly) => {
+      const client = createFakeMilvusClient(CATALOG);
+      const { context } = maintenance({ readOnly });
+      for (const type of ["load", "release"] as const) {
+        // oxlint-disable-next-line no-await-in-loop -- one refusal at a time, each with no call.
+        const error = await failure(runMilvusMaintenance(client, context, type, "docs_int64", "default"));
+        expect(error.message).toBe(readOnlySentence(readOnly));
+      }
+      expect(client.calls).toEqual([]);
+      expect(context.lock.held).toBe(false);
+    },
+  );
+
+  test("an operation Milvus does not run, no collection, and a name Milvus could not hold", async () => {
+    const client = createFakeMilvusClient(CATALOG);
+    const { context } = maintenance();
+    expect((await failure(runMilvusMaintenance(client, context, "vacuum", "docs_int64", "default"))).message).toBe(
+      "Milvus runs Load and Release, and not vacuum.",
+    );
+    expect((await failure(runMilvusMaintenance(client, context, "load"))).message).toBe(
+      "Load and Release name one collection, and none was named; nothing was sent.",
+    );
+    expect((await failure(runMilvusMaintenance(client, context, "release", "bad name", "default"))).message).toContain(
+      "is not a valid Milvus collection name",
     );
     expect(client.calls).toEqual([]);
   });

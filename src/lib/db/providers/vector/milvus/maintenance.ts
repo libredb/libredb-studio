@@ -12,9 +12,17 @@
  * covered by the lock. A lost answer reads "may have been applied" and is never resent.
  */
 import { DatabaseError, QueryError } from "@/lib/db/errors";
-import type { DatabaseType, MaintenanceOperation, MaintenanceOperationSpec, MaintenancePreview } from "@/lib/db/types";
+import type {
+  DatabaseType,
+  MaintenanceOperation,
+  MaintenanceOperationSpec,
+  MaintenancePreview,
+  MaintenanceResult,
+} from "@/lib/db/types";
 import type { VectorFieldInfo } from "@/lib/db/vector/types";
 import type { MilvusClient, WireIndexDescription } from "./client";
+import type { MilvusReadOnlySource } from "./connection-options";
+import { statusFailure, toProviderError } from "./errors";
 import {
   formatMilvusBytes,
   loadStateWord,
@@ -23,9 +31,10 @@ import {
   readSystemInfo,
   statisticsRowCount,
 } from "./monitoring";
-import { type MilvusSurfaceContext, readCollectionIndexes, surfaceCall } from "./objects";
+import { type MilvusSurfaceContext, readCollectionIndexes, surfaceCall, surfaceErrorContext } from "./objects";
 import { MILVUS_NAME } from "./request";
 import { indexParam, vectorFieldInfos, withIndexKinds } from "./schema";
+import { refuseReadOnly } from "./write-policy";
 
 /** Milvus's two operations, each its own member. */
 export const MILVUS_MAINTENANCE_OPERATIONS: readonly MaintenanceOperation[] = ["load", "release"];
@@ -303,4 +312,149 @@ export async function previewMilvusMaintenance(
   return type === "load"
     ? loadPreview(client, context, target, vectorFieldInfos(describe))
     : releasePreview(client, context, target);
+}
+
+// -- Load and Release --------------------------------------------------------------------------------------------------
+
+/** What only Load and Release call: this module is the one holder of `loadCollection` and `releaseCollection`. */
+export type MilvusMaintenanceClient = Pick<
+  MilvusClient,
+  "getLoadState" | "getLoadingProgress" | "loadCollection" | "releaseCollection"
+>;
+
+export interface MilvusMaintenanceContext extends MilvusSurfaceContext {
+  /** Where the connection's read-only mode was set, if it is read-only. */
+  readonly readOnly?: MilvusReadOnlySource;
+  /** The provider instance's one-load lock. */
+  readonly lock: MilvusLoadLock;
+  /** Aborted by `disconnect()`: it ends a wait for the lock and the poll's sleep, so nothing outlives the provider. */
+  readonly lifetime: AbortSignal;
+  readonly now: () => number;
+  readonly sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+const NO_COLLECTION = "Load and Release name one collection, and none was named; nothing was sent.";
+const LOCK_WAIT_CLOSED =
+  "This Load waited for another Load on this connection, and the connection closed first; nothing was sent.";
+const POLL_STOPPED =
+  "Studio stopped watching the load because the connection closed; Milvus continues the load on the server.";
+const PERCENTAGE = /^[0-9]+$/;
+
+/**
+ * GetLoadingProgress at once, then every second for at most 10 seconds, a permit only for each call and none while it
+ * sleeps. Milvus reports only 0, 50 and 100, and continues a load after Studio stops watching it.
+ */
+async function watchLoad(
+  client: MilvusMaintenanceClient,
+  context: MilvusMaintenanceContext,
+  target: MilvusMaintenanceTarget,
+): Promise<string> {
+  const { database, collection } = target;
+  const started = context.now();
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- one progress read at a time, each under its own permit.
+    const answer = await surfaceCall(context, `load progress read of collection ${collection}`, target, (options) =>
+      client.getLoadingProgress({ collection_name: collection }, options),
+    );
+    if (!PERCENTAGE.test(answer.progress)) {
+      throw new QueryError(
+        `Milvus answered the load progress of collection ${collection} with no percentage; the load continues on the server.`,
+        PROVIDER,
+      );
+    }
+    const percent = Number(answer.progress);
+    if (percent >= 100) return `Loaded: collection ${collection} of database ${database} is in query-node memory.`;
+    if (context.now() - started >= MILVUS_LOAD_WINDOW_MS) {
+      return `Loading ${percent}%, continues on the server: Studio stopped watching after ${MILVUS_LOAD_WINDOW_MS / 1000} seconds, and collection ${collection} reads Loaded once Milvus finishes.`;
+    }
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- the pause between two progress reads, holding no permit.
+      await context.sleep(MILVUS_LOAD_POLL_MS, context.lifetime);
+    } catch {
+      throw new QueryError(POLL_STOPPED, PROVIDER);
+    }
+  }
+}
+
+/**
+ * One load at a time on this provider: the lock is taken before anything is sent and released when the Load settles,
+ * on success, on a refusal, on a lost answer, when the poll ends and on a throw. The load state is read again under
+ * the lock, so a collection the server is still loading sends no second LoadCollection. A lost answer is an unknown
+ * outcome and is never resent.
+ */
+async function runLoad(
+  client: MilvusMaintenanceClient,
+  context: MilvusMaintenanceContext,
+  target: MilvusMaintenanceTarget,
+): Promise<string> {
+  const { collection } = target;
+  const named = { collection_name: collection };
+  let unlock: () => void;
+  try {
+    unlock = await context.lock.acquire(context.lifetime);
+  } catch {
+    throw new QueryError(LOCK_WAIT_CLOSED, PROVIDER);
+  }
+  try {
+    const state = await surfaceCall(context, `load state read of collection ${collection}`, target, (options) =>
+      client.getLoadState(named, options),
+    );
+    if (state.state === LOADING) throw new QueryError(STILL_LOADING, PROVIDER);
+    const operation = `Load of collection ${collection}`;
+    const answer = await surfaceCall(
+      context,
+      operation,
+      target,
+      (options) => client.loadCollection(named, options),
+      true,
+    );
+    const refused = statusFailure(answer, "LoadCollection");
+    if (refused !== undefined) throw toProviderError(refused, surfaceErrorContext(context, operation, target, true));
+    return await watchLoad(client, context, target);
+  } finally {
+    unlock();
+  }
+}
+
+/** Release is not gated by the lock or by a load in progress, so a collection whose load does not finish can be freed. */
+async function runRelease(
+  client: MilvusMaintenanceClient,
+  context: MilvusMaintenanceContext,
+  target: MilvusMaintenanceTarget,
+): Promise<string> {
+  const { database, collection } = target;
+  const operation = `Release of collection ${collection}`;
+  const answer = await surfaceCall(
+    context,
+    operation,
+    target,
+    (options) => client.releaseCollection({ collection_name: collection }, options),
+    true,
+  );
+  const refused = statusFailure(answer, "ReleaseCollection");
+  if (refused !== undefined) throw toProviderError(refused, surfaceErrorContext(context, operation, target, true));
+  return `Released: collection ${collection} of database ${database} left query-node memory; every other client's search and query on it now fails with code 101 until it is loaded again.`;
+}
+
+/**
+ * Runs Load or Release, or refuses before any request: on a read-only connection, for an operation Milvus does not
+ * run, with no collection named, and for a name Milvus could not hold. `target` is the collection and `container` its
+ * database, the connection's own when the route names none. The Milvus user must hold Milvus's own Load or Release
+ * privilege too, which the server enforces.
+ */
+export async function runMilvusMaintenance(
+  client: MilvusMaintenanceClient,
+  context: MilvusMaintenanceContext,
+  type: MaintenanceOperation,
+  target?: string,
+  container?: string,
+): Promise<MaintenanceResult> {
+  const started = context.now();
+  const readOnly = refuseReadOnly(context);
+  if (readOnly !== undefined) throw new QueryError(readOnly, PROVIDER);
+  if (type !== "load" && type !== "release") throw notRun(type);
+  if (target === undefined) throw new QueryError(NO_COLLECTION, PROVIDER);
+  const where = maintenanceTarget(container === undefined ? [target] : [container, target], context.database);
+  const message = type === "load" ? await runLoad(client, context, where) : await runRelease(client, context, where);
+  return { success: true, executionTime: context.now() - started, message };
 }
