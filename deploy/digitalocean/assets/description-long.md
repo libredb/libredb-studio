@@ -2,7 +2,7 @@
 
 **The open-source SQL IDE built for cloud-native teams.**
 
-LibreDB Studio gives you a full-featured database workspace in your browser: connect to PostgreSQL, MySQL, MongoDB, Redis and fifteen more engines, write and run queries, have the optional AI explain them wherever the engine returns a query plan, and share results with your team.
+LibreDB Studio gives you a full-featured database workspace in your browser: connect to PostgreSQL, MySQL, MongoDB, Redis and sixteen more engines, write and run queries, have the optional AI explain them wherever the engine returns a query plan, and share results with your team.
 
 ## Features
 
