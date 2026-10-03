@@ -79,6 +79,10 @@ No production seam turns the policy off.
 ### 3.2 The read policy
 
 The policy reads tokens, not text: a word inside a string, a comment or a backtick name is never a keyword, and a keyword split by a comment, `LOAD /* x */ CSV`, is still one word sequence.
+A unicode escape, a backslash then `u` then four hex digits, is refused before the text is read, wherever it stands, because the server decodes it before it reads the text.
+Measured on the compose 5.26.31 server on 2026-10-03: `` RETURN 1 AS `x\u0060y` `` is a syntax error at the `y`, the decoded backtick having ended the name; `RETURN 1 AS x // \u000a , 2 AS y` returns two columns, the decoded line break having ended the comment; and `RETURN 'a\u0027 AS x, \u0027b' AS y` returns two columns, the decoded quote having ended the string.
+So a name, a string or a comment holding the escape hides a clause from the tokens the policy reads: `` MATCH (n) WITH count(*) AS `x\u0060 CALL dbms.components() YIELD \u0060name` RETURN name `` ran the procedure.
+A backslash starts an escape only at the end of an odd run of backslashes, as the server reads it, so `'C:\\users'` passes; the server keeps an upper-case `\U0060` as written.
 It reads one statement: more than one non-empty statement is refused, while a `;` inside a string or a comment and a trailing `;` are not statements.
 Procedures, qualified functions and SHOW forms are allowlists, so a name the profile does not list is refused; clauses are a denylist, backed by the gate and READ mode, because the read clauses of Cypher are many and the writing ones few.
 
@@ -111,6 +115,7 @@ Every refusal is a `QueryError` whose sentence names what was refused; a policy 
 
 | Refused | Example | The sentence |
 |---|---|---|
+| A unicode escape | `RETURN 'caf\u00e9' AS s` | The statement holds the escape \u00e9, which the server decodes before it reads the text, so it could end a name, a string or a comment early and the server would run a statement other than the one checked. It was not run: type the character itself. |
 | Text that does not lex | `MATCH (n) RETURN 'x` | The statement could not be read: unterminated string at character 18. |
 | No statement | an empty or comment-only text | There is no statement to run. |
 | More than one statement | `MATCH (n) RETURN n; MATCH (m) RETURN m` | Neo4j runs one statement at a time, and this text holds 2. Run them one by one. |

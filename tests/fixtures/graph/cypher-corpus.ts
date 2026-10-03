@@ -81,10 +81,12 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
   {
     name: "strings with each escape",
     verdict: "allowed",
-    text: String.raw`RETURN 'a\\b\'c\"d\ne\rf\tg\bh\fiçj\U0001F600k', "x\"y\'z"`,
+    // The ç stands outside String.raw: Bun 1.4 transpiles a non-ASCII character in a raw template to the six
+    // characters backslash-u00E7, so a raw ç would test an escape instead of the letter.
+    text: String.raw`RETURN 'a\\b\'c\"d\ne\rf\tg\bh\fi` + "ç" + String.raw`j\U0001F600k', "x\"y\'z"`,
     tokens: [
       ["word", "RETURN"],
-      ["string", String.raw`'a\\b\'c\"d\ne\rf\tg\bh\fiçj\U0001F600k'`],
+      ["string", String.raw`'a\\b\'c\"d\ne\rf\tg\bh\fi` + "ç" + String.raw`j\U0001F600k'`],
       ["punct", ","],
       ["string", String.raw`"x\"y\'z"`],
     ],
@@ -704,5 +706,28 @@ export const CYPHER_CORPUS: readonly CorpusCase[] = [
       ["punct", ","],
       ["number", "1"],
     ],
+  },
+  {
+    name: "a unicode escape that ends a backtick name early on the server",
+    verdict: "unicode-escape",
+    subject: String.raw`\u0060`,
+    text: "MATCH (n) WITH count(*) AS `x\\u0060 CALL apoc.load.json('http://10.0.0.5/') YIELD \\u0060value` RETURN value",
+  },
+  {
+    name: "a unicode escape that ends a line comment early on the server",
+    verdict: "unicode-escape",
+    subject: String.raw`\u000a`,
+    text: String.raw`RETURN 1 AS x // \u000a , 2 AS y`,
+  },
+  {
+    name: "a unicode escape that ends a string early on the server",
+    verdict: "unicode-escape",
+    subject: String.raw`\u0027`,
+    text: String.raw`RETURN 'a\u0027 AS x, \u0027b' AS y`,
+  },
+  {
+    name: "an escaped backslash before a u, which the server keeps as written",
+    verdict: "allowed",
+    text: "RETURN 'C:\\\\users' AS path, `x\\\\u0060y` AS name",
   },
 ];

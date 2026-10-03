@@ -310,6 +310,7 @@ async function providerRefusal(text: string, params?: unknown[]): Promise<string
 
 describe("docs/providers/neo4j.md section 3.3 quotes every refusal sentence as the code gives it", () => {
   test.each([
+    ["A unicode escape", "RETURN 'caf\\u00e9' AS s"],
     ["Text that does not lex", "MATCH (n) RETURN 'x"],
     ["More than one statement", "MATCH (n) RETURN n; MATCH (m) RETURN m"],
     ["`EXPLAIN` or `PROFILE`", "EXPLAIN MATCH (n) RETURN n"],

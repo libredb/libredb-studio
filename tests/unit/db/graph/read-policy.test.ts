@@ -123,6 +123,8 @@ function expectedMessage(code: string, subject: string | undefined, typed: strin
       return `${subject} is not allowed on a read-only Neo4j connection.`;
     case "denied-function":
       return `${subject}() is not allowed: a read-only Neo4j connection calls only built-in functions.`;
+    case "unicode-escape":
+      return `The statement holds the escape ${subject}, which the server decodes before it reads the text, so it could end a name, a string or a comment early and the server would run a statement other than the one checked. It was not run: type the character itself.`;
     case "parameters-unsupported":
       return `Parameters such as ${subject} are not supported on Neo4j connections in this version: write the value into the statement.`;
     default:
@@ -371,6 +373,26 @@ describe("denied words", () => {
     expect(refusalOf("MATCH (n) CALL { RETURN n } in Transactions RETURN n").message).toBe(
       "IN TRANSACTIONS is not allowed: Neo4j connections are read-only in this version. If IN TRANSACTIONS is a name here (a property, a map key or a label), write it in backticks, as `in Transactions`.",
     );
+  });
+});
+
+describe("a unicode escape the server decodes before it reads the text", () => {
+  test("is refused at its backslash, before the text is lexed", () => {
+    expect(refusalOf(String.raw`RETURN 'x`)).toMatchObject({ code: "lex-error" });
+    expect(refusalOf(String.raw`RETURN 'x\u0027`)).toMatchObject({ code: "unicode-escape", position: 9 });
+  });
+
+  test("an odd run of backslashes before u is an escape, an even run is not", () => {
+    expect(refusalOf(String.raw`RETURN '\\\u0027' AS s`).position).toBe(10);
+    expect(allowedOf(String.raw`RETURN '\\u0027' AS s`).allowed).toBe(true);
+  });
+
+  test("is refused under a profile that denies nothing", () => {
+    expect(refusalOf(String.raw`RETURN 1 // \u000a`, EMPTY_PROFILE).code).toBe("unicode-escape");
+  });
+
+  test("an upper-case U, which the server keeps as written, is not one", () => {
+    expect(allowedOf("RETURN 1 AS `x\\U0060y`").allowed).toBe(true);
   });
 });
 

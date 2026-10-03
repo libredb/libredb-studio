@@ -8,8 +8,14 @@
  *
  * The policy holds no engine's names. Every list it compares against comes from the profile, so an
  * empty deny list refuses nothing and an empty allow list allows nothing; what it refuses on its own
- * is text that does not lex, an empty text, more than one statement, and parameters. A leading
- * `CYPHER <n>` is refused when the profile's dialect has no version prefix.
+ * is a unicode escape, text that does not lex, an empty text, more than one statement, and parameters.
+ * A leading `CYPHER <n>` is refused when the profile's dialect has no version prefix.
+ *
+ * A unicode escape is refused before the text is lexed, wherever it stands: Neo4j 5.26.31 decodes a
+ * backslash-u and four hex digits before it reads the text, in a backtick name, a string and a comment
+ * alike, so an escaped backtick, quote or line break ends that construct early on the server while the
+ * lexer reads it whole. A backslash-u is an escape when an odd run of backslashes ends at it, as the
+ * server reads it; an upper-case U the server keeps as written.
  */
 
 import type { GraphPolicyProfile } from "../profile";
@@ -17,6 +23,7 @@ import { CypherLexError, type CypherLexErrorReason, type CypherToken, lexCypher 
 import { type CypherStatement, splitCypherStatements } from "./statements";
 
 export type CypherRefusalCode =
+  | "unicode-escape"
   | "lex-error"
   | "empty"
   | "multiple-statements"
@@ -59,6 +66,9 @@ const LEX_REASONS: Record<CypherLexErrorReason, string> = {
   "unexpected-character": "unexpected character",
 };
 
+/** A backslash-u at the end of an odd run of backslashes; the group is the escaping backslash and its u. */
+const UNICODE_ESCAPE = /(?<!\\)(?:\\\\)*(\\u)/;
+
 /** The words that end a SHOW form: the clauses that may follow any allowed form. */
 const SHOW_CLAUSE_WORDS: ReadonlySet<string> = new Set(["YIELD", "WHERE", "RETURN", "ORDER", "SKIP", "LIMIT"]);
 
@@ -98,6 +108,18 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
     allowed: false,
     refusal: { code, subject, message, ...(position === undefined ? {} : { position }) },
   });
+
+  const escape = UNICODE_ESCAPE.exec(text);
+  if (escape !== null) {
+    const position = escape.index + escape[0].length - 2;
+    const subject = text.slice(position, position + 6);
+    return refuse(
+      "unicode-escape",
+      subject,
+      `The statement holds the escape ${subject}, which the server decodes before it reads the text, so it could end a name, a string or a comment early and the server would run a statement other than the one checked. It was not run: type the character itself.`,
+      position,
+    );
+  }
 
   let lexed: CypherToken[];
   try {

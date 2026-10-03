@@ -22,7 +22,9 @@ function nameErrorOf(name: string): CypherNameError {
 const corpusTokens = CYPHER_CORPUS.flatMap((corpusCase) => lexCypher(corpusCase.text));
 const corpusNames = corpusTokens
   .filter((token) => token.kind === "word" || token.kind === "backtick")
-  .map((token) => (token.kind === "word" ? token.text : token.value));
+  .map((token) => (token.kind === "word" ? token.text : token.value))
+  // The corpus spells the escape backslash-u0060 inside backtick names to test the read policy, and quoting refuses it.
+  .filter((name) => !/\\u0060/i.test(name));
 const corpusStrings = corpusTokens.filter((token) => token.kind === "string").map((token) => token.value);
 
 const NAME_SAMPLES: readonly string[] = [
