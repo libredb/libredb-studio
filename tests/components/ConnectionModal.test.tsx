@@ -97,6 +97,7 @@ const mockSetName = mock(() => {});
 const mockSetQueryTimeout = mock(() => {});
 const mockSetHost = mock(() => {});
 const mockSettleHost = mock(() => {});
+const mockTakeHostAddress = mock<(text: string) => boolean>(() => false);
 const mockSetPort = mock(() => {});
 const mockSetUser = mock(() => {});
 const mockSetPassword = mock(() => {});
@@ -158,6 +159,8 @@ function getDefaultForm() {
     host: "localhost",
     setHost: mockSetHost,
     settleHost: mockSettleHost,
+    takeHostAddress: mockTakeHostAddress,
+    hostError: undefined as string | undefined,
     port: "5432",
     setPort: mockSetPort,
     user: "",
@@ -1696,6 +1699,8 @@ describe("ConnectionModal: the Host box address and the credential warning", () 
     mockDeclaredCopy = {};
     mockSetHost.mockClear();
     mockSettleHost.mockClear();
+    mockTakeHostAddress.mockReset();
+    mockTakeHostAddress.mockImplementation(() => false);
   });
 
   test("settles the Host box when the user leaves it, so a typed address is split before Test and Save", () => {
@@ -1712,6 +1717,65 @@ describe("ConnectionModal: the Host box address and the credential warning", () 
     const host = container.querySelector("#host") as HTMLInputElement;
     fireEvent.input(host, { target: { value: "http://localhost:6333" }, inputType: "insertFromPaste" });
     expect(mockSetHost).toHaveBeenLastCalledWith("http://localhost:6333", "insertFromPaste");
+  });
+
+  test("offers a pasted address to the form as the paste's own text, and cancels the box's insertion when taken", () => {
+    mockTakeHostAddress.mockImplementation(() => true);
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const proceeded = fireEvent.paste(host, {
+      clipboardData: { getData: (format: string) => (format === "text/plain" ? "https://cluster.example.test" : "") },
+    });
+    expect(mockTakeHostAddress).toHaveBeenCalledWith("https://cluster.example.test");
+    expect(proceeded).toBe(false);
+  });
+
+  test("lets the box insert a paste the form does not take", () => {
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const proceeded = fireEvent.paste(host, { clipboardData: { getData: () => "cluster.example.test" } });
+    expect(mockTakeHostAddress).toHaveBeenCalledWith("cluster.example.test");
+    expect(proceeded).toBe(true);
+  });
+
+  test("offers a dropped address to the form as the drop's own text", () => {
+    mockTakeHostAddress.mockImplementation(() => true);
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const proceeded = fireEvent.drop(host, {
+      dataTransfer: { getData: (format: string) => (format === "text/plain" ? "http://h.example.test:6333" : "") },
+    });
+    expect(mockTakeHostAddress).toHaveBeenCalledWith("http://h.example.test:6333");
+    expect(proceeded).toBe(false);
+  });
+
+  test("draws the Host box's refusal right under the box, tied to it as its description", () => {
+    mockFormOverrides = { hostError: "Host takes no user name or password inside the address." };
+    const { container, getByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const error = getByTestId("host-error");
+    expect(error.textContent).toBe("Host takes no user name or password inside the address.");
+    expect(error.getAttribute("role")).toBe("alert");
+    expect(host.getAttribute("aria-describedby")?.split(" ")).toContain(error.id);
+    expect(host.getAttribute("aria-invalid")).toBe("true");
+    // Under the Host and Port row, in the Host field's own block, not in the result banner far below.
+    expect(error.parentElement).toBe(host.parentElement?.parentElement ?? null);
+  });
+
+  test("keeps the declared host hint in the box's description beside the refusal", () => {
+    mockFormOverrides = { hostError: "Refused." };
+    mockDeclaredCopy = { fieldHints: { host: "Declared hint for host." } };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    expect(host.getAttribute("aria-describedby")).toBe("host-hint host-error");
+  });
+
+  test("draws no Host refusal and marks the box valid when the form has none", () => {
+    const { container, queryByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    expect(queryByTestId("host-error")).toBeNull();
+    expect(host.hasAttribute("aria-invalid")).toBe(false);
+    expect(host.hasAttribute("aria-describedby")).toBe(false);
   });
 
   test("draws the form's credential warning beside the password, apart from the test result", () => {

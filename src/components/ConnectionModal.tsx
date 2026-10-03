@@ -78,6 +78,12 @@ function describedByHint(config: DatabaseUIConfig, field: ConnectionField): stri
 }
 
 /**
+ * The id of the Host box's refusal, drawn right under the box so the person sees why an address was not split
+ * without scrolling to the result banner, which repeats it.
+ */
+const HOST_ERROR_ID = "host-error";
+
+/**
  * The hint an engine DECLARES for one connection field (#1085), drawn under that field in this
  * panel's hint idiom: the muted paragraph `ssl-mode-hint` is, with a test id, and an id the field's
  * input names. Nothing is drawn where the engine declares none. The per-type hints the `isLibSQL`,
@@ -167,7 +173,9 @@ export function ConnectionModal({
     setName,
     host,
     setHost,
+    takeHostAddress,
     settleHost,
+    hostError,
     port,
     setPort,
     user,
@@ -626,9 +634,20 @@ export function ConnectionModal({
                         value={host}
                         onChange={(e) => setHost(e.target.value, (e.nativeEvent as InputEvent).inputType)}
                         onBlur={settleHost}
+                        onPaste={(e) => {
+                          if (takeHostAddress(e.clipboardData.getData("text/plain"))) e.preventDefault();
+                        }}
+                        onDrop={(e) => {
+                          if (takeHostAddress(e.dataTransfer.getData("text/plain"))) e.preventDefault();
+                        }}
                         placeholder="localhost"
                         autoComplete="off"
-                        aria-describedby={describedByHint(uiConfig, "host")}
+                        aria-invalid={hostError === undefined ? undefined : true}
+                        aria-describedby={
+                          [describedByHint(uiConfig, "host"), hostError === undefined ? undefined : HOST_ERROR_ID]
+                            .filter((id) => id !== undefined)
+                            .join(" ") || undefined
+                        }
                         className="md:col-span-3 h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
                       <Input
@@ -640,6 +659,11 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                     </div>
+                    {hostError !== undefined && (
+                      <p id={HOST_ERROR_ID} data-testid={HOST_ERROR_ID} role="alert" className="text-xs text-danger">
+                        {hostError}
+                      </p>
+                    )}
                     <DeclaredFieldHint config={uiConfig} field="host" />
                     <DeclaredFieldHint config={uiConfig} field="port" />
                   </div>

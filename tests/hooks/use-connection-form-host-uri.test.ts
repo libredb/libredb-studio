@@ -256,6 +256,98 @@ describe("useConnectionForm: an address in the Host box", () => {
   });
 });
 
+describe("useConnectionForm: an address pasted into a Host box that already holds text", () => {
+  test("replaces the prefilled host and is split, whatever the box held", () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setPort("2379"));
+    expect(result.current.host).toBe("localhost");
+    let taken = false;
+    act(() => {
+      taken = result.current.takeHostAddress("https://cluster.example.test");
+    });
+    expect(taken).toBe(true);
+    expect([result.current.host, result.current.port, result.current.sslMode, result.current.testResult]).toEqual([
+      "cluster.example.test",
+      "443",
+      "verify-system",
+      null,
+    ]);
+  });
+
+  test("a refused address replaces the box too, and shows its refusal", () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    let taken = false;
+    act(() => {
+      taken = result.current.takeHostAddress("https://user:pw@h.example.test");
+    });
+    expect(taken).toBe(true);
+    expect(result.current.host).toBe("https://user:pw@h.example.test");
+    expect(result.current.testResult).toEqual({ tone: "error", message: USERINFO_SENTENCE });
+  });
+
+  test("text that is not an address is left to the box, which inserts it at the caret", () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    let taken = true;
+    act(() => {
+      taken = result.current.takeHostAddress("cluster.example.test");
+    });
+    expect(taken).toBe(false);
+    expect([result.current.host, result.current.testResult]).toEqual(["localhost", null]);
+  });
+
+  test("an engine that declares nothing leaves every paste to the box", () => {
+    const { result } = renderForm();
+    let taken = true;
+    act(() => {
+      taken = result.current.takeHostAddress("https://cluster.example.test");
+    });
+    expect(taken).toBe(false);
+    expect([result.current.host, result.current.port]).toEqual(["localhost", "5432"]);
+  });
+});
+
+describe("useConnectionForm: the Host box's own refusal", () => {
+  test("names the refusal of a pasted address, and drops it once the box is edited", () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    expect(result.current.hostError).toBeUndefined();
+    act(() => result.current.setHost("https://user:pw@h.example.test", "insertFromPaste"));
+    expect(result.current.hostError).toBe(USERINFO_SENTENCE);
+    act(() => result.current.setHost("https://h.example.test", "deleteContentBackward"));
+    expect(result.current.hostError).toBeUndefined();
+  });
+
+  test("names the refusal Test Connection said about the Host box", async () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setHost("http://h.example/path", "insertText"));
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    expect(result.current.hostError).toBe(
+      "Host takes a scheme, a host and a port only: remove the path after the host.",
+    );
+  });
+
+  test("is not a test result about anything else", async () => {
+    const { result, onTestConnection } = renderForm();
+    onTestConnection.mockImplementation(async () => ({ success: false, error: "connection refused" }));
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    expect(result.current.testResult?.tone).toBe("error");
+    expect(result.current.hostError).toBeUndefined();
+  });
+});
+
 describe("useConnectionForm: the declared credential warning", () => {
   const PAIR_SENTENCE = `Credential warning: ${SYNTHETIC_PAIR.message}`;
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import {
   DatabaseConnection,
   DatabaseType,
@@ -541,10 +541,10 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   }
 
   /** The refusal of the Host box's address the dialog is showing, if it is showing one, so an edit can clear it. */
-  const hostRefusal = useRef<{ tone: TestResultTone; message: string } | null>(null);
+  const [hostRefusal, setHostRefusal] = useState<{ tone: TestResultTone; message: string } | null>(null);
   const showHostRefusal = useCallback((sentence: string) => {
     const refusal = { tone: "error" as const, message: sentence };
-    hostRefusal.current = refusal;
+    setHostRefusal(refusal);
     setTestResult(refusal);
   }, []);
 
@@ -558,9 +558,21 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   const setHostFromInput = (text: string, inputType?: string) => {
     setHost(text);
     // A refusal is about the text it read, so an edit takes it away; any other result stays until the next test.
-    setTestResult((current) => (current !== null && current === hostRefusal.current ? null : current));
+    setTestResult((current) => (current !== null && current === hostRefusal ? null : current));
     if (inputType === undefined || !WHOLE_VALUE_INPUTS.has(inputType)) return;
     splitHostAddress(text);
+  };
+
+  /**
+   * A paste or drop into the Host box, given its own text before the box inserts it. For an engine that declares
+   * `hostAcceptsUri`, an address (a `scheme://` text) replaces whatever the box holds and is split as a whole-value
+   * paste is, so a prefilled `localhost` never prefixes it; the caller then cancels the box's own insertion.
+   * Anything else returns false and is left to the box, which inserts it at the caret.
+   */
+  const takeHostAddress = (text: string): boolean => {
+    if (readHostBox(type, text).kind === "host") return false;
+    setHostFromInput(text, "insertFromPaste");
+    return true;
   };
 
   /** Fills Host, Port and SSL Mode from an accepted address, or shows the refusal of a refused one. */
@@ -1023,6 +1035,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     const cfg = getDBConfig(t);
     return { value: t, label: cfg.label, icon: cfg.icon, color: cfg.color };
   });
+  // The refusal of the Host box's address, drawn under the box as well as in the result banner; an edit clears both.
+  const hostError = testResult !== null && testResult === hostRefusal ? testResult.message : undefined;
   const readOnlyOffered = offersReadOnlyToggle(READ_ONLY_ENFORCED[type], editConnection);
   // The warning reads the credential `buildConnection` would send: a user left in state by another engine is not
   // this engine's, so it does not count where this engine takes no user name. It blocks nothing.
@@ -1039,7 +1053,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setName,
     host,
     setHost: setHostFromInput,
+    takeHostAddress,
     settleHost,
+    hostError,
     port,
     setPort,
     user,
