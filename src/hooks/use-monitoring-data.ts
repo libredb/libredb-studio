@@ -4,7 +4,7 @@ import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { buildConnectionPayload } from "./use-connection-payload";
-import type { MonitoringData, MonitoringOptions } from "@/lib/db/types";
+import type { MaintenancePreview, MonitoringData, MonitoringOptions } from "@/lib/db/types";
 import { toast } from "sonner";
 import { TimeSeriesBuffer, type TimeSeriesPoint } from "@/lib/time-series-buffer";
 
@@ -21,6 +21,7 @@ interface UseMonitoringDataReturn {
   refresh: () => Promise<void>;
   killSession: (pid: number | string) => Promise<boolean>;
   runMaintenance: (type: string, target?: string, container?: string) => Promise<boolean>;
+  previewMaintenance: (type: string, target: string, container?: string) => Promise<MaintenancePreview>;
 }
 
 const DEFAULT_REFRESH_INTERVAL = 30000; // 30 seconds
@@ -304,6 +305,30 @@ export function useMonitoringData(
     [fetchData],
   );
 
+  // What one per-row operation will do (spec 3.11). Raised rather than toasted: the dialog that asked shows the
+  // route's own sentence in place of the preview, and offers no confirm button.
+  const previewMaintenance = useCallback(
+    async (type: string, target: string, container?: string): Promise<MaintenancePreview> => {
+      const currentConnection = connectionRef.current;
+      if (!currentConnection) throw new Error("No connection is selected");
+
+      const res = await appFetch("/api/db/maintenance/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          target,
+          container,
+          ...buildConnectionPayload(currentConnection),
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || `Failed to preview ${type}`);
+      return result.preview as MaintenancePreview;
+    },
+    [],
+  );
+
   // Derived rather than reset in the connection effect: with no connection
   // there is nothing to report, and history belongs to one selection only.
   return {
@@ -319,5 +344,6 @@ export function useMonitoringData(
     refresh,
     killSession,
     runMaintenance,
+    previewMaintenance,
   };
 }
