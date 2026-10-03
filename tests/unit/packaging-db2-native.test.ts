@@ -52,12 +52,12 @@ describe("db2-node dependency", () => {
   };
 
   test("is pinned exactly, because the provider was measured against one version", () => {
-    expect(pkg.dependencies["db2-node"]).toBe("1.0.22");
+    expect(pkg.dependencies["db2-node"]).toBe("1.0.24");
     expect(pkg["//dependencies"]).toContain("db2-node is pinned exactly");
   });
 
   test("needs no install-time script allowance", () => {
-    // Measured: the scripts block holds only build, prepublishOnly and test,
+    // Measured on 1.0.24: the scripts block holds only build, build:debug, prepublishOnly and test,
     // and the package ships no binding.gyp, so bun runs nothing on install.
     expect(pkg.trustedDependencies).not.toContain("db2-node");
   });
@@ -163,7 +163,7 @@ describe("third-party notices", () => {
   const notices = readRepoFile("THIRD_PARTY_NOTICES.txt");
 
   test("carry db2-node's MIT text and the notices of the crates its addons link", () => {
-    expect(notices).toContain("db2-node 1.0.22 (https://github.com/gurungabit/db2-node, gitHead 68264e06)");
+    expect(notices).toContain("db2-node 1.0.24 (https://github.com/gurungabit/db2-node, gitHead d14431ae)");
     expect(notices).toContain("Copyright (c) 2026 Abit Gurung");
     for (const crate of ["rustls 0.23.37", "rustls-webpki 0.103.10", "ring 0.17.14", "decnumber-sys 0.1.6"]) {
       expect(notices).toContain(`\n${crate}\nLicense: `);
