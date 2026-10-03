@@ -1,16 +1,19 @@
 import { expect, test } from "@playwright/test";
 
 /**
- * Gate 5 for the Neo4j provider: the connection dialog offers it, draws its fields, and refuses a
- * routing URI typed into Host.
+ * Gate 5 for the Neo4j provider (#424): the connection dialog offers it, draws its fields, and refuses
+ * a routing URI typed into Host (spec E7).
  *
  * The unit and integration tests drive the provider directly, so they prove nothing about whether a
  * user can reach it. The dialog's fields for Neo4j are declarations (`DatabaseUIConfig`), which is why
  * this runs in a browser.
  *
  * The refusals are checked through Test Connection, which the server answers from `boltEndpointOf`
- * before the driver is built, so no Neo4j is needed; each is asserted by its own text. It runs on the
- * second server because Test Connection spends the shared account's per-process rate-limit bucket.
+ * before the driver is built, so no Neo4j is needed; each is asserted by its own text. The scheme
+ * refusal's text is the shared host validator's (`validateHost` in src/lib/db/http/endpoint.ts), which
+ * `boltEndpointOf` calls, so it is not spelled in uri.ts; the userinfo test is the control showing that
+ * `boltEndpointOf` is what answers. It runs on the second server because Test Connection spends the
+ * shared account's per-process rate-limit bucket.
  */
 test.describe("Neo4j in the connection dialog", () => {
   test.beforeEach(async ({ page }) => {
@@ -63,7 +66,7 @@ test.describe("Neo4j in the connection dialog", () => {
     ).toBeVisible();
   });
 
-  test("a routing neo4j:// URI in Host is refused before any socket opens", async ({ page }) => {
+  test("a routing neo4j:// URI in Host is refused before any socket opens (spec E7)", async ({ page }) => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Neo4j", exact: true }).click();
     await dialog.locator("#host").fill("neo4j://10.0.0.5:7687");
@@ -75,7 +78,7 @@ test.describe("Neo4j in the connection dialog", () => {
     });
   });
 
-  test("a neo4j:// URI carrying a user is refused with the user-and-password advice", async ({ page }) => {
+  test("a neo4j:// URI carrying a user is refused with the user-and-password advice (spec E7)", async ({ page }) => {
     // The control for the test above: the same field reaches a different refusal from the userinfo,
     // which uri.ts checks first, so the text there is what the scheme produced.
     const dialog = page.locator('[role="dialog"]');

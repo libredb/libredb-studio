@@ -91,9 +91,8 @@ export default defineConfig({
       testMatch: /etcd-provider\.spec\.ts/,
     },
     {
-      // neo4j-provider.spec.ts drives Test Connection too, so it takes the second server for the reason
-      // kafka-provider.spec.ts does; the four specs together stay far below that bucket's 120 requests a
-      // minute.
+      // neo4j-provider.spec.ts drives Test Connection too (two calls, one per refusal it asserts), so it
+      // takes the second server for the reason kafka-provider.spec.ts does.
       name: "chromium-neo4j",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
       testMatch: /neo4j-provider\.spec\.ts/,
