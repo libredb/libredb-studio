@@ -32,7 +32,7 @@
  * server has not ended the statement itself.
  */
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import neo4j, { type AuthToken, type Config, type SessionMode } from "neo4j-driver-lite";
@@ -99,25 +99,46 @@ const SOCKET_CODES = ["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT"];
 const TLS_MARKERS = ["self-signed", "self signed", "CERT_", "certificate", "ERR_TLS"];
 
 /**
+ * Whether the CA directory is this user's own, with no other user able to write into it.
+ *
+ * On POSIX that is its owner and its group and other write bits. Windows has neither: `lstat` reports
+ * every directory as mode 0o40666 and there is no process uid, so the bits would refuse every directory;
+ * the directory sits in the user's own temp directory, whose ACL is the protection there, and only its
+ * shape is checked.
+ */
+export function caDirectoryIsPrivate(
+  stat: { readonly mode: number; readonly uid: number; isDirectory(): boolean },
+  uid: number | undefined,
+  platform: NodeJS.Platform,
+): boolean {
+  if (!stat.isDirectory()) return false;
+  if (platform === "win32") return true;
+  return (uid === undefined || stat.uid === uid) && (stat.mode & 0o022) === 0;
+}
+
+/**
  * The CA's file, written on first use (see the file header). Throws when the directory
  * is not this user's private directory or the file holds other content.
  */
 function trustedCertificateFile(pem: string): string {
   const dir = join(tmpdir(), CA_DIRECTORY);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(dir);
-  const uid = process.getuid?.();
-  if (!stat.isDirectory() || (uid !== undefined && stat.uid !== uid) || (stat.mode & 0o022) !== 0) {
+  if (!caDirectoryIsPrivate(lstatSync(dir), process.getuid?.(), process.platform)) {
     throw new GraphClientError(
       "tls",
       `The CA certificate directory ${dir} is not a directory owned by this user, or is writable by other users, so the CA was not written there`,
     );
   }
   const file = join(dir, `${createHash("sha256").update(pem).digest("hex")}.pem`);
-  if (!existsSync(file)) {
-    writeFileSync(file, pem, { mode: 0o600 });
-  } else if (readFileSync(file, "utf8") !== pem) {
-    throw new GraphClientError("tls", `The file ${file} does not hold the CA certificate its name stands for`);
+  // One step, no check before it: `wx` creates the file or fails because it exists, so nothing can place a
+  // file between a check and the write. An existing file is then read and must hold exactly this PEM.
+  try {
+    writeFileSync(file, pem, { mode: 0o600, flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if (readFileSync(file, "utf8") !== pem) {
+      throw new GraphClientError("tls", `The file ${file} does not hold the CA certificate its name stands for`);
+    }
   }
   return file;
 }

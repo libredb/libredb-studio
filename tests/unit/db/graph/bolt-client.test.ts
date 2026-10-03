@@ -21,6 +21,7 @@ import {
   type BoltRecord,
   type BoltResult,
   buildBoltClient,
+  caDirectoryIsPrivate,
   createBoltClient,
 } from "@/lib/db/graph/bolt/bolt-client";
 import { MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-values";
@@ -204,21 +205,49 @@ describe("driver configuration", () => {
   });
 });
 
+describe("caDirectoryIsPrivate", () => {
+  const dir = (mode: number, uid = 1000, isDirectory = true) => ({ mode, uid, isDirectory: () => isDirectory });
+
+  test("on POSIX: a directory of this user that no other user can write to", () => {
+    expect(caDirectoryIsPrivate(dir(0o40700), 1000, "linux")).toBe(true);
+    expect(caDirectoryIsPrivate(dir(0o40755), 1000, "darwin")).toBe(true);
+    expect(caDirectoryIsPrivate(dir(0o40777), 1000, "linux")).toBe(false);
+    expect(caDirectoryIsPrivate(dir(0o40720), 1000, "linux")).toBe(false);
+    expect(caDirectoryIsPrivate(dir(0o40700, 0), 1000, "linux")).toBe(false);
+    expect(caDirectoryIsPrivate(dir(0o100600, 1000, false), 1000, "linux")).toBe(false);
+  });
+
+  // Windows reports every directory as 0o40666 and has no process uid, so the mode bits say nothing there;
+  // the per-user temp directory's ACL is the protection, and only the directory shape is checked.
+  test("on Windows: any directory, whatever the mode bits say", () => {
+    expect(caDirectoryIsPrivate(dir(0o40666, 0), undefined, "win32")).toBe(true);
+    expect(caDirectoryIsPrivate(dir(0o100666, 0, false), undefined, "win32")).toBe(false);
+  });
+});
+
 describe("custom CA (K2)", () => {
   const PEM = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n";
   const digest = createHash("sha256").update(PEM).digest("hex");
   let root: string;
-  let previous: string | undefined;
+  // os.tmpdir() reads TMPDIR on POSIX and TEMP, then TMP, on Windows, so all three point at the test root.
+  const TMP_VARIABLES = ["TMPDIR", "TEMP", "TMP"] as const;
+  const previous = new Map<string, string | undefined>();
+  const pointTmpAt = (dir: string) => {
+    for (const name of TMP_VARIABLES) process.env[name] = dir;
+  };
+  const POSIX = process.platform !== "win32";
 
   beforeAll(() => {
     root = mkdtempSync(join(tmpdir(), "bolt-ca-test-"));
-    previous = process.env.TMPDIR;
-    process.env.TMPDIR = root;
+    for (const name of TMP_VARIABLES) previous.set(name, process.env[name]);
+    pointTmpAt(root);
   });
 
   afterAll(() => {
-    if (previous === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = previous;
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
     rmSync(root, { recursive: true, force: true });
   });
 
@@ -234,8 +263,11 @@ describe("custom CA (K2)", () => {
       telemetryDisabled: true,
     });
     expect(readFileSync(file, "utf8")).toBe(PEM);
-    expect(statSync(file).mode & 0o777).toBe(0o600);
-    expect(statSync(join(root, "libredb-neo4j-ca")).mode & 0o777).toBe(0o700);
+    // Windows keeps no POSIX mode bits; its per-user temp directory's ACL is what keeps the file private.
+    if (POSIX) {
+      expect(statSync(file).mode & 0o777).toBe(0o600);
+      expect(statSync(join(root, "libredb-neo4j-ca")).mode & 0o777).toBe(0o700);
+    }
 
     const before = statSync(file).mtimeMs;
     const again = fakeLib();
@@ -254,7 +286,7 @@ describe("custom CA (K2)", () => {
     expect(calls.driver).toEqual([]);
   });
 
-  test("a CA directory others can write to is refused", () => {
+  test.skipIf(!POSIX)("a CA directory others can write to is refused", () => {
     const dir = join(root, "libredb-neo4j-ca");
     chmodSync(dir, 0o777);
     try {
@@ -267,15 +299,34 @@ describe("custom CA (K2)", () => {
     }
   });
 
+  // A write that fails for any reason but an existing file is the filesystem's own error, not a refusal of
+  // the file's content: a directory this user cannot write into fails with EACCES and that error surfaces.
+  test.skipIf(!POSIX || process.getuid?.() === 0)(
+    "a CA directory this user cannot write into fails with the filesystem's error",
+    () => {
+      const dir = join(root, "libredb-neo4j-ca");
+      chmodSync(dir, 0o500);
+      try {
+        const { lib, calls } = fakeLib();
+        expect(() =>
+          buildBoltClient({ ...BASE, uri: "bolt+s://db:7687", trustedCertificatePem: `${PEM}\n\n` }, lib),
+        ).toThrow(/EACCES|permission denied/i);
+        expect(calls.driver).toEqual([]);
+      } finally {
+        chmodSync(dir, 0o700);
+      }
+    },
+  );
+
   test("a CA directory path that is not a directory is refused", () => {
     const nested = mkdtempSync(join(root, "nested-"));
     writeFileSync(join(nested, "libredb-neo4j-ca"), "not a directory");
-    process.env.TMPDIR = nested;
+    pointTmpAt(nested);
     try {
       const { lib } = fakeLib();
       expect(() => buildBoltClient({ ...BASE, uri: "bolt+s://db:7687", trustedCertificatePem: PEM }, lib)).toThrow();
     } finally {
-      process.env.TMPDIR = root;
+      pointTmpAt(root);
     }
   });
 
