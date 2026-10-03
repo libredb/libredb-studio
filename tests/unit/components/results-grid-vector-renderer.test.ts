@@ -13,7 +13,7 @@ import { isVectorCell, vectorRenderer } from "@/components/results-grid/renderer
 import type { SparseEncoding, VectorColumn, VectorDType, VectorKind } from "@/lib/db/vector/types";
 import type { ExpectedCell, ExpectedCells } from "../../live/vector-evidence-derive";
 
-const CLASS = "text-hue-teal/80 font-mono";
+const CLASS = "text-hue-teal font-mono";
 const REFUSAL = "A value that is not a cell of a declared vector column reached the vector renderer";
 
 function column(

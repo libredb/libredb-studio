@@ -17,7 +17,7 @@ import type { RenderContext, ValueRenderer } from "./types";
   or sparse cell, and every sparse index, are written as integers.
 */
 
-const VECTOR_CLASS = "text-hue-teal/80 font-mono";
+const VECTOR_CLASS = "text-hue-teal font-mono";
 /** Elements the one-line grid cell shows before the ellipsis. */
 const PREVIEW_ELEMENTS = 8;
 const ELLIPSIS = "…";

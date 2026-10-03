@@ -133,7 +133,7 @@ describe("formatCellValue and formatCellCopy with a column's declaration", () =>
   test("a declared cell draws and copies as a vector", () => {
     expect(formatCellValue([1, 0.5], context)).toEqual({
       display: "[1.0, 0.5] 2 dims",
-      className: "text-hue-teal/80 font-mono",
+      className: "text-hue-teal font-mono",
     });
     expect(formatCellCopy([1, 0.5], context)).toBe("[1.0,0.5]");
   });
