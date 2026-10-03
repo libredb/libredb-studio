@@ -1,0 +1,51 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "Search",
+    "user": "root",
+    "surface": "a Search with 4 floats on an 8-dimension field",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64",
+      "dsl": "",
+      "dsl_type": "BoolExprV1",
+      "placeholder_group": {
+        "$bytes": "ChgKAiQwEGUaEM3MzD3NzEw+mpmZPs3MzD4="
+      },
+      "nq": "1",
+      "output_fields": [],
+      "search_params": [
+        {
+          "key": "anns_field",
+          "value": "vec"
+        },
+        {
+          "key": "topk",
+          "value": "3"
+        },
+        {
+          "key": "params",
+          "value": "{}"
+        }
+      ]
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "status": {
+      "extra_info": {},
+      "error_code": "UnexpectedError",
+      "reason": "failed to search: failed to search/query delegator 4 for channel by-dev-rootcoord-dml_0_469506719193499070v0: fail to search on QueryNode 4: worker(4) query failed: parser searchRequest failed:  => vector dimension mismatch, expected vector size(byte) 32, actual 16. at ../internal/core/src/query/Plan.cpp:183\n: segcore error[segcoreCode=2001]",
+      "code": 2000,
+      "retriable": false,
+      "detail": "failed to search: failed to search/query delegator 4 for channel by-dev-rootcoord-dml_0_469506719193499070v0: fail to search on QueryNode 4: worker(4) query failed: parser searchRequest failed:  => vector dimension mismatch, expected vector size(byte) 32, actual 16. at ../internal/core/src/query/Plan.cpp:183\n: segcore error[segcoreCode=2001]"
+    },
+    "results": null,
+    "collection_name": "",
+    "session_ts": "0"
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "ShowPartitions",
+    "user": "root",
+    "surface": "ShowPartitions as root",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "partition_names": [
+      "_default",
+      "part_a",
+      "part_b"
+    ],
+    "partitionIDs": [
+      "469506719193499071",
+      "469506719193499073",
+      "469506719193499075"
+    ],
+    "created_timestamps": [
+      "469506742749233170",
+      "469506742749233172",
+      "469506742801661972"
+    ],
+    "created_utc_timestamps": [
+      "1791026087758",
+      "1791026087758",
+      "1791026087958"
+    ],
+    "inMemory_percentages": [],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

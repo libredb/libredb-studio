@@ -1,0 +1,21 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "GetVersion",
+    "user": "root",
+    "surface": "TLS to the plaintext port",
+    "request": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "code": 14,
+      "details": "No connection established. Last error: Error: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER. Resolution note: ",
+      "message": "14 UNAVAILABLE: No connection established. Last error: Error: error:100000f7:SSL routines:OPENSSL_internal:WRONG_VERSION_NUMBER. Resolution note: "
+    }
+  }
+}

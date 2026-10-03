@@ -1,0 +1,43 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "Query",
+    "user": "root",
+    "surface": "a Query on the released unloaded_big",
+    "request": {
+      "db_name": "default",
+      "collection_name": "unloaded_big",
+      "expr": "id >= 0",
+      "output_fields": [
+        "id"
+      ],
+      "query_params": [
+        {
+          "key": "limit",
+          "value": "1"
+        }
+      ]
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "fields_data": [],
+    "output_fields": [],
+    "element_indices": [],
+    "status": {
+      "extra_info": {},
+      "error_code": "UnexpectedError",
+      "reason": "failed to query: collection not loaded[collection=469506719194000287]",
+      "code": 101,
+      "retriable": false,
+      "detail": "failed to query: collection not loaded[collection=469506719194000287]"
+    },
+    "collection_name": "",
+    "session_ts": "0",
+    "primary_field_name": ""
+  }
+}

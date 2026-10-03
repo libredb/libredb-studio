@@ -1,0 +1,116 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "Search",
+    "user": "root",
+    "surface": "a self-search by id on edge_values.bf16",
+    "request": {
+      "db_name": "default",
+      "collection_name": "edge_values",
+      "dsl": "",
+      "dsl_type": "BoolExprV1",
+      "ids": {
+        "int_id": {
+          "data": [
+            "3"
+          ]
+        }
+      },
+      "nq": "1",
+      "output_fields": [
+        "id"
+      ],
+      "use_default_consistency": true,
+      "search_params": [
+        {
+          "key": "anns_field",
+          "value": "bf16"
+        },
+        {
+          "key": "topk",
+          "value": "3"
+        },
+        {
+          "key": "params",
+          "value": "{}"
+        },
+        {
+          "key": "round_decimal",
+          "value": "-1"
+        }
+      ]
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "results": {
+      "fields_data": [
+        {
+          "valid_data": [],
+          "type": "Int64",
+          "field_name": "id",
+          "field_id": "100",
+          "is_dynamic": false,
+          "scalars": {
+            "long_data": {
+              "data": [
+                "3",
+                "2",
+                "5"
+              ]
+            },
+            "data": "long_data"
+          },
+          "field": "scalars"
+        }
+      ],
+      "scores": [
+        0,
+        2.502051591873169,
+        19
+      ],
+      "topks": [
+        "3"
+      ],
+      "output_fields": [
+        "id"
+      ],
+      "distances": [],
+      "recalls": [],
+      "highlight_results": [],
+      "group_by_field_values": [],
+      "agg_buckets": [],
+      "agg_topks": [],
+      "num_queries": "1",
+      "top_k": "3",
+      "ids": {
+        "int_id": {
+          "data": [
+            "3",
+            "2",
+            "5"
+          ]
+        },
+        "id_field": "int_id"
+      },
+      "group_by_field_value": null,
+      "all_search_count": "5",
+      "primary_field_name": "id",
+      "element_indices": null
+    },
+    "collection_name": "edge_values",
+    "session_ts": "0"
+  }
+}

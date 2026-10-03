@@ -1,0 +1,21 @@
+{
+  "$captured": {
+    "service": "milvus-mtls",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "node 24.14.0",
+    "rpc": "GetVersion",
+    "user": "root",
+    "surface": "a serverAuth-only client certificate",
+    "request": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "code": 14,
+      "details": "No connection established. Last error: 00020824F27A0000:error:0A000412:SSL routines:ssl3_read_bytes:ssl/tls alert bad certificate:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 42\n (2026-10-03T14:30:07.233Z). Resolution note: ",
+      "message": "14 UNAVAILABLE: No connection established. Last error: 00020824F27A0000:error:0A000412:SSL routines:ssl3_read_bytes:ssl/tls alert bad certificate:../deps/openssl/openssl/ssl/record/rec_layer_s3.c:918:SSL alert number 42\n (2026-10-03T14:30:07.233Z). Resolution note: "
+    }
+  }
+}

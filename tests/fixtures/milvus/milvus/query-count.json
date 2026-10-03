@@ -1,0 +1,59 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "Query",
+    "user": "root",
+    "surface": "a lone count(*) with no limit",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64",
+      "expr": "",
+      "output_fields": [
+        "count(*)"
+      ],
+      "query_params": []
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "fields_data": [
+      {
+        "valid_data": [
+          true
+        ],
+        "type": "Int64",
+        "field_name": "count(*)",
+        "field_id": "0",
+        "is_dynamic": false,
+        "scalars": {
+          "long_data": {
+            "data": [
+              "2000"
+            ]
+          },
+          "data": "long_data"
+        },
+        "field": "scalars"
+      }
+    ],
+    "output_fields": [
+      "count(*)"
+    ],
+    "element_indices": [],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "collection_name": "docs_int64",
+    "session_ts": "0",
+    "primary_field_name": "id"
+  }
+}

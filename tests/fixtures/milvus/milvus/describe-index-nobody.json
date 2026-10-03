@@ -1,0 +1,59 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "DescribeIndex",
+    "user": "nobody",
+    "surface": "DescribeIndex as nobody",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "index_descriptions": [
+      {
+        "params": [
+          {
+            "key": "M",
+            "value": "16"
+          },
+          {
+            "key": "efConstruction",
+            "value": "64"
+          },
+          {
+            "key": "metric_type",
+            "value": "COSINE"
+          },
+          {
+            "key": "index_type",
+            "value": "HNSW"
+          }
+        ],
+        "index_name": "vec",
+        "indexID": "469506719193820103",
+        "field_name": "vec",
+        "indexed_rows": "2000",
+        "total_rows": "2000",
+        "state": "Finished",
+        "index_state_fail_reason": "",
+        "pending_index_rows": "0",
+        "min_index_version": 0,
+        "max_index_version": 0
+      }
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

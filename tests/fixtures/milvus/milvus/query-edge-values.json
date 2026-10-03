@@ -1,0 +1,228 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "Query",
+    "user": "root",
+    "surface": "every edge row with every vector field",
+    "request": {
+      "db_name": "default",
+      "collection_name": "edge_values",
+      "expr": "id >= 0",
+      "output_fields": [
+        "id",
+        "label",
+        "f32",
+        "f16",
+        "bf16",
+        "bin",
+        "i8",
+        "sp"
+      ],
+      "query_params": [
+        {
+          "key": "limit",
+          "value": "16"
+        }
+      ]
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "fields_data": [
+      {
+        "valid_data": [],
+        "type": "BinaryVector",
+        "field_name": "bin",
+        "field_id": "105",
+        "is_dynamic": false,
+        "vectors": {
+          "dim": "16",
+          "binary_vector": {
+            "$bytes": "AAD//1WqAYAP8A=="
+          },
+          "data": "binary_vector"
+        },
+        "field": "vectors"
+      },
+      {
+        "valid_data": [],
+        "type": "Int8Vector",
+        "field_name": "i8",
+        "field_id": "106",
+        "is_dynamic": false,
+        "vectors": {
+          "dim": "4",
+          "int8_vector": {
+            "$bytes": "gH8A/wECAwSAgH9/AAAAAQMEAAA="
+          },
+          "data": "int8_vector"
+        },
+        "field": "vectors"
+      },
+      {
+        "valid_data": [],
+        "type": "SparseFloatVector",
+        "field_name": "sp",
+        "field_id": "107",
+        "is_dynamic": false,
+        "vectors": {
+          "dim": "4294967295",
+          "sparse_float_vector": {
+            "contents": [
+              {
+                "$bytes": "AAAAAGBCog3+////AAAAPw=="
+              },
+              {
+                "$bytes": "BwAAAM3MzD0IAAAAzcxMPg=="
+              },
+              {
+                "$bytes": "AQAAAJ7Jf38="
+              },
+              {
+                "$bytes": "ZAAAAAEAgD8="
+              },
+              {
+                "$bytes": "AgAAAAAAgD8="
+              }
+            ],
+            "dim": "4294967295"
+          },
+          "data": "sparse_float_vector"
+        },
+        "field": "vectors"
+      },
+      {
+        "valid_data": [],
+        "type": "Int64",
+        "field_name": "id",
+        "field_id": "100",
+        "is_dynamic": false,
+        "scalars": {
+          "long_data": {
+            "data": [
+              "1",
+              "2",
+              "3",
+              "4",
+              "5"
+            ]
+          },
+          "data": "long_data"
+        },
+        "field": "scalars"
+      },
+      {
+        "valid_data": [],
+        "type": "VarChar",
+        "field_name": "label",
+        "field_id": "101",
+        "is_dynamic": false,
+        "scalars": {
+          "string_data": {
+            "data": [
+              "range-ends",
+              "all-ones",
+              "non-finite-score",
+              "precision",
+              "metric-probe"
+            ]
+          },
+          "data": "string_data"
+        },
+        "field": "scalars"
+      },
+      {
+        "valid_data": [],
+        "type": "FloatVector",
+        "field_name": "f32",
+        "field_id": "102",
+        "is_dynamic": false,
+        "vectors": {
+          "dim": "4",
+          "float_vector": {
+            "data": [
+              3.4028234663852886e+38,
+              -1.401298464324817e-45,
+              1.1754943508222875e-38,
+              0.10000000149011612,
+              0.10000000149011612,
+              0.20000000298023224,
+              0.30000001192092896,
+              0.4000000059604645,
+              0,
+              1,
+              -1,
+              1.0000000116860974e-7,
+              16777216,
+              0.3333333432674408,
+              2.5,
+              -7,
+              3,
+              4,
+              0,
+              0
+            ]
+          },
+          "data": "float_vector"
+        },
+        "field": "vectors"
+      },
+      {
+        "valid_data": [],
+        "type": "Float16Vector",
+        "field_name": "f16",
+        "field_id": "103",
+        "is_dynamic": false,
+        "vectors": {
+          "dim": "4",
+          "float16_vector": {
+            "$bytes": "/3v/+wAEAQBmLmYyzTRmNgCAADwAvAgIAGhUNQBBAMcAQgBEAAAAAA=="
+          },
+          "data": "float16_vector"
+        },
+        "field": "vectors"
+      },
+      {
+        "valid_data": [],
+        "type": "BFloat16Vector",
+        "field_name": "bf16",
+        "field_id": "104",
+        "is_dynamic": false,
+        "vectors": {
+          "dim": "4",
+          "bfloat16_vector": {
+            "$bytes": "f3+AgM09AMDNPU0+mj7NPgCAgD+Av9czgEOqPiBA4MBAQIBAAAAAAA=="
+          },
+          "data": "bfloat16_vector"
+        },
+        "field": "vectors"
+      }
+    ],
+    "output_fields": [
+      "f32",
+      "f16",
+      "bf16",
+      "bin",
+      "i8",
+      "sp",
+      "id",
+      "label"
+    ],
+    "element_indices": [],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "collection_name": "edge_values",
+    "session_ts": "0",
+    "primary_field_name": "id"
+  }
+}
