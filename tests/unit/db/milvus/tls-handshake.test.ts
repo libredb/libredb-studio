@@ -334,9 +334,18 @@ function expected(
       return runtime === "bun" || (nodeMajor ?? 0) >= 25 ? { outcome: "failed" } : { outcome: "connected" };
     case "TLS to a plaintext port":
       return { outcome: "failed", errorClass: "ConnectionError" };
+    case "control: grpc-js reads unix: as a socket path":
+      // On Windows Bun connects there as elsewhere, and Node dials the Unix socket by that path too but is refused the
+      // connect with EACCES (CI's windows-latest runner), as the etcd provider's control met it.
+      return windowsNode(runtime) ? { outcome: "failed" } : { outcome: "connected" };
     default:
       return { outcome: "connected" };
   }
+}
+
+/** Node on Windows, where the E1 control's dial of the Unix socket is refused rather than connected. */
+function windowsNode(runtime: Runtime): boolean {
+  return process.platform === "win32" && runtime === "node";
 }
 
 function expectRun(outcomes: readonly HandshakeOutcome[], runtime: Runtime, nodeMajor?: number): void {
@@ -355,7 +364,16 @@ function expectRun(outcomes: readonly HandshakeOutcome[], runtime: Runtime, node
   if (runtime === "bun" || (nodeMajor ?? 0) >= 25)
     expect(ipControl.raw).toContain("Setting the TLS ServerName to an IP address is not permitted");
   // E1: the provider's `unix` host dialled no socket; only the control reached the listener named after the port.
-  expect(counts.unix).toBe(1);
+  // Node on Windows is refused the control's connect, so its run reaches the listener not at all, and says why.
+  if (windowsNode(runtime)) {
+    expect(counts.unix).toBe(0);
+    const unixControl = outcomes.find(
+      (outcome) => outcome.name === "control: grpc-js reads unix: as a socket path",
+    ) as {
+      raw?: string;
+    };
+    expect(unixControl.raw).toContain("connect EACCES");
+  } else expect(counts.unix).toBe(1);
 }
 
 describe("under Bun (E1, E6)", () => {

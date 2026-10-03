@@ -91,7 +91,8 @@ describe("no Milvus statement text reaches an AI route (E18)", () => {
     for (const route of statementRoutes) {
       const senders = files
         .filter((file) => readFileSync(file, "utf8").includes(`"/api/ai/${route}"`))
-        .map((file) => path.relative(ROOT, file));
+        // Forward slashes, as SENDERS spells them, so the comparison holds on Windows too.
+        .map((file) => path.relative(ROOT, file).split(path.sep).join("/"));
       expect(senders).toEqual([SENDERS[route].file]);
       expect(readFileSync(path.join(ROOT, SENDERS[route].gate.file), "utf8")).toContain(SENDERS[route].gate.text);
     }
