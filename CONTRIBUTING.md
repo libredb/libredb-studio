@@ -299,6 +299,19 @@ LLM_API_KEY=your_api_key
 LLM_MODEL=gemini-2.5-flash
 ```
 
+Any variable you add to `.env.example` whose name ends in `_PATH`, `_DIR` or `_FILE` must also
+be classified in [`bin/lib/launcher-utils.mjs`](bin/lib/launcher-utils.mjs), in one of two
+lists, or the required `Unit & Integration Tests` check fails:
+
+- `PATH_VARIABLES` — the value is a filesystem path, and the `npx @libredb/studio` launcher
+  resolves a relative value against the directory it was started from.
+- `URL_PATH_VARIABLES` — the name looks like a path but the value is not a file or directory
+  (a URL prefix or a mount name); the entry carries a one-line reason and the launcher leaves
+  the value alone.
+
+A guard test in [`tests/unit/launcher-utils.test.ts`](tests/unit/launcher-utils.test.ts)
+enforces this, so classify the variable when you add it rather than waiting for CI to flag it.
+
 ### Development Database
 
 We provide a ready-to-use PostgreSQL setup with sample data for testing:
