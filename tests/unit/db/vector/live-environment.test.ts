@@ -420,3 +420,44 @@ describe("docker/qdrant/keys.sh", () => {
     expect(keys).toContain('[ -f .complete ] && { echo "keys already in $1"; exit 0; }');
   });
 });
+
+const QDRANT_SEED_IMAGE = "python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4";
+const QDRANT_SERVICES = ["qdrant", "qdrant-seed", "qdrant-keys", "qdrant-auth", "qdrant-tls", "qdrant-mtls"];
+
+describe("the Qdrant seed", () => {
+  test("qdrant-seed is a one-shot in the pinned Python image that waits for a healthy qdrant and installs by hash", () => {
+    const seed = service("qdrant-seed");
+    expect(seed).toMatchObject({
+      image: QDRANT_SEED_IMAGE,
+      container_name: "libredb-qdrant-seed",
+      restart: "no",
+      depends_on: { qdrant: { condition: "service_healthy" } },
+      command: ["--url", "http://qdrant:6333"],
+    });
+    expect(seed.profiles).toBeUndefined();
+    expect(seed.ports).toBeUndefined();
+    expect(seed.volumes).toEqual(["./docker/qdrant:/seed:ro", "qdrant-keys:/keys:ro"]);
+    // The file writes $$@, which compose reads as the shell's $@: the arguments of `run ... qdrant-seed <arguments>`.
+    expect(seed.entrypoint?.[2]).toBe(
+      'pip install --quiet --no-cache-dir --require-hashes -r /seed/requirements.txt 1>&2 && exec python /seed/seed.py "$$@"',
+    );
+    expect(limits("qdrant-seed")).toEqual({ cpus: "1", memory: "1G", swap: "1G" });
+  });
+
+  test("seed.py creates the research's collections and aliases and the two the fixtures add, from fixed seeds", () => {
+    const seed = script("qdrant/seed.py");
+    expect(seed).toContain(
+      'COLLECTIONS = ["docs", "small_dtypes", "plain", "scratch", "empty_novec", "edge_values", "payload_spread"]',
+    );
+    expect(seed).toContain('ALIASES = {"docs_alias": "docs", "plain_alias": "plain"}');
+    for (const seedValue of ["20261002", "default_rng(7)", "default_rng(11)", "20261003"])
+      expect(seed).toContain(seedValue);
+    expect(seed).not.toMatch(/api_key\s*=\s*"/);
+  });
+
+  test("docker/qdrant/README.md names every service, and every command names the project and its services", () => {
+    const readme = script("qdrant/README.md");
+    for (const name of QDRANT_SERVICES) expect(readme).toContain(`\`${name}\``);
+    expectCommandsNameProjectAndServices(readme, QDRANT_SERVICES);
+  });
+});

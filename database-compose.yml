@@ -1712,6 +1712,29 @@ services:
             memory: 2G
       memswap_limit: 2G
 
+  qdrant-seed:
+    # One-shot seed (docker/qdrant/seed.py) in a pinned Python image, which installs
+    # qdrant-client and its dependencies from docker/qdrant/requirements.txt, pinned with
+    # hashes. It creates what is missing and leaves what exists. It mounts the keys read-only,
+    # so the same one-shot seeds qdrant-auth with --api-key-file (docker/qdrant/README.md).
+    image: python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4
+    container_name: libredb-qdrant-seed
+    restart: "no"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    volumes:
+      - ./docker/qdrant:/seed:ro
+      - qdrant-keys:/keys:ro
+    environment: *seed-env
+    entrypoint:
+      - sh
+      - -c
+      - pip install --quiet --no-cache-dir --require-hashes -r /seed/requirements.txt 1>&2 && exec python /seed/seed.py "$$@"
+      - qdrant-seed
+    command: ["--url", "http://qdrant:6333"]
+    <<: *vector-seed-limits
+
   # -- Qdrant, keys, JWT and TLS -------------------------------------------------
 
   qdrant-keys:
