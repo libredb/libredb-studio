@@ -2,11 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { DIALECT_EDITORS, formatterForLanguage } from "@/lib/editor/dialect-editors";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
 
-const EDITOR_LANGUAGES: readonly EditorLanguage[] = ["sql", "json", "libredb", "redis", "promql", "etcd"];
+const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
+  "sql",
+  "json",
+  "libredb",
+  "redis",
+  "promql",
+  "etcd",
+  "graph-cypher",
+];
 
 describe("DIALECT_EDITORS", () => {
   test("holds one record per tab type, the dialect-less ones included", () => {
     expect(Object.keys(DIALECT_EDITORS).sort()).toEqual([
+      "cypher",
       "etcd",
       "kafka",
       "libredb",
@@ -29,6 +38,7 @@ describe("DIALECT_EDITORS", () => {
       promql: "promql",
       kafka: "json",
       etcd: "etcd",
+      cypher: "graph-cypher",
     });
   });
 
@@ -87,7 +97,7 @@ describe("formatterForLanguage", () => {
   test("answers each Monaco language's formatter, and none for a language without one", () => {
     expect(formatterForLanguage("sql")).toBe(DIALECT_EDITORS.sql.format);
     expect(formatterForLanguage("json")).toBe(DIALECT_EDITORS.mongodb.format);
-    for (const language of ["libredb", "redis", "promql", "etcd"] as const) {
+    for (const language of ["libredb", "redis", "promql", "etcd", "graph-cypher"] as const) {
       expect(formatterForLanguage(language)).toBeUndefined();
     }
   });

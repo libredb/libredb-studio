@@ -4,7 +4,7 @@ import { DIALECT_EDITORS } from "@/lib/editor/dialect-editors";
 import type { QueryTab } from "@/lib/types";
 
 /** The Monaco language ids a query tab renders in, `QueryEditor`'s `language` prop. */
-export type EditorLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd";
+export type EditorLanguage = "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher";
 
 /**
  * The tab type a connection's tabs take.

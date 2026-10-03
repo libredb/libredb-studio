@@ -49,6 +49,9 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   promql: Object.freeze({ monacoId: "promql" }),
   kafka: Object.freeze({ monacoId: "json", format: formatJson }),
   etcd: Object.freeze({ monacoId: "etcd" }),
+  // Cypher declares a language and no dialect, as PromQL does, and has no formatter: no Format for a Cypher tab
+  // (Neo4j spec 6.5). `graph-cypher` and not `cypher`, which Monaco's own bundle registers.
+  cypher: Object.freeze({ monacoId: "graph-cypher" }),
 });
 
 /**
