@@ -20,6 +20,12 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { TypedConfirmDialog } from "@/components/typed-confirm";
 import {
+  MaintenanceEntityDialog,
+  closedEntityDialog,
+  entityRequest,
+  type EntityDialogOpening,
+} from "@/components/maintenance-entity-dialog";
+import {
   RefreshCw,
   Zap,
   HardDrive,
@@ -43,6 +49,7 @@ import { useReturnFocus } from "@/hooks/use-return-focus";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
 import {
+  declaredEntityOperations,
   maintenanceControl,
   type ActiveSessionDetails,
   type MaintenanceOperation,
@@ -69,6 +76,14 @@ const TABLE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideIcon; h
   { type: "reindex", label: "Reindex", Icon: RefreshCw, hover: "hover:text-hue-purple" },
   { type: "check", label: "Check", Icon: ShieldCheck, hover: "hover:text-hue-green" },
 ];
+
+/** One per-row control: a `TABLE_ACTIONS` entry, or a declared operation outside `MaintenanceType` (spec 3.11). */
+interface TableAction {
+  type: MaintenanceOperation;
+  label: string;
+  Icon: LucideIcon;
+  hover: string;
+}
 
 /**
  * Why no per-table maintenance control is anywhere on this page.
@@ -175,6 +190,9 @@ export function OperationsTab() {
   // in its own state, so every opening mounts a fresh one, as the account dialogs do (#1089, section 7.2).
   const [typedDialog, setTypedDialog] = useState<TypedDialogOpening | null>(null);
   const [typedDialogOpenings, setTypedDialogOpenings] = useState(0);
+  // A per-row operation's dialog, keyed per opening the same way (spec 3.11).
+  const [entityDialog, setEntityDialog] = useState<EntityDialogOpening | null>(null);
+  const [entityDialogOpenings, setEntityDialogOpenings] = useState(0);
 
   /*
     The object an Explorer deep link named (`onOpenMaintenance("tables", object.path)` →
@@ -229,7 +247,7 @@ export function OperationsTab() {
   // is reactive so it settles as soon as the capability arrives.
   const monitoringOptions = useMemo(() => ({ includeTables: true, includeIndexes: false, includeStorage: false }), []);
 
-  const { data, loading, error, refresh, killSession, runMaintenance } = useMonitoringData(
+  const { data, loading, error, refresh, killSession, runMaintenance, previewMaintenance } = useMonitoringData(
     selectedConnection,
     monitoringOptions,
   );
@@ -286,11 +304,20 @@ export function OperationsTab() {
   // Declared cards count: an engine may offer none of the operations the three worded cards send.
   const anyMaintenance = globalAnalyze || globalVacuum || globalReindex || declaredCards.length > 0;
 
-  // The per-row controls, in the provider's own words.
-  const tableActions = TABLE_ACTIONS.flatMap((action) => {
-    const control = maintenanceControl(capabilities, action.type, "perEntity");
-    return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];
-  });
+  // The per-row controls, in the provider's own words: the tab's own candidates, then every declared operation outside
+  // `MaintenanceType` that runs on one row, in declaration order and under a generic icon (spec 3.11).
+  const tableActions: TableAction[] = [
+    ...TABLE_ACTIONS.flatMap((action) => {
+      const control = maintenanceControl(capabilities, action.type, "perEntity");
+      return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];
+    }),
+    ...declaredEntityOperations(capabilities).map((operation) => ({
+      type: operation.type,
+      label: operation.label,
+      Icon: Wrench,
+      hover: "hover:text-brand",
+    })),
+  ];
 
   const handleConnectionChange = (id: string) => {
     const conn = connections.find((c) => c.id === id);
@@ -338,13 +365,19 @@ export function OperationsTab() {
 
   // The handler every maintenance control on this tab calls (#1089, section 7.2). A declared card whose spec asks
   // for a typed confirmation opens the typed dialog here instead, and the dialog sends the operation only once the
-  // connection's name matches. A per-row call carries a target and never asks: no per-row control is declared with
-  // a confirmation.
+  // connection's name matches. A per-row call whose spec asks for the row's own name or for a preview opens the
+  // per-row dialog instead (spec 3.11); every other per-row call sends with one click, as before.
   const handleRunMaintenance = async (type: MaintenanceOperation, target?: string, container?: string) => {
     const typedCard = target === undefined ? declaredCards.find((card) => card.type === type && card.typed) : undefined;
     if (typedCard !== undefined) {
       setTypedDialog({ card: typedCard, open: true, key: typedDialogOpenings });
       setTypedDialogOpenings(typedDialogOpenings + 1);
+      return;
+    }
+    const entity = target === undefined ? null : entityRequest(capabilities, type, target, container);
+    if (entity !== null) {
+      setEntityDialog({ request: entity, open: true, key: entityDialogOpenings });
+      setEntityDialogOpenings(entityDialogOpenings + 1);
       return;
     }
     await runMaintenanceNow(type, target, container);
@@ -959,6 +992,24 @@ export function OperationsTab() {
             // The outcome is the notification and the operation log, as for every other control on this tab, so
             // the dialog closes once the request has answered, whatever it answered.
             await runMaintenanceNow(typedDialog.card.type);
+            return null;
+          }}
+        />
+      )}
+
+      {/* A per-row operation's typed target or preview (spec 3.11): the row's own name, typed exactly, and the
+          provider's preview before the confirm button where the spec asks for one. */}
+      {entityDialog && (
+        <MaintenanceEntityDialog
+          key={entityDialog.key}
+          open={entityDialog.open}
+          onOpenChange={(open) => !open && setEntityDialog(closedEntityDialog)}
+          request={entityDialog.request}
+          loadPreview={previewMaintenance}
+          onConfirm={async () => {
+            // The outcome is the notification and the operation log, as for every other control on this tab.
+            const { type, target, container } = entityDialog.request;
+            await runMaintenanceNow(type, target, container);
             return null;
           }}
         />

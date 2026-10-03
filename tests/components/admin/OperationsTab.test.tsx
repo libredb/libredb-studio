@@ -106,6 +106,11 @@ import { render, act, cleanup, fireEvent, waitFor, within } from "@testing-libra
 import React from "react";
 
 import { OperationsTab } from "@/components/admin/tabs/OperationsTab";
+import {
+  SYNTHETIC_ENTITY_CAPABILITIES,
+  SYNTHETIC_PREVIEW,
+  SYNTHETIC_REFUSED_PREVIEW,
+} from "../../fixtures/maintenance-entity-operations";
 
 // =============================================================================
 // Test data
@@ -2523,5 +2528,146 @@ describe("OperationsTab", () => {
     for (const description of [COMPACT_DESCRIPTION, DEFRAGMENT_DESCRIPTION, DISARM_DESCRIPTION]) {
       expect(view.queryByText(description)).toBeNull();
     }
+  });
+
+  // =========================================================================
+  // Declared per-row operations, the typed target and the preview (spec 3.11)
+  //
+  // The synthetic declaration of tests/fixtures/maintenance-entity-operations.ts: two per-row operations outside
+  // MaintenanceType, "Release Object" (typed target) and "Load Object" (typed target and preview), declared in that
+  // order. No shipped provider declares either; the census suite pins that.
+  // =========================================================================
+
+  const mockPreview = mock(
+    async (_type: string, _target: string, _container?: string): Promise<typeof SYNTHETIC_PREVIEW> => SYNTHETIC_PREVIEW,
+  );
+
+  /** Clicks a row's control, found by its title, and returns the dialog it opened, found by the dialog's title. */
+  const openRowDialog = async (view: ReturnType<typeof render>, title: string) => {
+    await act(async () => {
+      fireEvent.click(view.container.querySelector(`button[title="${title}"]`) as HTMLButtonElement);
+    });
+    return view.getByRole("alertdialog", { name: title });
+  };
+
+  const withPreview = (preview: () => Promise<typeof SYNTHETIC_PREVIEW>) => {
+    mockPreview.mockClear();
+    mockPreview.mockImplementation(preview);
+    monitoringOverride = { previewMaintenance: mockPreview };
+  };
+
+  test("draws one row control per declared per-row operation, after the tab's own, in declaration order", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    const { container } = await render_();
+
+    expect(titlesIn(container)).toEqual(["Analyze Table", "Release Object", "Load Object"]);
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a typed-target control sends nothing until the row's own name is typed exactly, then sends once", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Release Object");
+    expect(dialog.textContent).toContain("Release Object runs on users only.");
+    const input = within(dialog).getByLabelText("Type users to confirm") as HTMLInputElement;
+    const confirm = within(dialog).getByRole("button", { name: "Release Object" }) as HTMLButtonElement;
+    for (const wrong of ["drop", "USERS", "Users", "PG Dev", " users", "users "]) {
+      fireEvent.change(input, { target: { value: wrong } });
+      expect({ wrong, disabled: confirm.disabled }).toEqual({ wrong, disabled: true });
+    }
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "users" } });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("disarm", "users", "public");
+    expect(view.queryByText("DISARM")).not.toBeNull();
+  });
+
+  test("a preview control reads the preview, shows it, and asks for the row's name before it sends", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => SYNTHETIC_PREVIEW);
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(dialog).queryByText(SYNTHETIC_PREVIEW.summary)).not.toBeNull());
+    expect(mockPreview).toHaveBeenCalledTimes(1);
+    expect(mockPreview).toHaveBeenCalledWith("compact", "users", "public");
+    for (const fact of SYNTHETIC_PREVIEW.facts) {
+      expect(dialog.textContent).toContain(fact.label);
+      expect(dialog.textContent).toContain(fact.value);
+    }
+    expect(dialog.textContent).toContain("as reported by the server, possibly several seconds old");
+
+    const confirm = within(dialog).getByRole("button", { name: "Load Object" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("Type users to confirm"), { target: { value: "users" } });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("compact", "users", "public");
+  });
+
+  test("a refused preview shows the refusal, with no confirm button, and sends nothing", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => SYNTHETIC_REFUSED_PREVIEW);
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(dialog).queryByText(SYNTHETIC_REFUSED_PREVIEW.refusal as string)).not.toBeNull());
+    expect(within(dialog).queryByRole("button", { name: "Load Object" })).toBeNull();
+    expect(within(dialog).queryByLabelText("Type users to confirm")).toBeNull();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a preview the route refuses shows the route's sentence, with no confirm button", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => {
+      throw new Error("This operation has no preview");
+    });
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(dialog).queryByText("This operation has no preview")).not.toBeNull());
+    expect(within(dialog).queryByRole("button", { name: "Load Object" })).toBeNull();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a preview dialog opened again starts empty and reads the preview again", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => SYNTHETIC_PREVIEW);
+    const view = await render_();
+
+    const first = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(first).queryByText(SYNTHETIC_PREVIEW.summary)).not.toBeNull());
+    fireEvent.change(within(first).getByLabelText("Type users to confirm"), { target: { value: "users" } });
+    await act(async () => {
+      fireEvent.click(within(first).getByRole("button", { name: "Cancel" }));
+    });
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+
+    const second = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(second).queryByText(SYNTHETIC_PREVIEW.summary)).not.toBeNull());
+    expect((within(second).getByLabelText("Type users to confirm") as HTMLInputElement).value).toBe("");
+    expect(mockPreview).toHaveBeenCalledTimes(2);
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a whole-database card with a typed confirmation still asks for the connection's name, not a row's", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    const view = await render_();
+
+    const dialog = await openTypedDialog(view, "Defragment", "Defragment the member");
+    expect(within(dialog).getByLabelText("Type PG Dev to confirm")).toBeTruthy();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
   });
 });
