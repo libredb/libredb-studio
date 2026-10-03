@@ -339,8 +339,8 @@ await provider.disconnect();
 
 ## Non-SQL Query Formats
 
-The non-SQL providers take a JSON query rather than SQL. The full format, operation list, and worked
-examples live in their prime docs:
+The non-SQL providers take a query that is not SQL, in the format each bullet names. The full format,
+operation list, and worked examples live in their prime docs:
 
 - **MongoDB** (MQL — `{collection, operation, filter, pipeline, update, documents, options}`):
   [providers/mongodb.md](./providers/mongodb.md) and the
@@ -350,6 +350,8 @@ examples live in their prime docs:
 - **Apache Kafka** (a JSON read request): [providers/kafka.md](./providers/kafka.md).
 - **etcd** (one etcdctl command): [providers/etcd.md](./providers/etcd.md).
 - **Neo4j** (one read-only Cypher statement): [providers/neo4j.md](./providers/neo4j.md).
+- **LibreDB** (a command using `get`, `put`, `delete`, `prefix` or `range`):
+  [providers/libredb.md](./providers/libredb.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
 takes ordinary SQL in the `sql` field and inherits the SQL editor and the shared limiter.
