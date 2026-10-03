@@ -150,6 +150,7 @@ function getDefaultForm() {
     readOnly: false,
     setReadOnly: mockSetReadOnly,
     readOnlyOffered: false,
+    credentialWarning: undefined as string | undefined,
     host: "localhost",
     setHost: mockSetHost,
     port: "5432",
@@ -1600,5 +1601,41 @@ describe("ConnectionModal", () => {
       expect(queryByText(/turso db tokens create/)).not.toBeNull();
       expect(queryByText("Auth Token")).not.toBeNull();
     });
+  });
+});
+
+describe("ConnectionModal: the Host box address and the credential warning", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    mockFormOverrides = {};
+    mockDeclaredCopy = {};
+    mockSetHost.mockClear();
+  });
+
+  test("hands the Host box's text to the form with the input kind that delivered it", () => {
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    fireEvent.input(host, { target: { value: "http://localhost:6333" }, inputType: "insertFromPaste" });
+    expect(mockSetHost).toHaveBeenLastCalledWith("http://localhost:6333", "insertFromPaste");
+  });
+
+  test("draws the form's credential warning beside the password, apart from the test result", () => {
+    mockFormOverrides = { credentialWarning: "Credential warning: synthetic sentence." };
+    const { container, getByTestId, queryByTestId } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
+    const warning = getByTestId("credential-warning");
+    expect(warning.textContent).toBe("Credential warning: synthetic sentence.");
+    expect(warning.getAttribute("role")).toBe("status");
+    expect(warning.parentElement).toBe((container.querySelector("#password") as HTMLElement).parentElement);
+    expect(queryByTestId("connection-test-result")).toBeNull();
+  });
+
+  test("draws no credential warning when the form has none", () => {
+    const { queryByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByTestId("credential-warning")).toBeNull();
   });
 });
