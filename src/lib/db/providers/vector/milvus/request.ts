@@ -237,7 +237,7 @@ function denseDataShape(text: string): { readonly nq: number; readonly dimension
   let inNumber = false;
   for (let index = match.index + match[0].length; index < text.length && depth > 0; index += 1) {
     const char = text[index];
-    const numeric = NUMBER_START.test(char) || (inNumber && (char === "e" || char === "E"));
+    const numeric: boolean = NUMBER_START.test(char) || (inNumber && (char === "e" || char === "E"));
     if (numeric && depth === 2 && !inNumber && nq === 1) dimension += 1;
     inNumber = numeric;
     if (numeric || char === "," || char.trim() === "") continue;
