@@ -599,6 +599,11 @@ output cap, and what it sends is one objective — see
   assume is the claim one line up in section 3, where a field name in the inventory is derived from
   your data rather than read from a catalog. Stated in both places on purpose: "no value leaves" and
   "nothing was read" are different promises, and only the first one is made here.
+- **A column an engine only inferred from sampled data.**
+  A provider marks such a column `provenance: "sampled"`, because its name was read out of stored rows rather than out of a declaration.
+  `machineColumns` (`src/lib/db/detailed-object.ts`) removes it before the agent's inventory is built, before `inspect_schema` caps or counts columns, and from the `schemaContext` string the four AI surfaces below send, so it reaches no model and no MCP client.
+  The object tree and the documentation table still show it, and the tree marks it "(sampled)".
+  No shipped engine sets the mark yet; MongoDB and Couchbase sample documents and do not, as the boundary above states.
 - **Cell values from a profile.** The Assess workflow's profile is aggregates only: counts of rows,
   present values, distinct values, and shape matches computed with `count(CASE WHEN … LIKE …)`
   *inside* the database. There is deliberately no `min`/`max`, because on a text column those return
