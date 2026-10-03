@@ -198,6 +198,7 @@ The claim waits for a test cluster to pass the provider's evidence gate (`docs/B
 ### 4.10 A user who is not root
 
 Lists are filtered by Milvus's grants: a database or collection list reads "visible to this user", never "none".
+In the console that is the list column's type, and a list with no row says it in a warning, since the grid shows no column for an empty result.
 A search that names no metric and no search parameter runs without the IndexDetail privilege, and its score column says the metric is not readable; a request that names either needs IndexDetail, because its checks read the index.
 
 ## 5. Query interface

@@ -75,7 +75,7 @@ export const MILVUS_OBJECT_KINDS: readonly ObjectKindSpec[] = [
 /** The reads one fan-out keeps in flight: the bulk describe's fallback and the Tables and index panels. */
 export const MILVUS_FAN_OUT = 4;
 
-const NO_DATABASE_VISIBLE =
+export const NO_DATABASE_VISIBLE =
   "Milvus lists no database visible to this Milvus user: a user sees only the databases it holds a privilege on.";
 
 /** Where one call goes: the database it names, and the collection where it names one. */

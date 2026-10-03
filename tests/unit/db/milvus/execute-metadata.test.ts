@@ -73,7 +73,20 @@ describe("databases", () => {
     const result = await run("databases/list");
     expect(result.rows).toEqual([{ dbName: "default" }, { dbName: "probe_db" }]);
     expect(result.columnTypes).toEqual({ dbName: "VarChar, visible to this user" });
+    expect(result.warnings).toBeUndefined();
     expectCalls(client, [{ method: "listDatabases", args: ["default"] }]);
+  });
+
+  test("databases/list with none visible says why in a warning, since an empty grid alone reads as none", async () => {
+    const { run } = executor({ databases: {} });
+    const result = await run("databases/list");
+    expect(result.rows).toEqual([]);
+    expect(result.warnings).toEqual([
+      {
+        message:
+          "Milvus lists no database visible to this Milvus user: a user sees only the databases it holds a privilege on.",
+      },
+    ]);
   });
 
   test("databases/describe: the named database, its id as an exact string", async () => {
@@ -91,7 +104,20 @@ describe("collections", () => {
     const result = await run("collections/list", { dbName: "probe_db" });
     expect(result.rows).toEqual([{ collectionName: "notes" }]);
     expect(result.columnTypes).toEqual({ collectionName: "VarChar, visible to this user" });
+    expect(result.warnings).toBeUndefined();
     expectCalls(client, [{ method: "showCollections", args: ["probe_db"] }]);
+  });
+
+  test("collections/list with none visible says why in a warning, naming the database it listed", async () => {
+    const { run } = executor({ databases: { ...CATALOG.databases, probe_db: [] } });
+    const result = await run("collections/list", { dbName: "probe_db" });
+    expect(result.rows).toEqual([]);
+    expect(result.warnings).toEqual([
+      {
+        message:
+          "Milvus lists no collection of database probe_db visible to this Milvus user: a user sees only the collections it holds a privilege on.",
+      },
+    ]);
   });
 
   test("collections/describe: one row per field with its index, and the load state, read with no load", async () => {
