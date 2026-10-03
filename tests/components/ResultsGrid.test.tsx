@@ -96,6 +96,8 @@ mock.module("@/components/results-grid/ResultCard", () => ({
         // The card decides its own preview fields from this list, so what it is HANDED is
         // the whole of the question here (#870).
         "data-fields": (props.fields as string[]).join(","),
+        // What the card is handed about vector columns, which it reads per preview field.
+        "data-vector-columns": JSON.stringify(props.vectorColumns ?? null),
       },
       React.createElement(
         "button",
@@ -114,7 +116,11 @@ mock.module("@/components/results-grid/RowDetailSheet", () => ({
     props.isOpen
       ? React.createElement(
           "div",
-          { "data-testid": "row-detail-sheet", "data-row-index": String(props.rowIndex) },
+          {
+            "data-testid": "row-detail-sheet",
+            "data-row-index": String(props.rowIndex),
+            "data-vector-columns": JSON.stringify(props.vectorColumns ?? null),
+          },
           "Row Detail",
         )
       : null,
@@ -636,6 +642,87 @@ describe("ResultsGrid", () => {
       // oxlint-disable-next-line no-await-in-loop -- one copy per table, each read from a cleared clipboard mock.
       await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(`\\x${hex}`));
     }
+  });
+
+  describe("vector columns (vector-family spec 3.10)", () => {
+    const DIMENSION = 768;
+    const embedding = Array.from({ length: DIMENSION }, (_, index) => ((index % 9) - 4) / 4);
+    const DISPLAY = "[-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, …] 768 dims";
+    const COPY = `[${embedding.map((value) => (Number.isInteger(value) ? value.toFixed(1) : String(value))).join(",")}]`;
+    const vectorResult: QueryResult = {
+      rows: [{ id: 1, embedding }],
+      fields: ["id", "embedding"],
+      rowCount: 1,
+      executionTime: 1,
+      vectorColumns: { embedding: { kind: "dense", dtype: "float32", dimension: DIMENSION } },
+    };
+
+    test("a declared vector column draws the vector cell in the desktop and the mobile table", () => {
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: vectorResult }));
+      fireEvent.click(getByTestId("view-table"));
+      expect(within(findContextMenuForMode(container, DISPLAY, "desktop")).getByText(DISPLAY)).not.toBeNull();
+      expect(within(findContextMenuForMode(container, DISPLAY, "mobile")).getByText(DISPLAY)).not.toBeNull();
+    });
+
+    test("Copy Cell on a declared vector cell copies the whole value as compact JSON", async () => {
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: vectorResult }));
+      fireEvent.click(getByTestId("view-table"));
+      for (const mode of ["desktop", "mobile"] as const) {
+        mockClipboardWriteText.mockClear();
+        const contextMenu = findContextMenuForMode(container, DISPLAY, mode);
+        fireEvent.contextMenu(within(contextMenu).getByText(DISPLAY));
+        fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+        // oxlint-disable-next-line no-await-in-loop -- one copy per table, each read from a cleared clipboard mock.
+        await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(COPY));
+      }
+    });
+
+    test("the same array in a column the result does not declare draws and copies as the JSON it was", async () => {
+      const json = JSON.stringify(embedding);
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, { result: { ...vectorResult, vectorColumns: undefined } }),
+      );
+      fireEvent.click(getByTestId("view-table"));
+      const contextMenu = findContextMenuForMode(container, json, "desktop");
+      fireEvent.contextMenu(within(contextMenu).getByText(json));
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(json));
+    });
+
+    test("a masked vector column shows and copies its mask, never the vector", async () => {
+      mockShouldMask.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["embedding", "custom"]]));
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, { result: vectorResult, maskingEnabled: true }),
+      );
+      fireEvent.click(getByTestId("view-table"));
+      const contextMenu = findContextMenuForMode(container, "***", "desktop");
+      expect(within(contextMenu).queryByText(DISPLAY)).toBeNull();
+      fireEvent.contextMenu(within(contextMenu).getByText("***"));
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith("***"));
+    });
+
+    test("a column named like an Object.prototype member is not taken for a declared vector", () => {
+      const result: QueryResult = {
+        rows: [{ constructor: [1, 2] }],
+        fields: ["constructor"],
+        rowCount: 1,
+        executionTime: 1,
+        vectorColumns: vectorResult.vectorColumns,
+      };
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+      fireEvent.click(getByTestId("view-table"));
+      expect(within(findContextMenuForMode(container, "[1,2]", "desktop")).getByText("[1,2]")).not.toBeNull();
+    });
+
+    test("the card view and the row detail are handed the result's vector columns", () => {
+      const declared = JSON.stringify(vectorResult.vectorColumns);
+      const { getAllByTestId, getByTestId } = render(React.createElement(ResultsGrid, { result: vectorResult }));
+      expect(getAllByTestId("result-card")[0].getAttribute("data-vector-columns")).toBe(declared);
+      fireEvent.click(getAllByTestId("result-card-content")[0]);
+      expect(getByTestId("row-detail-sheet").getAttribute("data-vector-columns")).toBe(declared);
+    });
   });
 
   test("offers no cell action for the row-detail column", () => {

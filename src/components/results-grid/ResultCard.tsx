@@ -4,7 +4,8 @@ import React, { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { Hash, ChevronRight, Lock } from "lucide-react";
 import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
-import { formatCellValue } from "./utils";
+import type { VectorColumn } from "@/lib/db/vector/types";
+import { formatCellValue, renderContextFor } from "./utils";
 
 export interface ResultCardProps {
   row: Record<string, unknown>;
@@ -15,6 +16,8 @@ export interface ResultCardProps {
   onSelect: () => void;
   maskingActive?: boolean;
   sensitiveColumns?: Map<string, MaskingPattern>;
+  /** The result's vector columns (`QueryResult.vectorColumns`), so a preview field of one draws as a vector cell. */
+  vectorColumns?: Readonly<Record<string, VectorColumn>>;
 }
 
 export function ResultCard({
@@ -26,6 +29,7 @@ export function ResultCard({
   onSelect,
   maskingActive,
   sensitiveColumns,
+  vectorColumns,
 }: ResultCardProps) {
   const primaryValue: unknown = row[primaryColumn];
   const idValue: unknown = idColumn ? row[idColumn] : null;
@@ -71,8 +75,9 @@ export function ResultCard({
         {previewFields.map((field) => {
           const pattern = sensitiveColumns?.get(field);
           const isMasked = maskingActive && pattern && row[field] != null && row[field] !== undefined;
-          const displayValue = isMasked ? maskValueByPattern(row[field], pattern) : formatCellValue(row[field]).display;
-          const className = isMasked ? "text-fg-muted italic" : formatCellValue(row[field]).className;
+          const formatted = formatCellValue(row[field], renderContextFor(vectorColumns, field));
+          const displayValue = isMasked ? maskValueByPattern(row[field], pattern) : formatted.display;
+          const className = isMasked ? "text-fg-muted italic" : formatted.className;
 
           return (
             <div key={field} className="flex items-center justify-between text-xs">

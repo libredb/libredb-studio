@@ -32,7 +32,7 @@ import { writeToClipboard } from "@/components/copy-button";
 import { ResultCard } from "@/components/results-grid/ResultCard";
 import { RowDetailSheet } from "@/components/results-grid/RowDetailSheet";
 import { StatsBar } from "@/components/results-grid/StatsBar";
-import { describeWarning, formatCellCopy, formatCellValue } from "@/components/results-grid/utils";
+import { describeWarning, formatCellCopy, formatCellValue, renderContextFor } from "@/components/results-grid/utils";
 import {
   getHeaderFitColumnSize,
   RESULT_COLUMN_MAX_SIZE,
@@ -340,9 +340,12 @@ export function ResultsGrid({
 
   const getCopyCellValue = useCallback(
     (rowIndex: number, row: Record<string, unknown>, field: string): string => {
-      return formatCellCopy(getDisplayedCellValue(rowIndex, row, field).value);
+      return formatCellCopy(
+        getDisplayedCellValue(rowIndex, row, field).value,
+        renderContextFor(result.vectorColumns, field),
+      );
     },
-    [getDisplayedCellValue],
+    [getDisplayedCellValue, result.vectorColumns],
   );
 
   const copyToClipboard = useCallback((text: string, label: string) => {
@@ -635,7 +638,10 @@ export function ResultsGrid({
 
         // Show revealed cell with lock indicator
         if (effectiveMaskingEnabled && sensitivePattern && isRevealed) {
-          const { display, className } = formatCellValue(displayValue);
+          const { display, className } = formatCellValue(
+            displayValue,
+            renderContextFor(result.vectorColumns, column.id),
+          );
           return (
             <div className={cn("w-full flex gap-1", valueFlow, wrapText ? "items-start" : "items-center")}>
               <span className={className}>{display}</span>
@@ -645,7 +651,7 @@ export function ResultsGrid({
         }
 
         // Show pending change value
-        const { display, className } = formatCellValue(displayValue);
+        const { display, className } = formatCellValue(displayValue, renderContextFor(result.vectorColumns, column.id));
 
         // No editor is opened unless editing is on: the commit paths above already
         // required it, so without this a cell offered an input whose edit was
@@ -686,6 +692,7 @@ export function ResultsGrid({
     wrapText,
     result.fields,
     result.columnTypes,
+    result.vectorColumns,
     editingCell,
     editValue,
     effectiveMaskingEnabled,
@@ -890,6 +897,7 @@ export function ResultsGrid({
                     onSelect={() => setSelectedRow({ row: result.rows[virtualRow.index], index: virtualRow.index })}
                     maskingActive={effectiveMaskingEnabled}
                     sensitiveColumns={sensitiveColumns}
+                    vectorColumns={result.vectorColumns}
                   />
                 </div>
               </ContextMenuTrigger>
@@ -964,7 +972,10 @@ export function ResultsGrid({
                     >
                       {visibleFields.map((field, idx) => {
                         const { value: cellValue, isMasked } = getDisplayedCellValue(virtualRow.index, row, field);
-                        const { display: displayValue, className: formattedClassName } = formatCellValue(cellValue);
+                        const { display: displayValue, className: formattedClassName } = formatCellValue(
+                          cellValue,
+                          renderContextFor(result.vectorColumns, field),
+                        );
                         const className = isMasked ? "text-fg-muted italic" : formattedClassName;
 
                         return (
@@ -1108,6 +1119,7 @@ export function ResultsGrid({
           maskingActive={effectiveMaskingEnabled}
           sensitiveColumns={sensitiveColumns}
           allowReveal={userCanReveal}
+          vectorColumns={result.vectorColumns}
         />
       )}
     </div>

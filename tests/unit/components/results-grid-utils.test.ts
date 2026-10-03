@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { describeWarning, formatCellCopy, formatCellValue } from "@/components/results-grid/utils";
+import { describeWarning, formatCellCopy, formatCellValue, renderContextFor } from "@/components/results-grid/utils";
+import type { VectorColumn } from "@/lib/db/vector/types";
 
 // =============================================================================
 // formatCellValue — output parity pins (#96)
@@ -107,5 +108,38 @@ describe("formatCellCopy", () => {
     expect(formatCellValue(bytes).display).toHaveLength(77);
     expect(formatCellCopy(bytes)).toBe(`\\x${hex}`);
     expect(formatCellCopy(new Uint8Array([1, 2, 171, 255]))).toBe("\\x0102abff");
+  });
+});
+
+describe("renderContextFor", () => {
+  const embedding: VectorColumn = { kind: "dense", dtype: "float32", dimension: 2 };
+
+  test("a declared column gets its declaration, and any other column none", () => {
+    expect(renderContextFor({ embedding }, "embedding")).toEqual({ vector: embedding });
+    expect(renderContextFor({ embedding }, "id")).toBeUndefined();
+    expect(renderContextFor(undefined, "embedding")).toBeUndefined();
+  });
+
+  test("a column named like an Object.prototype member finds no declaration", () => {
+    for (const field of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(renderContextFor({ embedding }, field)).toBeUndefined();
+    }
+  });
+});
+
+describe("formatCellValue and formatCellCopy with a column's declaration", () => {
+  const context = { vector: { kind: "dense", dtype: "float32", dimension: 2 } } as const;
+
+  test("a declared cell draws and copies as a vector", () => {
+    expect(formatCellValue([1, 0.5], context)).toEqual({
+      display: "[1.0, 0.5] 2 dims",
+      className: "text-hue-teal/80 font-mono",
+    });
+    expect(formatCellCopy([1, 0.5], context)).toBe("[1.0,0.5]");
+  });
+
+  test("a masked cell's text in a declared column draws and copies as the text", () => {
+    expect(formatCellValue("***", context).display).toBe("***");
+    expect(formatCellCopy("***", context)).toBe("***");
   });
 });

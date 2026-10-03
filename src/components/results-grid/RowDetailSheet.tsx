@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
 import { writeToClipboard } from "@/components/copy-button";
+import type { VectorColumn } from "@/lib/db/vector/types";
 import { classifyValue } from "./renderers/classify";
 import { getRenderer } from "./renderers/registry";
+import { renderContextFor } from "./utils";
 
 export interface RowDetailSheetProps {
   row: Record<string, unknown>;
@@ -20,6 +22,8 @@ export interface RowDetailSheetProps {
   maskingActive?: boolean;
   sensitiveColumns?: Map<string, MaskingPattern>;
   allowReveal?: boolean;
+  /** The result's vector columns (`QueryResult.vectorColumns`), so a field of one shows its header and whole value. */
+  vectorColumns?: Readonly<Record<string, VectorColumn>>;
 }
 
 export function RowDetailSheet({
@@ -31,6 +35,7 @@ export function RowDetailSheet({
   maskingActive,
   sensitiveColumns,
   allowReveal,
+  vectorColumns,
 }: RowDetailSheetProps) {
   /**
    * Which copy just ran, and whether it actually happened (B43). A bare field name
@@ -69,10 +74,11 @@ export function RowDetailSheet({
           isMasked: true,
         };
       }
-      const detail = getRenderer(classifyValue(value)).renderDetail(value);
+      const context = renderContextFor(vectorColumns, field);
+      const detail = getRenderer(classifyValue(value, context)).renderDetail(value, context);
       return { ...detail, isMasked: false };
     },
-    [maskingActive, sensitiveColumns, revealedFields],
+    [maskingActive, sensitiveColumns, revealedFields, vectorColumns],
   );
 
   /** The outcome is reported only once the write has one, never alongside starting it. */
@@ -84,8 +90,15 @@ export function RowDetailSheet({
   };
 
   const copyValue = (field: string, value: unknown) => {
-    const { text } = getDisplayValue(field, value);
-    copyAndReport(field, text);
+    const shown = getDisplayValue(field, value);
+    if (shown.isMasked) {
+      copyAndReport(field, shown.text);
+      return;
+    }
+    // The renderer's copy form where it has one: a vector's detail is a header line over the value, and only the
+    // value is search data. Every other kind copies the detail text, as it always did.
+    const context = renderContextFor(vectorColumns, field);
+    copyAndReport(field, getRenderer(classifyValue(value, context)).renderCopy?.(value, context) ?? shown.text);
   };
 
   const copyAllAsJson = () => {
