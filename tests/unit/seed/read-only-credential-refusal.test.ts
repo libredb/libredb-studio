@@ -112,7 +112,9 @@ describe("load: what the file shows", () => {
   });
 
   it("refuses a read-only seed with no password, or an empty one, even when its user is a reference", () => {
-    expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}" })).toEqual([["password", refusedAtLoad(NO_SECRET_SENTENCE)]]);
+    expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}" })).toEqual([
+      ["password", refusedAtLoad(NO_SECRET_SENTENCE)],
+    ]);
     expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}", password: "" })).toEqual([
       ["password", refusedAtLoad(NO_SECRET_SENTENCE)],
     ]);
