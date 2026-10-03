@@ -1669,6 +1669,131 @@ services:
     healthcheck: *milvus-health
     <<: *milvus-limits
 
+  # ---------------------------------------------------------------------------------------
+  # Qdrant (the qdrant provider). One server with no key is the default fixture, seeded by a
+  # one-shot Python sidecar; three keyed servers sit behind profiles: `qdrant-auth`, with an
+  # admin key, a read-only key and JWT RBAC, and `qdrant-tls`, with one-way TLS and with TLS
+  # that verifies the client's certificate. The keys and the TLS settings reach each keyed
+  # server as the local.yaml qdrant-keys generates into a volume, never as an environment
+  # variable here. No server publishes gRPC 6334 or the internal port 6335, which the provider
+  # never dials, and no server has a data volume: removing its container resets it.
+  # docker/qdrant/README.md describes the servers, the seeded collections and the keys.
+  # ---------------------------------------------------------------------------------------
+  qdrant:
+    # The GHCR mirror of the build the vector fixtures were captured from, by tag and by
+    # digest; it reports commit 6ab21cac.
+    image: ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822
+    container_name: libredb-qdrant
+    restart: unless-stopped
+    environment: &qdrant-env
+      # A server otherwise reports to telemetry.qdrant.io every hour.
+      QDRANT__TELEMETRY_DISABLED: "true"
+    ports:
+      - "127.0.0.1:6333:6333"
+    healthcheck: &qdrant-http-health
+      # /readyz needs no key. The image has bash and no curl, so the probe speaks HTTP itself.
+      test:
+        - CMD
+        - bash
+        - -c
+        - exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\r\n\r\n' >&3 && head -n 1 <&3 | grep -q ' 200 '
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Bounded at the maintainer's request; no swap past it. Measured 44 to 80 MiB after seeding
+    # during the research.
+    <<: &qdrant-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "2"
+            memory: 2G
+      memswap_limit: 2G
+
+  # -- Qdrant, keys, JWT and TLS -------------------------------------------------
+
+  qdrant-keys:
+    # Generates each keyed server's admin and read-only keys, its local.yaml and the TLS
+    # material into a named volume at first start (docker/qdrant/keys.sh), so no key and no
+    # private key is ever committed.
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-qdrant-keys
+    profiles: ["qdrant-auth", "qdrant-tls"]
+    restart: "no"
+    volumes:
+      - qdrant-keys:/keys
+      - ./docker/qdrant:/qdrant-scripts:ro
+    entrypoint: ["sh", "/qdrant-scripts/keys.sh", "/keys"]
+    <<: *vector-one-shot-limits
+
+  qdrant-auth:
+    image: ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822
+    container_name: libredb-qdrant-auth
+    profiles: ["qdrant-auth"]
+    restart: unless-stopped
+    depends_on:
+      qdrant-keys:
+        condition: service_completed_successfully
+    entrypoint: ["bash", "-c", "cp /keys/auth/local.yaml /qdrant/config/local.yaml && exec ./entrypoint.sh"]
+    environment:
+      <<: *qdrant-env
+      # inference listener must receive nothing
+      QDRANT__INFERENCE__ADDRESS: http://host.docker.internal:18904/infer
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - qdrant-keys:/keys:ro
+    ports:
+      - "127.0.0.1:6343:6333"
+    healthcheck: *qdrant-http-health
+    <<: *qdrant-limits
+
+  qdrant-tls:
+    # TLS on REST: the server presents its certificate and asks for none.
+    image: ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822
+    container_name: libredb-qdrant-tls
+    profiles: ["qdrant-tls"]
+    restart: unless-stopped
+    depends_on:
+      qdrant-keys:
+        condition: service_completed_successfully
+    entrypoint: ["bash", "-c", "cp /keys/tls/local.yaml /qdrant/config/local.yaml && exec ./entrypoint.sh"]
+    environment: *qdrant-env
+    volumes:
+      - qdrant-keys:/keys:ro
+    ports:
+      - "127.0.0.1:6353:6333"
+    healthcheck: &qdrant-tcp-health
+      # The listener speaks TLS, which bash cannot, so the probe only opens the socket.
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/6333"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    <<: *qdrant-limits
+
+  qdrant-mtls:
+    # TLS with verify_https_client_certificate: the server also asks for a client certificate
+    # issued by the fixture's CA.
+    image: ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822
+    container_name: libredb-qdrant-mtls
+    profiles: ["qdrant-tls"]
+    restart: unless-stopped
+    depends_on:
+      qdrant-keys:
+        condition: service_completed_successfully
+    entrypoint: ["bash", "-c", "cp /keys/mtls/local.yaml /qdrant/config/local.yaml && exec ./entrypoint.sh"]
+    environment: *qdrant-env
+    volumes:
+      - qdrant-keys:/keys:ro
+    ports:
+      - "127.0.0.1:6363:6333"
+    healthcheck: *qdrant-tcp-health
+    <<: *qdrant-limits
+
   # ==========================================================================
   # Wire-compatible engines (issue #424, Phase 0)
   #
@@ -2295,7 +2420,8 @@ volumes:
   # the two etcd auth servers and their init one-shots. Each Milvus server keeps its data in a
   # volume of its own, because the image runs as uid 999 and a bind mount crashed it;
   # milvus-certs and milvus-credentials hold the generated certificates and the seeded users'
-  # passwords. Everything else uses the image's own anonymous volumes.
+  # passwords, and qdrant-keys the generated Qdrant keys, local.yaml files and certificates.
+  # Everything else uses the image's own anonymous volumes.
   #
   # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
   # that write or read segments. A `down -v` resets the cluster to empty.
@@ -2312,3 +2438,4 @@ volumes:
   milvus-mtls-data: {}
   milvus-certs: {}
   milvus-credentials: {}
+  qdrant-keys: {}

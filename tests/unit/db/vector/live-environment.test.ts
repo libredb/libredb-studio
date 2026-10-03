@@ -295,3 +295,128 @@ describe("the Milvus seed", () => {
     expectCommandsNameProjectAndServices(readme, MILVUS_SERVICES);
   });
 });
+
+const QDRANT_IMAGE =
+  "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822";
+
+/** The Qdrant servers: profile, published port, the local.yaml it reads, and its health probe. */
+const QDRANT_SERVERS: Readonly<
+  Record<
+    string,
+    { readonly profile?: string; readonly port: string; readonly config?: string; readonly probe: "http" | "tcp" }
+  >
+> = {
+  qdrant: { port: "127.0.0.1:6333:6333", probe: "http" },
+  "qdrant-auth": { profile: "qdrant-auth", port: "127.0.0.1:6343:6333", config: "auth", probe: "http" },
+  "qdrant-tls": { profile: "qdrant-tls", port: "127.0.0.1:6353:6333", config: "tls", probe: "tcp" },
+  "qdrant-mtls": { profile: "qdrant-tls", port: "127.0.0.1:6363:6333", config: "mtls", probe: "tcp" },
+};
+
+describe("the Qdrant servers in database-compose.yml", () => {
+  test("each runs Qdrant 1.19.1 pinned by digest, named libredb-<service>, behind the profile the design names", () => {
+    for (const [name, expected] of Object.entries(QDRANT_SERVERS)) {
+      expect({
+        name,
+        image: service(name).image,
+        container: service(name).container_name,
+        profiles: service(name).profiles,
+      }).toEqual({
+        name,
+        image: QDRANT_IMAGE,
+        container: `libredb-${name}`,
+        profiles: expected.profile === undefined ? undefined : [expected.profile],
+      });
+      expect(service(name).restart).toBe("unless-stopped");
+    }
+  });
+
+  test("each publishes REST alone on loopback, never gRPC 6334 or the internal 6335, and has no data volume", () => {
+    for (const [name, expected] of Object.entries(QDRANT_SERVERS)) {
+      expect({ name, ports: service(name).ports }).toEqual({ name, ports: [expected.port] });
+      expect(service(name).volumes ?? []).toEqual(expected.config === undefined ? [] : ["qdrant-keys:/keys:ro"]);
+    }
+  });
+
+  test("each turns telemetry off, and none takes a key or a TLS setting from its environment", () => {
+    for (const name of Object.keys(QDRANT_SERVERS)) {
+      expect(service(name).environment?.QDRANT__TELEMETRY_DISABLED).toBe("true");
+      for (const key of Object.keys(service(name).environment ?? {})) {
+        expect({ name, key, keyOrTls: /^QDRANT__(SERVICE|TLS)__/.test(key) }).toEqual({ name, key, keyOrTls: false });
+      }
+    }
+  });
+
+  test("each keyed server reads its own generated local.yaml and waits for qdrant-keys", () => {
+    for (const [name, expected] of Object.entries(QDRANT_SERVERS)) {
+      if (expected.config === undefined) {
+        expect(service(name).entrypoint).toBeUndefined();
+        continue;
+      }
+      expect(service(name).entrypoint).toEqual([
+        "bash",
+        "-c",
+        `cp /keys/${expected.config}/local.yaml /qdrant/config/local.yaml && exec ./entrypoint.sh`,
+      ]);
+      expect(service(name).depends_on).toEqual({ "qdrant-keys": { condition: "service_completed_successfully" } });
+    }
+  });
+
+  test("qdrant-auth points its inference address at the harness listener, and says only that it must receive nothing", () => {
+    expect(service("qdrant-auth").environment?.QDRANT__INFERENCE__ADDRESS).toBe(
+      "http://host.docker.internal:18904/infer",
+    );
+    expect(service("qdrant-auth").extra_hosts).toEqual(["host.docker.internal:host-gateway"]);
+    expect(COMPOSE_TEXT).toContain(
+      "      # inference listener must receive nothing\n      QDRANT__INFERENCE__ADDRESS:",
+    );
+    expect(COMPOSE_TEXT.match(/inference/gi)).toHaveLength(2);
+    for (const name of ["qdrant", "qdrant-tls", "qdrant-mtls"]) {
+      expect(service(name).environment?.QDRANT__INFERENCE__ADDRESS).toBeUndefined();
+    }
+  });
+
+  test("each has a health probe its transport allows, and is bounded to 2 CPUs and 2 GiB with no swap", () => {
+    for (const [name, expected] of Object.entries(QDRANT_SERVERS)) {
+      const probe = service(name).healthcheck?.test ?? [];
+      expect(probe.slice(0, 3)).toEqual(["CMD", "bash", "-c"]);
+      expect(probe[3]).toContain(expected.probe === "http" ? "GET /readyz" : "</dev/tcp/127.0.0.1/6333");
+      expect(limits(name)).toEqual({ cpus: "2", memory: "2G", swap: "2G" });
+    }
+  });
+
+  test("qdrant-keys is a bounded one-shot in the pinned openssl image, behind both keyed profiles", () => {
+    expect(service("qdrant-keys")).toMatchObject({
+      image: OPENSSL_IMAGE,
+      container_name: "libredb-qdrant-keys",
+      profiles: ["qdrant-auth", "qdrant-tls"],
+      restart: "no",
+      entrypoint: ["sh", "/qdrant-scripts/keys.sh", "/keys"],
+      volumes: ["qdrant-keys:/keys", "./docker/qdrant:/qdrant-scripts:ro"],
+    });
+    expect(service("qdrant-keys").ports).toBeUndefined();
+    expect(limits("qdrant-keys")).toEqual({ cpus: "0.5", memory: "64M", swap: "64M" });
+    expect(compose.volumes).toHaveProperty("qdrant-keys");
+  });
+});
+
+describe("docker/qdrant/keys.sh", () => {
+  const keys = script("qdrant/keys.sh");
+
+  test("generates an admin and a read-only key of 32 random bytes for each keyed server", () => {
+    expect(keys).toContain("for server in auth tls mtls; do");
+    expect(keys).toContain('openssl rand -hex 32 >"$server/admin.key"');
+    expect(keys).toContain('openssl rand -hex 32 >"$server/read-only.key"');
+  });
+
+  test("writes JWT RBAC into the auth server's local.yaml, and TLS, verifying the client on mtls, into the others", () => {
+    expect(keys).toContain("  jwt_rbac: true");
+    expect(keys).toContain("  enable_tls: true");
+    expect(keys).toContain('verify_https_client_certificate: $([ "$server" = mtls ] && echo true || echo false)');
+    expect(keys).toContain("subjectAltName=DNS:localhost,IP:127.0.0.1,DNS:qdrant-tls,DNS:qdrant-mtls");
+    expect(keys).toContain("extendedKeyUsage=clientAuth");
+  });
+
+  test("runs once, behind a marker", () => {
+    expect(keys).toContain('[ -f .complete ] && { echo "keys already in $1"; exit 0; }');
+  });
+});
