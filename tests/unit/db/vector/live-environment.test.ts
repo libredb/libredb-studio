@@ -284,7 +284,7 @@ describe("the Milvus seed", () => {
     expect(compose.volumes).toHaveProperty("milvus-credentials");
   });
 
-  test("seed.py creates the research's objects and the four the fixtures add, in two databases", () => {
+  test("seed.py creates the research's objects and the ones the fixtures add, in two databases", () => {
     const seed = script("milvus/seed.py");
     for (const name of [
       "docs_int64",
@@ -297,6 +297,7 @@ describe("the Milvus seed", () => {
       "large_topk",
       "shadowed",
       "wide_768",
+      "emb_list",
       "notes",
     ]) {
       expect(seed).toContain(`"${name}", "`);
@@ -305,6 +306,9 @@ describe("the Milvus seed", () => {
     expect(seed).toContain('properties={"query_mode": "large_topk"}');
     expect(seed).toContain("num_partitions=1024");
     expect(seed).toContain('c.add_collection_field(spec.name, field_name="zeta"');
+    // An embedding list: a struct array whose vector subfield is indexed with a MAX_SIM metric.
+    expect(seed).toContain("element_type=DataType.STRUCT");
+    expect(seed).toContain('"chunks[emb]": ("HNSW", "MAX_SIM_COSINE"');
   });
 
   test("seed.py names root's documented default once, and generates every other password", () => {

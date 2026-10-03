@@ -45,6 +45,7 @@ TYPE_NAMES = {
     DataType.BINARY_VECTOR: "BinaryVector",
     DataType.INT8_VECTOR: "Int8Vector",
     DataType.SPARSE_FLOAT_VECTOR: "SparseFloatVector",
+    DataType.STRUCT: "Struct",
 }
 
 
@@ -105,13 +106,39 @@ def wait_index(c, name):
 
 
 class Field:
-    def __init__(self, name, dtype, **params):
+    """A field; a struct array (element_type STRUCT) takes its subfields as `struct`, a list of Field."""
+
+    def __init__(self, name, dtype, struct=(), **params):
         self.name = name
         self.dtype = dtype
+        self.struct = struct
         self.params = params
+
+    def add_to(self, c, schema):
+        if not self.struct:
+            schema.add_field(self.name, self.dtype, **self.params)
+            return
+        struct_schema = c.create_struct_field_schema()
+        for sub in self.struct:
+            struct_schema.add_field(sub.name, sub.dtype, **sub.params)
+        schema.add_field(self.name, self.dtype, struct_schema=struct_schema, **self.params)
+
+    def wire(self, value):
+        if not self.struct:
+            return wire(self.dtype, value)
+        types = {sub.name: sub.dtype for sub in self.struct}
+        return [{key: wire(types[key], item) for key, item in element.items()} for element in value]
+
+    def stored(self, value):
+        if not self.struct:
+            return stored(self.dtype, value)
+        types = {sub.name: sub.dtype for sub in self.struct}
+        return [{key: stored(types[key], item) for key, item in element.items()} for element in value]
 
     def manifest(self):
         entry = {"name": self.name, "type": TYPE_NAMES[self.dtype]}
+        if self.struct:
+            entry["fields"] = [sub.manifest() for sub in self.struct]
         for key, value in self.params.items():
             if key == "element_type":
                 entry[key] = TYPE_NAMES[value]
@@ -152,10 +179,15 @@ class Collection:
     def types(self):
         return {field.name: field.dtype for field in (*self.fields, *self.added)}
 
+    def wired(self, row):
+        """The row as pymilvus inserts it: a struct array's elements converted subfield by subfield."""
+        fields = {field.name: field for field in (*self.fields, *self.added)}
+        return {key: fields[key].wire(value) if key in fields else value for key, value in row.items()}
+
     def create(self, c):
         schema = c.create_schema(auto_id=self.auto_id, enable_dynamic_field=self.dynamic, description=self.description)
         for field in self.fields:
-            schema.add_field(field.name, field.dtype, **field.params)
+            field.add_to(c, schema)
         for name, source, output in self.functions:
             schema.add_function(Function(name=name, function_type=FunctionType.BM25, input_field_names=[source],
                                          output_field_names=[output]))
@@ -183,22 +215,22 @@ class Collection:
             c.release_collection(self.name)
 
     def insert(self, c):
-        types = self.types()
         batches = {}
         for row, partition in self.rows():
-            batches.setdefault(partition, []).append({key: wire(types.get(key), value) for key, value in row.items()})
+            batches.setdefault(partition, []).append(self.wired(row))
         for partition, rows in batches.items():
             options = {"partition_name": partition} if partition else {}
             for start in range(0, len(rows), 1000):
                 c.insert(self.name, rows[start:start + 1000], **options)
 
     def manifest(self):
-        types = self.types()
+        fields = {field.name: field for field in (*self.fields, *self.added)}
         rows = self.rows()
         sample = []
         for seq, (row, partition) in enumerate(rows[:self.sample]):
             entry = {"seq": seq, "key": row.get(self.key) if self.key else None,
-                     "values": {key: stored(types.get(key), value) for key, value in row.items()}}
+                     "values": {key: fields[key].stored(value) if key in fields else stored(None, value)
+                                for key, value in row.items()}}
             if partition:
                 entry["partition"] = partition
             sample.append(entry)
@@ -354,6 +386,18 @@ def shadowed_stages(c, spec):
         c.insert(spec.name, [{key: wire(types.get(key), value) for key, value in row.items()}])
 
 
+# Each row's chunks are an embedding list of one to three 4-dimension rows, every element exact in float32.
+EMB_LIST_ROWS = [
+    {"id": 1, "label": "two-chunks", "vec": [1.0, 0.0, 0.0, 0.0],
+     "chunks": [{"note": "a", "emb": [1.0, 0.0, 0.0, 0.0]}, {"note": "b", "emb": [0.0, 1.0, 0.0, 0.0]}]},
+    {"id": 2, "label": "one-chunk", "vec": [0.0, 1.0, 0.0, 0.0],
+     "chunks": [{"note": "c", "emb": [0.5, 0.5, 0.5, 0.5]}]},
+    {"id": 3, "label": "three-chunks", "vec": [0.0, 0.0, 1.0, 0.0],
+     "chunks": [{"note": "d", "emb": [0.0, 0.0, 1.0, 0.0]}, {"note": "e", "emb": [0.0, 0.0, 0.0, 1.0]},
+                {"note": "f", "emb": [-0.25, 0.75, -1.5, 2.0]}]},
+]
+
+
 def wide_768_rows():
     rng = np.random.default_rng(10)
     vectors = unit(rng, 1000, 768)
@@ -441,6 +485,15 @@ COLLECTIONS = [
         [Field("id", DataType.INT64, is_primary=True), Field("vec", DataType.FLOAT_VECTOR, dim=768)],
         {"vec": ("HNSW", "COSINE", HNSW)}, wide_768_rows, key="id",
         rule="the result byte budget"),
+    Collection(
+        "default", "emb_list", "a struct array whose vector subfield is an embedding list",
+        [Field("id", DataType.INT64, is_primary=True), Field("label", DataType.VARCHAR, max_length=32),
+         Field("vec", DataType.FLOAT_VECTOR, dim=4),
+         Field("chunks", DataType.ARRAY, element_type=DataType.STRUCT, max_capacity=4,
+               struct=(Field("note", DataType.VARCHAR, max_length=32), Field("emb", DataType.FLOAT_VECTOR, dim=4)))],
+        {"vec": ("FLAT", "L2", {}), "chunks[emb]": ("HNSW", "MAX_SIM_COSINE", SMALL_HNSW)},
+        lambda: [(dict(row), None) for row in EMB_LIST_ROWS], key="id", sample=len(EMB_LIST_ROWS),
+        rule="an embedding list: its multivector cells and a MAX_SIM search"),
     Collection(
         "probe_db", "notes", "a second database, small and loaded",
         [Field("id", DataType.INT64, is_primary=True), Field("vec", DataType.FLOAT_VECTOR, dim=4),
