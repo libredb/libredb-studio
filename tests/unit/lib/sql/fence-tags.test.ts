@@ -34,6 +34,7 @@ describe("fenceTagEngine", () => {
       "kafka",
       "etcd",
       "neo4j",
+      "qdrant",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -122,6 +123,12 @@ describe("fenceTagEngine", () => {
     // The control: the canonical tag names the same engine, so the two spellings cannot disagree.
     expect(isQueryFenceTag("neo4j")).toBe(true);
     expect(fenceTagEngine("neo4j")).toBe("neo4j");
+  });
+
+  test("qdrant has no alias: json, http and rest name other things, so none of them names Qdrant (vector-family spec 6.7)", () => {
+    for (const tag of ["json", "http", "rest"]) expect(fenceTagEngine(tag)).not.toBe("qdrant");
+    expect(fenceTagEngine("qdrant")).toBe("qdrant");
+    expect(isQueryFenceTag("qdrant")).toBe(true);
   });
 
   test("promql is a language tag that still names one engine, because one type-id runs PromQL", () => {

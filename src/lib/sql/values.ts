@@ -69,7 +69,7 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // filtering check, which is only possible if the backslash did not escape the
   // quote that closed the literal.
   cassandra: "standard",
-  // These five declare `queryLanguage: "json"`, so no statement is ever built for
+  // These six declare `queryLanguage: "json"`, so no statement is ever built for
   // them to read. What a generator emits for such a connection is portable SQL
   // meant to run elsewhere, and the standard form is the only thing it can claim.
   mongodb: "standard",
@@ -77,7 +77,8 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   libredb: "standard",
   kafka: "standard",
   etcd: "standard",
-  // PromQL, not SQL (#1085): the same reading as the five above. A PromQL string
+  qdrant: "standard",
+  // PromQL, not SQL (#1085): the same reading as the six above. A PromQL string
   // escapes with a backslash, but that is not a SQL literal and nothing here builds one.
   prometheus: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the

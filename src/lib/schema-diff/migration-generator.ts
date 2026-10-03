@@ -181,6 +181,14 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "A node label groups nodes whose properties are not declared columns, so there is no column definition to change.",
   },
+  // Not a table store either (vector-family spec 6.3): a collection holds points whose payloads are schemaless, and
+  // the columns the object browser shows are its vectors, its payload indexes and a sample of its payload keys.
+  // The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  qdrant: {
+    label: "Qdrant",
+    reason:
+      "A collection's payloads are schemaless and its vectors are declared through Qdrant's own collection API, not SQL DDL, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -236,7 +244,7 @@ const NO_DROP_IF_EXISTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["ora
  * any wrapper is written, so this entry keeps the two sets agreeing rather than changing output.
  * `kafka` (#1088) joined on the same fact and for the same reason: its text is a JSON read
  * request, not SQL. `etcd` (#1089) joined the same way: its text is an etcdctl command line, and
- * `neo4j` too: its text is a Cypher statement.
+ * `neo4j` too: its text is a Cypher statement, and `qdrant`: its text is a Qdrant console request.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
@@ -257,6 +265,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "kafka",
   "etcd",
   "neo4j",
+  "qdrant",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -274,6 +283,7 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "kafka",
   "etcd",
   "neo4j",
+  "qdrant",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

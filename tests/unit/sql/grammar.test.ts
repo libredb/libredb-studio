@@ -429,6 +429,8 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   etcd: "default",
   // Cypher, not SQL: the graph lexer reads it, so no SQL grammar is established for it, and none is read.
   neo4j: "default",
+  // A Qdrant console request, not SQL (vector-family spec 6.4): no SQL grammar is established for it, and none is read.
+  qdrant: "default",
 };
 
 /**
@@ -521,6 +523,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // A Cypher statement is not SQL text: its strings escape with a backslash, `//` opens a comment and a
   // backtick quotes a name, none of which a SQL span reader follows (Neo4j spec 5.5).
   neo4j: false,
+  // A Qdrant console request is a request line and one JSON body, not SQL text: its strings escape with a
+  // backslash and `//` opens a comment, which a SQL span reader cannot follow (vector-family spec 6.4).
+  qdrant: false,
 };
 
 describe("readsSqlText", () => {

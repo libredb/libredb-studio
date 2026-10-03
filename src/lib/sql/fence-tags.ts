@@ -92,6 +92,10 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A ```neo4j block holds one read-only Cypher statement the editor runs as it is (Neo4j spec 6.4). The
   // `cypher` alias below spells the language, and it still names this engine: see its entry.
   neo4j: true,
+  // A ```qdrant block holds one Qdrant console request the editor runs as it is (vector-family spec 6.7). No alias
+  // is registered below: `json` is a MongoDB document as often, `http` and `rest` name no engine, and
+  // `fenceTagEngine` is what decides whether a plan's deliverable was written for THIS connection.
+  qdrant: true,
 });
 
 /**

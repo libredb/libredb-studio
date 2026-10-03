@@ -1047,6 +1047,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     kafka: "engine-has-no-foreign-key",
     etcd: "engine-has-no-foreign-key",
     neo4j: "engine-has-no-foreign-key",
+    qdrant: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1164,6 +1165,9 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   etcd: { label: "etcd", reason: "not rows with declared columns" },
   // Not a table store: a label groups nodes whose properties are not declared columns.
   neo4j: { label: "Neo4j", reason: "not declared columns" },
+  // Not a table store either (vector-family spec 6.3): a collection holds points whose payloads are schemaless, and
+  // the columns the object browser shows are its vectors, its payload indexes and a sample of its payload keys.
+  qdrant: { label: "Qdrant", reason: "payloads are schemaless" },
 };
 
 /**
@@ -1338,6 +1342,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "kafka",
           "etcd",
           "neo4j",
+          "qdrant",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1380,10 +1385,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining eleven each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining fourteen each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the eleven needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the fourteen needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1399,6 +1404,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   kafka: false, // a JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   etcd: false, // an etcdctl command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   neo4j: false, // a Cypher statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  qdrant: false, // a Qdrant console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1429,6 +1435,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "kafka",
             "etcd",
             "neo4j",
+            "qdrant",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

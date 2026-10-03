@@ -96,6 +96,8 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("a\\b", "kafka")).toBe("'a\\b'");
     // Nor for an etcdctl command (#1089).
     expect(quoteLiteral("a\\b", "etcd")).toBe("'a\\b'");
+    // Nor for a Qdrant request (vector-family spec 6.4): its body is JSON, and no SQL statement is built for it.
+    expect(quoteLiteral("a\\b", "qdrant")).toBe("'a\\b'");
     expect(quoteLiteral("O'Brien", "kafka")).toBe("'O''Brien'");
   });
 
@@ -179,6 +181,8 @@ describe("positionalPlaceholder", () => {
     expect(positionalPlaceholder("kafka", 1)).toBeNull();
     // Nor an etcdctl command: the provider refuses bound params outright (#1089 5.4).
     expect(positionalPlaceholder("etcd", 1)).toBeNull();
+    // Nor a Qdrant request: its values are typed into the JSON body, and the provider binds nothing.
+    expect(positionalPlaceholder("qdrant", 1)).toBeNull();
     // Nor a Cypher statement: Cypher binds named `$name` parameters only, and the provider sends none in
     // this version, so the read policy refuses a parameter in the text before it is sent.
     expect(positionalPlaceholder("neo4j", 1)).toBeNull();
