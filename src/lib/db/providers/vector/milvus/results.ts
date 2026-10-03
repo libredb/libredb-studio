@@ -76,8 +76,14 @@ function staticColumns(schema: WireCollectionSchema, readers: readonly ColumnRea
     if (!field.is_dynamic) take(field.name, fieldTypeText(field, schema.functions), vectorColumnOf(field));
   }
   for (const struct of schema.struct_array_fields) take(struct.name, "ArrayOfStruct");
-  for (const name of [...byName.keys()].sort()) take(name, byName.get(name)?.type ?? "");
+  for (const name of [...byName.keys()].sort(byCodeUnit)) take(name, byName.get(name)?.type ?? "");
   return columns;
+}
+
+/** Names in code-unit order, the order `sort()` uses when given no comparator. */
+function byCodeUnit(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
 }
 
 function sameLength(lengths: readonly number[], what: string): number {
