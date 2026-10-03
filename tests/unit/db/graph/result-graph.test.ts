@@ -297,8 +297,10 @@ describe("captionOf", () => {
     expect(caption({ other: "o", label: "B" })).toBe("B");
   });
 
-  test("matches those keys case-insensitively", () => {
+  test("matches every key without case, the first in property order winning a tie", () => {
     expect(caption({ Title: "T", NAME: "N" })).toBe("N");
+    expect(caption({ Name: "Upper", name: "lower" })).toBe("Upper");
+    expect(caption({ LastNAME: "Lovelace", DESCRIPTION: "D" })).toBe("Lovelace");
   });
 
   test("then a key ending in name, then description", () => {
@@ -335,6 +337,14 @@ describe("captionOf", () => {
     const text = `${"x".repeat(22)}\u{1F600}\u{1F600}\u{1F600}`;
     expect(caption({ name: text })).toBe(`${"x".repeat(22)}\u{1F600}…`);
   });
+
+  test("truncation never splits a grapheme cluster", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    const flag = "\u{1F1F9}\u{1F1F7}";
+    expect(caption({ name: `${"x".repeat(22)}${family}${family}${family}` })).toBe(`${"x".repeat(22)}${family}…`);
+    expect(caption({ name: `${"x".repeat(22)}${flag}${flag}${flag}` })).toBe(`${"x".repeat(22)}${flag}…`);
+    expect(caption({ name: `${"x".repeat(23)}${flag}` })).toBe(`${"x".repeat(23)}${flag}`);
+  });
 });
 
 describe("hasGraphValues", () => {
@@ -351,5 +361,10 @@ describe("hasGraphValues", () => {
 
   test("finds one inside lists and maps", () => {
     expect(hasGraphValues([{ x: [1, { deep: [ab] }] }])).toBe(true);
+  });
+
+  test("counts only what can be drawn, so an empty path offers no tab", () => {
+    expect(hasGraphValues([{ p: path([], []) }])).toBe(false);
+    expect(buildResultGraph([{ p: path([], []) }], ["p"], { maxNodes: 300 }).nodes).toEqual([]);
   });
 });

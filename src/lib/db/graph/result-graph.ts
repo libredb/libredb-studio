@@ -56,6 +56,7 @@ export interface ResultGraphOptions {
 
 const CAPTION_LENGTH = 24;
 const ELLIPSIS = "…";
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 /**
  * Every graph value in a cell, in depth-first order. A path yields its member
@@ -92,16 +93,19 @@ function asText(value: unknown): string {
   return typeof value === "string" ? value : typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
+/** Counts visible characters (grapheme clusters), so a cut never splits an emoji sequence or a flag. */
 function truncate(text: string): string {
-  const chars = Array.from(text);
+  const chars = Array.from(graphemes.segment(text), (part) => part.segment);
   return chars.length <= CAPTION_LENGTH ? text : `${chars.slice(0, CAPTION_LENGTH - 1).join("")}${ELLIPSIS}`;
 }
 
 /**
  * A node's caption: the first present property among `name`, `title`, `label`,
- * then a key ending in `name`, then `description` (keys compared without case),
- * then the first string property, else the first label, else the elementId;
- * at most 24 characters. Null, undefined and the empty string are not present.
+ * then a key ending in `name`, then `description`, then the first string
+ * property, else the first label, else the elementId; at most 24 characters.
+ * Every key comparison ignores case, and when two keys match one step (`Name`
+ * and `name`), the first in property order wins. Null, undefined and the empty
+ * string are not present.
  */
 export function captionOf(node: Pick<GraphNodeJson, "elementId" | "labels" | "properties">): string {
   const present = Object.entries(node.properties).filter(([, value]) => value != null && value !== "");
@@ -116,7 +120,11 @@ export function captionOf(node: Pick<GraphNodeJson, "elementId" | "labels" | "pr
   return truncate(found ? asText(found[1]) : (node.labels[0] ?? node.elementId));
 }
 
-/** True when any cell of any row holds a graph value, at any depth. */
+/**
+ * True when any cell of any row holds a drawable graph value, at any depth: a
+ * node, a relationship, or a path with at least one member. A path with no
+ * members draws nothing, so it offers no tab; Neo4j never returns one.
+ */
 export function hasGraphValues(rows: readonly Record<string, unknown>[]): boolean {
   return rows.some((row) => Object.values(row).some((cell) => !graphValuesIn(cell).next().done));
 }
