@@ -941,7 +941,7 @@ transport, and it is a separate type-id when it comes. See [trino.md](./provider
 |---|---|
 | **PrestoDB** | Shipped-adjacent: the `trino` transport already builds its headers from a dialect prefix, so this is a descriptor, a doc and an integration test. A separate type-id, because `version()` and the fault vocabulary differ |
 | **Snowflake / BigQuery / Databricks SQL** | REST SQL APIs exist and the data model fits; auth is the wall (key-pair JWT, service-account signing, OAuth) and that is where the no-dependency promise ends |
-| **CouchDB, ArangoDB, SurrealDB, Qdrant, Weaviate** | All HTTP, all non-SQL or only partially SQL. Feasible, but each needs its own query grammar the way MongoDB and LibreDB do |
+| **CouchDB, ArangoDB, SurrealDB, Weaviate** | All HTTP, all non-SQL or only partially SQL. Feasible, but each needs its own query grammar the way MongoDB and LibreDB do |
 
 Contributions are welcome for any of these. Open an issue with the rubric score first, so the design
 decisions are settled before code exists — that is what let the Couchbase, ClickHouse, Druid, Trino and
