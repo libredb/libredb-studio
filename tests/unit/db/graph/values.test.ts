@@ -69,8 +69,7 @@ describe("isGraphValueJson", () => {
   });
 
   test("refuses a node missing elementId or with mistyped fields", () => {
-    const { elementId: _omit, ...noId } = alice;
-    expect(isGraphValueJson(noId)).toBe(false);
+    expect(isGraphValueJson({ "~graph": "node", labels: ["Person"], properties: { name: "Alice" } })).toBe(false);
     expect(isGraphValueJson({ ...alice, elementId: 7 })).toBe(false);
     expect(isGraphValueJson({ ...alice, labels: "Person" })).toBe(false);
     expect(isGraphValueJson({ ...alice, labels: ["Person", 1] })).toBe(false);
