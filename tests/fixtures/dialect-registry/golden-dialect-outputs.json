@@ -227,6 +227,18 @@
   "selectQuery": "get 'Order\"Items' --prefix --limit=50\n\n# put 'Order\"Itemsexample' value\n\n# del 'Order\"Itemsexample'\n\n# watch 'Order\"Items' --prefix\n\n# txn\n# create(\"Order\\\"Itemsexample\") = \"0\"\n#\n# put \"Order\\\"Itemsexample\" value\n#\n# get \"Order\\\"Itemsexample\"",
   "countQuery": null
  },
+ "neo4j": {
+  "queryLanguage": "cypher",
+  "queryDialect": null,
+  "tabType": "cypher",
+  "monacoLanguage": "graph-cypher",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "",
+  "selectQuery": "",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",
