@@ -59,6 +59,13 @@ class RowReader {
     return value;
   }
 
+  /** A string or null; a missing field is refused like any other wrong shape. */
+  nullableString(row: Row, field: string): string | null {
+    const value = row[field];
+    if (value !== null && typeof value !== "string") throw this.wrong(field, "a string or null");
+    return value;
+  }
+
   strings(row: Row, field: string): string[] {
     const value = row[field];
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) {
@@ -115,17 +122,20 @@ async function listKind(
 ): Promise<{ entries: readonly GraphCatalogEntry[]; truncated: boolean }> {
   if (kind === "index") {
     const { reader, rows, result } = await createdIndexes(client, database);
-    const entries = rows.map((row) => ({
-      name: reader.string(row, "name"),
-      detail: {
-        type: reader.string(row, "type"),
-        entityType: reader.entity(row),
-        labelsOrTypes: reader.strings(row, "labelsOrTypes"),
-        properties: reader.strings(row, "properties"),
-        state: reader.string(row, "state"),
-        ...(row.owningConstraint === null ? {} : { owningConstraint: reader.string(row, "owningConstraint") }),
-      },
-    }));
+    const entries = rows.map((row) => {
+      const owningConstraint = reader.nullableString(row, "owningConstraint");
+      return {
+        name: reader.string(row, "name"),
+        detail: {
+          type: reader.string(row, "type"),
+          entityType: reader.entity(row),
+          labelsOrTypes: reader.strings(row, "labelsOrTypes"),
+          properties: reader.strings(row, "properties"),
+          state: reader.string(row, "state"),
+          ...(owningConstraint === null ? {} : { owningConstraint }),
+        },
+      };
+    });
     return { entries, truncated: result.truncated };
   }
   const statement = NEO4J_CATALOG_STATEMENTS[kind];
@@ -181,7 +191,7 @@ async function indexRows(
       labelsOrTypes: reader.strings(row, "labelsOrTypes"),
       properties: reader.strings(row, "properties"),
       state: reader.string(row, "state"),
-      unique: row.owningConstraint !== null,
+      unique: reader.nullableString(row, "owningConstraint") !== null,
     })),
     truncated: result.truncated,
   };

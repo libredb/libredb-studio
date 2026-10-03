@@ -240,4 +240,27 @@ describe("neo4jCatalog over other answers", () => {
       ),
     ).rejects.toThrow(QueryError);
   });
+
+  test("reads owningConstraint the same way for the listing and the index rows: null, a string, or refused", async () => {
+    const index = {
+      name: "i",
+      type: "RANGE",
+      entityType: "NODE",
+      labelsOrTypes: ["A"],
+      properties: ["p"],
+      state: "ONLINE",
+    };
+    const refusal =
+      'The catalog answer of "SHOW INDEXES YIELD name, type, entityType, labelsOrTypes, properties, state, owningConstraint" holds a owningConstraint that is not a string or null';
+    const refused = [index, { ...index, owningConstraint: 7 }].flatMap((row) => [
+      expect(neo4jCatalog.indexRows(answering([row]).client, DATABASE)).rejects.toThrow(refusal),
+      expect(neo4jCatalog.listKind(answering([row]).client, DATABASE, "index")).rejects.toThrow(refusal),
+    ]);
+    await Promise.all(refused);
+    const owned = answering([{ ...index, owningConstraint: "c" }]).client;
+    expect((await neo4jCatalog.indexRows(owned, DATABASE)).rows[0].unique).toBe(true);
+    expect((await neo4jCatalog.listKind(owned, DATABASE, "index")).entries[0].detail).toMatchObject({
+      owningConstraint: "c",
+    });
+  });
 });
