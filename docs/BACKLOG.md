@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D145, U17 · 89
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X20, U2-U72 · 60
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X22, U2-U72 · 62
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -2456,6 +2456,26 @@ A streamed bound read before the parse, as `readBoundedJson` in `src/lib/api/bou
 X19 measured how `POST /api/db/query` answers a body above the framework's 10 MiB buffer; how `POST /api/db/multi-query` answers one is unverified.
 
 **Done when:** the owner has chosen a body bound for the query routes, and both routes answer a body above it with a 413 that names the size, read from the stream before any parse, with a test per route.
+
+### X21. One user can fill a shared connection's in-flight slots
+
+`src/lib/db/utils/bounded-limiter.ts` bounds the calls Studio has in flight per provider and per engine key, with one FIFO queue per engine key, and `ProviderLimiter.acquire(signal)` takes no user.
+A connection every user shares, a seed connection above all, is one provider, so one user's console runs and panel reads can hold every slot and fill the queue.
+Another user's request then waits behind them, or is refused with the full-queue sentence, although that user sent one request.
+No shipped provider uses the limiter yet; the Milvus and Qdrant providers are its first consumers.
+Measured 2026-10-03: `acquire` takes the one parameter `signal`, and `engineLimiter` has no caller outside its own module.
+
+**Done when:** the routes that reach a provider bound the calls each user has in flight on one connection, with a test that a second user's request is admitted while the first user's requests fill their own share.
+
+### X22. A request the browser drops does not cancel the query it started
+
+`POST /api/db/query` hands the run's `queryId` to a provider that implements `cancelQuery`, and the one way to stop that run is `POST /api/db/cancel` with the same id, which the editor's Stop sends.
+When the browser drops the request instead, because the tab is closed, the network fails or the page reloads, the route never reads the request's abort signal.
+The provider then keeps the query running until it ends or its deadline passes, holding its connection and, for a provider on the limiter of X21, its slot.
+No engine has that bridge today.
+Measured 2026-10-03: `src/app/api/db/query/route.ts` holds no reference to `signal`.
+
+**Done when:** a request aborted mid-run reaches the provider's `cancelQuery` for the run it started, with a route test that aborts the request and asserts exactly one cancel for its `queryId`.
 
 ---
 
