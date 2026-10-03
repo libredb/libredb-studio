@@ -95,6 +95,16 @@ describe("the grid cell", () => {
     expect(display([[0.5]], context("multi", "float32"))).toBe("[[0.5]] 1 row of 1 dim");
     expect(display([], context("multi", "float32"))).toBe("[] 0 rows of 0 dims");
   });
+
+  test("a cell whose length differs from the declared dimension states its own length", () => {
+    expect(display([], context("dense", "float32", 768))).toBe("[] 0 dims");
+    expect(display([1, 2], context("dense", "float32", 768))).toBe("[1.0, 2.0] 2 dims");
+    expect(display([255], context("dense", "binary", 16))).toBe("[255] 8 bits");
+    expect(display([[]], context("multi", "float32", 2))).toBe("[[]] 1 row of 0 dims");
+    expect(vectorRenderer.renderDetail([1, 2], context("dense", "float32", 768)).text).toBe(
+      "dense float32, 2 dims\n[1.0,2.0]",
+    );
+  });
 });
 
 describe("the row detail", () => {
@@ -178,6 +188,26 @@ describe("isVectorCell", () => {
     expect(isVectorCell({ indices: [1, 2], values: [0.5] }, column("sparse", "float32", null, "indices-values"))).toBe(
       false,
     );
+  });
+
+  test("refuses every value under a kind it does not know, so a newer host's declaration draws the cell as what it is", () => {
+    const unknown = { kind: "Dense", dtype: "float32", dimension: 3 } as unknown as VectorColumn;
+    for (const value of [[1, 2, 3], "abc", 5, "****"]) {
+      expect(isVectorCell(value, unknown), JSON.stringify(value)).toBe(false);
+      expect(classifyValue(value, { vector: unknown }), JSON.stringify(value)).not.toBe("vector");
+    }
+  });
+
+  test("refuses every value under a declaration that is not an object", () => {
+    const missing = null as unknown as VectorColumn;
+    expect(isVectorCell([1, 2, 3], missing)).toBe(false);
+    expect(classifyValue("x", { vector: missing })).toBe("scalar");
+  });
+
+  test("refuses a sparse cell whose encoding it does not know", () => {
+    const csr = { kind: "sparse", dtype: "float32", dimension: null, sparseEncoding: "csr" } as unknown as VectorColumn;
+    expect(isVectorCell({ indices: [1], values: [0.5] }, csr)).toBe(false);
+    expect(isVectorCell({ "1": 0.5 }, csr)).toBe(false);
   });
 
   test("the renderer refuses a value its column does not describe, rather than drawing a vector", () => {

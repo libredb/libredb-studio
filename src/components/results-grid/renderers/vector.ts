@@ -61,7 +61,10 @@ function isElementRow(value: unknown): value is readonly Element[] {
 }
 
 function readSparse(value: unknown, encoding: SparseEncoding | undefined): VectorCell | null {
-  if (encoding === undefined || value === null || typeof value !== "object") return null;
+  // An encoding this build does not know is not read as one it does: the copy would not be the engine's own form.
+  if ((encoding !== "index-map" && encoding !== "indices-values") || value === null || typeof value !== "object") {
+    return null;
+  }
   const sparse = sparseFromCell(value, encoding);
   if (sparse === null) return null;
   if (encoding === "index-map") {
@@ -76,8 +79,14 @@ function readSparse(value: unknown, encoding: SparseEncoding | undefined): Vecto
   return isElementRow(indices) && isElementRow(values) ? { kind: "indices-values", indices, values, sparse } : null;
 }
 
-/** `value` read as a cell of `column`, or null when it does not have the shape the column declares. */
+/**
+ * `value` read as a cell of `column`, or null when it does not have the shape the column declares.
+ *
+ * A host hands the declaration as plain data, so one this build cannot read (not an object, or a kind added after
+ * this build) describes no cell, and the cell draws as what it is rather than failing the grid.
+ */
 function readVectorCell(value: unknown, column: VectorColumn): VectorCell | null {
+  if (typeof column !== "object" || (column as VectorColumn | null) === null) return null;
   switch (column.kind) {
     case "dense":
       return isElementRow(value) ? { kind: "dense", values: value } : null;
@@ -85,6 +94,8 @@ function readVectorCell(value: unknown, column: VectorColumn): VectorCell | null
       return Array.isArray(value) && value.every(isElementRow) ? { kind: "multi", rows: value } : null;
     case "sparse":
       return readSparse(value, column.sparseEncoding);
+    default:
+      return null;
   }
 }
 
@@ -119,14 +130,16 @@ function counted(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
 
+/** The size the cell holds, never the declared dimension in its place, so a short or empty cell does not claim 768. */
 function sizeText(cell: VectorCell, column: VectorColumn): string {
   switch (cell.kind) {
     case "dense":
       return column.dtype === "binary"
-        ? counted(column.dimension ?? cell.values.length * 8, "bit", "bits")
-        : counted(column.dimension ?? cell.values.length, "dim", "dims");
+        ? counted(cell.values.length * 8, "bit", "bits")
+        : counted(cell.values.length, "dim", "dims");
     case "multi": {
-      const rowSize = column.dimension ?? (cell.rows.length === 0 ? 0 : cell.rows[0].length);
+      // With no row to measure, the declared row size is the only size there is.
+      const rowSize = cell.rows.length === 0 ? (column.dimension ?? 0) : cell.rows[0].length;
       return `${counted(cell.rows.length, "row", "rows")} of ${counted(rowSize, "dim", "dims")}`;
     }
     case "index-map":
