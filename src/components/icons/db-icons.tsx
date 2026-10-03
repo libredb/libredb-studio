@@ -553,3 +553,31 @@ export const Neo4jIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="M16.88 8.24 13.12 15.76" />
   </svg>
 );
+
+/**
+ * Qdrant: a mark drawn for Studio, never the project's logo or any vendor asset.
+ *
+ * A query point with two distance rings around it and the neighbours the rings reach, the nearest-neighbour
+ * search a vector database answers, as strokes at the house weight with no fill, which is what stays
+ * identifiable at the 14px the connection list draws. The outer ring is open, so it reads as a radius and not
+ * as a second node.
+ */
+export const QdrantIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="1.75" />
+    <circle cx="12" cy="12" r="5.25" />
+    <path d="M3 12a9 9 0 0 1 9-9" />
+    <path d="M21 12a9 9 0 0 1-9 9" />
+    <circle cx="18.4" cy="5.6" r="1.25" />
+    <circle cx="5.6" cy="18.4" r="1.25" />
+  </svg>
+);

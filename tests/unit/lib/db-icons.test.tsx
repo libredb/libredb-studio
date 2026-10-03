@@ -22,6 +22,7 @@ import {
   EtcdIcon,
   Db2Icon,
   Neo4jIcon,
+  QdrantIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -48,6 +49,7 @@ describe("db-icons", () => {
     { name: "EtcdIcon", Component: EtcdIcon },
     { name: "Db2Icon", Component: Db2Icon },
     { name: "Neo4jIcon", Component: Neo4jIcon },
+    { name: "QdrantIcon", Component: QdrantIcon },
   ];
 
   for (const { name, Component } of icons) {

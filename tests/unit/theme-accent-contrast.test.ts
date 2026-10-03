@@ -223,14 +223,17 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
 ];
 
 /**
- * The six hues where two engines share a hue and are held apart only by step, so
+ * The seven hues where two engines share a hue and are held apart only by step, so
  * the `-alt` is a distinct IDENTITY and has to join the separation set. Pinned by
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
  * `fuchsia` joined with Neo4j: of the hues with no identity `-alt` yet, only
  * violet's step stands further from its nearest identity in both palettes, and
  * violet is LibreDB's own; the closest pair of the set stays where it was.
+ * `rose` joined with Qdrant, whose own mark is a crimson: `hue-rose` is Redis's, and
+ * its `-alt` step, which theme.css already declared as an emphasis, clears every
+ * test below as an identity too.
  */
-const IDENTITY_ALTS = ["blue", "sky", "yellow", "emerald", "teal", "fuchsia"] as const;
+const IDENTITY_ALTS = ["blue", "sky", "yellow", "emerald", "teal", "fuchsia", "rose"] as const;
 
 /**
  * What theme.css actually declares, and what each declaration is supposed to be.
