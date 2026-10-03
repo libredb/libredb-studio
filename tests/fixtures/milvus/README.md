@@ -11,7 +11,8 @@ It drives @grpc/grpc-js with the definition the descriptor generator builds and 
 Every file records the image with its digest, the server version, the date, the runtime, the RPC, the Milvus user, the surface and the request.
 The error rows of the provider's error table and the TLS rows run under Bun and again in a Node child; a row whose two answers differ is written twice, as `<name>.bun.json` and `<name>.node.json`.
 No credential, token or key is written: the authorization metadata is never recorded, and every file is checked for every form of every credential the run sent before it is written.
-The harness writes only a collection and an alias under the prefix `libredb_evidence_`, which it creates at the start and drops at the end.
+The harness writes only what it owns, under the prefix `libredb_evidence_`: a collection and an alias on `milvus`, and on `milvus-tls`, which no seed writes, an empty loaded collection the TLS port's waiting queries wait on.
+It creates them at the start and drops them at the end.
 
 ## The catalog
 
