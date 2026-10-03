@@ -84,6 +84,11 @@ const NUMERAL_WORDS: Record<string, number> = {
   eighteen: 18,
   nineteen: 19,
   twenty: 20,
+  "twenty-one": 21,
+  "twenty-two": 22,
+  "twenty-three": 23,
+  "twenty-four": 24,
+  "twenty-five": 25,
 };
 
 /**
@@ -256,8 +261,25 @@ describe("the gate fails the copy it exists to catch", () => {
   });
 
   test("an English numeral is read as well as a digit", () => {
+    // The word for the current count is looked up, not written here, so this fixture does
+    // not go stale with the copy it guards.
+    const word = Object.keys(NUMERAL_WORDS).find((key) => NUMERAL_WORDS[key] === expected);
+    expect(word).toBeDefined();
+    const capitalized = `${word?.charAt(0).toUpperCase()}${word?.slice(1)}`;
+
     expect(engineCountProblems("Query fourteen engines from your browser.", "fixture")).toHaveLength(1);
-    expect(engineCountProblems(`Nineteen database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
+    expect(engineCountProblems(`${capitalized} database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
+  });
+
+  test("a hyphenated numeral is read whole, not as its first word", () => {
+    // "twenty-one engines" must publish 21. Read as "twenty" it would pass on the day the
+    // count is twenty and the copy is one ahead.
+    expect(engineCountProblems("Query twenty-one engines from your browser.", "fixture")).toEqual(
+      expected === 21 ? [] : [`fixture: "twenty-one engines" publishes 21, and there are ${expected}`],
+    );
+    expect(engineCountProblems("Query Twenty-Five database engines.", "fixture")).toEqual(
+      expected === 25 ? [] : [`fixture: "Twenty-Five database engines" publishes 25, and there are ${expected}`],
+    );
   });
 
   test("a deliberately abridged list is checked on its numeral only", () => {
