@@ -7,7 +7,7 @@ import type * as Monaco from "monaco-editor";
 import { Zap, LoaderCircle, TextAlignStart, Trash2, Copy, Play, Hash } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
+import { DIALECT_EDITORS, formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
 import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
 import type { SchemaCompletionCache, SchemaColumnItem } from "@/lib/editor/sql-completions";
 import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completions";
@@ -85,6 +85,19 @@ interface QueryEditorProps {
   databaseType?: DatabaseType;
   schemaContext?: string;
   capabilities?: import("@/lib/db/types").ProviderCapabilities;
+}
+
+/**
+ * What the Format button's tooltip names, for each language that has a formatter: JSON for MongoDB and Kafka, a
+ * request of its dialect for a tab whose editor record carries a console language (vector-family spec 3.5; the dialect id
+ * is the engine's name in lower case, so `qdrant` reads "Qdrant request"), and SQL for the rest, the only other
+ * formatter. Read from the records, so no engine is named here.
+ */
+function formatTitleNoun(language: QueryEditorProps["language"]): string {
+  if (language === "json") return "JSON";
+  const consoleSpec = Object.values(DIALECT_EDITORS).find((editor) => editor.monacoId === language)?.console?.spec;
+  if (consoleSpec === undefined) return "SQL";
+  return `${consoleSpec.id.charAt(0).toUpperCase()}${consoleSpec.id.slice(1)} request`;
 }
 
 interface ParsedTable {
@@ -640,7 +653,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               size="sm"
               className="h-7 text-xs font-medium text-fg-muted hover:text-fg-bright gap-2"
               onClick={handleFormat}
-              title={`Format ${language === "json" ? "JSON" : "SQL"} (${shortcutLabel(SHORTCUTS.formatQuery)})`}
+              title={`Format ${formatTitleNoun(language)} (${shortcutLabel(SHORTCUTS.formatQuery)})`}
             >
               <TextAlignStart strokeWidth={1.5} className="w-3 h-3" /> Format
             </Button>

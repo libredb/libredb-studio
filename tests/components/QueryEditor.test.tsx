@@ -809,6 +809,15 @@ describe("QueryEditor", () => {
     expect(formatBtn?.getAttribute("title")).toContain("Format JSON");
   });
 
+  test("FORMAT button names a Qdrant request in qdrant mode, never SQL (vector-family spec 6.7)", () => {
+    const { queryByText } = render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "qdrant", value: "GET /collections" })),
+    );
+    const formatBtn = queryByText("Format")!.closest("button");
+    expect(formatBtn?.getAttribute("title")).toContain("Format Qdrant request");
+    expect(formatBtn?.getAttribute("title")).not.toContain("SQL");
+  });
+
   // -----------------------------------------------------------------------
   // handleEditorChange — onContentChange callback
   // -----------------------------------------------------------------------
