@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:42:32.202Z",
+    "runtime": "bun 1.4.2",
+    "surface": "points/scroll of edge_values, the payload sample: 1000 points, no vectors",
+    "request": {
+      "method": "POST",
+      "path": "/collections/edge_values/points/scroll",
+      "headers": {},
+      "body": "{\"filter\":{\"must\":[{\"slice\":{\"index\":0,\"total\":1}}]},\"limit\":1000,\"with_payload\":true,\"with_vector\":false}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 213,
+    "body": "{\"result\":{\"points\":[{\"id\":1,\"payload\":{\"label\":\"range-ends\"}},{\"id\":2,\"payload\":{\"label\":\"non-finite-score\"}},{\"id\":3,\"payload\":{\"label\":\"metric-probe\"}}],\"next_page_offset\":null},\"status\":\"ok\",\"time\":0.00057948}"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:42:32.226Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/plain/aliases",
+    "request": {
+      "method": "GET",
+      "path": "/collections/plain/aliases",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 109,
+    "body": "{\"result\":{\"aliases\":[{\"alias_name\":\"plain_alias\",\"collection_name\":\"plain\"}]},\"status\":\"ok\",\"time\":3.266e-6}"
+  }
+}
