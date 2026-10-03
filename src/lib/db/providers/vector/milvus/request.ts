@@ -1504,6 +1504,12 @@ function checkAgainstIndex(
   }
 }
 
+/**
+ * The scalar types the server's group-by operator refuses, measured on 3.0.2 ("unsupported data type FLOAT for group
+ * by operator"); Bool, the integers, VarChar, JSON and Timestamptz group.
+ */
+const UNGROUPED_SCALAR_TYPES: readonly string[] = ["Float", "Double", "Array", "Geometry"];
+
 function groupingFieldOf(schema: WireCollectionSchema, grouping: GroupingPhase0 | undefined, collection: string) {
   if (grouping === undefined) return undefined;
   const field = schema.fields.find((candidate) => candidate.name === grouping.field);
@@ -1511,6 +1517,9 @@ function groupingFieldOf(schema: WireCollectionSchema, grouping: GroupingPhase0 
     throw refusal(1, "groupingField", `${shown(grouping.field)} is not a field of ${collection}.`);
   if (isVectorType(field.data_type)) {
     throw refusal(1, "groupingField", `${field.name} is a vector field; Milvus groups by a scalar field.`);
+  }
+  if (UNGROUPED_SCALAR_TYPES.includes(field.data_type)) {
+    throw refusal(1, "groupingField", `${field.name} has the type ${field.data_type}, which Milvus does not group by.`);
   }
   return field;
 }

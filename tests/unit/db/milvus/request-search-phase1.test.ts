@@ -285,6 +285,53 @@ describe("entities/search lowering (5.4)", () => {
     ).toBe('"nope" is not a field of docs_varchar.');
   });
 
+  test("grouping by a Float, Double, Array or Geometry field is refused in phase 1; JSON and the integers lower", () => {
+    const scalarsOnly = collectionSchema("scalars", [
+      fieldSchema({ name: "id", data_type: "Int64", is_primary_key: true }),
+      fieldSchema({
+        name: "v",
+        data_type: "FloatVector",
+        type_params: [{ key: "dim", value: "2" }],
+      }),
+      fieldSchema({ name: "f", data_type: "Float" }),
+      fieldSchema({ name: "d", data_type: "Double" }),
+      fieldSchema({ name: "a", data_type: "Array", element_type: "Int64" }),
+      fieldSchema({ name: "g", data_type: "Geometry", nullable: true }),
+      fieldSchema({ name: "j", data_type: "JSON" }),
+      fieldSchema({ name: "b", data_type: "Bool" }),
+      fieldSchema({ name: "i8", data_type: "Int8" }),
+      fieldSchema({ name: "ts", data_type: "Timestamptz", nullable: true }),
+    ]);
+    const run = (groupingField: string) =>
+      lowerWith(
+        `POST entities/search\n${JSON.stringify({ collectionName: "scalars", annsField: "v", data: [[0.1, 0.2]], groupingField })}`,
+        describeAnswer(scalarsOnly),
+        { kind: "read", response: describedIndex({ v: { indexType: "FLAT", metric: "L2" } }) },
+      );
+    for (const [name, type] of [
+      ["f", "Float"],
+      ["d", "Double"],
+      ["a", "Array"],
+      ["g", "Geometry"],
+    ]) {
+      expect(refusalOf(() => run(name))).toEqual({
+        phase: 1,
+        key: "groupingField",
+        message: `${name} has the type ${type}, which Milvus does not group by.`,
+      });
+    }
+    for (const name of ["j", "b", "i8", "ts", "id"]) {
+      const operation = run(name);
+      if (operation.kind !== "search") throw new Error("expected a search");
+      expect(pairs(operation.request).group_by_field).toBe(name);
+    }
+    expect(refusalOf(() => search("docs_int64", { annsField: "vec", data: [VECTOR], groupingField: "tags" }))).toEqual({
+      phase: 1,
+      key: "groupingField",
+      message: "tags has the type Array, which Milvus does not group by.",
+    });
+  });
+
   test("a query_mode=large_topk collection is searched under Studio's own caps, as any other (E28, R43 F16)", () => {
     const plain = describedCollection("docs_int64");
     const large = { ...plain, properties: [{ key: "query_mode", value: "large_topk" }] };
