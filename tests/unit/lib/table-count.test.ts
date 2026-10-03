@@ -81,6 +81,8 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   etcd: null,
   // Cypher (Neo4j spec 6.5): `offersCountQuery` answers false for the language, so no Count appears.
   neo4j: null,
+  // A Qdrant console request (vector-family spec 6.7): the dialect's record withholds the action; a count is the documented count request.
+  qdrant: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

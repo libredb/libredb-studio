@@ -11,6 +11,8 @@ import {
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
+import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { readsSqlText } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
@@ -313,12 +315,13 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka, etcd and neo4j and for no other type", () => {
+  test("is true for prometheus, kafka, etcd, neo4j and qdrant and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
       "etcd",
       "neo4j",
+      "qdrant",
     ]);
   });
 
@@ -328,13 +331,14 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the six types whose text is not SQL", () => {
+  test("carries a row for exactly the seven types whose text is not SQL", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
       "etcd",
       "kafka",
       "mongodb",
       "neo4j",
       "prometheus",
+      "qdrant",
       "redis",
     ]);
   });
@@ -441,8 +445,8 @@ describe("vocabularySendsToModel", () => {
 
   // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
   // values included, on this deployment (#1089 E10).
-  test("keeps etcd's statements from the AI analysis, and no other shipped type's", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual(["etcd"]);
+  test("keeps etcd's and Qdrant's statements from the AI analysis, and no other shipped type's", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual(["etcd", "qdrant"]);
   });
 
   test("sends with no type at all", () => {
@@ -521,7 +525,9 @@ describe("the etcd row", () => {
 
 /**
  * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
- * and never stored. No shipped row declares either field, so every rule here is driven by the stand-in row.
+ * and never stored. Qdrant's row is the one shipped row that declares both fields; every rule here is driven by
+ * the stand-in row, so it is pinned apart from any engine's grammar, and Qdrant's own is pinned in
+ * describe("the qdrant row").
  */
 describe("statementRefusal and the console text bound", () => {
   const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
@@ -532,12 +538,13 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("no shipped row declares a refusal or a bound, so no shipped type changes", () => {
-    for (const row of Object.values(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
+  test("only qdrant's row declares a refusal and a bound, so no other shipped type changes", () => {
+    for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
+      if (type === "qdrant") continue;
       expect(row?.refuse).toBeUndefined();
       expect(row?.maxTextBytes).toBeUndefined();
     }
-    for (const type of SHIPPED_DATABASE_TYPES) {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => candidate !== "qdrant")) {
       expect(consoleTextByteLimit(type)).toBeUndefined();
       expect(statementRefusal("x".repeat(10_000), type)).toBeUndefined();
     }
@@ -601,5 +608,45 @@ describe("statementRefusal and the console text bound", () => {
 
   test("never quotes the text it refuses", () => {
     expect(consoleTextOverLimit("SECRET-TEXT", 3)).not.toContain("SECRET");
+  });
+});
+
+/**
+ * Qdrant's row (vector-family spec 6.7): the provider's own guard.ts decides, a v1 request only reads, so no
+ * operation asks, the row keeps every statement from the AI analysis, and the editor refuses what guard.ts refuses,
+ * before the lexer, past the dialect's own byte bound.
+ */
+describe("the qdrant row", () => {
+  const READ = 'POST /collections/docs/points/scroll\n{"limit": 5, "with_payload": true}';
+  const WRITE = 'PUT /collections/docs/points\n{"points": [{"id": 1, "vector": [0.1, 0.2]}]}';
+
+  test("decides alone, names no destructive operation and asks about no read", () => {
+    const row = NON_SQL_DESTRUCTIVE_VOCABULARY.qdrant;
+    expect(row?.decidesAlone).toBe(true);
+    expect(row?.operations.size).toBe(0);
+    // guard.ts answers the route's class, and no class a v1 route has is a destructive operation.
+    expect(row?.read(READ)).toEqual(["read"]);
+    expect(row?.operations.has("read")).toBe(false);
+    expect(isDestructiveNonSqlQuery(READ, "qdrant")).toBe(false);
+    expect(row?.typedConfirmation).toBeUndefined();
+  });
+
+  test("keeps every statement from the AI analysis (vector-family spec 4.4)", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.qdrant?.safetyAnalysis).toBe(false);
+    expect(vocabularySendsToModel("qdrant")).toBe(false);
+  });
+
+  test("refuses with guard.ts's verdict, by reference, and declares the dialect's byte bound", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.qdrant?.refuse).toBe(qdrantRefusal);
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.qdrant?.maxTextBytes).toBe(QDRANT_CONSOLE.maxTextBytes);
+    expect(consoleTextByteLimit("qdrant")).toBe(1_048_576);
+    expect(statementRefusal(WRITE, "qdrant")).toBe(qdrantRefusal(WRITE));
+    expect(statementRefusal(WRITE, "qdrant")).toBeDefined();
+    expect(statementRefusal(READ, "qdrant")).toBeUndefined();
+  });
+
+  test("refuses a text one byte past the bound before guard.ts reads it", () => {
+    const over = `# ${"x".repeat(QDRANT_CONSOLE.maxTextBytes)}\n${READ}`;
+    expect(statementRefusal(over, "qdrant")).toContain(`over the ${QDRANT_CONSOLE.maxTextBytes}-byte limit`);
   });
 });

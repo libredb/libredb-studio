@@ -7,11 +7,13 @@ import type { DatabaseType } from "@/lib/types";
  *
  * A row of `NON_SQL_DESTRUCTIVE_VOCABULARY` is the only input the readers of the gate's `typedConfirmation` and
  * `safetyAnalysis` fields, `QuerySafetyDialog`, and the editor's `refuse` and `maxTextBytes` readers take (#1089;
- * no shipped row declares the last two). So a test installs one here, which pins each rule
+ * Qdrant's row is the one shipped row that declares the last two). So a test installs one here, which pins each rule
  * apart from any engine's grammar, and removes it when it ends; every test file runs in a bun process of its own,
  * so no other file ever reads the table while the row is in it. etcd's row, the one shipped row that declares both
- * fields, is pinned with its own commands in describe("the etcd row") of `tests/unit/db/destructive-commands.test.ts`
- * and describe("etcd's row") of `tests/components/QuerySafetyDialog.test.tsx`.
+ * of the first two fields, is pinned with its own commands in describe("the etcd row") of
+ * `tests/unit/db/destructive-commands.test.ts` and describe("etcd's row") of `tests/components/QuerySafetyDialog.test.tsx`;
+ * Qdrant's, in describe("the qdrant row") of the same unit file and describe("the real qdrant row") of
+ * `tests/hooks/use-query-execution.test.ts`.
  */
 export const STAND_IN_TYPE = "stand-in-typed-engine" as string as DatabaseType;
 

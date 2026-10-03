@@ -3,7 +3,7 @@
  * warning, decoded locally with no request, the no-secret refusal, and the provider's own connect() stage. Every
  * token here is minted at test time from a stand-in secret; none is written into a file.
  */
-import { describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { createHmac } from "node:crypto";
 
 const debug = mock(() => {});
@@ -20,6 +20,8 @@ import {
 } from "@/lib/db/credential-warnings";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
+import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
+import { SeedConnectionSchema } from "@/lib/seed/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 const TEST_PASSWORD = "password";
@@ -197,6 +199,58 @@ describe("connect(): the provider's own stage, after resolution (vector-family s
       createClient as never,
     );
     await expect(provider.connect()).rejects.toThrow(/user/i);
+    expect(createClient).toHaveBeenCalledTimes(0);
+  });
+});
+
+const seed = {
+  id: "vectors-read",
+  name: "Vectors",
+  type: "qdrant",
+  host: "qdrant.internal",
+  port: 6333,
+  roles: ["*"],
+  managed: true,
+  readOnly: true,
+} as const;
+
+function issuesOf(candidate: Record<string, unknown>): [string, string][] {
+  const result = SeedConnectionSchema.safeParse(candidate);
+  return result.success ? [] : result.error.issues.map((issue) => [issue.path.join("."), issue.message]);
+}
+
+function refusedAtLoad(refusal: string): string {
+  return `Seed connection "vectors-read": ${refusal} readOnly: true is refused with this credential, because the mode would promise a boundary the server does not keep. Give this connection a credential of its own, or remove readOnly.`;
+}
+
+describe("load: the seed file refuses what it shows (vector-family spec 3.12)", () => {
+  afterEach(() => {
+    delete process.env.QDRANT_SEED_KEY;
+  });
+
+  test("a read-only seed with no key, or an empty one, is refused naming the connection and the field", () => {
+    expect(issuesOf({ ...seed })).toEqual([["password", refusedAtLoad(NO_SECRET_SENTENCE)]]);
+    expect(issuesOf({ ...seed, password: "" })).toEqual([["password", refusedAtLoad(NO_SECRET_SENTENCE)]]);
+  });
+
+  test("a read-only seed holding a key loads, and one without readOnly loads with no key", () => {
+    expect(issuesOf({ ...seed, password: TEST_PASSWORD })).toEqual([]);
+    expect(issuesOf({ ...seed, readOnly: undefined })).toEqual([]);
+  });
+
+  test("a ${ENV} reference that resolves to nothing is refused after resolution, by the provider, with zero client calls", async () => {
+    process.env.QDRANT_SEED_KEY = "";
+    const parsed = SeedConnectionSchema.parse({ ...seed, password: "${QDRANT_SEED_KEY}" });
+    const resolved = resolveConnectionCredentials(parsed);
+    expect(readOnlySeedRefusal("qdrant", resolved)).toBe(NO_SECRET_SENTENCE);
+    const { createClient } = openServer();
+    const provider = new QdrantProvider(
+      connection({ seedId: resolved.id, readOnly: true, password: resolved.password }),
+      {},
+      {},
+      createClient as never,
+    );
+    await expect(provider.connect()).rejects.toThrow(NO_SECRET_SENTENCE);
     expect(createClient).toHaveBeenCalledTimes(0);
   });
 });

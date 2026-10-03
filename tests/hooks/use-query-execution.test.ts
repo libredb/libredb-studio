@@ -6,6 +6,7 @@ import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../helpers/mock-fetch";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
+import qdrantDocs from "../fixtures/vector/corpus/qdrant-docs.json";
 import { storage } from "@/lib/storage";
 
 // ── Mock QuerySafetyDialog ──────────────────────────────────────────────────
@@ -23,6 +24,7 @@ mock.module("@/components/QuerySafetyDialog", () => ({
 }));
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
+import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
@@ -4073,7 +4075,8 @@ describe("useQueryExecution", () => {
 // A statement the connection type's editor refuses
 // =============================================================================
 //
-// No shipped row declares `refuse` or `maxTextBytes`, so the stand-in row drives every case. The refusal runs before
+// Qdrant's row declares `refuse` and `maxTextBytes` (describe("the real qdrant row") below), and the stand-in row drives
+// every case here, so each rule is pinned apart from any engine's grammar. The refusal runs before
 // the confirmation gate, which is why `isDangerousQueryMock` is never consulted, and before every condition that
 // Proceed, an explain run, a page and playground mode skip.
 describe("a statement the connection type's editor refuses", () => {
@@ -4277,5 +4280,108 @@ describe("a statement the connection type's editor refuses", () => {
 
     expectRefused(tabs, fetchMock);
     expect(tabs[1]).toBe(other);
+  });
+});
+
+// =============================================================================
+// The real qdrant row (vector-family spec 4.2 and 4.4)
+// =============================================================================
+//
+// A request naming a model that is not local is a phase 0 refusal of guard.ts, which the real vocabulary row applies
+// in the browser: nothing is posted to any route, the query-safety route included, and no history is written. A
+// phase 1 refusal needs the schema and a version gate needs the server's version, so both reach the route once and
+// are written to history as an error carrying Studio's sentence.
+describe("the real qdrant row", () => {
+  const qdrantConnection: DatabaseConnection = { ...mockConnection, id: "qe-qdrant", name: "Vectors", type: "qdrant" };
+  const NON_LOCAL_MODEL = /"model"\s*:\s*"(?!(?:qdrant\/bm25|bm25)")/;
+  /** The documentation's own single requests, each on a route the v1 table runs, that name a model other than local BM25. */
+  const HOSTED_MODEL_BLOCKS = (qdrantDocs as { blocks: { file: string; text: string }[] }).blocks.filter(
+    (block) => NON_LOCAL_MODEL.test(block.text) && /^\s*POST /.test(block.text),
+  );
+  let history: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    history = spyOn(storage, "addToHistory").mockImplementation(() => {});
+    isDangerousQueryMock.mockClear();
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    history.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  function mount(route: MockFetchResponse) {
+    const tabs = [createTab({ result: { ...mockQueryResult } })];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    const fetchMock = mockGlobalFetch({ "/api/": route });
+    const params = createDefaultParams({ activeConnection: qdrantConnection, tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+    return { result, tabs, fetchMock };
+  }
+
+  test("the corpus holds the 18 documentation blocks the spec counts, 5 of them with a provider key in options", () => {
+    expect(HOSTED_MODEL_BLOCKS).toHaveLength(18);
+    expect(HOSTED_MODEL_BLOCKS.filter((block) => /"options"\s*:/.test(block.text))).toHaveLength(5);
+  });
+
+  test.each(HOSTED_MODEL_BLOCKS.map((block) => [block.file, block.text] as const))(
+    "refuses inference objects in the browser, with zero fetch and zero history entries: %s",
+    async (_file, text) => {
+      const sentence = qdrantRefusal(text);
+      expect(sentence).toBeDefined();
+      const { result, tabs, fetchMock } = mount({ json: mockQueryResult });
+      let returned: boolean | undefined;
+      await act(async () => {
+        returned = await result.current.executeQuery(text);
+      });
+      expect(returned).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(history).not.toHaveBeenCalled();
+      expect(isDangerousQueryMock).not.toHaveBeenCalled();
+      expect(tabs[0].runError).toBe(sentence);
+    },
+  );
+
+  test.each(HOSTED_MODEL_BLOCKS.map((block) => [block.file, block.text] as const))(
+    "Proceed and an explain run refuse the same block, with zero fetch: %s",
+    async (_file, text) => {
+      const { result, fetchMock } = mount({ json: mockQueryResult });
+      await act(async () => {
+        result.current.forceExecuteQuery(text);
+      });
+      await act(async () => {
+        await result.current.executeQuery(text, undefined, true);
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(history).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([
+    [
+      "a phase 1 refusal: local BM25 aimed at a dense vector",
+      'POST /collections/docs/points/query\n{"query": {"text": "vector search", "model": "qdrant/bm25"}, "using": "text", "limit": 5}',
+    ],
+    [
+      "a version-gate refusal: a key newer than the server",
+      'POST /collections/docs/points/query\n{"query": {"indices": [1, 3], "values": [0.1, 0.2]}, "using": "keywords", "params": {"idf": "global"}, "limit": 5}',
+    ],
+  ])("%s reaches the route once and is written to history as an error with Studio's sentence", async (_label, text) => {
+    // guard.ts cannot see the schema or the server's version, so it passes both; the provider refuses after its
+    // metadata read or at its version gate, and the route answers with Studio's sentence (vector-family spec 4.2).
+    expect(qdrantRefusal(text)).toBeUndefined();
+    const SENTENCE = "Studio refuses this request before running it.";
+    const { result, fetchMock } = mount({ status: 400, json: { error: SENTENCE } });
+    await act(async () => {
+      await result.current.executeQuery(text);
+    });
+    expect(fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://localhost:3000").pathname)).toEqual([
+      "/api/db/query",
+    ]);
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(history.mock.calls[0][0]).toMatchObject({ status: "error", errorMessage: SENTENCE, query: text });
   });
 });

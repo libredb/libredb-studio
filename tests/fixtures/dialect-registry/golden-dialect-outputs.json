@@ -251,6 +251,18 @@
   "selectQuery": "",
   "countQuery": null
  },
+ "qdrant": {
+  "queryLanguage": "json",
+  "queryDialect": "qdrant",
+  "tabType": "qdrant",
+  "monacoLanguage": "qdrant",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "POST /collections/Order%22Items/points/scroll\n{\"limit\": 100, \"with_payload\": true, \"with_vector\": false}",
+  "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

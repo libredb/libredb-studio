@@ -112,7 +112,13 @@ export type DatabaseType =
   // connection is one Bolt endpoint plus TLS, a user and password, and an optional `database`;
   // with none, the server's home database is used. Every write is refused before it is sent,
   // whatever `readOnly` says.
-  | "neo4j";
+  | "neo4j"
+  // Qdrant (vector-family spec 6). A vector database read over its REST API by a client of this repository's own on
+  // the shared node transport (`src/lib/db/http/node-transport.ts`), a member of the `vector/` family. Its editor
+  // text is Qdrant's own `METHOD /path` request with one JSON body, so it declares `queryLanguage: "json"` with a
+  // `queryDialect` of its own. The connection is one REST endpoint plus TLS and an API key or JWT in `password`;
+  // there is no user and no database, and `readOnly` is a mode its provider enforces.
+  | "qdrant";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 

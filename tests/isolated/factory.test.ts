@@ -631,6 +631,12 @@ describe("createDatabaseProvider", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
+  test("a qdrant connection with readOnly: true is built, since its provider keeps the mode (vector-family spec 4.4)", async () => {
+    const conn = { ...makeConnection("qdrant", { port: 6333, user: undefined, database: undefined }), readOnly: true };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("qdrant");
+  });
+
   test("the factory error lists qdrant among the supported types, before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant\b.*, libredb$/);

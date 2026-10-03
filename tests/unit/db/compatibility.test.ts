@@ -14,6 +14,7 @@ import {
   compatibleEnginesFor,
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
+  isExternalDatabaseType,
   MCP_EXPOSABLE,
   READ_ONLY_ENFORCED,
   SHIPPED_DATABASE_TYPES,
@@ -409,6 +410,21 @@ describe("wire-compatibility registry", () => {
     // both as on Oracle.
     expect(READ_ONLY_ENFORCED.db2).toBe(false);
     expect(MCP_EXPOSABLE.db2).toBe(true);
+  });
+
+  test("qdrant ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 6.7, 10.2)", () => {
+    // A server the user already runs, reached over its REST API. No relative is recorded: Qdrant Cloud speaks the
+    // same API and is claimed nowhere until a test cluster passes gate 4 (vector-family spec 6.2).
+    expect(SHIPPED_DATABASE_TYPES).toContain("qdrant");
+    expect(isExternalDatabaseType("qdrant")).toBe(true);
+    expect(compatibleEnginesFor("qdrant")).toEqual([]);
+    expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
+    expect(MCP_EXPOSABLE.qdrant).toBe(true);
+    // The counts of vector-family spec 10.2, from the sets they count: PREV plus one external engine and no relative.
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      23, 22, 28,
+    ]);
+    expect(connectableProductCount()).toBe(50);
   });
 
   test("duckdb ships as a driver and is a relative of nothing", () => {

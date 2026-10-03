@@ -5,6 +5,12 @@ import {
   etcdTypedConfirmation,
   readEtcdOperations,
 } from "@/lib/db/providers/keyvalue/etcd/guard";
+import {
+  QDRANT_DESTRUCTIVE_OPERATIONS,
+  qdrantRefusal,
+  readQdrantOperations,
+} from "@/lib/db/providers/vector/qdrant/guard";
+import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
 
 /**
  * The confirmation gate's vocabulary for the engines whose query text is NOT SQL.
@@ -472,6 +478,19 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // cannot run (Neo4j spec 5.5).
   neo4j: { operations: NEO4J_DESTRUCTIVE_OPERATIONS, read: readNeo4jOperations, decidesAlone: true },
   prometheus: { operations: PROMETHEUS_DESTRUCTIVE_OPERATIONS, read: readPrometheusOperations, decidesAlone: true },
+  // Qdrant (vector-family spec 6.7): the provider's own guard.ts reads the text with the parser the provider
+  // runs, so what asks and what runs are one parse. A v1 request only reads, so nothing asks; what guard.ts refuses
+  // (a write route, an inference input other than local BM25, an unknown key) the editor refuses before anything is
+  // sent.
+  qdrant: {
+    operations: QDRANT_DESTRUCTIVE_OPERATIONS,
+    read: readQdrantOperations,
+    decidesAlone: true,
+    // A request carries vectors, filters and payload values, so no Qdrant statement is posted for an AI analysis.
+    safetyAnalysis: false,
+    refuse: qdrantRefusal,
+    maxTextBytes: QDRANT_CONSOLE.maxTextBytes,
+  },
   redis: { operations: REDIS_DESTRUCTIVE_COMMANDS, read: readRedisOperations, decidesAlone: false },
 };
 

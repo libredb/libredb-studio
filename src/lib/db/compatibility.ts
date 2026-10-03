@@ -83,6 +83,9 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // family. Memgraph speaks Bolt and Cypher and is recorded below as a relative only once a gate-4
   // probe has measured it, never because the protocol answers.
   neo4j: true,
+  // Qdrant (vector-family spec 6): its own provider, doc and integration test, a member of the `vector/` family.
+  // Qdrant Cloud speaks the same API and is recorded nowhere until a test cluster passes gate 4 (vector-family spec 6.2).
+  qdrant: true,
   libredb: true,
 });
 
@@ -139,6 +142,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   etcd: true,
   // A server the user already runs, reached over Bolt.
   neo4j: true,
+  // A server or cluster the user already runs, reached over Qdrant's REST API.
+  qdrant: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -203,6 +208,9 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Read-only whatever the flag says: this version of the provider refuses every write before it is sent,
   // offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.
   neo4j: true,
+  // Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it
+  // refuses every route that is not a read before any request (vector-family spec 4.4).
+  qdrant: true,
   libredb: false,
 });
 
@@ -243,6 +251,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
   // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
   neo4j: true,
+  // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4); `run_read_query` does not
+  // serve it, because the provider implements no `queryReadOnly`.
+  qdrant: true,
   libredb: true,
 });
 

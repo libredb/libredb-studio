@@ -80,5 +80,7 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   etcd: unconnected("etcd"),
   // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing (Neo4j spec 6.1).
   neo4j: unconnected("neo4j"),
+  // No field beyond UNCONNECTED (vector-family spec 6.2): the constructor validates nothing and opens nothing; a user is refused at connect, which no census reaches.
+  qdrant: unconnected("qdrant"),
   libredb: unconnected("libredb"),
 });

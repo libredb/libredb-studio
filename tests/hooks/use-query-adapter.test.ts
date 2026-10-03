@@ -3,6 +3,8 @@ import "../helpers/mock-sonner";
 
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
+import qdrantDocs from "../fixtures/vector/corpus/qdrant-docs.json";
+import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { renderHook, act } from "@testing-library/react";
 
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
@@ -1698,5 +1700,80 @@ describe("a statement the connection type's editor refuses", () => {
 
     expectRefused(tabs, onQueryExecute);
     expect(tabs[1]).toBe(other);
+  });
+});
+
+// =============================================================================
+// The real qdrant row in the embedded workspace (vector-family spec 4.2)
+// =============================================================================
+//
+// The host owns the fetch behind `onQueryExecute`, so a refused statement must never reach it, on any of the four
+// paths a host's user can take.
+describe("the real qdrant row in the embedded workspace", () => {
+  const NON_LOCAL_MODEL = /"model"\s*:\s*"(?!(?:qdrant\/bm25|bm25)")/;
+  const HOSTED = (qdrantDocs as { blocks: { text: string }[] }).blocks.find(
+    (block) => NON_LOCAL_MODEL.test(block.text) && /^\s*POST /.test(block.text),
+  )?.text;
+  if (HOSTED === undefined) throw new Error("the corpus holds no hosted-model request");
+  const sentence = qdrantRefusal(HOSTED);
+
+  function mount(tab: QueryTab = makeTab({ query: HOSTED, type: "qdrant" })) {
+    const onQueryExecute = mock(() => Promise.resolve(makeQueryResult()));
+    const { tabs, setTabs } = createMutableTabs([tab]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: "qdrant" }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+    return { result, tabs, onQueryExecute };
+  }
+
+  test.each(["executeQuery", "forceExecuteQuery", "unlimited"] as const)(
+    "%s hands the host nothing and writes Studio's sentence to the tab",
+    async (run) => {
+      expect(sentence).toBeDefined();
+      const { result, tabs, onQueryExecute } = mount();
+      await act(async () => {
+        if (run === "executeQuery") await result.current.executeQuery(HOSTED);
+        else if (run === "forceExecuteQuery") result.current.forceExecuteQuery(HOSTED);
+        else {
+          result.current.setUnlimitedWarningOpen(true);
+          result.current.setPendingUnlimitedQuery({ query: HOSTED, tabId: "tab-1" });
+        }
+      });
+      if (run === "unlimited") {
+        await act(async () => {
+          result.current.handleUnlimitedQuery();
+        });
+      }
+      expect(onQueryExecute).not.toHaveBeenCalled();
+      expect(tabs[0].runError).toBe(sentence);
+    },
+  );
+
+  test("Load More refuses the request it pages", async () => {
+    const { result, tabs, onQueryExecute } = mount(
+      makeTab({
+        query: "GET /collections",
+        resultQuery: HOSTED,
+        type: "qdrant",
+        result: {
+          rows: [{ id: 1 }],
+          fields: ["id"],
+          rowCount: 1,
+          executionTime: 1,
+          pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true },
+        },
+        currentOffset: 50,
+      }),
+    );
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+    expect(onQueryExecute).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
   });
 });

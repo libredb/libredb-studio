@@ -707,4 +707,16 @@ describe("SeedConnectionSchema: a qdrant seed", () => {
   it("accepts the qdrant type, with no user and no database", () => {
     expect(SeedConnectionSchema.safeParse(qdrant).success).toBe(true);
   });
+
+  it("loads a managed read-only qdrant seed holding a key reference", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [{ ...qdrant, password: "${QDRANT_READ_ONLY_KEY}", readOnly: true, managed: true }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("loads a qdrant seed with mcp: true, since MCP is offered for Qdrant (vector-family spec 4.4)", () => {
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...qdrant, mcp: true }] }).success).toBe(true);
+  });
 });

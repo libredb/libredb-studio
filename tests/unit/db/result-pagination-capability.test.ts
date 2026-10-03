@@ -70,6 +70,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   kafka: false,
   etcd: false,
   neo4j: false,
+  qdrant: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

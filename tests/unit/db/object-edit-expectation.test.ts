@@ -18,9 +18,9 @@ describe("the Phase 3 census expectation", () => {
   test("the set is five pairs on four engines, etcd's key the fifth (#1089)", () => {
     expect(EXPECTED_EDITABLE_KINDS.length).toBe(5);
     expect(new Set(EXPECTED_EDITABLE_KINDS.map(([type]) => type)).size).toBe(4);
-    // The fleet is EXTERNAL_DATABASE_TYPES.length (21 with db2 and neo4j) plus the embedded store; db2 and neo4j abstain.
-    expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(18);
-    expect(EDIT_CENSUS_TYPES.length).toBe(22);
+    // The fleet is EXTERNAL_DATABASE_TYPES.length (22 with db2, neo4j and qdrant) plus the embedded store; db2, neo4j and qdrant abstain.
+    expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(19);
+    expect(EDIT_CENSUS_TYPES.length).toBe(23);
   });
 
   test("no pair is written twice", () => {
