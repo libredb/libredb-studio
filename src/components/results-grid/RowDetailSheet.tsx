@@ -89,16 +89,20 @@ export function RowDetailSheet({
     });
   };
 
-  const copyValue = (field: string, value: unknown) => {
+  /**
+   * What a copy of one field writes: the mask when the field is masked, otherwise the renderer's copy form where it
+   * has one, because a vector's detail is a header line over the value and only the value is search data. Every
+   * other kind copies the detail text, as it always did.
+   */
+  const copyTextOf = (field: string, value: unknown): string => {
     const shown = getDisplayValue(field, value);
-    if (shown.isMasked) {
-      copyAndReport(field, shown.text);
-      return;
-    }
-    // The renderer's copy form where it has one: a vector's detail is a header line over the value, and only the
-    // value is search data. Every other kind copies the detail text, as it always did.
+    if (shown.isMasked) return shown.text;
     const context = renderContextFor(vectorColumns, field);
-    copyAndReport(field, getRenderer(classifyValue(value, context)).renderCopy?.(value, context) ?? shown.text);
+    return getRenderer(classifyValue(value, context)).renderCopy?.(value, context) ?? shown.text;
+  };
+
+  const copyValue = (field: string, value: unknown) => {
+    copyAndReport(field, copyTextOf(field, value));
   };
 
   const copyAllAsJson = () => {
@@ -106,8 +110,7 @@ export function RowDetailSheet({
     if (maskingActive && sensitiveColumns && sensitiveColumns.size > 0) {
       const maskedRow: Record<string, unknown> = {};
       for (const field of fields) {
-        const { text } = getDisplayValue(field, row[field]);
-        maskedRow[field] = text;
+        maskedRow[field] = copyTextOf(field, row[field]);
       }
       copyAndReport("__all__", JSON.stringify(maskedRow, null, 2));
     } else {

@@ -551,4 +551,28 @@ describe("results-grid/RowDetailSheet", () => {
     fireEvent.click(copyButtons[1]!);
     expect(String(writeText.mock.calls[0]?.[0])).toBe("***MASKED***");
   });
+
+  test("Copy JSON under masking writes an unmasked vector field as its value, not its header line", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 1, email: "alice@example.com", embedding: [1, 0.5, 0] }}
+        fields={["id", "email", "embedding"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+        vectorColumns={{ embedding: { kind: "dense", dtype: "float32", dimension: 3 } }}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({
+      id: "1",
+      email: "***MASKED***",
+      embedding: "[1.0,0.5,0.0]",
+    });
+  });
 });
