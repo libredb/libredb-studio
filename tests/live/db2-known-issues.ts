@@ -2,11 +2,14 @@
  * Opt-in live report for the db2-node defects the Db2 provider (#786) works around: is each
  * one still PRESENT in the installed driver, or GONE?
  *
- * WHY THIS EXISTS. The provider was measured against db2-node 1.0.22, and docs/providers/db2.md
- * lists the driver defects it contains (reported upstream as gurungabit/db2-node#12). Every
- * workaround is a bet that a defect is still there, so a driver bump starts here: run this
- * against the old and the new version and compare the lines. It drives db2-node directly, never
- * the provider, because the question is what the driver does on its own.
+ * WHY THIS EXISTS. The provider was first measured against db2-node 1.0.22, whose defects K1 to
+ * K22 were reported upstream as gurungabit/db2-node#12, and moved to 1.0.24, which fixed most of
+ * them; docs/providers/db2.md lists what is still PRESENT on 1.0.24 and what was fixed. Every
+ * workaround is a bet that a defect is still there, and every lifted one a bet that it stays
+ * gone, so a driver bump starts here: run this against the old and the new version and compare
+ * the lines. On 1.0.24 the expected report is GONE for every row but K4, K15, K16 and K17; a GONE
+ * that turns PRESENT again is a regression the provider no longer guards against. It drives
+ * db2-node directly, never the provider, because the question is what the driver does on its own.
  *
  * It is a REPORT and exits 0 whatever it finds: one line per known issue,
  * `K<n> <short name>: PRESENT | GONE | ERROR <message>`, under a header naming the driver version
@@ -37,6 +40,10 @@ const BASE: ConnectionConfig = {
   database: process.env.DB2_DATABASE ?? "TESTDB",
   user: process.env.DB2_USER ?? "db2inst1",
   password: process.env.DB2_PASSWORD ?? "Password123!",
+  // The compose service has no TLS listener and the stock AUTHENTICATION=SERVER, so the plaintext
+  // mechanism is asked for by name, as the provider does behind its insecure opt-in: since 1.0.24
+  // the driver refuses to fall back to it otherwise (K11).
+  securityMechanism: "userPassword",
 };
 const SCHEMA = `LIBREDB_KI_${randomBytes(3).toString("hex").toUpperCase()}`;
 const DUMMY = "FROM SYSIBM.SYSDUMMY1";
@@ -132,13 +139,27 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
     },
   ],
   [
-    "K4 SELECT * on a wide mixed-type table",
+    "K4 a LOB beside other columns",
     async (c) => {
+      // 1.0.22 lost rows and columns of SELECT * over a mixed table; 1.0.24 still does when a LOB
+      // or XML column shares the row, and returns a CLOB's bytes as the BLOB beside it.
       const declared = Number(
         first(await c.query("SELECT COUNT(*) FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'ALLTYPES'")),
       );
-      const result = await c.query("SELECT * FROM APP.ALLTYPES");
-      return result.rows.length === 0 || result.columns.length < declared ? "PRESENT" : "GONE";
+      const present: string[] = [];
+      const all = await attempt(() => c.query("SELECT * FROM APP.ALLTYPES"));
+      if (!all.ok) present.push(`SELECT * failed: ${message(all.error)}`);
+      else if (all.value.rows.length !== 3 || all.value.columns.length < declared) {
+        present.push(
+          `SELECT * answered ${all.value.rows.length} of 3 rows, ${all.value.columns.length} of ${declared} columns`,
+        );
+      }
+      const pair = await attempt(() => c.query("SELECT C_CLOB, C_BLOB FROM APP.ALLTYPES WHERE ID = 1"));
+      const blob = pair.ok ? pair.value.rows[0]?.C_BLOB : undefined;
+      if (!(blob instanceof Uint8Array) || Buffer.from(blob).toString("hex") !== "0001feff") {
+        present.push("a BLOB beside a CLOB is not its own bytes");
+      }
+      return present.length === 0 ? "GONE" : `PRESENT (${present.join("; ")})`;
     },
   ],
   [
@@ -228,11 +249,17 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
       });
       await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
       const { port } = proxy.address() as net.AddressInfo;
+      // The driver's DEFAULT mechanism, as a connection that did not ask for plaintext gets it.
+      const { securityMechanism: _named, ...unnamed } = BASE;
       try {
-        const client = new Client({ ...BASE, host: "127.0.0.1", port });
-        await client.connect();
-        await client.query("VALUES 1");
-        await client.close();
+        const client = new Client({ ...unnamed, host: "127.0.0.1", port });
+        const connected = await attempt(() => client.connect());
+        if (connected.ok) {
+          await client.query("VALUES 1");
+          await client.close();
+        } else {
+          console.log(`   K11 default mechanism without TLS: ${message(connected.error)}`);
+        }
       } finally {
         proxy.close();
       }
@@ -252,7 +279,8 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
   ],
   [
     "K13 serverInfo productName is not the product",
-    async (c) => ((await c.serverInfo()).productName.startsWith("DB2") ? "GONE" : "PRESENT"),
+    // 1.0.22 answered the instance name; 1.0.24 answers the server class, `QDB2/LINUXX8664`.
+    async (c) => ((await c.serverInfo()).productName.includes("DB2/") ? "GONE" : "PRESENT"),
   ],
   [
     "K14 queryTimeout leaves the statement running on the server",
@@ -299,17 +327,25 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
       const when = new Date() as unknown as string;
       const date = await attempt(() => c.query(`UPDATE ${SCHEMA}.K16 SET TS = ? WHERE ID = 1`, [when]));
       if (!date.ok) present.push("Date refused");
-      // Alone, a BOOLEAN bound as a string is accepted; beside another parameter it is not.
-      const boolean = await attempt(() => c.query(`INSERT INTO ${SCHEMA}.K16 (ID, B) VALUES (?, ?)`, [2, "true"]));
+      // 1.0.22 failed a BOOLEAN bound beside another parameter. 1.0.24 binds a JS boolean there,
+      // and refuses the string "true" alone or beside others, with an error a caller sees.
+      const boolean = await attempt(() => c.query(`INSERT INTO ${SCHEMA}.K16 (ID, B) VALUES (?, ?)`, [2, true]));
       if (!boolean.ok) present.push("BOOLEAN in a parameter list");
+      const text = await attempt(() => c.query(`UPDATE ${SCHEMA}.K16 SET B = ? WHERE ID = 1`, ["true"]));
+      if (!text.ok) present.push(`BOOLEAN bound as the text "true" refused: ${message(text.error)}`);
       return present.length === 0 ? "GONE" : `PRESENT (${present.join(", ")})`;
     },
   ],
   [
     "K17 some driver errors carry no sqlstate",
     async (c) => {
-      const result = await attempt(() => c.query("VALUES CAST(CURRENT TIMESTAMP AS TIMESTAMP(0))"));
-      if (result.ok) throw new Error("the K8 statement no longer fails, so it cannot show the K17 shape");
+      // A failure the driver raises itself: the K8 decode error while K8 is present, and the
+      // refusal of an out-of-range bound DECIMAL once K22 is fixed, which the server would have
+      // answered with SQLSTATE 22003.
+      const decode = await attempt(() => c.query("VALUES CAST(CURRENT TIMESTAMP AS TIMESTAMP(0))"));
+      const result = decode.ok ? await attempt(() => c.query(`VALUES CAST(? AS DECIMAL(5,2))`, ["12345.67"])) : decode;
+      if (result.ok) throw new Error("neither client-side failure happens any more, so K17 has no shape to show");
+      console.log(`   K17 error: ${sqlCodes(result.error)} ${message(result.error)}`);
       return (result.error as { sqlstate?: string }).sqlstate === undefined ? "PRESENT" : "GONE";
     },
   ],

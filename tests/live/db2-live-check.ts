@@ -7,9 +7,9 @@
  * catalog SQL still reads SYSCAT the way the fixture was built, that a paged SELECT runs, that
  * RUNSTATS and REORG escape a quote and a blank inside a table name and refuse a view, that a
  * definition longer than one chunk reads whole and one over the bound reads as partial, that a
- * JS bigint parameter, alone or inside an array, is refused before it reaches db2-node (where it
- * aborts the process, K10 in `tests/live/db2-known-issues.ts`), and that `verify-ca` connects
- * with a PEM held as text.
+ * JS bigint of 2^63 - 1 is bound exactly while an array parameter is refused before db2-node can
+ * read it as bytes, that an inline row edit and a data import write non-ASCII text and a DECIMAL
+ * that read back byte for byte, and that `verify-ca` connects with a PEM held as text.
  *
  * Unlike the known-issue report, this one FAILS: every check prints PASS or FAIL with the
  * verbatim error, and the process exits non-zero when any check failed.
@@ -30,6 +30,7 @@ import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { Db2Provider } from "@/lib/db/providers/sql/db2";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { generateImportSQL } from "@/components/DataImportModal";
 
 const CONNECTION: DatabaseConnection = {
   id: "live-db2",
@@ -41,7 +42,8 @@ const CONNECTION: DatabaseConnection = {
   user: process.env.DB2_USER ?? "db2inst1",
   password: process.env.DB2_PASSWORD ?? "Password123!",
   // The compose service has no TLS listener, so this connection takes the explicit opt-in that
-  // the provider otherwise refuses a connection without TLS for (K11).
+  // the provider otherwise refuses a connection without TLS for, which it passes to db2-node as
+  // the plaintext mechanism by name.
   allowInsecureAuth: true,
   createdAt: new Date(),
 };
@@ -225,10 +227,18 @@ async function main(): Promise<void> {
     expect(!names.includes("APP.ORDER_SUMMARY"), `the view APP.ORDER_SUMMARY is listed: ${JSON.stringify(names)}`);
   });
 
-  await check("a JS bigint parameter is refused with QueryError and the process lives", async () => {
+  await check("a JS bigint of 2^63 - 1 is bound exactly", async () => {
+    const result = await provider.query(
+      "SELECT 1 AS HIT FROM SYSIBM.SYSDUMMY1 WHERE CAST(9223372036854775807 AS BIGINT) = ?",
+      [BigInt(2) ** BigInt(63) - BigInt(1)],
+    );
+    expect(result.rows.length === 1, `got ${JSON.stringify(result.rows)}`);
+  });
+
+  await check("an array parameter is refused with QueryError and the connection still answers", async () => {
     let refused: unknown;
     try {
-      await provider.query("SELECT CAST(? AS BIGINT) AS V FROM SYSIBM.SYSDUMMY1", [BigInt(2) ** BigInt(60)]);
+      await provider.query("VALUES CAST(? AS VARCHAR(10))", [[1, 2]]);
     } catch (error) {
       refused = error;
     }
@@ -237,22 +247,72 @@ async function main(): Promise<void> {
     expect(after.rows.length === 1, "the connection did not answer after the refusal");
   });
 
-  await check("a bigint inside an array parameter is refused with QueryError and the process lives", async () => {
+  await check("a statement that starts with a comment runs as written", async () => {
+    const result = await provider.query("-- note\n/* more */ VALUES 1");
+    expect(result.rows.length === 1, `got ${JSON.stringify(result.rows)}`);
+  });
+
+  await check("an UPDATE that matches no row reports zero changed rows", async () => {
+    const result = await provider.query(`UPDATE APP.ORDERS SET ID = ID WHERE ID = -1`);
+    expect(result.rowCount === 0, `rowCount ${result.rowCount}`);
+  });
+
+  // The inline editor's own statement shape (`src/hooks/use-inline-editing.ts`): every value
+  // bound as text, the key bound as a number, one UPDATE per row.
+  const text = "Grüße, 世界 𝄞 çğış";
+  const hexOf = (value: string) => Buffer.from(value, "utf8").toString("hex").toUpperCase();
+  await check("setup: a scratch table for the write round trip", async () => {
+    await provider.query(
+      `CREATE TABLE ${SCRATCH}.EDITS (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(100), AMT DECIMAL(7,2))`,
+    );
+    await provider.query(`INSERT INTO ${SCRATCH}.EDITS VALUES (1, 'a', 1.00)`);
+  });
+
+  await check("an inline edit writes non-ASCII text and a DECIMAL that read back byte for byte", async () => {
+    const update = await provider.query(`UPDATE "${SCRATCH}"."EDITS" SET "NAME" = ?, "AMT" = ? WHERE "ID" = ?`, [
+      text,
+      "12345.67",
+      1,
+    ]);
+    expect(update.rowCount === 1, `rowCount ${update.rowCount}`);
+    const [row] = (await provider.query(`SELECT HEX(NAME) AS H, VARCHAR(AMT) AS A, NAME FROM ${SCRATCH}.EDITS`)).rows;
+    expect(row?.H === hexOf(text), `HEX ${String(row?.H)} for ${hexOf(text)}`);
+    expect(row?.A === "12345.67", `AMT ${String(row?.A)}`);
+    expect(row?.NAME === text, `NAME read back as ${String(row?.NAME)}`);
+  });
+
+  await check("a DECIMAL that does not fit its column is refused and the stored value is kept", async () => {
     let refused: unknown;
     try {
-      await provider.query("VALUES CAST(? AS VARCHAR(10))", [[BigInt(1)]]);
+      await provider.query(`UPDATE "${SCRATCH}"."EDITS" SET "AMT" = ? WHERE "ID" = ?`, ["123456.78", 1]);
     } catch (error) {
       refused = error;
     }
-    expect(refused instanceof QueryError, `got ${refused === undefined ? "a result" : errorText(refused)}`);
-    const after = await provider.query("VALUES 1");
-    expect(after.rows.length === 1, "the connection did not answer after the refusal");
+    expect(refused !== undefined, "the overflowing value was accepted");
+    const [row] = (await provider.query(`SELECT VARCHAR(AMT) AS A FROM ${SCRATCH}.EDITS`)).rows;
+    expect(row?.A === "12345.67", `AMT ${String(row?.A)}`);
+  });
+
+  await check("a data import writes non-ASCII text and a DECIMAL that read back byte for byte", async () => {
+    const statements = generateImportSQL(
+      { headers: ["ID", "NAME", "AMT"], rows: [["2", text, "98765.43"]], totalRows: 1 },
+      { kind: "existing", path: [SCRATCH, "EDITS"] },
+      {},
+      "db2",
+      provider.getCapabilities(),
+    ).split("\n\n");
+    for (const statement of statements) await provider.query(statement);
+    const [row] = (await provider.query(`SELECT HEX(NAME) AS H, VARCHAR(AMT) AS A FROM ${SCRATCH}.EDITS WHERE ID = 2`))
+      .rows;
+    expect(row?.H === hexOf(text), `HEX ${String(row?.H)} for ${hexOf(text)}`);
+    expect(row?.A === "98765.43", `AMT ${String(row?.A)}`);
   });
 
   await check("cleanup: the scratch schema is dropped", async () => {
     for (const view of ["LONG_VIEW", "HUGE_VIEW"]) {
       await provider.query(`DROP VIEW ${SCRATCH}.${view}`).catch(() => undefined);
     }
+    await provider.query(`DROP TABLE ${SCRATCH}.EDITS`).catch(() => undefined);
     await provider.query(`DROP SCHEMA ${SCRATCH} RESTRICT`);
   });
 
