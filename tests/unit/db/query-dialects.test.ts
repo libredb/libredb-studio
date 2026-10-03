@@ -60,6 +60,9 @@ describe("QUERY_DIALECTS", () => {
   });
 
   test("a record may decline the SQL export formats, and none does, so every shipped engine keeps both", () => {
+    // `bun run typecheck` is the assertion for the field: this literal compiles only while `DialectSpec` declares
+    // `offersSqlExport`, and bun strips types, so no runtime expect on it could fail. What a declining record does
+    // to the menus is pinned by the export gate's own tests.
     const declining: DialectSpec = {
       tabType: "kafka",
       offersColumnProfiling: false,
@@ -67,7 +70,7 @@ describe("QUERY_DIALECTS", () => {
       offersCountQuery: false,
       offersSqlExport: false,
     };
-    expect(declining.offersSqlExport).toBe(false);
+    void declining;
     for (const [dialect, spec] of Object.entries(QUERY_DIALECTS)) {
       expect(Object.hasOwn(spec, "offersSqlExport"), `the ${dialect} record declares offersSqlExport`).toBe(false);
     }

@@ -55,6 +55,9 @@ describe("QueryResult and WorkspaceQueryResult", () => {
   });
 
   test("vectorColumns is carried under its own name", () => {
+    // The constants are `Record`s over each interface's keys, so `bun run typecheck` is what fails if either
+    // interface loses `vectorColumns`; at run time this pins only that the listing carries it rather than excusing it.
+    expect(Object.hasOwn(NOT_CARRIED, "vectorColumns")).toBe(false);
     expect(Object.hasOwn(QUERY_RESULT_KEYS, "vectorColumns")).toBe(true);
     expect(Object.hasOwn(WORKSPACE_RESULT_KEYS, "vectorColumns")).toBe(true);
   });
