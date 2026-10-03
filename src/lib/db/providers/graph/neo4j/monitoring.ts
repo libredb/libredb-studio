@@ -13,7 +13,7 @@ import type { ActiveSessionDetails, DatabaseOverview, HealthInfo, IndexStats, Ta
 import { formatDuration } from "@/lib/db/utils/pool-manager";
 
 /** The release series this provider is verified against; any other server connects and is marked untested. */
-export const NEO4J_TESTED_SERIES = "5.26.";
+const NEO4J_TESTED_SERIES = "5.26.";
 
 /** What Neo4j does not report, in the words the monitoring panels already render. */
 const NOT_REPORTED = "N/A";

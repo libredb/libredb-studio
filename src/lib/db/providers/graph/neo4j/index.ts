@@ -45,7 +45,7 @@ import { NEO4J_POLICY_PROFILE } from "./profile";
 import { neo4jStatementGate } from "./statement-gate";
 
 /** Bolt's registered port. */
-export const NEO4J_DEFAULT_PORT = 7687;
+const NEO4J_DEFAULT_PORT = 7687;
 
 /** The whole engine profile: the pure policy half and the server half (SR15: no execution hook beyond these). */
 export const NEO4J_ENGINE_PROFILE: GraphEngineProfile = {
