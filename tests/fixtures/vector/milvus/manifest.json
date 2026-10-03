@@ -860,6 +860,173 @@
      }
     ]
    },
+   "emb_list": {
+    "auto_id": false,
+    "description": "a struct array whose vector subfield is an embedding list",
+    "dynamic": false,
+    "fields": [
+     {
+      "name": "id",
+      "primary": true,
+      "type": "Int64"
+     },
+     {
+      "max_length": 32,
+      "name": "label",
+      "type": "VarChar"
+     },
+     {
+      "dim": 4,
+      "name": "vec",
+      "type": "FloatVector"
+     },
+     {
+      "element_type": "Struct",
+      "fields": [
+       {
+        "max_length": 32,
+        "name": "note",
+        "type": "VarChar"
+       },
+       {
+        "dim": 4,
+        "name": "emb",
+        "type": "FloatVector"
+       }
+      ],
+      "max_capacity": 4,
+      "name": "chunks",
+      "type": "Array"
+     }
+    ],
+    "functions": [],
+    "indexes": {
+     "chunks[emb]": {
+      "metric": "MAX_SIM_COSINE",
+      "params": {
+       "M": 8,
+       "efConstruction": 32
+      },
+      "type": "HNSW"
+     },
+     "vec": {
+      "metric": "L2",
+      "params": {},
+      "type": "FLAT"
+     }
+    },
+    "key": "id",
+    "loaded": true,
+    "num_partitions": null,
+    "partitions": [],
+    "properties": {},
+    "rows": 3,
+    "rule": "an embedding list: its multivector cells and a MAX_SIM search",
+    "sample": [
+     {
+      "key": 1,
+      "seq": 0,
+      "values": {
+       "chunks": [
+        {
+         "emb": [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+         ],
+         "note": "a"
+        },
+        {
+         "emb": [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+         ],
+         "note": "b"
+        }
+       ],
+       "id": 1,
+       "label": "two-chunks",
+       "vec": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "key": 2,
+      "seq": 1,
+      "values": {
+       "chunks": [
+        {
+         "emb": [
+          0.5,
+          0.5,
+          0.5,
+          0.5
+         ],
+         "note": "c"
+        }
+       ],
+       "id": 2,
+       "label": "one-chunk",
+       "vec": [
+        0.0,
+        1.0,
+        0.0,
+        0.0
+       ]
+      }
+     },
+     {
+      "key": 3,
+      "seq": 2,
+      "values": {
+       "chunks": [
+        {
+         "emb": [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+         ],
+         "note": "d"
+        },
+        {
+         "emb": [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+         ],
+         "note": "e"
+        },
+        {
+         "emb": [
+          -0.25,
+          0.75,
+          -1.5,
+          2.0
+         ],
+         "note": "f"
+        }
+       ],
+       "id": 3,
+       "label": "three-chunks",
+       "vec": [
+        0.0,
+        0.0,
+        1.0,
+        0.0
+       ]
+      }
+     }
+    ]
+   },
    "fts": {
     "auto_id": false,
     "description": "BM25 full text search",
@@ -6144,7 +6311,7 @@
    }
   }
  },
- "date": "2026-10-03T12:30:16.538Z",
+ "date": "2026-10-03T14:40:45.125Z",
  "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
  "engine": "milvus",
  "image": "milvusdb/milvus:v3.0.2",

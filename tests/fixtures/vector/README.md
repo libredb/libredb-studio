@@ -15,7 +15,7 @@ It calls one surface per file, records a pass or the verbatim failure, and rende
 <!-- generated:provenance -->
 | Engine | Image | Digest | Server version | Captured | Runtime |
 |---|---|---|---|---|---|
-| milvus | `milvusdb/milvus:v3.0.2` | `sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0` | 3.0.2 | 2026-10-03T12:30:30.704Z to 2026-10-03T12:30:30.810Z | bun 1.4.2 |
+| milvus | `milvusdb/milvus:v3.0.2` | `sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0` | 3.0.2 | 2026-10-03T14:40:45.520Z to 2026-10-03T14:40:45.560Z | bun 1.4.2 |
 | qdrant | `ghcr.io/qdrant/qdrant/qdrant:v1.19.1` | `sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822` | 1.19.1 | 2026-10-03T12:30:30.811Z to 2026-10-03T12:30:30.840Z | bun 1.4.2 |
 <!-- /generated:provenance -->
 
@@ -33,6 +33,7 @@ The harness first requires both servers to be running and healthy, and stops wit
 It reads each seed's manifest by running the seed's one-shot with `--manifest` and the server's pinned image, stops when the manifest records another build, then sends every request one at a time.
 Every answer must have the outcome its capture declares and hold the claim its capture states, and every derived cell must equal its REST cell as float32 where the two have the same shape; otherwise nothing is written.
 A run replaces `milvus/`, `qdrant/` and `expected-scores.json` whole.
+`--engine milvus` or `--engine qdrant` captures one engine alone: it requires only that server, replaces only its directory and its entry of `expected-scores.json`, and `--readme` keeps the other engine's cross-check lines as they were.
 
 ### The files
 
@@ -40,6 +41,7 @@ A run replaces `milvus/`, `qdrant/` and `expected-scores.json` whole.
 - `describe-*.json`: the describe answer of every seeded collection.
 - `query-*.json` (Milvus), `scroll-docs.json` and `retrieve-*.json` (Qdrant): cells of every vector type as each engine returns them.
   Milvus REST returns `Float16Vector`, `BFloat16Vector`, `BinaryVector` and `Int8Vector` cells as base64, which is why no expected cell is derived from REST.
+- `milvus/query-emb_list.json` and `milvus/search-max-sim.json`: the embedding list of `emb_list`, a struct array whose vector subfield `chunks[emb]` is indexed with `MAX_SIM_COSINE`; REST answers the struct array as its elements, and the search ranks id 3 first for id 3's own list.
 - `search-*.json`: one search per metric.
   `milvus/search-l2-origin.json` answers 25.0 and `qdrant/search-euclid-origin.json` 5.0 for (3,4) against the origin, because Milvus `L2` is the squared distance and Qdrant `Euclid` is not.
 - `search-non-finite.json`: the self-search of the `edge_values` sparse row whose value 3.4e38 gives an inner product above the float32 maximum.
@@ -65,7 +67,7 @@ No password, key or token is in any file: the Milvus `authorization` header is w
 <!-- generated:cross-check -->
 | Engine | Cells equal to REST as float32 | Cells REST answers in another shape | Cells no capture holds |
 |---|---|---|---|
-| milvus | 20 | 40 | 31 |
+| milvus | 26 | 40 | 31 |
 | qdrant | 50 | 0 | 0 |
 
 - milvus: default/docs_varchar pk vc-0000 f16: cell: REST holds string.
@@ -118,6 +120,7 @@ No password, key or token is in any file: the Milvus `authorization` header is w
 | `milvus/describe-default-docs_int64.json` | pass | `POST /v2/vectordb/collections/describe` | collections/describe of default.docs_int64 |
 | `milvus/describe-default-docs_varchar.json` | pass | `POST /v2/vectordb/collections/describe` | collections/describe of default.docs_varchar |
 | `milvus/describe-default-edge_values.json` | pass | `POST /v2/vectordb/collections/describe` | collections/describe of default.edge_values |
+| `milvus/describe-default-emb_list.json` | pass | `POST /v2/vectordb/collections/describe` | collections/describe of default.emb_list |
 | `milvus/describe-default-fts.json` | pass | `POST /v2/vectordb/collections/describe` | collections/describe of default.fts |
 | `milvus/describe-default-large_topk.json` | pass | `POST /v2/vectordb/collections/describe` | collections/describe of default.large_topk |
 | `milvus/describe-default-pk_partitioned.json` | pass | `POST /v2/vectordb/collections/describe` | collections/describe of default.pk_partitioned |
@@ -129,6 +132,7 @@ No password, key or token is in any file: the Milvus `authorization` header is w
 | `milvus/query-docs_int64.json` | pass | `POST /v2/vectordb/entities/query` | entities/query of docs_int64 seq 0 to 4 with vec |
 | `milvus/query-docs_varchar.json` | pass | `POST /v2/vectordb/entities/query` | entities/query of docs_varchar vc-0000 to vc-0004 with every vector field |
 | `milvus/query-edge_values.json` | pass | `POST /v2/vectordb/entities/query` | entities/query of every edge_values row with every vector field |
+| `milvus/query-emb_list.json` | pass | `POST /v2/vectordb/entities/query` | entities/query of every emb_list row with vec and its embedding list |
 | `milvus/search-bm25.json` | pass | `POST /v2/vectordb/entities/search` | entities/search, BM25, fts.text_sparse, the text vector index |
 | `milvus/search-cosine.json` | pass | `POST /v2/vectordb/entities/search` | entities/search, COSINE, docs_int64.vec, the vector of seq 0 |
 | `milvus/search-hamming-binary.json` | pass | `POST /v2/vectordb/entities/search` | entities/search, HAMMING, docs_varchar.bin, the bytes of vc-0000 |
@@ -137,6 +141,7 @@ No password, key or token is in any file: the Milvus `authorization` header is w
 | `milvus/search-l2-float16.json` | pass | `POST /v2/vectordb/entities/search` | entities/search, L2, docs_varchar.f16, the vector of vc-0000 |
 | `milvus/search-l2-int8.json` | pass | `POST /v2/vectordb/entities/search` | entities/search, L2, docs_varchar.i8, the vector of vc-0000 |
 | `milvus/search-l2-origin.json` | pass | `POST /v2/vectordb/entities/search` | entities/search, L2, edge_values.f32, (3,4) of the metric-probe row against the origin |
+| `milvus/search-max-sim.json` | pass | `POST /v2/vectordb/entities/search` | entities/search, MAX_SIM_COSINE, emb_list.chunks[emb], the embedding list of id 3 |
 | `milvus/search-non-finite.json` | empty-body | `POST /v2/vectordb/entities/search` | entities/search, IP, edge_values.sp, the self-search of the 3.4e38 row |
 | `qdrant/aliases.json` | pass | `GET /aliases` | GET /aliases |
 | `qdrant/describe-docs.json` | pass | `GET /collections/docs` | GET /collections/docs |

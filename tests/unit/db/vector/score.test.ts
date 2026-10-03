@@ -24,6 +24,11 @@ const SCORES: Readonly<
   Dot: { semantics: { kind: "similarity", better: "higher" }, text: "Float, Dot, higher is closer" },
   Euclid: { semantics: { kind: "distance", better: "lower" }, text: "Float, Euclid, lower is closer" },
   Manhattan: { semantics: { kind: "distance", better: "lower" }, text: "Float, Manhattan, lower is closer" },
+  // An embedding list's MAX_SIM score is a sum of best matches, with no family metric and no stated direction.
+  MAX_SIM_COSINE: {
+    semantics: { kind: "similarity", better: null },
+    text: "Float, MAX_SIM_COSINE, rows are in rank order",
+  },
 };
 
 for (const engine of ENGINES) {
@@ -41,6 +46,23 @@ for (const engine of ENGINES) {
     });
   });
 }
+
+describe("the Milvus embedding list's score text (spec 3.3)", () => {
+  test("names the MAX_SIM metric the fixture captured, and says only that rows are in rank order", () => {
+    const field = allFields("milvus").find(
+      ({ collection, field: entry }) => collection === "default/emb_list" && entry.name === "chunks[emb]",
+    )?.field;
+    expect(field?.nativeMetric).toStartWith("MAX_SIM");
+    expect(
+      scoreColumnType({
+        kind: "similarity",
+        better: null,
+        metric: field?.metric ?? null,
+        nativeName: field?.nativeMetric ?? null,
+      }),
+    ).toBe(`Float, ${field?.nativeMetric}, rows are in rank order`);
+  });
+});
 
 describe("scoreColumnType", () => {
   test.each([

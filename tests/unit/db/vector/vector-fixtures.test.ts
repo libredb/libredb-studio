@@ -25,6 +25,7 @@ const MILVUS_COLLECTIONS = [
   "default-docs_int64",
   "default-docs_varchar",
   "default-edge_values",
+  "default-emb_list",
   "default-fts",
   "default-large_topk",
   "default-pk_partitioned",
@@ -44,6 +45,7 @@ const CATALOG: Readonly<Record<"milvus" | "qdrant", readonly string[]>> = {
     "query-docs_int64",
     "query-docs_varchar",
     "query-edge_values",
+    "query-emb_list",
     "search-bm25",
     "search-cosine",
     "search-hamming-binary",
@@ -52,6 +54,7 @@ const CATALOG: Readonly<Record<"milvus" | "qdrant", readonly string[]>> = {
     "search-l2-float16",
     "search-l2-int8",
     "search-l2-origin",
+    "search-max-sim",
     "search-non-finite",
   ],
   qdrant: [
@@ -244,7 +247,7 @@ describe("the seeds' manifests", () => {
     }
   });
 
-  test("Milvus holds the research's objects and the four the fixtures add, each with its row count and load state", () => {
+  test("Milvus holds the research's objects and the ones the fixtures add, each with its row count and load state", () => {
     const manifest = read("milvus/manifest.json") as MilvusManifestJson;
     const rows = Object.fromEntries(
       Object.entries(manifest.databases).flatMap(([database, collections]) =>
@@ -258,6 +261,7 @@ describe("the seeds' manifests", () => {
       "default.docs_int64": [2000, true],
       "default.docs_varchar": [500, true],
       "default.edge_values": [5, true],
+      "default.emb_list": [3, true],
       "default.fts": [200, true],
       "default.large_topk": [100, true],
       "default.pk_partitioned": [2000, true],
@@ -404,5 +408,57 @@ describe("the derived files", () => {
       "small_dtypes.f16",
       "small_dtypes.t4",
     ]);
+  });
+});
+
+describe("the Milvus embedding list (spec 3.3)", () => {
+  interface DescribeAnswer {
+    readonly data: { readonly indexes: readonly { readonly fieldName: string; readonly metricType: string }[] };
+  }
+  const fields = (read("milvus/expected-fields.json") as { fields: Record<string, ExpectedField[]> }).fields;
+  const nativeMetric = (field: ExpectedField) =>
+    (field as ExpectedField & { nativeMetric: string | null }).nativeMetric;
+
+  test("chunks[emb] is a float32 multivector of dimension 4, scored by the MAX_SIM metric its describe capture names", () => {
+    const described = parse((read("milvus/describe-default-emb_list.json") as Captured).payload.body) as DescribeAnswer;
+    const captured = described.data.indexes.find((index) => index.fieldName === "chunks[emb]")?.metricType;
+    expect(captured).toStartWith("MAX_SIM");
+    const field = fields["default/emb_list"].find((entry) => entry.name === "chunks[emb]") as ExpectedField;
+    expect([field.kind, field.dtype, field.dimension, field.metric, nativeMetric(field)]).toEqual([
+      "multi",
+      "float32",
+      4,
+      "other",
+      captured,
+    ]);
+  });
+
+  test("every emb_list row has a multivector cell equal to the struct array REST answered, element by element", () => {
+    const cells = (
+      read("milvus/expected-cells.json") as {
+        cells: { collection: string; field: string; kind: string; match: { value: unknown }; cell: number[][] }[];
+      }
+    ).cells.filter((entry) => entry.collection === "default/emb_list" && entry.kind === "multi");
+    expect(cells.map((entry) => entry.match.value)).toEqual([1, 2, 3]);
+    const rows = (
+      parse((read("milvus/query-emb_list.json") as Captured).payload.body) as {
+        data: { id: number; chunks: { emb: number[] }[] }[];
+      }
+    ).data;
+    for (const cell of cells) {
+      const row = rows.find((entry) => entry.id === cell.match.value);
+      expect({ id: cell.match.value, cell: cell.cell }).toEqual({
+        id: cell.match.value,
+        cell: row?.chunks.map((element) => element.emb),
+      });
+    }
+  });
+
+  test("the MAX_SIM search of id 3's embedding list ranks id 3 first", () => {
+    const capture = read("milvus/search-max-sim.json") as Captured;
+    expect(capture.outcome).toBe("pass");
+    const hits = (parse(capture.payload.body) as { data: { id: number; distance: number }[] }).data;
+    expect(hits[0].id).toBe(3);
+    expect(hits.map((hit) => hit.distance)).toEqual([...hits.map((hit) => hit.distance)].sort((a, b) => b - a));
   });
 });

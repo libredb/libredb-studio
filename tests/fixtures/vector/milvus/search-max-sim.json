@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T14:40:45.559Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/search, MAX_SIM_COSINE, emb_list.chunks[emb], the embedding list of id 3",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/search",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"emb_list\",\"annsField\":\"chunks[emb]\",\"data\":[[[0,0,1,0],[0,0,0,1],[-0.25,0.75,-1.5,2]]],\"outputFields\":[\"id\"],\"limit\":3}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 123,
+    "body": "{\"code\":0,\"cost\":0,\"data\":[{\"distance\":3,\"id\":3},{\"distance\":1.1906924,\"id\":2},{\"distance\":0.2860388,\"id\":1}],\"topks\":[3]}\n"
+  }
+}

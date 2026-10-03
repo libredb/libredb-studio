@@ -1072,6 +1072,132 @@
       }
     },
     {
+      "collection": "default/emb_list",
+      "seq": 0,
+      "match": {
+        "field": "id",
+        "value": 1
+      },
+      "field": "vec",
+      "kind": "dense",
+      "dtype": "float32",
+      "cell": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "collection": "default/emb_list",
+      "seq": 1,
+      "match": {
+        "field": "id",
+        "value": 2
+      },
+      "field": "vec",
+      "kind": "dense",
+      "dtype": "float32",
+      "cell": [
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "collection": "default/emb_list",
+      "seq": 2,
+      "match": {
+        "field": "id",
+        "value": 3
+      },
+      "field": "vec",
+      "kind": "dense",
+      "dtype": "float32",
+      "cell": [
+        0,
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "collection": "default/emb_list",
+      "seq": 0,
+      "match": {
+        "field": "id",
+        "value": 1
+      },
+      "field": "chunks[emb]",
+      "kind": "multi",
+      "dtype": "float32",
+      "cell": [
+        [
+          1,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          1,
+          0,
+          0
+        ]
+      ]
+    },
+    {
+      "collection": "default/emb_list",
+      "seq": 1,
+      "match": {
+        "field": "id",
+        "value": 2
+      },
+      "field": "chunks[emb]",
+      "kind": "multi",
+      "dtype": "float32",
+      "cell": [
+        [
+          0.5,
+          0.5,
+          0.5,
+          0.5
+        ]
+      ]
+    },
+    {
+      "collection": "default/emb_list",
+      "seq": 2,
+      "match": {
+        "field": "id",
+        "value": 3
+      },
+      "field": "chunks[emb]",
+      "kind": "multi",
+      "dtype": "float32",
+      "cell": [
+        [
+          0,
+          0,
+          1,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          -0.25,
+          0.75,
+          -1.5,
+          2
+        ]
+      ]
+    },
+    {
       "collection": "default/large_topk",
       "seq": 0,
       "match": {

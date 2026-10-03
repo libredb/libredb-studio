@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T14:40:45.558Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/query of every emb_list row with vec and its embedding list",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/query",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"emb_list\",\"filter\":\"id >= 1\",\"outputFields\":[\"id\",\"vec\",\"chunks\"],\"limit\":10}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 329,
+    "body": "{\"code\":0,\"cost\":0,\"data\":[{\"chunks\":[{\"emb\":[1,0,0,0],\"note\":\"a\"},{\"emb\":[0,1,0,0],\"note\":\"b\"}],\"id\":1,\"vec\":[1,0,0,0]},{\"chunks\":[{\"emb\":[0.5,0.5,0.5,0.5],\"note\":\"c\"}],\"id\":2,\"vec\":[0,1,0,0]},{\"chunks\":[{\"emb\":[0,0,1,0],\"note\":\"d\"},{\"emb\":[0,0,0,1],\"note\":\"e\"},{\"emb\":[-0.25,0.75,-1.5,2],\"note\":\"f\"}],\"id\":3,\"vec\":[0,0,1,0]}]}\n"
+  }
+}

@@ -200,6 +200,23 @@ for (const engine of ENGINES) {
   });
 }
 
+describe("Milvus's embedding-list cells (spec 3.3)", () => {
+  test("each emb_list row is a multivector cell that passes checkMultiVector at Milvus's element bound", () => {
+    const multi = expectedCells("milvus").cells.filter((cell) => cell.kind === "multi");
+    expect(multi.map((cell) => `${cell.collection} ${cell.field} ${String(cell.match.value)}`)).toEqual([
+      "default/emb_list chunks[emb] 1",
+      "default/emb_list chunks[emb] 2",
+      "default/emb_list chunks[emb] 3",
+    ]);
+    for (const cell of multi) {
+      const field = targetOf("milvus", cell.collection, cell.field);
+      expect(field).toMatchObject({ kind: "multi", dtype: "float32", dimension: 4 });
+      const rows = (cell.cell as unknown[][]).map((row) => vectorNumbers(field, row.map(tagged)) as number[]);
+      expect(checkMultiVector(field, rows, MULTIVECTOR_ELEMENTS.milvus)).toBeNull();
+    }
+  });
+});
+
 describe("a binary field whose dimension is not whole bytes", () => {
   test("is refused as a shape, with no fractional byte count", () => {
     const target = { name: "b", kind: "dense", dtype: "binary", dimension: 12 } as const;

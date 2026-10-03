@@ -4,7 +4,7 @@
     "image": "milvusdb/milvus:v3.0.2",
     "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
     "version": "3.0.2",
-    "date": "2026-10-03T12:30:30.764Z",
+    "date": "2026-10-03T14:40:45.547Z",
     "runtime": "bun 1.4.2",
     "surface": "entities/query of every edge_values row with every vector field",
     "request": {
