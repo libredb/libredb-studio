@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting twenty engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd and Neo4j
+description: Web-based SQL IDE for cloud-native teams supporting twenty-one engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd and Neo4j
 type: application
-version: 0.1.74
+version: 0.1.75
 appVersion: "0.17.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -48,6 +48,10 @@ keywords:
   # One keyword only, like kafka above: `etcd` is the type-id and the word an evaluator looking
   # for an etcd client types, so there is no second spelling to catch.
   - etcd
+  # Two keywords, like the libsql pair above: `db2` is the type-id, and `ibm-db2` is what an
+  # evaluator who searches by vendor types, since the product is IBM Db2.
+  - db2
+  - ibm-db2
   # Two keywords, like the prometheus pair above: `neo4j` is the type-id and the product, and
   # `cypher` is what an evaluator looking for a Cypher client types.
   - neo4j
@@ -161,6 +165,8 @@ annotations:
   # the README; no template, value or default moves.
   # False: 0.1.74 changes chart metadata only, naming Neo4j in the description, the keywords and
   # the README; no template, value or default moves.
+  # False: 0.1.75 changes chart metadata only, naming Db2 LUW in the description, the keywords and
+  # the README; no template, value or default moves.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -176,7 +182,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "The application image gains the read-only Neo4j provider; no template, value or default moves, and it acts once an application release moves appVersion."
+    - "The application image gains the Db2 LUW provider (#786); no template, value or default moves, and it acts once an application release moves appVersion."
 dependencies:
   - name: postgresql
     version: "16.x.x"

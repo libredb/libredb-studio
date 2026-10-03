@@ -739,12 +739,61 @@ export function generateTableQuery(
   if (capabilities.defaultPort === COUCHBASE_PORT) {
     return `SELECT ${COUCHBASE_KEY_PROJECTION}, ${COUCHBASE_ALIAS}.* FROM ${table} AS ${COUCHBASE_ALIAS}${terminator(capabilities)}`;
   }
+  // An engine whose driver misreads some column types declares how its preview reads each one
+  // (#786), so the preview names its columns rather than asking for `*`.
+  const projection = capabilities.previewProjection;
+  if (projection !== undefined) {
+    return projectedPreview(table, projection, columns ?? [], capabilities);
+  }
   // Every other SQL dialect, Oracle and SQL Server included. They had branches of their
   // own only to spell their row bound — `FETCH FIRST 50 ROWS ONLY` and `SELECT TOP 50` —
   // and with no bound to spell, one statement serves all of them. Issue #264's rule, that
   // a ClickHouse bound must sit after any `FORMAT` or `SETTINGS` clause, is moot for the
   // same reason: there is no generated bound to misplace.
   return `SELECT * FROM ${table}${terminator(capabilities)}`;
+}
+
+/**
+ * A preview that names its columns and reads each through the declared projection (#786).
+ *
+ * The first rule whose `type` matches a column's declared type decides how it is read: through
+ * its expression, aliased back to the column's own name so the grid's header does not change, or
+ * not at all, in which case the column is named in a comment above the statement. Names in the
+ * comment are JSON-quoted, as `commentName` quotes them, so no name can end the comment.
+ *
+ * With no column list loaded, the preview reads `*` under the declaration's own note: there is
+ * no list to project, and saying so beats a statement that pretends to have one. With a list
+ * whose every column is left out, the comment naming them is the whole preview: `*` would read
+ * exactly the columns the declaration says cannot be read.
+ */
+function projectedPreview(
+  table: string,
+  projection: NonNullable<ProviderCapabilities["previewProjection"]>,
+  columns: readonly ColumnSchema[],
+  capabilities: ProviderCapabilities,
+): string {
+  const rules = projection.rules.map((rule) => ({ pattern: new RegExp(rule.type), expression: rule.expression }));
+  const read: string[] = [];
+  const omitted: string[] = [];
+  for (const column of columns) {
+    const rule = rules.find((candidate) => candidate.pattern.test(column.type));
+    const quoted = quoteIdentifier(column.name, capabilities);
+    if (rule === undefined) {
+      read.push(quoted);
+    } else if (rule.expression === null) {
+      omitted.push(`${commentName(column.name)} ${column.type.replace(/[\r\n]/g, " ")}`);
+    } else {
+      read.push(`${rule.expression.replaceAll("{column}", quoted)} AS ${quoted}`);
+    }
+  }
+  if (columns.length === 0) {
+    return `-- ${projection.unprojectedNote}\nSELECT * FROM ${table}${terminator(capabilities)}`;
+  }
+  const comment = `-- Not read by this preview: ${omitted.join(", ")}. ${projection.omittedNote}`;
+  if (read.length === 0) return comment;
+  const statement = `SELECT ${read.join(", ")} FROM ${table}${terminator(capabilities)}`;
+  if (omitted.length === 0) return statement;
+  return `${comment}\n${statement}`;
 }
 
 /**

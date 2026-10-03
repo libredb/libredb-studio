@@ -40,7 +40,7 @@ const STATEMENT = "SELECT * FROM t";
  * - `false` for `libredb`, the quiet one: it inherits `BaseDatabaseProvider.prepareQuery`,
  *   which echoes `offset: 50` back while applying nothing, so a `true` here would render a
  *   control whose every click re-fetches page one.
- * - `true` for the other twelve, each of which emits a real offset clause; the shapes
+ * - `true` for the other thirteen, each of which emits a real offset clause; the shapes
  *   differ per dialect and the invariant below does not care which, only that the
  *   statement CHANGED and the provider says it applied the bound.
  *
@@ -54,6 +54,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   libsql: true,
   duckdb: true,
   oracle: true,
+  db2: true,
   mssql: true,
   clickhouse: true,
   druid: true,

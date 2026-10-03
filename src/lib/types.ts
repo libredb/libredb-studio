@@ -25,6 +25,11 @@ export type DatabaseType =
   | "redis"
   | "oracle"
   | "mssql"
+  // IBM Db2 for Linux, UNIX and Windows (issue #786), reached through a Rust DRDA client shipped
+  // as native N-API addons, so no IBM client library is installed anywhere. Db2 for z/OS
+  // and Db2 for IBM i speak the same protocol and are out of scope: neither has been connected
+  // to, and their catalogs are not the `SYSCAT` views this provider reads.
+  | "db2"
   | "libredb"
   | "couchbase"
   | "clickhouse"
@@ -295,6 +300,16 @@ export interface DatabaseConnection {
    * OAUTHBEARER and GSSAPI are not offered.
    */
   saslMechanism?: "PLAIN" | "SCRAM-SHA-256" | "SCRAM-SHA-512";
+  /**
+   * Db2: connect with no TLS although the password then crosses the network in cleartext (#786).
+   *
+   * An explicit acceptance of a risk, and never a default. Without TLS the Db2 driver (1.0.22) downgrades
+   * every security mechanism to SECMEC 3, user and cleartext password, in silence (K11 in
+   * `docs/providers/db2.md`), so the Db2 provider REFUSES a connection with no TLS unless this is
+   * `true`. Read by no other engine: each of those either encrypts the password itself or
+   * follows its own driver's default.
+   */
+  allowInsecureAuth?: boolean;
   /**
    * Read no catalog when this connection opens.
    *

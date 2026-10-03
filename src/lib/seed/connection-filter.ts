@@ -93,6 +93,9 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         // The read-only mode (#1089), copied for the reason skipObjectScan is: dropped here, a seed the
         // operator declared read-only would be listed and opened as a connection that writes.
         readOnly: conn.readOnly,
+        // Db2's consent to a cleartext password (#786), copied for the reason skipObjectScan is:
+        // dropped here, a seed the operator declared it for would be refused by the provider.
+        allowInsecureAuth: conn.allowInsecureAuth,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

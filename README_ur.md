@@ -111,11 +111,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">بیس engines، ایک interface</span>
+### <span dir="rtl">اکیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
 
 <div dir="rtl" align="right">
 
@@ -128,6 +128,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **PostgreSQL** | `pg` | <span dir="rtl">مکمل SQL IDE، EXPLAIN execution plans، transactions، query cancellation (`pg_cancel_backend`)</span> |
 | **MySQL** | `mysql2` | <span dir="rtl">مکمل SQL IDE، EXPLAIN، transactions، query cancellation (`KILL QUERY`)</span> |
 | **Oracle** | <span dir="rtl">`oracledb` (Thin موڈ)</span> | <span dir="rtl">مکمل SQL IDE، `FETCH FIRST N ROWS` کے ساتھ pagination، `V$` monitoring views، `ANALYZE TABLE`، `ALTER INDEX REBUILD`، transactions</span> |
+| **Db2 LUW** | <span dir="rtl">`db2-node` (Rust میں لکھا DRDA client، native N-API addon، IBM client کے بغیر)</span> | <span dir="rtl">Db2 for Linux, UNIX and Windows کے لیے SQL IDE: tables، views، materialized query tables، aliases، sequences، modules، routines اور triggers کا schema browser، محفوظ definitions، `FETCH FIRST` / `OFFSET` pagination، ہر table پر RUNSTATS اور REORG۔ TLS لازمی ہے جب تک آپ جان بوجھ کر اسے بند نہ کریں، کیونکہ اس کے بغیر driver password کو cleartext میں بھیجتا ہے۔ Driver کچھ types غلط پڑھتا ہے (non-ASCII text، 2^53 سے بڑا BIGINT، BOOLEAN، XML، LOBs)، اس لیے inline editing، import، EXPLAIN، transactions اور cancel بند ہیں؛ معلوم مسائل [`docs/providers/db2.md`](docs/providers/db2.md) میں ہیں</span> |
 | **SQL Server** | <span dir="rtl">`mssql` (tedious)</span> | <span dir="rtl">مکمل SQL IDE، `TOP N` / `OFFSET FETCH` کے ساتھ pagination، `sys.dm_*` DMV، `UPDATE STATISTICS`، `DBCC CHECKDB`، transactions، Azure SQL کی خودکار شناخت</span> |
 | **SQLite** | <span dir="rtl">`bun:sqlite` / `node:sqlite` (runtime کے مطابق)</span> | <span dir="rtl">file یا memory میں مکمل SQL IDE</span> |
 | **libSQL** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (Hrana protocol، `POST /v2/pipeline`، port 8080)</span> | <span dir="rtl">مکمل SQL IDE۔ یہی type-id آپ کے اپنے libSQL server (`sqld`) اور Turso Cloud، دونوں سے connect کرتا ہے۔ یہ network پر SQLite dialect ہے، اور `dbstat` کے ساتھ tables اور indexes کا اصل size bytes میں دیتا ہے۔ credential password نہیں بلکہ auth token ہے۔ صرف دو maintenance operations ہیں، Reindex اور integrity check: server `VACUUM`، `ANALYZE` اور `PRAGMA optimize` کو رد کرتا ہے</span> |

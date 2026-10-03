@@ -197,8 +197,15 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
         {/* Right edge separator */}
         <div className="absolute right-0 top-0 bottom-0 w-px bg-fill-strong" />
 
-        {/* Content */}
-        <div className="relative z-10 flex flex-col p-12 w-full overflow-y-auto">
+        {/*
+          Content. 40px above and below rather than the 48px at the sides: the column's height is
+          the hero's budget at 1366x768 and 1280x800 (#541, pinned by e2e/login.spec.ts). The
+          twenty-second showcase entry (#786) wrapped the engine list into a fourth row at 1366x768
+          and scrolled the page by 7px; no column gap that still separates the entries keeps it at
+          three rows with room for one more, so the 16px comes from the padding instead and both
+          sizes fit the four rows, with 9 and 25px to spare.
+        */}
+        <div className="relative z-10 flex flex-col px-12 py-10 w-full overflow-y-auto">
           {/* Top: Logo */}
           <a
             href="https://libredb.org"

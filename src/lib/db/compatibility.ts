@@ -42,6 +42,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // be it. Nothing is recorded as a relative below for that reason.
   duckdb: true,
   oracle: true,
+  // IBM Db2 LUW (#786): its own provider, doc and integration test. Db2 for z/OS and for IBM i
+  // speak the same DRDA protocol and are recorded below as relatives only once a gate-4 probe has
+  // measured each, never because the protocol answers.
+  db2: true,
   mssql: true,
   clickhouse: true,
   druid: true,
@@ -115,6 +119,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // `sqlite` below, and external for the same reason.
   duckdb: true,
   oracle: true,
+  // A server the user already runs, reached over DRDA.
+  db2: true,
   mssql: true,
   clickhouse: true,
   druid: true,
@@ -178,6 +184,7 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   libsql: false,
   duckdb: false,
   oracle: false,
+  db2: false,
   mssql: false,
   clickhouse: false,
   druid: false,
@@ -217,6 +224,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   libsql: true,
   duckdb: true,
   oracle: true,
+  db2: true,
   mssql: true,
   clickhouse: true,
   druid: true,

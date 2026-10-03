@@ -26,6 +26,8 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "trino")).toBe("'O''Brien'");
     // Measured on DuckDB v1.5.5: `SELECT 'it''s'` answers `it's`.
     expect(quoteLiteral("O'Brien", "duckdb")).toBe("'O''Brien'");
+    // Measured on Db2 LUW 12.1.0.0: `VALUES 'O''Brien'` answers `O'Brien`.
+    expect(quoteLiteral("O'Brien", "db2")).toBe("'O''Brien'");
   });
 
   test("prefixes the SQL Server literal with N, so the value is read as Unicode", () => {
@@ -72,6 +74,9 @@ describe("quoteLiteral", () => {
     // Measured on Trino 476: `SELECT 'a\b' AS a` answers the two characters `a\b`, so
     // the backslash is data and doubling it would put a second one in the value.
     expect(quoteLiteral("a\\b", "trino")).toBe("'a\\b'");
+    // Measured on Db2 LUW 12.1.0.0 through db2-node 1.0.22: `VALUES 'a\b'` answers `a\b` and
+    // `VALUES LENGTH('a\b')` answers 3, so the backslash is data (#786).
+    expect(quoteLiteral("a\\b", "db2")).toBe("'a\\b'");
   });
 
   test("gives the standard form to an engine that has no SQL of its own", () => {
@@ -142,6 +147,10 @@ describe("positionalPlaceholder", () => {
     // because `$` also opens a dollar-quoted literal in this dialect.
     expect(positionalPlaceholder("duckdb", 1)).toBe("?");
     expect(positionalPlaceholder("duckdb", 2)).toBe("?");
+    // db2-node binds a params array against `?`, measured on Db2 LUW 12.1.0.0 with
+    // `SELECT TABNAME FROM SYSCAT.TABLES WHERE TABSCHEMA = ? AND TABNAME = ?` (#786).
+    expect(positionalPlaceholder("db2", 1)).toBe("?");
+    expect(positionalPlaceholder("db2", 2)).toBe("?");
   });
 
   test("trino has no positional placeholder, because its provider refuses to bind one", () => {

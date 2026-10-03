@@ -39,6 +39,8 @@ export default defineConfig({
     // addon into the published ESM/CJS bundles.
     "@duckdb/node-api",
     "@duckdb/node-bindings",
+    // The Db2 driver's loader ends in a native `require('./db2-node.<triple>.node')`.
+    "db2-node",
     // Pure JS, but external for the same reason it is in `serverExternalPackages`:
     // its optional `require('kerberos')` is unresolvable at build time.
     "cassandra-driver",

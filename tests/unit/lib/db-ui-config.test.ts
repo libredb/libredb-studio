@@ -35,6 +35,7 @@ const ALL_TYPES: DatabaseType[] = [
   "mongodb",
   "redis",
   "oracle",
+  "db2",
   "mssql",
   "libredb",
   "couchbase",
@@ -473,6 +474,27 @@ describe("db-ui-config", () => {
     });
   });
 
+  test("db2 declares its label, DRDA port, fields and the cleartext password hint (#786)", () => {
+    const db2 = getDBConfig("db2");
+    expect(db2).toMatchObject({
+      label: "Db2 LUW",
+      color: "text-hue-purple",
+      defaultPort: "50000",
+      // A `db2://` paste fills the fields, the Oracle precedent, so no toggle is drawn.
+      showConnectionStringToggle: false,
+      // The last is the consent to a cleartext password the provider refuses a connection with no
+      // TLS without (#786), drawn as a checkbox while SSL Mode is disable.
+      connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    });
+    expect(takesConnectionField("db2", "allowInsecureAuth")).toBe(true);
+    expect(takesConnectionField("postgres", "allowInsecureAuth")).toBe(false);
+    expect(db2.fieldHints).toEqual({
+      password:
+        "Without TLS, Db2's driver can send this password in cleartext. Turn on SSL below and use the server's TLS port.",
+    });
+    expect(db2.fieldLabels).toBeUndefined();
+  });
+
   test("etcd declares the field hints of #1089 6.1, one connection per cluster and no connection string", () => {
     const etcd = getDBConfig("etcd");
     expect(etcd).toMatchObject({
@@ -539,6 +561,7 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   apiKeyId: true,
   apiKeySecret: true,
   saslMechanism: true,
+  allowInsecureAuth: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 
@@ -573,11 +596,11 @@ describe("declared connection-field copy (#1085)", () => {
     expect(connectionFieldHint(empty, "password")).toBeUndefined();
   });
 
-  test("only prometheus, kafka, etcd and neo4j declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only db2, prometheus, kafka, etcd and neo4j declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["prometheus", "kafka", "etcd", "neo4j"]);
+    expect(declared).toEqual(["db2", "prometheus", "kafka", "etcd", "neo4j"]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
@@ -650,6 +673,9 @@ describe("db-showcase", () => {
         "redis",
         "oracle",
         "mssql",
+        // Right after SQL Server (#786): a mainstream relational engine, read beside Oracle and
+        // SQL Server rather than among the search and analytical engines.
+        "db2",
         "elasticsearch",
         "opensearch",
         "cassandra",

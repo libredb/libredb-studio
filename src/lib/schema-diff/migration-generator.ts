@@ -79,6 +79,15 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "libSQL",
     reason: "SQLite cannot retype a column; recreate the table and copy the rows.",
   },
+  // Db2 retypes a column with its own `ALTER COLUMN … SET DATA TYPE`, which the PostgreSQL branch
+  // this id would otherwise inherit does not emit, and several such changes leave the table
+  // REORG-pending until a REORG runs, which a flat migration file cannot schedule (#786). ADD and
+  // DROP COLUMN take the standard spelling, both measured on Db2 LUW 12.1.0.0.
+  db2: {
+    label: "Db2 LUW",
+    reason:
+      "Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand.",
+  },
   couchbase: {
     label: "Couchbase",
     reason: "Collections hold schemaless JSON documents, so there is no column definition to change.",
@@ -175,6 +184,14 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
 };
 
 /**
+ * The dialects with no `IF EXISTS` on `DROP CONSTRAINT` or `DROP INDEX`, so a dropped foreign key or
+ * index is written bare. Oracle has neither form; Db2 (#786) neither, measured on Db2 LUW 12.1.0.0:
+ * `ALTER TABLE "C" DROP CONSTRAINT IF EXISTS "fk_c"` and `DROP INDEX IF EXISTS "ix_c"` are both
+ * SQL0104N at `EXISTS`, while the bare statements run.
+ */
+const NO_DROP_IF_EXISTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["oracle", "db2"]);
+
+/**
  * Canonical type ids whose migration text carries no transaction wrapper, because no
  * `BEGIN;` this generator could emit would be both valid and meaningful for them (#284).
  *
@@ -210,6 +227,8 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  * than a safe default — this set is what removes it from the wrapper it used to inherit.
  *
  * Oracle DDL commits implicitly and BEGIN opens a PL/SQL block, not a transaction.
+ * Db2 (#786) is excluded for the Oracle reason: it has no standalone `BEGIN;`, and BEGIN opens a
+ * compound SQL block.
  * SQL Server is handled separately with BEGIN TRANSACTION.
  *
  * `prometheus` (#1085) joined later, on the fact `mongodb` and `redis` already rest on: its
@@ -221,6 +240,7 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
+  "db2",
   "sqlite",
   "libsql",
   "cassandra",
@@ -499,7 +519,7 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         // `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF' expecting EOF"
         // (measured), and dropping what was never declarable is not a statement.
         lines.push(`-- Apache Cassandra: Cannot drop a foreign key. CQL never declared one.`);
-      } else if (dialect === "oracle") {
+      } else if (NO_DROP_IF_EXISTS.has(dialect)) {
         lines.push(`ALTER TABLE ${id} DROP CONSTRAINT ${constraintName};`);
       } else {
         lines.push(`ALTER TABLE ${id} DROP CONSTRAINT IF EXISTS ${constraintName};`);
@@ -520,7 +540,7 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         lines.push(`DROP INDEX ${escapeIdentifier(idx.indexName, dialect)} ON ${id};`);
       } else if (dialect === "mssql") {
         lines.push(`DROP INDEX IF EXISTS ${escapeIdentifier(idx.indexName, dialect)} ON ${id};`);
-      } else if (dialect === "oracle") {
+      } else if (NO_DROP_IF_EXISTS.has(dialect)) {
         lines.push(`DROP INDEX ${escapeIdentifier(idx.indexName, dialect)};`);
       } else {
         lines.push(`DROP INDEX IF EXISTS ${escapeIdentifier(idx.indexName, dialect)};`);

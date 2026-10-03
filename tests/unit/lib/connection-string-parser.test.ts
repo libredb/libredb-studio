@@ -280,6 +280,57 @@ describe("parseConnectionString", () => {
     });
   });
 
+  // ── Db2 LUW (#786) ──────────────────────────────────────────────────────
+
+  describe("db2:// URLs", () => {
+    test("parses a db2 URL into its fields", () => {
+      const result = parseConnectionString("db2://db2inst1:secret@db2host:50001/TESTDB");
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe("db2");
+      expect(result!.host).toBe("db2host");
+      expect(result!.port).toBe("50001");
+      expect(result!.user).toBe("db2inst1");
+      expect(result!.password).toBe("secret");
+      expect(result!.database).toBe("TESTDB");
+      // A plain URL says nothing about TLS, so it leaves the form's mode alone.
+      expect(result!.sslMode).toBeUndefined();
+      expect(result!.unmappedTLSParam).toBeUndefined();
+    });
+
+    test("uses default port 50000 when omitted", () => {
+      expect(parseConnectionString("db2://user:pass@host/SAMPLE")!.port).toBe("50000");
+    });
+
+    // `verify-system`, not `require`, by D26's rule and the Db2 provider's own: without verified
+    // TLS db2-node can send the password in cleartext (K11), so TLS is verified unless a reader
+    // chooses otherwise in the panel. A self-hosted Db2 with a private CA then fails closed on the
+    // chain, and its CA certificate is what the panel asks for.
+    test.each(["ssl=true", "ssl=1", "ssl=TRUE", "security=SSL", "security=ssl", "Security=SSL"])(
+      "?%s asks for verified TLS",
+      (query) => {
+        const result = parseConnectionString(`db2://u:p@host:50001/TESTDB?${query}`);
+        expect(result!.sslMode).toBe("verify-system");
+        expect(result!.unmappedTLSParam).toBeUndefined();
+      },
+    );
+
+    test.each(["ssl=false", "ssl=0"])("?%s asks for plaintext", (query) => {
+      const result = parseConnectionString(`db2://u:p@host/TESTDB?${query}`);
+      expect(result!.sslMode).toBe("disable");
+    });
+
+    test("an unknown value is reported rather than guessed", () => {
+      expect(parseConnectionString("db2://u:p@host/TESTDB?ssl=maybe")!.unmappedTLSParam).toBe("ssl=maybe");
+      expect(parseConnectionString("db2://u:p@host/TESTDB?security=CLEARTEXT")!.unmappedTLSParam).toBe(
+        "security=CLEARTEXT",
+      );
+    });
+
+    test("db2 publishes its scheme", () => {
+      expect(ENGINE_URI_SCHEMES.db2).toBe("db2");
+    });
+  });
+
   // ── MSSQL / SQL Server ──────────────────────────────────────────────────
 
   describe("mssql:// and sqlserver:// URLs", () => {
@@ -730,6 +781,10 @@ describe("parseConnectionString", () => {
 // ─── detectConnectionStringType ─────────────────────────────────────────────
 
 describe("detectConnectionStringType", () => {
+  test("detects db2://", () => {
+    expect(detectConnectionStringType("db2://host")).toBe("db2");
+  });
+
   test("detects postgres://", () => {
     expect(detectConnectionStringType("postgres://host")).toBe("postgres");
   });

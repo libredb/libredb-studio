@@ -101,9 +101,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 20のエンジン、1つのインターフェース
+### 21のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -112,6 +112,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **PostgreSQL** | `pg` | フルSQL IDE、EXPLAIN、トランザクション、クエリキャンセル（`pg_cancel_backend`） |
 | **MySQL** | `mysql2` | フルSQL IDE、EXPLAIN、トランザクション、クエリキャンセル（`KILL QUERY`） |
 | **Oracle** | `oracledb`（Thinモード） | フルSQL IDE、`FETCH FIRST N ROWS`、`V$`監視ビュー、`ANALYZE TABLE`、`ALTER INDEX REBUILD`、トランザクション |
+| **Db2 LUW** | `db2-node`（RustのDRDAクライアント、ネイティブN-APIアドオン、IBMクライアント不要） | Db2 for Linux, UNIX and Windows向けSQL IDE、テーブル・ビュー・マテリアライズ照会表・別名・シーケンス・モジュール・ルーチン・トリガーのスキーマブラウザ、保存された定義、`FETCH FIRST` / `OFFSET`ページング、テーブル単位のRUNSTATSとREORG。ドライバーはTLSなしではパスワードを平文で送るため、明示的に無効化しない限りTLS必須。一部の型（非ASCIIテキスト、2^53を超えるBIGINT、BOOLEAN、XML、LOB）を誤読するため、インライン編集・インポート・EXPLAIN・トランザクション・キャンセルは無効。既知の問題は[`docs/providers/db2.md`](docs/providers/db2.md) |
 | **SQL Server** | `mssql` (tedious) | フルSQL IDE、`TOP N` / `OFFSET FETCH`、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、トランザクション、Azure SQL自動判別 |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（実行時選択） | フルSQL IDE、ファイル型・インメモリ型 |
 | **libSQL** | ドライバなし、HTTPのみ（Hranaプロトコル、`POST /v2/pipeline`、8080） | フルSQL IDE。自前運用のlibSQLサーバー（`sqld`）とTurso Cloudの両方に同じtype-idで接続します。ネットワーク越しのSQLite方言で、`dbstat`による実測のテーブル・インデックスサイズが読めます。認証情報はパスワードではなくauthトークンです。メンテナンスはReindexと整合性チェックのみ。`VACUUM`、`ANALYZE`、`PRAGMA optimize`はサーバー側が拒否します |

@@ -43,6 +43,12 @@ src/lib/db/
 │   │   │   ├── introspect.ts   #   duckdb_* table functions + pragma_storage_info -> schema, sizes, health
 │   │   │   └── values.ts       #   result -> QueryResult and DuckDB type text -> the product's own names
 │   │   ├── oracle.ts           # Oracle Strategy
+│   │   ├── db2/                # Db2 LUW Strategy (DRDA through db2-node, a native N-API driver)
+│   │   │   ├── index.ts        #   Db2Provider
+│   │   │   ├── driver.ts       #   The one file that imports db2-node
+│   │   │   ├── connection.ts   #   Target, TLS options and the CA temp file
+│   │   │   ├── catalog.ts      #   Every SYSCAT statement the provider sends
+│   │   │   └── objects.ts      #   Catalog rows -> the object surface
 │   │   ├── mssql.ts            # SQL Server Strategy
 │   │   ├── clickhouse/         # ClickHouse Strategy (SQL over HTTP, no driver)
 │   │   │   ├── index.ts        #   ClickHouseProvider
@@ -133,6 +139,7 @@ BaseDatabaseProvider (abstract)
 │   ├── LibSQLProvider                      │
 │   ├── DuckDBProvider                      │
 │   ├── OracleProvider                      │
+│   ├── Db2Provider                         │
 │   ├── MSSQLProvider                       │
 │   ├── ClickHouseProvider                  │
 │   ├── DruidProvider                       │
@@ -207,7 +214,7 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Twenty-one type-ids are supported by twenty provider modules: `elasticsearch` and `opensearch` share
+Twenty-two type-ids are supported by twenty-one provider modules: `elasticsearch` and `opensearch` share
 one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
@@ -218,6 +225,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | PostgreSQL | `postgres` | SQL | [providers/postgres.md](./providers/postgres.md) |
 | MySQL | `mysql` | SQL | [providers/mysql.md](./providers/mysql.md) |
 | Oracle | `oracle` | SQL | [providers/oracle.md](./providers/oracle.md) |
+| Db2 LUW | `db2` | SQL | [providers/db2.md](./providers/db2.md) |
 | Microsoft SQL Server | `mssql` | SQL | [providers/mssql.md](./providers/mssql.md) |
 | SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
 | libSQL | `libsql` | SQL (SQLite over a network) | [providers/libsql.md](./providers/libsql.md) |
@@ -417,7 +425,7 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
+Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
 Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over

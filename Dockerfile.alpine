@@ -134,6 +134,11 @@ RUN node scripts/copy-monaco.mjs && npx next build
 #                keyed on $(node -p process.arch) rather than on the libc alone:
 #                each leg of the manifest is built for its own arch, so keeping
 #                the other one is 2.3 MB no process in THIS image can open.
+#   db2-node   - one package with all eight prebuilt addons at its root (#786),
+#                traced into .next/standalone by its static require literals and
+#                copied by no explicit COPY, so only that tree is pruned, to the
+#                musl addon for $ARCH. The x64 one NEEDS libgcc_s.so.1, which the
+#                load probe proves this base provides; builder and runner share it.
 #
 # The asserts are the point of the step, not decoration: an over-eager glob that
 # deleted the payload the image actually loads would otherwise surface as a
@@ -147,11 +152,15 @@ RUN set -eux; \
       rm -rf "$root/better-sqlite3/deps" "$root/better-sqlite3/src" "$root/better-sqlite3/binding.gyp"; \
       true; \
     done; \
+    find .next/standalone/node_modules/db2-node -maxdepth 1 -type f -name 'db2-node.*.node' ! -name "db2-node.linux-${ARCH}-musl.node" -delete; \
     rm -rf public/screenshots .next/standalone/public/screenshots; \
     bash scripts/lib/prune-standalone-payload.sh .next/standalone; \
     test -f "node_modules/@duckdb/node-bindings-linux-${ARCH}-musl/libduckdb.so"; \
     test -d "node_modules/@img/sharp-libvips-linuxmusl-${ARCH}"; \
     test -f "node_modules/better-sqlite3/prebuilds/linuxmusl-${ARCH}.node"; \
+    test -f ".next/standalone/node_modules/db2-node/db2-node.linux-${ARCH}-musl.node"; \
+    test "$(find .next/standalone/node_modules/db2-node -name '*.node' | wc -l)" -eq 1; \
+    node -e "require('/usr/src/app/.next/standalone/node_modules/db2-node')"; \
     test -f .next/standalone/server.js; \
     test ! -e .next/standalone/src; \
     test ! -e .next/standalone/Dockerfile.alpine; \
@@ -256,6 +265,10 @@ COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/@libredb/lib
 # Keep in sync with scripts/build-standalone-payload.sh.
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/@duckdb ./node_modules/@duckdb
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/detect-libc ./node_modules/detect-libc
+
+# Notices for the Rust crates compiled into db2-node's addons, which its npm
+# tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
+COPY --chown=nextjs:nodejs --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt
 
 # Vendored sample database templates (the SQLite employees sample). Read at
 # runtime via fs relative to process.cwd() (/app), so output file tracing

@@ -10,13 +10,14 @@
 #
 # Both tiers assert the SAME outcome - no launcher warning, everything works,
 # including STORAGE_PROVIDER=sqlite. That is the point of the node26 leg: the
-# payload is built on Node 24, so a green node26 run proves the payload's two
-# native modules - better-sqlite3 (N-API since v13) and the DuckDB driver's
-# @duckdb/node-bindings addon - are genuinely ABI-independent. Under
-# better-sqlite3 v12's per-ABI binding this leg could not have passed.
+# payload is built on Node 24, so a green node26 run proves the payload's
+# native modules - better-sqlite3 (N-API since v13), the DuckDB driver's
+# @duckdb/node-bindings addon and db2-node's N-API addon - are genuinely
+# ABI-independent. Under better-sqlite3 v12's per-ABI binding this leg could
+# not have passed.
 #
-# Both are exercised, not just asserted in prose: STORAGE_PROVIDER=sqlite drives
-# the first and a DuckDB query drives the second.
+# All three are exercised, not just asserted in prose: STORAGE_PROVIDER=sqlite
+# drives the first, a DuckDB query the second and a Db2 connection the third.
 #
 # Runtimes below the floor are not a tier here: `npx` never reaches this script
 # on them. npm's version picker silently resolves the newest ENGINE-COMPATIBLE
@@ -140,11 +141,23 @@ SQLITE_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Co
 # and the node26 tier is precisely where an ABI-bound addon would fail.
 DUCKDB_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Content-Type: application/json" \
   -d "{\"connection\":{\"id\":\"engine-smoke-duckdb\",\"type\":\"duckdb\",\"name\":\"engine-smoke-duckdb\",\"database\":\"$WORK/smoke.duckdb\"},\"sql\":\"SELECT 41+1 AS a\"}")
+# The third native module, db2-node (#786), against a closed port: there is no
+# Db2 server here, so the assertion is the failure class. A loaded driver gets
+# as far as the socket and reports the refusal; a missing or unloadable addon
+# never reaches it and surfaces as a module or binding error instead. The
+# connection opts in to sending its password without TLS: without that the
+# provider refuses it before any socket opens, and the refusal says nothing
+# about whether the addon loaded.
+DB2_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Content-Type: application/json" \
+  -d '{"connection":{"id":"engine-smoke-db2","type":"db2","name":"engine-smoke-db2","host":"127.0.0.1","port":1,"database":"TESTDB","user":"smoke","password":"smoke","allowInsecureAuth":true},"sql":"VALUES 1"}')
 LAUNCHER_LOG=$(cat "$LOG")
 
 check_absent "launcher prints no runtime warning" "$LAUNCHER_LOG" "STORAGE_PROVIDER=sqlite"
 check "sqlite connection works via node:sqlite" "$SQLITE_BODY" '"a":42'
 check "duckdb connection works via @duckdb/node-api" "$DUCKDB_BODY" '"a":42'
+check "db2 connection reaches the network via db2-node" "$DB2_BODY" "Connection refused"
+check_absent "db2-node resolves from the server chunk" "$DB2_BODY" "Cannot find module"
+check_absent "db2-node loads its native addon" "$DB2_BODY" "Failed to load native binding"
 
 kill "$SERVER_PID" 2>/dev/null || true
 wait "$SERVER_PID" 2>/dev/null || true

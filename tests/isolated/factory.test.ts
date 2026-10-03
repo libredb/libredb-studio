@@ -469,6 +469,13 @@ describe("createDatabaseProvider", () => {
     expect(provider.type).toBe("oracle");
   });
 
+  test('creates provider for type "db2"', async () => {
+    const conn = makeConnection("db2");
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("db2");
+  });
+
   test('creates provider for type "mssql"', async () => {
     const conn = makeConnection("mssql");
     const provider = await createDatabaseProvider(conn);

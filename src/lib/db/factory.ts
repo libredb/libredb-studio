@@ -156,6 +156,11 @@ export async function createDatabaseProvider(
       return new OracleProvider(connection, options);
     }
 
+    case "db2": {
+      const { Db2Provider } = await import("./providers/sql/db2/index");
+      return new Db2Provider(connection, options);
+    }
+
     case "mssql": {
       const { MSSQLProvider } = await import("./providers/sql/mssql");
       return new MSSQLProvider(connection, options, execution);
@@ -272,7 +277,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, neo4j, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, neo4j, libredb`,
         connection.type,
       );
   }

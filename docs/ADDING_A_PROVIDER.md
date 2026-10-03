@@ -30,7 +30,7 @@ Three decisions. The first is the consequential one, which is why it is first.
    Hrana protocol, `POST /v2/pipeline` ([libsql.md](./providers/libsql.md)), and Prometheus over its
    HTTP API, `/api/v1/*` ([prometheus.md](./providers/prometheus.md)). If it does need one, it
    will be something like `pg`,
-   `mysql2`, `mongodb`, `ioredis`, `oracledb` or `mssql`.
+   `mysql2`, `mongodb`, `ioredis`, `oracledb`, `mssql` or `db2-node`.
 
 2. **Which base class?**
    - **SQL databases → extend `SQLBaseProvider`.**
@@ -221,11 +221,14 @@ The Memgraph provider is filed as `docs/BACKLOG.md` D141.
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'cockroachdb';
 ```
+
+A type-id may contain a digit: `db2` does.
+A test or a script that parses type-ids out of source text matches them with `[a-z0-9]+`, never `[a-z]+`, or it reads `db2` as `db` and passes for the wrong reason.
 
 ### 1.2 — Add to `QueryTab.type` if needed
 
@@ -337,9 +340,11 @@ whatever reads it has to treat emptiness as the absence and raise.
   `regenerated` when the engine composed the statement from its catalog. Oracle's
   `DBMS_METADATA.GET_DDL` is `regenerated`; SQLite's `sqlite_schema.sql` is `stored`. Say which in
   the provider doc, with the measurement.
-- `form` is `complete` when the text runs as given, and `body` when it is the definition's body
-  without the `CREATE` statement around it. A caller that pastes a `body` into an editor and runs it
-  gets a syntax error, so the two must not be conflated.
+- `form` is `complete` when the text runs as given, and `partial` when it does not: a body without
+  the `CREATE` statement around it, a bare SELECT, or a text the provider had to cut (the Db2
+  provider marks a definition longer than 32672 bytes `partial`). A caller that pastes a `partial`
+  text into an editor and runs it gets a syntax error, so the two must not be conflated. The type is
+  `ObjectSourceForm` in `src/lib/db/types.ts`.
 
 **The two isolated tests a new provider must satisfy**, neither of which any provider suite can
 stand in for, because both read the WHOLE fleet at once:
@@ -388,6 +393,7 @@ for worked, code-verified examples see each provider's **Design decisions** sect
 |--------|-------------|
 | `escapeIdentifier()` | `"table_name"` (PostgreSQL/SQLite) or `` `table_name` `` (MySQL) |
 | `buildLimitClause()` | `LIMIT 50 OFFSET 10` |
+| `getDefaultSchema()` | A `switch (this.type)` over postgres, mysql, oracle and mssql; every other type-id answers `""` unless its provider overrides it, so a provider whose default schema matters overrides it or never relies on it |
 | `shouldEnableSSL()` | Auto-detects cloud providers |
 | `prepareQuery()` | Automatically injects LIMIT into SELECT queries |
 
@@ -496,6 +502,8 @@ bun add <driver-package>
 #                            optional; this one is pure JS, which is the next best thing)
 # bun add @duckdb/node-api  (DuckDB — an embedded engine, so there is no protocol at all and no
 #                            HTTP alternative; this one is a NATIVE N-API addon)
+# bun add --exact db2-node    (Db2 LUW — DRDA is a binary protocol, so a driver is not optional;
+#                            this one is a Rust NATIVE N-API addon with no IBM client)
 # bun add --exact neo4j-driver-lite  (Neo4j: Bolt is a binary protocol; pure JS, and the graph
 #                            layer's one transport, so a second graph engine adds no driver)
 ```
@@ -824,7 +832,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · kafka · etcd · neo4j · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · kafka · etcd · neo4j · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), a
@@ -1091,7 +1099,7 @@ Run them before the first edit and again before the commit, and re-derive each h
 
 ```bash
 OUT=(docs CLAUDE.md CONTRIBUTING.md 'README*.md' DOCKERHUB.md snap packaging desktop deploy charts/libredb-studio operator/config e2e ':!docs/BACKLOG.md' ':!docs/llms')
-git grep -n -I -i -E '\b(eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty[- ](six|seven|eight|nine)|forty[- ](four|five|six|seven))\b|\b(1[0-9]|2[0-9]|4[0-9]) (database backends|database engines|engines|type-ids|providers|drivers)\b|十[七八九]|二十[七八]?|四十[四五六七]|Diecisiete|Dieciocho|Diecinueve|veintisiete|veintiocho|1[789]の|सत्रह|अठारह|उन्नीस|سترہ|اٹھارہ|انیس|Dezoito|Dezenove|Восемнадцат|Девятнадцат' -- "${OUT[@]}"   # G1
+git grep -n -I -i -E '\b(eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty[- ](one|six|seven|eight|nine)|forty[- ](four|five|six|seven|eight))\b|\b(1[0-9]|2[0-9]|4[0-9]) (database backends|database engines|engines|type-ids|providers|drivers)\b|十[七八九]|二十[一七八]?|四十[四五六七八]|Diecisiete|Dieciocho|Diecinueve|Veinte|veinte|veintisiete|veintiocho|1[789]の|20の|सत्रह|अठारह|उन्नीस|बीस|سترہ|اٹھارہ|انیس|بیس|Dezoito|Dezenove|Vinte|Восемнадцат|Девятнадцат|Двадцат' -- "${OUT[@]}"   # G1
 git grep -n -I -E 'Prometheus|prometheus|PromQL|promql' -- "${OUT[@]}"   # G2, the closest earlier engine
 git grep -n -I -i -E 'redis and libredb|redis, libredb|libredb and redis|mongodb and redis|mongodb, redis|redis and mongodb|dialect of (its|their) own|queryDialect' -- "${OUT[@]}"   # G3
 git grep -n -I -E 'VictoriaMetrics|victoriametrics' -- "${OUT[@]}"   # G4, the latest relative

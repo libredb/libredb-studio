@@ -983,7 +983,9 @@ libredb-studio
 > internal mirror. winget carries no equivalent restriction.
 
 Open http://127.0.0.1:3000 and log in with the printed credentials. All three packages install the same standalone zip: the server payload, a bundled private Node.js runtime (`node\node.exe`),
-and the `libredb-studio.exe` launcher — nothing else to install.
+and the `libredb-studio.exe` launcher.
+The Db2 driver's native addon also needs the Microsoft Visual C++ 2015-2022 x64 redistributable (it imports `VCRUNTIME140.dll`).
+winget and Chocolatey install it as a declared dependency (`Microsoft.VCRedist.2015+.x64`, `vcredist140`); with Scoop, install it once with `scoop install extras/vcredist2022` if the machine lacks it.
 
 The launcher mirrors the Linux packages' contract:
 

@@ -17,7 +17,10 @@
 # The runtime keep-list documented in scripts/build-standalone-payload.sh
 # (server.js, package.json, .next, node_modules, public, data) must always
 # survive this step; LICENSE and README.md are deliberately kept too
-# (release-artifact convention; the MIT notice travels with the payload).
+# (release-artifact convention; the MIT notice travels with the payload),
+# and so is THIRD_PARTY_NOTICES.txt, which carries the db2-node addon's
+# MIT text and its compiled crates' notices (#786) and which
+# build-standalone-payload.sh relies on finding here.
 #
 # Usage: prune-standalone-payload.sh <payload-dir>
 # ==============================================================================

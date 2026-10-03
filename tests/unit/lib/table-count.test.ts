@@ -56,6 +56,9 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   libsql: 'SELECT COUNT(*) AS row_count\nFROM "Order""Items";',
   duckdb: 'SELECT COUNT(*) AS row_count\nFROM c0.c1."Order""Items";',
   oracle: 'SELECT COUNT(*) AS row_count\nFROM "c0"."Order""Items"',
+  // COUNT answers an INTEGER on Db2 too and overflows past 2,147,483,647 rows; v1 keeps COUNT(*),
+  // see docs/providers/db2.md. The declared `double` quoting leaves a lower-case name bare (#786).
+  db2: 'SELECT COUNT(*) AS row_count\nFROM c0."Order""Items";',
   // COUNT answers an int on SQL Server and overflows past 2,147,483,647 rows.
   mssql: 'SELECT COUNT_BIG(*) AS row_count\nFROM c0.c1.[Order"Items];',
   clickhouse: 'SELECT COUNT(*) AS row_count\nFROM c0."Order""Items";',

@@ -230,7 +230,9 @@ function objectActions(
 
   const maintenance = handlers.onOpenMaintenance;
   if (isRelation && maintenance !== undefined) {
-    const analyze = maintenanceControl(capabilities, "analyze", "perEntity");
+    // The row's KIND is asked as well: an operation may run on some relation kinds and not
+    // others, Db2's RUNSTATS refusing a view (#786).
+    const analyze = maintenanceControl(capabilities, "analyze", "perEntity", kind.id);
     if (analyze.offered) {
       actions.push({
         id: "maintenance-analyze",
@@ -242,7 +244,7 @@ function objectActions(
     // The redirect, not the literal `vacuum`: four providers point that wording at an
     // operation that is not a vacuum, and the page this item opens follows the same
     // redirect, so reading the literal here would withhold an item the destination has.
-    const vacuum = maintenanceControl(capabilities, labels?.vacuumActionOperation ?? "vacuum", "perEntity");
+    const vacuum = maintenanceControl(capabilities, labels?.vacuumActionOperation ?? "vacuum", "perEntity", kind.id);
     if (vacuum.offered) {
       actions.push({
         id: "maintenance-vacuum",

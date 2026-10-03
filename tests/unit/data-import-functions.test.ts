@@ -6,6 +6,8 @@ import {
   inferSqlType,
   escapeSQL,
   generateImportSQL,
+  importRefusal,
+  offersNewTableImport,
   type ImportTarget,
   type ParsedData,
 } from "@/components/DataImportModal";
@@ -300,6 +302,39 @@ describe("generateImportSQL", () => {
     const target: ImportTarget = { kind: "existing", path: ["shop", "dbo", "customers"] };
     const sql = generateImportSQL(sampleData, target, { name: "name" });
     expect(sql).toContain("INSERT INTO shop.dbo.customers");
+  });
+
+  test("refuses every target on an engine that declares nothing an import could write into (#786)", () => {
+    const db2Shaped = {
+      queryLanguage: "sql",
+      supportsCreateTable: false,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables" }],
+    } as unknown as ProviderCapabilities;
+    expect(() =>
+      generateImportSQL(sampleData, { kind: "existing", path: ["APP", "ORDERS"] }, {}, "db2", db2Shaped),
+    ).toThrow("takes no imported data");
+    expect(() => generateImportSQL(sampleData, { kind: "new", name: "T" }, {}, "db2", db2Shaped)).toThrow(
+      "takes no imported data",
+    );
+    expect(importRefusal(db2Shaped)).toContain("no table an import may create");
+    expect(importRefusal(undefined)).toBeNull();
+  });
+
+  test("refuses a new table where the engine declares no create-table, and keeps existing targets (#786)", () => {
+    const writableNoCreate = {
+      queryLanguage: "sql",
+      supportsCreateTable: false,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true }],
+    } as unknown as ProviderCapabilities;
+    expect(() => generateImportSQL(sampleData, { kind: "new", name: "T" }, {}, "db2", writableNoCreate)).toThrow(
+      "declares no create-table",
+    );
+    expect(
+      generateImportSQL(sampleData, { kind: "existing", path: ["T"] }, { name: "name" }, "db2", writableNoCreate),
+    ).toContain("INSERT INTO");
+    expect(importRefusal(writableNoCreate)).toBeNull();
+    expect(offersNewTableImport(writableNoCreate)).toBe(false);
+    expect(offersNewTableImport(undefined)).toBe(true);
   });
 
   test("a new table is named exactly as it was typed", () => {

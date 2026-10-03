@@ -59,6 +59,10 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   libsql: unconnected("libsql"),
   duckdb: unconnected("duckdb"),
   oracle: unconnected("oracle"),
+  // Without the shared MongoDB string: the Db2 provider reads a stored connection string at
+  // construction and refuses one that is not db2:// (#786), which is the behaviour a census must
+  // not have to route around.
+  db2: { ...unconnected("db2"), connectionString: undefined },
   mssql: unconnected("mssql"),
   clickhouse: unconnected("clickhouse"),
   druid: unconnected("druid"),

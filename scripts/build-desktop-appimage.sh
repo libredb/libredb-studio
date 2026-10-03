@@ -229,8 +229,20 @@ if [ -d "$BETTER_SQLITE3_PREBUILDS" ]; then
   fi
 fi
 
+# db2-node is one package with eight addons at its root, and the Linux tarball
+# keeps both libcs for its arch. db2-node.linux-<arch>-musl.node needs the musl
+# libc, which linuxdeploy cannot resolve here, so keep only the glibc addon and
+# fail if it is missing: without it the bundle would have no Db2 support.
+DB2_NODE_DIR="$STAGE_PAYLOAD/node_modules/db2-node"
+if [ ! -f "$DB2_NODE_DIR/db2-node.linux-${ARCH}-gnu.node" ]; then
+  echo "db2-node ships no linux-${ARCH}-gnu addon in the payload - the bundle would have no Db2 support" >&2
+  exit 1
+fi
+find "$DB2_NODE_DIR" -maxdepth 1 -type f -name 'db2-node.*.node' \
+  ! -name "db2-node.linux-${ARCH}-gnu.node" -delete
+
 # Turbopack resolves the externalized database drivers (pg, mysql2, mongodb,
-# ssh2, better-sqlite3, @duckdb/node-api) through hashed SYMLINKS under
+# ssh2, better-sqlite3, @duckdb/node-api, db2-node) through hashed SYMLINKS under
 # .next/node_modules, and
 # Tauri's resource copy silently drops symlinks: the directory is simply absent
 # from the bundle and every request dies with

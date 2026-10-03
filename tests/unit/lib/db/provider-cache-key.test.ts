@@ -53,3 +53,14 @@ describe("the read-only mode is part of no identity digest (#1089)", () => {
     expect(connectionIdentity({ ...base, readOnly: true })).toBe(connectionIdentity(base));
   });
 });
+
+describe("providerCacheKey frames Db2's consent to a cleartext password (#786)", () => {
+  const db2: DatabaseConnection = { ...base, type: "db2", port: 50000, database: "TESTDB" };
+
+  test("a connection whose consent was taken back is not handed the provider opened under it", async () => {
+    const consented = await providerCacheKey({ ...db2, allowInsecureAuth: true });
+
+    expect(consented).not.toBe(await providerCacheKey(db2));
+    expect(await providerCacheKey({ ...db2, allowInsecureAuth: false })).toBe(await providerCacheKey(db2));
+  });
+});

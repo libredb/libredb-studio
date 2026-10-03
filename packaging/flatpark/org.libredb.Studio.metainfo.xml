@@ -47,6 +47,7 @@
       <li>DuckDB</li>
       <li>Microsoft SQL Server</li>
       <li>Oracle Database</li>
+      <li>IBM Db2 for Linux, UNIX and Windows</li>
       <li>MongoDB and FerretDB</li>
       <li>Redis, Valkey, DragonflyDB and KeyDB</li>
       <li>Couchbase</li>
@@ -109,6 +110,7 @@
     <keyword>MongoDB</keyword>
     <keyword>Redis</keyword>
     <keyword>Oracle</keyword>
+    <keyword>Db2</keyword>
     <keyword>IDE</keyword>
   </keywords>
 

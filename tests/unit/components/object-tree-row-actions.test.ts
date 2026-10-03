@@ -305,6 +305,28 @@ describe("rowActions and maintenance", () => {
     // The control: without the redirect the literal `vacuum` is not declared at all here.
     expect(idsFor(objectRow("table"), mysql)).not.toContain("maintenance-vacuum");
   });
+
+  test("an operation that names its kinds is offered on those kinds' rows only (#786)", () => {
+    // Db2-shaped: RUNSTATS and REORG run on a table and refuse a view, which is a relation too.
+    const db2 = capabilitiesOf({
+      objectKinds: [table, view],
+      supportsMaintenance: true,
+      maintenanceOperations: ["analyze", "optimize"],
+      maintenanceOperationSpecs: {
+        analyze: { global: false, perEntity: true, label: "Run Statistics", kinds: ["table"] },
+        optimize: { global: false, perEntity: true, label: "Reorganize Table", kinds: ["table"] },
+      },
+    });
+    const labels = { vacuumActionOperation: "optimize" } as ProviderLabels;
+    const ids = (kindId: string) =>
+      rowActions({ row: objectRow(kindId), object: orders, capabilities: db2, labels, handlers: allHandlers() }).map(
+        (action) => action.id,
+      );
+
+    expect(ids("table")).toEqual(expect.arrayContaining(["maintenance-analyze", "maintenance-vacuum"]));
+    expect(ids("view")).not.toContain("maintenance-analyze");
+    expect(ids("view")).not.toContain("maintenance-vacuum");
+  });
 });
 
 describe("rowActions on a folder row", () => {

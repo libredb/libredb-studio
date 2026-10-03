@@ -126,6 +126,43 @@ services:
       # once and ONLY on a fresh data directory, so an existing container has to be
       # recreated before an edit takes effect. Connect as APP / Password123! on XEPDB1.
       - ./docker/oracle-init:/container-entrypoint-initdb.d:ro
+  db2:
+    # IBM Db2 Community Edition, the engine the Db2 provider (#786) was measured on.
+    image: icr.io/db2_community/db2:12.1.0.0
+    container_name: libredb-db2
+    restart: unless-stopped
+    # Unprivileged: IBM's run instructions pass --privileged, but the instance only needs
+    # these two capabilities for its shared memory. Measured on a container started this
+    # way: Privileged=false, CapAdd=[CAP_IPC_LOCK CAP_IPC_OWNER], and the database starts.
+    cap_add:
+      - IPC_LOCK
+      - IPC_OWNER
+    environment:
+      LICENSE: accept
+      DB2INSTANCE: db2inst1
+      DB2INST1_PASSWORD: Password123!
+      DBNAME: testdb
+      ARCHIVE_LOGS: "false"
+      AUTOCONFIG: "false"
+      SAMPLEDB: "false"
+    ports:
+      - "50000:50000"
+    volumes:
+      # The object-browser fixture: schemas APP and REPORTING, one object of every kind the
+      # provider lists, and the tables the maintenance and value tests use. The image
+      # executes EVERY file in /var/custom on every start, so only the script goes there and
+      # the .sql it feeds to the CLP is mounted elsewhere. The script loads the fixture once
+      # and skips it when APP.ORDERS exists, so an edit takes effect on a fresh volume only.
+      # Connect as db2inst1 / Password123! to TESTDB.
+      - ./docker/db2-init/01-object-fixture.sh:/var/custom/01-object-fixture.sh:ro
+      - ./docker/db2-init/01-object-fixture.sql:/var/custom-fixture/01-object-fixture.sql:ro
+    healthcheck:
+      # The first start creates the instance and the database, which takes minutes.
+      test: ["CMD-SHELL", "su - db2inst1 -c 'db2gcf -s' | grep -q Available"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 120s
   couchbase:
     # The image ships an uninitialized node: the cluster, the credentials below,
     # the bucket and its primary index are all applied by the couchbase-init

@@ -103,9 +103,9 @@ LibreDB Studio दूसरा रास्ता चुनता है: **tool
 
 ## मुख्य क्षमताएँ
 
-### बीस engines, एक interface
+### इक्कीस engines, एक interface
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
 
 सभी SQL engines एक ही schema browser, ER diagram, schema diff और monitoring dashboard इस्तेमाल करते हैं। MongoDB और Redis SQL engines नहीं हैं, इसलिए उनमें ER diagram और schema diff नहीं है। Druid, Elasticsearch, OpenSearch और Trino दोहरे अपवाद हैं: उनके HTTP SQL interface का कोई ऐसा URI रूप नहीं है जिसे यह build पढ़ सके, इसलिए उन्हें सिर्फ़ host/port से configure किया जाता है। साथ ही, generated migration सीधे अपनी सीमा बताता है, बजाय ऐसे engine के लिए DDL बनाने के जिसकी SQL में column बदलने का कोई statement ही नहीं है। Couchbase के schemaless collections पर भी यही लागू है। Search clusters के ER diagram में सिर्फ़ boxes होते हैं, कोई line नहीं: indexes foreign keys declare नहीं करते, और engine के model में declare करने के लिए foreign key होती ही नहीं।
 
@@ -114,6 +114,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **PostgreSQL** | `pg` | पूरा SQL IDE, EXPLAIN plans, transactions, query cancel (`pg_cancel_backend`) |
 | **MySQL** | `mysql2` | पूरा SQL IDE, EXPLAIN, transactions, query cancel (`KILL QUERY`) |
 | **Oracle** | `oracledb` (Thin mode) | पूरा SQL IDE, `FETCH FIRST N ROWS` pagination, `V$` monitoring views, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transactions |
+| **Db2 LUW** | `db2-node` (Rust में लिखा DRDA client, native N-API addon, IBM client की ज़रूरत नहीं) | Db2 for Linux, UNIX and Windows के लिए SQL IDE: tables, views, materialized query tables, aliases, sequences, modules, routines और triggers का schema browser, stored definitions, `FETCH FIRST` / `OFFSET` pagination, हर table पर RUNSTATS और REORG. TLS ज़रूरी है जब तक आप जानबूझकर उसे बंद न करें, क्योंकि उसके बिना driver password को cleartext में भेजता है. Driver कुछ types गलत पढ़ता है (non-ASCII text, 2^53 से बड़ा BIGINT, BOOLEAN, XML, LOBs), इसलिए inline editing, import, EXPLAIN, transactions और cancel बंद हैं; ज्ञात समस्याएँ [`docs/providers/db2.md`](docs/providers/db2.md) में हैं |
 | **SQL Server** | `mssql` (tedious) | पूरा SQL IDE, `TOP N` / `OFFSET FETCH` pagination, `sys.dm_*` DMVs, `UPDATE STATISTICS`, `DBCC CHECKDB`, transactions, Azure SQL की अपने-आप पहचान |
 | **SQLite** | `bun:sqlite` / `node:sqlite` (runtime पर चुना जाता है) | पूरा SQL IDE, file-based या in-memory डेटाबेस |
 | **libSQL** | कोई driver नहीं, सिर्फ़ HTTP (Hrana protocol, `POST /v2/pipeline`, port 8080) | पूरा SQL IDE। एक ही type-id self-hosted libSQL server (`sqld`) और Turso Cloud दोनों से जुड़ता है। यह network पर चलने वाली SQLite dialect है, और `dbstat` से tables और indexes का असली byte size पढ़ता है। Credential password नहीं, auth token है। Maintenance में सिर्फ़ Reindex और integrity check हैं: `VACUUM`, `ANALYZE` और `PRAGMA optimize` server मना कर देता है |

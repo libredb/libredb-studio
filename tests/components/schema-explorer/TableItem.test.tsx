@@ -185,6 +185,24 @@ const mysqlCaps = caps({
 });
 
 /**
+ * Db2-shaped (#786): RUNSTATS and REORG each name the kinds they run on, because a Db2 view is
+ * a relation and refuses both, and the vacuum slot names `optimize`.
+ */
+const db2Caps = caps({
+  supportsMaintenance: true,
+  maintenanceOperations: ["analyze", "optimize"],
+  maintenanceOperationSpecs: {
+    analyze: { label: "Run Statistics", perEntity: true, global: false, kinds: ["table", "materialized_query_table"] },
+    optimize: {
+      label: "Reorganize Table",
+      perEntity: true,
+      global: false,
+      kinds: ["table", "materialized_query_table"],
+    },
+  },
+});
+
+/**
  * Labels are partial for the same reason capabilities are: TableItem reads four
  * of the fifteen. The two defaults spelled out here are `BaseDatabaseProvider`'s
  * own, so a case that overrides one is visibly overriding it (#427).
@@ -971,6 +989,40 @@ describe("TableItem", () => {
       expect(dropdown.queryByText("Refresh Statistics")).not.toBeNull();
       expect(dropdown.queryByText("Gather Statistics")).toBeNull();
       expect(dropdown.queryByText("Analyze Table")).toBeNull();
+    });
+
+    test("offers an operation only on the kinds its spec names, as the desktop tree does", () => {
+      const labels = labelsFor({ vacuumAction: "Reorganize Table", vacuumActionOperation: "optimize" });
+      const table = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={db2Caps}
+          labels={labels}
+        />,
+      );
+      const tableMenu = within(table.getByTestId("dropdown"));
+      expect(tableMenu.queryByText("Run Statistics")).not.toBeNull();
+      expect(tableMenu.queryByText("Reorganize Table")).not.toBeNull();
+      cleanup();
+
+      const view = render(
+        <TableItem
+          table={viewObject}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={db2Caps}
+          labels={labels}
+        />,
+      );
+      const viewMenu = within(view.getByTestId("dropdown"));
+      expect(viewMenu.queryByText("Run Statistics")).toBeNull();
+      expect(viewMenu.queryByText("Reorganize Table")).toBeNull();
+      // Withheld for the kind alone: the rest of the menu is still there.
+      expect(viewMenu.queryByText("Select Top 50")).not.toBeNull();
     });
 
     test("offers nothing while the capabilities are still unknown", () => {

@@ -9,6 +9,11 @@ index drops include `ON <table>`. Oracle uses `ADD (<definition>)`, places `DEFA
 `NOT NULL`, and emits no transaction wrapper because DDL commits implicitly. Oracle table,
 index and constraint drops use the unconditional forms, which avoid depending on a particular
 release's support for `IF EXISTS`. A generated migration is not an idempotent script.
+Db2 LUW keeps the PostgreSQL `ADD COLUMN` and `DROP COLUMN` forms, which it accepts, and emits no
+transaction wrapper, because a Db2 `BEGIN` opens a compound block; its constraint and index drops
+use the unconditional forms too, because Db2 refuses `IF EXISTS` there, and a column modification
+is written as a comment, because Db2 needs `ALTER COLUMN ... SET DATA TYPE` and may leave the table
+REORG-pending ([providers/db2.md](./providers/db2.md#11-schema-diff)).
 
 Removed foreign keys and indexes precede column changes, so an indexed column can be removed
 and an index name can be reused in the same table diff. Changes to an existing index's columns,

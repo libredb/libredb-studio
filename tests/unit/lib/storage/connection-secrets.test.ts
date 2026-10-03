@@ -91,6 +91,8 @@ describe("the classification is exhaustive by construction", () => {
       [
         "agentPassword",
         "agentUser",
+        // Db2's consent to a cleartext password (#786). A choice about the transport, so `public`.
+        "allowInsecureAuth",
         // Elasticsearch's API key pair (#708). Unlike `user`, an id is one generated,
         // opaque half of a credential pair rather than a name an operator chose, so
         // both halves are classified secret below.

@@ -162,12 +162,12 @@ id, so no reader can grow a dialect test of its own.
 | Character | Established reading | Dialects |
 |-----------|--------------------|----------|
 | `#` | opens a line comment | MySQL, MariaDB, ClickHouse (which also has `#!`), OpenSearch |
-| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix, or a character the parser simply refuses | PostgreSQL, Oracle, SQL Server, SQLite, libSQL, DuckDB, Elasticsearch, Trino |
+| `#` | ordinary code — a jsonb/geometric operator, an identifier character, a temp-table name, a bind-variable prefix, or a character the parser simply refuses | PostgreSQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Elasticsearch, Trino |
 | `q'…'` | a string literal (alternate quoting): the delimiter after the tag opens the body and its partner followed by `'` closes it, so the body carries apostrophes unescaped — `[ ] { } ( ) < >` pair up, any other character closes with itself, either letter case of the tag, and `nq'…'` is the same form for the national character set | Oracle only |
 | `q'…'` | not a form at all — a name followed by an ordinary string, which is what those characters are there | everything else, including the default |
 | `[…]` | a quoted **name**: everything between the brackets is the identifier (`SELECT [a--b] FROM t` selects a column called `a--b`) and the run does not nest. The doubled `]` this reading honours is SQL Server's escape — SQLite stops at the first `]` and has none, so `[a]]b]` reads as one name where SQLite reads `[a]` and then junk, which it rejects either way | SQL Server, SQLite, libSQL, OpenSearch |
 | `[…]` | an **array literal or subscript**: it nests (`[[1,2],[3,4]]`), nothing inside it is escaped, and a literal inside it is a literal (`m['a]b']`) | ClickHouse, PostgreSQL, DuckDB, Trino |
-| `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, SQL Server, ClickHouse, DuckDB |
+| `/* … /* … */ … */` | one **nesting** comment: a `/*` inside a comment opens another and the run continues until the depth returns to zero, so a region that already contains comments can be commented out. A run short of a closer is undeterminable rather than closed early | PostgreSQL, Db2 LUW, SQL Server, ClickHouse, DuckDB |
 | `/* … /* … */ … */` | a **flat** comment: the first `*/` ends it, and everything after that is the statement's own code | MySQL, MariaDB, SQLite, libSQL, Oracle, and the default |
 | `//` | opens a **line comment**, ending at the newline like `--` | Apache Cassandra (and its relatives), ClickHouse |
 | `//` | **ordinary code** — an operator the parser refuses (`operator does not exist: integer // integer` on PostgreSQL 18), or a character it rejects outright | everything else, including the default |
@@ -202,9 +202,9 @@ The embedded LibreDB is not in that set: its text is read as SQL, and its undeci
 |------|-----------------------------------|--------------------------------------------------|
 | `#` | Couchbase, Druid, the embedded LibreDB provider | — |
 | `q'…'` | nobody | everything except Oracle: the form is Oracle's alone, so "not a literal" is the correct reading for the rest |
-| `[…]` | MySQL, Oracle, Elasticsearch, Couchbase, Druid, LibreDB | SQL Server, SQLite, libSQL and OpenSearch, whose rule the default already applied |
+| `[…]` | MySQL, Oracle, Db2 LUW, Elasticsearch, Couchbase, Druid, LibreDB | SQL Server, SQLite, libSQL and OpenSearch, whose rule the default already applied |
 | `/* … */` nesting | Couchbase, Druid, LibreDB | MySQL, SQLite, libSQL, Oracle, Elasticsearch, OpenSearch and Trino, whose flat rule the default already applied — each established from its own source rather than assumed to agree |
-| `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied |
+| `//` | Elasticsearch, OpenSearch, Couchbase, Druid, LibreDB | PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server and Trino, each refused on a live server: `SELECT 1 // note` is an error there, so "not a comment" is the reading the default already applied |
 
 The distinction is visible in `src/lib/sql/grammar.ts` too: an established fact is written out in that
 dialect's row, an undecided one is written `DEFAULT_SQL_GRAMMAR.<fact>`.
@@ -214,11 +214,11 @@ establishing rather than accepting: left at the name reading, a nested array or 
 containing a `]` lost its bound there — and, since #297, also asked for confirmation, because the same
 undeterminable run is text the safety gate cannot read. A prompt on everyday syntax teaches operators
 to click the gate away, which costs more than the missed bound, so the rule was established from the
-manual (4.2.3 Subscripts, 4.2.12 Array Constructors). MySQL and Oracle stay undecided: `[` is not a
-name quote in either, but neither has a subscript rule to read it under instead, and reading one
+manual (4.2.3 Subscripts, 4.2.12 Array Constructors). MySQL, Oracle and Db2 LUW stay undecided: `[` is not a
+name quote in any of them (`SELECT 1 AS [a] FROM SYSIBM.SYSDUMMY1` is SQLCODE -104 on Db2 12.1), but none has a subscript rule to read it under instead, and reading one
 engine's rule off another's is what this channel exists to stop. The direction there is safe — a run
 the name reading cannot close is reported as undeterminable, an undeterminable end is never cut, so
-the cost is an unbounded read and never a misplaced clause — and those two dialects do not write
+the cost is an unbounded read and never a misplaced clause — and those three dialects do not write
 bracket runs in everyday SQL. See
 [Text the reading cannot resolve asks, and says so](#text-the-reading-cannot-resolve-asks-and-says-so).
 

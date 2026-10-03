@@ -116,6 +116,7 @@ export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = {
   redis: "redis",
   oracle: "oracle",
   mssql: "mssql",
+  db2: "db2",
   couchbase: "couchbase",
   clickhouse: "clickhouse",
   libsql: "libsql",
@@ -169,6 +170,11 @@ export function parseConnectionString(input: string): ParsedConnection | null {
   // MSSQL / SQL Server
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) {
     return parseGenericURL(trimmed, "mssql", "1433");
+  }
+
+  // Db2 LUW (#786). The TLS it asks for rides in the query string, read by `readQueryTLS`.
+  if (trimmed.startsWith("db2://")) {
+    return parseGenericURL(trimmed, "db2", "50000");
   }
 
   // Couchbase — the TLS scheme is checked first, it is not a prefix of the plain one.
@@ -255,6 +261,21 @@ const MYSQL_SSL_MODE: Record<string, SSLMode> = {
   required: "require",
   verify_ca: "verify-ca",
   verify_identity: "verify-full",
+};
+
+/**
+ * Db2's `security=` keyword: `SSL` is the one value that names a TLS transport (#786). It maps to
+ * a VERIFYING mode, by D26's rule and because the Db2 provider fails closed on unverified
+ * transport: without TLS db2-node 1.0.22 can send the password in cleartext (K11).
+ */
+const DB2_SECURITY: Record<string, SSLMode> = { ssl: "verify-system" };
+
+/** Db2's boolean `ssl=`, both ends mappable, onto the mode `security=SSL` reads as (#786). */
+const DB2_SSL: Record<string, SSLMode> = {
+  true: "verify-system",
+  "1": "verify-system",
+  false: "disable",
+  "0": "disable",
 };
 
 /**
@@ -392,7 +413,7 @@ function readADONetTLS(get: (key: string) => string | undefined): TLSIntent {
 /**
  * The TLS a URL carries in its QUERY STRING, for the engines that put it there.
  *
- * Only postgres, mysql and mssql are read here: for `rediss://`, `couchbases://` and
+ * Only postgres, mysql, mssql and db2 are read here: for `rediss://`, `couchbases://` and
  * ClickHouse's `http(s)://` the scheme IS the transport and already decided, and MongoDB's
  * URI is read by `readMongoTLS`, which parses it by hand because `mongodb+srv://` is not a
  * URL this function's caller can build.
@@ -426,6 +447,15 @@ function readQueryTLS(url: URL, type: DatabaseType): TLSIntent {
   }
 
   if (type === "mssql") return readADONetTLS((key) => params.get(key)?.value);
+
+  if (type === "db2") {
+    // `security=SSL` is the keyword Db2's own CLI and JDBC drivers read; `ssl` is the boolean
+    // spelling other URLs carry. Both ask for a verifying mode: see `DB2_SECURITY`.
+    const security = params.get("security");
+    if (security) return mapTLSValue(security, DB2_SECURITY);
+    const ssl = params.get("ssl");
+    return ssl ? mapTLSValue(ssl, DB2_SSL) : {};
+  }
 
   return {};
 }
@@ -653,6 +683,7 @@ export function detectConnectionStringType(input: string): DatabaseType | null {
   if (trimmed.startsWith("redis://") || trimmed.startsWith("rediss://")) return "redis";
   if (trimmed.startsWith("oracle://")) return "oracle";
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) return "mssql";
+  if (trimmed.startsWith("db2://")) return "db2";
   if (trimmed.startsWith("couchbase://") || trimmed.startsWith("couchbases://")) return "couchbase";
   if (trimmed.startsWith("libsql://")) return "libsql";
   if (trimmed.startsWith("clickhouse://") || trimmed.startsWith("http://") || trimmed.startsWith("https://"))

@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd and Neo4j** from your browser, with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd and Neo4j** from your browser, with AI-powered query assistance, interactive ER diagrams, schema diff, a virtualized data grid, RBAC, OIDC SSO, and a live monitoring dashboard.
 
 ---
 
@@ -109,14 +109,15 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Twenty external engines share one interface.
-The twenty-first row is the embedded LibreDB store, which ships inside the image rather than being a server you connect out to.
+Twenty-one external engines share one interface.
+The twenty-second row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
 | **PostgreSQL** | `pg` | EXPLAIN plans, transactions, query cancellation, SSL/TLS, SSH tunnel |
 | **MySQL** | `mysql2` | EXPLAIN plans, transactions, `KILL QUERY`, SSL/TLS, SSH tunnel |
 | **Oracle** | `oracledb` (thin) | `FETCH FIRST` pagination, `V$` monitoring, `ANALYZE`, transactions |
+| **Db2 LUW** | `db2-node` | `FETCH FIRST` paging, RUNSTATS and REORG; TLS required |
 | **SQL Server** | `mssql` | `OFFSET FETCH`, `sys.dm_*` DMVs, `DBCC CHECKDB`, Azure SQL auto-detect |
 | **SQLite** | `bun:sqlite` / `node:sqlite` | File-based or in-memory databases; the driver follows the runtime, with a `LIBREDB_SQLITE_DRIVER` override |
 | **libSQL** | none — HTTP | Full SQL IDE over the Hrana protocol against a libSQL server or Turso Cloud; SQLite's dialect across a network, with real per-table bytes from `dbstat` and an auth token instead of a password |
@@ -141,7 +142,7 @@ Prometheus and Apache Kafka are read-only too: Studio calls only their read APIs
 
 ### Engines with no provider of their own
 
-Twenty-eight further engines speak the wire protocol of one of the twenty drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Every one of them was measured against a real instance rather than assumed, and how much of the product worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the twenty-one drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much of the product worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

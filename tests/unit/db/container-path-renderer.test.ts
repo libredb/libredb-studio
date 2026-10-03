@@ -84,6 +84,7 @@ const ENGINES = [
   "src/lib/db/providers/keyvalue/redis.ts",
   "src/lib/db/providers/sql/cassandra/objects.ts",
   "src/lib/db/providers/sql/clickhouse/objects.ts",
+  "src/lib/db/providers/sql/db2/objects.ts",
   "src/lib/db/providers/sql/druid/objects.ts",
   "src/lib/db/providers/sql/duckdb/objects.ts",
   "src/lib/db/providers/sql/libsql/objects.ts",

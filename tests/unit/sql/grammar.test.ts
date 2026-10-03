@@ -389,6 +389,9 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // statement behind each one.
   duckdb: "established",
   oracle: "established",
+  // Probed 2026-10-03 on Db2 LUW 12.1.0.0 through db2-node 1.0.22 (#786); see the db2 block above
+  // and DB2_GRAMMAR in `grammar.ts` for the statement behind each fact.
+  db2: "established",
   mssql: "established",
   clickhouse: "established",
   // Established by live probe rather than from a document: their SQL surface is an
@@ -428,6 +431,40 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   neo4j: "default",
 };
 
+/**
+ * Db2 LUW, every fact probed 2026-10-03 on DB2/LINUXX8664 12.1.0.0 through db2-node 1.0.22, the
+ * driver the provider uses (#786). Each statement below answered as quoted.
+ */
+describe("db2", () => {
+  const grammar = resolveSqlGrammar("db2");
+
+  test("`#` is code: the rest of the line is not hidden", () => {
+    // `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 # note` and `SELECT 1 # 2 AS a FROM SYSIBM.SYSDUMMY1`
+    // are both SQLCODE -104, an unexpected token at the `#`.
+    expect(grammar.hash).toBe("code");
+  });
+
+  test("block comments nest", () => {
+    // `SELECT 1 AS a /* a /* b */ FROM SYSIBM.SYSDUMMY1 */ FROM SYSIBM.SYSDUMMY1` answers the
+    // row, and `SELECT 1 AS a /* a /* b */ FROM SYSIBM.SYSDUMMY1` is SQLCODE -104: the inner `*/`
+    // did not close the run.
+    expect(grammar.blockComment).toBe("nesting");
+  });
+
+  test("`q'…'` and `//` are not in the grammar", () => {
+    // `SELECT q'[x]' AS a FROM SYSIBM.SYSDUMMY1` and `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 // note`
+    // are both SQLCODE -104.
+    expect(grammar.alternateQuoting).toBe(false);
+    expect(grammar.doubleSlashComment).toBe(false);
+  });
+
+  test("`[…]` is left at the compatibility default", () => {
+    // `SELECT 1 AS [a] FROM SYSIBM.SYSDUMMY1` is SQLCODE -104, so it is no name quote, but SQL PL
+    // writes an array element as `a[1]` and no subscript reading was established for plain SQL.
+    expect(grammar.bracket).toBe(DEFAULT_SQL_GRAMMAR.bracket);
+  });
+});
+
 describe("every database type has a recorded grammar decision", () => {
   test.each(Object.entries(GRAMMAR_COVERAGE))("%s is %s", (type, expected) => {
     const isDefault = resolveSqlGrammar(type as DatabaseType) === DEFAULT_SQL_GRAMMAR;
@@ -445,6 +482,8 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // SQLBaseProvider and hands the text to `runAndReadAll`.
   duckdb: true,
   oracle: true,
+  // SQL, and the statement text IS what the editor sends to the driver (#786).
+  db2: true,
   mssql: true,
   clickhouse: true,
   couchbase: true,

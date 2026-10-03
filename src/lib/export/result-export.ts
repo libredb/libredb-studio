@@ -166,6 +166,10 @@ const DIALECT_TYPES: Partial<Record<DatabaseType, Partial<Record<InferredKind, s
   // 'PRECISION'`, while `DOUBLE`, `TEXT`, `BIGINT`, `BOOLEAN`, `TIMESTAMP` and `BLOB`
   // are all whole type names.
   cassandra: { numeric: "DOUBLE" },
+  // Db2 has no TEXT: measured on 12.1.0.0, `CREATE TABLE ... (c TEXT)` is SQL0204N `"TEXT" is an
+  // undefined name`, while BIGINT, DOUBLE PRECISION, BOOLEAN, TIMESTAMP and BLOB are whole types.
+  // CLOB, the unbounded character type, rather than a VARCHAR whose bound a cell could pass (#786).
+  db2: { text: "CLOB" },
   oracle: {
     text: "VARCHAR2(4000)",
     integer: "NUMBER(19)",
@@ -323,15 +327,16 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * it answers `Unknown type 'text'` to.
  *
  * The map is total, for the reason `BINARY_LITERAL` below is: a new provider must not
- * inherit a silently wrong answer. The eleven dialects with NO row measured have an
- * empty one. Druid takes no INSERT at all without the MSQ extension. The two search
+ * inherit a silently wrong answer. The twelve dialects with NO row measured have an
+ * empty one. Db2 is the one of them that parses both statements (#786); no bare name was
+ * measured standing alone there, so each is re-spelled from its family. Druid takes no INSERT at all without the MSQ extension. The two search
  * endpoints and Couchbase parse no CREATE TABLE: a SQL++ collection is schemaless and
  * `CREATE COLLECTION` takes no columns, which is why the Couchbase provider declares
  * `supportsCreateTable: false`. MongoDB, Redis, Kafka, etcd and the embedded store declare
  * `queryLanguage: "json"`, `prometheus` declares `"promql"` and `neo4j` declares `"cypher"`,
- * so no SQL statement is ever built for those seven to read. A file for any of the eleven is
- * by definition meant to run somewhere else, so every bare name in it is re-spelled portably
- * rather than kept as one engine's private word.
+ * so no SQL statement is ever built for those seven to read. A file for any of those eleven
+ * is by definition meant to run somewhere else, so every bare name in it is re-spelled
+ * portably rather than kept as one engine's private word.
  */
 const NOTHING_STANDS_ALONE: readonly string[] = [];
 
@@ -510,6 +515,9 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
     "datetime",
   ],
   trino: ["varchar", "varbinary", "timestamp", "timestamp without time zone", "timestamp with time zone"],
+  // No name was measured standing alone on Db2 in its first version (#786), so every bare name is
+  // re-spelled from its family.
+  db2: NOTHING_STANDS_ALONE,
   cassandra: ["varchar", "text", "blob", "decimal", "timestamp"],
   druid: NOTHING_STANDS_ALONE,
   elasticsearch: NOTHING_STANDS_ALONE,
@@ -598,6 +606,8 @@ function sqlTypeOf(column: string, rows: readonly Record<string, unknown>[], sou
  *
  * - `standard-hex` — `X'0102'`, the SQL standard's binary string literal.
  * - `zero-x` — `0x0102`, for the dialects that reject `X'…'`.
+ * - `binary-hex`: `BX'0102'`, Db2's binary string literal. Db2 parses `X'…'` too, but as a
+ *   CHARACTER string (FOR BIT DATA), which a `BLOB` or a `VARBINARY` column refuses.
  * - `pg-bytea` — `'\x0102'::bytea`. Postgres's `X'…'` is a BIT STRING, not bytea, and
  *   there is no cast between the two: measured on 18.4, `SELECT pg_typeof(X'0102')`
  *   answers `bit` and `SELECT X'0102'::bytea` is `ERROR: cannot cast type bit to
@@ -617,7 +627,7 @@ function sqlTypeOf(column: string, rows: readonly Record<string, unknown>[], sou
  * The map is total for the same reason `LITERAL_ESCAPE` is
  * (`src/lib/sql/values.ts`): a new provider must not inherit a silently wrong answer.
  */
-type BinaryLiteral = "standard-hex" | "zero-x" | "pg-bytea" | "hextoraw" | "unhex" | "text";
+type BinaryLiteral = "standard-hex" | "zero-x" | "binary-hex" | "pg-bytea" | "hextoraw" | "unhex" | "text";
 
 const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   postgres: "pg-bytea",
@@ -666,6 +676,12 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   // the empty string rather than raising — and `X'…'` is not in the grammar at all.
   cassandra: "zero-x",
   oracle: "hextoraw",
+  // Measured on Db2 LUW 12.1.0.0 (#786): `INSERT … VALUES (X'0102deadbeef')` into a `BLOB` or a
+  // `VARBINARY` column is SQL0408N, "a value is not compatible with the data type of its
+  // assignment target", because `X'…'` is a character string here. `BX'0102deadbeef'` goes into
+  // `BLOB`, `VARBINARY` and `VARCHAR FOR BIT DATA` alike, reading back as `HEX(…)` =
+  // `0102DEADBEEF`, and `BX''` inserts the zero-length value into all three.
+  db2: "binary-hex",
   // Measured on 26.7.1: `unhex('0102deadbeef')` into a `String` column reads back as
   // `hex(payload)` = `0102DEADBEEF` with `length(payload)` 6, and `length(unhex(''))`
   // is 0.
@@ -699,6 +715,8 @@ function binaryLiteral(bytes: Uint8Array, dialect: DatabaseType | undefined): st
       return `'${text}'::bytea`;
     case "zero-x":
       return `0x${hex}`;
+    case "binary-hex":
+      return `BX'${hex}'`;
     case "hextoraw":
       return `HEXTORAW('${hex}')`;
     case "unhex":

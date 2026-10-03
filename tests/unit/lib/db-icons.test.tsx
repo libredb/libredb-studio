@@ -20,6 +20,7 @@ import {
   PrometheusIcon,
   KafkaIcon,
   EtcdIcon,
+  Db2Icon,
   Neo4jIcon,
 } from "@/components/icons/db-icons";
 
@@ -45,6 +46,7 @@ describe("db-icons", () => {
     { name: "PrometheusIcon", Component: PrometheusIcon },
     { name: "KafkaIcon", Component: KafkaIcon },
     { name: "EtcdIcon", Component: EtcdIcon },
+    { name: "Db2Icon", Component: Db2Icon },
     { name: "Neo4jIcon", Component: Neo4jIcon },
   ];
 

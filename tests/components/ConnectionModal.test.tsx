@@ -134,6 +134,7 @@ const mockSetApiKeyId = mock(() => {});
 const mockSetApiKeySecret = mock(() => {});
 const mockSetSkipObjectScan = mock(() => {});
 const mockSetReadOnly = mock(() => {});
+const mockSetAllowInsecureAuth = mock(() => {});
 const mockSetSaslMechanism = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
@@ -150,6 +151,8 @@ function getDefaultForm() {
     setSkipObjectScan: mockSetSkipObjectScan,
     readOnly: false,
     setReadOnly: mockSetReadOnly,
+    allowInsecureAuth: false,
+    setAllowInsecureAuth: mockSetAllowInsecureAuth,
     readOnlyOffered: false,
     credentialWarning: undefined as string | undefined,
     host: "localhost",
@@ -269,6 +272,7 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   prometheus: ["host", "port", "user", "password"],
   kafka: ["host", "port", "saslMechanism", "user", "password"],
   etcd: ["host", "port", "user", "password"],
+  db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -307,6 +311,13 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       ],
     },
     showSshTunnel: false,
+  },
+  // Mirrored from the real entry (#786); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  db2: {
+    fieldHints: {
+      password:
+        "Without TLS, Db2's driver can send this password in cleartext. Turn on SSL below and use the server's TLS port.",
+    },
   },
   // Mirrored from the real entry (#1089 6.1); tests/unit/lib/db-ui-config.test.ts pins the real one.
   etcd: {
@@ -500,6 +511,31 @@ describe("ConnectionModal", () => {
     mockSetReadOnly.mockClear();
     fireEvent.click(getByLabelText("Read-only"));
     expect(mockSetReadOnly).toHaveBeenCalledWith(false);
+  });
+
+  test("offers Db2's consent to a cleartext password only while SSL Mode is disable, and forwards it (#786)", () => {
+    mockFormOverrides = { type: "db2", sslMode: "disable" };
+    const { getByLabelText, queryByLabelText, rerender } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
+    const box = getByLabelText("Send the password without TLS") as HTMLInputElement;
+
+    expect(box.checked).toBe(false);
+    expect(box.getAttribute("aria-describedby")).toBe("allowInsecureAuth-hint");
+    fireEvent.click(box);
+    expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(true);
+
+    mockFormOverrides = { type: "db2", sslMode: "disable", allowInsecureAuth: true };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect((getByLabelText("Send the password without TLS") as HTMLInputElement).checked).toBe(true);
+
+    // Under a TLS mode there is nothing to consent to, and on another engine no such field.
+    mockFormOverrides = { type: "db2", sslMode: "verify-full" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Send the password without TLS")).toBeNull();
+    mockFormOverrides = { type: "postgres", sslMode: "disable" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Send the password without TLS")).toBeNull();
   });
 
   test("shows the saved query timeout when editing", () => {
@@ -822,6 +858,8 @@ describe("ConnectionModal", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
     expect(queryByText(/postgres:\/\//)).not.toBeNull();
+    // A `db2://` paste fills the fields (#786), so the list names it too.
+    expect(queryByText(/db2:\/\//)).not.toBeNull();
   });
 
   // ── 29b. verify-system is offered, and says what it verifies (D26) ──────
@@ -1426,6 +1464,7 @@ describe("ConnectionModal", () => {
       ["mysql", "mysql", {}, NETWORKED, {}],
       ["redis", "redis", {}, NETWORKED, {}],
       ["oracle", "oracle", {}, NETWORKED, {}],
+      ["db2", "db2", {}, NETWORKED, MOCK_FIELD_COPY.db2.fieldHints ?? {}],
       ["mssql", "mssql", {}, NETWORKED, {}],
       ["clickhouse", "clickhouse", {}, NETWORKED, {}],
       ["mongodb", "mongodb", {}, { ...NETWORKED, authSource: "Authentication Database" }, {}],

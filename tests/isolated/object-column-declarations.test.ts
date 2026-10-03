@@ -87,6 +87,7 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   postgres: ["table", "view", "materialized_view", "sequence"],
   mysql: ["table", "view"],
   oracle: ["table", "view", "materialized_view"],
+  db2: ["table", "view", "materialized_query_table"],
   mssql: ["table", "view"],
   sqlite: ["table", "view"],
   libsql: ["table", "view"],
@@ -196,8 +197,8 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (20 with neo4j) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(21);
+    // EXTERNAL_DATABASE_TYPES.length (21 with db2 and neo4j) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(22);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, and the design's
     // table has no such row: every engine has at least one kind with columns.

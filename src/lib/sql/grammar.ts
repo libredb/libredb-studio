@@ -230,6 +230,28 @@ const ORACLE_GRAMMAR: SqlGrammar = {
   // the slashes. Nothing on that line is hidden.
   doubleSlashComment: false,
 };
+/**
+ * Db2 LUW, every fact probed 2026-10-03 on DB2/LINUXX8664 12.1.0.0 through db2-node 1.0.22, the
+ * driver the provider sends statements with (#786).
+ */
+const DB2_GRAMMAR: SqlGrammar = {
+  // CODE: `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 # note` and `SELECT 1 # 2 AS a FROM
+  // SYSIBM.SYSDUMMY1` are both SQLCODE -104 at the `#`, so the rest of the line is not hidden.
+  hash: "code",
+  // Not established. `SELECT 1 AS [a] FROM SYSIBM.SYSDUMMY1` is SQLCODE -104, so it is no name
+  // quote, but SQL PL writes an array element as `a[1]` and no subscript reading was measured in
+  // plain SQL, so the fail-safe default stays, for the reason the note above `SQL_GRAMMARS` gives
+  // for MySQL and Oracle.
+  bracket: DEFAULT_SQL_GRAMMAR.bracket,
+  // NESTING: `SELECT 1 AS a /* a /* b */ FROM SYSIBM.SYSDUMMY1 */ FROM SYSIBM.SYSDUMMY1` answers
+  // the row, and `SELECT 1 AS a /* a /* b */ FROM SYSIBM.SYSDUMMY1` is SQLCODE -104, so the inner
+  // `*/` did not close the run. The flat default would read the text after it as code.
+  blockComment: "nesting",
+  // `SELECT q'[x]' AS a FROM SYSIBM.SYSDUMMY1` is SQLCODE -104.
+  alternateQuoting: false,
+  // `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 // note` is SQLCODE -104.
+  doubleSlashComment: false,
+};
 const MSSQL_GRAMMAR: SqlGrammar = {
   hash: "code",
   bracket: "quoted-identifier",
@@ -565,6 +587,7 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   clickhouse: CLICKHOUSE_GRAMMAR,
   postgres: POSTGRES_GRAMMAR,
   oracle: ORACLE_GRAMMAR,
+  db2: DB2_GRAMMAR,
   mssql: MSSQL_GRAMMAR,
   sqlite: SQLITE_GRAMMAR,
   duckdb: DUCKDB_GRAMMAR,

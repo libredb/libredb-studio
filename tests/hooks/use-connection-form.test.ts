@@ -44,6 +44,8 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   kafka: ["host", "port", "saslMechanism", "user", "password"],
   // No database: one connection is one cluster (#1089 6.1).
   etcd: ["host", "port", "user", "password"],
+  // The consent to a cleartext password is a field of Db2's own (#786).
+  db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -136,6 +138,56 @@ describe("useConnectionForm", () => {
     user: "app",
     createdAt: new Date(),
   };
+
+  test("Db2's consent to a cleartext password is written only while it is ticked with no TLS, and reopens (#786)", async () => {
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const editConnection: DatabaseConnection = {
+      id: "warehouse",
+      name: "Warehouse",
+      type: "db2",
+      host: "db2.internal",
+      port: 50000,
+      user: "db2inst1",
+      password: "secret",
+      database: "TESTDB",
+      createdAt: new Date(),
+      allowInsecureAuth: true,
+    };
+    const { result, rerender } = renderHook(
+      ({ connection }) =>
+        useConnectionForm({
+          ...defaultProps,
+          editConnection: connection,
+          onConnect,
+          onTestConnection: async () => ({ success: true }),
+        }),
+      { initialProps: { connection: editConnection } },
+    );
+    expect(result.current.allowInsecureAuth).toBe(true);
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[0][0].allowInsecureAuth).toBe(true);
+
+    // A TLS mode makes the consent moot, and it is not sent.
+    act(() => result.current.setSSLMode("verify-full"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[1][0]).not.toHaveProperty("allowInsecureAuth");
+
+    // Unticked, it is cleared, and a connection that never consented reopens unticked.
+    act(() => {
+      result.current.setSSLMode("disable");
+      result.current.setAllowInsecureAuth(false);
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[2][0]).not.toHaveProperty("allowInsecureAuth");
+    rerender({ connection: { ...editConnection, allowInsecureAuth: undefined } });
+    expect(result.current.allowInsecureAuth).toBe(false);
+  });
 
   test("reopens a saved timeout and clearing it restores the default", async () => {
     const onConnect = mock((_connection: DatabaseConnection) => {});
@@ -1250,6 +1302,26 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult!.message).toContain("parsed successfully");
   });
 
+  test("handlePasteConnectionString fills the Db2 fields from a db2:// URL, with ?security=SSL as verified TLS (#786)", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("db2://db2inst1:secret@db2.example.com:50001/TESTDB?security=SSL");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe("db2");
+    expect(result.current.host).toBe("db2.example.com");
+    expect(result.current.port).toBe("50001");
+    expect(result.current.user).toBe("db2inst1");
+    expect(result.current.password).toBe("secret");
+    expect(result.current.database).toBe("TESTDB");
+    expect(result.current.sslMode).toBe("verify-system");
+    expect(result.current.testResult!.tone).toBe("success");
+  });
+
   test("handlePasteConnectionString keeps the TLS intent of a pasted https ClickHouse URL", () => {
     // A ClickHouse Cloud endpoint is the common case. Losing the scheme here sends a
     // plaintext POST to the TLS port, which fails with a bare "fetch failed".
@@ -1471,6 +1543,8 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult).not.toBeNull();
     expect(result.current.testResult!.tone).toBe("error");
     expect(result.current.testResult!.message).toContain("Could not parse");
+    // The list of formats it names includes every scheme the parser reads, `db2://` among them (#786).
+    expect(result.current.testResult!.message).toContain("db2://");
   });
 
   // ── environment defaults to 'local' ────────────────────────────────────────
@@ -1538,6 +1612,7 @@ describe("useConnectionForm", () => {
     mysql: true,
     sqlite: true,
     oracle: true,
+    db2: true,
     mssql: true,
     mongodb: true,
     redis: true,

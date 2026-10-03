@@ -506,6 +506,28 @@ export const EtcdIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
+ * IBM Db2 LUW (#786): a database cylinder beside a "2", as strokes at the house weight with no fill,
+ * which stays readable at the 14px the connection list draws.
+ */
+export const Db2Icon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <ellipse cx="8" cy="5.5" rx="5" ry="2.2" />
+    <path d="M3 5.5v13c0 1.2 2.2 2.2 5 2.2s5-1 5-2.2v-13" />
+    <path d="M3 12c0 1.2 2.2 2.2 5 2.2s5-1 5-2.2" />
+    <path d="M16.5 10.2c0-1 .8-1.7 1.8-1.7s1.8.7 1.8 1.7c0 1.7-3.6 2.9-3.6 5.1h3.7" />
+  </svg>
+);
+
+/**
  * Neo4j: a generic graph glyph, never the vendor's logo.
  *
  * Three nodes joined by three relationships, drawn as strokes at the house weight with no fill: a property

@@ -110,6 +110,9 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
     "function/sql",
     "trigger/sql",
   ],
+  // A module holds routines and has no text of its own to read; an alias and a sequence are rows
+  // in the catalog rather than a stored definition (#786).
+  db2: ["view/sql", "materialized_query_table/sql", "procedure/sql", "function/sql", "trigger/sql"],
   mssql: ["view/sql", "procedure/sql", "function/sql", "trigger/sql"],
   clickhouse: ["table/sql", "view/sql", "materialized_view/sql", "dictionary/sql", "function/sql"],
   druid: [],
@@ -223,8 +226,8 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (20 with neo4j) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(21);
+    // EXTERNAL_DATABASE_TYPES.length (21 with db2 and neo4j) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(22);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -242,11 +245,11 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(72);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(72);
-    // neo4j added four kinds, none source-bearing: 23 + 4 and 95 + 4.
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(27);
-    expect(rows).toHaveLength(99);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(77);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(77);
+    // neo4j added four kinds, none source-bearing, and db2 five source-bearing kinds and four others.
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(31);
+    expect(rows).toHaveLength(108);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -272,10 +275,10 @@ describe("the fleet census of object source declarations", () => {
       [],
     );
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
-    // 74 on a MariaDB connection against 72 unconnected: the design states both numbers because
+    // 79 on a MariaDB connection against 77 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(74);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(79);
   });
 
   /*
@@ -361,8 +364,8 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    // 99 unconnected kinds plus the MariaDB branch's eight.
-    expect(rows).toHaveLength(107);
+    // 108 unconnected kinds plus the MariaDB branch's eight.
+    expect(rows).toHaveLength(116);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

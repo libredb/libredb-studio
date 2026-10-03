@@ -71,6 +71,18 @@
   "selectQuery": "SELECT\n  \"id\",\n  \"name\"\nFROM \"c0\".\"Order\"\"Items\"\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\""
  },
+ "db2": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT id, name FROM c0.\"Order\"\"Items\";",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
+ },
  "mssql": {
   "queryLanguage": "sql",
   "queryDialect": null,

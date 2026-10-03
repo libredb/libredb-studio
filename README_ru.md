@@ -102,9 +102,9 @@ LibreDB Studio устроен наоборот: **инструмент прих�
 
 ## Основные возможности
 
-### Двадцать СУБД, один интерфейс
+### Двадцать одна СУБД, один интерфейс
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
 
 Для всех SQL-СУБД доступен одинаковый набор инструментов: дерево объектов базы (схемы, таблицы, столбцы), ER-диаграммы, сравнение схем и панели мониторинга. MongoDB и Redis работают не на SQL, поэтому ER-диаграмм и сравнения схем для них нет.
 
@@ -117,6 +117,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 | **PostgreSQL** | `pg` | Полноценная SQL IDE, планы выполнения EXPLAIN, транзакции, отмена запросов (`pg_cancel_backend`) |
 | **MySQL** | `mysql2` | Полноценная SQL IDE, EXPLAIN, транзакции, отмена запросов (`KILL QUERY`) |
 | **Oracle** | `oracledb` (тонкий клиент, режим Thin) | Полноценная SQL IDE, постраничный вывод через `FETCH FIRST N ROWS`, представления мониторинга `V$`, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, транзакции |
+| **Db2 LUW** | `db2-node` (DRDA-клиент на Rust в нативном аддоне N-API, без клиента IBM) | SQL IDE для Db2 for Linux, UNIX and Windows: обозреватель схем с таблицами, представлениями, материализованными таблицами запросов, псевдонимами, последовательностями, модулями, процедурами, функциями и триггерами, сохранённые определения, постраничный вывод через `FETCH FIRST` / `OFFSET`, RUNSTATS и REORG для отдельной таблицы. TLS обязателен, если вы сознательно его не отключили, потому что без него драйвер передаёт пароль открытым текстом. Драйвер неверно читает некоторые типы (не-ASCII текст, BIGINT больше 2^53, BOOLEAN, XML, LOB), поэтому редактирование строк, импорт, EXPLAIN, транзакции и отмена запроса отключены; известные проблемы описаны в [`docs/providers/db2.md`](docs/providers/db2.md) |
 | **SQL Server** | `mssql` (tedious) | Полноценная SQL IDE, постраничный вывод через `TOP N` / `OFFSET FETCH`, системные представления `sys.dm_*`, `UPDATE STATISTICS`, `DBCC CHECKDB`, транзакции, автоопределение Azure SQL |
 | **SQLite** | `bun:sqlite` / `node:sqlite` (в зависимости от среды выполнения) | Полноценная SQL IDE, база в файле на сервере или в памяти |
 | **libSQL** | Без драйвера, по HTTP (протокол Hrana, `POST /v2/pipeline`, порт 8080) | Полноценная SQL IDE для своего сервера libSQL (`sqld`) и для Turso Cloud. Это тот же диалект SQLite, только по сети. Есть `EXPLAIN QUERY PLAN` и реальный размер таблиц и индексов из `dbstat`. Вместо пароля используется токен доступа. Из операций обслуживания доступны только `REINDEX` и `PRAGMA integrity_check`, остальные (`VACUUM`, `ANALYZE`, `PRAGMA optimize`) сервер не принимает |

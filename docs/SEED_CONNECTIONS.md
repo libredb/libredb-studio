@@ -58,7 +58,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -180,7 +180,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
@@ -204,6 +204,7 @@ connections:
 | `connections[].instanceName` | No | — | SQL Server instance name |
 | `connections[].localDataCenter` | No¹ | — | Cassandra local data centre (`datacenter1`). ¹Optional in the schema because no other engine has it, and **required by the Cassandra provider**: the driver refuses to connect without one |
 | `connections[].saslMechanism` | No | - | Kafka: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`, absent meaning none; `user` and `password` are sent only with a mechanism, and only over TLS. It takes a literal name: it is neither a credential nor an address, so a `${ENV}` or `${vault:...}` reference in it is refused when the file loads, naming the field, because the file is validated before any reference is resolved |
+| `connections[].allowInsecureAuth` | No | absent | Db2 only (#786): `true` accepts that a connection with no TLS sends its password to the server in cleartext, which the Db2 provider otherwise refuses when the connection opens ([providers/db2.md](providers/db2.md)). Set `ssl` instead wherever the server offers TLS. Every other engine ignores it. A literal boolean: a `${ENV}` reference fails the whole file |
 | `connections[].authSource` | No | — | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error |
 | `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd connection refuses `mcp: true` when the file loads: MCP is not offered for it |
 

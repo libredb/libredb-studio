@@ -167,6 +167,15 @@ describe("filterByRoles: engine-specific fields", () => {
     expect(managed.saslMechanism).toBe("SCRAM-SHA-512");
   });
 
+  it("carries a Db2 connection's consent to a cleartext password through (#786)", () => {
+    // Dropped here, the provider would refuse a seed whose file did set the consent.
+    const [managed] = filterByRoles([{ ...baseConn, type: "db2", port: 50000, allowInsecureAuth: true }], ["user"]);
+    const [none] = filterByRoles([{ ...baseConn, type: "db2", port: 50000 }], ["user"]);
+
+    expect(managed.allowInsecureAuth).toBe(true);
+    expect(none.allowInsecureAuth).toBeUndefined();
+  });
+
   it("leaves the mechanism absent on a seeded connection that names none", () => {
     const [managed] = filterByRoles([{ ...baseConn, type: "kafka", port: 9092 }], ["user"]);
 

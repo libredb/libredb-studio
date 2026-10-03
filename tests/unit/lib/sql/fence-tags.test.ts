@@ -21,6 +21,7 @@ describe("fenceTagEngine", () => {
       "mongodb",
       "redis",
       "oracle",
+      "db2",
       "mssql",
       "libredb",
       "couchbase",
@@ -42,6 +43,13 @@ describe("fenceTagEngine", () => {
     // `null` is fenceTagEngine's "names no engine", the answer an untagged fence and `sql` get.
     for (const tag of ["sh", "bash", "shell", "etcdctl"]) expect(fenceTagEngine(tag)).toBeNull();
     expect(fenceTagEngine("etcd")).toBe("etcd");
+  });
+
+  test("db2 has no alias: `sqlpl` and `ibmdb2` name no engine (#786)", () => {
+    // Only the type-id itself is read as naming Db2; `sqlpl` is a language, not the product.
+    expect(fenceTagEngine("db2")).toBe("db2");
+    expect(fenceTagEngine("sqlpl")).toBeNull();
+    expect(fenceTagEngine("ibmdb2")).toBeNull();
   });
 
   test("an alias names the engine it is an alias for", () => {

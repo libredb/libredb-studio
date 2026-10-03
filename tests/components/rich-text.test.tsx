@@ -152,6 +152,7 @@ describe("renderProse code hand-off to the editor", () => {
       "mongodb",
       "redis",
       "oracle",
+      "db2",
       "mssql",
       "libredb",
       "couchbase",

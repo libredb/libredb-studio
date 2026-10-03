@@ -47,6 +47,10 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   mongodb: true,
   redis: true,
   oracle: true,
+  // A ```db2 block holds a statement this editor runs against a Db2 LUW connection (#786). No
+  // alias is registered below: `sqlpl` names Db2's procedural language rather than the product,
+  // and an alias that names the WRONG engine is worse here than a missing one.
+  db2: true,
   mssql: true,
   libredb: true,
   couchbase: true,

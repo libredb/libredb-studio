@@ -325,14 +325,16 @@ jobs:
           test -f "$SMOKE_DIR/libredb-studio.exe"
           test -f "$SMOKE_DIR/node/node.exe"
           # Issue #114 constraint: the drivers must load on Windows with the
-          # BUNDLED runtime. better-sqlite3 is the ONLY native binding in
-          # the payload (the real Windows-prebuild risk) and the only one
-          # requireable from the payload root: on the win32 build Turbopack
-          # bundles the pure-JS drivers (oracledb thin mode, mssql/tedious)
-          # into the server chunks, so they carry no prebuild risk and load
-          # with the server itself (the 0.9.58 attempt proved oracledb is
-          # not in the traced node_modules here, unlike the linux build).
+          # BUNDLED runtime. The native bindings are the real Windows-prebuild
+          # risk, and these two probes require them from the payload root:
+          # better-sqlite3, and db2-node (#786), whose win32-x64-msvc addon
+          # imports VCRUNTIME140.dll. The pure-JS drivers carry no prebuild
+          # risk: on the win32 build Turbopack bundles them (oracledb thin
+          # mode, mssql/tedious) into the server chunks, so they load with the
+          # server itself (the 0.9.58 attempt proved oracledb is not in the
+          # traced node_modules here, unlike the linux build).
           (cd "$SMOKE_DIR" && ./node/node.exe -e "require('better-sqlite3')(':memory:').close(); console.log('db driver probe ok')")
+          (cd "$SMOKE_DIR" && ./node/node.exe -e "const m = require('db2-node'); if (typeof m.Client !== 'function') { throw new Error('db2-node loaded without Client'); } console.log('db2-node probe ok')")
           # Zero-config boot through the launcher: storage defaults under
           # %LOCALAPPDATA%\LibreDB\Studio, bind defaults to loopback, and
           # the first run must print generated admin credentials.

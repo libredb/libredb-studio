@@ -28,11 +28,11 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D145, U17 · 89
+- [Drivers and connections](#drivers-and-connections) — D1-D151, U17 · 95
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X22, U2-U72 · 62
-- [Dependencies](#dependencies) — P1-P6 · 6
+- [Dependencies](#dependencies) — P1-P8 · 8
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
@@ -2045,7 +2045,62 @@ Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
 
 **Done when:** concurrent `getOrCreateProvider` calls for one cache key share one creation, or the loser disconnects its provider and closes a tunnel it created, and a test drives two overlapping first calls with a provider that counts its connects and disconnects.
 
-### D145. MongoDB and Couchbase read their fields from a sample and do not mark them sampled
+### D145. Db2 inline row edit, data import and Create Table are off until db2-node decodes non-ASCII text
+
+`db2-node` 1.0.22 decodes a CHAR or VARCHAR value holding any non-ASCII byte as EBCDIC 037, so a read-then-write-back stores corrupted text ([gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12), K1 in `docs/providers/db2.md`).
+So no kind in `DB2_OBJECT_KINDS` (`src/lib/db/providers/sql/db2/capabilities.ts`) declares `acceptsRowWrites`, and `db2Capabilities` sets `supportsInlineRowEdit` and `supportsCreateTable` to false, which also closes the data import dialog.
+Create Table needs a Db2 row of column types as well: Db2 refuses the `TEXT` type the PostgreSQL row would emit (SQL0204N).
+
+Found 2026-10-03 by the Db2 provider's driver spike (#786).
+
+**Done when:** a `db2-node` release reads "Grüße" back as written on Db2 12.1 and 11.5, `tests/live/db2-known-issues.ts` prints `GONE` for K1, and Db2 declares `acceptsRowWrites` on its table kind, `supportsInlineRowEdit` and `supportsCreateTable`, with a measured column-type row and an import round trip of non-ASCII text in the provider tests.
+
+### D146. Db2 monitoring reads only the version and two catalog counts
+
+`src/lib/db/providers/sql/db2/monitoring.ts` reads the service level and the table and index counts, and answers every other panel empty with a label that says so.
+The #787 branch carried measured SQL for sessions (`MON_GET_CONNECTION`), slow queries (`MON_GET_PKG_CACHE_STMT`, which is empty unless `mon_req_metrics` or `mon_act_metrics` is on), buffer-pool hit ratio, storage, uptime, deadlocks and index statistics, measured on Db2 11.5 through `ibm_db`.
+
+Found 2026-10-03 while scoping the Db2 provider's first version (#786).
+
+**Done when:** each panel is read through `db2-node`, re-measured on 12.1 and 11.5, refused reads answer an empty panel rather than throwing, and `docs/providers/db2.md` section 9 names what each panel reads.
+
+### D147. The Db2 schema diff writes a column modification as a comment
+
+`NO_COLUMN_MODIFICATION` in `src/lib/schema-diff/migration-generator.ts` holds `db2`, because Db2 changes a column with `ALTER TABLE ... ALTER COLUMN ... SET DATA TYPE` and may leave the table REORG-pending, after which most statements on it fail with SQL0668N until a REORG.
+The #787 branch drafted a branch that emits `SET DATA TYPE`, `SET`/`DROP NOT NULL` and `SET`/`DROP DEFAULT` with a REORG advisory comment, never measured live.
+
+Found 2026-10-03 while scoping the Db2 provider's first version (#786).
+
+**Done when:** the column modification is expressed through a declared capability rather than a `dialect === "db2"` branch, each statement it emits runs on Db2 12.1 against the fixture, the REORG-pending advisory names the table, and `tests/unit/schema-diff/migration-generator.test.ts` moves `db2` out of the comment-only coverage.
+
+### D148. Db2 has no transactions, SANDBOX or query cancel
+
+`db2Capabilities` sets `supportsTransactions` to false and the provider implements no `cancelQuery`: it holds one `Client` with no session of its own for a transaction, and `db2-node` 1.0.22 offers no interrupt, since `close()` waits for the running statement and `queryTimeout` leaves the statement running on the server (K14 in `docs/providers/db2.md`).
+
+Found 2026-10-03 by the Db2 provider's driver spike (#786).
+
+**Done when:** a driver release offers a real interrupt or a server-side cancel the provider can send on a second connection, the provider implements `cancelQuery` and the transaction lifecycle on a held connection, and a live test cancels a long statement and sees it end on the server.
+
+### D149. Windows channels and the Visual C++ runtime the Db2 addon needs
+
+The win32 addon of `db2-node` imports `VCRUNTIME140.dll`, so a Windows machine without the Microsoft Visual C++ 2015-2022 x64 redistributable cannot load the Db2 driver.
+winget and Chocolatey declare it as a dependency; the portable zip, Scoop and `npx @libredb/studio` on Windows rely on the machine having it, and nothing has been measured on a clean Windows install.
+
+Found 2026-10-03 while packaging the Db2 provider (#786).
+
+**Done when:** a clean Windows 11 VM without the redistributable is measured on every Windows channel, each channel either installs the runtime or says what to install before the first Db2 connection, and a missing runtime reaches the user as a sentence naming it rather than a load error.
+
+### D150. The Db2 schema diff mixes schemas and writes views as tables, and nothing can turn it off
+
+Nothing in the provider capabilities disables schema diff or migration DDL for an engine, so a Db2 connection offers both with the shared engine's limits, measured on the Db2 provider branch.
+The diff keys objects by name only, so `APP.T` and `REPORTING.T` collide; it writes a view or a materialized query table as `CREATE TABLE`; and it quotes a cross-schema reference `SCHEMA.TABLE` as one identifier.
+The nearest lever is the migration generator's `NO_TABLE_DDL` type set in `src/lib/schema-diff/migration-generator.ts`, which declines the whole diff.
+
+Found 2026-10-03 while building the Db2 provider (#786); the schema-diff engine was left untouched.
+
+**Done when:** either the diff keys objects by schema and name, keeps a view or MQT a view, and quotes each part of a qualified name on its own, each pinned by a test over a two-schema Db2 fixture, or a declared capability turns schema diff and migration DDL off for an engine that cannot be served correctly, with the Db2 provider declaring it and the UI saying why.
+
+### D151. MongoDB and Couchbase read their fields from a sample and do not mark them sampled
 
 `describeObject` in `src/lib/db/providers/document/mongodb.ts` infers a collection's fields from up to `OBJECT_SAMPLE_SIZE` (100) documents and sets no `provenance` on the columns it builds.
 `src/lib/db/providers/document/couchbase/index.ts` does the same with the engine's `INFER` sampler, because Couchbase stores no schema to read, and sets no `provenance` either.
@@ -3069,7 +3124,7 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
 ### U58. TablesTab's Vacuum summary card reads 0 and "OK" on an engine that declares no vacuum
 
 `vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card counts the tables whose `bloatRatio` passes 10 as if the engine had a vacuum.
-Nine engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, SQL Server, ClickHouse, Trino, Redis and Couchbase today, and etcd after the etcd PR.
+Ten engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, SQL Server, ClickHouse, Trino, Redis, Couchbase and etcd today, and Db2 LUW after the Db2 PR (#786), which reads no table statistics in its first version.
 All but MySQL publish no `bloatRatio`, so their card shows 0 with a green "OK" wherever the tab has table statistics to read; Redis answers none, so its card reads that only while its database is empty, and N/A once the database holds a key.
 MySQL's `bloatRatio` is `DATA_FREE` as a percentage of the table's data and index bytes, so its card counts the tables past 10 percent under the Vacuum title, a count the fix takes off the card too.
 Reproduce: render `TablesTab` with the capabilities `POST /api/db/provider-meta` serves for libSQL, Oracle or SQL Server and the statistics of one table, or open the Tables tab on one of them over a database that holds a table, and read the Vacuum card.
@@ -3360,6 +3415,26 @@ knip does not follow a `.css` import, so a stylesheet imported only for its side
 Found 2026-09-30 by the etcd PR's knip run (#1089), which removed the other hint, `gh` in `ignoreBinaries`, after measuring that no script needs it.
 
 **Done when:** `knip.json` either declares a compiler for `.css` or states that the project's stylesheets are out of scope in a form knip accepts, and `bun run knip` prints no configuration hint.
+
+### P7. The TLS library compiled into the db2-node addon is inside four RustSec advisories
+
+`db2-node` 1.0.22, the Db2 provider's driver (#786), compiles `rustls` 0.23.37 and `rustls-webpki` 0.103.10 into its native addon.
+Checked on 2026-10-03 against the RustSec advisory database, `rustls` 0.23.37 is inside RUSTSEC-2026-0285 (patched in 0.23.45), and `rustls-webpki` 0.103.10 is inside RUSTSEC-2026-0098, RUSTSEC-2026-0099 and RUSTSEC-2026-0104 (patched in 0.103.13).
+That library is what protects a Db2 connection's password on the wire, since without TLS the driver sends it in cleartext (K11 in `docs/providers/db2.md`).
+The crates are linked into the `.node` binary, so no lockfile, override or `cargo update` on our side reaches them: only a new `db2-node` release can.
+
+**Done when:** a `db2-node` release links `rustls` 0.23.45 or later and `rustls-webpki` 0.103.13 or later, its `Cargo.lock` is re-checked against the advisory database, `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run on it, and the pin in `package.json` and section 12 of `docs/providers/db2.md` move to it.
+
+### P8. db2-node 1.0.24 fixes the known driver issues, and the Db2 provider still pins 1.0.22
+
+The Db2 provider (#786) shipped on `db2-node` 1.0.22 with the driver defects K1 to K22 documented in `docs/providers/db2.md` and reported upstream in gurungabit/db2-node#12.
+Upstream fixed all of them in gurungabit/db2-node#13, merged 2026-10-03.
+The v1.0.23 tag failed to publish, so the fixes reach npm with 1.0.24, whose release is gurungabit/db2-node#15; on 2026-10-03 npm still served 1.0.22 (`npm view db2-node dist-tags`).
+The fix changes behaviour the provider depends on: an unsafe BIGINT is returned as a string, `CALL` returns result sets, `currentSchema` is honoured, `Client.cancel()` exists, and a connection without TLS to a stock `AUTHENTICATION=SERVER` server is refused unless `securityMechanism: 'userPassword'` is set, so `allowInsecureAuth` stops working until the provider passes it.
+Bumping the pin is a provider change, not a routine bump.
+P7 closes with the same release if its `Cargo.lock` carries the patched TLS crates.
+
+**Done when:** the pin in `package.json` moves to the published release; `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run against Db2 12.1 and 11.5 and each K row in `docs/providers/db2.md` is removed or kept on that evidence; `allowInsecureAuth` maps to the driver's explicit plaintext mechanism; inline edit, data import and Create Table are re-enabled only if K1 and K22 measure as gone; and each workaround the fix makes redundant (the compound block around `CALL`, HEX catalog names, the preview casts) is removed or its reason restated.
 
 ## Documentation
 

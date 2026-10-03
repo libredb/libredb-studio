@@ -73,6 +73,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   // The checkbox owns it, so unticking it has to CLEAR it (#1089): `preserved` would leave the box
   // unticked on screen while the saved connection went on refusing writes.
   readOnly: "edited",
+  // The checkbox owns it, so unticking it has to CLEAR it (#786): `preserved` would keep a Db2
+  // connection sending its password without TLS after the user took the consent back.
+  allowInsecureAuth: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",
@@ -173,6 +176,9 @@ export const CONNECTION_FORM_DEFAULTS = {
   // A leftover mode would make the next connection, on an engine whose provider enforces it, refuse
   // every write with nobody having asked it to.
   readOnly: false,
+  // A leftover consent would send the next Db2 connection's password without TLS, a risk nobody
+  // accepted for it (#786).
+  allowInsecureAuth: false,
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -328,6 +334,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    * hidden.
    */
   const [readOnly, setReadOnly] = useState(D.readOnly);
+  /**
+   * Accept that a Db2 connection with no TLS sends its password in cleartext (#786). Drawn only
+   * for an engine that takes the field, and only while SSL Mode is disable; the provider refuses a
+   * connection with no TLS unless this is set.
+   */
+  const [allowInsecureAuth, setAllowInsecureAuth] = useState(D.allowInsecureAuth);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -371,6 +383,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     saslMechanism: setSaslMechanism,
     skipObjectScan: setSkipObjectScan,
     readOnly: setReadOnly,
+    allowInsecureAuth: setAllowInsecureAuth,
     showSSH: setShowSSH,
     sshEnabled: setSSHEnabled,
     sshHost: setSSHHost,
@@ -472,6 +485,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Overwritten, not set only when true, for the no-scan choice's reason: a connection that is not
       // read-only must show an unticked box, or the last one edited is saved onto it.
       setReadOnly(editConnection.readOnly === true);
+      // Overwritten for the same reason: a connection that never accepted a cleartext password must
+      // show an unticked box, or the last one edited is saved onto it.
+      setAllowInsecureAuth(editConnection.allowInsecureAuth === true);
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -674,6 +690,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // switch keeps the box's state, and the factory refuses `readOnly: true` on every other engine.
       // Written only when true, like the no-scan choice: `false` and absent are one mode.
       ...(readOnly && READ_ONLY_ENFORCED[type] ? { readOnly: true } : {}),
+      // Only for an engine that takes it, and only while no TLS is chosen, which is the only state the
+      // box is drawn in (#786): consent left over from a type switch or a TLS mode is not sent.
+      ...(allowInsecureAuth && addressedFields.has("allowInsecureAuth") && sslMode === "disable"
+        ? { allowInsecureAuth: true }
+        : {}),
     };
   }, [
     sslMode,
@@ -710,6 +731,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     saslMechanism,
     skipObjectScan,
     readOnly,
+    allowInsecureAuth,
   ]);
 
   /**
@@ -874,7 +896,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         // they are FILE-based, `showConnectionStringToggle` is false for all three, so
         // this control is never rendered for them and no scheme is being withheld.
         message:
-          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, libsql://, http(s)://, redis://, oracle://, mssql://",
+          "Could not parse connection string. Supported formats: postgres://, mysql://, mongodb://, couchbase://, clickhouse://, libsql://, http(s)://, redis://, oracle://, mssql://, db2://",
       });
       return;
     }
@@ -993,6 +1015,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "prometheus",
     "kafka",
     "etcd",
+    "db2",
     "neo4j",
   ];
   const dbTypes = selectableTypes.map((t) => {
@@ -1078,6 +1101,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setSkipObjectScan,
     readOnly,
     setReadOnly,
+    allowInsecureAuth,
+    setAllowInsecureAuth,
 
     // SSH Tunnel
     showSSH,

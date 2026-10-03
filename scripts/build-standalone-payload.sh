@@ -22,6 +22,10 @@
 #                                      (ORACLE_CLIENT_LIB_DIR) loads a native
 #                                      addon from build/Release, which file
 #                                      tracing never sees (#538)
+#   - node_modules/db2-node         -> the Db2 driver: traced (no copy),
+#                                      pruned to the addons this target loads
+#   - THIRD_PARTY_NOTICES.txt       -> notices for the crates compiled into
+#                                      db2-node's addons
 #   - seed-assets/                  -> vendored sample DB templates (fs-read
 #                                      at runtime, not seen by file tracing)
 #   - data/                         -> default SQLite storage directory
@@ -251,6 +255,24 @@ if ! ls "$PAYLOAD_DIR"/node_modules/oracledb/build/Release/oracledb-*-"${OS}"-"$
   exit 1
 fi
 
+# The Db2 driver (#786). No copy here, unlike the three above: db2-node's
+# index.js reaches its eight prebuilt addons through static require literals,
+# so file tracing already put the whole package into the payload at the
+# `cp -R .next/standalone/.` step. The work is the reverse, keeping only what
+# this target can load (both libcs on Linux, because npx serves Alpine from the
+# same tarball); the script fails when the package, a kept addon or the addon
+# count is wrong. Then prove the survivor loads under this host's node.
+"$ROOT_DIR/scripts/lib/prune-db2-node.sh" "$PAYLOAD_DIR" "$OS" "$ARCH"
+if ! (cd "$PAYLOAD_DIR" && node -e "require('db2-node')") 2>/dev/null; then
+  echo "db2-node does not load for ${OS}-${ARCH} under $(node --version)." >&2
+  exit 1
+fi
+
+# The npm tarball of db2-node ships no LICENSE and no notices for the Rust
+# crates linked into its addons, so the generated notices travel at the payload
+# root, next to LICENSE (prune-standalone-payload.sh keeps both).
+cp THIRD_PARTY_NOTICES.txt "$PAYLOAD_DIR/THIRD_PARTY_NOTICES.txt"
+
 # Vendored sample database templates (seed-assets/): read at runtime relative
 # to the payload root, so output file tracing never includes them — copy
 # explicitly (mirrors the Dockerfile runner stage COPY).
@@ -304,6 +326,12 @@ if [ "$RUN_SMOKE" = "true" ]; then
   # until a user opens a DuckDB connection.
   echo "==> Smoke: @duckdb/node-api native binding loads"
   (cd "$SMOKE_DIR" && node -e "const { DuckDBInstance } = require('@duckdb/node-api'); DuckDBInstance.create(':memory:').then((i) => i.connect()).then((c) => c.runAndReadAll('SELECT 42 AS a')).then((r) => { if (r.getRowObjectsJson()[0].a !== 42) { throw new Error('unexpected DuckDB result'); } });")
+
+  # The third native module. A bare require is a complete probe: index.js
+  # throws at load when the addon for this platform is not on disk.
+  echo "==> Smoke: db2-node native binding loads"
+  (cd "$SMOKE_DIR" && node -e "const m = require('db2-node'); if (typeof m.Client !== 'function') { throw new Error('db2-node loaded without Client'); }")
+  test -f "$SMOKE_DIR/THIRD_PARTY_NOTICES.txt"
 
   PORT=$(( (RANDOM % 20000) + 20001 ))
   echo "==> Smoke: booting node server.js on port $PORT"

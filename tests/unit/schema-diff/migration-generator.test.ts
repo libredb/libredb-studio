@@ -321,6 +321,16 @@ describe("generateMigrationSQL: foreign keys in ALTER", () => {
     expect(sql).toContain("DROP FOREIGN KEY `fk_users_old_ref`");
   });
 
+  // Db2 has neither `DROP CONSTRAINT IF EXISTS` nor `DROP INDEX IF EXISTS`: measured on Db2 LUW
+  // 12.1.0.0, both are SQL0104N at `EXISTS`, while the bare `ALTER TABLE "C" DROP CONSTRAINT
+  // "fk_c"` and `DROP INDEX "ix_c"` run (#786). So it takes Oracle's spelling of both.
+  test("Db2 drops a removed FK and a removed index without IF EXISTS", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "db2");
+    expect(sql).toContain('ALTER TABLE "users" DROP CONSTRAINT "fk_users_old_ref";');
+    expect(sql).toContain('DROP INDEX "idx_legacy";');
+    expect(sql).not.toContain("IF EXISTS");
+  });
+
   test("SQLite FK drop produces comment", () => {
     const sql = generateMigrationSQL(makeModifiedTableDiff(), "sqlite");
     expect(sql).toContain("-- SQLite: Cannot drop foreign key directly");
@@ -1019,6 +1029,9 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     postgres: "key-follows-in-an-alter",
     mysql: "key-follows-in-an-alter",
     oracle: "key-follows-in-an-alter",
+    // Measured on Db2 LUW 12.1.0.0 (#786): the trailing `ALTER TABLE … ADD CONSTRAINT … FOREIGN
+    // KEY … REFERENCES …` this arm emits runs.
+    db2: "key-follows-in-an-alter",
     mssql: "key-follows-in-an-alter",
     clickhouse: "engine-has-no-foreign-key",
     couchbase: "engine-has-no-foreign-key",
@@ -1115,6 +1128,10 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // pins the DDL rather than a comment.
   duckdb: "postgres-branch-measured",
   oracle: "has-own-branch",
+  // Db2 spells a retype `ALTER COLUMN … SET DATA TYPE`, which the PostgreSQL branch does not emit,
+  // and the change can leave the table REORG-pending, so the migration names it rather than
+  // carrying it (#786).
+  db2: { label: "Db2 LUW", reason: "may leave the table REORG-pending; write the change by hand." },
   mssql: "has-own-branch",
   clickhouse: "has-own-branch",
   couchbase: { label: "Couchbase", reason: "schemaless JSON documents" },
@@ -1328,9 +1345,15 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
         expect(sql).toContain(`-- ${expected.label}: Cannot alter column "name".`);
       }
       expect(sql).toContain(expected.reason);
-      expect(sql).not.toContain("ALTER COLUMN");
-      expect(sql).not.toContain("MODIFY COLUMN");
-      expect(sql).not.toContain("MODIFY (");
+      // Statements only: Db2's reason names its own `ALTER COLUMN … SET DATA TYPE` in the comment,
+      // and what matters is that no STATEMENT carries a modification.
+      const statements = sql
+        .split("\n")
+        .filter((line) => !line.startsWith("--"))
+        .join("\n");
+      expect(statements).not.toContain("ALTER COLUMN");
+      expect(statements).not.toContain("MODIFY COLUMN");
+      expect(statements).not.toContain("MODIFY (");
     });
   }
 });
@@ -1353,6 +1376,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   duckdb: "BEGIN;",
   mssql: "BEGIN TRANSACTION;",
   oracle: false, // DDL commits implicitly; BEGIN starts a PL/SQL block.
+  db2: false, // no standalone `BEGIN;`: BEGIN opens a compound SQL block, the Oracle reason (#786)
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
@@ -1436,7 +1460,7 @@ describe("the engines whose table DDL is declined take no wrapper either", () =>
     );
     const match = declaration.exec(source);
     if (match === null) throw new Error(`${name} is not declared as a Set literal in migration-generator.ts`);
-    return [...match[1].matchAll(/"([a-z]+)"/g)].map((member) => member[1]);
+    return [...match[1].matchAll(/"([a-z0-9]+)"/g)].map((member) => member[1]);
   };
 
   test("every id NO_TABLE_DDL declines is one NO_TRANSACTION_WRAPPER leaves unwrapped", () => {

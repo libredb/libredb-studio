@@ -53,6 +53,7 @@ const SeedDatabaseType = z.enum([
   "mongodb",
   "redis",
   "oracle",
+  "db2",
   "mssql",
   "libredb",
   "couchbase",
@@ -163,6 +164,11 @@ export const SeedConnectionSchema = z
     // naming the field. Accepted only on an engine whose provider enforces it (the second refine
     // below), and only on a managed seed (SeedConfigSchema).
     readOnly: z.boolean().optional(),
+    // Db2 only (#786): accept that a connection with no TLS sends its password in cleartext, which
+    // the Db2 provider otherwise refuses. Declared for the reason skipObjectScan is: zod strips an
+    // undeclared key silently, and a seed file's consent would validate and vanish, leaving a
+    // connection the provider refuses with a message naming a field the file did set.
+    allowInsecureAuth: z.boolean().optional(),
   })
   .superRefine((conn, ctx) => {
     if (conn.type === "elasticsearch") return;

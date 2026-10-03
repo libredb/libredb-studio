@@ -102,9 +102,9 @@ Tomada en serio, esa frase deja de ser una preferencia y se vuelve una especific
 
 ## Capacidades principales
 
-### Veinte motores, una sola interfaz
+### Veintiún motores, una sola interfaz
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j
 
 Todos los motores SQL comparten el mismo explorador de esquemas, los diagramas ER, la comparación de esquemas y los paneles de monitoreo. MongoDB y Redis no son motores SQL: no tienen diagrama ER ni comparación de esquemas. Druid, Elasticsearch, OpenSearch y Trino son doblemente excepcionales: sus interfaces SQL sobre HTTP no tienen una forma de URI que este build sepa interpretar, así que se configuran por host y puerto, y las migraciones que se generan explican la limitación en lugar de inventar DDL para un motor cuyo SQL no tiene sentencias de cambio de columna. Lo mismo pasa con las colecciones sin esquema de Couchbase. El diagrama ER de los clústeres de búsqueda tiene cajas pero no líneas: los índices no declaran claves foráneas, y en el modelo del motor no hay ninguna que declarar.
 
@@ -113,6 +113,7 @@ Todos los motores SQL comparten el mismo explorador de esquemas, los diagramas E
 | **PostgreSQL** | `pg` | IDE SQL completo, planes de ejecución EXPLAIN, transacciones, cancelación de consultas (`pg_cancel_backend`) |
 | **MySQL** | `mysql2` | IDE SQL completo, EXPLAIN, transacciones, cancelación de consultas (`KILL QUERY`) |
 | **Oracle** | `oracledb` (modo Thin) | IDE SQL completo, paginación con `FETCH FIRST N ROWS`, vistas de monitoreo `V$`, `ANALYZE TABLE`, `ALTER INDEX REBUILD`, transacciones |
+| **Db2 LUW** | `db2-node` (un cliente DRDA en Rust dentro de un addon N-API nativo, sin cliente de IBM) | IDE SQL para Db2 en Linux, UNIX y Windows: explorador de esquemas con tablas, vistas, tablas de consulta materializada, alias, secuencias, módulos, rutinas y triggers, definiciones almacenadas, paginación con `FETCH FIRST` / `OFFSET`, RUNSTATS y REORG por tabla. TLS es obligatorio salvo que lo desactives a propósito, porque sin él el driver envía la contraseña en texto plano. El driver lee mal algunos tipos (texto no ASCII, BIGINT por encima de 2^53, BOOLEAN, XML, LOB), así que la edición en línea, la importación, EXPLAIN, las transacciones y la cancelación están desactivadas; los problemas conocidos están en [`docs/providers/db2.md`](docs/providers/db2.md) |
 | **SQL Server** | `mssql` (tedious) | IDE SQL completo, paginación con `TOP N` / `OFFSET FETCH`, DMV `sys.dm_*`, `UPDATE STATISTICS`, `DBCC CHECKDB`, transacciones, detección automática de Azure SQL |
 | **SQLite** | `bun:sqlite` / `node:sqlite` (según el runtime) | IDE SQL completo, sobre archivo o en memoria |
 | **libSQL** | Sin driver, HTTP puro (protocolo Hrana, `POST /v2/pipeline`, puerto 8080) | IDE SQL completo. El mismo type-id conecta tanto a un servidor libSQL propio (`sqld`) como a Turso Cloud. Es el dialecto de SQLite a través de la red, y con `dbstat` da el tamaño real en bytes de tablas e índices. La credencial es un auth token, no una contraseña. Solo hay dos operaciones de mantenimiento, Reindex y verificación de integridad: `VACUUM`, `ANALYZE` y `PRAGMA optimize` los rechaza el servidor |

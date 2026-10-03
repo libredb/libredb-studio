@@ -240,6 +240,12 @@ const nextConfig: NextConfig = {
   // through createRequire, and bundling it fails the build with "non-ecmascript
   // placeable asset" on that addon's .node file. External, the library resolves
   // the addon at runtime and falls back to its WebAssembly crc32c without it.
+  // `db2-node` is a napi-rs package: its index.js requires
+  // `./db2-node.<triple>.node` and falls back to `require('db2-node-<triple>')`,
+  // a package that does not exist. Bundled, the first is a non-ecmascript asset
+  // and the second an unresolvable module, the two failures above. External,
+  // file tracing still follows those static literals to all eight addons, and
+  // the Dockerfiles and payload scripts prune them to the platform.
   serverExternalPackages: [
     "pg",
     "mysql2",
@@ -251,6 +257,7 @@ const nextConfig: NextConfig = {
     "@duckdb/node-api",
     "@duckdb/node-bindings",
     "@platformatic/kafka",
+    "db2-node",
   ],
 
   // One rule over every path, not just the skipped ones: both values are constants and byte

@@ -56,7 +56,7 @@ git add PKGBUILD .SRCINFO libredb-studio-bin.install LICENSE REUSE.toml
 git commit -m "Initial import: 0.17.0" && git push origin HEAD:master
 ```
 
-The files here name twenty engines and pin 0.17.0, which ships eighteen, because the etcd provider (#1089) and the Neo4j provider merged after it, so render the `PKGBUILD` with `scripts/render-aur-pkgbuild.mjs` for the release that carries both, regenerate `.SRCINFO` from that render with `makepkg --printsrcinfo > .SRCINFO`, since the script writes the `PKGBUILD` alone, and push both, with that version in the commit message.
+The files here name twenty-one engines and pin 0.17.0, which ships eighteen, because the etcd provider (#1089), the Neo4j provider and the Db2 LUW provider (#786) merged after it, so render the `PKGBUILD` with `scripts/render-aur-pkgbuild.mjs` for the release that carries all three, regenerate `.SRCINFO` from that render with `makepkg --printsrcinfo > .SRCINFO`, since the script writes the `PKGBUILD` alone, and push both, with that version in the commit message.
 
 Then set the `aur` channel to `status: live` in `distribution/channels.yaml` and add the key as the
 `AUR_SSH_PRIVATE_KEY` repository secret.

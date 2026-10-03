@@ -35,7 +35,7 @@ adopt-info: payload
 summary: The modern, AI-powered open-source SQL IDE for cloud-native teams
 description: |
   Web-based SQL IDE for PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle,
-  SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
+  Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid,
   Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus,
   Apache Kafka, etcd and Neo4j
   with AI query assistance.

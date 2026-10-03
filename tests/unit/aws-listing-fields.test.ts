@@ -129,6 +129,7 @@ describe("AWS Marketplace listing fields", () => {
       MongoDB: "mongodb",
       Redis: "redis",
       Oracle: "oracle",
+      Db2: "db2",
       "SQL Server": "mssql",
       Couchbase: "couchbase",
       ClickHouse: "clickhouse",

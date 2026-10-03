@@ -1031,6 +1031,35 @@ describe("maintenanceControl", () => {
     });
   });
 
+  test("a spec that names its kinds is offered on a row of those kinds only (#786)", () => {
+    // Db2's views are relations, and RUNSTATS on one answers SQLSTATE 428DY.
+    const db2Shaped = caps({
+      maintenanceOperations: ["analyze"],
+      maintenanceOperationSpecs: {
+        analyze: {
+          label: "Run Statistics",
+          perEntity: true,
+          global: false,
+          kinds: ["table", "materialized_query_table"],
+        },
+      },
+    });
+
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity", "table").offered).toBe(true);
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity", "materialized_query_table").offered).toBe(true);
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity", "view")).toEqual({
+      offered: false,
+      label: "Run Statistics",
+    });
+    // A caller that names no kind, the Tables and Operations tabs listing tables, is not asked.
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity").offered).toBe(true);
+    // And a spec that names none still answers for every kind.
+    const sqliteShaped = caps({
+      maintenanceOperationSpecs: { analyze: { label: "Analyze Table", perEntity: true, global: true } },
+    });
+    expect(maintenanceControl(sqliteShaped, "analyze", "perEntity", "view").offered).toBe(true);
+  });
+
   test("an operation whose target is a session id is offered in neither placement", () => {
     const withKill = caps({
       maintenanceOperations: ["kill"],

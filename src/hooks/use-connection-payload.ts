@@ -130,6 +130,9 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // The secret half authenticates but does not itself decide the catalog view.
   apiKeyId: "resolution",
   apiKeySecret: "resolution",
+  // Whether a Db2 connection may connect with no TLS at all (#786): like every transport field
+  // below, it decides whether, and how, the connection connects.
+  allowInsecureAuth: "resolution",
   ssl: "nested",
   sshTunnel: "nested",
 };

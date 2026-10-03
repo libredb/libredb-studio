@@ -170,6 +170,38 @@ export interface MaintenanceOperationSpec {
    * fields. `tests/unit/db/maintenance-confirmation-capability.test.ts` holds every shipped provider to that.
    */
   confirmation?: "typed";
+  /**
+   * The object kinds a per-entity control of this operation runs on, by kind id (#786).
+   *
+   * Absent means every relation kind, which is what every surface offered before the field
+   * existed. Db2 declares it because RUNSTATS and REORG run on a table and a materialized query
+   * table and are refused on a view (SQLSTATE 428DY), and its views are relations too.
+   */
+  kinds?: readonly string[];
+}
+
+/** One rule of a `PreviewProjection`: which declared types it reads, and how. */
+export interface PreviewProjectionRule {
+  /**
+   * A regular expression, as source text so the declaration stays plain data, tested against
+   * `ColumnSchema.type`. The author anchors it.
+   */
+  readonly type: string;
+  /**
+   * The expression the column is read through, `{column}` standing for the quoted column name,
+   * or null to leave the column out of the preview.
+   */
+  readonly expression: string | null;
+}
+
+/** How a preview reads its columns (see `ProviderCapabilities.previewProjection`). */
+export interface PreviewProjection {
+  /** Tested in order; the first match wins, and a column no rule matches is read as it is. */
+  readonly rules: readonly PreviewProjectionRule[];
+  /** Why a left-out column is not read, written after the list of them in the comment. */
+  readonly omittedNote: string;
+  /** The comment above a preview whose column list was not loaded, so nothing could be projected. */
+  readonly unprojectedNote: string;
 }
 
 /** Where a surface wants to put a control: on one row, or on a whole-database card. */
@@ -196,6 +228,7 @@ export function maintenanceControl(
   capabilities: ProviderCapabilities | undefined,
   type: MaintenanceOperation,
   placement: MaintenancePlacement,
+  kind?: string,
 ): { offered: boolean; label?: string; title?: string; description?: string; confirmation?: "typed" } {
   // Unknown capabilities are not a permission: `/api/db/provider-meta` answers with
   // nothing both while it is in flight and when it failed, and failing open there
@@ -210,8 +243,12 @@ export function maintenanceControl(
     return { offered: true };
   }
 
+  // A row of a kind the operation does not run on is offered nothing. Only a caller that names
+  // the row's kind is asked this, so the Operations and Tables tabs, which list tables, are not.
+  const kindRefused = kind !== undefined && spec.kinds !== undefined && !spec.kinds.includes(kind);
+
   return {
-    offered: spec[placement],
+    offered: spec[placement] && !kindRefused,
     label: spec.label,
     ...(spec.title === undefined ? {} : { title: spec.title }),
     ...(spec.description === undefined ? {} : { description: spec.description }),
@@ -829,6 +866,18 @@ export interface ProviderCapabilities {
    * passes text through untouched - neither of those is this field's business.
    */
   statementTerminator?: "none";
+  /**
+   * How a preview reads each column, for an engine whose driver misreads some column types
+   * when they are selected as they are (#786).
+   *
+   * Absent means a preview is `SELECT *`, which is every engine but Db2. Present, the object
+   * browser's preview names every column and reads each through the first rule whose `type`
+   * matches its declared type, so a column the driver would misread arrives as text it reads
+   * correctly, and a column it cannot read at all is left out and named in a comment above the
+   * statement. A preview whose column list is not loaded yet still reads `SELECT *`, under the
+   * `unprojectedNote` comment, because no list exists to project.
+   */
+  previewProjection?: PreviewProjection;
   /**
    * The container levels this engine nests its objects in, outermost first (#789).
    *

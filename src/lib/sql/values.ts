@@ -31,6 +31,10 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // is data, and doubling it would add a second one to the value.
   duckdb: "standard",
   oracle: "standard",
+  // Measured on Db2 LUW 12.1.0.0 through db2-node 1.0.22 (#786), both directions: `VALUES
+  // 'O''Brien'` answers `O'Brien`, and `VALUES 'a\b'` answers the three characters `a\b` with
+  // `LENGTH` 3, so a backslash is data.
+  db2: "standard",
   // SQL Server parses a BARE literal in the database's collation code page and only an
   // `N`-prefixed one as Unicode, so the prefix is not decoration: every catalog name in
   // `sys` is `sysname`, which is `nvarchar(128)`.
@@ -266,6 +270,8 @@ export function positionalPlaceholder(dialect: DatabaseType, position: number): 
     case "mysql":
     case "sqlite":
     case "druid":
+    // db2-node binds a params array against `?`, measured on Db2 LUW 12.1.0.0 (#786).
+    case "db2":
       return "?";
     case "oracle":
       return `:${position}`;

@@ -26,6 +26,7 @@ import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
 import { type GraphKindId, graphObjectSegment } from "@/lib/db/graph/objects";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
+import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
 
 // ============================================================================
 // Helpers
@@ -55,6 +56,61 @@ const sampleColumns: ColumnSchema[] = [
 // ============================================================================
 // generateTableQuery
 // ============================================================================
+
+describe("generateTableQuery with a declared preview projection (#786)", () => {
+  // A projection shaped like Db2's, written here so the generator's rule is pinned on its own.
+  const projected = makeCaps({
+    defaultPort: 50000,
+    identifierQuoting: "double",
+    previewProjection: {
+      rules: [
+        { type: "^BIGINT$", expression: "VARCHAR({column})" },
+        { type: "^(CLOB|BLOB)\\(", expression: null },
+        { type: "^XML$", expression: null },
+      ],
+      omittedNote: "The driver cannot read these types.",
+      unprojectedNote: "The column list is not loaded, so every column is read as it is.",
+    },
+  });
+  const columns: ColumnSchema[] = [
+    { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+    { name: "C_BIG", type: "BIGINT", nullable: true, isPrimary: false },
+    { name: "C_CLOB", type: "CLOB(1048576)", nullable: true, isPrimary: false },
+    { name: 'odd"name', type: "XML", nullable: true, isPrimary: false },
+  ];
+
+  test("names every column, reads each through its rule, and says which were left out", () => {
+    expect(generateTableQuery(["APP", "ALLTYPES"], projected, columns)).toBe(
+      '-- Not read by this preview: "C_CLOB" CLOB(1048576), "odd\\"name" XML. The driver cannot read these types.\n' +
+        'SELECT "ID", VARCHAR("C_BIG") AS "C_BIG" FROM "APP"."ALLTYPES";',
+    );
+  });
+
+  test("a table whose every column reads as it is carries no comment", () => {
+    expect(generateTableQuery(["APP", "T"], projected, [columns[0]])).toBe('SELECT "ID" FROM "APP"."T";');
+  });
+
+  test("with no column list it reads every column, under the unprojected note", () => {
+    expect(generateTableQuery(["APP", "T"], projected)).toBe(
+      '-- The column list is not loaded, so every column is read as it is.\nSELECT * FROM "APP"."T";',
+    );
+    expect(generateTableQuery(["APP", "T"], projected, [])).toBe(
+      '-- The column list is not loaded, so every column is read as it is.\nSELECT * FROM "APP"."T";',
+    );
+  });
+
+  // The list IS loaded here, so the unprojected note would be false, and `SELECT *` would read
+  // exactly the columns the declaration says the driver cannot. The comment is the whole preview.
+  test("a table whose every column is left out names them and reads nothing", () => {
+    expect(generateTableQuery(["APP", "T"], projected, [columns[2], columns[3]])).toBe(
+      '-- Not read by this preview: "C_CLOB" CLOB(1048576), "odd\\"name" XML. The driver cannot read these types.',
+    );
+  });
+
+  test("an engine that declares no projection still previews with SELECT *", () => {
+    expect(generateTableQuery(["users"], makeCaps(), columns)).toBe("SELECT * FROM users;");
+  });
+});
 
 describe("generateTableQuery", () => {
   test("SQL (postgres/mysql/sqlite) carries no row bound of its own", () => {
@@ -1154,6 +1210,38 @@ describe("the generated statement addresses an object by its path", () => {
     const out = generateSelectQuery(["APP", "APP_CUSTOMERS"], sampleColumns, oracleCaps);
     expect(out.endsWith(";")).toBe(false);
     expect(out).toBe('SELECT\n  "id",\n  "name"\nFROM APP.APP_CUSTOMERS\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY');
+  });
+
+  // --- D. Db2 (#786): no generator arm, the declaration is the whole story ----
+
+  // Read off the provider's own declaration rather than a fixture, so a change to it moves these.
+  // Both statements were run through db2-node on Db2 LUW 12.1.0.0 against `APP.CUSTOMERS` (with its
+  // own upper-case `ID` and `NAME`): a trailing `;` and `LIMIT n` are both accepted, so no
+  // terminator or limit arm is needed.
+  const db2Caps = db2Capabilities(makeCaps());
+
+  test("Db2 quotes an upper-case name, and previews through its declared projection", () => {
+    const columns: ColumnSchema[] = [
+      { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+      { name: "NAME", type: "VARCHAR(40)", nullable: true, isPrimary: false },
+      { name: "NOTES", type: "CLOB(1048576)", nullable: true, isPrimary: false },
+    ];
+    expect(generateTableQuery(["APP", "CUSTOMERS"], db2Caps, columns)).toBe(
+      `-- Not read by this preview: "NOTES" CLOB(1048576). ${db2Caps.previewProjection?.omittedNote}\n` +
+        'SELECT "ID", VARGRAPHIC("NAME") AS "NAME" FROM "APP"."CUSTOMERS";',
+    );
+  });
+
+  test("Db2 with no column list loaded reads every column under its unprojected note", () => {
+    expect(generateTableQuery(["APP", "CUSTOMERS"], db2Caps)).toBe(
+      `-- ${db2Caps.previewProjection?.unprojectedNote}\nSELECT * FROM "APP"."CUSTOMERS";`,
+    );
+  });
+
+  test("Generate Query on Db2 bounds with LIMIT", () => {
+    expect(generateSelectQuery(["APP", "CUSTOMERS"], sampleColumns, db2Caps)).toBe(
+      'SELECT\n  id,\n  name\nFROM "APP"."CUSTOMERS"\nWHERE 1=1\nLIMIT 100;',
+    );
   });
 
   // --- an address with no segments is refused rather than spelled ----------

@@ -131,8 +131,14 @@ function renderMenuItems({
   // The vacuum item follows `vacuumActionOperation`, not the literal `vacuum`: four
   // providers point that wording at an operation that is not a vacuum, and it is the
   // operation - not the label - whose targeting decides whether a table can be named.
-  const analyzeControl = maintenanceControl(capabilities, "analyze", "perEntity");
-  const vacuumControl = maintenanceControl(capabilities, labels?.vacuumActionOperation ?? "vacuum", "perEntity");
+  // The row's kind too, as the desktop tree asks it: Db2's RUNSTATS runs on a table, not a view (#786).
+  const analyzeControl = maintenanceControl(capabilities, "analyze", "perEntity", table.kind);
+  const vacuumControl = maintenanceControl(
+    capabilities,
+    labels?.vacuumActionOperation ?? "vacuum",
+    "perEntity",
+    table.kind,
+  );
 
   return (
     <>

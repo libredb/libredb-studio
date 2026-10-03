@@ -15,6 +15,7 @@ import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   MCP_EXPOSABLE,
+  READ_ONLY_ENFORCED,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
@@ -396,6 +397,18 @@ describe("wire-compatibility registry", () => {
 
   test("compatibleEnginesFor tolerates a type outside the shipped union", () => {
     expect(compatibleEnginesFor("not-a-database" as DatabaseType)).toEqual([]);
+  });
+
+  test("db2 ships as an external driver, with the posture Oracle has (#786)", () => {
+    // IBM Db2 LUW over DRDA. No relative is recorded: z/OS and IBM i speak the same protocol and
+    // are out of scope until a live probe has measured one.
+    expect(SHIPPED_DATABASE_TYPES).toContain("db2");
+    expect(EXTERNAL_DATABASE_TYPES).toContain("db2");
+    expect(compatibleEnginesFor("db2")).toEqual([]);
+    // The provider enforces no read-only mode, so `readOnly: true` is refused, and MCP is offered,
+    // both as on Oracle.
+    expect(READ_ONLY_ENFORCED.db2).toBe(false);
+    expect(MCP_EXPOSABLE.db2).toBe(true);
   });
 
   test("duckdb ships as a driver and is a relative of nothing", () => {

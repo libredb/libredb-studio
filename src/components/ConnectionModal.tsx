@@ -184,6 +184,8 @@ export function ConnectionModal({
     setSkipObjectScan,
     readOnly,
     setReadOnly,
+    allowInsecureAuth,
+    setAllowInsecureAuth,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -370,7 +372,7 @@ export function ConnectionModal({
                   </Button>
                 </div>
                 <p className="text-xs text-fg-muted">
-                  Supports: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://
+                  Supports: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://, db2://
                 </p>
               </div>
             </motion.div>
@@ -1093,6 +1095,31 @@ export function ConnectionModal({
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/*
+                The consent to a cleartext password (#786), outside the accordion so it is seen while
+                SSL Mode is disable: the Db2 provider refuses such a connection without it, and the
+                refusal names this box.
+              */}
+              {takesConnectionField(type, "allowInsecureAuth") && sslMode === "disable" && (
+                <div className="space-y-1 p-3 rounded-lg border border-warning-tint/10 bg-warning-tint/5">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      id="allowInsecureAuth"
+                      type="checkbox"
+                      checked={allowInsecureAuth}
+                      onChange={(e) => setAllowInsecureAuth(e.target.checked)}
+                      aria-describedby="allowInsecureAuth-hint"
+                      className="rounded border-edge bg-panel"
+                    />
+                    <span className="text-xs font-medium text-warning">Send the password without TLS</span>
+                  </label>
+                  <p id="allowInsecureAuth-hint" className="text-xs text-fg-muted">
+                    With no SSL mode this driver sends the password in cleartext, so the connection is refused unless
+                    this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.
+                  </p>
+                </div>
+              )}
 
               {/*
                 The SSH half only where the engine offers a tunnel (#1088). A Kafka client reaches
