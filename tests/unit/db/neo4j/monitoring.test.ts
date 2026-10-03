@@ -110,6 +110,29 @@ describe("isoDurationMs", () => {
 });
 
 describe("toActiveSessions", () => {
+  // The monitoring panels count `state === "active"` (SessionsTab, OverviewTab, OperationsTab), the word
+  // PostgreSQL gives a statement in flight; Neo4j's `Running` is that state, and its other statuses keep
+  // their own words, lower-cased, so they are counted as neither active nor idle.
+  test.each([
+    ["Running", "active"],
+    ["Blocked", "blocked"],
+    ["Closing", "closing"],
+    ["Terminated", "terminated"],
+  ])("maps the transaction status %s to the panel state %s", (status, state) => {
+    const [session] = toActiveSessions([
+      {
+        database: "neo4j",
+        transactionId: "neo4j-transaction-1",
+        username: "neo4j",
+        currentQuery: "RETURN 1",
+        startTime: "2026-10-03T05:18:20.881Z",
+        status,
+        durationMs: 1,
+      },
+    ]);
+    expect(session?.state).toBe(state);
+  });
+
   test("one session per transaction, its id as the pid", () => {
     expect(
       toActiveSessions([
@@ -128,7 +151,7 @@ describe("toActiveSessions", () => {
         pid: "neo4j-transaction-18",
         user: "neo4j",
         database: "neo4j",
-        state: "Running",
+        state: "active",
         query: "MATCH (n) RETURN n",
         queryStart: new Date("2026-10-03T05:18:20.881Z"),
         duration: "101ms",

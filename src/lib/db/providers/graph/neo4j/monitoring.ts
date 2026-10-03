@@ -119,13 +119,22 @@ export interface Neo4jTransaction {
   readonly durationMs: number;
 }
 
+/**
+ * The panel state of a transaction status. The monitoring panels count `state === "active"`, PostgreSQL's
+ * word for a statement in flight, which is what Neo4j's `Running` means; the other statuses (`Blocked`,
+ * `Closing`, `Terminated`) keep their own words, lower-cased, so no panel counts them as active or idle.
+ */
+function sessionState(status: string): string {
+  return status === "Running" ? "active" : status.toLowerCase();
+}
+
 /** One session per transaction, its transaction id as the pid. */
 export function toActiveSessions(transactions: readonly Neo4jTransaction[]): ActiveSessionDetails[] {
   return transactions.map((transaction) => ({
     pid: transaction.transactionId,
     user: transaction.username,
     database: transaction.database,
-    state: transaction.status,
+    state: sessionState(transaction.status),
     query: transaction.currentQuery,
     queryStart: new Date(transaction.startTime),
     duration: formatDuration(transaction.durationMs),
