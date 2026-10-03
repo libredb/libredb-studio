@@ -105,6 +105,7 @@ const SEEDED: ReadonlyArray<readonly [string, string]> = [
   ["default", "large_topk"],
   ["default", "shadowed"],
   ["default", "wide_768"],
+  ["default", "emb_list"],
   ["probe_db", "notes"],
 ];
 const EDGE_FIELDS = ["f32", "f16", "bf16", "bin", "i8", "sp"];

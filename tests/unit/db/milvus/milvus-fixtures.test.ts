@@ -93,8 +93,8 @@ describe("the capture reader's rules", () => {
     );
   });
 
-  test("the catalog has 109 names, sorted, each under one of the three services", () => {
-    expect(MILVUS_FIXTURE_NAMES).toHaveLength(109);
+  test("the catalog has 110 names, sorted, each under one of the three services", () => {
+    expect(MILVUS_FIXTURE_NAMES).toHaveLength(110);
     expect([...MILVUS_FIXTURE_NAMES]).toEqual([...MILVUS_FIXTURE_NAMES].sort());
     for (const name of MILVUS_FIXTURE_NAMES) expect(name).toMatch(/^(milvus|milvus-tls|milvus-mtls)\/[a-z0-9_-]+$/);
   });
@@ -225,6 +225,15 @@ describe("what the captures decode to through the real adapter (5.1, 5.9, E20)",
     );
     expect(vec?.data_type).toBe("FloatVector");
     expect(vec?.type_params).toContainEqual({ key: "dim", value: "8" });
+  });
+
+  test("emb_list's struct array decodes with its embedding-list subfield, an ArrayOfVector of FloatVector(4)", async () => {
+    const client = await replaying("DescribeCollection", "milvus/describe-collection-default-emb_list");
+    const schema = (await client.describeCollection({ collection_name: "emb_list" }, call)).schema;
+    const chunks = schema?.struct_array_fields.find((field) => field.name === "chunks");
+    const emb = chunks?.fields.find((field) => field.name === "emb");
+    expect([emb?.data_type, emb?.element_type]).toEqual(["ArrayOfVector", "FloatVector"]);
+    expect(emb?.type_params).toContainEqual({ key: "dim", value: "4" });
   });
 
   test("the non-finite score of the sparse self-search equals the value PR 1v derived (3.3)", async () => {
