@@ -1,12 +1,13 @@
 /**
  * The Qdrant modules shipped to the browser import only each other (vector-family spec 6.11): routes.ts,
- * request.ts and guard.ts reach the editor through the dialect registry and the vocabulary row, so each may import
- * the other browser modules, the shared console and vector modules, the repository's error classes, and types, and
- * only types, from @/lib/types and from client.ts. Never qdrant-vocabulary.ts, results.ts, execute.ts or any other
+ * request.ts and guard.ts reach the editor through the dialect registry and the vocabulary row, and generators.ts,
+ * labels.ts and type-spelling.ts through the query generators and the labels, so each may import the other browser
+ * modules, the shared console and vector modules, the repository's error classes, and types, and only types, from
+ * @/lib/types, @/lib/db/types and client.ts. Never qdrant-vocabulary.ts, results.ts, execute.ts or any other
  * module, and never a runtime built-in. Module names are resolved as TypeScript resolves them, so an alias counts.
  *
  * Each rule is proven both ways: the real sources pass, and a violation planted in a copy of a real file's text
- * fails by name. Part C adds generators.ts, labels.ts and type-spelling.ts to BROWSER_MODULES when it writes them.
+ * fails by name.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync, realpathSync } from "node:fs";
@@ -16,9 +17,11 @@ import ts from "typescript";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const PROVIDER = "src/lib/db/providers/vector/qdrant";
-const BROWSER_MODULES = ["routes.ts", "request.ts", "guard.ts"].map((name) => `${PROVIDER}/${name}`);
+const BROWSER_MODULES = ["routes.ts", "request.ts", "guard.ts", "generators.ts", "labels.ts", "type-spelling.ts"].map(
+  (name) => `${PROVIDER}/${name}`,
+);
 const SHARED_DIRECTORIES = ["src/lib/db/console/", "src/lib/db/vector/"];
-const TYPES_ONLY = ["src/lib/types.ts", `${PROVIDER}/client.ts`];
+const TYPES_ONLY = ["src/lib/types.ts", "src/lib/db/types.ts", `${PROVIDER}/client.ts`];
 const ANY_IMPORT = ["src/lib/db/errors.ts"];
 
 const canonical = (path: string): string => realpathSync.native(path).split("\\").join("/");
@@ -111,7 +114,7 @@ function seamFindings(file: string, text: string): string[] {
 const read = (file: string) => readFileSync(join(ROOT, file), "utf8");
 
 describe("the Qdrant browser modules import only what the browser may run", () => {
-  test("routes.ts, request.ts and guard.ts hold the rule", () => {
+  test("routes.ts, request.ts, guard.ts, generators.ts, labels.ts and type-spelling.ts hold the rule", () => {
     expect(BROWSER_MODULES.flatMap((file) => seamFindings(file, read(file)))).toEqual([]);
   });
 
@@ -152,6 +155,21 @@ describe("planted violations fail by name", () => {
       `${PROVIDER}/request.ts`,
       'import { QDRANT_OPS } from "./client";\n',
       `qdrant browser module: ${PROVIDER}/request.ts imports a value from ./client; it takes types, and only types, from it`,
+    ],
+    [
+      `${PROVIDER}/generators.ts`,
+      'import { qdrantMetric } from "./qdrant-vocabulary";\n',
+      `qdrant browser module: ${PROVIDER}/generators.ts imports ./qdrant-vocabulary, which a browser module may not import`,
+    ],
+    [
+      `${PROVIDER}/type-spelling.ts`,
+      'import { vectorColumnName } from "./columns";\n',
+      `qdrant browser module: ${PROVIDER}/type-spelling.ts imports ./columns, which a browser module may not import`,
+    ],
+    [
+      `${PROVIDER}/labels.ts`,
+      'import { isVectorProvider } from "@/lib/db/types";\n',
+      `qdrant browser module: ${PROVIDER}/labels.ts imports a value from @/lib/db/types; it takes types, and only types, from it`,
     ],
     [
       `${PROVIDER}/guard.ts`,
