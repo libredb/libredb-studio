@@ -30,6 +30,9 @@ export type {
   MaintenancePreview,
 } from "../lib/db/types";
 
+// The vector column declaration a result carries (`QueryResult.vectorColumns`, `WorkspaceQueryResult.vectorColumns`)
+export type { VectorColumn, VectorKind, VectorDType, SparseEncoding } from "../lib/db/vector/types";
+
 /**
  * The shape a consumer of `StudioWorkspaceProps.onSchemaFetch` returns (#789).
  *

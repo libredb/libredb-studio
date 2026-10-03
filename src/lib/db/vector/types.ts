@@ -71,3 +71,21 @@ export interface ScoreSemantics {
 
 /** Whether a count is one the engine computed exactly, or an estimate. */
 export type CountKind = "exact" | "estimate";
+
+/**
+ * A result column that holds vectors, as `QueryResult.vectorColumns` declares it.
+ *
+ * The results grid draws a cell as a vector only when its column is declared here, so a column nobody declared
+ * keeps the JSON rendering it always had, and Copy Cell writes a declared cell whole, in the engine's own encoding.
+ */
+export interface VectorColumn {
+  readonly kind: VectorKind;
+  readonly dtype: VectorDType;
+  /**
+   * Elements per vector, bits for a binary vector, and the size of one row for a multivector; null for a sparse
+   * column and where the engine declares no dimension.
+   */
+  readonly dimension: number | null;
+  /** How a sparse cell is encoded: set on every sparse column and on no other. */
+  readonly sparseEncoding?: SparseEncoding;
+}

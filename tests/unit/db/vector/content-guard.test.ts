@@ -107,6 +107,7 @@ const EXPORTS: Readonly<Record<string, readonly string[]>> = {
     "ScoreSemantics",
     "SparseEncoding",
     "VECTOR_DTYPES",
+    "VectorColumn",
     "VectorDType",
     "VectorFieldInfo",
     "VectorIndexKind",

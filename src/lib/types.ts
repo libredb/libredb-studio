@@ -16,6 +16,7 @@
 */
 import type { StoredObject } from "@/lib/db/detailed-object";
 import type { ObjectSourceDocument } from "@/lib/db/types";
+import type { VectorColumn } from "@/lib/db/vector/types";
 
 export type DatabaseType =
   | "postgres"
@@ -560,6 +561,15 @@ export interface QueryResult {
    * catalog entry to answer with. Absent when the source declared none.
    */
   columnTypes?: Record<string, string>;
+  /**
+   * The columns of this result that hold vectors, keyed by their names in `fields`: each one's kind, element type,
+   * dimension and, for a sparse column, its cell encoding. A cell of a declared column holds its engine's native
+   * form and renders as a vector cell, and Copy Cell copies it whole, as search data for the same engine; a column
+   * that is not declared renders as before, whatever its cells hold.
+   *
+   * **Absent** when the result has no vector column, never an empty object.
+   */
+  vectorColumns?: Readonly<Record<string, VectorColumn>>;
 }
 
 /**

@@ -2019,6 +2019,7 @@ interface QueryResult {
   pagination?: QueryPagination;          // Auto-limiting the route attaches to every response
   warnings?: QueryWarning[];             // Notices the engine attached; ABSENT when it reported none
   columnTypes?: Record<string, string>;  // Declared type per column, keyed by its name in `fields`
+  vectorColumns?: Readonly<Record<string, VectorColumn>>; // Vector columns by name; ABSENT when the result has none
 }
 
 interface QueryPagination {

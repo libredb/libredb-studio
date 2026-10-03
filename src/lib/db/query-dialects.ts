@@ -28,6 +28,11 @@ export interface DialectSpec {
   readonly offersCodeGeneration: boolean;
   /** Whether Generate Count Query is offered, read for every language (`offersCountQuery`). */
   readonly offersCountQuery: boolean;
+  /**
+   * Whether the result export menu offers SQL `INSERT` and `CREATE TABLE` DDL (`offersSqlExport` in
+   * `src/lib/db/types.ts`). Absent means it does, which is every record today, so no shipped engine's menu changes.
+   */
+  readonly offersSqlExport?: boolean;
 }
 
 /**

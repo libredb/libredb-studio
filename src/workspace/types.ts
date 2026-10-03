@@ -3,6 +3,7 @@ import type { Ref } from "react";
 
 import type { DatabaseType, SavedQuery, QueryWarning } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { VectorColumn } from "@/lib/db/vector/types";
 import type {
   Container,
   DatabaseObject,
@@ -254,6 +255,16 @@ export interface WorkspaceQueryResult {
     totalReturned: number;
     wasLimited: boolean;
   };
+  /**
+   * The columns of this result that hold vectors, keyed by their names in `fields`, exactly as
+   * `QueryResult.vectorColumns` declares them: a declared column renders as a vector cell and Copy Cell copies it
+   * whole in the engine's own encoding, and an undeclared column renders as before.
+   *
+   * Absent when the result has no vector column, never an empty object. Additive and optional, as `warnings` is,
+   * because hosts outside this repository implement this interface. A page fetched by Load More that carries none
+   * keeps the declaration of the rows already on screen.
+   */
+  vectorColumns?: Readonly<Record<string, VectorColumn>>;
 }
 
 // === Feature flags ===

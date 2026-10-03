@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { declaresDialect, dialectSpec, QUERY_DIALECTS, registeredDialect } from "@/lib/db/query-dialects";
+import {
+  declaresDialect,
+  type DialectSpec,
+  dialectSpec,
+  QUERY_DIALECTS,
+  registeredDialect,
+} from "@/lib/db/query-dialects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 function makeCaps(overrides: Partial<ProviderCapabilities> = {}): ProviderCapabilities {
@@ -50,6 +56,20 @@ describe("QUERY_DIALECTS", () => {
   test("freezes every record too, so no reader can turn one dialect's gate on at run time", () => {
     for (const [dialect, spec] of Object.entries(QUERY_DIALECTS)) {
       expect(Object.isFrozen(spec), `the ${dialect} record is mutable`).toBe(true);
+    }
+  });
+
+  test("a record may decline the SQL export formats, and none does, so every shipped engine keeps both", () => {
+    const declining: DialectSpec = {
+      tabType: "kafka",
+      offersColumnProfiling: false,
+      offersCodeGeneration: false,
+      offersCountQuery: false,
+      offersSqlExport: false,
+    };
+    expect(declining.offersSqlExport).toBe(false);
+    for (const [dialect, spec] of Object.entries(QUERY_DIALECTS)) {
+      expect(Object.hasOwn(spec, "offersSqlExport"), `the ${dialect} record declares offersSqlExport`).toBe(false);
     }
   });
 });
