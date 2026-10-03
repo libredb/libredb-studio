@@ -68,6 +68,10 @@ export default defineConfig({
     // Tailwind 4 computed styles); external like every other UI lib - it is
     // a regular dependency, so consumers resolve it via npm.
     "@zumer/snapdom",
+    // The Graph tab's canvas and layout, loaded by a dynamic import in
+    // cytoscape-host.ts; both are regular dependencies, exact-pinned.
+    "cytoscape",
+    "cytoscape-fcose",
     "@tanstack/react-table",
     "@tanstack/react-virtual",
     "react-resizable-panels",

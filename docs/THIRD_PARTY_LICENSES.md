@@ -21,5 +21,17 @@ It holds the db2-node MIT text and, for each crate, the license text it ships: t
 Apache-2.0 section 4(d) would require carrying any NOTICE file an Apache-licensed crate ships; none of the 62 does, and the generator fails if one starts to.
 The CycloneDX SBOM the release workflow publishes is built from the npm dependency graph and cannot see these crates, so this file and the notices file are the only places they are declared.
 
+The Graph tab's canvas library and its layout carry only the MIT notice each package ships, and are recorded here because fcose arrives with two transitive packages that `package.json` does not name:
+
+| Package | Version | License | Reached as |
+| --- | --- | --- | --- |
+| [`cytoscape`](https://github.com/cytoscape/cytoscape.js) | 3.34.3 | MIT | direct dependency, no runtime dependencies of its own |
+| [`cytoscape-fcose`](https://github.com/iVis-at-Bilkent/cytoscape.js-fcose) | 2.2.0 | MIT | direct dependency |
+| [`cose-base`](https://github.com/iVis-at-Bilkent/cose-base) | 2.2.0 | MIT | dependency of `cytoscape-fcose` |
+| [`layout-base`](https://github.com/iVis-at-Bilkent/layout-base) | 2.0.1 | MIT | dependency of `cose-base` |
+
+Each ships its LICENSE file in the package; all four were read on 2026-10-03.
+Only `src/components/results-graph/cytoscape-host.ts` loads them, through a dynamic import, so they reach a browser chunk of their own and never the server.
+
 See `docs/BACKLOG.md` entry C8 for the broader, not-yet-generated NOTICE this file is a manual
 precursor to.
