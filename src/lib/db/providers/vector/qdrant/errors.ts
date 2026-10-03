@@ -226,11 +226,11 @@ function transportError(error: TransportError, context: QdrantErrorContext): Err
       return new QueryError(tooLargeSentence(context), PROVIDER);
     case "redirect":
       return connection(
-        `Qdrant at ${endpointOf(context)} answered with a redirect, which Studio never follows. ${error.message}`,
+        `Qdrant at ${endpointOf(context)} answered with a redirect, which Studio never follows. ${serverText(error.message, context.secretForms)}`,
       );
     case "encoding":
       return connection(
-        `Qdrant at ${endpointOf(context)} answered in an encoding Studio does not read. ${error.message}`,
+        `Qdrant at ${endpointOf(context)} answered in an encoding Studio does not read. ${serverText(error.message, context.secretForms)}`,
       );
     case "tls":
       return connection(

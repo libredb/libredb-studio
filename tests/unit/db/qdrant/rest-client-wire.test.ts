@@ -191,6 +191,34 @@ describe("what reaches the wire (QE2, QE4)", () => {
     expect(worded.message).not.toContain(TEST_PASSWORD);
   });
 
+  test("a redirect whose target's host holds the key is worded without the key", async () => {
+    const redirecting = await httpListener((_request, response) => {
+      response.writeHead(307, { location: `http://${TEST_PASSWORD}.example.test/x` });
+      response.end();
+    });
+    const connection = options(redirecting.port);
+    const error = await failure(() => connect(connection).send(request("get_collections"), deadline()));
+    expect((error as TransportError).kind).toBe("redirect");
+    const worded = toProviderError(error, context(connection));
+    expect(worded).toBeInstanceOf(ConnectionError);
+    expect(worded.message).not.toContain(TEST_PASSWORD);
+    expect(worded.message).toContain(WITHHELD);
+  });
+
+  test("a content-encoding that holds the key is worded without the key", async () => {
+    const encoding = await httpListener((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json", "content-encoding": TEST_PASSWORD });
+      response.end("{}");
+    });
+    const connection = options(encoding.port);
+    const error = await failure(() => connect(connection).send(request("get_collections"), deadline()));
+    expect((error as TransportError).kind).toBe("encoding");
+    const worded = toProviderError(error, context(connection));
+    expect(worded).toBeInstanceOf(ConnectionError);
+    expect(worded.message).not.toContain(TEST_PASSWORD);
+    expect(worded.message).toContain(WITHHELD);
+  });
+
   test("proxy variables naming a listener carry nothing to it", async () => {
     const proxy = await countingListener();
     for (const name of PROXY_VARIABLES) setEnvironment(name, `http://127.0.0.1:${proxy.port}`);
