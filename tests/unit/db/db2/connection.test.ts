@@ -15,6 +15,7 @@ import {
   type CaFileSystem,
   DB2_DEFAULT_PORT,
   NODE_CA_FILE_SYSTEM,
+  assertPasswordSendable,
   assertTransport,
   clientOptions,
   openClient,
@@ -197,6 +198,44 @@ describe("resolveTarget", () => {
       expect(target.database).toBe("SAMPLE");
       expect(target.user).toBe("u");
     });
+  });
+});
+
+describe("assertPasswordSendable (K23)", () => {
+  // Measured on Db2 12.1.0.0 with db2-node 1.0.22, with and without TLS: the server rejects each of
+  // these five as a wrong password, while the IBM CLP signs in with the same password.
+  test.each(["!", "[", "]", "^", "|"])("a password holding %s is refused, naming the character", (character) => {
+    const config = connection({ password: `Pass${character}word1` });
+    const error = refusal(() => assertPasswordSendable(resolveTarget(config)));
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect(error.message).toContain(`contains ${character}`);
+    expect(error.message).toContain("db2-node 1.0.22");
+    expect(error.message).toContain("Change the password");
+  });
+
+  test("several such characters are each named once, in the order they appear", () => {
+    const error = refusal(() => assertPasswordSendable(resolveTarget(connection({ password: "a|b!c|d" }))));
+    expect(error.message).toContain("contains | and !");
+  });
+
+  test("a password from the connection string is checked too", () => {
+    const config = connection({ connectionString: "db2://db2inst1:Pass%21word@db2.example.com:50001/TESTDB" });
+    expect(() => assertPasswordSendable(resolveTarget(config))).toThrow("contains !");
+  });
+
+  test("an empty password is sent", () => {
+    expect(() => assertPasswordSendable(resolveTarget(connection({ password: "" })))).not.toThrow();
+  });
+
+  // The other printable ASCII characters the measurement tried, each accepted by the server.
+  test.each(["@", "#", "$", "%", "&", "*", "?", "~", "{", "\\"])("a password holding %s is sent", (character) => {
+    const config = connection({ password: `x${character}y` });
+    expect(() => assertPasswordSendable(resolveTarget(config))).not.toThrow();
+  });
+
+  test("the refusal never quotes the password itself", () => {
+    const error = refusal(() => assertPasswordSendable(resolveTarget(connection({ password: "opaque!value" }))));
+    expect(error.message).not.toContain("opaque");
   });
 });
 

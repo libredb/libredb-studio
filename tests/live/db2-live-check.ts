@@ -39,7 +39,7 @@ const CONNECTION: DatabaseConnection = {
   port: Number(process.env.DB2_PORT ?? 50000),
   database: process.env.DB2_DATABASE ?? "TESTDB",
   user: process.env.DB2_USER ?? "db2inst1",
-  password: process.env.DB2_PASSWORD ?? "Password123!",
+  password: process.env.DB2_PASSWORD ?? "Password123",
   // The compose service has no TLS listener, so this connection takes the explicit opt-in that
   // the provider otherwise refuses a connection without TLS for (K11).
   allowInsecureAuth: true,

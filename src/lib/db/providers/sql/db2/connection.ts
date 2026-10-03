@@ -195,6 +195,35 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
 }
 
 /**
+ * The five characters db2-node 1.0.22 cannot carry in a password (K23).
+ *
+ * They are exactly the printable ASCII characters EBCDIC code page 037 places differently from
+ * code page 500, so the server reads a different password from the one typed. Measured on Db2
+ * 12.1.0.0, with and without TLS: each of the five is rejected as "user id or password invalid",
+ * `credentialEncoding: "utf8"` does not change that, the IBM CLP signs in over TCP with the same
+ * password, and every other printable ASCII character tried is accepted. The section 4 note in
+ * `docs/providers/db2.md` has the full matrix.
+ */
+const UNSENDABLE_PASSWORD_CHARACTERS = new Set(["!", "[", "]", "^", "|"]);
+
+/**
+ * Refuses a password the driver would send wrongly, before any socket opens.
+ *
+ * Without this the server's answer is "user id or password invalid", which sends a person to
+ * check a password that is right. The refusal names the characters and never the password.
+ */
+export function assertPasswordSendable(target: Db2Target): void {
+  const found = [...new Set([...target.password].filter((character) => UNSENDABLE_PASSWORD_CHARACTERS.has(character)))];
+  if (found.length === 0) return;
+  throw new DatabaseConfigError(
+    `This Db2 password contains ${found.join(" and ")}, which db2-node 1.0.22 does not send correctly: the server ` +
+      "would reject it as a wrong password even though it is right. Change the password of this Db2 user to one " +
+      "without ! [ ] ^ or |, and use the new password here.",
+    "db2",
+  );
+}
+
+/**
  * The driver options for one target, per the TLS table in `docs/providers/db2.md`. Neither
  * `queryTimeout`, `currentSchema` nor `securityMechanism` is ever set (M6, M4, K11).
  */
@@ -270,6 +299,7 @@ export async function openClient(
 ): Promise<OpenedClient> {
   const target = resolveTarget(config);
   assertTransport(config, target);
+  assertPasswordSendable(target);
   const driver = await load();
   const ca = target.caPem === undefined ? undefined : await writeCaFile(target.caPem, fs);
   try {

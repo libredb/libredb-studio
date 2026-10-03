@@ -65,7 +65,7 @@ A deployment without the driver answers `describeDriverAbsence()`'s message, "Db
 | Port | No | `50000`, Db2's conventional DRDA listener |
 | Database | Yes | "Database name is required for Db2" |
 | User | Yes | "User is required for Db2" |
-| Password | No | Sent empty when none is given; sent in cleartext without TLS (K11), see section 3.3 |
+| Password | No | Sent empty when none is given; sent in cleartext without TLS (K11), see section 3.3; a password holding `!`, `[`, `]`, `^` or `\|` is refused before connecting (K23) |
 | SSL panel | Yes, unless you opt out | Section 3.3 |
 
 A pasted `db2://user:password@host:50000/TESTDB` fills the fields; there is no connection-string toggle, the Oracle precedent.
@@ -139,7 +139,7 @@ Then paste `ca.arm` (it is PEM) into the SSL panel's CA certificate field, set t
 
 ## 4. Known issues (db2-node 1.0.22)
 
-K1 to K17 are reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12); K18 to K22 were measured after that report and are not in it yet.
+K1 to K17 are reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12); K18 to K23 were measured after that report and are not in it yet.
 The provider will move to a driver release that fixes them, and the maintainer's fork, [libredb/database-provider-db2-node](https://github.com/libredb/database-provider-db2-node), is the fallback if upstream does not.
 The live script `tests/live/db2-known-issues.ts` probes each row against a running Db2 and prints `PRESENT` or `GONE`, so a driver bump starts by running it.
 
@@ -167,6 +167,15 @@ The live script `tests/live/db2-known-issues.ts` probes each row against a runni
 | K20 | A value truncated with a warning desynchronises the driver | `VALUES CAST(REPEAT('x', 100) AS VARCHAR(10))` answers "Protocol error: query ended with undecoded row data"; a `CAST` of a 40868-byte CLOB to VARCHAR(32672) answered 36 garbage rows in one run and "Protocol error: invalid DSS magic byte" in another, and `VARGRAPHIC()` over a value longer than 16336 units returned garbage rows | Yes for the provider's own reads: a definition is read in `SUBSTRING` chunks, and the preview casts only values that fit | `VARCHAR(SUBSTRING(col, start, n, OCTETS), n)` |
 | K21 | A row wider than one DRDA block fails | Two VARCHAR(32672) columns answer "Protocol error: invalid DSS magic byte", on the first run or the second | Yes for the provider's own reads: a definition is read one chunk per statement | Select fewer wide columns per statement |
 | K22 | A bound DECIMAL that does not fit its column, or is not a number, is stored as a wrong value with no error | `SET AMT = ?` with "12345.67" into DECIMAL(5,2) stored 345.67, and `CAST(? AS DECIMAL(5,2))` answered 999.00 for 99999 and 323.00 for "abc", where the same literal is refused with SQLSTATE 22003, SQLCODE -413 | No: a statement run with parameters writes what the driver sends | Write DECIMAL values as literals; until a driver release fixes this, a bound DECIMAL write is not safe |
+| K23 | A password holding `!`, `[`, `]`, `^` or `\|` is sent wrongly | The server answers "Security check failed: check_code=0x0F (user id or password invalid)" for a password that is right | Yes: the provider refuses such a password before connecting and names the characters, instead of letting the server call it wrong | Change the Db2 user's password to one without those five characters |
+
+K23 was measured on 2026-10-04 against the compose `db2` service, Db2 12.1.0.0, through db2-node 1.0.22.
+Over plaintext, `!` was refused under the driver's default security mechanism and under `securityMechanism: 'userPassword'`, each with `credentialEncoding` left out, `'utf8'` and `'ebcdic'`; `[`, `]`, `^` and `|` were refused with `credentialEncoding` left out and with `'utf8'`.
+Over TLS (the recipe in section 3.3, Verify CA), all five were refused under the default mechanism.
+Over plaintext every other printable ASCII character tried (`@ # $ % & * ? ~ { \`) was accepted, and over TLS `@` was.
+The IBM CLP inside the container signed in over TCP with `Password123!`, so the server takes the password and the driver sends it wrongly.
+The five are exactly the printable ASCII characters EBCDIC code page 037 places differently from code page 500.
+`tests/live/db2-known-issues.ts` has no probe for K23, because it needs a Db2 user whose password holds one of the five; to re-measure it, set such a password with `chpasswd` in the container and connect with db2-node directly.
 
 A result with a BIGINT, DECFLOAT, BOOLEAN or XML column carries an integrity warning above the grid that names those columns, says what the driver does to them and which cast reads them correctly, and says that exported or copied rows carry the same values; copy and export stay available, so read the warning before you hand the rows on.
 TIMESTAMP(0), TIMESTAMP(12) and LOB columns need no warning, because they fail with an error instead.

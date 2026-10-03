@@ -36,7 +36,7 @@ const BASE: ConnectionConfig = {
   port: Number(process.env.DB2_PORT ?? 50000),
   database: process.env.DB2_DATABASE ?? "TESTDB",
   user: process.env.DB2_USER ?? "db2inst1",
-  password: process.env.DB2_PASSWORD ?? "Password123!",
+  password: process.env.DB2_PASSWORD ?? "Password123",
 };
 const SCHEMA = `LIBREDB_KI_${randomBytes(3).toString("hex").toUpperCase()}`;
 const DUMMY = "FROM SYSIBM.SYSDUMMY1";

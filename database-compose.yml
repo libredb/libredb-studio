@@ -140,7 +140,8 @@ services:
     environment:
       LICENSE: accept
       DB2INSTANCE: db2inst1
-      DB2INST1_PASSWORD: Password123!
+      # No ! [ ] ^ or | in it: db2-node 1.0.22 sends those five wrongly (K23 in docs/providers/db2.md).
+      DB2INST1_PASSWORD: Password123
       DBNAME: testdb
       ARCHIVE_LOGS: "false"
       AUTOCONFIG: "false"
@@ -153,7 +154,7 @@ services:
       # executes EVERY file in /var/custom on every start, so only the script goes there and
       # the .sql it feeds to the CLP is mounted elsewhere. The script loads the fixture once
       # and skips it when APP.ORDERS exists, so an edit takes effect on a fresh volume only.
-      # Connect as db2inst1 / Password123! to TESTDB.
+      # Connect as db2inst1 / Password123 to TESTDB.
       - ./docker/db2-init/01-object-fixture.sh:/var/custom/01-object-fixture.sh:ro
       - ./docker/db2-init/01-object-fixture.sql:/var/custom-fixture/01-object-fixture.sql:ro
     healthcheck:

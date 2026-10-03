@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D164, U17 · 108
+- [Drivers and connections](#drivers-and-connections) — D1-D164, U17 · 107
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U78 · 72
@@ -2185,17 +2185,6 @@ Measured 2026-10-03 on the branch: `parseConsole` refuses `{"dbName": "default" 
 Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 5).
 
 **Done when:** users paste commented Milvus bodies; then the dialect declares `bodyComments: true` in one data change, with corpus cases for a comment inside a string, after a value and at the end of the body.
-
-### D159. db2-node refuses a password holding `!` that the server accepts
-
-The Db2 compose service sets `DB2INST1_PASSWORD=Password123!`, and the server takes it: `CONNECT TO TESTDB USER db2inst1 USING "Password123!"` succeeds in the container's own command line processor.
-Studio, over `db2-node` 1.0.22 with the insecure opt-in, is refused with "Authentication failed: Security check failed: severity=8, check_code=0x0F (user id or password invalid), requested_secmec=0x0009, accepted_secmec=0x0003, credential_encoding=Ebcdic037", and `db2diag` logs "Password validation for user db2inst1 failed".
-After the password is changed to letters and digits only, the same connection succeeds at once.
-The likely cause is how the driver encodes `!` in EBCDIC code page 037 (K11 in `docs/providers/db2.md` already says the password travels as EBCDIC without TLS); the characters affected, and whether a TLS connection meets the same refusal, were not measured.
-
-Found 2026-10-03 by the browser pass of #1246, whose change does not touch Db2.
-
-**Done when:** the password characters `db2-node` encodes differently from the server are measured with and without TLS, the result goes upstream with that evidence, and either the pinned `db2-node` carries the fix or `docs/providers/db2.md` names the characters a password must not hold.
 
 ### D160. The Db2 compose service can skip its object fixture on a fresh volume
 
