@@ -3,12 +3,13 @@
 # with the sha256 of the wheel pip downloads for the given image, so `pip install --require-hashes` installs those
 # wheels and nothing else. It then installs the result into a fresh virtual environment and runs `pip check`, so a
 # requirements.in that misses a dependency fails here and not in the seed. Run it again after any change to
-# requirements.in, and never edit requirements.txt by hand.
+# requirements.in, and never edit requirements.txt by hand. The wheels are linux/amd64's, the platform the seed
+# services of database-compose.yml run as.
 #   sh docker/lock-requirements.sh <dir> <python image pinned by digest>
 set -eu
 dir=$(cd "$1" && pwd)
 image="$2"
-docker run --rm --memory=2g --cpus=2 --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$dir:/w" -w /w "$image" sh -eu -c '
+docker run --rm --platform linux/amd64 --memory=2g --cpus=2 --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$dir:/w" -w /w "$image" sh -eu -c '
   pip download --quiet --disable-pip-version-check --no-cache-dir --no-deps --only-binary=:all: \
     -d /tmp/wheels -r requirements.in
   [ "$(ls /tmp/wheels | wc -l)" -eq "$(grep -c "==" requirements.in)" ] || { echo "one wheel per pin expected" >&2; exit 1; }

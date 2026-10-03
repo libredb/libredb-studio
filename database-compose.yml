@@ -1562,7 +1562,9 @@ services:
     # what is missing and leaves what exists, so it may run again on a seeded server, and it
     # generates the passwords of the users reader and nobody into the milvus-credentials volume.
     # pip writes to stderr, so `run ... milvus-seed ... --manifest` prints the manifest alone.
+    # requirements.txt hashes the linux/amd64 wheels, so the seed runs as linux/amd64 everywhere.
     image: python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016
+    platform: linux/amd64
     container_name: libredb-milvus-seed
     restart: "no"
     depends_on:
@@ -1717,7 +1719,9 @@ services:
     # qdrant-client and its dependencies from docker/qdrant/requirements.txt, pinned with
     # hashes. It creates what is missing and leaves what exists. It mounts the keys read-only,
     # so the same one-shot seeds qdrant-auth with --api-key-file (docker/qdrant/README.md).
+    # requirements.txt hashes the linux/amd64 wheels, so the seed runs as linux/amd64 everywhere.
     image: python:3.14-slim@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4
+    platform: linux/amd64
     container_name: libredb-qdrant-seed
     restart: "no"
     depends_on:

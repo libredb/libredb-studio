@@ -34,6 +34,7 @@ interface ComposeService {
   readonly depends_on?: Readonly<Record<string, { readonly condition: string }>>;
   readonly deploy?: { readonly resources?: { readonly limits?: { readonly cpus?: string; readonly memory?: string } } };
   readonly memswap_limit?: string;
+  readonly platform?: string;
 }
 
 // `merge: true` because the file shares settings through `<<:` merge keys.
@@ -236,6 +237,13 @@ function expectCommandsNameProjectAndServices(readme: string, services: readonly
 
 const MILVUS_SEED_IMAGE = "python:3.12-slim@sha256:dddfd7e07f9d15aeeca61529320492139d21cac7f0070c00609243e51e4e0016";
 const MILVUS_SERVICES = ["milvus", "milvus-seed", "milvus-certs", "milvus-tls", "milvus-mtls"];
+
+describe("the seeds' platform", () => {
+  test("each seed one-shot runs as linux/amd64, the platform of every wheel its requirements.txt hashes", () => {
+    expect(service("milvus-seed").platform).toBe("linux/amd64");
+    expect(service("qdrant-seed").platform).toBe("linux/amd64");
+  });
+});
 
 describe("the Milvus seed", () => {
   test("milvus-seed is a one-shot in the pinned Python image that waits for a healthy milvus and installs by hash", () => {

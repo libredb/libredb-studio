@@ -46,6 +46,13 @@ function pins(file: string): string[] {
     .sort();
 }
 
+describe("docker/lock-requirements.sh", () => {
+  test("downloads the wheels as linux/amd64, the platform the seed one-shots run as", () => {
+    const lock = readFileSync(path.join(ROOT, "docker/lock-requirements.sh"), "utf8");
+    expect(lock).toMatch(/^docker run --rm --platform linux\/amd64 /m);
+  });
+});
+
 for (const { engine, image, pinned, count } of SEEDS) {
   describe(`the ${engine} seed's packages`, () => {
     const directory = path.join(ROOT, "docker", engine);
