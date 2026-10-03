@@ -370,9 +370,11 @@ describe("describeMilvusCollections", () => {
     const client = createFakeMilvusClient({ databases: { default: many(201) } });
     const batch = await describeMilvusCollections(client, testSurface(), "default", namesOf(201));
     expect(batch.details).toHaveLength(201);
-    expect(
-      client.calls.map((call) => (call.args?.[1] as { collection_name: string[] }).collection_name.length),
-    ).toEqual([200, 1]);
+    const sizes = client.calls.map((call) => {
+      const request = call.args?.[1] as { collection_name: string[] } | undefined;
+      return request?.collection_name.length;
+    });
+    expect(sizes).toEqual([200, 1]);
   });
 
   test("the caller's limit is applied before any call, and truncated names it in the shared sentence", async () => {

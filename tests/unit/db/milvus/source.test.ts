@@ -88,7 +88,7 @@ function keyPaths(value: unknown, prefix = ""): string[] {
   if (typeof value !== "object" || value === null || OPEN_OBJECTS.has(prefix)) return [];
   return Object.entries(value).flatMap(([key, child]) => {
     const path = prefix === "" ? key : `${prefix}.${key}`;
-    return [path, ...keyPaths(child, path)];
+    return [path].concat(keyPaths(child, path));
   });
 }
 
@@ -252,8 +252,7 @@ describe("the State part", () => {
   });
 
   test("with no row_count there is no estimate and no source sentence", () => {
-    const { rowCount: _dropped, ...input } = DOCS_INPUT;
-    const document = stateDocument(input);
+    const document = stateDocument({ ...DOCS_INPUT, rowCount: undefined });
     expect(Object.hasOwn(document, "rowCountEstimate")).toBe(false);
     expect(Object.hasOwn(document, "rowCountSource")).toBe(false);
   });

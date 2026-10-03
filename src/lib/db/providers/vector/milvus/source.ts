@@ -14,7 +14,7 @@ import { QueryError } from "@/lib/db/errors";
 import { applySourceBound } from "@/lib/db/object-kinds";
 import type { DatabaseType, ObjectSourcePart } from "@/lib/db/types";
 import { serverText } from "@/lib/db/utils/server-text";
-import type { DescribeCollectionResponse, WireFieldSchema, WireIndexDescription } from "./client";
+import type { DescribeCollectionResponse, WireFieldSchema, WireFunctionSchema, WireIndexDescription } from "./client";
 import { indexParam } from "./schema";
 
 const PROVIDER: DatabaseType = "milvus";
@@ -74,6 +74,17 @@ function createField(field: WireFieldSchema): JsonObject {
   };
 }
 
+/** A function's name, type and input and output fields; never its parameters. */
+function createFunction(fn: WireFunctionSchema): JsonObject {
+  return {
+    name: fn.name,
+    ...(fn.description === "" ? {} : { description: fn.description }),
+    type: fn.type,
+    inputFieldNames: [...fn.input_field_names],
+    outputFieldNames: [...fn.output_field_names],
+  };
+}
+
 function createIndex(index: WireIndexDescription): JsonObject {
   const metric = indexParam(index, "metric_type");
   const indexType = indexParam(index, "index_type");
@@ -109,13 +120,7 @@ export function schemaDocument(
       enableDynamicField: schema.enable_dynamic_field,
       // The dynamic field is the flag above, never a field of the create request.
       fields: schema.fields.filter((field) => !field.is_dynamic).map(createField),
-      functions: schema.functions.map((fn) => ({
-        name: fn.name,
-        ...(fn.description === "" ? {} : { description: fn.description }),
-        type: fn.type,
-        inputFieldNames: [...fn.input_field_names],
-        outputFieldNames: [...fn.output_field_names],
-      })),
+      functions: schema.functions.map(createFunction),
     },
     indexParams: indexes.map(createIndex),
     params: {
