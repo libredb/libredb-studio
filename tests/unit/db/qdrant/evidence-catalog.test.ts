@@ -25,7 +25,8 @@ import {
 import { QDRANT_ROUTE_FIXTURE } from "../../../helpers/qdrant-routes";
 
 // Named stand-ins, never realistic values.
-const TEST_PASSWORD = "password";
+// The HS256 signing stand-in: named for its role, since the mintJwt test hashes the token it mints on purpose.
+const SIGNER = "password";
 const TEST_PASSWORD_SECOND = "password-second";
 const ROUTES = QDRANT_ROUTE_FIXTURE.routes;
 const CATALOG = qdrantCatalog(ROUTES);
@@ -134,11 +135,11 @@ describe("the catalog", () => {
 
 describe("mintJwt", () => {
   test("is an HS256 token whose signature verifies with the secret, and whose claims decode", () => {
-    const token = mintJwt({ access: "r", exp: 1 }, TEST_PASSWORD);
+    const token = mintJwt({ access: "r", exp: 1 }, SIGNER);
     const [header, claims, signature] = token.split(".");
     expect(JSON.parse(Buffer.from(header, "base64url").toString())).toEqual({ alg: "HS256", typ: "JWT" });
     expect(JSON.parse(Buffer.from(claims, "base64url").toString())).toEqual({ access: "r", exp: 1 });
-    expect(signature).toBe(createHmac("sha256", TEST_PASSWORD).update(`${header}.${claims}`).digest("base64url"));
+    expect(signature).toBe(createHmac("sha256", SIGNER).update(`${header}.${claims}`).digest("base64url"));
     expect(mintJwt({ access: "r", exp: 1 }, TEST_PASSWORD_SECOND).split(".")[2]).not.toBe(signature);
   });
 

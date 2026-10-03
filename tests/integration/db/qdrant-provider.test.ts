@@ -151,7 +151,8 @@ describe("the recorded server", () => {
     await provider.getHealth();
     for (const call of wire.calls) {
       expect(ROUTE_PATTERNS.some((pattern) => pattern.test(call.method))).toBe(true);
-      expect(call.method).not.toMatch(/telemetry|metrics|healthz|readyz|livez|snapshots\/[^/]+$/);
+      expect(call.method).not.toMatch(/telemetry|metrics|healthz|readyz|livez/);
+      expect(call.method).not.toMatch(/snapshots\/[^/]+$/);
     }
     await provider.disconnect();
   });

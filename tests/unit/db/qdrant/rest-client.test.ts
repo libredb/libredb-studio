@@ -169,8 +169,15 @@ describe("the client builds exactly the 17 routes of the pinned OpenAPI document
   });
 
   test("no operation, with any parameter the path rule lets through, reaches a path outside the table", async () => {
+    const escaped = (text: string) => text.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
     const templates = QDRANT_ROUTE_FIXTURE.routes.map(
-      (route) => new RegExp(`^${route.method} ${route.path.replace(/\{[a-z_]+\}/g, "[^/?#]+").replace(/\//g, "\\/")}$`),
+      (route) =>
+        new RegExp(
+          `^${route.method} ${route.path
+            .split(/\{[a-z_]+\}/)
+            .map(escaped)
+            .join("[^/?#]+")}$`,
+        ),
     );
     const forbidden = [
       "healthz",
