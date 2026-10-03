@@ -1,5 +1,5 @@
 /**
- * Drift guard for the four public type blocks in `docs/API_DOCS.md` (#567).
+ * Drift guard for the public type blocks in `docs/API_DOCS.md` (#567).
  *
  * The Data Types section restates `DatabaseConnection`, `QueryResult`, `DatabaseObject`
  * and `HealthInfo`. Nothing compared those restatements to the interfaces, which is
@@ -11,6 +11,10 @@
  * This extracts top-level field names from each doc block and from the matching
  * interface and asserts they are equal, so the next field added to the source fails
  * the gate until the doc follows.
+ *
+ * `VectorColumn` joined the list with the vector results grid, and its block inlines three published unions
+ * (`VectorKind`, `VectorDType`, `SparseEncoding`), so their members are compared too: a member added to the
+ * source fails the gate until the doc's inlined union follows.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -27,6 +31,14 @@ const SHAPES = [
   { name: "QueryResult", source: "src/lib/types.ts" },
   { name: "DatabaseObject", source: "src/lib/db/types.ts" },
   { name: "HealthInfo", source: "src/lib/db/types.ts" },
+  { name: "VectorColumn", source: "src/lib/db/vector/types.ts" },
+] as const;
+
+/** The `VectorColumn` fields whose doc line inlines a published union, which must list exactly its members. */
+const INLINED_UNIONS = [
+  { field: "kind", union: "VectorKind" },
+  { field: "dtype", union: "VectorDType" },
+  { field: "sparseEncoding", union: "SparseEncoding" },
 ] as const;
 
 function scanInterfaceBody(source: string, name: string): string {
@@ -114,6 +126,25 @@ function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
+function quotedMembers(text: string): string[] {
+  return [...text.matchAll(/"([^"]*)"/g)].map((match) => match[1]);
+}
+
+function unionMembers(source: string, name: string): string[] {
+  const match = source.match(new RegExp(`export\\s+type\\s+${name}\\s*=([^;]*);`));
+  if (!match) throw new Error(`type ${name} not found`);
+  return quotedMembers(stripComments(match[1]));
+}
+
+function fieldTypeText(source: string, name: string, field: string): string {
+  const body = stripComments(scanInterfaceBody(source, name));
+  const line = body
+    .split("\n")
+    .find((candidate) => new RegExp(`^\\s*(?:readonly\\s+)?${field}\\??\\s*:`).test(candidate));
+  if (line === undefined) throw new Error(`${name}.${field} not found`);
+  return line;
+}
+
 function topLevelFields(source: string, name: string): string[] {
   const body = stripComments(scanInterfaceBody(source, name));
   const fields: string[] = [];
@@ -137,6 +168,16 @@ describe("docs/API_DOCS.md Data Types blocks match the source interfaces", () =>
       expect(fromDocs.length).toBeGreaterThan(0);
       expect(fromSource.length).toBeGreaterThan(0);
       expect(fromDocs).toEqual(fromSource);
+    });
+  }
+});
+
+describe("the unions docs/API_DOCS.md inlines in VectorColumn match the published types", () => {
+  for (const { field, union } of INLINED_UNIONS) {
+    test(`VectorColumn.${field} lists exactly the members of ${union}`, () => {
+      const fromSource = unionMembers(read("src/lib/db/vector/types.ts"), union);
+      expect(fromSource.length).toBeGreaterThan(0);
+      expect(quotedMembers(fieldTypeText(DATA_TYPES, "VectorColumn", field))).toEqual(fromSource);
     });
   }
 });

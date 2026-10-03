@@ -2038,7 +2038,7 @@ interface QueryWarning {
 interface VectorColumn {                            // One entry of `vectorColumns`
   kind: "dense" | "sparse" | "multi";               // VectorKind
   dtype: "float32" | "float64" | "float16" | "bfloat16" | "int8" | "uint8" | "binary"; // VectorDType
-  dimension: number | null;                         // Elements per vector, bits for "binary", one row's size for "multi"; null for "sparse"
+  dimension: number | null;                         // Elements per vector, bits for "binary", one row's size for "multi"; null for "sparse" and where the engine declares none
   sparseEncoding?: "index-map" | "indices-values";  // SparseEncoding: set on every sparse column
 }
 ```
