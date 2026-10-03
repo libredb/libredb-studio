@@ -2,9 +2,9 @@ import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential
 import type { DatabaseType } from "@/lib/types";
 
 /**
- * Synthetic declarations: Qdrant declares the one shipped record (src/lib/db/credential-warnings.ts), and each test
- * here declares a synthetic one on another real type for its own duration, so the mechanism is exercised apart from
- * any provider's data. `etcd` carries the pair and no-secret cases because its provider enforces `readOnly`, so a
+ * Synthetic declarations: Milvus and Qdrant declare the shipped records (src/lib/db/credential-warnings.ts), and
+ * each test here declares a synthetic one on another real type for its own duration, so the mechanism is exercised
+ * apart from any provider's data. `etcd` carries the pair and no-secret cases because its provider enforces `readOnly`, so a
  * read-only seed of it reaches the credential check at all.
  */
 /**

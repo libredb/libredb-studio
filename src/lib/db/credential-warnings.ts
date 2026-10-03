@@ -28,7 +28,12 @@ export type CredentialWarning =
   | { readonly kind: "no-secret"; readonly message: string };
 
 /**
- * Each connection type's declared warnings. A provider adds its own row; Qdrant's is the first.
+ * Each connection type's declared warnings. A provider adds its own row; Milvus and Qdrant declare one each.
+ *
+ * Milvus (vector-family spec 3.12, E22): every server starts with the documented `root` pair, the default
+ * survives a restart with a new configured default, and a server with authorization off, its default, accepts any
+ * credential or none, so only the dialog's sentence can tell an operator, and a read-only seed with either
+ * promises a boundary the server does not keep. Studio never probes or changes the credential.
  *
  * Qdrant (vector-family spec 3.12 and 4.4): a JWT is a credential the dialog can read without asking the
  * server, so a token that declares no expiry, manage access, or no access claim at all warns before Test
@@ -36,6 +41,20 @@ export type CredentialWarning =
  * none, so a read-only seed without a key promises a boundary the server does not keep and is refused.
  */
 export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>> = {
+  milvus: [
+    {
+      kind: "pair",
+      user: "root",
+      password: "Milvus",
+      message:
+        "This is the documented default root credential every Milvus server starts with, and it stays valid until an administrator changes it, so anyone who knows Milvus can sign in with it. Change the root password on the server, or connect as a user of your own.",
+    },
+    {
+      kind: "no-secret",
+      message:
+        "A Milvus server with authorization off, its default, accepts any credential or none, so a read-only seed without a password promises a boundary the server does not keep.",
+    },
+  ],
   qdrant: [
     {
       kind: "jwt",

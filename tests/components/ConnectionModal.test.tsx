@@ -338,6 +338,17 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
     readOnlyHint:
       "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
   },
+  // Mirrored from the real entry (vector-family spec 5.2); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  milvus: {
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as a Zilliz Cloud endpoint, which is split into Host and Port. Port 9091 is Milvus's management port, which Studio never dials.",
+      database: "Optional; empty means default. A dbName in a request body overrides it.",
+      user: "Optional. At most 32 characters, starting with a letter. Leave it empty to put a token in Password or token.",
+      password:
+        "Milvus receives the password or token on every call, so a password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+    },
+  },
   // Mirrored from the real entry (vector-family spec 6.2); tests/unit/lib/db-ui-config.test.ts pins the real one.
   qdrant: {
     fieldLabels: { password: "API key or JWT" },
@@ -1529,6 +1540,13 @@ describe("ConnectionModal", () => {
         { saslMechanism: "PLAIN and SCRAM require TLS" },
       ],
       ["etcd", "etcd", {}, CREDENTIALS_ONLY, MOCK_FIELD_COPY.etcd.fieldHints ?? {}],
+      [
+        "milvus",
+        "milvus",
+        {},
+        { ...NETWORKED, password: "Password or token" },
+        MOCK_FIELD_COPY.milvus.fieldHints ?? {},
+      ],
       // No User box and no Database box: Qdrant has neither (vector-family spec 6.2).
       [
         "qdrant",

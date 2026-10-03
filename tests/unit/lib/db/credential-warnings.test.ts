@@ -26,8 +26,9 @@ const MANAGE_NO_EXP_URL_SAFE = "e30.eyJhY2Nlc3MiOiJtIiwic3ViIjoieHg_Pz8_Pz4-In0.
 type Credential = { user?: string; password?: string };
 
 describe("CREDENTIAL_WARNINGS", () => {
-  test("qdrant is the one shipped type that declares credential warnings (vector-family spec 3.12)", () => {
-    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual(["qdrant"]);
+  test("milvus and qdrant are the shipped types that declare credential warnings (vector-family spec 3.12)", () => {
+    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual(["milvus", "qdrant"]);
+    expect(CREDENTIAL_WARNINGS.milvus?.map((entry) => entry.kind)).toEqual(["pair", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.qdrant?.map((entry) => entry.kind)).toEqual(["jwt", "no-secret"]);
   });
 });

@@ -51,6 +51,7 @@ const ALL_TYPES: DatabaseType[] = [
   "kafka",
   "etcd",
   "neo4j",
+  "milvus",
   "qdrant",
 ];
 
@@ -641,11 +642,35 @@ describe("declared connection-field copy (#1085)", () => {
     expect(qdrant.credentialWarnings).toBe(CREDENTIAL_WARNINGS.qdrant);
   });
 
-  test("only db2, prometheus, kafka, etcd, neo4j and qdrant declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("milvus declares its port, the Database box, Password or token, the field hints and the Host box addresses (vector-family spec 5.2)", () => {
+    const milvus = getDBConfig("milvus");
+    expect(milvus).toMatchObject({
+      label: "Milvus",
+      color: "text-hue-indigo-alt",
+      defaultPort: "19530",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "user", "password", "database"],
+    });
+    // The SSL panel and the SSH tunnel are both offered (vector-family spec 5.2).
+    expect(milvus.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("milvus")).toBe(true);
+    expect(milvus.fieldLabels).toEqual({ password: "Password or token" });
+    expect(milvus.fieldHints).toEqual({
+      host: "A name or address, or a pasted http:// or https:// address such as a Zilliz Cloud endpoint, which is split into Host and Port. Port 9091 is Milvus's management port, which Studio never dials.",
+      database: "Optional; empty means default. A dbName in a request body overrides it.",
+      user: "Optional. At most 32 characters, starting with a letter. Leave it empty to put a token in Password or token.",
+      password:
+        "Milvus receives the password or token on every call, so a password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+    });
+    expect(hostUriSchemes("milvus")).toEqual(["http", "https"]);
+    expect(milvus.credentialWarnings).toBe(CREDENTIAL_WARNINGS.milvus);
+  });
+
+  test("only db2, prometheus, kafka, etcd, neo4j, milvus and qdrant declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["db2", "prometheus", "kafka", "etcd", "neo4j", "qdrant"]);
+    expect(declared).toEqual(["db2", "prometheus", "kafka", "etcd", "neo4j", "milvus", "qdrant"]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
@@ -740,8 +765,10 @@ describe("db-showcase", () => {
         // Behind Kafka and ahead of libSQL (#1089), for the reason the two before it sit where they do: the store
         // a Kubernetes control plane keeps its state in, met beside the databases rather than as one of them.
         "etcd",
-        // Behind etcd and ahead of libSQL (vector-family spec 10.3): the vector database a team runs beside its
-        // databases, met beside them rather than as one of them, as the three before it are.
+        // Behind etcd and ahead of libSQL (vector-family spec 10.3): the vector databases a team runs beside its
+        // databases, met beside them rather than as one of them, as the three before them are; Milvus first,
+        // the one of the two an evaluator is more likely to have met.
+        "milvus",
         "qdrant",
         "libsql",
         "libredb",
@@ -769,8 +796,8 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("only qdrant declares hostAcceptsUri, so every other Host box takes a host alone", () => {
-    expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual(["qdrant"]);
+  test("only milvus and qdrant declare hostAcceptsUri, so every other Host box takes a host alone", () => {
+    expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual(["milvus", "qdrant"]);
   });
 
   test("hostUriSchemes reads an entry's declaration, and only that entry's", () => {

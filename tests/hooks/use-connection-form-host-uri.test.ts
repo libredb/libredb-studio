@@ -16,8 +16,8 @@ import {
 /**
  * The Host box of an engine that declares `hostAcceptsUri`, through the real form hook and the real
  * `DB_UI_CONFIG`: unlike tests/hooks/use-connection-form.test.ts, nothing here mocks `@/lib/db-ui-config`,
- * because the declaration is read from the real table. Qdrant is the one shipped entry that declares it; the
- * synthetic cases declare it on the etcd entry for their own duration, so they read as before.
+ * because the declaration is read from the real table. Milvus and Qdrant are the shipped entries that declare it;
+ * the synthetic cases declare it on the etcd entry for their own duration, so they read as before.
  */
 
 const restores: (() => void)[] = [];
@@ -461,5 +461,29 @@ describe("useConnectionForm: the real qdrant row (vector-family spec 3.12, 6.2)"
     expect(onTestConnection.mock.calls[0][0].user).toBeUndefined();
     expect(onConnect.mock.calls[0][0].user).toBeUndefined();
     expect(onConnect.mock.calls[0][0].database).toBeUndefined();
+  });
+});
+
+describe("useConnectionForm: the real milvus row (vector-family spec 3.12, 5.2)", () => {
+  test("the real milvus row splits a pasted https address in the Host box and keeps 443", () => {
+    const { result } = renderForm();
+    act(() => result.current.setType("milvus"));
+    act(() => result.current.setHost("https://in03-abc.serverless.example.com:443", "insertFromPaste"));
+    expect([result.current.type, result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "milvus",
+      "in03-abc.serverless.example.com",
+      "443",
+      "verify-system",
+    ]);
+  });
+
+  test("the real milvus row warns for the declared pair before Test Connection", () => {
+    const pair = CREDENTIAL_WARNINGS.milvus?.find((entry) => entry.kind === "pair");
+    if (pair?.kind !== "pair") throw new Error("the milvus record declares no pair");
+    const { result } = renderForm();
+    act(() => result.current.setType("milvus"));
+    act(() => result.current.setUser(pair.user));
+    act(() => result.current.setPassword(pair.password));
+    expect(result.current.credentialWarning).toBe(`Credential warning: ${pair.message}`);
   });
 });

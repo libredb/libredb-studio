@@ -23,6 +23,7 @@ import {
   Db2Icon,
   Neo4jIcon,
   QdrantIcon,
+  MilvusIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -466,6 +467,33 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     // The dialog's own sentence says the mode can be turned off, which is false here (spec A7).
     readOnlyHint:
       "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+  },
+  milvus: {
+    // A mark drawn for Studio, never the project's logo or any vendor or Attu asset (vector-family spec 10.3).
+    icon: MilvusIcon,
+    // Milvus's own mark is a blue. `hue-blue` is PostgreSQL's and its `-alt` etcd's, and `hue-sky` and its `-alt`
+    // are taken; `hue-cyan-alt` fails the separation test and `hue-indigo-alt` clears it, which is why `indigo`
+    // joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry (vector-family spec 10.3).
+    color: "text-hue-indigo-alt",
+    label: "Milvus",
+    // One endpoint carries gRPC with TLS on or off (vector-family spec 5.2); 9091 is the management port, never dialled.
+    defaultPort: "19530",
+    // The connection-string box reads http:// and https:// as ClickHouse, so a pasted vendor address belongs in the
+    // Host box, which splits it (hostAcceptsUri below, vector-family spec 3.12).
+    showConnectionStringToggle: false,
+    // The database is optional and sent with every call; the provider reads `config.user` and `config.database`,
+    // which the write-list test of tests/unit/lib/db-ui-config.test.ts holds.
+    connectionFields: ["host", "port", "user", "password", "database"],
+    // The Prometheus precedent: one password box also carries a token when User is empty (vector-family spec 5.2).
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as a Zilliz Cloud endpoint, which is split into Host and Port. Port 9091 is Milvus's management port, which Studio never dials.",
+      database: "Optional; empty means default. A dbName in a request body overrides it.",
+      user: "Optional. At most 32 characters, starting with a letter. Leave it empty to put a token in Password or token.",
+      password:
+        "Milvus receives the password or token on every call, so a password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+    },
+    hostAcceptsUri: ["http", "https"],
   },
   qdrant: {
     // A mark drawn for Studio, never the vendor's logo (vector-family spec 10.3).

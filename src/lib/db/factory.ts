@@ -267,6 +267,13 @@ export async function createDatabaseProvider(
     }
 
     // Vector databases - dynamically imported
+    case "milvus": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
+      // rides along, so an execution profile opens it read-only (vector-family spec E8).
+      const { MilvusProvider } = await import("./providers/vector/milvus/index");
+      return new MilvusProvider(connection, options, execution);
+    }
+
     case "qdrant": {
       // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
       // rides along, so an execution profile opens it read-only, as etcd's does.
