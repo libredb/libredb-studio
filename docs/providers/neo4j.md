@@ -150,7 +150,7 @@ The gate costs one round trip per statement, which the design accepted because t
 ### 3.6 Machine access
 
 Plan mode drafts Cypher and runs nothing: `getLabels().statementLanguage` tells the model what the policy enforces, "Read-only Cypher for Neo4j 5: one statement per run, no writes, no LOAD CSV, no APOC or GDS. CALL is limited to db.labels, db.relationshipTypes, db.propertyKeys, db.schema.visualization, db.schema.nodeTypeProperties, db.schema.relTypeProperties, db.ping and dbms.components. SHOW is limited to indexes, constraints, databases, procedures and functions. Only built-in functions can be called; parameters are not supported. Quote labels, relationship types and property names that are not plain words with backticks.", and a drafted statement meets the policy when the user runs it.
-A plan run's fence tag is the type-id, `neo4j`, and `cypher` is read as a query tag that names no engine, since several graph engines speak Cypher.
+A plan run's fence tag is the type-id, `neo4j`, and a `cypher` block also names Neo4j, as `promql` names Prometheus, while Neo4j is the only engine here that runs Cypher; a second graph engine revisits that.
 `list_connections` and `inspect_schema` work through the object surface and run no user Cypher, so a Neo4j seed may set `mcp: true`.
 The provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` do not serve Neo4j: both need a non-SQL statement contract the agent and MCP guards do not have, and the boundary of section 3.4 has to be measured for that path on its own.
 That work is filed as B93.
