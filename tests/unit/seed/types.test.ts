@@ -701,6 +701,14 @@ describe("SeedConfigSchema: MCP is not offered for etcd (#1089 E12)", () => {
   });
 });
 
+describe("SeedConnectionSchema: a milvus seed (vector-family spec 5.2)", () => {
+  const milvus = { id: "vectors", name: "Vectors", type: "milvus", host: "milvus.internal", roles: ["*"] };
+
+  it("accepts the milvus type", () => {
+    expect(SeedConnectionSchema.safeParse(milvus).success).toBe(true);
+  });
+});
+
 describe("SeedConnectionSchema: a qdrant seed", () => {
   const qdrant = { id: "vectors", name: "Vectors", type: "qdrant", host: "qdrant.internal", roles: ["*"] };
 

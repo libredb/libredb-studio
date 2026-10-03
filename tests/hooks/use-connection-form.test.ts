@@ -18,6 +18,7 @@ const DEFAULT_PORTS: Record<string, string> = {
   kafka: "9092",
   mssql: "1433",
   etcd: "2379",
+  milvus: "19530",
   qdrant: "6333",
 };
 
@@ -1636,6 +1637,7 @@ describe("useConnectionForm", () => {
     kafka: true,
     etcd: true,
     neo4j: true,
+    milvus: true,
     qdrant: true,
   };
 

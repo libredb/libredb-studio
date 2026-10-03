@@ -69,6 +69,7 @@ const SeedDatabaseType = z.enum([
   "kafka",
   "etcd",
   "neo4j",
+  "milvus",
   "qdrant",
 ]);
 

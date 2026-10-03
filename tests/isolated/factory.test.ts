@@ -637,6 +637,23 @@ describe("createDatabaseProvider", () => {
     expect((await createDatabaseProvider(conn)).type).toBe("qdrant");
   });
 
+  test('creates provider for type "milvus"', async () => {
+    // The constructor validates nothing and opens nothing, as etcd's, so the provider is built, and declares its
+    // language, its dialect and its read-only enforcement, with no Milvus running (vector-family spec 5.7).
+    const conn = makeConnection("milvus", { port: 19530, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("milvus");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("milvus");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bneo4j, milvus, qdrant, libredb$/);
+  });
+
   test("the factory error lists qdrant among the supported types, before the embedded store", async () => {
     const conn = makeConnection("not-an-engine");
     await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant\b.*, libredb$/);
