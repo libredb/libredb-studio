@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { containerDepth, relationKindIds } from "@/lib/db/object-kinds";
+import { machineColumns } from "@/lib/db/detailed-object";
 import type { Container, DatabaseObject, DatabaseProvider } from "@/lib/db/types";
 import {
   newMcpCorrelationId,
@@ -90,7 +91,7 @@ export type InspectSchemaInput = z.infer<typeof InspectSchemaInputSchema>;
 type InspectedTable = z.infer<typeof InspectedTableSchema>;
 
 const INSPECT_SCHEMA_TITLE = "Inspect schema";
-export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
+export const INSPECT_SCHEMA_DESCRIPTION = `List the tables of one connection with their columns and, on request, their indexes. Works on every engine. Columns an engine only inferred from sampled data are left out, so a table may hold fields this list does not show. Pages with limit and offset; has_more and next_offset say when more tables exist. ${MCP_UNTRUSTED_NOTICE}`;
 
 const MAX_COLUMNS = 50;
 const MAX_INDEXES = 25;
@@ -146,7 +147,9 @@ async function inspectTable(
     args.include_columns || args.include_indexes ? await provider.describeObject(object.path, object.kind) : null;
   const rawComment = (detail === null ? undefined : commentOf(detail)) ?? commentOf(object);
   const comment = rawComment === undefined ? undefined : cutUtf8(rawComment, MCP_TABLE_COMMENT_CAP_BYTES);
-  const columns = detail?.columns ?? [];
+  // Before the cap and the count: a column the engine only inferred from sampled data is named by the data, so it
+  // never reaches a client, and `columns_omitted` keeps meaning "beyond the 50-column cap".
+  const columns = machineColumns(detail?.columns ?? []);
   const indexes = detail?.indexes ?? [];
   return {
     name: object.name,
