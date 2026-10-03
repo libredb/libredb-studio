@@ -12,6 +12,8 @@
  * (`tests/fixtures/milvus/`), so the composition also meets bytes a real server sent.
  *
  * Server: Milvus 3.0.2 standalone (milvusdb/milvus:v3.0.2), the build the captures were taken from.
+ * Live check (tests/live/milvus-live-check.ts) against milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0,
+ * 2026-10-03: Bun 1.4.2 19/19 passed, Node v24.14.0 19/19, Node v26.10.0 19/19.
  */
 import { describe, expect, test } from "bun:test";
 import {
