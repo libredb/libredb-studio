@@ -4,10 +4,12 @@
  * forms. Every refusal is a DatabaseConfigError raised before any client exists, and none repeats the value it
  * refuses. The TLS material checks are Task 9's half of this file.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { X509Certificate } from "node:crypto";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   buildMilvusConnectionOptions,
+  clientCertificateRefusal,
   MILVUS_DEFAULT_DATABASE,
   MILVUS_DEFAULT_PORT,
   MILVUS_IP_SERVER_NAME,
@@ -22,6 +24,7 @@ import {
   SYNTHETIC_PAIR,
   SYNTHETIC_PASSWORD,
 } from "../../../helpers/synthetic-credential-warnings";
+import { makeMilvusTlsMaterial, type MilvusTlsMaterial } from "../../../helpers/milvus-tls-material";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -347,5 +350,98 @@ describe("E22: the seed stage of 3.12, after resolution, before any socket", () 
     // Not a seed, or a seed that is not read-only: the dialog's warning is the only reader there.
     expect(build({ readOnly: true, host: "127.0.0.1" }).auth).toEqual({ kind: "none" });
     expect(build({ seedId: "s1", host: "127.0.0.1" }).auth).toEqual({ kind: "none" });
+  });
+});
+
+describe("E6: the TLS material is refused in words before any channel (R42 M12)", () => {
+  let material: MilvusTlsMaterial;
+  beforeAll(() => {
+    material = makeMilvusTlsMaterial();
+  }, 60_000);
+  afterAll(() => material.remove());
+
+  const mtls = (cert: string, key: string, ca?: string) => ({
+    host: "localhost",
+    ssl: { mode: "verify-full", clientCert: cert, clientKey: key, ...(ca === undefined ? {} : { caCert: ca }) },
+  });
+
+  test("a good clientAuth certificate and its key pass, and so does one with no extended key usage", () => {
+    expect(
+      build(mtls(material.pem("client.crt"), material.pem("client.key"), material.pem("ca.crt"))).tls
+        ?.clientCertificate,
+    ).toBeDefined();
+    expect(
+      build(mtls(material.pem("client-noeku.crt"), material.pem("client-noeku.key"))).tls?.clientCertificate,
+    ).toBeDefined();
+  });
+
+  test("a certificate from another CA passes the preflight: only the server can refuse it", () => {
+    expect(build(mtls(material.pem("client-other-ca.crt"), material.pem("client-other-ca.key"))).tls).toBeDefined();
+  });
+
+  test("a certificate whose extended key usage lacks clientAuth is refused, naming that", () => {
+    expect(refusal(mtls(material.pem("client-serverauth.crt"), material.pem("client-serverauth.key"))).message).toBe(
+      "The client certificate is not issued for client authentication: its extended key usage lacks clientAuth, so Milvus would refuse it. Paste a certificate issued for client use under SSL / TLS.",
+    );
+  });
+
+  test("an expired certificate is refused naming its validTo", () => {
+    const x509 = new X509Certificate(material.pem("client.crt"));
+    expect(clientCertificateRefusal(x509, Date.parse(x509.validTo) - 1000)).toBeUndefined();
+    expect(clientCertificateRefusal(x509, Date.parse(x509.validTo) + 1000)).toBe(
+      `The client certificate expired on ${x509.validTo}, so Milvus would refuse it: paste a current one under SSL / TLS.`,
+    );
+  });
+
+  test("a key that does not match the certificate, a key that is not PEM and an encrypted key are refused", () => {
+    expect(refusal(mtls(material.pem("client.crt"), material.pem("client-serverauth.key"))).message).toBe(
+      "The Client Private Key under SSL / TLS is not the key of the Client Certificate: paste the private key issued with that certificate there.",
+    );
+    expect(refusal(mtls(material.pem("client.crt"), "not a key")).message).toBe(
+      "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.",
+    );
+    expect(refusal(mtls(material.pem("client.crt"), material.pem("client-encrypted.key"))).message).toBe(
+      "The Client Private Key under SSL / TLS is encrypted, and SSL / TLS has no passphrase field: paste the key unencrypted there.",
+    );
+  });
+
+  test("a client certificate that is not PEM is refused", () => {
+    expect(refusal(mtls("not a certificate", material.pem("client.key"))).message).toBe(
+      "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.",
+    );
+  });
+
+  test("a CA that is not PEM, that hides a BEGIN marker inside a line, or that is OpenSSL's trusted form, is refused", () => {
+    expect(refusal({ ssl: { mode: "verify-full", caCert: "no certificate" } }).message).toBe(
+      "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued Milvus's server certificate there.",
+    );
+    expect(refusal({ ssl: { mode: "verify-full", caCert: ` ${material.pem("ca.crt")}` } }).message).toContain(
+      "has a -----BEGIN marker that does not start its line",
+    );
+    expect(
+      refusal({
+        ssl: {
+          mode: "verify-full",
+          caCert: "-----BEGIN TRUSTED CERTIFICATE-----\nx\n-----END TRUSTED CERTIFICATE-----\n",
+        },
+      }).message,
+    ).toContain("holds a TRUSTED CERTIFICATE block");
+    expect(
+      build({ ssl: { mode: "verify-full", caCert: `${material.pem("ca.crt")}${material.pem("other-ca.crt")}` } }).tls
+        ?.ca,
+    ).toBeDefined();
+  });
+
+  test("the material is checked in every TLS mode, require included, and never with TLS off", () => {
+    expect(
+      refusal({
+        ssl: {
+          mode: "require",
+          clientCert: material.pem("client-serverauth.crt"),
+          clientKey: material.pem("client-serverauth.key"),
+        },
+      }).message,
+    ).toContain("not issued for client authentication");
+    expect(build({ ssl: { mode: "disable", caCert: "no certificate" } }).tls).toBeUndefined();
   });
 });

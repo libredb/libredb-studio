@@ -36,6 +36,7 @@ import {
   type TunnelFarEnd,
   type WithTunnelFarEnd,
 } from "@/lib/types";
+import { createPrivateKey, type KeyObject, X509Certificate } from "node:crypto";
 import { isIP, isIPv6 } from "node:net";
 import type { MilvusErrorConnection } from "./errors";
 
@@ -112,6 +113,29 @@ const DATABASE_NAME_RULE =
   "The Milvus database name must start with a letter or _, hold only letters, digits and _, and be at most 255 characters.";
 const CLIENT_PAIR =
   "The Client Certificate and the Client Private Key under SSL / TLS go together: add the missing one, or clear both.";
+const PEM_BEGIN_INSIDE_A_LINE = /[^\n]-----BEGIN/;
+const PEM_TRUSTED_CERTIFICATE = /-----BEGIN TRUSTED CERTIFICATE-----/;
+const PEM_CERTIFICATE_BLOCK = /-----BEGIN (?:X509 )?CERTIFICATE-----[\s\S]*?(?:\n-----END [^\n]*|$)/g;
+const ENCRYPTED_PEM_KEY = /-----BEGIN ENCRYPTED PRIVATE KEY-----|^Proc-Type: 4,ENCRYPTED/m;
+/** The extended key usage OIDs a client certificate may carry: clientAuth, or any usage. */
+const CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
+const ANY_EXTENDED_KEY_USAGE = "2.5.29.37.0";
+const CA_NOT_PEM =
+  "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued Milvus's server certificate there.";
+const CA_BEGIN_INSIDE_A_LINE =
+  "The CA Certificate under SSL / TLS has a -----BEGIN marker that does not start its line: put each -----BEGIN marker at the start of a line there, with nothing before it, not even a space or a byte order mark.";
+const CA_TRUSTED_FORM =
+  "The CA Certificate under SSL / TLS holds a TRUSTED CERTIFICATE block, OpenSSL's form with trust settings, which not every runtime reads: paste the certificate in its plain PEM form there, as openssl x509 -in <file> prints it.";
+const CLIENT_CERTIFICATE_NOT_PEM =
+  "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.";
+const NOT_FOR_CLIENT_AUTH =
+  "The client certificate is not issued for client authentication: its extended key usage lacks clientAuth, so Milvus would refuse it. Paste a certificate issued for client use under SSL / TLS.";
+const CLIENT_KEY_NOT_PEM =
+  "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.";
+const CLIENT_KEY_ENCRYPTED =
+  "The Client Private Key under SSL / TLS is encrypted, and SSL / TLS has no passphrase field: paste the key unencrypted there.";
+const CLIENT_KEY_MISMATCH =
+  "The Client Private Key under SSL / TLS is not the key of the Client Certificate: paste the private key issued with that certificate there.";
 const TUNNEL_NOT_OPENED =
   "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Milvus was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const SEED_REFUSED =
@@ -214,6 +238,9 @@ function tlsOptions(config: DatabaseConnection, identity: string): MilvusTlsOpti
   const row = TLS_MODES[mode as SSLMode];
   if (row === null) return undefined;
   if ((cert === undefined) !== (key === undefined)) throw configError(CLIENT_PAIR);
+  // In every TLS mode, since grpc-js reads all three whatever it verifies (E6).
+  if (ca !== undefined) checkCa(ca);
+  if (cert !== undefined && key !== undefined) checkClientPair(cert, key);
   const identityIsIp = isIP(identity) !== 0;
   return {
     mode: row.mode,
@@ -326,4 +353,57 @@ function wrongType(field: string, expected: string): DatabaseConfigError {
 
 function configError(message: string): DatabaseConfigError {
   return new DatabaseConfigError(message, PROVIDER);
+}
+
+/** A CA read as both runtimes' PEM readers read it (the etcd provider's rule, copied under the isolation rule). */
+function checkCa(pem: string): void {
+  if (PEM_BEGIN_INSIDE_A_LINE.test(pem)) throw configError(CA_BEGIN_INSIDE_A_LINE);
+  if (PEM_TRUSTED_CERTIFICATE.test(pem)) throw configError(CA_TRUSTED_FORM);
+  const blocks = pem.match(PEM_CERTIFICATE_BLOCK) ?? [];
+  if (blocks.length === 0) throw configError(CA_NOT_PEM);
+  for (const block of blocks) certificate(block, CA_NOT_PEM);
+}
+
+/**
+ * E6's local preflight: the usage and the expiry R42 M12 measured X509Certificate naming on all three runtimes, then
+ * that the key is the certificate's own, so a refusal names the cause where a handshake under Bun names none.
+ */
+function checkClientPair(cert: string, key: string): void {
+  const x509 = certificate(cert, CLIENT_CERTIFICATE_NOT_PEM);
+  const refusal = clientCertificateRefusal(x509, Date.now());
+  if (refusal !== undefined) throw configError(refusal);
+  if (!x509.checkPrivateKey(privateKey(key))) throw configError(CLIENT_KEY_MISMATCH);
+}
+
+/**
+ * Why Milvus would refuse this client certificate, or undefined: an extended key usage that exists and lacks
+ * clientAuth, or a validity that has ended. A certificate with no extended key usage extension is accepted, as the
+ * server accepts it (R42 F6); `keyUsage` is undefined then, whatever the typings say.
+ */
+export function clientCertificateRefusal(x509: X509Certificate, now: number): string | undefined {
+  const usages: readonly string[] | undefined = x509.keyUsage;
+  if (usages !== undefined && !usages.includes(CLIENT_AUTH) && !usages.includes(ANY_EXTENDED_KEY_USAGE)) {
+    return NOT_FOR_CLIENT_AUTH;
+  }
+  if (Date.parse(x509.validTo) < now) {
+    return `The client certificate expired on ${x509.validTo}, so Milvus would refuse it: paste a current one under SSL / TLS.`;
+  }
+  return undefined;
+}
+
+function certificate(pem: string, refusal: string): X509Certificate {
+  try {
+    return new X509Certificate(pem);
+  } catch {
+    throw configError(refusal);
+  }
+}
+
+function privateKey(pem: string): KeyObject {
+  try {
+    return createPrivateKey(pem);
+  } catch {
+    // The runtimes disagree on the code, so the PEM decides.
+    throw configError(ENCRYPTED_PEM_KEY.test(pem) ? CLIENT_KEY_ENCRYPTED : CLIENT_KEY_NOT_PEM);
+  }
 }
