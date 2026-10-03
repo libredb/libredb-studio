@@ -326,14 +326,13 @@ function holderFindings(files: readonly RepositoryFile[]): string[] {
   );
   return Object.entries(METHOD_HOLDERS).flatMap(([method, holders]) => {
     const naming = modules.filter((file) => namesMethod(file, method)).map((file) => file.path);
-    return [
-      ...naming
-        .filter((path) => !holders.includes(path))
-        .map((path) => `${method}: ${path} names it and is not one of its holders`),
-      ...holders
-        .filter((path) => !naming.includes(path))
-        .map((path) => `${method}: ${path} is a holder and does not name it`),
-    ];
+    const strangers = naming
+      .filter((path) => !holders.includes(path))
+      .map((path) => `${method}: ${path} names it and is not one of its holders`);
+    const silent = holders
+      .filter((path) => !naming.includes(path))
+      .map((path) => `${method}: ${path} is a holder and does not name it`);
+    return strangers.concat(silent);
   });
 }
 
