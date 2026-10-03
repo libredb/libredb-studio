@@ -60,6 +60,31 @@ describe("sparseFromIndicesValues", () => {
   });
 });
 
+describe("a refusal's index is the position the element was written at", () => {
+  const ints = (...numbers: number[]) => numbers.map((number) => taggedNumber(String(number)));
+
+  test("in two parallel lists written out of order, not the position after sorting", () => {
+    const bound = 2 ** 32;
+    expect(sparseFromIndicesValues(sp, ints(5, 3, -1), ints(1, 1, 1), bound)).toMatchObject({
+      index: 2,
+      sentence: `Vector field "sp" (float32, sparse): index -1 is not an integer from 0 to below ${bound}.`,
+    });
+    expect(sparseFromIndicesValues(sp, ints(5, 3, 9), [1, 1e39, 1], bound)).toMatchObject({
+      index: 1,
+      sentence: 'Vector field "sp" (float32, sparse): the value at index 3 is 1e+39, not a finite float32.',
+    });
+    expect(sparseFromIndicesValues(sp, ints(7, 3, 7), ints(1, 1, 1), bound)).toMatchObject({
+      index: 2,
+      sentence: 'Vector field "sp" (float32, sparse): index 7 is given twice.',
+    });
+  });
+
+  test("in an index map, the position among its keys as the object holds them", () => {
+    expect(sparseFromIndexMap(sp, map({ b: 1, "3": 1e39 }), 1000)).toMatchObject({ index: null });
+    expect(sparseFromIndexMap(sp, map({ "900": 1, "17": 1e39 }), 1000)).toMatchObject({ index: 0 });
+  });
+});
+
 describe("checkSparse", () => {
   test("refuses unequal lengths, an index out of range or repeated, and a value that is not a finite float32", () => {
     const check = (vector: SparseVector) => checkSparse(sp, vector, 10)?.sentence;

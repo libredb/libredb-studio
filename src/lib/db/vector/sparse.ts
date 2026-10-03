@@ -7,7 +7,8 @@ import type { SparseEncoding } from "./types";
  * Sparse vectors (vector-family spec 3.3): one in-memory form, `{indices, values}` in ascending index order, read
  * from either written form. Indices are distinct non-negative integers below a bound the provider gives, because
  * the bound is engine data; values are finite float32. The two readers take the field first, so every refusal
- * names it and its element type.
+ * names it and its element type, and check the entries as written before sorting them, so a refusal's `index` is
+ * the position the element was written at.
  */
 export interface SparseVector {
   readonly indices: readonly number[];
@@ -55,8 +56,7 @@ export function sparseFromIndexMap(
     indices.push(Number(key));
     values.push(value);
   }
-  const vector = sorted(indices, values);
-  return checkSparse(target, vector, indexBoundExclusive) ?? vector;
+  return checkSparse(target, { indices, values }, indexBoundExclusive) ?? sorted(indices, values);
 }
 
 /** Two parallel lists, `indices` of integer literals and `values` of numbers. */
@@ -81,8 +81,10 @@ export function sparseFromIndicesValues(
     indexNumbers.push(isTaggedInt(index) ? Number(index.digits) : index);
     valueNumbers.push(value);
   }
-  const vector = sorted(indexNumbers, valueNumbers);
-  return checkSparse(target, vector, indexBoundExclusive) ?? vector;
+  return (
+    checkSparse(target, { indices: indexNumbers, values: valueNumbers }, indexBoundExclusive) ??
+    sorted(indexNumbers, valueNumbers)
+  );
 }
 
 /**
