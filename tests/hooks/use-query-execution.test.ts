@@ -5,6 +5,7 @@ import "../helpers/mock-navigation";
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../helpers/mock-fetch";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import { storage } from "@/lib/storage";
 
 // ── Mock QuerySafetyDialog ──────────────────────────────────────────────────
@@ -3946,5 +3947,198 @@ describe("useQueryExecution", () => {
 
       expect(outcome).toBe(false);
     });
+  });
+});
+
+// =============================================================================
+// A statement the connection type's editor refuses (vector family, PR 1v)
+// =============================================================================
+//
+// No shipped row declares `refuse` or `maxTextBytes`, so the stand-in row drives every case. The refusal runs before
+// the confirmation gate, which is why `isDangerousQueryMock` is never consulted, and before every condition that
+// Proceed, an explain run, a page and playground mode skip.
+describe("a statement the connection type's editor refuses", () => {
+  const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
+  const REFUSED = '{"FORBIDDEN": true}';
+  const standInConnection: DatabaseConnection = { ...mockConnection, id: "qe-stand-in", type: STAND_IN_TYPE };
+  let remove: () => void = () => {};
+  let history: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    remove = installStandInVocabulary({
+      refuse: (text) => (text.includes("FORBIDDEN") ? REFUSAL : undefined),
+      maxTextBytes: 64,
+    });
+    history = spyOn(storage, "addToHistory").mockImplementation(() => {});
+    isDangerousQueryMock.mockClear();
+    mockToastError.mockClear();
+    mockToastSuccess.mockClear();
+  });
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+    history.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  const pagedTab = (resultQuery: string) =>
+    createTab({
+      query: "SELECT 1",
+      result: {
+        ...mockQueryResult,
+        pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true },
+      },
+      resultQuery,
+      currentOffset: 50,
+    });
+
+  function mount(
+    overrides: Record<string, unknown> = {},
+    tab: QueryTab = createTab({ result: { ...mockQueryResult } }),
+  ) {
+    const tabs = [tab];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    const fetchMock = mockGlobalFetch({ "/api/db/": { json: mockQueryResult } });
+    const params = createDefaultParams({
+      activeConnection: standInConnection,
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      ...overrides,
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+    return { result, tabs, fetchMock };
+  }
+
+  function expectRefused(tabs: QueryTab[], fetchMock: ReturnType<typeof mockGlobalFetch>, sentence = REFUSAL) {
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+    expect(isDangerousQueryMock).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+    expect(tabs[0].result).toBeNull();
+    expect(tabs[0].isExecuting).toBe(false);
+    expect(tabs[0].isLoadingMore).toBe(false);
+    expect(mockToastError).toHaveBeenCalledWith("Statement Refused", { description: sentence });
+  }
+
+  test("a run sends nothing, writes no history and returns false", async () => {
+    const { result, tabs, fetchMock } = mount();
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery(REFUSED);
+    });
+    expect(returned).toBe(false);
+    expectRefused(tabs, fetchMock);
+  });
+
+  test("Proceed, which skips the gate, sends nothing either", async () => {
+    const { result, tabs, fetchMock } = mount();
+    await act(async () => {
+      result.current.forceExecuteQuery(REFUSED);
+    });
+    expectRefused(tabs, fetchMock);
+  });
+
+  test("an explain run sends nothing", async () => {
+    const { result, tabs, fetchMock } = mount();
+    await act(async () => {
+      await result.current.executeQuery(REFUSED, undefined, true);
+    });
+    expectRefused(tabs, fetchMock);
+  });
+
+  test("Load More refuses the statement it pages", async () => {
+    const tab = pagedTab(REFUSED);
+    const { result, tabs, fetchMock } = mount({}, tab);
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+    expectRefused(tabs, fetchMock);
+  });
+
+  test("playground mode opens no transaction for it", async () => {
+    const { result, tabs, fetchMock } = mount({ playgroundMode: true });
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+    expectRefused(tabs, fetchMock);
+  });
+
+  test("with metadata still loading, it is refused the same way", async () => {
+    const { result, tabs, fetchMock } = mount({ metadata: null });
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+    expectRefused(tabs, fetchMock);
+  });
+
+  test("a text over the declared byte bound is refused with its size", async () => {
+    const { result, tabs, fetchMock } = mount();
+    await act(async () => {
+      await result.current.executeQuery("é".repeat(33));
+    });
+    expectRefused(
+      tabs,
+      fetchMock,
+      "The statement is 66 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it.",
+    );
+  });
+
+  test("an accepted statement of a type that declares a bound goes to /api/db/query whole and is written to history once", async () => {
+    const { result, tabs, fetchMock } = mount({ metadata: null });
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery("SELECT 1; SELECT 2");
+    });
+    expect(returned).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const url = String((fetchMock.mock.calls[0] as unknown as [string])[0]);
+    expect(url).toContain("/api/db/query");
+    expect(url).not.toContain("multi-query");
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  test("a refusal supersedes a run still in flight on the tab", async () => {
+    const tabs = [createTab()];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    globalThis.fetch = mock(
+      (_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("The operation was aborted.", "AbortError")),
+          );
+        }),
+    ) as unknown as typeof fetch;
+    const params = createDefaultParams({
+      activeConnection: standInConnection,
+      metadata: null,
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    let first: Promise<boolean> | undefined;
+    act(() => {
+      first = result.current.executeQuery("SELECT 1");
+    });
+    await act(async () => {
+      expect(await result.current.executeQuery(REFUSED)).toBe(false);
+    });
+    await act(async () => {
+      expect(await first).toBe(false);
+    });
+
+    expect(tabs[0].runError).toBe(REFUSAL);
+    expect(tabs[0].isExecuting).toBe(false);
+    expect(mockToastError).toHaveBeenCalledTimes(1);
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
   });
 });
