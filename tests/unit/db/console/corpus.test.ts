@@ -1,0 +1,456 @@
+/**
+ * The console grammar over one corpus, on Bun and on the Node the tests find on PATH, with identical messages
+ * (vector-family spec 3.4).
+ *
+ * The corpus: the nine Milvus console requests of the design's examples and the 257 Qdrant documentation blocks,
+ * both under tests/fixtures/vector/corpus/; both engines' refusal corpora and seven string-and-comment fixtures,
+ * written below as exact bytes; the bound cases; and the tag-shaped objects. The route tables are stand-ins built
+ * from tests/fixtures/vector/routes/, which the Milvus and Qdrant providers replace with their own routes.ts.
+ *
+ * Under Node: the helper is bundled for Node and run in a child process. CI's Node is 24; the PR's completion
+ * sequence runs this file a second time with Node 26 first on PATH.
+ */
+import { beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { ConsoleDialectSpec, RouteSpec } from "@/lib/db/console/dialect";
+import { classifyConsole } from "@/lib/db/console/guard";
+import { ConsoleRefusal, parseConsole } from "@/lib/db/console/parser";
+import { type CorpusCase, type CorpusOutcome, type CorpusTable, corpusOutcomes } from "../../../helpers/console-corpus";
+import {
+  type FixtureRouteJson,
+  MILVUS_STAND_IN,
+  QDRANT_STAND_IN,
+  type RouteTableJson,
+  standInRoutes,
+} from "../../../helpers/console-stand-ins";
+
+const FIXTURES = join(import.meta.dir, "..", "..", "..", "fixtures", "vector");
+const readJson = <T>(...path: string[]): T => JSON.parse(readFileSync(join(FIXTURES, ...path), "utf8")) as T;
+
+const milvusTable = readJson<RouteTableJson>("routes", "milvus-v1.json");
+const qdrantV1Table = readJson<RouteTableJson>("routes", "qdrant-v1.json");
+const qdrantFullTable = readJson<RouteTableJson>("routes", "qdrant-full.json");
+const v1Ops = new Set(qdrantV1Table.routes.map((route) => route.op));
+const allRead = () => "read" as const;
+
+/** Every method the full Qdrant table names, so a documentation block is never refused for its method alone. */
+const QDRANT_FULL_STAND_IN: ConsoleDialectSpec = {
+  ...QDRANT_STAND_IN,
+  id: "qdrant-full-stand-in",
+  methods: [...new Set(qdrantFullTable.routes.map((route) => route.method))],
+};
+
+const TABLES: Readonly<Record<string, CorpusTable>> = {
+  milvus: { spec: MILVUS_STAND_IN, routes: standInRoutes(milvusTable, allRead) },
+  qdrant: { spec: QDRANT_STAND_IN, routes: standInRoutes(qdrantV1Table, allRead) },
+  "qdrant-full": {
+    spec: QDRANT_FULL_STAND_IN,
+    routes: standInRoutes(qdrantFullTable, (route: FixtureRouteJson) => (v1Ops.has(route.op) ? "read" : "write")),
+  },
+};
+
+const docs = readJson<{ blocks: { file: string; text: string }[] }>("corpus", "qdrant-docs.json").blocks;
+const milvusRequests = readJson<{ requests: { name: string; text: string }[] }>(
+  "corpus",
+  "milvus-requests.json",
+).requests;
+
+/** Each engine's refusal corpus: one text per rule of the grammar the engine's dialect can break. */
+const REFUSALS: readonly { readonly table: "milvus" | "qdrant"; readonly text: string; readonly reason: string }[] = [
+  { table: "milvus", text: "POST /v2/vectordb/entities/search", reason: "body-required" },
+  { table: "milvus", text: "GET /v2/vectordb/collections/list", reason: "unknown-method" },
+  { table: "milvus", text: "POST /v2/vectordb/collections/drop\n{}", reason: "unknown-route" },
+  { table: "milvus", text: "POST http://127.0.0.1:19530/v2/vectordb/entities/search\n{}", reason: "absolute-url" },
+  { table: "milvus", text: "POST /v2/vectordb/entities/search?timeout=5\n{}", reason: "query-key" },
+  { table: "milvus", text: "POST /v2/vectordb/entities/search\nAuthorization: Bearer x\n{}", reason: "header-line" },
+  { table: "milvus", text: "// note\nPOST /v2/vectordb/collections/list\n{}", reason: "unknown-method" },
+  { table: "milvus", text: 'POST /v2/vectordb/entities/search\n{"limit": 5 // five\n}', reason: "body-comment" },
+  { table: "milvus", text: 'POST /v2/vectordb/entities/search\n{"limit": 5,}', reason: "trailing-comma" },
+  { table: "milvus", text: 'POST /v2/vectordb/entities/search\n{"data": [[0.1, ...]]}', reason: "ellipsis" },
+  { table: "milvus", text: 'POST /v2/vectordb/entities/search\n{"limit": 5, "limit": 6}', reason: "duplicate-key" },
+  {
+    table: "milvus",
+    text: 'POST /v2/vectordb/entities/search\n{"__proto__": {"admin": true}}',
+    reason: "prototype-key",
+  },
+  {
+    table: "milvus",
+    text: 'POST /v2/vectordb/entities/search\n{"a": 1}\nPOST /v2/vectordb/entities/search\n{"a": 1}',
+    reason: "second-request",
+  },
+  { table: "milvus", text: "# only a comment", reason: "no-request" },
+  { table: "qdrant", text: "DELETE /collections/docs", reason: "unknown-method" },
+  { table: "qdrant", text: "GET /collections/{collection_name}", reason: "path-template" },
+  { table: "qdrant", text: "GET /collections/docs#points", reason: "fragment" },
+  { table: "qdrant", text: "POST /collections/docs/points/query?wait=true\n{}", reason: "query-key" },
+  { table: "qdrant", text: "POST /collections/docs/points/query?timeout=-1\n{}", reason: "query-value" },
+  { table: "qdrant", text: "GET /collections\n{}", reason: "body-not-allowed" },
+  {
+    table: "qdrant",
+    text: 'POST /collections/docs/points/query\n{"query": [0.1, 0.2]\n# note\n}',
+    reason: "comment-position",
+  },
+  { table: "qdrant", text: 'POST /collections/docs/points/query\n{"filter": {"must": [}', reason: "malformed-json" },
+  { table: "qdrant", text: 'POST /collections/docs/points/query\n{"query": "http://x}', reason: "unterminated-string" },
+  { table: "qdrant", text: "GET /collections\nGET /collections", reason: "second-request" },
+  { table: "qdrant", text: "GET https://cloud.example/collections", reason: "absolute-url" },
+];
+
+/** Seven string-and-comment fixtures, exact bytes: where a // or a # is text, where a comment, and where a refusal. */
+const STRINGS_AND_COMMENTS: readonly {
+  readonly name: string;
+  readonly table: "milvus" | "qdrant";
+  readonly text: string;
+  readonly verdict: string;
+  readonly body?: string;
+}[] = [
+  {
+    name: "a URL in a string",
+    table: "qdrant",
+    text: 'POST /collections/docs/points/query\n{"url": "http://example.com/a//b"}',
+    verdict: "accepted",
+    body: '{"url":"http://example.com/a//b"}',
+  },
+  {
+    name: "a comment holding quotes",
+    table: "qdrant",
+    text: 'POST /collections/docs/points/query\n{"limit": 1 // a "quoted" {note}\n}',
+    verdict: "accepted",
+    body: '{"limit":1}',
+  },
+  {
+    name: "a CR before the LF belongs to the comment",
+    table: "qdrant",
+    text: 'POST /collections/docs/points/query\r\n{"a": "x" // note\r\n, "b": 2}',
+    verdict: "accepted",
+    body: '{"a":"x","b":2}',
+  },
+  {
+    name: "an unterminated string that swallowed //",
+    table: "qdrant",
+    text: 'POST /collections/docs/points/query\n{"a": "http://x}\n// note',
+    verdict: "unterminated-string",
+  },
+  {
+    name: "a # inside a string",
+    table: "milvus",
+    text: 'POST /v2/vectordb/entities/query\n{"filter": "tag == \\"#1\\""}',
+    verdict: "accepted",
+    body: '{"filter":"tag == \\"#1\\""}',
+  },
+  {
+    name: "escaped quotes around //",
+    table: "milvus",
+    text: 'POST /v2/vectordb/entities/query\n{"filter": "\\"//\\""}',
+    verdict: "accepted",
+    body: '{"filter":"\\"//\\""}',
+  },
+  {
+    name: "a comment after the body at the end of the text",
+    table: "qdrant",
+    text: 'POST /collections/docs/points/query\n{"limit": 3} // done',
+    verdict: "accepted",
+    body: '{"limit":3}',
+  },
+];
+
+const nested = (depth: number) =>
+  `POST /v2/vectordb/entities/search\n{"data": ${"[".repeat(depth - 1)}0.1${"]".repeat(depth - 1)}}`;
+/** A filter tree `depth` containers deep, the body object counted: each must level adds an object and an array. */
+function nestedFilter(depth: number): string {
+  let condition = depth % 2 === 0 ? '{"key": "a"}' : '{"key": "a", "match": {"value": 1}}';
+  let total = 1 + (depth % 2 === 0 ? 1 : 2);
+  while (total < depth) {
+    condition = `{"must": [${condition}]}`;
+    total += 2;
+  }
+  return `POST /collections/docs/points/query\n{"filter": ${condition}}`;
+}
+const uuid = (index: number) => `"${index.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000"`;
+const hasId = (count: number) =>
+  `POST /collections/docs/points/query\n{"filter": {"must": [{"has_id": [${Array.from({ length: count }, (_, index) => uuid(index)).join(",")}]}]}}`;
+function exactlyOneMebibyteOfZeros(): string {
+  const head = 'POST /v2/vectordb/entities/search\n{"data": [';
+  const body = head + "0,".repeat(Math.floor((1_048_576 - head.length) / 2));
+  return body + " ".repeat(1_048_576 - body.length);
+}
+
+const BOUNDS: readonly (CorpusCase & { readonly verdict: string })[] = [
+  { name: "arrays 32 deep", table: "milvus", text: nested(32), full: false, verdict: "accepted" },
+  { name: "arrays 33 deep", table: "milvus", text: nested(33), full: false, verdict: "too-deep" },
+  { name: "a filter 32 deep", table: "qdrant", text: nestedFilter(32), full: false, verdict: "accepted" },
+  { name: "a filter 33 deep", table: "qdrant", text: nestedFilter(33), full: false, verdict: "too-deep" },
+  {
+    name: "100,000 nested brackets",
+    table: "milvus",
+    text: `POST /v2/vectordb/entities/search\n{"data": ${"[".repeat(100_000)}`,
+    full: false,
+    verdict: "too-deep",
+  },
+  {
+    name: "exactly 1,048,576 bytes of 0,",
+    table: "milvus",
+    text: exactlyOneMebibyteOfZeros(),
+    full: false,
+    verdict: "too-many-numbers",
+  },
+  {
+    name: "4,097 small objects",
+    table: "milvus",
+    text: `POST /v2/vectordb/entities/search\n{"data": [${"{},".repeat(4_096)}{}]}`,
+    full: false,
+    verdict: "too-many-nodes",
+  },
+  { name: "10,000 UUIDs in has_id", table: "qdrant", text: hasId(10_000), full: false, verdict: "accepted" },
+  { name: "32,769 UUIDs in has_id", table: "qdrant", text: hasId(32_769), full: false, verdict: "too-many-scalars" },
+];
+
+const TAG_SHAPED: readonly CorpusCase[] = [
+  {
+    name: "an int-shaped object as a Milvus limit",
+    table: "milvus",
+    text: 'POST /v2/vectordb/entities/query\n{"collectionName": "docs", "limit": {"kind":"int","digits":"42"}}',
+    full: true,
+    integerAt: "limit",
+  },
+  {
+    name: "a float-shaped object as a Qdrant point id",
+    table: "qdrant",
+    text: 'POST /collections/docs/points/query\n{"query": {"kind":"float","text":"1.5","value":1.5}}',
+    full: true,
+    integerAt: "query",
+  },
+];
+
+const CASES: readonly CorpusCase[] = [
+  ...milvusRequests.map((request) => ({
+    name: `milvus/${request.name}`,
+    table: "milvus",
+    text: request.text,
+    full: true,
+  })),
+  ...docs.map((block) => ({ name: `qdrant-full/${block.file}`, table: "qdrant-full", text: block.text, full: true })),
+  ...docs.map((block) => ({ name: `qdrant/${block.file}`, table: "qdrant", text: block.text, full: true })),
+  ...REFUSALS.map((entry, index) => ({ name: `refusal/${index}`, table: entry.table, text: entry.text, full: true })),
+  ...STRINGS_AND_COMMENTS.map((entry) => ({
+    name: `strings/${entry.name}`,
+    table: entry.table,
+    text: entry.text,
+    full: true,
+  })),
+  ...BOUNDS.map((entry) => ({ name: entry.name, table: entry.table, text: entry.text, full: entry.full })),
+  ...TAG_SHAPED,
+];
+
+/**
+ * The first token of a block's first line that is neither blank nor a comment: a method when the block opens with a
+ * request line, anything else when the block is a fragment, which the grammar refuses whatever reason it names.
+ */
+const requestToken = (text: string): string => {
+  const line = text
+    .split("\n")
+    .map((item) => item.trim())
+    .find((item) => item !== "" && !QDRANT_STAND_IN.commentMarkers.some((marker) => item.startsWith(marker)));
+  return line?.split(/\s+/)[0] ?? "";
+};
+
+const inBun = corpusOutcomes(TABLES, CASES);
+const outcome = (name: string): CorpusOutcome => {
+  const found = inBun.find((entry) => entry.name === name);
+  if (found === undefined) throw new Error(`no outcome named ${name}`);
+  return found;
+};
+const tally = (prefix: string) => {
+  const counts: Record<string, number> = {};
+  for (const entry of inBun.filter((item) => item.name.startsWith(prefix)))
+    counts[entry.verdict] = (counts[entry.verdict] ?? 0) + 1;
+  return counts;
+};
+
+let underNode: { version: string; outcomes: CorpusOutcome[] };
+
+beforeAll(async () => {
+  const node = Bun.which("node");
+  if (node === null)
+    throw new Error(
+      "No node on PATH: this test runs the corpus under Node, the production runtime; install Node 24 or later",
+    );
+  const work = mkdtempSync(join(tmpdir(), "console-corpus-"));
+  try {
+    const build = await Bun.build({
+      entrypoints: [join(import.meta.dir, "..", "..", "..", "helpers", "console-corpus.ts")],
+      target: "node",
+      format: "esm",
+      outdir: work,
+    });
+    expect({ success: build.success, logs: build.logs.map(String) }).toMatchObject({ success: true });
+    writeFileSync(join(work, "input.json"), JSON.stringify({ tables: TABLES, cases: CASES }));
+    writeFileSync(
+      join(work, "run.mjs"),
+      [
+        'import { readFileSync } from "node:fs";',
+        `const { corpusOutcomes } = await import(${JSON.stringify(pathToFileURL(build.outputs[0].path).href)});`,
+        `const input = JSON.parse(readFileSync(${JSON.stringify(join(work, "input.json"))}, "utf8"));`,
+        "process.stdout.write(JSON.stringify({ version: process.version, outcomes: corpusOutcomes(input.tables, input.cases) }));",
+        "",
+      ].join("\n"),
+    );
+    const run = Bun.spawnSync([node, join(work, "run.mjs")], { stdout: "pipe", stderr: "pipe", timeout: 120_000 });
+    expect({
+      exitCode: run.exitCode,
+      timedOut: run.exitedDueToTimeout === true,
+      stderr: run.stderr.toString(),
+    }).toMatchObject({
+      exitCode: 0,
+      timedOut: false,
+    });
+    underNode = JSON.parse(run.stdout.toString());
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}, 180_000);
+
+describe("Bun and Node read the corpus identically", () => {
+  test("the Node on PATH is 24 or 26", () => {
+    expect(["24", "26"]).toContain(underNode.version.slice(1).split(".")[0]);
+  });
+
+  test("every verdict, message, body, formatted text and token drawing is the same", () => {
+    expect(underNode.outcomes.length).toBe(inBun.length);
+    expect(underNode.outcomes).toEqual(inBun);
+  });
+});
+
+describe("the Milvus requests", () => {
+  test("all nine are accepted", () => {
+    expect(milvusRequests.length).toBe(9);
+    expect(tally("milvus/")).toEqual({ accepted: 9 });
+  });
+});
+
+describe("the Qdrant documentation blocks", () => {
+  test("257 blocks: 227 accepted against the full route table and 30 refused by name", () => {
+    expect(docs.length).toBe(257);
+    const full = tally("qdrant-full/");
+    expect(full.accepted).toBe(227);
+    expect(257 - full.accepted).toBe(30);
+  });
+
+  test("against the 17-route v1 table: 82 accepted, 155 refused as routes v1 does not run, 20 refused by the grammar", () => {
+    expect(qdrantV1Table.routes.length).toBe(17);
+    const methods = new Set(qdrantFullTable.routes.map((route) => route.method));
+    const outcomes = inBun.filter((entry) => entry.name.startsWith("qdrant/"));
+    expect(outcomes.length).toBe(docs.length);
+    const buckets = { accepted: 0, notRun: 0, grammar: 0 };
+    outcomes.forEach((entry, index) => {
+      if (entry.verdict === "accepted") buckets.accepted += 1;
+      else if (entry.verdict === "unknown-route") buckets.notRun += 1;
+      else if (entry.verdict === "unknown-method" && methods.has(requestToken(docs[index].text))) buckets.notRun += 1;
+      else buckets.grammar += 1;
+    });
+    // An earlier count was 81, 155 and 21, taken before query keys were declared per route: the optimizations
+    // block with ?with=queued,completed is accepted now, because with is a key that route declares, and the one
+    // ?wait=true block refused then for its key is a PUT, which the v1 table refuses first as a route it does not run.
+    expect(buckets).toEqual({ accepted: 82, notRun: 155, grammar: 20 });
+  });
+});
+
+describe("the refusal corpora", () => {
+  test.each(REFUSALS.map((entry, index) => [index, entry.table, entry.reason] as const))(
+    "%d: %s refuses as %s",
+    (index, _table, reason) => {
+      expect(outcome(`refusal/${index}`).verdict).toBe(reason);
+    },
+  );
+});
+
+describe("the string-and-comment fixtures", () => {
+  test.each(STRINGS_AND_COMMENTS.map((entry) => [entry.name, entry.verdict, entry.body ?? null] as const))(
+    "%s: %s",
+    (name, verdict, body) => {
+      const read = outcome(`strings/${name}`);
+      expect({ verdict: read.verdict, body: read.body }).toEqual({ verdict, body });
+    },
+  );
+});
+
+describe("the bounds", () => {
+  test.each(BOUNDS.map((entry) => [entry.name, entry.verdict] as const))(
+    "%s: %s, never a RangeError",
+    (name, verdict) => {
+      expect(outcome(name).verdict).toBe(verdict);
+    },
+  );
+
+  test("the 32,769-UUID case names the scalar-leaf bound", () => {
+    expect(outcome("32,769 UUIDs in has_id").message).toContain("more than 32768 strings in its lists of strings");
+  });
+
+  test("the 1,048,576-byte case is exactly at the text bound, and its peak memory is recorded", () => {
+    const text = exactlyOneMebibyteOfZeros();
+    expect(new TextEncoder().encode(text).length).toBe(1_048_576);
+    const before = process.memoryUsage().rss;
+    let refusal: unknown;
+    try {
+      parseConsole(MILVUS_STAND_IN, TABLES.milvus.routes, text);
+    } catch (error) {
+      refusal = error;
+    }
+    const grown = process.memoryUsage().rss - before;
+    console.info(
+      `console corpus: the 1,048,576-byte numeric case grew the RSS by ${Math.round(grown / 1_048_576)} MiB`,
+    );
+    expect((refusal as ConsoleRefusal).reason).toBe("too-many-numbers");
+  });
+});
+
+describe("tag-shaped objects", () => {
+  test("parse to objects, write back as objects, and are refused naming the field where an integer is required", () => {
+    const limit = outcome("an int-shaped object as a Milvus limit");
+    expect(limit.body).toBe('{"collectionName":"docs","limit":{"kind":"int","digits":"42"}}');
+    expect(limit.formatted).toContain('"limit": {\n    "kind": "int",\n    "digits": "42"\n  }');
+    expect(limit.integer).toBe('Vector field "limit" (int8): element 0 is an object, not a number.');
+    const id = outcome("a float-shaped object as a Qdrant point id");
+    expect(id.body).toBe('{"query":{"kind":"float","text":"1.5","value":1.5}}');
+    expect(id.integer).toBe('Vector field "query" (int8): element 0 is an object, not a number.');
+  });
+});
+
+describe("classifyConsole over both tables", () => {
+  test("every v1 route of both tables classifies as read", () => {
+    for (const [name, table] of [
+      ["milvus", TABLES.milvus],
+      ["qdrant", TABLES.qdrant],
+    ] as const) {
+      for (const route of table.routes) {
+        const path = route.template
+          .replace(/\{collection_name\}/g, "docs")
+          .replace(/\{id\}/g, "42")
+          .replace(/\{[a-z_]+\}/g, "x");
+        const text = `${route.method} ${table.spec.pathPrefix}${path}${route.body === "none" ? "" : "\n{}"}`;
+        expect(classifyConsole(table.spec, table.routes, text), `${name} ${route.op}`).toBe("read");
+      }
+    }
+  });
+
+  test("a write route in a synthetic table classifies as write", () => {
+    const routes: readonly RouteSpec[] = [
+      ...TABLES.qdrant.routes,
+      {
+        method: "POST",
+        template: "collections/{collection_name}/points/delete",
+        op: "delete_points",
+        class: "write",
+        params: { collection_name: "name" },
+        query: {},
+        body: "required",
+      },
+    ];
+    expect(classifyConsole(QDRANT_STAND_IN, routes, 'POST /collections/docs/points/delete\n{"points": [1]}')).toBe(
+      "write",
+    );
+  });
+});
