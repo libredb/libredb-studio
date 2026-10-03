@@ -6,7 +6,7 @@ import { LoaderCircle, ChartColumn, X, CircleAlert, Sparkles, Lock, Download } f
 import { cn } from "@/lib/utils";
 import { DatabaseConnection } from "@/lib/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
-import type { DetailedObject } from "@/lib/db/detailed-object";
+import { machineColumns, type DetailedObject } from "@/lib/db/detailed-object";
 import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
@@ -82,7 +82,14 @@ export function DataProfiler({
   const fetchAiSummary = async (data: ProfileData) => {
     setIsAiLoading(true);
     try {
+      // The profile table lists every column, but the summary goes to a model, which never sees a column the
+      // engine only inferred from sampled data: `machineColumns` decides which, as for `schemaContext` below.
+      const declared = new Set(machineColumns(tableSchema?.columns ?? []));
+      const withheld = new Set(
+        (tableSchema?.columns ?? []).filter((column) => !declared.has(column)).map((column) => column.name),
+      );
       const profileSummary = data.columns
+        .filter((c) => !withheld.has(c.name))
         .map(
           (c) =>
             `${c.name}: ${c.nullPercent}% null, ${c.distinctCount} distinct, min=${c.minValue || "N/A"}, max=${c.maxValue || "N/A"}`,

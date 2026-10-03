@@ -602,6 +602,7 @@ output cap, and what it sends is one objective — see
 - **A column an engine only inferred from sampled data.**
   A provider marks such a column `provenance: "sampled"`, because its name was read out of stored rows rather than out of a declaration.
   `machineColumns` (`src/lib/db/detailed-object.ts`) removes it before the agent's inventory is built, before `inspect_schema` caps or counts columns, and from the `schemaContext` string the four AI surfaces below send, so it reaches no model and no MCP client.
+The Data Profiler's table still profiles it, and the column profiles it sends for an AI summary leave it out.
   The object tree and the documentation table still show it, and the tree marks it "(sampled)".
   No shipped engine sets the mark yet; MongoDB and Couchbase sample documents and do not, as the boundary above states.
 - **Cell values from a profile.** The Assess workflow's profile is aggregates only: counts of rows,
