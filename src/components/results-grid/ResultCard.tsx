@@ -39,8 +39,11 @@ export function ResultCard({
     if (maskingActive && sensitiveColumns?.has(primaryColumn) && primaryValue != null) {
       return maskValueByPattern(primaryValue, sensitiveColumns.get(primaryColumn)!);
     }
-    return primaryValue != null ? String(primaryValue) : `Row ${index + 1}`;
-  }, [maskingActive, sensitiveColumns, primaryColumn, primaryValue, index]);
+    if (primaryValue == null) return `Row ${index + 1}`;
+    // A declared vector column draws as the grid draws it, not as the comma-joined text of its elements.
+    const context = renderContextFor(vectorColumns, primaryColumn);
+    return context === undefined ? String(primaryValue) : formatCellValue(primaryValue, context).display;
+  }, [maskingActive, sensitiveColumns, primaryColumn, primaryValue, index, vectorColumns]);
 
   // Show first 4 fields (excluding primary and id)
   const previewFields = fields.filter((f) => f !== primaryColumn && f !== idColumn).slice(0, 4);
