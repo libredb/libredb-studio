@@ -3,8 +3,9 @@
  * revisions SR4, SR10, SR15, SR16, SR17).
  *
  * Server only. An engine supplies a `GraphEngineProfile` (its policy lists, port, catalog reads,
- * statement gate and error table) and this class does the rest, so an engine provider holds
- * declarations and monitoring reads and nothing of the query path.
+ * statement gate and error table) and a `GraphTransport` (how a connection is addressed and the
+ * client built, chosen by the engine's composition root, spec 3.5), and this class does the rest,
+ * so an engine provider holds declarations and monitoring reads and nothing of the query path.
  *
  * Every statement takes one road: the read policy over its tokens, then the engine's statement
  * gate unless it is an allowed `SHOW` form, then one `GraphClient.run` in a READ session on the
@@ -40,16 +41,14 @@ import type {
   QueryResult,
 } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
-import { createBoltClient } from "./bolt/bolt-client";
 import {
   type GraphClient,
   GraphClientError,
-  type GraphClientFactory,
   type GraphRunOptions,
   type GraphRunResult,
   type GraphServerInfo,
+  type GraphTransport,
 } from "./bolt/client";
-import { boltEndpointOf } from "./bolt/uri";
 import { type CypherReadVerdict, type CypherRefusal, checkCypherRead } from "./cypher/read-policy";
 import {
   columnsOf,
@@ -177,7 +176,7 @@ function toQueryResult(result: GraphRunResult, executionTime: number): QueryResu
 
 export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   protected readonly profile: GraphEngineProfile;
-  private readonly createClient: GraphClientFactory;
+  private readonly transport: GraphTransport;
   private session: GraphSession | null = null;
   /**
    * Statements in flight under the caller's id, so `cancelQuery` reaches them (spec 5.5). An id
@@ -191,11 +190,11 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     config: DatabaseConnection,
     options: ProviderOptions,
     profile: GraphEngineProfile,
-    createClient: GraphClientFactory = createBoltClient,
+    transport: GraphTransport,
   ) {
     super(config, options);
     this.profile = profile;
-    this.createClient = createClient;
+    this.transport = transport;
   }
 
   // Every flag is the engine's decision: the base class's defaults are SQL's.
@@ -255,8 +254,8 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     }
     let client: GraphClient | undefined;
     try {
-      const endpoint = boltEndpointOf(this.config, this.profile.defaultPort);
-      client = this.createClient({
+      const endpoint = this.transport.endpointOf(this.config, this.profile.defaultPort);
+      client = this.transport.createClient({
         uri: endpoint.uri,
         ...(endpoint.trustedCertificatePem === undefined
           ? {}

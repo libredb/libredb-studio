@@ -11,6 +11,7 @@
  * Rows are JSON-safe when they leave the client (`record-values.ts`), so nothing above
  * this seam meets a driver value class.
  */
+import type { DatabaseConnection } from "@/lib/db/types";
 
 /** `summary.queryType`: read only, read and write, write only, schema write. */
 export type GraphQueryType = "r" | "rw" | "w" | "s";
@@ -90,3 +91,21 @@ export interface BoltClientConfig {
 }
 
 export type GraphClientFactory = (config: BoltClientConfig) => GraphClient;
+
+/** Where a client dials, built from a connection's host, port and TLS panel. */
+export interface GraphEndpoint {
+  readonly uri: string;
+  /** PEM text of the CA the client trusts instead of the system store. */
+  readonly trustedCertificatePem?: string;
+}
+
+/**
+ * The transport an engine's composition root hands `GraphBaseProvider` (spec 3.5): how a
+ * connection is addressed and how the client is built. The base depends on this interface
+ * only, so the engine, not the shared base, chooses the transport it runs on.
+ */
+export interface GraphTransport {
+  /** Throws `DatabaseConfigError` for a panel it cannot address safely. */
+  readonly endpointOf: (connection: DatabaseConnection, defaultPort: number) => GraphEndpoint;
+  readonly createClient: GraphClientFactory;
+}

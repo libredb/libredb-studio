@@ -15,6 +15,8 @@
  * - nothing under `src/lib/db/graph/` imports from `src/lib/db/providers/`;
  * - the pure set (every graph file except `bolt/**` and `graph-base-provider.ts`)
  *   imports no Node built-in and nothing from `bolt/` or `graph-base-provider`;
+ * - `graph-base-provider.ts` imports from `bolt/` only the `bolt/client` interface, so the
+ *   transport an engine runs on is chosen by its composition root (spec 3.5);
  * - the Neo4j provider imports from no other provider directory;
  * - every module name in these files is a plain string.
  *
@@ -32,6 +34,7 @@ const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const GRAPH = "src/lib/db/graph";
 const NEO4J = "src/lib/db/providers/graph/neo4j";
 const PROVIDERS = "src/lib/db/providers";
+const BASE_PROVIDER = `${GRAPH}/graph-base-provider.ts`;
 const DRIVER_IMPORTERS = new Set([`${GRAPH}/bolt/bolt-client.ts`, `${GRAPH}/bolt/record-values.ts`]);
 const BANNED_NAMES = new Set([
   "executeQuery",
@@ -149,6 +152,9 @@ function violations(file: string, text: string): string[] {
         out.push(`${where} imports ${specifier}, server-only, into the pure set`);
       }
     }
+    if (file === BASE_PROVIDER && within(target, `${GRAPH}/bolt`) && target !== `${GRAPH}/bolt/client`) {
+      out.push(`${where} imports ${specifier}; the base provider may import only bolt/client from the transport`);
+    }
     if (within(file, NEO4J) && within(target, PROVIDERS) && !within(target, NEO4J)) {
       out.push(`${where} imports ${specifier} from another provider directory`);
     }
@@ -230,11 +236,25 @@ describe("planted violations fail by name", () => {
     expect(violations(pure, text)).toEqual([expect.stringContaining(phrase)]);
   });
 
-  test("the Bolt directory and the base provider may import Node built-ins and each other", () => {
+  test("the Bolt directory may import Node built-ins, and the base provider the Bolt client interface", () => {
     expect(
       violations(bolt, 'import { createHash } from "node:crypto";\nimport type { GraphClient } from "./client";'),
     ).toEqual([]);
-    expect(violations(`${GRAPH}/graph-base-provider.ts`, 'import { GraphClient } from "./bolt/client";')).toEqual([]);
+    expect(violations(BASE_PROVIDER, 'import { GraphClient } from "./bolt/client";')).toEqual([]);
+  });
+
+  test.each([
+    ["the driver-backed client", 'import { createBoltClient } from "./bolt/bolt-client";', "./bolt/bolt-client"],
+    [
+      "the URI builder by alias",
+      'import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";',
+      "@/lib/db/graph/bolt/uri",
+    ],
+    ["the record conversion", 'import type { x } from "./bolt/record-values";', "./bolt/record-values"],
+  ])("the base provider importing %s", (_, text, specifier) => {
+    expect(violations(BASE_PROVIDER, text)).toEqual([
+      expect.stringContaining(`imports ${specifier}; the base provider may import only bolt/client`),
+    ]);
   });
 
   test("the Neo4j provider importing another provider", () => {

@@ -16,8 +16,10 @@ import type {
   GraphRunOptions,
   GraphRunResult,
   GraphServerInfo,
+  GraphTransport,
 } from "@/lib/db/graph/bolt/client";
 import { GraphClientError } from "@/lib/db/graph/bolt/client";
+import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
 import type { CypherReadVerdict, CypherRefusal } from "@/lib/db/graph/cypher/read-policy";
 import {
   type GraphCatalog,
@@ -191,9 +193,10 @@ class TestGraphProvider extends GraphBaseProvider {
     config: DatabaseConnection,
     options: ProviderOptions,
     profile: GraphEngineProfile,
-    createClient?: GraphClientFactory,
+    createClient: GraphClientFactory,
+    endpointOf: GraphTransport["endpointOf"] = boltEndpointOf,
   ) {
-    super(config, options, profile, createClient);
+    super(config, options, profile, { endpointOf, createClient });
   }
 
   public getCapabilities(): ProviderCapabilities {
@@ -311,9 +314,22 @@ describe("construction", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
-  test("constructs with no client factory given and is not connected", () => {
-    const provider = new TestGraphProvider(connection(), {}, profileWith(new FakeCatalog()));
-    expect(provider.isConnected()).toBe(false);
+  test("connects through the transport it is handed: its endpoint and its client", async () => {
+    const transport = new FakeTransport();
+    const endpoints: Array<[string | undefined, number]> = [];
+    const provider = new TestGraphProvider(
+      connection(),
+      {},
+      profileWith(new FakeCatalog()),
+      transport.factory,
+      (config, port) => {
+        endpoints.push([config.host, port]);
+        return { uri: "test://elsewhere:1" };
+      },
+    );
+    await provider.connect();
+    expect(endpoints).toEqual([["db.example", 7687]]);
+    expect(transport.configs.map((config) => config.uri)).toEqual(["test://elsewhere:1"]);
   });
 
   test("every surface refuses before connect", async () => {
