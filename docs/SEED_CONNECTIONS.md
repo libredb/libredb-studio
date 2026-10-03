@@ -261,7 +261,9 @@ A connection type can declare credentials that would make a read-only seed a pro
 No shipped type declares one yet.
 On a type that does, the seed loader refuses a `readOnly: true` connection whose credential matches, in two stages: load refuses what the file shows; resolution refuses the rest.
 At load, a literal `user` and `password` that match, or an absent or empty `password`, fail the whole file with an error that names the connection and the `password` field and never repeats the value.
-A `${ENV}` or `${vault:...}` reference cannot be read at load, so it passes there; once it resolves, the type's provider refuses the connection before anything is dialled if the resolved credential matches or is empty.
+An absent or empty `password` fails the file whatever the `user` holds, a reference included.
+A `${ENV}` or `${vault:...}` reference cannot be read at load, so a pair with a reference in either field passes there; once it resolves, the type's provider refuses the connection before anything is dialled if the resolved credential matches or is empty.
+A value shaped like `${...}` that the resolver does not resolve, such as `${lower}`, is a literal and is checked as one.
 An empty `user` with a password of the form `user:password` is read as that pair, so a token that carries a default credential is refused too.
 
 ---

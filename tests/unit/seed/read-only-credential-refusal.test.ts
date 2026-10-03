@@ -95,6 +95,7 @@ describe("load: what the file shows", () => {
     expect(issuesOf({ ...base, user: "", password: "root:Milvus" })).toEqual([
       ["password", refusedAtLoad(PAIR_SENTENCE)],
     ]);
+    expect(issuesOf({ ...base, password: "root:Milvus" })).toEqual([["password", refusedAtLoad(PAIR_SENTENCE)]]);
   });
 
   it("refuses a read-only seed with no password, or an empty one, where the type declares no-secret", () => {
@@ -108,6 +109,28 @@ describe("load: what the file shows", () => {
     expect(issuesOf({ ...base, user: "root", password: "${SYNTH_SEED_PASSWORD}" })).toEqual([]);
     expect(issuesOf({ ...base, user: "root", password: VAULT_REFERENCE })).toEqual([]);
     expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}", password: "Milvus" })).toEqual([]);
+  });
+
+  it("refuses a read-only seed with no password, or an empty one, even when its user is a reference", () => {
+    expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}" })).toEqual([["password", refusedAtLoad(NO_SECRET_SENTENCE)]]);
+    expect(issuesOf({ ...base, user: "${SYNTH_SEED_USER}", password: "" })).toEqual([
+      ["password", refusedAtLoad(NO_SECRET_SENTENCE)],
+    ]);
+    expect(issuesOf({ ...base, user: "${vault:secret/data/etcd#user}" })).toEqual([
+      ["password", refusedAtLoad(NO_SECRET_SENTENCE)],
+    ]);
+  });
+
+  it("reads a value the resolver never resolves as the literal it is", () => {
+    expect(issuesOf({ ...base, user: "${lower}", password: "" })).toEqual([
+      ["password", refusedAtLoad(NO_SECRET_SENTENCE)],
+    ]);
+    expect(issuesOf({ ...base, user: "root", password: "${not a ref}" })).toEqual([]);
+    restore();
+    restore = declareCredentialWarnings("etcd", [{ ...SYNTHETIC_PAIR, password: "${lower}" }]);
+    expect(issuesOf({ ...base, user: "root", password: "${lower}" })).toEqual([
+      ["password", refusedAtLoad(PAIR_SENTENCE)],
+    ]);
   });
 
   it("refuses inside a whole seed file under the connection's own path", () => {

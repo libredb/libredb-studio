@@ -2,12 +2,7 @@ import { z } from "zod";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
-
-/**
- * A `${ENV}` or `${vault:...}` reference, which the load cannot read: the credential check below passes it, and
- * the provider of a type that declares a credential warning runs the same check on the resolved value.
- */
-const CREDENTIAL_REFERENCE = /^\$\{.+\}$/;
+import { isCredentialReference } from "./credential-resolver";
 
 // SSLMode matches the union in src/lib/types.ts — NO 'prefer'. Kept in step BY HAND: a zod
 // enum is a value, so a mode missing here is not a compile error, it is a seed file the
@@ -193,13 +188,20 @@ export const SeedConnectionSchema = z
   })
   // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a
   // published default pair, or no secret where the type accepts none, so the mode would promise a boundary the
-  // server does not keep. The file shows only literals, so a reference passes here and the type's provider checks
-  // the resolved value before it dials: load refuses what the file shows; resolution refuses the rest. Read from
-  // the declared record, never a type-id branch. The message names the connection and the field, never the value.
+  // server does not keep. The file shows only literals, so a pair with a `${ENV}` or `${vault:...}` reference in
+  // either field passes here and the type's provider checks the resolved value before it dials, while a password
+  // the file leaves absent or empty is refused whatever the user is: load refuses what the file shows; resolution
+  // refuses the rest. Read from the declared record, never a type-id branch. The message names the connection and
+  // the field, never the value.
   .superRefine((conn, ctx) => {
     if (conn.readOnly !== true) return;
-    if ([conn.user, conn.password].some((value) => value !== undefined && CREDENTIAL_REFERENCE.test(value))) return;
-    const refusal = readOnlySeedRefusal(conn.type, { user: conn.user, password: conn.password });
+    if (isCredentialReference(conn.password)) return;
+    const userIsReference = isCredentialReference(conn.user);
+    if (userIsReference && (conn.password ?? "") !== "") return;
+    const refusal = readOnlySeedRefusal(conn.type, {
+      user: userIsReference ? undefined : conn.user,
+      password: conn.password,
+    });
     if (refusal === undefined) return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
