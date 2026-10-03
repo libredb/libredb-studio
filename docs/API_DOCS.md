@@ -936,6 +936,7 @@ No shipped provider implements `engineUser()` yet.
 ```
 
 The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
+A body that is not JSON, or JSON that is not an object, answers `400` with `{ "error": "Invalid request body" }` before any provider is opened.
 
 `container` is type-checked before any provider is opened: a value that is neither absent nor a string
 answers `{ "error": "\"container\" must be a string naming the target's container" }` with `400`.
@@ -996,7 +997,7 @@ It calls the provider's `previewMaintenance(type, path)` and nothing else, and w
 `preview` is a `MaintenancePreview`, published from `@libredb/studio/types`.
 A dialog that receives a `refusal` shows it and offers no confirm button.
 
-**Response (400 Bad Request):** the checks of `POST /api/db/maintenance`, made in the same order before the provider's method runs (a missing `type`, a non-string `container`, maintenance unsupported, an operation the provider does not declare, an operation that takes no target), and these two:
+**Response (400 Bad Request):** the checks of `POST /api/db/maintenance`, made in the same order before the provider's method runs (a body that is not a JSON object, a missing `type`, a non-string `container`, maintenance unsupported, an operation the provider does not declare, an operation that takes no target), and these two:
 
 | Condition | Body |
 |---|---|

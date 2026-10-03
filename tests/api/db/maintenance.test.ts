@@ -218,6 +218,25 @@ describe("POST /api/db/maintenance", () => {
     }));
   });
 
+  test.each<[string, string]>([
+    ["null", "null"],
+    ["an array", "[]"],
+    ["a number", "7"],
+    ["text that is not JSON", "{"],
+  ])("a body that is %s answers 400 with a fixed sentence and opens no provider", async (_label, raw) => {
+    const res = await POST(
+      new Request("http://localhost:3000/api/db/maintenance", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: raw,
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(res)).toEqual({ error: "Invalid request body" });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
   test("admin with valid params returns maintenance result", async () => {
     const req = createMockRequest("/api/db/maintenance", {
       method: "POST",

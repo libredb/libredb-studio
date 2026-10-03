@@ -146,6 +146,25 @@ describe("POST /api/db/maintenance/preview", () => {
     }
   });
 
+  test.each<[string, string]>([
+    ["null", "null"],
+    ["an array", "[]"],
+    ["a number", "7"],
+    ["text that is not JSON", "{"],
+  ])("a body that is %s answers 400 with a fixed sentence and opens no provider", async (_label, raw) => {
+    const res = await POST(
+      new Request("http://localhost:3000/api/db/maintenance/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: raw,
+      }) as never,
+    );
+
+    expect(res.status).toBe(400);
+    expect(await parseResponseJSON<{ error: string }>(res)).toEqual({ error: "Invalid request body" });
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
   test("a user gets 403 and a permission_denied audit row, and no provider is opened", async () => {
     mockGetSession.mockImplementation(async () => ({ role: "user", username: "bob" }));
 

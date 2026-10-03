@@ -29,7 +29,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = await request.json();
+    // A body that is not JSON, or JSON that is not an object (`null`, an array, a number), is the caller's mistake and
+    // answers 400 in a fixed sentence, rather than reaching the destructuring below as a raw runtime error.
+    const body = await request.json().catch(() => null);
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
     const { type, target, container } = body;
 
     const connection = await resolveConnection(body, guard.session);
