@@ -79,6 +79,7 @@ export const PATH_VARIABLES = Object.freeze([
 export const URL_PATH_VARIABLES = Object.freeze({
   BASE_PATH: "the URL prefix the app is served under behind a reverse proxy",
   NEXT_PUBLIC_MONACO_VS_PATH: "the URL the browser loads the Monaco editor from",
+  VAULT_K8S_AUTH_PATH: "the mount of the Kubernetes auth method inside the Vault API URL",
 });
 
 /**
