@@ -1,12 +1,13 @@
 /**
  * Where a Db2 connection goes and how it gets there (#786).
  *
- * THE TRANSPORT FAILS CLOSED. Without TLS, db2-node 1.0.22 downgrades every security mechanism to
- * SECMEC 3 in silence and sends the password in cleartext, even when an encrypted mechanism is
- * asked for (K11). A connection with no TLS is therefore REFUSED unless it carries
- * `allowInsecureAuth: true`, an explicit acceptance of that risk; the form shows it as a warning
- * checkbox, and the refusal lives here so that a stored connection, a seed or an embedding host
- * meets the same rule as the form.
+ * THE TRANSPORT FAILS CLOSED. Without TLS the password crosses the network in cleartext, or at
+ * best DRDA-encrypted while every row stays in the clear, so a connection with no TLS is REFUSED
+ * unless it carries `allowInsecureAuth: true`, an explicit acceptance of that risk; the form
+ * shows it as a warning checkbox, and the refusal lives here so that a stored connection, a seed
+ * or an embedding host meets the same rule as the form. db2-node 1.0.24 no longer downgrades to
+ * the plaintext mechanism in silence (K11, fixed): it refuses unless asked by name, so the opt-in
+ * is passed to it as `securityMechanism: "userPassword"`.
  *
  * A stored `db2://` URL and the structured fields are read into one target with one precedence:
  * the URL's fields win over the form's, except the dial address while an SSH tunnel is open,
@@ -106,7 +107,7 @@ export function resolveTarget(config: Db2Connection): Db2Target {
   const ssl = config.ssl;
   if (ssl?.clientCert || ssl?.clientKey) {
     throw new DatabaseConfigError(
-      "db2-node 1.0.22 has no client-certificate authentication; remove the client certificate and key from this " +
+      "db2-node 1.0.24 has no client-certificate authentication; remove the client certificate and key from this " +
         "Db2 connection.",
       "db2",
     );
@@ -162,16 +163,16 @@ const CHECKS_HOST_NAME = new Set<SSLMode>(["verify-system", "verify-full"]);
 /**
  * The transport rules, checked before any socket opens.
  *
- * No TLS without the explicit opt-in (K11). A tunnel the factory did not open is refused rather
+ * No TLS without the explicit opt-in. A tunnel the factory did not open is refused rather
  * than dialled around. And through a tunnel, a mode that checks the server's NAME is refused:
- * db2-node 1.0.22 has no option for the name to check, so it checks the certificate against the
+ * db2-node 1.0.24 has no option for the name to check, so it checks the certificate against the
  * address it dials, which is the tunnel's local end and not the server's own name.
  */
 export function assertTransport(config: Db2Connection, target: Db2Target): void {
   if ((target.tls === undefined || target.tls === "disable") && config.allowInsecureAuth !== true) {
     throw new DatabaseConfigError(
-      "This Db2 connection has no TLS, and without TLS db2-node 1.0.22 sends the password to the server in " +
-        'cleartext whatever security mechanism is asked for. Turn TLS on under SSL / TLS, or tick "Send the ' +
+      "This Db2 connection has no TLS, and without TLS the password is sent to the server in cleartext. Turn TLS " +
+        'on under SSL / TLS, or tick "Send the ' +
         'password without TLS" to accept that risk for this connection.',
       "db2",
     );
@@ -186,7 +187,7 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
   }
   if (farEnd !== undefined && target.tls !== undefined && CHECKS_HOST_NAME.has(target.tls)) {
     throw new DatabaseConfigError(
-      `TLS mode "${target.tls}" checks the server's name, and through an SSH tunnel db2-node 1.0.22 can only check ` +
+      `TLS mode "${target.tls}" checks the server's name, and through an SSH tunnel db2-node 1.0.24 can only check ` +
         `the tunnel's local address rather than ${farEnd.host}. Use verify-ca with the server's CA certificate ` +
         "through a tunnel.",
       "db2",
@@ -196,7 +197,9 @@ export function assertTransport(config: Db2Connection, target: Db2Target): void 
 
 /**
  * The driver options for one target, per the TLS table in `docs/providers/db2.md`. Neither
- * `queryTimeout`, `currentSchema` nor `securityMechanism` is ever set (M6, M4, K11).
+ * `queryTimeout` nor `currentSchema` is ever set (M6, M4). Without TLS, which `assertTransport`
+ * lets through only behind the insecure opt-in, the plaintext mechanism is named, because
+ * db2-node 1.0.24 refuses it otherwise; over TLS the driver's encrypted default is kept.
  */
 export function clientOptions(target: Db2Target, caFile?: string): Db2ClientOptions {
   const base = {
@@ -210,7 +213,7 @@ export function clientOptions(target: Db2Target, caFile?: string): Db2ClientOpti
   switch (target.tls) {
     case undefined:
     case "disable":
-      return { ...base, ssl: false };
+      return { ...base, ssl: false, securityMechanism: "userPassword" };
     case "require":
       return { ...base, ssl: true, rejectUnauthorized: false };
     case "verify-system":

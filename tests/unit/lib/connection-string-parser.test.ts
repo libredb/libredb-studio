@@ -302,7 +302,7 @@ describe("parseConnectionString", () => {
     });
 
     // `verify-system`, not `require`, by D26's rule and the Db2 provider's own: without verified
-    // TLS db2-node can send the password in cleartext (K11), so TLS is verified unless a reader
+    // TLS the password can reach a server that impersonates the host, so TLS is verified unless a reader
     // chooses otherwise in the panel. A self-hosted Db2 with a private CA then fails closed on the
     // chain, and its CA certificate is what the panel asks for.
     test.each(["ssl=true", "ssl=1", "ssl=TRUE", "security=SSL", "security=ssl", "Security=SSL"])(

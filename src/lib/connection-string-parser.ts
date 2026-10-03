@@ -266,7 +266,7 @@ const MYSQL_SSL_MODE: Record<string, SSLMode> = {
 /**
  * Db2's `security=` keyword: `SSL` is the one value that names a TLS transport (#786). It maps to
  * a VERIFYING mode, by D26's rule and because the Db2 provider fails closed on unverified
- * transport: without TLS db2-node 1.0.22 can send the password in cleartext (K11).
+ * transport: without TLS the password crosses the network in cleartext.
  */
 const DB2_SECURITY: Record<string, SSLMode> = { ssl: "verify-system" };
 

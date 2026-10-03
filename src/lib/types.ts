@@ -316,11 +316,11 @@ export interface DatabaseConnection {
   /**
    * Db2: connect with no TLS although the password then crosses the network in cleartext (#786).
    *
-   * An explicit acceptance of a risk, and never a default. Without TLS the Db2 driver (1.0.22) downgrades
-   * every security mechanism to SECMEC 3, user and cleartext password, in silence (K11 in
-   * `docs/providers/db2.md`), so the Db2 provider REFUSES a connection with no TLS unless this is
-   * `true`. Read by no other engine: each of those either encrypts the password itself or
-   * follows its own driver's default.
+   * An explicit acceptance of a risk, and never a default. A stock Db2 server without TLS offers
+   * only DRDA SECMEC 3, user and cleartext password, so the Db2 provider REFUSES a connection with
+   * no TLS unless this is `true`, and then asks db2-node for that mechanism by name, which 1.0.24
+   * refuses to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by no other
+   * engine: each of those either encrypts the password itself or follows its own driver's default.
    */
   allowInsecureAuth?: boolean;
   /**

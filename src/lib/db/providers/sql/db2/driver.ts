@@ -10,19 +10,23 @@
  * module scope. `db2-node` is one package carrying eight prebuilt N-API addons, and a
  * top-level import would load one of them into every process that so much as touches the
  * provider registry. The types below are written out rather than taken from the package,
- * so they name only what this provider uses and leave out three options on purpose:
+ * so they name only what this provider uses and leave out two options on purpose:
  *
- * - `queryTimeout`: db2-node 1.0.22 rejects the promise on the client side and leaves the
- *   statement EXECUTING on the server, then reconnects in silence (K14).
- * - `currentSchema`: accepted and ignored (K12), so passing it would claim a schema the
- *   session never had.
- * - `securityMechanism`: without TLS the driver downgrades it to cleartext whatever it is
- *   set to (K11), so it is no control at all.
+ * - `queryTimeout`: since 1.0.24 it cancels the statement on the server through
+ *   `WLM_CANCEL_ACTIVITY` on a second session, which needs monitoring and cancel privileges a
+ *   plain user may not hold, and then closes the connection. Wiring it, and `Client.cancel()`,
+ *   is a change of its own (D148), measured with an unprivileged user.
+ * - `currentSchema`: honoured since 1.0.24, and still not needed: every catalog statement binds
+ *   its schema (M4), and a session schema would only change how the user's own SQL resolves.
+ *
+ * `securityMechanism` is named with exactly one value. db2-node 1.0.24 refuses to fall back to
+ * the plaintext mechanism a stock `AUTHENTICATION=SERVER` server answers with, unless the
+ * connection asks for it by name, so the insecure opt-in asks for `userPassword`.
  */
 
 import { ConnectionError } from "../../../errors";
 
-/** One result column as db2-node 1.0.22 describes it. */
+/** One result column as db2-node describes it. */
 export interface Db2ColumnMeta {
   name: string;
   /** The driver's own spelling: `Integer`, `VarChar(50)`, `Decimal { precision: 9, scale: 2 }`. */
@@ -54,6 +58,11 @@ export interface Db2ClientOptions {
   sslClientHostnameValidation?: "Basic" | "OFF";
   /** A FILE PATH to a PEM file, never the PEM text itself. */
   caCert?: string;
+  /**
+   * Only the plaintext mechanism (DRDA SECMEC 3), and only without TLS behind the insecure
+   * opt-in. Left out, the driver uses its encrypted default.
+   */
+  securityMechanism?: "userPassword";
   connectTimeout?: number;
 }
 

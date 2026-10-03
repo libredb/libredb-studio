@@ -5,8 +5,8 @@
  * The package carries eight prebuilt native addons, and a module-scope import would load one into
  * every process that touches the provider registry. It is also the one place a deployment without
  * the driver is told so, and the one place the package's own types are kept out of the provider:
- * `driver.ts` declares the narrow shape the rest of the provider reads, and leaves out the three
- * options db2-node 1.0.22 mishandles.
+ * `driver.ts` declares the narrow shape the rest of the provider reads, leaves out the two options
+ * this provider does not use, and names `securityMechanism` with the one value it may pass.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -52,7 +52,7 @@ describe("the db2-node seam", () => {
     expect(IMPORTS_DRIVER.test("the db2-node driver is not installed")).toBe(false);
   });
 
-  test("the client options type leaves out queryTimeout, currentSchema and securityMechanism (M4, M6, K11)", () => {
+  test("the client options type leaves out queryTimeout and currentSchema, and allows only the plaintext mechanism (M4, M6)", () => {
     const source = readFileSync(DRIVER_FILE, "utf8");
     const options = source.slice(
       source.indexOf("export interface Db2ClientOptions"),
@@ -61,7 +61,7 @@ describe("the db2-node seam", () => {
 
     expect(options).not.toMatch(/^\s+queryTimeout\??:/m);
     expect(options).not.toMatch(/^\s+currentSchema\??:/m);
-    expect(options).not.toMatch(/^\s+securityMechanism\??:/m);
+    expect(options).toMatch(/^\s+securityMechanism\?: "userPassword";$/m);
   });
 });
 
