@@ -58,7 +58,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -180,7 +180,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
@@ -195,7 +195,7 @@ connections:
 | `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid and Trino have no URI form this build parses — those connections need `host` and are addressed by host and port only |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
-| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
+| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd and Neo4j); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
@@ -218,7 +218,7 @@ With no seed file, or with no entry that opts in for the token's role, `list_con
 ### A read-only cluster for everyone
 
 `readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
-etcd's is the one that does today ([providers/etcd.md](providers/etcd.md), section 3.4), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+etcd's and Neo4j's do today ([providers/etcd.md](providers/etcd.md), section 3.4, and the Neo4j recipe below), and on every other engine the file is refused at load, with a sentence naming the type and the field.
 The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
 
 ```yaml
@@ -256,6 +256,34 @@ The load refuses `readOnly: true` on a connection that is not managed: an unmana
 `readOnly` is set per connection and never in `defaults`, which the load refuses, so a later connection in the file never inherits it.
 The mode is a boundary only where etcd authenticates the client with a secret only the seeds hold, a password or a client certificate: on an etcd that authenticates nobody, a `user` who knows the address can reach it with a connection of their own.
 A read-only connection shows a Read-only marker beside its name in the sidebar and in the editor header.
+
+### A read-only Neo4j graph
+
+A Neo4j connection is read-only whatever `readOnly` says, because its provider refuses every write before it is sent ([providers/neo4j.md](providers/neo4j.md), section 3.1), so `readOnly: true` loads on a managed Neo4j seed and states what the connection does.
+One seed every role reaches is enough, and `mcp: true` lets an MCP client list the connection and inspect its schema; `run_read_query` does not serve Neo4j.
+
+```yaml
+version: "1"
+connections:
+  - id: "graph"
+    name: "Graph"
+    type: neo4j
+    host: neo4j.internal
+    port: 7687
+    database: neo4j
+    user: "reader"
+    password: "${NEO4J_READER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${NEO4J_CA}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+    mcp: true
+```
+
+Leave `database` out to read the user's home database; another database is another connection.
+`verify-full` and `verify-ca` both check the host name, and through an SSH tunnel a verifying mode is refused, so use `require` with verification off there ([providers/neo4j.md](providers/neo4j.md), section 4.5).
 
 ---
 

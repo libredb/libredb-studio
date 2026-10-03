@@ -27,12 +27,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka and etcd.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd and Neo4j.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - Nineteen engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd
+- **Multi-Database Support** - Twenty engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, Apache Kafka, etcd, Neo4j
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -423,7 +423,7 @@ Under that cap, a result of exactly `limit` rows still has `wasLimited: true` an
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
-Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus, Kafka and etcd ignore it. `POST /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
+Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus, Kafka, etcd and Neo4j ignore it. `POST /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
 
 **The database a run reads (optional):**
 ```json
@@ -1873,7 +1873,7 @@ interface DatabaseConnection {
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 

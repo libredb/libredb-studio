@@ -85,6 +85,12 @@
         TLS with a custom CA and client certificates, and SASL PLAIN, SCRAM-SHA-256 and SCRAM-SHA-512 over TLS only.
         Read-only by construction: the provider never produces, commits an offset, joins a consumer group or creates a topic.
         See [`providers/kafka.md`](providers/kafka.md).
+*   **Graph Databases:**
+    *   **Neo4j:** Read-only Cypher over Bolt through `neo4j-driver-lite`, tested on Neo4j 5.26 LTS, on a shared graph layer a second Cypher engine can join.
+        Node labels and relationship types with their properties as columns, indexes and constraints are browsable, and a click on a label or a relationship type writes a bounded sample read.
+        Nodes, relationships and paths reach the grid as tagged JSON cells with the graph type in the column header, and a 64-bit integer or a temporal value keeps every digit.
+        Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification, then a READ session.
+        See [`providers/neo4j.md`](providers/neo4j.md).
 *   **Embedded Stores:**
     *   **LibreDB:** Support for embedded, server-less `.libredb` files via the `@libredb/libredb` package — a small get/put/delete/prefix/range command grammar over the key-value lens, with catalog-aware schema views for relational and document namespaces.
 *   **Connection Pooling:** Configurable pool settings (min/max connections, idle timeout) for production workloads.
@@ -111,7 +117,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Contextual Actions (schema tab):** Quick access menus for each table including "Select Top 50", "Generate Query", "Generate Count Query", and "Copy Name". Action labels adapt per provider (e.g. "Scan Keys" for Redis, "Find Documents" for MongoDB).
 *   **Generate Count Query (both explorers):** Opens an editable count statement in a new tab without running it, so a filter can be added before Run.
     SQL engines get a qualified, dialect-quoted `SELECT COUNT(*)` (`COUNT_BIG(*)` on SQL Server), and MongoDB gets its `count` document.
-    Redis, LibreDB, Prometheus, Apache Kafka and etcd have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
+    Redis, LibreDB, Prometheus, Apache Kafka, etcd and Neo4j have no count grammar here, and a derived key-prefix grouping has nothing to count, so they are not offered it.
 *   **DBA Quick Tools:** (Admin Only) Instant access to "Analyze Table" and "Vacuum Table" directly from the table context menu, on the providers whose rows are real objects. A key-value provider such as Redis, whose rows are derived key-prefix groupings, offers neither -- there is no table for the maintenance page to act on.
 *   **Visual Clarity:** Modern glassmorphic design with Framer Motion animations for smooth transitions.
 *   **Database Stats:** Integrated table counts and connection health monitoring directly in the sidebar.

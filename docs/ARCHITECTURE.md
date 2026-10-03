@@ -4,7 +4,7 @@ This document outlines the architectural patterns, tech stack, and system design
 
 ## System Overview
 
-LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **20 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Trino, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, Apache Kafka, etcd, LibreDB. The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module.
+LibreDB Studio is a hybrid, cloud-native database management tool that provides an IDE-like experience in the browser. It supports **21 database backends** via a Strategy Pattern abstraction: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Trino, Apache Cassandra, Elasticsearch, OpenSearch, Redis, Prometheus, Apache Kafka, etcd, Neo4j, LibreDB. The count is the `SHIPPED` record in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts), which is exhaustive over `DatabaseType`; `elasticsearch` and `opensearch` are two ids served by one provider module.
 
 It runs in two modes: as a **standalone Next.js app** and as an **embedded npm package** (`@libredb/studio`) consumed by libredb-platform. See [§4.6](#46-workspace-abstraction-npm-package-embedding).
 
@@ -43,6 +43,7 @@ graph TD
         DBFactory --> KeyValue[Key-Value Providers]
         DBFactory --> TimeSeries[Time-Series Providers]
         DBFactory --> Stream[Stream Providers]
+        DBFactory --> Graph[Graph Providers]
 
         SQL --> PG[(PostgreSQL)]
         SQL --> MySQL[(MySQL)]
@@ -62,6 +63,7 @@ graph TD
         KeyValue --> Etcd[(etcd)]
         TimeSeries --> Prometheus[(Prometheus)]
         Stream --> Kafka[(Apache Kafka)]
+        Graph --> Neo4j[(Neo4j)]
         DBFactory --> Embedded[Embedded Providers]
         Embedded --> LibreDB[(LibreDB)]
     end
@@ -107,6 +109,13 @@ classDiagram
         +cancelQuery()
     }
 
+    class GraphBaseProvider {
+        <<abstract>>
+        #profile GraphEngineProfile
+        +query()
+        +cancelQuery()
+    }
+
     BaseDatabaseProvider <|-- SQLBaseProvider
     BaseDatabaseProvider <|-- MongoDBProvider
     BaseDatabaseProvider <|-- CouchbaseProvider
@@ -114,6 +123,7 @@ classDiagram
     BaseDatabaseProvider <|-- PrometheusProvider
     BaseDatabaseProvider <|-- KafkaProvider
     BaseDatabaseProvider <|-- EtcdProvider
+    BaseDatabaseProvider <|-- GraphBaseProvider
     BaseDatabaseProvider <|-- LibreDBProvider
 
     SQLBaseProvider <|-- PostgresProvider
@@ -128,12 +138,18 @@ classDiagram
     SQLBaseProvider <|-- CassandraProvider
     SQLBaseProvider <|-- LibSQLProvider
     SQLBaseProvider <|-- DuckDBProvider
+
+    GraphBaseProvider <|-- Neo4jProvider
 ```
 
 Each provider implements:
 - **`getCapabilities()`** - queryLanguage, supportsExplain, supportsCreateTable, maintenanceOperations, etc.
 - **`getLabels()`** - entityName, selectAction, searchPlaceholder, etc. (drives all UI text)
 - **`prepareQuery()`** - handles query limiting per-provider (SQL LIMIT injection vs MongoDB native)
+
+A graph engine is the one family with a shared base of its own: `GraphBaseProvider` (`src/lib/db/graph/graph-base-provider.ts`) runs every statement through the shared Cypher read policy, the engine's statement gate and one READ session over the Bolt transport, and the engine supplies a `GraphEngineProfile` (its policy lists, catalog reads, gate and error table) plus its declarations and monitoring reads.
+The graph core under `src/lib/db/graph/` is pure and shipped to the browser, where the editor's Cypher language and completion read it; `bolt/` and the base class are server only.
+[`ADDING_A_PROVIDER.md`](./ADDING_A_PROVIDER.md#adding-a-graph-engine) describes the layers and the profile, and [`providers/neo4j.md`](./providers/neo4j.md) the one engine on them.
 
 Adding a new database type requires: **1 provider class** + **1 entry in `db-ui-config.ts`**.
 
@@ -312,7 +328,12 @@ src/
     │   │   ├── keyvalue/    # redis, etcd/ (gRPC client seam + an etcdctl subset over etcd's gRPC API via @grpc/grpc-js)
     │   │   ├── timeseries/  # prometheus/ (transport seam + PromQL over the Prometheus HTTP API)
     │   │   ├── stream/      # kafka/ (read-client seam + JSON read requests over the Kafka protocol via @platformatic/kafka)
+    │   │   ├── graph/       # neo4j/ (an engine profile, catalog, statement gate and monitoring on the graph layer below)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
+    │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends (docs/ADDING_A_PROVIDER.md, "Adding a graph engine"):
+    │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators), objects.ts, values.ts and
+    │   │                    #   profile.ts are pure and browser-safe; bolt/ (the GraphClient seam, the URI, the one
+    │   │                    #   neo4j-driver-lite client, driver values to JSON) and graph-base-provider.ts are server only
     │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects)
     │   ├── factory.ts       # Provider factory
     │   └── types.ts         # Database types
@@ -322,7 +343,7 @@ src/
     │                        #   cookie, WebAuthn wrapper, management and sign-in services, browser client
     ├── llm/                 # LLM provider module
     ├── editor/              # Monaco completions (SQL + MongoDB), the tab-type/language ladder,
-    │                       # and the LibreDB, Redis and etcd command languages
+    │                       # the LibreDB, Redis and etcd command languages, and Cypher
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path

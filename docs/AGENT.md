@@ -748,9 +748,9 @@ engine.
 The deliverable is one runnable statement, not a lecture. The rules ask for it in a single fenced
 block tagged with the connection's canonical type-id, rationale after the block, and no name that is
 not in the inventory.
-Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, and since #1085 a `promql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
+Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, since #1085 a `promql` one, and a `cypher` one since Neo4j) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
 That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all twenty ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all twenty-one ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -2560,7 +2560,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the twenty
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the twenty-one
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp
@@ -2691,6 +2691,7 @@ the role's own grants are the whole boundary (A3).
 - **B90**: the worked call a refusal attaches for a model to copy is gated by `refusalExamples`, which defaults to false and is on for 2 of the 40 shipped profiles, so it is off for every model nobody has measured yet - which is where the repeated refusals are: `qwen2.5:3b-instruct` earned 155 `compose_report` refusals in one data-analysis cell with the flag off. The refusal names the failing paths and offers what is citable either way; what the flag withholds is the shape a model can copy rather than parse.
 - **B91**: the MCP settings page renders the OpenCode snippet under `mcp.servers.libredb` while that client reads `mcp.libredb` and wants an `enabled` field, so a user copying it gets a configuration error rather than a server; the same route accepts a request body of any size, measured at 2 MB with HTTP 200.
 - **B92**: on etcd, plan mode can draft a read of a whole prefix group the connection can only partly read, because the snapshot marks the group `partlyReadable` and says so in the prompt but `plan-statement-drafted` is recorded with no check of the draft against that mark, and the model, which is not given the readable key's name, follows the note only some of the time; measured at 4 of 4 drafts of `etcdctl get /config/ --prefix` on one model, each refused by etcd when run.
+- **B93**: Neo4j is served by plan mode and the MCP metadata tools only: its provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it, because both guard a statement with SQL readers and a Cypher statement needs a contract of its own, measured against the `LOAD CSV` and APOC reach its read policy refuses (`docs/providers/neo4j.md` section 3.6).
 
 **Settled as limits rather than as work.** The eight below have no entry in `docs/BACKLOG.md`, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet
