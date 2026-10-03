@@ -1,6 +1,7 @@
 import type { QueryWarning } from "@/lib/types";
 import { classifyValue } from "./renderers/classify";
 import { getRenderer } from "./renderers/registry";
+import type { RenderContext } from "./renderers/types";
 
 const WARNING_FALLBACK_LABEL = "Warning";
 
@@ -22,4 +23,16 @@ export function describeWarning(warning: QueryWarning): string {
 // kept name- and signature-stable for the existing grid call sites.
 export function formatCellValue(value: unknown): { display: string; className: string } {
   return getRenderer(classifyValue(value)).renderCompact(value);
+}
+
+/**
+ * What Copy Cell writes for a cell: the renderer's copy form where it has one, its compact display otherwise.
+ *
+ * A separate reading from the display because the two differ wherever the display is a preview: a binary cell
+ * shows its first 32 bytes and its size, and a vector cell its first 8 elements, while Copy Cell copies the whole
+ * value. `value` is the DISPLAYED value, so a masked cell copies its mask.
+ */
+export function formatCellCopy(value: unknown, context?: RenderContext): string {
+  const renderer = getRenderer(classifyValue(value, context));
+  return renderer.renderCopy?.(value, context) ?? renderer.renderCompact(value, context).display;
 }

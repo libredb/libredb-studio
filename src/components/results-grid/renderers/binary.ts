@@ -20,4 +20,10 @@ export const binaryRenderer: ValueRenderer = {
     // copy the bytes out, and it is the form the export writes.
     return { text: binaryText(asBytes(value) ?? NO_BYTES), className: BINARY_CLASS, preserveWhitespace: false };
   },
+  renderCopy(value) {
+    // The whole value again, for Copy Cell, which used to copy the cell's preview:
+    // the first 32 bytes and a size, 77 characters for a 100-byte value, which no
+    // reader could paste back as the value.
+    return binaryText(asBytes(value) ?? NO_BYTES);
+  },
 };

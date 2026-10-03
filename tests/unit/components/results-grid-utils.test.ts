@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { describeWarning, formatCellValue } from "@/components/results-grid/utils";
+import { describeWarning, formatCellCopy, formatCellValue } from "@/components/results-grid/utils";
 
 // =============================================================================
 // formatCellValue — output parity pins (#96)
@@ -89,5 +89,23 @@ describe("describeWarning", () => {
 
   test("still reports an entry that carries neither message nor code", () => {
     expect(describeWarning({ message: "" })).toBe("Warning");
+  });
+});
+
+describe("formatCellCopy", () => {
+  test("a renderer with no copy form copies its compact display, as Copy Cell always did", () => {
+    expect(formatCellCopy("Alice")).toBe("Alice");
+    expect(formatCellCopy(42)).toBe("42");
+    expect(formatCellCopy({ a: 1 })).toBe('{"a":1}');
+    expect(formatCellCopy('{\n  "id": 1\n}')).toBe('{\n  "id": 1\n}');
+    expect(formatCellCopy(null)).toBe("NULL");
+  });
+
+  test("a binary value copies every byte, where its display is a preview", () => {
+    const bytes = { type: "Buffer", data: Array.from({ length: 100 }, (_, index) => index) };
+    const hex = bytes.data.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    expect(formatCellValue(bytes).display).toHaveLength(77);
+    expect(formatCellCopy(bytes)).toBe(`\\x${hex}`);
+    expect(formatCellCopy(new Uint8Array([1, 2, 171, 255]))).toBe("\\x0102abff");
   });
 });

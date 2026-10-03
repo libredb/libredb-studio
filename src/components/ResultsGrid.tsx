@@ -32,7 +32,7 @@ import { writeToClipboard } from "@/components/copy-button";
 import { ResultCard } from "@/components/results-grid/ResultCard";
 import { RowDetailSheet } from "@/components/results-grid/RowDetailSheet";
 import { StatsBar } from "@/components/results-grid/StatsBar";
-import { describeWarning, formatCellValue } from "@/components/results-grid/utils";
+import { describeWarning, formatCellCopy, formatCellValue } from "@/components/results-grid/utils";
 import {
   getHeaderFitColumnSize,
   RESULT_COLUMN_MAX_SIZE,
@@ -340,7 +340,7 @@ export function ResultsGrid({
 
   const getCopyCellValue = useCallback(
     (rowIndex: number, row: Record<string, unknown>, field: string): string => {
-      return formatCellValue(getDisplayedCellValue(rowIndex, row, field).value).display;
+      return formatCellCopy(getDisplayedCellValue(rowIndex, row, field).value);
     },
     [getDisplayedCellValue],
   );

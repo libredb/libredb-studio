@@ -611,6 +611,33 @@ describe("ResultsGrid", () => {
     await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith("Charles"));
   });
 
+  test("Copy Cell on a bytea value copies the whole value, not the cell's preview", async () => {
+    // Reproduces the defect first: the grid cell shows the first 32 bytes and the size, and Copy Cell used to
+    // copy that preview, 77 characters for a 100-byte value, which no reader could paste back as the value.
+    const bytes = Array.from({ length: 100 }, (_, index) => index);
+    const hex = bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const preview = `\\x${hex.slice(0, 64)}... (100 B)`;
+    const result: QueryResult = {
+      rows: [{ id: 1, payload: { type: "Buffer", data: bytes } }],
+      fields: ["id", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+      columnTypes: { id: "int4", payload: "bytea" },
+    };
+    expect(preview).toHaveLength(77);
+
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    for (const mode of ["desktop", "mobile"] as const) {
+      mockClipboardWriteText.mockClear();
+      const contextMenu = findContextMenuForMode(container, preview, mode);
+      fireEvent.contextMenu(within(contextMenu).getByText(preview));
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+      // oxlint-disable-next-line no-await-in-loop -- one copy per table, each read from a cleared clipboard mock.
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(`\\x${hex}`));
+    }
+  });
+
   test("offers no cell action for the row-detail column", () => {
     // That column holds a control, not a value, so there is nothing in it to copy.
     const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));

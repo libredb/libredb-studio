@@ -252,6 +252,12 @@ describe("renderDetail", () => {
     expect(binaryRenderer.renderDetail({ type: "Buffer", data: [] }).text).toBe("\\x");
   });
 
+  test("binaryRenderer copies the whole value, the form the detail sheet and the export write", () => {
+    const long = new Uint8Array(1024 * 1024).fill(0xab);
+    expect(binaryRenderer.renderCopy?.(long)).toBe(`\\x${"ab".repeat(1024 * 1024)}`);
+    expect(binaryRenderer.renderCopy?.({ type: "Buffer", data: [] })).toBe("\\x");
+  });
+
   test("whitespace inside JSON string values never triggers the raw fallback", () => {
     // Spaces/newlines inside string literals are significant and survive the
     // canonical round-trip, so this input still gets the pretty treatment.
