@@ -3525,7 +3525,7 @@ Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 sta
 A label's colour is assigned from the chart palette by order of first appearance in each result (`buildResultGraph` in `src/lib/db/graph/result-graph.ts`), so one label can take a different colour in two results, and a user cannot pick a colour, a caption property or a node size for a label.
 Neo4j Browser keeps such choices in its GraSS style sheet; the cheap step the research names is a per-connection, per-label colour and caption override kept in the existing storage layer.
 
-Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 states what the tab draws and why it runs no statement of its own.
+Deferred when the Graph tab was added, as outside its first version's scope; the Known limitations section of `docs/providers/neo4j.md` lists it.
 
 **Done when:** a user can set a label's colour and caption property from the legend, the choice is stored through the storage layer per connection and survives a reload and a second result, a label with no choice keeps the palette rule, and a test pins both.
 
@@ -3533,7 +3533,7 @@ Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 sta
 
 The tab runs fcose and only fcose (`fcoseLayout` in `src/components/results-graph/cytoscape-host.ts`), and Re-layout reruns the same layout, so a tree, a hierarchy or a radial picture of a result cannot be asked for.
 
-Deferred when the Graph tab was added; `docs/providers/neo4j.md` section 5.6 states what the tab draws and why it runs no statement of its own.
+Deferred when the Graph tab was added, as outside its first version's scope; the Known limitations section of `docs/providers/neo4j.md` lists it.
 
 **Done when:** the toolbar offers at least a hierarchical (breadth-first or dagre-style) layout beside fcose, with an accessible name on the control, any new layout package pinned with its licence checked as cytoscape's were, and a test that switching layouts reruns the chosen one.
 
