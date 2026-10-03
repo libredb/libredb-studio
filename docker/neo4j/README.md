@@ -73,3 +73,4 @@ The `types` service holds:
 A byte array is not seeded: no core Cypher function produces one, and the APOC plugin is not installed on this image.
 
 The schema holds a `RANGE` index `person_name` on `Person(name)` and a uniqueness constraint `service_id` on `Service(id)`, besides the two `LOOKUP` indexes every database has.
+The constraint brings its own `RANGE` index, also named `service_id`, so `SHOW INDEXES` lists four indexes.
