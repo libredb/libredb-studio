@@ -138,6 +138,10 @@ mock.module("@/components/SchemaDiff", () => ({
 
 // Captured: the graph tests assert the masking inputs reach it exactly as they reach
 // the grid. Its own behaviour is tested against a headless canvas in GraphView.test.tsx.
+// A recorded exception to the graph view spec's "no mock.module() in new tests": the
+// panel gives no way to hand GraphView its injectable canvas factory, and the real one
+// needs a canvas happy-dom lacks, so the real view cannot render here. This file
+// already replaces every other lazy view the same way, and runs in its own process.
 let capturedGraphViewProps: Record<string, unknown> = {};
 
 mock.module("@/components/results-graph/GraphView", () => ({
