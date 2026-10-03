@@ -31,6 +31,7 @@ import {
   type MilvusClient,
   type MilvusClientFactory,
   MilvusError,
+  type WireShowCollectionsRequest,
 } from "@/lib/db/providers/vector/milvus/client";
 import type { MilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
 import { toMilvusError, toProviderError } from "@/lib/db/providers/vector/milvus/errors";
@@ -624,7 +625,8 @@ const INVOKE: ReadonlyArray<
   ["GetMetrics", (c, o) => c.getMetricsSystemInfo(o), { request: SYSTEM_INFO_REQUEST }],
   ["ListDatabases", (c, o) => c.listDatabases(o), {}],
   ["DescribeDatabase", (c, o) => c.describeDatabase({}, o), { db_name: "probe_db" }],
-  ["ShowCollections", (c, o) => c.showCollections(o), { db_name: "probe_db" }],
+  // The seam method takes no request: the whole wire request is the db_name the adapter adds.
+  ["ShowCollections", (c, o) => c.showCollections(o), { db_name: "probe_db" } satisfies WireShowCollectionsRequest],
   [
     "DescribeCollection",
     (c, o) => c.describeCollection({ collection_name: "notes" }, o),

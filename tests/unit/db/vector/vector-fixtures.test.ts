@@ -429,7 +429,7 @@ describe("the Milvus embedding list (spec 3.3)", () => {
       "float32",
       4,
       "other",
-      captured,
+      captured as string,
     ]);
   });
 
@@ -447,9 +447,10 @@ describe("the Milvus embedding list (spec 3.3)", () => {
     ).data;
     for (const cell of cells) {
       const row = rows.find((entry) => entry.id === cell.match.value);
+      expect(row, `REST row ${String(cell.match.value)}`).toBeDefined();
       expect({ id: cell.match.value, cell: cell.cell }).toEqual({
         id: cell.match.value,
-        cell: row?.chunks.map((element) => element.emb),
+        cell: (row as (typeof rows)[number]).chunks.map((element) => element.emb),
       });
     }
   });
