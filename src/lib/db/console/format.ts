@@ -6,7 +6,8 @@ import { consoleTokens, readConsoleBody } from "./parser";
  * The console's Format (vector-family spec 3.5): the body re-indented from the lexer's tokens, two spaces a level,
  * with every other byte kept. The lines before the request line are kept as typed, the request line keeps its
  * method and target as typed, every literal keeps its bytes, and each comment after the request line keeps its
- * text on a line of its own. A `JSON.parse` round trip would round an integer above 2^53, which is why the body is
+ * text on a line of its own. Lines are joined with LF, and the CR of a CRLF ending is dropped, so a text formats
+ * to the same bytes whichever line ending it came with. A `JSON.parse` round trip would round an integer above 2^53, which is why the body is
  * never parsed into numbers here.
  *
  * A text the grammar cannot read is refused with the parser's own `ConsoleRefusal`, so Format never rewrites
@@ -33,11 +34,14 @@ function inlineArray(pieces: readonly Piece[], open: number): number | undefined
   return at;
 }
 
+/** A line, or a comment that runs to its line's end, without the CR of a CRLF ending: Format writes LF alone. */
+const withoutLineEndCr = (text: string): string => (text.endsWith("\r") ? text.slice(0, -1) : text);
+
 export function formatConsole(spec: ConsoleDialectSpec, text: string): string {
   const read = consoleTokens(spec, text, true);
   readConsoleBody(spec, read);
   const { lines, tokens, request } = read;
-  const out: string[] = lines.slice(0, request.line);
+  const out: string[] = lines.slice(0, request.line).map(withoutLineEndCr);
   out.push(lines[request.line].slice(0, request.bodyColumn));
 
   const pieces: Piece[] = [];
@@ -59,7 +63,13 @@ export function formatConsole(spec: ConsoleDialectSpec, text: string): string {
     const piece = pieces[at];
     if (piece.kind === "comment") {
       flush();
-      out.push(`${pad()}${piece.text}`);
+      out.push(`${pad()}${withoutLineEndCr(piece.text)}`);
+      continue;
+    }
+    if (piece.kind === "punctuation" && (piece.text === "}" || piece.text === "]")) {
+      flush();
+      indent--;
+      current = `${pad()}${piece.text}`;
       continue;
     }
     if (current === "") current = pad();
@@ -89,10 +99,6 @@ export function formatConsole(spec: ConsoleDialectSpec, text: string): string {
       current += "{";
       indent++;
       flush();
-    } else if (piece.text === "}" || piece.text === "]") {
-      flush();
-      indent--;
-      current = `${pad()}${piece.text}`;
     } else if (piece.text === ",") {
       current += ",";
       flush();

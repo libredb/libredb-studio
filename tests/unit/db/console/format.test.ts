@@ -61,11 +61,33 @@ describe("formatConsole", () => {
         "  POST   /collections/docs/points/query?timeout=5",
         "{",
         '  "limit": 3,',
-        "  // three\r",
+        "  // three",
         '  "url": "http://x//y"',
         "}",
         "// done",
       ].join("\n"),
+    );
+  });
+
+  test("a text with CRLF line endings formats to the bytes its LF form formats to, with no CR left", () => {
+    const crlf =
+      '# find\r\n// first\r\nPOST /collections/docs/points/query\r\n{"a": "x" // note\r\n, "b": [1, // one\r\n2]}\r\n// done\r\n';
+    const formatted = formatConsole(QDRANT_STAND_IN, crlf);
+    expect(formatted).toBe(formatConsole(QDRANT_STAND_IN, crlf.replaceAll("\r\n", "\n")));
+    expect(formatted).not.toContain("\r");
+    expect(formatted.split("\n").slice(0, 3)).toEqual(["# find", "// first", "POST /collections/docs/points/query"]);
+    expect(formatted).toContain("  // note\n");
+  });
+
+  test("a CR inside a string or a comment, away from the line's end, keeps its place", () => {
+    expect(formatConsole(QDRANT_STAND_IN, 'POST x\n{"a": 1 // one\rtwo\r\n}')).toBe(
+      'POST x\n{\n  "a": 1\n  // one\rtwo\n}',
+    );
+  });
+
+  test("a comment before a closing bracket leaves no line of spaces behind it", () => {
+    expect(formatConsole(QDRANT_STAND_IN, 'POST x\n{"a": [{"b": 1 // one\n} // two\n] // three\n}')).toBe(
+      'POST x\n{\n  "a": [\n    {\n      "b": 1\n      // one\n    }\n    // two\n  ]\n  // three\n}',
     );
   });
 
