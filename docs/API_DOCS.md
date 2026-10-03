@@ -903,7 +903,7 @@ A request refused before the provider is called writes no maintenance event.
 An event also carries `engineUser`, the engine principal the connection acts as, when the provider implements the optional `engineUser()` method: on the completed, the failed (`success: false`) and the thrown rows alike.
 It is a user name and never any part of a secret.
 On the authoritative stdout line, `libredb.audit.v1`, it appears as `engine_user`, and the key is absent from every row whose provider names no engine principal.
-Milvus's provider implements `engineUser()`: the Milvus user name, or the word `token` when Password or token carries a token with User empty.
+Milvus's provider implements `engineUser()`: the Milvus user name, the user name before the colon when Password or token carries a `user:password` token with User empty, or the word `token` for a token with no colon.
 
 **Maintenance Types:**
 

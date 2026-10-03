@@ -422,7 +422,7 @@ export class MilvusProvider extends BaseDatabaseProvider {
     return previewMilvusMaintenance(session.client, context, type, path);
   }
 
-  /** The Milvus principal an audit row names: a user name or the word "token", never any part of a secret. */
+  /** The Milvus principal an audit row names: a user name (a `user:password` token's too) or the word "token", never any part of a secret. */
   public engineUser(): string | undefined {
     return this.session?.options.principal;
   }

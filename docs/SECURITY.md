@@ -304,7 +304,7 @@ log.
 
 A maintenance row names the engine principal the connection acts as, when the provider implements `engineUser()`: `engineUser` on the event and `engine_user` on the `libredb.audit.v1` stdout line, on the completed, failed (`success: false`) and thrown rows of `POST /api/db/maintenance` alike.
 It is a user name and never any part of a secret, and a row whose provider names no engine principal carries no such key.
-Milvus's provider implements it: the Milvus user name, or the word `token` when Password or token carries a token with User empty.
+Milvus's provider implements it: the Milvus user name, the user name before the colon when Password or token carries a `user:password` token with User empty, or the word `token` for a token with no colon.
 
 **3.4.** WRITES are refused by the database itself, and each engine's boundary is its own. A
 PostgreSQL read-only transaction carrying exactly one statement, run by a role verified at open to

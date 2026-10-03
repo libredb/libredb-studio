@@ -287,3 +287,21 @@ describe("docs/SEED_CONNECTIONS.md names the Milvus refusals", () => {
     expect(SEEDS).toContain("load refuses what the file shows; resolution refuses the rest");
   });
 });
+
+describe("the audit pages name the engineUser() the code gives", () => {
+  const API_DOCS = read("docs/API_DOCS.md");
+  const principalOf = (password: string) =>
+    buildMilvusConnectionOptions({ ...MILVUS, host: "localhost", password }, CONTEXT).principal;
+  const SENTENCE =
+    "the Milvus user name, the user name before the colon when Password or token carries a `user:password` token with User empty, or the word `token` for a token with no colon.";
+
+  test("a user:password token is audited as its user, a token with no colon as the word token", () => {
+    expect(principalOf(`reader:${TEST_PASSWORD}`)).toBe("reader");
+    expect(principalOf(TEST_PASSWORD)).toBe("token");
+  });
+
+  test("docs/SECURITY.md and docs/API_DOCS.md state both token forms", () => {
+    expect(SECURITY).toContain(`Milvus's provider implements it: ${SENTENCE}`);
+    expect(API_DOCS).toContain(`Milvus's provider implements \`engineUser()\`: ${SENTENCE}`);
+  });
+});
