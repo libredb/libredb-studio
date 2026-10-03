@@ -1,7 +1,8 @@
 /**
  * The Db2 catalog statements and their row readers (#786).
  *
- * Every row shape here was measured through db2-node 1.0.22 on Db2 LUW 12.1.0.0: the HEX of
+ * Every row shape here was measured through db2-node 1.0.22 on Db2 LUW 12.1.0.0, and the catalog
+ * reads were re-run live through 1.0.24 on 12.1.0.0 and 11.5.9.0: the HEX of
  * `Grüße` (`4772C3BCC39F65`), the CODEUNITS32 column whose LENGTH is 40 and whose declared length
  * is 10, the 16-byte DECFLOAT(34), the default `0` padded with 253 blanks by SUBSTRING and the
  * NULL definition of an EXTERNAL routine.
@@ -322,7 +323,7 @@ describe("the source statements", () => {
     ["TABLE_TRIGGER_SOURCE", catalog.TABLE_TRIGGER_SOURCE],
     ["SCHEMA_TRIGGER_SOURCE", catalog.SCHEMA_TRIGGER_SOURCE],
   ])("%s reads one chunk per row: the head with the length, the tail alone", (_name, statements) => {
-    // A row carrying both 32672-character chunks loses the driver's framing (measured).
+    // The tail is read only when a definition needs it, so a short one carries no padding chunk.
     for (const sql of [statements.head, statements.tail]) expect(sql.match(/AS TEXT_BYTES/g)).toHaveLength(1);
     expect(statements.head).toContain("SUBSTRING(");
     expect(statements.head).toContain(", 1, 16336, OCTETS)");

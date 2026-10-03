@@ -1,13 +1,13 @@
 /**
- * IBM Db2 LUW provider (#786), over db2-node 1.0.22.
+ * IBM Db2 LUW provider (#786), over db2-node 1.0.24.
  *
- * The driver has known defects, each reported upstream (gurungabit/db2-node#12) and listed in
- * `docs/providers/db2.md` under "Known issues". This class contains the ones a provider can:
+ * The driver's known defects are listed in `docs/providers/db2.md` under "Known issues", and the
+ * ones 1.0.22 had were reported upstream (gurungabit/db2-node#12) and fixed in 1.0.24. This class
+ * contains the ones a provider still can:
  *
- * - M1 no LOB in the catalog reads, and catalog text read as HEX (`catalog.ts`);
- * - M2 RUNSTATS and REORG inside a compound block (`maintenance.ts`);
- * - M3 a bigint parameter checked before the driver can abort on it (`params.ts`);
- * - M4 the schema always bound, never `currentSchema`; M5 padded CHAR trimmed (`catalog.ts`);
+ * - M1 no LOB in a catalog row beside other columns, and catalog text read as HEX (`catalog.ts`);
+ * - M3 an array or object parameter refused before the driver reads it as bytes (`params.ts`);
+ * - M4 the schema always bound, never the session's; M5 padded CHAR trimmed (`catalog.ts`);
  * - M6 no `queryTimeout` and no `cancelQuery`; M7 a duplicate column named (`values.ts`);
  * - TLS that fails closed, and a tunnel that is never dialled around (`connection.ts`).
  *
@@ -16,8 +16,9 @@
  * out of TLS.
  *
  * Absent on purpose: `queryReadOnly` and `endOpenQueryTransaction` (no read-only profile in this
- * version), `cancelQuery` (db2-node's `close()` waits for the running statement, so it cannot
- * stand in for a cancel), interactive transactions, and the object-edit pair.
+ * version), `cancelQuery` (1.0.24's `Client.cancel()` and server-side `queryTimeout` need
+ * monitoring and cancel privileges and are a change of their own, D148), interactive
+ * transactions, and the object-edit pair.
  */
 
 import type {
@@ -56,7 +57,7 @@ import { type Db2Client, type Db2Driver, loadDb2Driver } from "./driver";
 import { MAINTAINED_TABLE_TYPES, MAINTENANCE_TARGET_TYPE_SQL, maintenanceStatement } from "./maintenance";
 import { neutralHealth, readOverview, TABLE_STATS_SQL, tableStatsRow } from "./monitoring";
 import * as objects from "./objects";
-import { driverStatement, normaliseParams } from "./params";
+import { normaliseParams } from "./params";
 import { readResult } from "./values";
 
 /** The seams a test replaces; production uses the defaults. */
@@ -144,15 +145,16 @@ export class Db2Provider extends SQLBaseProvider {
   // ============================================================================
 
   /**
-   * One statement, with its parameters made safe (M3) and its leading comments removed, which
-   * db2-node refuses with SQLSTATE 42612 SQLCODE -84. No timeout is passed (M6).
+   * One statement, sent as written with its parameters checked (M3). db2-node 1.0.24 classifies a
+   * statement past its leading comments, which 1.0.22 refused (K18, fixed). No timeout is passed
+   * (M6).
    */
   public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const client = this.connected();
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          return await client.query(driverStatement(sql), normaliseParams(params));
+          return await client.query(sql, normaliseParams(params));
         } catch (error) {
           throw mapDatabaseError(error, "db2", sql);
         }

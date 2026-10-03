@@ -1,14 +1,14 @@
 /**
  * RUNSTATS and REORG on Db2 LUW (#786).
  *
- * Both are CLP commands, so they reach the server through `SYSPROC.ADMIN_CMD`, and that `CALL`
- * runs inside a compound block: db2-node 1.0.22 fails every bare `CALL` with SQLSTATE 07005
- * SQLCODE -517 (K9), and the same `CALL` between `BEGIN` and `END` runs (M2, measured on
- * 12.1.0.0). The block has no result set to read, which these two commands do not need.
+ * Both are CLP commands, so they reach the server through a plain `CALL SYSPROC.ADMIN_CMD`.
+ * db2-node 1.0.24 runs a `CALL` through EXCSQLSTT, measured on 12.1.0.0 and 11.5.9.0; 1.0.22
+ * failed every bare `CALL` (K9, fixed), which is why this used to be wrapped in a compound block.
+ * Neither command answers a result set, and none is read.
  *
- * The schema comes from the request's container and never from the session (M4): db2-node
- * ignores `currentSchema` (K12), and a session schema standing in for a missing one would run
- * the command against a table the user did not name.
+ * The schema comes from the request's container and never from the session (M4): a session
+ * schema standing in for a missing one would run the command against a table the user did not
+ * name.
  */
 
 import type { MaintenanceOperation } from "@/lib/db/types";
@@ -58,7 +58,7 @@ export function maintenanceStatement(
   if (!target) throw new DatabaseConfigError(`A table name is required for ${spec.word}`, "db2");
   if (!schema) throw new DatabaseConfigError(`A schema is required for ${spec.word} on Db2`, "db2");
   return {
-    sql: `BEGIN CALL SYSPROC.ADMIN_CMD('${spec.command(adminCommandTarget(schema, target))}'); END`,
+    sql: `CALL SYSPROC.ADMIN_CMD('${spec.command(adminCommandTarget(schema, target))}')`,
     message: `${spec.word} completed on ${schema}.${target}`,
     word: spec.word,
   };

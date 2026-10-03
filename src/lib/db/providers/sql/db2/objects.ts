@@ -310,8 +310,8 @@ const NO_TEXT_BY_ORIGIN: Readonly<Record<string, string>> = {
 
 /** The sentence a definition longer than the byte bound carries. */
 export const SOURCE_TRUNCATION_REASON =
-  `Db2 stores this definition as a CLOB longer than ${SOURCE_BYTE_LIMIT} bytes, and db2-node 1.0.22 cannot fetch a ` +
-  `CLOB, so only the first ${SOURCE_BYTE_LIMIT} bytes are shown.`;
+  `Db2 stores this definition as a CLOB longer than ${SOURCE_BYTE_LIMIT} bytes, and this provider reads at most ` +
+  `the first ${SOURCE_BYTE_LIMIT}, so only those are shown.`;
 
 /** Which statements read one object's definition, and with which binds. */
 function sourceStatement(

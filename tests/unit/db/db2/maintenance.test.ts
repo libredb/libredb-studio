@@ -1,11 +1,11 @@
 /**
  * RUNSTATS and REORG statements for Db2 (#786).
  *
- * M2: every `CALL` through db2-node 1.0.22 fails with SQLSTATE 07005 SQLCODE -517 (K9), and the
- * same `CALL` inside a compound block runs, measured on 12.1.0.0 against `APP."Mixed Case"`. So
- * the statement is `BEGIN CALL SYSPROC.ADMIN_CMD('...'); END`, and the command inside it is a
- * string literal, which is why a quote in a table name is doubled twice: once as an identifier
- * and once as a literal.
+ * The statement is a plain `CALL SYSPROC.ADMIN_CMD('...')`: db2-node 1.0.24 runs a `CALL`
+ * through EXCSQLSTT, measured on 12.1.0.0 and 11.5.9.0 against `APP."O'Brien"` and
+ * `APP."Mixed Case"`, where 1.0.22 failed every bare `CALL` (K9) and the provider wrapped it in a
+ * compound block. The command inside it is a string literal, which is why a quote in a table name
+ * is doubled twice: once as an identifier and once as a literal.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -30,22 +30,20 @@ describe("adminCommandTarget", () => {
   });
 });
 
-describe("maintenanceStatement (M2)", () => {
-  test("analyze is RUNSTATS inside a compound block", () => {
+describe("maintenanceStatement", () => {
+  test("analyze is a plain CALL of RUNSTATS", () => {
     const statement = maintenanceStatement("analyze", "ORDERS", "APP");
 
     expect(statement.sql).toBe(
-      `BEGIN CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE "APP"."ORDERS" WITH DISTRIBUTION AND DETAILED INDEXES ALL'); END`,
+      `CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE "APP"."ORDERS" WITH DISTRIBUTION AND DETAILED INDEXES ALL')`,
     );
-    expect(statement.sql.startsWith("BEGIN CALL ")).toBe(true);
-    expect(statement.sql.endsWith("; END")).toBe(true);
     expect(statement.message).toBe("RUNSTATS completed on APP.ORDERS");
   });
 
-  test("optimize is REORG inside a compound block", () => {
+  test("optimize is a plain CALL of REORG", () => {
     const statement = maintenanceStatement("optimize", "O'Brien", "APP");
 
-    expect(statement.sql).toBe(`BEGIN CALL SYSPROC.ADMIN_CMD('REORG TABLE "APP"."O''Brien"'); END`);
+    expect(statement.sql).toBe(`CALL SYSPROC.ADMIN_CMD('REORG TABLE "APP"."O''Brien"')`);
     expect(statement.message).toBe("REORG completed on APP.O'Brien");
   });
 

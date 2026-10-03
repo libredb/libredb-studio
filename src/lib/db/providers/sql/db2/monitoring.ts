@@ -7,8 +7,9 @@
  * storage reading is taken, so none is reported, and the labels tell the Queries and Sessions
  * tabs to say so rather than to suggest a server setting.
  *
- * `serverInfo()` is never used for the version: db2-node 1.0.22 answers it with the instance name
- * and `SQL12010`, not the product string (K13).
+ * `serverInfo()` is never used for the version: db2-node 1.0.24 answers it with the server class
+ * `QDB2/LINUXX8664` and the release code `SQL12010` (1.0.22 answered the instance name, K13),
+ * neither of which is the `DB2 v12.1.0.0` a reader expects.
  */
 
 import type { DatabaseOverview, HealthInfo, TableStats } from "@/lib/db/types";
@@ -66,7 +67,7 @@ export function neutralHealth(): HealthInfo {
  * Table are run from a row of the admin Operations list and the monitoring Tables panel, and an
  * empty list left both unreachable from the object tree's deep link. The types are the two
  * `MAINTAINED_TABLE_TYPES` in `maintenance.ts`, and the schemas are the ones `CONTAINERS_SQL`
- * lists. Names are read as HEX for K1, like every catalog name.
+ * lists. Names are read as HEX, like every catalog name (`catalog.ts` says why).
  */
 export const TABLE_STATS_SQL = `SELECT HEX(RTRIM(TABSCHEMA)) AS SCHEMA_HEX, HEX(TABNAME) AS NAME_HEX, CARD
 FROM SYSCAT.TABLES

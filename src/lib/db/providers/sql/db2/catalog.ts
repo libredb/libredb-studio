@@ -2,24 +2,25 @@
  * The Db2 LUW catalog reads, and the pure functions that read their rows (#786).
  *
  * Every statement here reads `SYSCAT`, binds every value with `?`, and binds the schema rather
- * than leaning on the session's: db2-node 1.0.22 ignores `currentSchema` (K12, M4).
+ * than leaning on the session's (M4), so a catalog read never depends on what the session's
+ * schema happens to be.
  *
- * THREE DRIVER DEFECTS SHAPE EVERY STATEMENT BELOW, each measured on 12.1.0.0:
+ * THREE RULES SHAPE EVERY STATEMENT BELOW:
  *
- * 1. No LOB is ever selected (M1). `SYSCAT.COLUMNS."DEFAULT"` and the `TEXT` of a view, a
- *    routine and a trigger are CLOBs, and a CLOB fetch fails with SQLSTATE 58009 SQLCODE -30020
- *    (K7). The obvious `CAST(TEXT AS VARCHAR(32672))` is WORSE than failing on a longer text:
- *    the truncation warning it raises desynchronises the driver, which answered 36 rows of
- *    garbage for one view and a "Protocol error: invalid DSS magic byte" for another. So a LOB is
- *    read as `VARCHAR(SUBSTRING(x, start, n, OCTETS), n)`, which never truncates: SUBSTRING with
- *    an explicit length PADS a shorter value with blanks rather than warning, and the reader
- *    cuts the padding off by the byte length `LENGTH(x)` reports beside it.
- * 2. Catalog text is read as HEX. The driver decodes every non-ASCII byte of a VARCHAR as EBCDIC
- *    037 (K1), so a table called `Grüße` arrived as `åÊC¯C¤Á` while `HEX(TABNAME)` arrived as
- *    `4772C3BCC39F65`, the name's exact UTF-8 bytes. Every name, default and definition is
- *    therefore selected as `HEX(...)` under an alias ending `_HEX`, and decoded here. Statement
- *    text and bound values travel the other way correctly (a bound `Grüße` found that table), so
- *    only what comes BACK needs this.
+ * 1. No LOB is selected beside other columns (M1). `SYSCAT.COLUMNS."DEFAULT"` and the `TEXT` of a
+ *    view, a routine and a trigger are CLOBs. db2-node 1.0.22 could not fetch a CLOB at all (K7);
+ *    1.0.24 fetches one read on its own, but a LOB beside other columns can still come back wrong
+ *    or fail (K4, measured on 12.1.0.0: a CLOB beside a DOUBLE failed with a protocol error, and
+ *    beside a GRAPHIC answered no row). So a LOB is read as `VARCHAR(SUBSTRING(x, start, n,
+ *    OCTETS), n)`, which never truncates: SUBSTRING with an explicit length PADS a shorter value
+ *    with blanks rather than warning, and the reader cuts the padding off by the byte length
+ *    `LENGTH(x)` reports beside it.
+ * 2. Catalog text is read as HEX, under an alias ending `_HEX`, and decoded here. 1.0.22 decoded
+ *    every non-ASCII byte of a VARCHAR as EBCDIC 037 (K1), which is why this started; 1.0.24
+ *    decodes a Unicode database's text correctly. It stays because a SUBSTRING chunk of a
+ *    definition or a default can end inside a character, which only bytes can be cut at cleanly,
+ *    and because on a database with another code page the driver's decoding was not measured,
+ *    where this provider refuses a non-ASCII name it cannot decode rather than show a guess.
  * 3. Blank-padded CHAR columns arrive padded (`SCHEMANAME` as `"APP     "`), so every one is
  *    RTRIMmed in the statement (M5).
  */
@@ -399,10 +400,10 @@ export const SOURCE_BYTE_LIMIT = SOURCE_CHUNK_BYTES * 2;
  * length (and whatever else the kind needs), the tail its second chunk, run only when the
  * definition is longer than one chunk.
  *
- * TWO STATEMENTS AND NOT ONE, measured on 12.1.0.0: a single row carrying both 32672-character
- * chunks fails through db2-node 1.0.22 with "Protocol error: invalid DSS magic byte", sometimes on
- * the first run and sometimes on the second, while a row carrying one chunk read correctly six
- * times running. A row wider than one DRDA block is what the driver loses its framing on.
+ * TWO STATEMENTS AND NOT ONE, so that a definition shorter than one chunk, which is nearly every
+ * definition, does not carry a second chunk of 16336 padding blanks over the wire. db2-node 1.0.22
+ * also failed a row carrying both 32672-character chunks with "Protocol error: invalid DSS magic
+ * byte" (K21); 1.0.24 reads such a row, measured on 12.1.0.0, so that is no longer the reason.
  */
 export interface SourceStatements {
   readonly head: string;
