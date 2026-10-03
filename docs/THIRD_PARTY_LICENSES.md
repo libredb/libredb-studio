@@ -31,7 +31,7 @@ The Graph tab's canvas library and its layout carry only the MIT notice each pac
 | [`layout-base`](https://github.com/iVis-at-Bilkent/layout-base) | 2.0.1 | MIT | dependency of `cose-base` |
 
 Each ships its LICENSE file in the package; all four were read on 2026-10-03.
-Only `src/components/results-graph/cytoscape-host.ts` loads them, through a dynamic import, so they reach a browser chunk of their own and never the server.
+Only `src/components/results-graph/cytoscape-host.ts` loads them, and only through a dynamic import, so importing that module loads neither package.
 
 See `docs/BACKLOG.md` entry C8 for the broader, not-yet-generated NOTICE this file is a manual
 precursor to.

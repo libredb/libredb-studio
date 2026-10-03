@@ -4,9 +4,8 @@
  * `cytoscape` and its `cytoscape-fcose` layout are loaded here and nowhere else
  * (a test parses every source file to hold that), and only through a dynamic
  * `import()` that the view awaits inside an effect. So importing this module
- * loads neither package: nothing touches `window` at module load or during a
- * server render, and both land in a chunk of their own that only the Graph tab
- * fetches.
+ * loads neither package, and nothing touches `window` at module load or during
+ * a server render.
  *
  * `loadCytoscape` is the view's default factory. The view takes the factory as a
  * prop, so a component test passes a fake or a `headless: true` instance instead,

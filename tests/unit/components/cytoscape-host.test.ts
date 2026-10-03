@@ -7,7 +7,7 @@
  * libraries headlessly through the loader the view takes as its injectable factory,
  * and a syntactic guard keeps every other source file from importing either package.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
 import ts from "typescript";
@@ -84,13 +84,23 @@ describe("loadCytoscape", () => {
     }
   });
 
-  test("can be called again, as a remounted view does", async () => {
+  test("can be called again, as a remounted view does, without a warning and without breaking the first instance", async () => {
+    const warn = spyOn(console, "warn");
+    const error = spyOn(console, "error");
     const first = await headless(loadCytoscape);
     const second = await headless(loadCytoscape);
     try {
       second.layout(fcoseLayout()).run();
+      first.layout(fcoseLayout()).run();
       expect(second.nodes()).toHaveLength(3);
+      for (const cy of [first, second]) {
+        expect(new Set(cy.nodes().map((node) => `${node.position().x},${node.position().y}`)).size).toBe(3);
+      }
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).not.toHaveBeenCalled();
     } finally {
+      warn.mockRestore();
+      error.mockRestore();
       first.destroy();
       second.destroy();
     }
