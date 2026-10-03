@@ -56,6 +56,24 @@ const PROVIDER_DOCS = readdirSync(path.join(ROOT, "docs/providers"))
  * doc, and a name that is not declared is caught here rather than by a reader.
  */
 const NAMED_CITATIONS = [
+  // Db2 provider.
+  {
+    doc: "docs/providers/db2.md",
+    source: "src/lib/db/providers/sql/db2/index.ts",
+    methods: ["connect", "disconnect", "query", "countObjects", "describeObjects"],
+  },
+  // etcd provider.
+  {
+    doc: "docs/providers/etcd.md",
+    source: "src/lib/db/providers/keyvalue/etcd/index.ts",
+    methods: ["connect", "disconnect"],
+  },
+  // Neo4j provider.
+  {
+    doc: "docs/providers/neo4j.md",
+    source: "src/lib/db/providers/graph/neo4j/index.ts",
+    methods: ["getLabels", "connect"],
+  },
   {
     doc: "docs/providers/sqlite.md",
     source: "src/lib/db/providers/sql/sqlite.ts",
