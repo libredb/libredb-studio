@@ -25,6 +25,10 @@ import { declaredLevels } from "@/lib/db/object-kinds";
 import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
 import { type GraphKindId, graphObjectSegment } from "@/lib/db/graph/objects";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
+import { parseConsole } from "@/lib/db/console/parser";
+import { toJsonText } from "@/lib/db/console/tagged-json";
+import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
+import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
 
@@ -2047,5 +2051,38 @@ describe("Cypher tree click and Generate Query (Neo4j spec 6.5)", () => {
   test("quoteIdentifier writes a Cypher name in backticks, a backtick doubled", () => {
     expect(quoteIdentifier("Person", neo4jCaps)).toBe("`Person`");
     expect(quoteIdentifier("Back`tick", neo4jCaps)).toBe("`Back``tick`");
+  });
+});
+
+// Qdrant (vector-family spec 6.7): both generators read the DIALECT_GENERATORS record, which writes the provider's own
+// browser-safe text, and every output is a request the real console parser accepts.
+describe("generateTableQuery and generateSelectQuery: Qdrant", () => {
+  const qdrantCaps = makeCaps({ queryLanguage: "json", queryDialect: "qdrant", supportsExplain: false });
+  const path = ["plain"];
+  const columns: ColumnSchema[] = [
+    { name: "id", type: "uint64 or UUID", nullable: false, isPrimary: true },
+    { name: "vector", type: "Dense(4, float32, Dot)", nullable: true, isPrimary: false },
+    { name: "city", type: "keyword", nullable: true, isPrimary: false },
+  ];
+
+  test("the tree click on a Qdrant collection writes the scroll request, never a MongoDB find", () => {
+    const text = generateTableQuery(path, qdrantCaps, columns);
+    expect(text).toBe(qdrantTableQuery(path));
+    const request = parseConsole(QDRANT_CONSOLE, QDRANT_ROUTES, text);
+    expect([request.route.method, request.route.template, request.params.collection_name]).toEqual([
+      "POST",
+      "collections/{collection_name}/points/scroll",
+      "plain",
+    ]);
+    expect(JSON.parse(toJsonText(request.body))).toEqual({ limit: 100, with_payload: true, with_vector: false });
+  });
+
+  test("Generate Command on a Qdrant collection writes a runnable query over its first dense vector", () => {
+    const text = generateSelectQuery(path, columns, qdrantCaps);
+    expect(text).toBe(qdrantSelectQuery(path, columns));
+    const request = parseConsole(QDRANT_CONSOLE, QDRANT_ROUTES, text);
+    expect(request.route.template).toBe("collections/{collection_name}/points/query");
+    const body = JSON.parse(toJsonText(request.body)) as Record<string, unknown>;
+    expect([(body.query as number[]).length, body.limit, body.using]).toEqual([4, 10, undefined]);
   });
 });

@@ -1,9 +1,9 @@
 /**
  * `offersSqlExport`, the one reader of `DialectSpec.offersSqlExport` (vector-family spec 3.10, BACKLOG U69).
  *
- * The real registry answers for every shipped dialect. No shipped record declines the SQL formats, so two
- * synthetic records, which no shipped dialect is, stand in for one that declines them and one that says so
- * explicitly. The module mock is process-wide, which the runner confines to this file.
+ * The real registry answers for every shipped dialect. Qdrant's record is the one shipped record that declines the
+ * SQL formats, and two synthetic records, which no shipped dialect is, stand in for one that declines them and one
+ * that says so explicitly, so the rule is pinned apart from any engine. The module mock is process-wide, which the runner confines to this file.
  */
 import { describe, expect, mock, test } from "bun:test";
 import type { DialectSpec } from "@/lib/db/query-dialects";
@@ -58,10 +58,14 @@ describe("offersSqlExport", () => {
     expect(offersSqlExport(makeCaps({ queryLanguage: "promql" }))).toBe(true);
   });
 
-  test("offers them to every shipped dialect, whose records leave the field absent", () => {
+  test("offers them to every shipped dialect whose record leaves the field absent", () => {
     for (const dialect of ["libredb", "redis", "kafka", "etcd"] as const) {
       expect(offersSqlExport(makeCaps({ queryDialect: dialect })), dialect).toBe(true);
     }
+  });
+
+  test("withholds them from qdrant, whose record declines them (vector-family spec 3.10)", () => {
+    expect(offersSqlExport(makeCaps({ queryDialect: "qdrant" }))).toBe(false);
   });
 
   test("offers them to a host's dialect this release has no record for, as the menu always did", () => {

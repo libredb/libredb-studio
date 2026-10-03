@@ -106,6 +106,8 @@ mock.module("@monaco-editor/react", () => ({
           // The etcd language's tokens provider is the provider's own lexer, not a Monarch grammar (#1089).
           setTokensProvider: mock(() => {}),
           setLanguageConfiguration: mock(() => {}),
+          // The Qdrant console language registers its route completion before the editor mounts (vector-family spec 3.5).
+          registerCompletionItemProvider: mock(() => ({ dispose: () => {} })),
         },
       };
 
@@ -1952,12 +1954,11 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("graph-cypher");
   });
 
-  test("registers no console language while no editor record carries one (vector-family spec 3.5)", () => {
+  test("registers the Qdrant console language after the custom languages, before the editor mounts (vector-family spec 3.8)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", value: "SELECT 1" })));
 
-    // registerDialectConsoles runs on every mount, and no shipped record carries a console language, so the
-    // five custom languages registered before it are the whole list.
-    expect(capturedLanguageRegistrations).toEqual(["libredb", "redis", "promql", "etcd", "graph-cypher"]);
+    // registerDialectConsoles runs on every mount, and the Qdrant record is the one that carries a console language.
+    expect(capturedLanguageRegistrations).toEqual(["libredb", "redis", "promql", "etcd", "graph-cypher", "qdrant"]);
   });
 
   describe("the Cypher completion provider registers for a graph-cypher editor only", () => {

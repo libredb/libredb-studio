@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd",
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "qdrant",
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -131,7 +131,7 @@ function draftEvent(options: {
     | { readonly kind: "no-inventory" }
     | { readonly kind: "not-applicable" };
   /** The editor language the server recorded with the draft; absent, as a ledger written before it. */
-  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher";
+  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher" | "qdrant";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -357,6 +357,33 @@ describe("AnswerCard — a plan run's statement", () => {
     ] as const) {
       const other = render(<AnswerCard timeline={cypherDraft} capabilities={capabilitiesFor(language, dialect)} />);
       expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-purple/40");
+      cleanup();
+    }
+  });
+
+  test("tints a Qdrant request in the qdrant language its tab renders in, in an accent of its own (vector-family spec 6.7)", () => {
+    // No guard here reads a Qdrant request (`validatePlanStatement` declines it), so the draft is shown beside the
+    // "not checked" chip, as a PromQL or etcd one is.
+    const qdrantDraft = planTimeline({
+      sql: 'POST /collections/docs/points/scroll\n{"limit": 5, "with_payload": true}',
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const qdrant = render(<AnswerCard timeline={qdrantDraft} capabilities={capabilitiesFor("json", "qdrant")} />);
+    const block = qdrant.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("qdrant");
+    expect(block.className).toContain("border-hue-pink/40");
+    cleanup();
+
+    // The controls: SQL's blue, JSON's cyan and etcd's sky are not it, so the class above is Qdrant's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["json", "etcd"],
+    ] as const) {
+      const other = render(<AnswerCard timeline={qdrantDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-pink/40");
       cleanup();
     }
   });

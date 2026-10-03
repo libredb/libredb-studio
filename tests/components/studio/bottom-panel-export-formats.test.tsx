@@ -2,8 +2,8 @@
  * The result export menu's SQL formats, read per dialect (vector-family spec 3.10, R46 C4, BACKLOG U69).
  *
  * R46 C4 measured the Export menu of seven engines offering SQL INSERT and DDL; each keeps both here, under its
- * own language and dialect. A synthetic dialect record, which no shipped engine has, declines them, and both the
- * Export and the Copy items must leave them out. The registry is mocked for that one name only and the mock is
+ * own language and dialect. Qdrant's record declines them, and so does a synthetic dialect record, which no shipped
+ * engine has, so the rule is pinned apart from any engine: both the Export and the Copy items must leave them out. The registry is mocked for that one name only and the mock is
  * process-wide, so this file is separate from `BottomPanel.test.tsx`.
  */
 import "../../setup-dom";
@@ -136,6 +136,10 @@ describe("the result export menu offers the SQL formats where the dialect says t
 
   test("capabilities that have not arrived keep both, as the menu always did", async () => {
     expect(await exportMenuItems(null)).toEqual(ALL_ITEMS);
+  });
+
+  test("qdrant, whose record declines them, loses both from the Export and the Copy items (vector-family spec 3.10)", async () => {
+    expect(await exportMenuItems(capabilitiesOf({ queryDialect: "qdrant" }))).toEqual(WITHOUT_SQL);
   });
 
   test("a dialect whose record declines them loses both, from the Export and the Copy items alike", async () => {

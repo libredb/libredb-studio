@@ -54,6 +54,12 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
   });
 
+  test("Qdrant gets a qdrant tab, not the MongoDB one its queryLanguage json would give (vector-family spec 6.7)", () => {
+    expect(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "qdrant" }))).toBe("qdrant");
+    // The control: the same declaration with the dialect removed is MongoDB's.
+    expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
+  });
+
   test("Neo4j (queryLanguage cypher, no dialect) gets a cypher tab, not the SQL fallback (Neo4j spec 6.5)", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "cypher" }))).toBe("cypher");
   });
@@ -87,6 +93,13 @@ describe("editorLanguageForTabType", () => {
   test("an etcd tab renders in the etcd language this repository registers over the provider's lexer (#1089)", () => {
     expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "etcd" })))).toBe(
       "etcd",
+    );
+  });
+
+  test("a qdrant tab renders in the qdrant console language, restored with no capabilities (vector-family spec 3.8)", () => {
+    expect(editorLanguageForTabType("qdrant")).toBe("qdrant");
+    expect(editorLanguageForTabType(resolveTabType(makeCaps({ queryLanguage: "json", queryDialect: "qdrant" })))).toBe(
+      "qdrant",
     );
   });
 });

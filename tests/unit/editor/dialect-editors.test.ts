@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import type { ConsoleLanguage } from "@/lib/editor/console-language";
+import { formatConsole } from "@/lib/db/console/format";
+import { QDRANT_CONSOLE, QDRANT_ROUTES as QDRANT_ROUTES_REAL } from "@/lib/db/providers/vector/qdrant/routes";
 import { DIALECT_EDITORS, formatterForLanguage, registerDialectConsoles } from "@/lib/editor/dialect-editors";
 import type { EditorLanguage } from "@/lib/editor/tab-language";
 import { QDRANT_ROUTES, QDRANT_STAND_IN } from "../../helpers/console-stand-ins";
@@ -13,6 +15,7 @@ const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "promql",
   "etcd",
   "graph-cypher",
+  "qdrant",
 ];
 
 describe("DIALECT_EDITORS", () => {
@@ -24,6 +27,7 @@ describe("DIALECT_EDITORS", () => {
       "libredb",
       "mongodb",
       "promql",
+      "qdrant",
       "redis",
       "sql",
     ]);
@@ -42,15 +46,16 @@ describe("DIALECT_EDITORS", () => {
       kafka: "json",
       etcd: "etcd",
       cypher: "graph-cypher",
+      qdrant: "qdrant",
     });
   });
 
-  test("only the SQL tab and the two JSON tabs have a formatter", () => {
+  test("only the SQL tab, the two JSON tabs and the Qdrant console have a formatter", () => {
     const formatted = Object.entries(DIALECT_EDITORS)
       .filter(([, editor]) => editor.format !== undefined)
       .map(([type]) => type)
       .sort();
-    expect(formatted).toEqual(["kafka", "mongodb", "sql"]);
+    expect(formatted).toEqual(["kafka", "mongodb", "qdrant", "sql"]);
   });
 
   test("tab types that render in one Monaco language share one formatter, or all have none", () => {
@@ -107,10 +112,19 @@ describe("formatterForLanguage", () => {
 });
 
 describe("the console field", () => {
-  test("no shipped tab type carries a console language yet", () => {
-    for (const [tabType, editor] of Object.entries(DIALECT_EDITORS)) {
-      expect(editor.console, `${tabType} carries a console language`).toBeUndefined();
-    }
+  test("the Qdrant record carries the Qdrant console language, and no other record carries one", () => {
+    const carrying = Object.entries(DIALECT_EDITORS)
+      .filter(([, editor]) => editor.console !== undefined)
+      .map(([tabType]) => tabType);
+    expect(carrying).toEqual(["qdrant"]);
+    expect(DIALECT_EDITORS.qdrant.console?.spec).toBe(QDRANT_CONSOLE);
+    expect(DIALECT_EDITORS.qdrant.console?.routes).toBe(QDRANT_ROUTES_REAL);
+  });
+
+  test("a qdrant tab formats through formatConsole bound to QDRANT_CONSOLE", () => {
+    const text = 'POST /collections/docs/points/scroll\n{"limit":1,"with_payload":true}';
+    expect(DIALECT_EDITORS.qdrant.format?.(text)).toBe(formatConsole(QDRANT_CONSOLE, text));
+    expect(formatterForLanguage("qdrant")?.(text)).toBe(formatConsole(QDRANT_CONSOLE, text));
   });
 });
 
@@ -145,9 +159,10 @@ describe("registerDialectConsoles", () => {
     expect(registered.map((language) => language.id)).toEqual(["first-console", "second-console"]);
   });
 
-  test("registers nothing for the shipped records", () => {
+  test("registers the Qdrant console language for the shipped records, once", () => {
     const { monaco, registered } = recordingMonaco();
     registerDialectConsoles(monaco);
-    expect(registered).toEqual([]);
+    registerDialectConsoles(monaco);
+    expect(registered.map((language) => language.id)).toEqual(["qdrant"]);
   });
 });

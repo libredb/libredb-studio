@@ -5,6 +5,7 @@ import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
+import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
 import { type ObjectReadRange, offersCountQuery, type ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
@@ -669,6 +670,13 @@ const DIALECT_GENERATORS: Readonly<Record<QueryDialect, DialectGenerators>> = Ob
   etcd: {
     table: (path, _columns, scope) => etcdReadText(objectSegment(path), scope),
     select: (path, _columns, scope) => etcdCommandText(objectSegment(path), scope),
+  },
+  // Qdrant reads a collection through its own console request (vector-family spec 6.7), written by the provider's
+  // browser-safe generators.ts: the tree click is a 100-point scroll of the clicked collection, without vectors, and
+  // "Generate Command" a runnable query over the first dense vector. Neither reads the scope.
+  qdrant: {
+    table: (path) => qdrantTableQuery(path),
+    select: (path, columns) => qdrantSelectQuery(path, columns),
   },
 });
 
