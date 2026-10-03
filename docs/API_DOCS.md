@@ -2034,6 +2034,13 @@ interface QueryWarning {
   message: string;         // The notice, as the engine worded it
   code?: number | string;  // The engine's own identifier, when it reported one
 }
+
+interface VectorColumn {                            // One entry of `vectorColumns`
+  kind: "dense" | "sparse" | "multi";               // VectorKind
+  dtype: "float32" | "float64" | "float16" | "bfloat16" | "int8" | "uint8" | "binary"; // VectorDType
+  dimension: number | null;                         // Elements per vector, bits for "binary", one row's size for "multi"; null for "sparse"
+  sparseEncoding?: "index-map" | "indices-values";  // SparseEncoding: set on every sparse column
+}
 ```
 
 `pagination` is the object `POST /api/db/query` attaches to every response (`limit`, `offset`,
@@ -2043,6 +2050,14 @@ produced no warnings omits the field rather than sending `[]`, so a client can d
 from the field's presence alone. `columnTypes` is the declared type of *this* result, which is the
 only source for a computed column or an ad-hoc projection — the schema has no catalog entry to
 answer with.
+
+`vectorColumns` names the columns of this result that hold vectors, keyed by their names in `fields`, and is absent when the result has none, never an empty object.
+A declared column's cells render as vector cells: the first 8 elements and the size in the grid (`768 dims`, bits for a binary vector, entries for a sparse one, rows for a multivector), a header line such as `dense float32, 768 dims` over the whole value in the row detail, and the whole value on Copy Cell.
+A cell holds its engine's native form, so a copied cell is search data for its own engine: every element of a float vector and of every multivector is written with a fraction when it is integral (`1.0`), int8, uint8 and binary elements and every sparse index are written as integers, and a sparse cell keeps its encoding (`index-map` is `{"3":0.5}`, `indices-values` is `{"indices":[3],"values":[0.5]}`).
+A masked column copies its mask, as every other masked cell does.
+Only a declared column renders as a vector, so an array in any other column renders as the JSON it is.
+`WorkspaceQueryResult`, the result a host returns to `StudioWorkspace`, carries the same optional field, and a page fetched by Load More that carries none keeps the first page's declaration.
+`VectorColumn`, `VectorKind`, `VectorDType` and `SparseEncoding` are published from `@libredb/studio/types`.
 
 ### HealthInfo
 
