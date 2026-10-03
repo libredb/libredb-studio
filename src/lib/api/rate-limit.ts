@@ -138,17 +138,23 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // for exactly that and the object half of the count moved: the previous figure was TWENTY-THREE
   // over seven object routes, and the edit surface adds two.
   //
-  // TWENTY-SEVEN handlers today, and there are three ways in, which is why one grep under-counts.
-  // Directly, seventeen call sites that pass bucket: "query" to guardRoute themselves
-  // (grep -rl 'bucket: "query"' src/app/api/ answers seventeen files, one call site each, verified
-  // with grep -rc on the same list): admin/fleet-health, db/cancel, db/disconnect, db/health,
-  // db/maintenance, db/monitoring, db/multi-query, db/pool-stats, db/profile, db/provider-meta,
-  // db/query, db/test-connection, db/transaction, mcp/token, and the three storage routes (storage,
-  // storage/[collection], storage/migrate). Note db/health: only its POST is metered, because the
-  // GET is the container health probe and takes no connection. mcp/token runs no query: its POST is
-  // metered here because the credential it mints reaches this workload, and its GET reads the
-  // channel status with getSession and is charged nothing, as GET /api/agent/config is in the ai
-  // bucket.
+  // RE-COUNTED 2026-10-03, when db/maintenance/preview joined: the figure below had said seventeen
+  // files while the grep it cites already answered twenty-one, because admin/accounts,
+  // admin/accounts/[email], auth/passkey and auth/totp had joined without it.
+  //
+  // THIRTY-TWO route files today, and there are three ways in, which is why one grep under-counts.
+  // Directly, twenty-two route files that pass bucket: "query" to guardRoute themselves
+  // (grep -rl 'bucket: "query"' src/app/api/ answers twenty-two files; grep -c on the same list
+  // finds one call site in each but auth/passkey and auth/totp, which have one per method, two
+  // each, so twenty-four call sites): admin/accounts, admin/accounts/[email], admin/fleet-health,
+  // auth/passkey, auth/totp, db/cancel, db/disconnect, db/health, db/maintenance,
+  // db/maintenance/preview, db/monitoring, db/multi-query, db/pool-stats, db/profile,
+  // db/provider-meta, db/query, db/test-connection, db/transaction, mcp/token, and the three storage
+  // routes (storage, storage/[collection], storage/migrate). Note db/health: only its POST is
+  // metered, because the GET is the container health probe and takes no connection. mcp/token
+  // runs no query: its POST is metered here because the credential it mints reaches this workload,
+  // and its GET reads the channel status with getSession and is charged nothing, as
+  // GET /api/agent/config is in the ai bucket.
   // Indirectly, the NINE object routes under db/objects (containers, counts, list, describe,
   // search, inventory, source, edit-plan, edit-apply), which reach this bucket through
   // handleObjectRequest in object-route.ts and so carry no bucket literal of their own. Counted
