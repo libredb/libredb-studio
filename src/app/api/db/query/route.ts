@@ -4,6 +4,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
+import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
@@ -57,6 +58,21 @@ export async function POST(req: NextRequest) {
 
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
+    }
+
+    // A connection type that declares a console text bound is held to it here, before the bound parameters, the
+    // provider and the statement cache are reached, so an oversize text opens no socket. The answer names the size
+    // and the bound and never repeats the text. The bound is read from the type in the body, after the JSON has been
+    // parsed: a streamed bound on the request itself would change every engine and is a separate decision.
+    const textLimit = consoleTextByteLimit(connection.type);
+    if (textLimit !== undefined) {
+      if (typeof sql !== "string") {
+        return NextResponse.json({ error: "sql must be a string" }, { status: 400 });
+      }
+      const over = consoleTextOverLimit(sql, textLimit);
+      if (over !== undefined) {
+        return NextResponse.json({ error: over }, { status: 413 });
+      }
     }
 
     // A generated statement sends its values here rather than writing them into the

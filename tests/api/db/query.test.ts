@@ -1,4 +1,5 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
@@ -1329,5 +1330,79 @@ describe("POST /api/db/query — the database a run reads", () => {
     expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
     expect(openedConnections()).toHaveLength(1);
     expect(openedConnections()[0]).toMatchObject({ database: "testdb" });
+  });
+});
+
+/**
+ * A connection type's console text bound (vector family, PR 1v). It is read after `resolveConnection` and the
+ * `!sql` check and before the bound parameters, the provider and the statement cache, and the answer never repeats
+ * the text. No shipped engine declares one, which the 9 MiB case pins.
+ */
+describe("POST /api/db/query: a declared console text bound", () => {
+  const LIMIT = 64;
+  const standIn = { id: "stand-in-1", name: "Stand-in", type: STAND_IN_TYPE };
+  let remove: () => void = () => {};
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    remove = installStandInVocabulary({ maxTextBytes: LIMIT });
+  });
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  async function post(body: Record<string, unknown>) {
+    const res = await POST(createMockRequest("/api/db/query", { method: "POST", body }) as never);
+    return { res, data: await parseResponseJSON<{ error?: string }>(res) };
+  }
+
+  test("answers 413 one byte over, naming the size and the bound, never the text, before any provider", async () => {
+    const sql = `SECRET-${"x".repeat(LIMIT - 6)}`;
+    const { res, data } = await post({ connection: standIn, sql });
+    expect(res.status).toBe(413);
+    expect(data.error).toBe(
+      "The statement is 65 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it.",
+    );
+    expect(JSON.stringify(data)).not.toContain("SECRET");
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
+  });
+
+  test("counts UTF-8 bytes, not characters", async () => {
+    const { res, data } = await post({ connection: standIn, sql: "é".repeat(40) });
+    expect(res.status).toBe(413);
+    expect(data.error).toContain("80 bytes");
+  });
+
+  test("refuses before it reads the bound parameters", async () => {
+    const { res } = await post({ connection: standIn, sql: "x".repeat(LIMIT + 1), params: "not-an-array" });
+    expect(res.status).toBe(413);
+  });
+
+  test("lets a text of exactly the bound through to the provider", async () => {
+    const sql = "x".repeat(LIMIT);
+    const { res } = await post({ connection: standIn, sql });
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(sql);
+  });
+
+  test("refuses a sql that is not a string where the type declares a bound", async () => {
+    const { res, data } = await post({ connection: standIn, sql: ["x"] });
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("sql must be a string");
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("an engine that declares no bound runs a 9 MiB statement as before", async () => {
+    const sql = `SELECT 1 -- ${"x".repeat(9 * 1024 * 1024)}`;
+    const { res } = await post({ connection: validConnection, sql });
+    expect(res.status).toBe(200);
+    expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toHaveLength(sql.length);
   });
 });

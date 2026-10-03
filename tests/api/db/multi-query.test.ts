@@ -1,4 +1,5 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -737,5 +738,50 @@ describe("POST /api/db/multi-query", () => {
 
     expect(res.status).toBe(200);
     expect("openTransaction" in data).toBe(false);
+  });
+});
+
+/**
+ * A type that declares a console text bound runs one statement per request, so this route, whose SQL splitter would
+ * turn one console text into several requests, refuses it before splitting anything (vector family, PR 1v).
+ */
+describe("POST /api/db/multi-query: a type that declares a console text bound", () => {
+  const REFUSAL =
+    "This connection type runs one statement per request: send it to POST /api/db/query, because this route would split its text into several requests.";
+  let remove: () => void = () => {};
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    remove = installStandInVocabulary({ maxTextBytes: 64 });
+  });
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  test("is refused with 400 naming POST /api/db/query, before the text is split or a provider acquired", async () => {
+    // `;` alone splits into no statement, which answers "No valid SQL statements found" when the split runs first.
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { id: "stand-in-1", name: "Stand-in", type: STAND_IN_TYPE }, sql: ";" },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(REFUSAL);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("a type that declares no bound is split and run as before", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT 1; SELECT 2" },
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
   });
 });
