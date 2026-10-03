@@ -19,13 +19,22 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
+  declaredEntityOperations,
   maintenanceControl,
+  type MaintenanceOperation,
   type MaintenanceType,
   type MonitoringData,
   type ProviderCapabilities,
   type ProviderLabels,
 } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
+import {
+  MaintenanceEntityDialog,
+  closedEntityDialog,
+  entityRequest,
+  type EntityDialogOpening,
+  type LoadMaintenancePreview,
+} from "@/components/maintenance-entity-dialog";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 /**
@@ -50,6 +59,14 @@ const MAINTENANCE_ACTIONS: { type: MaintenanceType; label: string; Icon: LucideI
   { type: "reindex", label: "Reindex", Icon: Zap, className: "h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex" },
   { type: "check", label: "Check", Icon: ShieldCheck, className: "h-6 w-6 sm:h-8 sm:w-8 hidden sm:inline-flex" },
 ];
+
+/** One per-row control: a `MAINTENANCE_ACTIONS` entry, or a declared operation outside `MaintenanceType` (spec 3.11). */
+interface RowAction {
+  type: MaintenanceOperation;
+  label: string;
+  Icon: LucideIcon;
+  className: string;
+}
 
 /**
  * Pure formatters, at module scope rather than re-created inside `TablesTab` on every
@@ -185,11 +202,27 @@ interface TablesTabProps {
    * an engine that declares no caption.
    */
   labels?: ProviderLabels;
+  /**
+   * Reads a per-row operation's preview (spec 3.11), from `useMonitoringData`. Absent, a control whose spec asks for
+   * a preview is not offered: the tab would have no way to show what it does before it runs.
+   */
+  onPreviewMaintenance?: LoadMaintenancePreview;
 }
 
-export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, capabilities, labels }: TablesTabProps) {
+export function TablesTab({
+  data,
+  loading,
+  onRunMaintenance,
+  onPreviewMaintenance,
+  isAdmin = true,
+  capabilities,
+  labels,
+}: TablesTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  // A per-row operation's dialog, and the count that keys each opening, as the Operations tab keeps its own (spec 3.11).
+  const [entityDialog, setEntityDialog] = useState<EntityDialogOpening | null>(null);
+  const [entityDialogOpenings, setEntityDialogOpenings] = useState(0);
 
   if (loading && !data) {
     return <TablesSkeleton />;
@@ -259,10 +292,22 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
   // thing to every engine: a schema for PostgreSQL, the database for MySQL, an owner for
   // Oracle. The row already renders `${schemaName}.${tableName}`, so the value was one
   // property away and was being dropped here (#772).
-  const handleMaintenance = async (type: MaintenanceType, tableName: string, container?: string) => {
+  const runRowMaintenance = async (type: MaintenanceOperation, tableName: string, container?: string) => {
     setActionLoading(`${type}-${tableName}`);
     await onRunMaintenance(type, tableName, container);
     setActionLoading(null);
+  };
+
+  // A row control whose spec asks for the row's own name or for a preview opens the per-row dialog, which sends
+  // through `runRowMaintenance` once confirmed (spec 3.11); every other control sends with one click, as before.
+  const handleMaintenance = async (type: MaintenanceOperation, tableName: string, container?: string) => {
+    const entity = entityRequest(capabilities, type, tableName, container);
+    if (entity !== null) {
+      setEntityDialog({ request: entity, open: true, key: entityDialogOpenings });
+      setEntityDialogOpenings(entityDialogOpenings + 1);
+      return;
+    }
+    await runRowMaintenance(type, tableName, container);
   };
 
   // Offer only the maintenance a provider declares it can perform HERE: /api/db/maintenance
@@ -271,10 +316,25 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
   // database from a control that named one table, Oracle's index rebuild answered ORA-01418
   // for every table name there is. `maintenanceControl` reads the provider's own
   // `perEntity` declaration for each, and hands back the engine's own wording with it (#496).
-  const availableActions = MAINTENANCE_ACTIONS.flatMap((action) => {
-    const control = maintenanceControl(capabilities, action.type, "perEntity");
-    return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];
-  });
+  //
+  // Every declared operation outside `MaintenanceType` that runs on one row follows the tab's own, in declaration
+  // order and under a generic icon (spec 3.11). One whose spec asks for a preview is offered only where this tab was
+  // handed a way to read one.
+  const availableActions: RowAction[] = [
+    ...MAINTENANCE_ACTIONS.flatMap((action) => {
+      const control = maintenanceControl(capabilities, action.type, "perEntity");
+      return control.offered ? [{ ...action, label: control.label ?? action.label }] : [];
+    }),
+    ...declaredEntityOperations(capabilities).map((operation) => ({
+      type: operation.type,
+      label: operation.label,
+      Icon: Wrench,
+      className: "h-6 w-6 sm:h-8 sm:w-8",
+    })),
+  ].filter(
+    (action) =>
+      onPreviewMaintenance !== undefined || maintenanceControl(capabilities, action.type, "perEntity").preview !== true,
+  );
 
   // Both halves have to be true for the dead end U22 names: the engine declares a control
   // that takes ONE table, and this panel has no table to offer it on. `statsAbsent` covers
@@ -462,6 +522,22 @@ export function TablesTab({ data, loading, onRunMaintenance, isAdmin = true, cap
           )}
         </CardContent>
       </Card>
+
+      {/* A per-row operation's typed target or preview (spec 3.11). */}
+      {entityDialog && (
+        <MaintenanceEntityDialog
+          key={entityDialog.key}
+          open={entityDialog.open}
+          onOpenChange={(open) => !open && setEntityDialog(closedEntityDialog)}
+          request={entityDialog.request}
+          loadPreview={onPreviewMaintenance}
+          onConfirm={async () => {
+            const { type, target, container } = entityDialog.request;
+            await runRowMaintenance(type, target, container);
+            return null;
+          }}
+        />
+      )}
     </div>
   );
 }

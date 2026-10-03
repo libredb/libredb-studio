@@ -536,4 +536,27 @@ describe("MonitoringDashboard", () => {
 
     expect(providerMetadataCalls[providerMetadataCalls.length - 1]?.id).toBe("c2");
   });
+
+  test("hands the hook's previewMaintenance to the tables tab (spec 3.11)", async () => {
+    const user = userEvent.setup();
+    const previewMaintenance = mock(async () => ({ summary: "Loads users.", facts: [] }));
+    const withPreview = { ...monitoringDataDefaults(), previewMaintenance };
+    mockUseMonitoringData.mockImplementation(() => withPreview);
+    tablesTabProps.length = 0;
+
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<MonitoringDashboard />);
+    });
+    const { queryByTestId, container } = renderResult!;
+    const tablesTrigger = Array.from(container.querySelectorAll('[role="tab"]')).find((t) =>
+      t.textContent?.includes("Tables"),
+    ) as HTMLElement;
+    await user.click(tablesTrigger);
+    await waitFor(() => {
+      expect(queryByTestId("monitoring-tablestab")).not.toBeNull();
+    });
+
+    expect(tablesTabProps[tablesTabProps.length - 1].onPreviewMaintenance).toBe(previewMaintenance);
+  });
 });

@@ -84,6 +84,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
     refresh,
     killSession,
     runMaintenance,
+    previewMaintenance,
   } = useMonitoringData(selectedConnection, monitoringOptions);
 
   // Declared provider capabilities, so tabs can hide controls the provider cannot
@@ -307,6 +308,7 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   data={data}
                   loading={loading}
                   onRunMaintenance={runMaintenance}
+                  onPreviewMaintenance={previewMaintenance}
                   capabilities={metadata?.capabilities}
                   labels={metadata?.labels}
                 />
