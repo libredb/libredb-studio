@@ -10,13 +10,20 @@
  */
 import type { MilvusInt64, WireTemplateValue } from "./client";
 
-const INT64_DIGITS = /^(0|-?[1-9][0-9]{0,18})$/;
-const INT64_MIN = BigInt("-9223372036854775808");
-const INT64_MAX = BigInt("9223372036854775807");
+/** A canonical decimal: no leading zero, no plus sign, no `-0`. */
+const CANONICAL_DECIMAL = /^(0|-?[1-9][0-9]*)$/;
+/** A sign and 19 digits: any longer text is out of range, so it is refused before it is parsed. */
+const INT64_TEXT_MAX = 20;
+/**
+ * Milvus's Int64 range, derived rather than spelled: tests/unit/db/sqlite-int64.test.ts reserves the digits for
+ * SQLite's bind rule in sql/sqlite-int64.ts, which is a different rule this provider must not import.
+ */
+const INT64_MAX = (BigInt(1) << BigInt(63)) - BigInt(1);
+const INT64_MIN = -(BigInt(1) << BigInt(63));
 
 /** `text` when it is the canonical decimal of an Int64, undefined otherwise (E12). */
 export function int64Digits(text: string): MilvusInt64 | undefined {
-  if (!INT64_DIGITS.test(text)) return undefined;
+  if (text.length > INT64_TEXT_MAX || !CANONICAL_DECIMAL.test(text)) return undefined;
   const value = BigInt(text);
   return value < INT64_MIN || value > INT64_MAX ? undefined : text;
 }
