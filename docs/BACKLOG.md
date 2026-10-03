@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D139, U17 · 83
+- [Drivers and connections](#drivers-and-connections) — D1-D140, U17 · 84
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X19, U2-U71 · 58
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X20, U2-U71 · 59
 - [Dependencies](#dependencies) — P1-P6 · 6
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -1995,6 +1995,17 @@ Not fixed there: the SQLite provider is outside that PR.
 
 **Done when:** a statement that changes no row reports no changed rows on both SQLite drivers, read from the statement itself rather than the connection's last count, and a test runs a `DELETE` then a `CREATE TABLE` on one connection and pins the second answer.
 
+### D140. MongoDB reads its fields from a sample and does not mark them sampled
+
+`describeObject` in `src/lib/db/providers/document/mongodb.ts` infers a collection's fields from up to `OBJECT_SAMPLE_SIZE` (100) documents and sets no `provenance` on the columns it builds.
+So every field name it reports, which comes from the stored documents rather than from a declaration, reaches MCP `inspect_schema`, agent grounding and the four AI panels.
+`ColumnSchema.provenance: "sampled"` exists for that case, and `machineColumns` in `src/lib/db/detailed-object.ts` keeps a marked column from every one of those surfaces.
+Adopting it is one assignment in the column builder and its test, but the consequence is not small: every MongoDB field is sampled, so marking them removes MongoDB's whole field list from MCP, agent grounding and the AI panels, where a model drafts queries from those names today.
+That trade needs the owner's decision before anyone makes it.
+Measured 2026-10-03: no `provenance:` assignment exists in the provider, and `OBJECT_SAMPLE_SIZE` is 100.
+
+**Done when:** the owner has decided whether MongoDB's sampled fields stay visible to models, and either the column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or `docs/providers/mongodb.md` states that its sampled fields reach those surfaces and this entry is deleted.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -2384,6 +2395,16 @@ stated in `readDefaultBody`'s own docblock.
 
 **Done when:** a body above the framework's clone limit gets one answer that names the size, on every
 route, rather than an empty-body claim on five and a parser error on one.
+
+### X20. The query routes read the whole JSON body before any bound a connection type declares
+
+`POST /api/db/query` and `POST /api/db/multi-query` call `req.json()` before they know which connection type the request is for, because the type is inside the body.
+A console text bound a connection type declares (`maxTextBytes` on its row in `src/lib/db/destructive-commands.ts`) is therefore checked after the body is parsed: the 413 of `POST /api/db/query` and the 400 of `POST /api/db/multi-query` keep the text from the provider, never from the parse.
+For every engine the only bound on the body is the framework's clone limit of X19, and statements up to it run today: `tests/api/db/query.test.ts` runs a 9 MiB statement on a type that declares no bound.
+A streamed bound read before the parse, as `readBoundedJson` in `src/lib/api/bounded-json.ts` gives the passkey routes and `readObjectRouteBody`, would close this for every engine, but it changes every SQL tab, and a JSON-escaped text can be several times its own size, so the figure is a decision about every engine rather than a fix.
+X19 measured how `POST /api/db/query` answers a body above the framework's 10 MiB buffer; how `POST /api/db/multi-query` answers one is unverified.
+
+**Done when:** the owner has chosen a body bound for the query routes, and both routes answer a body above it with a 413 that names the size, read from the stream before any parse, with a test per route.
 
 ---
 
