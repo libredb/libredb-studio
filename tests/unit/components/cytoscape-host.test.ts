@@ -129,8 +129,8 @@ describe("fcoseLayout", () => {
       fit: false,
       nodeDimensionsIncludeLabels: true,
       packComponents: true,
-      nodeSeparation: 100,
-      idealEdgeLength: 90,
+      nodeSeparation: 75,
+      idealEdgeLength: 60,
       tilingPaddingVertical: 16,
       tilingPaddingHorizontal: 16,
     });
