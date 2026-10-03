@@ -2370,8 +2370,7 @@ Measured with a commit counter in a real browser, 27 keystrokes in the editor: t
 Measured with a render counter in each of the three, 27 keystrokes in a real browser: 27 renders each on `main`, 0 each after.
 `BottomPanel` is still handed the tab's statement while its explain view is open, which pairs it with the plan, so in that view alone it re-renders per keystroke.
 The dialogs moved into `StudioModals` and the standalone overlays into `StudioOverlays`.
-Keystroke churn on the shell children was eliminated in #1190.
-What still re-renders on every keystroke, on `main` and on this head alike, is the modal surface: `SaveQueryModal`, `QuerySafetyDialog`, `CreateTableModal`, `DataImportModal`, `DataProfiler`, `CodeGenerator`, `TestDataGenerator`, the two confirmation `AlertDialog`s, `CommandPalette` and `MobileNav`.
+What still re-renders on every keystroke is the modal surface: `SaveQueryModal`, `QuerySafetyDialog`, `CreateTableModal`, `DataImportModal`, `DataProfiler`, `CodeGenerator`, `TestDataGenerator`, the two confirmation `AlertDialog`s, `CommandPalette`, `ShortcutsDialog` and `MobileNav`.
 Neither `StudioModals`, `StudioOverlays` nor the modals are memoized.
 
 ### X9. What `columnTypes` still cannot name, measured
