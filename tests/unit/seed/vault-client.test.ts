@@ -49,6 +49,7 @@ describe("vault-client", () => {
     delete process.env.VAULT_TOKEN;
     delete process.env.VAULT_ROLE;
     delete process.env.VAULT_K8S_TOKEN_PATH;
+    delete process.env.VAULT_K8S_AUTH_PATH;
     delete process.env.VAULT_NAMESPACE;
     delete process.env.VAULT_CACHE_TTL_MS;
   });
@@ -250,6 +251,51 @@ describe("vault-client", () => {
       expect(login.init.method).toBe("POST");
       expect(JSON.parse(login.init.body as string)).toEqual({ role: "studio", jwt: "sa-jwt" });
       expect(headersOf(calls[calls.length - 1])["X-Vault-Token"]).toBe("lease-token");
+    });
+
+    it("logs in at the mount named by VAULT_K8S_AUTH_PATH, ignoring surrounding slashes", async () => {
+      process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+      process.env.VAULT_ROLE = "studio";
+      const { dir, tokenPath } = writeServiceAccountToken("sa-jwt");
+      tokenDirs.push(dir);
+      process.env.VAULT_K8S_TOKEN_PATH = tokenPath;
+
+      for (const mount of ["orion", "/orion", "orion/", "/orion/"]) {
+        resetVaultCache();
+        process.env.VAULT_K8S_AUTH_PATH = mount;
+        const { calls, fetchImpl } = transport((url) => {
+          if (url === "http://127.0.0.1:8200/v1/auth/orion/login") {
+            return jsonResponse({ auth: { client_token: "lease-token", lease_duration: 3600 } });
+          }
+          if (url.includes("/v1/auth/")) return jsonResponse({ errors: ["permission denied"] }, 403);
+          return secretResponse("pg-secret");
+        });
+
+        expect(await readVaultSecret(PASSWORD_PATH, "password", { fetch: fetchImpl })).toBe("pg-secret");
+        expect(calls[0].url).toBe("http://127.0.0.1:8200/v1/auth/orion/login");
+      }
+    });
+
+    it("falls back to the kubernetes mount when VAULT_K8S_AUTH_PATH is empty or only slashes", async () => {
+      process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+      process.env.VAULT_ROLE = "studio";
+      const { dir, tokenPath } = writeServiceAccountToken("sa-jwt");
+      tokenDirs.push(dir);
+      process.env.VAULT_K8S_TOKEN_PATH = tokenPath;
+
+      for (const mount of ["", "/"]) {
+        resetVaultCache();
+        process.env.VAULT_K8S_AUTH_PATH = mount;
+        const { calls, fetchImpl } = transport((url) => {
+          if (url.endsWith("/v1/auth/kubernetes/login")) {
+            return jsonResponse({ auth: { client_token: "lease-token", lease_duration: 3600 } });
+          }
+          return secretResponse("pg-secret");
+        });
+
+        expect(await readVaultSecret(PASSWORD_PATH, "password", { fetch: fetchImpl })).toBe("pg-secret");
+        expect(calls[0].url).toBe("http://127.0.0.1:8200/v1/auth/kubernetes/login");
+      }
     });
 
     it("reuses the lease for later reads and re-logs in before it lapses", async () => {
