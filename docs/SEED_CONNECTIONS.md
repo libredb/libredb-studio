@@ -77,6 +77,7 @@ connections:
     # localDataCenter: "datacenter1"  # Cassandra only - REQUIRED there
     # authSource: "admin"     # MongoDB only - the database the user was created in
     # saslMechanism: SCRAM-SHA-512  # Kafka only - PLAIN|SCRAM-SHA-256|SCRAM-SHA-512, a literal name
+    # allowInsecureAuth: true  # Db2 only - accept a password sent without TLS
 
   - id: "dev-mysql"
     name: "Dev MySQL"
@@ -196,6 +197,7 @@ connections:
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
 | `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
 | `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd and Neo4j); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
+| `connections[].skipObjectScan` | No | absent | `true` reads no catalog when the connection opens, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765) |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
