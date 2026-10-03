@@ -294,8 +294,8 @@ describe("qualified names", () => {
 
   test("CALL with no name after it is refused as a procedure", () => {
     expect(refusalOf("CALL").code).toBe("denied-procedure");
-    expect(refusalOf("CALL").subject).toBe("");
-    expect(refusalOf("CALL 5").subject).toBe("");
+    expect(refusalOf("CALL").subject).toBe("CALL");
+    expect(refusalOf("CALL 5").subject).toBe("CALL");
   });
 
   test("a scoped CALL with an unclosed scope still walks the tokens after CALL", () => {
@@ -336,6 +336,42 @@ describe("qualified names", () => {
     expect(allowedOf("MATCH (n) RETURN n.show").isShow).toBe(false);
     expect(allowedOf("RETURN {call: 1, show: 2}").allowed).toBe(true);
     expect(allowedOf("MATCH (n) RETURN n.CALL, n.SHOW").allowed).toBe(true);
+  });
+
+  test("CALL used as a label names CALL, not an empty procedure, and advises the backtick form", () => {
+    expect(refusalOf("MATCH (n:CALL) RETURN n")).toEqual({
+      code: "denied-procedure",
+      subject: "CALL",
+      position: 9,
+      message: `CALL is not allowed here: a read-only Neo4j connection can call only ${ALLOWED_PROCEDURES.join(", ")}. If CALL is a name here (a property, a map key or a label), write it in backticks, as \`CALL\`.`,
+    });
+    expect(refusalOf("MATCH (call) RETURN 1").message).toEndWith("write it in backticks, as `call`.");
+    expect(allowedOf("MATCH (n:`CALL`) RETURN n").callsProcedure).toBe(false);
+  });
+
+  test("CALL before a keyword is a name too, refused as CALL with the backtick advice", () => {
+    const refusal = refusalOf("MATCH (n) WITH n AS call RETURN call");
+    expect([refusal.subject, refusal.position]).toEqual(["CALL", 20]);
+    expect(refusal.message).toEndWith("write it in backticks, as `call`.");
+    expect(refusalOf("CALL myproc()").message).toBe(
+      `CALL myproc is not allowed: a read-only Neo4j connection can call only ${ALLOWED_PROCEDURES.join(", ")}.`,
+    );
+  });
+
+  test("SHOW used as a name names only SHOW and the words after it, and advises the backtick form", () => {
+    expect(refusalOf("MATCH (n:SHOW) RETURN n")).toEqual({
+      code: "denied-show",
+      subject: "SHOW",
+      position: 9,
+      message:
+        "SHOW is not allowed on a read-only Neo4j connection. If SHOW is a name here (a property, a map key or a label), write it in backticks, as `SHOW`.",
+    });
+    expect(refusalOf("MATCH (show) RETURN show").message).toBe(
+      "SHOW is not allowed on a read-only Neo4j connection. If SHOW is a name here (a property, a map key or a label), write it in backticks, as `show`.",
+    );
+    expect(refusalOf("SHOW USERS").message).toBe("SHOW USERS is not allowed on a read-only Neo4j connection.");
+    expect(refusalOf("SHOW DATABASE 'a' , `b`").subject).toBe("SHOW DATABASE 'a' `b`");
+    expect(allowedOf("MATCH (n:`SHOW`) RETURN n").isShow).toBe(false);
   });
 
   test("CALL after a dot and called is still a qualified function outside the allowlist", () => {

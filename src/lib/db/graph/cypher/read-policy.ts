@@ -19,7 +19,7 @@
  */
 
 import type { GraphPolicyProfile } from "../profile";
-import { CypherLexError, type CypherLexErrorReason, type CypherToken, lexCypher } from "./lexer";
+import { CYPHER_KEYWORDS, CypherLexError, type CypherLexErrorReason, type CypherToken, lexCypher } from "./lexer";
 import { type CypherStatement, splitCypherStatements } from "./statements";
 
 export type CypherRefusalCode =
@@ -99,6 +99,10 @@ function qualifiedNameAt(tokens: readonly CypherToken[], at: number): QualifiedN
   }
   return { joined: names.join("."), parts: names.length, end: index };
 }
+
+/** The advice a refusal gives when the word refused may be a name: the backtick form, as typed. */
+const nameAdvice = (subject: string, typed: string): string =>
+  ` If ${subject} is a name here (a property, a map key or a label), write it in backticks, as \`${typed}\`.`;
 
 /** Checks one text against the profile: one statement, read-only, every name it calls allowed. */
 export function checkCypherRead(text: string, profile: GraphPolicyProfile): CypherReadVerdict {
@@ -213,14 +217,25 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
         continue;
       }
       const name = qualifiedNameAt(tokens, index + 1);
-      const position = next?.start ?? token.end;
+      const allowed = policy.allowedProcedures.join(", ");
+      if (next === undefined || name.parts === 0 || (next.kind === "word" && CYPHER_KEYWORDS.has(next.value))) {
+        // No name follows, as in `MATCH (n:CALL)`, or a keyword does, as in `WITH 1 AS call RETURN call`: the
+        // word is a name there, not a call.
+        return refuse(
+          "denied-procedure",
+          "CALL",
+          `CALL is not allowed here: a read-only ${engine} connection can call only ${allowed}.${nameAdvice("CALL", token.text)}`,
+          token.start,
+        );
+      }
+      const position = next.start;
       const denied = refuseNamespace(name, position);
       if (denied !== undefined) return denied;
       if (!policy.allowedProcedures.includes(name.joined)) {
         return refuse(
           "denied-procedure",
           name.joined,
-          `CALL ${name.joined} is not allowed: a read-only ${engine} connection can call only ${policy.allowedProcedures.join(", ")}.`,
+          `CALL ${name.joined} is not allowed: a read-only ${engine} connection can call only ${allowed}.`,
           position,
         );
       }
@@ -239,17 +254,24 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
         form.push(
           part.kind === "word" ? part.value : part.kind === "backtick" || part.kind === "string" ? "*" : part.text,
         );
-        typed.push(part.kind === "word" ? part.value : part.text);
+        // The subject names what was typed as words, names and strings, never the punctuation after a SHOW name.
+        if (part.kind === "word" || part.kind === "backtick" || part.kind === "string") {
+          typed.push(part.kind === "word" ? part.value : part.text);
+        }
       }
       const matches = policy.allowedShowForms.some(
         (allowed) => allowed.length === form.length && allowed.every((word, at) => word === "*" || word === form[at]),
       );
       if (!matches) {
         const subject = ["SHOW", ...typed].join(" ");
+        // No word follows, as in `MATCH (n:SHOW)` or `MATCH (show)`: the word may be a name.
+        const after = tokens[index + 1];
+        const advice =
+          after?.kind !== "word" || SHOW_CLAUSE_WORDS.has(after.value) ? nameAdvice("SHOW", token.text) : "";
         return refuse(
           "denied-show",
           subject,
-          `${subject} is not allowed on a read-only ${engine} connection.`,
+          `${subject} is not allowed on a read-only ${engine} connection.${advice}`,
           token.start,
         );
       }
@@ -290,7 +312,7 @@ export function checkCypherRead(text: string, profile: GraphPolicyProfile): Cyph
         return refuse(
           "denied-word",
           subject,
-          `${subject} is not allowed: ${engine} connections are read-only in this version. If ${subject} is a name here (a property, a map key or a label), write it in backticks, as \`${typed}\`.`,
+          `${subject} is not allowed: ${engine} connections are read-only in this version.${nameAdvice(subject, typed)}`,
           token.start,
         );
       }
