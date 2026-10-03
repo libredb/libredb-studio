@@ -1,16 +1,18 @@
 # Db2 LUW Provider
 
-The `db2` type-id: IBM Db2 for Linux, UNIX and Windows over DRDA, through the `db2-node` 1.0.22 driver.
+The `db2` type-id: IBM Db2 for Linux, UNIX and Windows over DRDA, through the `db2-node` 1.0.24 driver.
 Source: [`src/lib/db/providers/sql/db2/`](../../src/lib/db/providers/sql/db2/).
 Tests: [`tests/unit/db/db2/`](../../tests/unit/db/db2/) and [`tests/integration/db/db2-provider.test.ts`](../../tests/integration/db/db2-provider.test.ts).
 Tracking issue: [#786](https://github.com/libredb/libredb-studio/issues/786).
 
-Every measured fact on this page was measured on 2026-10-03 against the `icr.io/db2_community/db2` 12.1.0.0 and 11.5.9.0 containers, through `db2-node` 1.0.22 on Node 24 and Bun 1.4.2, unless the sentence names another basis.
+Every measured fact on this page was measured against the `icr.io/db2_community/db2` 12.1.0.0 and 11.5.9.0 containers, first on 2026-10-03 through `db2-node` 1.0.22 on Node 24 and Bun 1.4.2, and again on 2026-10-04 through 1.0.24 on Bun 1.4.2, unless the sentence names another basis.
+A sentence that names 1.0.22 describes that version and is kept for the reason it gives.
 
 ## 1. Overview
 
 Studio connects to a Db2 LUW database, lists its schemas and their objects, describes tables, views and materialized query tables, shows the stored definition of views, routines and triggers, runs SQL with server-side paging, and offers RUNSTATS and REORG on one table at a time.
-This first version is deliberately narrow, because the driver it runs on has defects that corrupt or drop data on some types: read [Known issues](#4-known-issues-db2-node-1022) before you rely on a result.
+A table takes inline edits and imports into an existing table.
+The driver still has defects that can return a wrong value for a LOB or XML column read beside other columns: read [Known issues](#4-known-issues-db2-node-1024) before you rely on such a result.
 
 Db2 for z/OS and Db2 for IBM i are out of scope.
 Both need IBM's Db2 Connect gateway to be reached over DRDA, and nothing here was measured against either.
@@ -19,8 +21,8 @@ Both need IBM's Db2 Connect gateway to be reached over DRDA, and nothing here wa
 
 `db2-node` is a DRDA client written in Rust and shipped as a native N-API addon, one prebuilt binary per platform, under the MIT licence.
 It needs no IBM client, no `IBM_DB_HOME` and no CLI driver download, which is what lets every image and the desktop build carry Db2 without an IBM licence step.
-It is pinned exactly, at 1.0.22, as a regular dependency.
-The defects of section 4 are reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12), and the provider will move to a release that fixes them.
+It is pinned exactly, at 1.0.24, as a regular dependency.
+The defects 1.0.22 had were reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12) and fixed in 1.0.24 by [gurungabit/db2-node#13](https://github.com/gurungabit/db2-node/pull/13); the ones still present are in section 4.
 
 ### Concept mapping
 
@@ -42,11 +44,11 @@ The defects of section 4 are reported upstream at [gurungabit/db2-node#12](https
 | `capabilities.ts` | `DB2_CONTAINER_LEVELS`, `DB2_OBJECT_KINDS`, `db2Capabilities`, `db2Labels`: pure data, no driver import |
 | `driver.ts` | The `Db2Driver` types, `loadDb2Driver()`, the one `import("db2-node")`, and `describeDriverAbsence()` |
 | `connection.ts` | `resolveTarget()`, `assertTransport()`, `clientOptions()` and `openClient()`: the TLS mapping and the CA temp-file lifecycle |
-| `params.ts` | `normaliseParams()`, which keeps a `bigint` away from the driver (K10) |
-| `values.ts` | `db2TypeName()`, `readResult()` and `DB2_PREVIEW_PROJECTION` |
+| `params.ts` | `normaliseParams()`, which refuses an array or object parameter before the driver reads it as bytes |
+| `values.ts` | `db2TypeName()`, `readResult()` and its LOB integrity warning, and `DB2_PREVIEW_PROJECTION` |
 | `catalog.ts` | The catalog SQL, and the decoders that read its rows: names, column types, object detail and source text |
 | `objects.ts` | The row mappers of the object surface |
-| `maintenance.ts` | `adminCommandTarget()`, `maintenanceStatement()` and the statement that reads a target's type |
+| `maintenance.ts` | `adminCommandTarget()`, `maintenanceStatement()` (a plain `CALL SYSPROC.ADMIN_CMD`) and the statement that reads a target's type |
 | `monitoring.ts` | The version, catalog-count and table-list statements, and their reads |
 | `index.ts` | The composition root |
 
@@ -65,7 +67,7 @@ A deployment without the driver answers `describeDriverAbsence()`'s message, "Db
 | Port | No | `50000`, Db2's conventional DRDA listener |
 | Database | Yes | "Database name is required for Db2" |
 | User | Yes | "User is required for Db2" |
-| Password | No | Sent empty when none is given; sent in cleartext without TLS (K11), see section 3.3 |
+| Password | No | Sent empty when none is given; sent in cleartext without TLS, see section 3.3. `db2-node` 1.0.24 refuses a password holding `!`, `^`, `[`, `]` or `\|` that the server accepts, with and without TLS (D159 in `docs/BACKLOG.md`) |
 | SSL panel | Yes, unless you opt out | Section 3.3 |
 
 A pasted `db2://user:password@host:50000/TESTDB` fills the fields; there is no connection-string toggle, the Oracle precedent.
@@ -81,20 +83,22 @@ Because `db2-node` checks a certificate against the name it dials, which there i
 ### 3.2 Server versions
 
 Db2 LUW 12.1.0.0 and 11.5.9.0 were measured.
-The version shown in the monitoring overview is `SERVICE_LEVEL` of `SYSIBMADM.ENV_INST_INFO`, for example "DB2 v12.1.0.0"; the driver's own `serverInfo()` answers the instance name and `SQL12010` and is never read (K13).
+The version shown in the monitoring overview is `SERVICE_LEVEL` of `SYSIBMADM.ENV_INST_INFO`, for example "DB2 v12.1.0.0"; the driver's own `serverInfo()` is never read, because it answers the server class `QDB2/LINUXX8664` and the release code `SQL12010` on 1.0.24 (the instance name on 1.0.22, K13), neither of which names the version a reader expects.
 
 ### 3.3 TLS
 
 TLS is the part of this provider to set up first.
-Without it, `db2-node` 1.0.22 downgrades the security mechanism in silence and sends the password to the server in EBCDIC cleartext, even when it is asked for an encrypted mechanism (K11).
-So the provider refuses a connection with no TLS settings, with an error that names that defect, unless the connection carries the explicit insecure opt-in, `allowInsecureAuth: true`, shown in the connection form as a checkbox that says the password travels in cleartext.
+A stock Db2 server with `AUTHENTICATION=SERVER` offers only DRDA security mechanism 3 without TLS, which sends the user and the password in cleartext.
+`db2-node` 1.0.22 fell back to it in silence, even when asked for an encrypted mechanism (K11); 1.0.24 refuses to send the password that way unless the connection asks for the mechanism by name, measured on 12.1.0.0 and 11.5.9.0: "Server does not support the requested encrypted security mechanism (requested=0x0009, offered=0x0003); refusing to send credentials without encryption."
+So the provider refuses a connection with no TLS settings, with an error that says the password would travel in cleartext, unless the connection carries the explicit insecure opt-in, `allowInsecureAuth: true`, shown in the connection form as a checkbox that says so.
+With the opt-in, and only then, the provider passes `securityMechanism: "userPassword"`, which is how the opt-in reaches 1.0.24; over TLS it passes no mechanism and the driver's encrypted default is kept, which the stock server answers with mechanism 3 inside the TLS session (measured).
 Turn the opt-in on only for a database on a network you trust end to end, such as a local container.
 
 The SSL panel's modes map to `db2-node` options as follows:
 
 | Mode | `db2-node` options | What is checked |
 |---|---|---|
-| Disabled, with the insecure opt-in | `ssl: false` | Nothing; the password travels in cleartext |
+| Disabled, with the insecure opt-in | `ssl: false, securityMechanism: "userPassword"` | Nothing; the password travels in cleartext |
 | Require (no verification) | `ssl: true, rejectUnauthorized: false` | Encryption only; a server that impersonates the host is not detected |
 | Verify (system trust) | `ssl: true, rejectUnauthorized: true` | The chain, against the system trust store |
 | Verify CA | `ssl: true, rejectUnauthorized: true, caCert: <file>, sslClientHostnameValidation: "OFF"` | The chain, against your CA; not the host name |
@@ -105,9 +109,10 @@ Verify full without a CA certificate checks the chain against the system trust s
 Verify CA without a CA certificate is refused: it checks no host name, so against the system trust store it would accept any publicly trusted certificate, issued for any name, and send it the password.
 The panel holds the CA as PEM text and `db2-node` wants a file path, so the provider writes the PEM to `ca.pem` in a fresh `libredb-db2-` directory under the system temp directory, mode 0600, on connect, and removes the directory on disconnect and on a failed connect.
 On Windows the mode bits do not apply, and the file is private through the per-user access control on the temp directory under the user profile.
-A client certificate or key is refused with "db2-node 1.0.22 has no client-certificate authentication; remove the client certificate and key from this Db2 connection.", never ignored.
+A client certificate or key is refused with "db2-node 1.0.24 has no client-certificate authentication; remove the client certificate and key from this Db2 connection.", never ignored.
 
-Measured: the connection negotiates TLS 1.3; a CA certificate with host-name validation, host-name validation `OFF` and `rejectUnauthorized: false` each connect; the system trust store alone answers `UnknownIssuer` for a server signed by a private CA; Verify full by an IP address the certificate does not name fails with "invalid peer certificate: certificate not valid for name", where Verify CA connects; and a plaintext connection to the TLS port is reset.
+Measured through 1.0.24 on 12.1.0.0 and 11.5.9.0: Verify CA with the CA held as PEM text connects through the provider, and the opt-in connects without TLS where the same connection without the named mechanism is refused.
+Measured through 1.0.22: the connection negotiates TLS 1.3; a CA certificate with host-name validation, host-name validation `OFF` and `rejectUnauthorized: false` each connect; the system trust store alone answers `UnknownIssuer` for a server signed by a private CA; Verify full by an IP address the certificate does not name fails with "invalid peer certificate: certificate not valid for name", where Verify CA connects; and a plaintext connection to the TLS port is reset.
 
 #### Enabling TLS on the server
 
@@ -137,40 +142,45 @@ db2stop && db2start
 Then paste `ca.arm` (it is PEM) into the SSL panel's CA certificate field, set the port to 50001, and choose Verify full.
 `DB2COMM=SSL,TCPIP` keeps the plaintext port open beside the TLS one; drop `TCPIP` once every client uses TLS.
 
-## 4. Known issues (db2-node 1.0.22)
+## 4. Known issues (db2-node 1.0.24)
 
-K1 to K17 are reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12); K18 to K22 were measured after that report and are not in it yet.
-The provider will move to a driver release that fixes them, and the maintainer's fork, [libredb/database-provider-db2-node](https://github.com/libredb/database-provider-db2-node), is the fallback if upstream does not.
-The live script `tests/live/db2-known-issues.ts` probes each row against a running Db2 and prints `PRESENT` or `GONE`, so a driver bump starts by running it.
+The live script `tests/live/db2-known-issues.ts` probes each row below, and each row fixed in 1.0.24, against a running Db2 and prints `PRESENT` or `GONE`, so a driver bump starts by running it.
+On 2026-10-04 it printed the same verdict for every row on 12.1.0.0 and on 11.5.9.0: `PRESENT` for K4, K15, K16 and K17, and `GONE` for every other row.
+K4 in its 1.0.24 shape, K16's BOOLEAN refusal, K15 and K17 are not among the numbered cases of the upstream report.
 
 | # | Issue | What you see | Mitigated by the provider | Workaround |
 |---|---|---|---|---|
-| K1 | Non-ASCII text in CHAR or VARCHAR is decoded as EBCDIC 037 | "Grüße" reads as mojibake; the bytes on the server are correct | No | None for reads; write non-ASCII text with another client. Inline row edit, data import and Create Table are off, so Studio never writes the garbled text back |
-| K2 | INTEGER is byte-swapped when a DECFLOAT or BOOLEAN column sits in the same row | 1 reads as 16777216 | No | Select the INTEGER and the DECFLOAT or BOOLEAN columns in separate queries, or `CAST(col AS VARCHAR(40))` the DECFLOAT or BOOLEAN |
-| K3 | A BOOLEAN column alone returns phantom rows | 7 rows for 3 | No | `CAST(col AS VARCHAR(5))` |
-| K4 | `SELECT *` on a table with such columns returns too few rows and no error | rowCount 0, or some of the rows, and columns missing from the header: `APP.ALLTYPES` answered 2 rows of 3 and 20 of 25 columns, while the projected preview answered all 3 rows exactly | Partly: the object browser's preview names and casts its columns | Name the columns and cast the defect types |
-| K5 | XML rows whose value is NULL are dropped | 1 row of 3 | No | `XMLSERIALIZE(col AS VARCHAR(32000))`, which drops a row whose document is longer than 32000 bytes, silently |
-| K6 | BIGINT is read as a JS number, lossy above 2^53, and cannot be bound losslessly | 9223372036854775807 reads as 9223372036854776000 | Partly: the preview casts BIGINT, and a result with a BIGINT column carries an integrity warning | `CAST(col AS VARCHAR(20))` or `CHAR(col)` |
-| K7 | CLOB, DBCLOB and BLOB fetches fail | SQLSTATE 58009, SQLCODE -30020, and the LOB column vanishes from the header | Yes for the provider's own reads: no catalog query selects a LOB | `VARCHAR(SUBSTRING(col, 1, 32672, OCTETS), 32672)` for text, never a `CAST` that truncates (K20), or leave the LOB column out |
-| K8 | TIMESTAMP(0) and TIMESTAMP(12) fail to decode | "expected 26 bytes" | No | `VARCHAR(ts)` |
-| K9 | Every `CALL` fails | SQLSTATE 07005, SQLCODE -517 | Yes for maintenance, which wraps its call in a compound block | None in the editor: Studio's statement splitter cuts a `BEGIN ... END` block at its inner `;`, so use RUNSTATS and REORG from the object tree |
-| K10 | Binding a JS `bigint` panics in Rust and aborts the process | An uncatchable crash of the whole server | Yes: `normaliseParams()` turns a safe-integer `bigint` into a number, refuses anything larger, and refuses an array or object parameter, inside which a `bigint` aborts the process too, each with a query error before the driver sees it | Not needed |
-| K11 | Without TLS the password is sent in EBCDIC cleartext | Nothing visible: the downgrade is silent | Yes: a connection without TLS is refused unless it opts in | Enable TLS (section 3.3) |
-| K12 | The `currentSchema` option has no effect | | Yes: never passed; every catalog query binds its schema | Qualify names in your own SQL |
-| K13 | `serverInfo()` answers the instance name, not the product | `SQL12010` | Yes: never read; the version comes from `SYSIBMADM.ENV_INST_INFO` | Not needed |
-| K14 | `queryTimeout` rejects on the client and leaves the statement running on the server | The statement keeps running and the client reconnects in silence | Yes: never set; the app's query timeout is not applied to Db2 | Set a server-side limit, see section 7.4 |
+| K4 | A LOB or XML column read beside other columns can come back wrong, lose rows or fail | A BLOB beside a CLOB answered the CLOB's bytes; a CLOB beside a GRAPHIC answered no row of three; a CLOB beside a DOUBLE answered "Protocol error: Invalid SQLDTAGRP indicator 0xEF"; `ID, C_VCHAR, C_CLOB` answered "Protocol error: Non-null fetch SQLDIAGGRP is not supported"; `SELECT *` over `APP.ALLTYPES` answered 1 row of 3 and 23 of 25 columns | Partly: the object browser's preview leaves LOB and XML columns out, no catalog query selects a LOB beside another column, and a result holding a LOB or XML column beside others carries an integrity warning naming them | Select each LOB or XML column on its own, with the key that tells its rows apart if you need one: a CLOB beside an INTEGER, a BIGINT, a DECIMAL, a DATE, a TIMESTAMP or a CHAR read exactly |
 | K15 | Duplicate column names collapse in a row | `columns` lists both, the row holds one value | Yes, by visibility: the result carries a warning naming the column | Alias each column |
-| K16 | A GRAPHIC parameter is padded with U+0000; TIMESTAMP(12) and `Date` parameters are refused; a BOOLEAN bound beside another parameter fails | "expected timestamp length 26 or 29 bytes", and "parameter descriptor count 1 does not match parameter count 2" | Yes for the provider's own SQL, which binds only VARCHAR-compatible values; a `Date`, array or object parameter is refused before the driver sees it, because a `Date` bound where a string fits is sent as `{}` | Write the value as a literal |
-| K17 | Client-side failures carry no SQLSTATE | A protocol message only | No | Read the message |
-| K18 | A statement that starts with a comment, block or line, is refused | SQLSTATE 42612, SQLCODE -84 | Yes: the provider strips leading comments before the statement reaches the driver | Not needed |
-| K19 | A searched UPDATE or DELETE that matches no row reports -2147221503 changed rows | A negative row count | Yes: that value is read as 0, and any other negative count is reported as 0 with a warning that the count is unknown | Not needed |
-| K20 | A value truncated with a warning desynchronises the driver | `VALUES CAST(REPEAT('x', 100) AS VARCHAR(10))` answers "Protocol error: query ended with undecoded row data"; a `CAST` of a 40868-byte CLOB to VARCHAR(32672) answered 36 garbage rows in one run and "Protocol error: invalid DSS magic byte" in another, and `VARGRAPHIC()` over a value longer than 16336 units returned garbage rows | Yes for the provider's own reads: a definition is read in `SUBSTRING` chunks, and the preview casts only values that fit | `VARCHAR(SUBSTRING(col, start, n, OCTETS), n)` |
-| K21 | A row wider than one DRDA block fails | Two VARCHAR(32672) columns answer "Protocol error: invalid DSS magic byte", on the first run or the second | Yes for the provider's own reads: a definition is read one chunk per statement | Select fewer wide columns per statement |
-| K22 | A bound DECIMAL that does not fit its column, or is not a number, is stored as a wrong value with no error | `SET AMT = ?` with "12345.67" into DECIMAL(5,2) stored 345.67, and `CAST(? AS DECIMAL(5,2))` answered 999.00 for 99999 and 323.00 for "abc", where the same literal is refused with SQLSTATE 22003, SQLCODE -413 | No: a statement run with parameters writes what the driver sends | Write DECIMAL values as literals; until a driver release fixes this, a bound DECIMAL write is not safe |
+| K16 | A BOOLEAN parameter must be a JS boolean | The text `true` is refused with "expected boolean-compatible parameter, got VarChar("true")", alone or beside other parameters | No: the grid's inline editor binds text, so editing a BOOLEAN cell fails with that message and writes nothing | Write the BOOLEAN with an `UPDATE` of your own, as a literal |
+| K17 | Client-side failures carry no SQLSTATE | A protocol message only: an out-of-range DECIMAL parameter answers "Protocol error: DECIMAL parameter out of range for DECIMAL(5,2)" | No | Read the message |
 
-A result with a BIGINT, DECFLOAT, BOOLEAN or XML column carries an integrity warning above the grid that names those columns, says what the driver does to them and which cast reads them correctly, and says that exported or copied rows carry the same values; copy and export stay available, so read the warning before you hand the rows on.
-TIMESTAMP(0), TIMESTAMP(12) and LOB columns need no warning, because they fail with an error instead.
-A `SELECT *` you write yourself cannot be rewritten, so K4 still applies to it.
+A result with a CLOB, DBCLOB, BLOB or XML column and any other column carries an integrity warning above the grid that names those columns, says the driver can return wrong values or drop rows there, and says that exported or copied rows carry the same values; copy and export stay available, so read the warning before you hand the rows on.
+A column the driver dropped from the header cannot be named by it, so a `SELECT *` over a table with LOB columns is best not trusted at all.
+
+### Fixed in 1.0.24
+
+These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12), and fixed by [gurungabit/db2-node#13](https://github.com/gurungabit/db2-node/pull/13), released as [1.0.24](https://github.com/gurungabit/db2-node/releases/tag/v1.0.24); each now probes `GONE` on 12.1.0.0 and 11.5.9.0, and the provider workaround each one needed is gone with it unless the line says otherwise.
+
+- K1: non-ASCII text in CHAR or VARCHAR read back as EBCDIC 037 mojibake. Catalog names are still read as HEX, for the reasons section 6.1 gives.
+- K2: an INTEGER beside a DECFLOAT or BOOLEAN was byte-swapped.
+- K3: a BOOLEAN column alone returned phantom rows.
+- K5: XML rows whose value is NULL were dropped.
+- K6: BIGINT read as a JS number, lossy above 2^53, and could not be bound losslessly.
+- K7: no CLOB, DBCLOB or BLOB could be fetched. One read on its own now is; beside other columns, see K4.
+- K8: TIMESTAMP(0) and TIMESTAMP(12) failed to decode.
+- K9: every `CALL` failed with SQLSTATE 07005, SQLCODE -517.
+- K10: binding a JS `bigint`, alone or inside an array or object, aborted the process.
+- K11: without TLS the driver fell back to sending the password in cleartext in silence. It now refuses unless asked by name, which is how the insecure opt-in asks (section 3.3).
+- K12: the `currentSchema` option had no effect. The provider still binds every catalog query's schema and passes none.
+- K13: `serverInfo()` answered the instance name. It now answers the server class, and the provider still reads the version from `SYSIBMADM.ENV_INST_INFO`.
+- K14: `queryTimeout` rejected on the client and left the statement running on the server. It now cancels it on the server, given the privileges section 7.4 names; the provider still sets none.
+- K18: a statement that starts with a comment was refused with SQLSTATE 42612, SQLCODE -84.
+- K19: an UPDATE or DELETE that matched no row reported -2147221503 changed rows.
+- K20: a value truncated with a warning desynchronised the driver.
+- K21: a row wider than one DRDA block failed with "Protocol error: invalid DSS magic byte".
+- K22: a bound DECIMAL that did not fit its column, or was not a number, was stored as a wrong value with no error. It is now refused before the statement runs, with K17's message.
+- From K16: a GRAPHIC parameter is padded with blanks rather than U+0000, and TIMESTAMP(12) and `Date` parameters are taken.
 
 ## 5. Capabilities
 
@@ -178,14 +188,14 @@ A `SELECT *` you write yourself cannot be rewritten, so K4 still applies to it.
 |---|---|---|
 | Query language | SQL | |
 | Default port | 50000 | DRDA listener convention |
-| EXPLAIN | No | Db2's EXPLAIN fills the explain tables rather than answering a plan |
+| EXPLAIN | No | Db2's EXPLAIN fills the explain tables rather than answering a plan; reading them back is possible on 1.0.24, where a `CALL` runs, and is not built yet |
 | External query limiting | Yes | Inherited |
-| Create Table | No | No Db2 row of column types exists for the dialog, which would otherwise emit PostgreSQL DDL |
-| Inline row edit | No | K1: a read-then-write-back stores corrupted text; it comes back when the driver decodes non-ASCII text |
-| Data import | No | The same reason: no kind declares `acceptsRowWrites` |
+| Create Table | No | No Db2 row of column types exists for the dialog, which would otherwise emit PostgreSQL DDL, and an import into a new table would write `TEXT`, which Db2 refuses, and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` (D145) |
+| Inline row edit | Yes | Tables only. Off on 1.0.22, where a read-then-write-back stored corrupted text (K1) and a DECIMAL that did not fit was stored wrong (K22); see section 7.5 |
+| Data import | Yes | Into an existing table, the one kind that declares `acceptsRowWrites`; not into a new table, as Create Table above |
 | Result pagination | Yes | Section 7.2 |
-| Transactions and SANDBOX | No | No held session in this version |
-| Query cancel | No | `close()` waits for the running statement to end, so it is no cancel, and `queryTimeout` leaves it running (K14) |
+| Transactions and SANDBOX | No | No held session in this version; 1.0.24's `beginTransaction()` makes one possible (D148) |
+| Query cancel | No | Not wired yet: 1.0.24's `Client.cancel()` and its `queryTimeout` cancel the statement on the server through `WLM_CANCEL_ACTIVITY`, which needs monitoring and cancel privileges a plain user may not hold (D148) |
 | Foreign keys | Yes | Inherited |
 | Maintenance | Yes | Run Statistics and Reorganize Table, per table only |
 | Connection string | Yes | A `db2://` paste fills the fields |
@@ -194,7 +204,7 @@ A `SELECT *` you write yourself cannot be rewritten, so K4 still applies to it.
 | Container levels | Schema | |
 | Container path shapes | Exact | Like Oracle |
 
-The application's query timeout is not forwarded to Db2, because the driver's own timeout leaves the statement running on the server (K14).
+The application's query timeout is not forwarded to Db2: on 1.0.22 the driver's own timeout left the statement running on the server (K14), and on 1.0.24 it cancels it through a second session that needs privileges this version does not ask a user to hold.
 
 ## 6. Object surface
 
@@ -204,7 +214,8 @@ The containers are the rows of `SYSCAT.SCHEMATA` whose name does not start with 
 The schema equal to `CURRENT SCHEMA` is marked as the session default.
 Schema names are stored blank-padded in the catalog (`SCHEMANAME` arrives as `"APP     "`), so every schema column is trimmed on its right.
 Every other name is read as stored, so an object name that ends in a blank keeps it.
-On a database whose code set is UTF-8 (1208, the default since Db2 9.5) names and column defaults are read as `HEX(...)` and decoded in the provider, so a non-ASCII identifier survives K1.
+On a database whose code set is UTF-8 (1208, the default since Db2 9.5) names and column defaults are read as `HEX(...)` and decoded in the provider.
+That began as the way round K1, which 1.0.24 fixed, and it stays because a column default and a definition are read in byte chunks that can end inside a character, and because the driver's decoding on a database with another code page was not measured.
 The code page is read once from `SYSCAT.COLUMNS`, which a plain user can read.
 On a database with another code page an all-ASCII name reads as written, and a non-ASCII one is refused with an error that names the code page, because the provider carries no table to decode it and a guessed name could not be addressed by any statement.
 
@@ -222,7 +233,7 @@ On a database with another code page an all-ASCII name reads as written, and a n
 | Function | routine | No | Yes | `SYSCAT.ROUTINES`, type `F` |
 | Trigger | attached to a table | No | Yes | `SYSCAT.TRIGGERS` |
 
-No kind declares `acceptsRowWrites` or `acceptsSourceEdits`.
+Only a table declares `acceptsRowWrites`, and no kind declares `acceptsSourceEdits`.
 Routines inside a module are not listed at the schema level, and only routines of origin `E`, `F`, `Q` and `U` are listed, which leaves out the system-generated ones.
 
 ### 6.3 Counts and listings
@@ -249,7 +260,7 @@ Status mapping:
 Tables, views and materialized query tables are described; every other kind answers an empty detail without a round trip.
 Columns come from `SYSCAT.COLUMNS` in `COLNO` order, the primary key from `KEYSEQ`, foreign keys from `SYSCAT.REFERENCES` joined to `SYSCAT.KEYCOLUSE` on both sides, the referenced table included in the join, and indexes from `SYSCAT.INDEXES` filtered by the table's schema, because a system-named key index lives in `SYSIBM`.
 A foreign key's referenced table is bare inside the object's schema and `SCHEMA.TABLE` across schemas.
-A column default is a CLOB in the catalog, so its first 254 bytes are read as `HEX(VARCHAR(SUBSTRING("DEFAULT", 1, 254, OCTETS), 254))` beside `LENGTH("DEFAULT")` (K7).
+A column default is a CLOB in the catalog, so its first 254 bytes are read as `HEX(VARCHAR(SUBSTRING("DEFAULT", 1, 254, OCTETS), 254))` beside `LENGTH("DEFAULT")`, because a LOB read beside the row's other columns can come back wrong (K4).
 254 bytes is the most IBM allows a default constant; a longer default is left out of the detail rather than shown cut, because a column's detail cannot say that a default is partial and a cut expression handed to a migration is worse than none.
 
 A column's type is spelled as its declaration: `VARCHAR(n)`, `CHARACTER(n) FOR BIT DATA` for a binary character column, `DECIMAL(p,s)`, `TIMESTAMP` at the default precision 6 and `TIMESTAMP(p)` otherwise, `DECFLOAT(34)` or `DECFLOAT(16)`, and a character or graphic type declared in a unit other than its default keeps that unit, because its `LENGTH` is in bytes: `VARCHAR(10 CODEUNITS32)` has `LENGTH` 40 and `STRINGUNITSLENGTH` 10 (measured), and prints as declared.
@@ -260,9 +271,11 @@ A caller-bound limit cuts the target list and says so.
 ### 6.5 Source
 
 Views, materialized query tables, procedures, functions and triggers show their stored definition text, labelled "Definition".
-The text is a CLOB, so it is read as two `HEX(VARCHAR(SUBSTRING(TEXT, start, 16336, OCTETS), 16336))` chunks together with `LENGTH(TEXT)` (K7), and the blanks `SUBSTRING` pads a short chunk with are cut off by that length.
-The obvious `CAST(TEXT AS VARCHAR(32672))` was measured and is worse than failing: on a longer text its truncation warning desynchronised the driver, which answered 36 rows of garbage for one view and "Protocol error: invalid DSS magic byte" for another.
-A definition longer than 32672 bytes is shown cut, marked partial, and carries the reason "Db2 stores this definition as a CLOB longer than 32672 bytes, and db2-node 1.0.22 cannot fetch a CLOB, so only the first 32672 bytes are shown.", because a cut text does not run.
+The text is a CLOB, so it is read as up to two `HEX(VARCHAR(SUBSTRING(TEXT, start, 16336, OCTETS), 16336))` chunks together with `LENGTH(TEXT)` (K4), and the blanks `SUBSTRING` pads a short chunk with are cut off by that length.
+The second chunk is a statement of its own, run only for a definition longer than one chunk, so a short one carries no chunk of padding; on 1.0.22 a row carrying both chunks also lost the driver's framing (K21).
+On 1.0.22 the obvious `CAST(TEXT AS VARCHAR(32672))` was worse than failing: on a longer text its truncation warning desynchronised the driver, which answered 36 rows of garbage for one view and "Protocol error: invalid DSS magic byte" for another (K20).
+A definition longer than 32672 bytes is shown cut, marked partial, and carries the reason "Db2 stores this definition as a CLOB longer than 32672 bytes, and this provider reads at most the first 32672, so only those are shown.", because a cut text does not run.
+1.0.24 fetches a CLOB read on its own whole, measured with a 40067-byte view definition, so the bound could go (D165).
 Because the chunks are read as hex and decoded in the provider, a non-ASCII character in a definition survives on a Unicode database; a cut that falls inside a character drops that character rather than showing a replacement glyph.
 
 A routine with no text is refused with a reason chosen by its `ORIGIN`:
@@ -286,11 +299,14 @@ It was measured on the #787 branch and deferred: a failing `CREATE OR REPLACE PR
 
 ### 7.1 Results
 
-`query()` normalises the parameters (K10), strips leading comments (K18), sends the statement, and reads the result.
+`query()` checks the parameters, sends the statement as written, and reads the result.
+A string, number, `bigint`, boolean, `Date`, `null` or byte buffer goes to the driver as it is: 1.0.24 binds a `bigint` exactly and a `Date` as its UTC timestamp, where 1.0.22 aborted the process on the first (K10) and bound the second as `{}`.
+An array or any other object is refused before the driver sees it, because the driver reads an array of small integers as BINARY bytes.
+A statement may start with a comment, which 1.0.22 refused (K18).
 `fields` and `columnTypes` come from the driver's column metadata, so a zero-row result still has its header.
-A SELECT reports the number of rows returned; any other statement reports the driver's affected-row count.
+A SELECT reports the number of rows returned; any other statement reports the driver's affected-row count, which is 0 for an UPDATE or DELETE that matched no row (on 1.0.22 it was -2147221503, K19).
 Each statement commits on its own.
-The driver's diagnostics are passed through as result warnings, beside the duplicate-column warning of K15 and the integrity warning of section 4.
+The driver's diagnostics are passed through as result warnings, beside the duplicate-column warning of K15 and the LOB integrity warning of K4.
 Errors go through the shared `mapDatabaseError()`, which reads the SQLSTATE and SQLCODE when the driver's message carries them.
 
 ### 7.2 Paging
@@ -302,44 +318,53 @@ A statement that already carries `FETCH FIRST` or `LIMIT` is left as written, an
 
 | Db2 type | Arrives as | Correct |
 |---|---|---|
-| SMALLINT, INTEGER | number | Yes, except K2 |
-| BIGINT | number | Lossy above 2^53 (K6) |
+| SMALLINT, INTEGER | number | Yes |
+| BIGINT | number inside the safe integer range, an exact decimal string beyond it | Yes |
 | REAL, DOUBLE | number | Yes |
 | DECIMAL(p,s) | string | Yes, lossless |
-| DECFLOAT | string | Yes alone; K2 beside an INTEGER |
-| CHAR(n) | string, blank-padded | ASCII only (K1) |
-| VARCHAR | string | ASCII only (K1) |
+| DECFLOAT | string | Yes |
+| CHAR(n) | string, blank-padded | Yes |
+| VARCHAR | string | Yes |
 | GRAPHIC, VARGRAPHIC | string | Yes |
 | BINARY, VARBINARY | bytes | Yes |
 | DATE | `2024-02-29` | Yes |
 | TIME | `23.59.59` | Yes, in Db2's dot format |
-| TIMESTAMP(6) | `2024-02-29-23.59.59.123456` | Yes |
-| TIMESTAMP(0), TIMESTAMP(12) | error | No (K8) |
-| CLOB, DBCLOB, BLOB | error | No (K7) |
-| XML | string without the `<?xml` declaration | NULL rows dropped (K5) |
-| BOOLEAN | | Phantom rows (K3) |
+| TIMESTAMP(p), any p | `2024-02-29-23.59.59.123456`, with p fraction digits | Yes |
+| CLOB, DBCLOB | string | Read on its own; beside other columns see K4 |
+| BLOB | bytes | Read on its own; beside other columns see K4 |
+| XML | string without the `<?xml` declaration | Read on its own; beside other columns see K4 |
+| BOOLEAN | boolean | Yes |
 
+A CLOB column can arrive described as `VarChar(32777)` (measured: a `CLOB(1M)` column, a `CLOB(2G)` cast and `SYSCAT.VIEWS.TEXT`), and since no VARCHAR is longer than 32672 the provider declares it as `CLOB`.
 Column keys are upper case, and an unnamed expression is keyed `1`, `2` and so on.
 A timestamp stays a string and is never turned into a `Date`, so no time zone shifts it.
 
 ### 7.4 No timeout and no cancel
 
-Nothing bounds a statement on the Studio side: the app's query timeout is not applied to Db2 and there is no cancel (K14).
+Nothing bounds a statement on the Studio side: the app's query timeout is not applied to Db2 and there is no cancel.
+`db2-node` 1.0.24 makes both possible, through `Client.cancel()` and a `queryTimeout` that cancels on the server, given a user with monitoring privileges and `EXECUTE` on `SYSPROC.WLM_CANCEL_ACTIVITY`; wiring them is D148.
 For a production database, bound statements on the server, with a Db2 workload management threshold such as `ACTIVITYTOTALTIME`, so an expensive query from any client ends there.
+
+### 7.5 Writes
+
+A table takes the grid's inline edits and an import into it; a view, a materialized query table and every other kind take neither.
+An inline edit is one `UPDATE "SCHEMA"."TABLE" SET "C" = ?, ... WHERE "KEY" = ?` per row, every value bound as text and a numeric key as a number.
+Measured through 1.0.24 on 12.1.0.0 and 11.5.9.0 (`tests/live/db2-live-check.ts`): an edit of a VARCHAR to "Grüße, 世界 𝄞 çğış" and a DECIMAL(7,2) to 12345.67 read back with the same `HEX` bytes, an import of the same text into an existing table did too, and a DECIMAL that does not fit its column is refused with "Protocol error: DECIMAL parameter out of range for DECIMAL(7,2)" and leaves the stored value as it was.
+A BOOLEAN column cannot be edited from the grid: the grid binds the text `true`, which 1.0.24 refuses with "expected boolean-compatible parameter" (K16), so the edit fails with that message and writes nothing.
 
 ## 8. Maintenance
 
 Run Statistics and Reorganize Table run on one table or materialized query table at a time, from its menu in the object tree; a view, an alias or any other kind is refused by name before anything is sent (RUNSTATS on a view answers SQLSTATE 428DY, measured), and there is no database-wide card, because Db2 LUW has no whole-database RUNSTATS or REORG.
-The provider sends each as `SYSPROC.ADMIN_CMD` inside a compound block, because a bare `CALL` fails (K9):
+The provider sends each as a plain call of `SYSPROC.ADMIN_CMD`:
 
 ```sql
-BEGIN CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE "APP"."ORDERS" WITH DISTRIBUTION AND DETAILED INDEXES ALL'); END
-BEGIN CALL SYSPROC.ADMIN_CMD('REORG TABLE "APP"."ORDERS"'); END
+CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE "APP"."ORDERS" WITH DISTRIBUTION AND DETAILED INDEXES ALL')
+CALL SYSPROC.ADMIN_CMD('REORG TABLE "APP"."ORDERS"')
 ```
 
+On 1.0.22 every bare `CALL` failed with SQLSTATE 07005, SQLCODE -517 (K9), and the provider wrapped the call in a `BEGIN ... END` block; 1.0.24 runs a `CALL` through EXCSQLSTT, so the same statements also run from the editor.
 The target is the schema and table, each a delimited identifier with `"` doubled, and then every `'` doubled because the whole command is a string literal: the table `O'Brien` becomes `"APP"."O''Brien"`.
 A request without a schema is refused; the provider never falls back to `CURRENT SCHEMA`.
-Run these from the object tree, not the editor: the editor's statement splitter cuts the block at its inner `;`.
 
 ## 9. Monitoring
 
@@ -380,16 +405,16 @@ The Windows addon imports `VCRUNTIME140.dll`, so Windows needs the Microsoft Vis
 The addons statically link 62 Rust crates whose licences the npm package does not carry.
 `THIRD_PARTY_NOTICES.txt` holds the `db2-node` MIT text and each crate's notice, is generated by `scripts/generate-db2-node-notices.sh` from the upstream `Cargo.lock`, and ships in every image and payload.
 
-The `rustls` and `rustls-webpki` versions compiled into 1.0.22 fall inside published RustSec advisories, checked on 2026-10-03: `rustls` 0.23.37 is inside RUSTSEC-2026-0285 (patched in 0.23.45), and `rustls-webpki` 0.103.10 inside RUSTSEC-2026-0098, RUSTSEC-2026-0099 and RUSTSEC-2026-0104 (patched in 0.103.13).
-They are compiled into the addon, so only a new `db2-node` release can pick the fixes up.
-P7 in `docs/BACKLOG.md` tracks that release, and P8 tracks the pin bump to the release that fixes K1 to K22.
+The `rustls` and `rustls-webpki` versions compiled into the addons fall inside published RustSec advisories: `rustls` 0.23.37 is inside RUSTSEC-2026-0285 (patched in 0.23.45), and `rustls-webpki` 0.103.10 inside RUSTSEC-2026-0098, RUSTSEC-2026-0099 and RUSTSEC-2026-0104 (patched in 0.103.13).
+Checked on 2026-10-04 through the OSV API, the 1.0.24 `Cargo.lock` carries the same two versions as 1.0.22, and the same crate set.
+They are compiled into the addon, so only a new `db2-node` release can pick the fixes up; P7 in `docs/BACKLOG.md` tracks it.
 Only linux x64 was measured; arm64, macOS and Windows load the addon in the release probes but were not run against a Db2.
 
 ## 13. Testing
 
 - `tests/integration/db/db2-provider.test.ts` drives the provider against a mocked driver that mirrors the fixture, and ends with the shared object-surface conformance check.
 - `tests/unit/db/db2/` holds the unit tests of each module.
-- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4, and `tests/live/db2-live-check.ts` runs the provider against a live Db2; neither runs in `bun run test`.
+- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 and for the K rows fixed in 1.0.24, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes included; neither runs in `bun run test`.
 
 The `db2` service of `database-compose.yml` runs `icr.io/db2_community/db2:12.1.0.0` unprivileged, with `cap_add: [IPC_LOCK, IPC_OWNER]`, on port 50000.
 Its first boot creates the instance and the database and takes several minutes; wait for the health check before you connect.
@@ -397,11 +422,14 @@ The fixture under `docker/db2-init/` creates the schemas `APP` and `REPORTING` w
 
 ```bash
 docker compose -f database-compose.yml up -d db2
-bun tests/live/db2-known-issues.ts
+DB2_USER=<user> DB2_PASSWORD=<password> bun tests/live/db2-known-issues.ts
 ```
+
+The compose password `Password123!` holds a `!`, which `db2-node` 1.0.24 refuses (D159), so both scripts need `DB2_USER` and `DB2_PASSWORD` of a user whose password avoids `!`, `^`, `[`, `]` and `|`.
+The 2026-10-04 runs used an operating-system user in the instance's `db2iadm1` group, granted `DBADM WITH DATAACCESS WITH ACCESSCTRL` and `WLMADM`, and loaded the fixture by hand after the image skipped it on a fresh volume (D160).
 
 ## 14. References
 
 - [IBM Db2 12.1 documentation](https://www.ibm.com/docs/en/db2/12.1.x)
-- [db2-node on npm](https://www.npmjs.com/package/db2-node), and the upstream defect report [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12)
+- [db2-node on npm](https://www.npmjs.com/package/db2-node), the upstream defect report [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12), its fix [gurungabit/db2-node#13](https://github.com/gurungabit/db2-node/pull/13) and the [1.0.24 release](https://github.com/gurungabit/db2-node/releases/tag/v1.0.24)
 - [#786](https://github.com/libredb/libredb-studio/issues/786), the tracking issue, and [#787](https://github.com/libredb/libredb-studio/pull/787), the earlier ibm_db attempt whose catalog SQL this provider keeps

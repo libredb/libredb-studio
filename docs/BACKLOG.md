@@ -28,11 +28,11 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D164, U17 · 108
+- [Drivers and connections](#drivers-and-connections) — D1-D165, U17 · 109
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U78 · 72
-- [Dependencies](#dependencies) — P1-P9 · 9
+- [Dependencies](#dependencies) — P1-P9 · 8
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
@@ -2046,15 +2046,15 @@ Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
 
 **Done when:** concurrent `getOrCreateProvider` calls for one cache key share one creation, or the loser disconnects its provider and closes a tunnel it created, and a test drives two overlapping first calls with a provider that counts its connects and disconnects.
 
-### D145. Db2 inline row edit, data import and Create Table are off until db2-node decodes non-ASCII text
+### D145. Db2 Create Table is off until the dialog and the import have Db2 column types
 
-`db2-node` 1.0.22 decodes a CHAR or VARCHAR value holding any non-ASCII byte as EBCDIC 037, so a read-then-write-back stores corrupted text ([gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12), K1 in `docs/providers/db2.md`).
-So no kind in `DB2_OBJECT_KINDS` (`src/lib/db/providers/sql/db2/capabilities.ts`) declares `acceptsRowWrites`, and `db2Capabilities` sets `supportsInlineRowEdit` and `supportsCreateTable` to false, which also closes the data import dialog.
-Create Table needs a Db2 row of column types as well: Db2 refuses the `TEXT` type the PostgreSQL row would emit (SQL0204N).
+Inline row edit and the import into an existing table came back with `db2-node` 1.0.24, which reads non-ASCII text back as written and refuses a DECIMAL that does not fit its column, measured on Db2 12.1 and 11.5 by `tests/live/db2-live-check.ts` (K1 and K22 in `docs/providers/db2.md`).
+`db2Capabilities` (`src/lib/db/providers/sql/db2/capabilities.ts`) still sets `supportsCreateTable` to false, which also withholds an import into a new table, because neither path can spell a Db2 table.
+`CreateTableModal` (`src/components/CreateTableModal.tsx`) has no Db2 row in `DIALECTS` and would fall back to PostgreSQL's, and `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, which Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` and so cuts every fraction.
 
-Found 2026-10-03 by the Db2 provider's driver spike (#786).
+Found 2026-10-03 by the Db2 provider's driver spike (#786); narrowed to Create Table 2026-10-04 when writes came back.
 
-**Done when:** a `db2-node` release reads "Grüße" back as written on Db2 12.1 and 11.5, `tests/live/db2-known-issues.ts` prints `GONE` for K1, and Db2 declares `acceptsRowWrites` on its table kind, `supportsInlineRowEdit` and `supportsCreateTable`, with a measured column-type row and an import round trip of non-ASCII text in the provider tests.
+**Done when:** `CreateTableModal` carries a Db2 row whose every type was measured in a `CREATE TABLE` on 12.1 and 11.5, an import into a new Db2 table infers Db2 types that keep the imported values exactly, with a round trip of non-ASCII text and a fractional number in the live check, and Db2 declares `supportsCreateTable`.
 
 ### D146. Db2 monitoring reads only the version and two catalog counts
 
@@ -2076,11 +2076,13 @@ Found 2026-10-03 while scoping the Db2 provider's first version (#786).
 
 ### D148. Db2 has no transactions, SANDBOX or query cancel
 
-`db2Capabilities` sets `supportsTransactions` to false and the provider implements no `cancelQuery`: it holds one `Client` with no session of its own for a transaction, and `db2-node` 1.0.22 offers no interrupt, since `close()` waits for the running statement and `queryTimeout` leaves the statement running on the server (K14 in `docs/providers/db2.md`).
+`db2Capabilities` sets `supportsTransactions` to false and the provider implements no `cancelQuery`: it holds one `Client` with no session of its own for a transaction.
+`db2-node` 1.0.22 offered no interrupt (K14 in `docs/providers/db2.md`); 1.0.24 offers `Client.cancel()`, a `queryTimeout` that cancels the statement on the server through `SYSPROC.WLM_CANCEL_ACTIVITY` on a second session and then closes the connection, and `beginTransaction()`, so the driver no longer stands in the way.
+Cancel needs the connecting user to hold activity-monitoring privileges and `EXECUTE` on `WLM_CANCEL_ACTIVITY`, which a plain application user may not, so what an unprivileged user sees has to be measured.
 
 Found 2026-10-03 by the Db2 provider's driver spike (#786).
 
-**Done when:** a driver release offers a real interrupt or a server-side cancel the provider can send on a second connection, the provider implements `cancelQuery` and the transaction lifecycle on a held connection, and a live test cancels a long statement and sees it end on the server.
+**Done when:** the provider implements `cancelQuery` over `Client.cancel()` and the transaction lifecycle on a held connection, a user without the cancel privileges gets a refusal that names them, and a live test cancels a long statement and sees it end on the server.
 
 ### D149. Windows channels and the Visual C++ runtime the Db2 addon needs
 
@@ -2191,11 +2193,14 @@ Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 
 The Db2 compose service sets `DB2INST1_PASSWORD=Password123!`, and the server takes it: `CONNECT TO TESTDB USER db2inst1 USING "Password123!"` succeeds in the container's own command line processor.
 Studio, over `db2-node` 1.0.22 with the insecure opt-in, is refused with "Authentication failed: Security check failed: severity=8, check_code=0x0F (user id or password invalid), requested_secmec=0x0009, accepted_secmec=0x0003, credential_encoding=Ebcdic037", and `db2diag` logs "Password validation for user db2inst1 failed".
 After the password is changed to letters and digits only, the same connection succeeds at once.
-The likely cause is how the driver encodes `!` in EBCDIC code page 037 (K11 in `docs/providers/db2.md` already says the password travels as EBCDIC without TLS); the characters affected, and whether a TLS connection meets the same refusal, were not measured.
+The likely cause is how the driver encodes `!` in EBCDIC code page 037 (the refusal names `credential_encoding=Ebcdic037`).
+Measured 2026-10-04 through `db2-node` 1.0.24 on 12.1, by changing one test user's password one character at a time: `!`, `^`, `[`, `]` and `|` are refused and every other ASCII punctuation character is accepted, the five being the ones EBCDIC code pages 037 and 500 place differently.
+The refusal is the same over TLS with the driver's default mechanism, over TLS with `securityMechanism: "userPassword"`, and without TLS with it, and `credentialEncoding: "utf8"` is refused too.
+`docs/providers/db2.md` now names the five characters beside the password field.
 
 Found 2026-10-03 by the browser pass of #1246, whose change does not touch Db2.
 
-**Done when:** the password characters `db2-node` encodes differently from the server are measured with and without TLS, the result goes upstream with that evidence, and either the pinned `db2-node` carries the fix or `docs/providers/db2.md` names the characters a password must not hold.
+**Done when:** the measurement above goes upstream with that evidence, and either the pinned `db2-node` carries the fix or the entry is deleted with `docs/providers/db2.md` naming the characters.
 
 ### D160. The Db2 compose service can skip its object fixture on a fresh volume
 
@@ -2250,6 +2255,16 @@ Found while designing the address paste of the vector providers, whose Host-box 
 Not fixed there: the ClickHouse paste path is outside that work.
 
 **Done when:** a port typed in a pasted `http://` or `https://` URL is kept as typed, including 80 and 443, and a test pastes `https://host:443` and `http://host:80` and pins both ports.
+
+### D165. A Db2 definition longer than 32672 bytes is shown cut, and the driver can now read it whole
+
+`readObjectSource` in `src/lib/db/providers/sql/db2/objects.ts` reads a definition as at most two 16336-byte `HEX(VARCHAR(SUBSTRING(...)))` chunks beside its length (`src/lib/db/providers/sql/db2/catalog.ts`), so a longer one is shown partial.
+That bound came from `db2-node` 1.0.22, which could not fetch a CLOB at all (K7 in `docs/providers/db2.md`).
+1.0.24 fetches a CLOB selected on its own: `SELECT TEXT FROM SYSCAT.VIEWS WHERE ...` answered all 40067 bytes of a view definition four times running on 12.1, while a LOB beside other columns can still come back wrong (K4), so the length and `ORIGIN` would stay in a statement of their own.
+
+Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.24.
+
+**Done when:** a definition of any length reads whole through a statement that selects the CLOB alone, a non-ASCII definition longer than 32672 bytes reads back byte for byte in `tests/live/db2-live-check.ts` on 12.1 and 11.5, and the partial form and its reason are gone from section 6.5 of `docs/providers/db2.md`.
 
 ## Value interpolation
 
@@ -3671,21 +3686,11 @@ Found 2026-09-30 by the etcd PR's knip run (#1089), which removed the other hint
 
 `db2-node` 1.0.22, the Db2 provider's driver (#786), compiles `rustls` 0.23.37 and `rustls-webpki` 0.103.10 into its native addon.
 Checked on 2026-10-03 against the RustSec advisory database, `rustls` 0.23.37 is inside RUSTSEC-2026-0285 (patched in 0.23.45), and `rustls-webpki` 0.103.10 is inside RUSTSEC-2026-0098, RUSTSEC-2026-0099 and RUSTSEC-2026-0104 (patched in 0.103.13).
-That library is what protects a Db2 connection's password on the wire, since without TLS the driver sends it in cleartext (K11 in `docs/providers/db2.md`).
+That library is what protects a Db2 connection's password on the wire, since without TLS the password travels in cleartext (section 3.3 of `docs/providers/db2.md`).
 The crates are linked into the `.node` binary, so no lockfile, override or `cargo update` on our side reaches them: only a new `db2-node` release can.
+Re-checked on 2026-10-04 for the move to 1.0.24: its `Cargo.lock` carries the same `rustls` 0.23.37 and `rustls-webpki` 0.103.10, and OSV still places both inside those four advisories.
 
 **Done when:** a `db2-node` release links `rustls` 0.23.45 or later and `rustls-webpki` 0.103.13 or later, its `Cargo.lock` is re-checked against the advisory database, `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run on it, and the pin in `package.json` and section 12 of `docs/providers/db2.md` move to it.
-
-### P8. db2-node 1.0.24 fixes the known driver issues, and the Db2 provider still pins 1.0.22
-
-The Db2 provider (#786) shipped on `db2-node` 1.0.22 with the driver defects K1 to K22 documented in `docs/providers/db2.md` and reported upstream in gurungabit/db2-node#12.
-Upstream fixed all of them in gurungabit/db2-node#13, merged 2026-10-03.
-The v1.0.23 tag failed to publish, so the fixes reach npm with 1.0.24, whose release is gurungabit/db2-node#15; on 2026-10-03 npm still served 1.0.22 (`npm view db2-node dist-tags`).
-The fix changes behaviour the provider depends on: an unsafe BIGINT is returned as a string, `CALL` returns result sets, `currentSchema` is honoured, `Client.cancel()` exists, and a connection without TLS to a stock `AUTHENTICATION=SERVER` server is refused unless `securityMechanism: 'userPassword'` is set, so `allowInsecureAuth` stops working until the provider passes it.
-Bumping the pin is a provider change, not a routine bump.
-P7 closes with the same release if its `Cargo.lock` carries the patched TLS crates.
-
-**Done when:** the pin in `package.json` moves to the published release; `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run against Db2 12.1 and 11.5 and each K row in `docs/providers/db2.md` is removed or kept on that evidence; `allowInsecureAuth` maps to the driver's explicit plaintext mechanism; inline edit, data import and Create Table are re-enabled only if K1 and K22 measure as gone; and each workaround the fix makes redundant (the compound block around `CALL`, HEX catalog names, the preview casts) is removed or its reason restated.
 
 ### P9. Two dev dependencies resolve undici 7.28.0, inside a high advisory
 

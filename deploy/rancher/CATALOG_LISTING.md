@@ -45,9 +45,9 @@ What gets mailed is `pcsc-listing.html` beside this file, not the sections below
 > line 183. On Druid the true sentence is the one `docs/providers/druid.md` and the README both
 > carry: Druid SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`. "Druid has no `INSERT`" is
 > false — `INSERT` and `REPLACE` exist there through the MSQ task engine, on an endpoint this
-> provider does not use (`docs/providers/druid.md` §5.5). On Db2 LUW the engine can write and the
-> driver is the reason: `db2-node` 1.0.22 misreads non-ASCII text, so a write-back would store
-> corrupted values (`docs/providers/db2.md`, K1); never say Db2 itself is read-only.
+> provider does not use (`docs/providers/druid.md` §5.5). On Db2 LUW a table takes inline edits and
+> imports into an existing table, and Create Table is off because the dialog has no Db2 column
+> types yet (`docs/providers/db2.md`, section 5); never say Db2 is read-only.
 >
 > **Accuracy gate — AI wording.** Natural-language-to-SQL was removed from the product, so
 > no listing may say the assistant writes SQL from a plain-English question. What ships is
