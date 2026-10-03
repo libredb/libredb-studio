@@ -118,7 +118,7 @@ A range bound above 2^53 is sent with a warning that Qdrant compares range bound
 
 There is no User field and no Database box: Qdrant has no user name and no container level.
 A non-empty user from a seed file or the API is refused when the connection opens, naming the field.
-A collection or alias name in a request is refused before it reaches a path when it is empty, `.` or `..`, holds `/` or NUL, or is longer than 255 characters; a vector name is refused when it holds one of `<`, `>`, `:`, `"`, `/`, `\`, `|`, `?`, `*`, NUL or U+001F, or is longer than 200 bytes.
+A collection or alias name in a request is refused before it reaches a path when it is empty, `.` or `..`, holds `/` or NUL, as written or once percent-decoded (so `%2e%2e` and `a%2fb` are refused too), or is longer than 255 characters; a vector name is refused when it holds one of `<`, `>`, `:`, `"`, `/`, `\`, `|`, `?`, `*`, NUL or U+001F, or is longer than 200 bytes.
 
 ### 4.2 Authentication
 
