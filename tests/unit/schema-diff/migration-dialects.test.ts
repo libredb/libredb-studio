@@ -34,6 +34,7 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   prometheus: null,
   kafka: null,
   etcd: null,
+  neo4j: null,
 };
 
 describe("migration dialect regressions (#284)", () => {

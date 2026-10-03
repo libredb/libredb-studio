@@ -323,15 +323,15 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * it answers `Unknown type 'text'` to.
  *
  * The map is total, for the reason `BINARY_LITERAL` below is: a new provider must not
- * inherit a silently wrong answer. The ten dialects with NO row measured have an
+ * inherit a silently wrong answer. The eleven dialects with NO row measured have an
  * empty one. Druid takes no INSERT at all without the MSQ extension. The two search
  * endpoints and Couchbase parse no CREATE TABLE: a SQL++ collection is schemaless and
  * `CREATE COLLECTION` takes no columns, which is why the Couchbase provider declares
  * `supportsCreateTable: false`. MongoDB, Redis, Kafka, etcd and the embedded store declare
- * `queryLanguage: "json"` and `prometheus` declares `"promql"`, so no SQL statement is
- * ever built for those six to read. A file for any of the ten is by definition meant to
- * run somewhere else, so every bare name in it is re-spelled portably rather than kept as
- * one engine's private word.
+ * `queryLanguage: "json"`, `prometheus` declares `"promql"` and `neo4j` declares `"cypher"`,
+ * so no SQL statement is ever built for those seven to read. A file for any of the eleven is
+ * by definition meant to run somewhere else, so every bare name in it is re-spelled portably
+ * rather than kept as one engine's private word.
  */
 const NOTHING_STANDS_ALONE: readonly string[] = [];
 
@@ -521,6 +521,7 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   prometheus: NOTHING_STANDS_ALONE,
   kafka: NOTHING_STANDS_ALONE,
   etcd: NOTHING_STANDS_ALONE,
+  neo4j: NOTHING_STANDS_ALONE,
 };
 
 /**
@@ -654,6 +655,8 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   etcd: "standard-hex",
   // PromQL, not SQL (#1085): no statement is ever built for it either, so the same claim.
   prometheus: "standard-hex",
+  // Cypher, not SQL: it has no INSERT and no byte literal, so no statement is built for it either.
+  neo4j: "standard-hex",
   // Measured on SQL Server 2022: `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)`
   // answers `0102DEADBEEF`, `DATALENGTH(0x)` answers 0 — so the empty case is spelled
   // — and `SELECT X'0102'` is `Msg 207 … Invalid column name 'X'`.

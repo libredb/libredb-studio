@@ -74,5 +74,7 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   // No field beyond UNCONNECTED (#1089 3.1): the provider validates nothing in its constructor, so its
   // declarations answer for this connection whatever it holds.
   etcd: unconnected("etcd"),
+  // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing (Neo4j spec 6.1).
+  neo4j: unconnected("neo4j"),
   libredb: unconnected("libredb"),
 });

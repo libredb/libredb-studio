@@ -92,9 +92,10 @@ export class Neo4jProvider extends GraphBaseProvider {
       supportsConnectionString: false,
       defaultPort: NEO4J_DEFAULT_PORT,
       statementTerminator: "none",
+      // One container, the database (SR4), and every address names it. `containerPathShapes` is left absent,
+      // which the kernel reads as `exact`: GraphBaseProvider refuses any other container with a check of its
+      // own rather than `assertContainerPathShape`, as etcd and Kafka do with theirs.
       containerLevels: GRAPH_CONTAINER_LEVELS,
-      // One container, the database (SR4), and every address names it.
-      containerPathShapes: "exact",
       objectKinds: GRAPH_OBJECT_KINDS,
       schemaRefreshPattern: SCHEMA_REFRESH_NEVER,
     };

@@ -35,6 +35,8 @@ const STATEMENT = "SELECT * FROM t";
  *   does below: a read request carries its own limit and no offset can page it.
  * - `false` for `etcd` (#1089), whose own `prepareQuery` pins the command it is given: a command
  *   carries its own `--limit`, and no offset can page it.
+ * - `false` for `neo4j`, whose `prepareQuery` (`GraphBaseProvider`) hands the statement on untouched:
+ *   the provider bounds a read by the rows it takes from the server, and no offset can page it.
  * - `false` for `libredb`, the quiet one: it inherits `BaseDatabaseProvider.prepareQuery`,
  *   which echoes `offset: 50` back while applying nothing, so a `true` here would render a
  *   control whose every click re-fetches page one.
@@ -66,6 +68,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   prometheus: false,
   kafka: false,
   etcd: false,
+  neo4j: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];
@@ -183,7 +186,7 @@ describe("supportsResultPagination (#816)", () => {
       return;
     }
 
-    // MongoDB, Redis, LibreDB, Prometheus, Kafka and etcd: no refusal, so the only thing that keeps criterion 3 is the
+    // MongoDB, Redis, LibreDB, Prometheus, Kafka, etcd and Neo4j: no refusal, so the only thing that keeps criterion 3 is the
     // flag. Pin what they really do, so a provider that starts applying the offset is a
     // failure here rather than a flag left false for an engine that outgrew it.
     expect(pageTwo.prepared.wasLimited).toBe(false);

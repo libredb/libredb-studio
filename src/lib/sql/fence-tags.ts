@@ -85,6 +85,11 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // no engine in `ALIAS_ENGINES`, and `etcdctl`, which names etcd alone, is left out until plan
   // runs show a model writing it.
   etcd: true,
+  // A ```neo4j block holds one read-only Cypher statement the editor runs as it is (Neo4j spec 6.4). The
+  // `cypher` alias below is registered as a QUERY tag but NOT as an engine, the `cql` rule: Cypher is a
+  // language several graph engines speak, so reading `cypher` as "this was written for Neo4j" would put a
+  // claim in the model's mouth once a second graph engine exists.
+  neo4j: true,
 });
 
 /**
@@ -111,6 +116,7 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "n1ql",
   "cql",
   "promql",
+  "cypher",
 ]);
 
 /**

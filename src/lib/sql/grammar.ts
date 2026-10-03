@@ -618,6 +618,11 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * the shell's quoting rules and a txn body by etcdctl's own, and a key may be spelled like any SQL
  * keyword. Its provider extends `BaseDatabaseProvider` and parses the text itself.
  *
+ * `neo4j` takes one Cypher statement (Neo4j spec 5.5), which is not SQL text either: its strings
+ * escape with a backslash, `//` opens a comment and a backtick quotes a name, so a SQL span reader
+ * would misread where a literal ends. Its provider reads the text with the graph lexer
+ * (`src/lib/db/graph/cypher/lexer.ts`) and refuses every write before sending it.
+ *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
  * `SQLBaseProvider`.
@@ -648,6 +653,7 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "prometheus",
   "kafka",
   "etcd",
+  "neo4j",
 ]);
 
 /**

@@ -14,7 +14,9 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  * The fifteen providers that call `assertContainerPathShape` declare a value explicitly; the
  * five that call no kernel check and declare no container level (elasticsearch, opensearch,
  * prometheus, kafka, etcd) leave it absent, which the kernel reads as `exact`: the same `[]`-only set
- * their own `container.length !== 0` checks accept.
+ * their own `container.length !== 0` checks accept. neo4j leaves it absent too: its one level is the
+ * database, and `GraphBaseProvider` refuses any container but `[database]` with a check of its own,
+ * which is the `exact` reading the kernel gives the absent field.
  *
  * It reads the field DIRECTLY on purpose. A census of the declaration must tell absent from
  * `exact`, and `acceptedContainerShapes()` collapses the two, which is its job and not this
@@ -48,6 +50,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   prometheus: "absent",
   kafka: "absent",
   etcd: "absent",
+  neo4j: "absent",
 });
 
 const TYPES = Object.keys(EXPECTED_CONTAINER_PATH_SHAPES) as DatabaseType[];

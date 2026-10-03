@@ -110,6 +110,9 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   // One kind has columns: a key-prefix group, whose columns are the fixed shape of a `get` row (#1089 4.2).
   // Keys, members, leases, users and roles describe none.
   etcd: ["prefix"],
+  // Two kinds have columns: a node label and a relationship type, whose columns are the property keys the
+  // server reports for them (Neo4j spec 4.1). Indexes and constraints describe none.
+  neo4j: ["label", "relationship_type"],
   libredb: ["table", "collection", "keyspace"],
 });
 
@@ -193,7 +196,8 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(20);
+    // EXTERNAL_DATABASE_TYPES.length (20 with neo4j) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(21);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
     // A row naming nothing would make its type-id's census pass on the empty set, and the design's
     // table has no such row: every engine has at least one kind with columns.

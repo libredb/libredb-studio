@@ -289,16 +289,33 @@ describe("isDestructiveNonSqlQuery", () => {
     // writes (#1088, section 2).
     expect(isDestructiveNonSqlQuery(query, "kafka")).toBe(false);
   });
+
+  // ── Neo4j ────────────────────────────────────────────────────────────────
+
+  test.each<[string, string]>([
+    ["a read", "MATCH (n:Person) RETURN n LIMIT 25"],
+    ["a write", "CREATE (n:Person {name: 'Ada'})"],
+    ["a detach delete", "MATCH (n) DETACH DELETE n"],
+    ["a schema change", "DROP INDEX person_name"],
+    ["SQL", "DROP TABLE users"],
+    ["a statement that never closes", "MATCH (n RETURN n"],
+    ["nothing at all", ""],
+  ])("names nothing for %s, because the provider refuses every write before sending it", (_label, query) => {
+    // Not "unreadable, so ask": the read policy refuses a write before anything is sent (Neo4j spec 5.5), so a
+    // confirmation would ask about a statement that cannot run.
+    expect(isDestructiveNonSqlQuery(query, "neo4j")).toBe(false);
+  });
 });
 
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka and etcd and for no other type", () => {
+  test("is true for prometheus, kafka, etcd and neo4j and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
       "etcd",
+      "neo4j",
     ]);
   });
 
@@ -308,14 +325,19 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the five types whose text is not SQL", () => {
+  test("carries a row for exactly the six types whose text is not SQL", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
       "etcd",
       "kafka",
       "mongodb",
+      "neo4j",
       "prometheus",
       "redis",
     ]);
+  });
+
+  test("names no Neo4j operation, because the provider sends no write to name", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.neo4j?.operations.size).toBe(0);
   });
 
   test("names no Kafka operation, because a read request has none to name", () => {
@@ -364,6 +386,7 @@ describe("vocabularyTypedConfirmation", () => {
     ["mongodb", '{"collection":"users","operation":"deleteMany","filter":{}}'],
     ["prometheus", "up"],
     ["kafka", '{"topic": "orders"}'],
+    ["neo4j", "MATCH (n) DETACH DELETE n"],
   ])(
     "asks for nothing to be typed on %s, whose row declares no typed confirmation or which has no row",
     (type, text) => {

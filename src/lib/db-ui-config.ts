@@ -20,6 +20,7 @@ import {
   PrometheusIcon,
   KafkaIcon,
   EtcdIcon,
+  Neo4jIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 
@@ -401,6 +402,28 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
       user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
       password:
         "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
+    },
+  },
+  neo4j: {
+    // A generic graph glyph, never Neo4j's logo (spec E12).
+    icon: Neo4jIcon,
+    // No identity hue is free. `hue-fuchsia` is Prometheus's; its `-alt` step is a second identity only
+    // because it clears the separation test, which is why `fuchsia` joined IDENTITY_ALTS in
+    // tests/unit/theme-accent-contrast.test.ts with this entry, as `blue` did with etcd's.
+    color: "text-hue-fuchsia-alt",
+    label: "Neo4j",
+    // The Bolt port. The HTTP port (7474) serves the browser and the HTTP API, which this provider never uses.
+    defaultPort: "7687",
+    // No URI scheme to paste: the provider builds its bolt:// URI from Host, Port and the SSL panel, and
+    // connection-string-parser.ts reads no Neo4j URI (spec 6.1).
+    showConnectionStringToggle: false,
+    // The SSL panel and the SSH tunnel stay offered: a bolt:// URI dials the one server it names, unlike a
+    // routing neo4j:// URI, which this provider never builds. An empty database is the server's home database.
+    connectionFields: ["host", "port", "user", "password", "database"],
+    // The read-only sentence sits under User because the form draws no per-engine hint on its Read-only toggle.
+    fieldHints: {
+      user: "Neo4j connections are read-only in this version, whether or not Read-only is set: this user's write privileges are never used.",
+      database: "Leave empty to use the server's home database.",
     },
   },
   libredb: {

@@ -590,6 +590,26 @@ describe("createDatabaseProvider", () => {
     await expect(createDatabaseProvider(conn)).rejects.toThrow("readOnly must be true or false.");
   });
 
+  test('creates provider for type "neo4j"', async () => {
+    // No `database`: an empty one means the server's home database, resolved in connect(). The constructor
+    // validates nothing and opens nothing (Neo4j spec 6.1), so the provider is built, and declares its
+    // language and its read-only enforcement, with no server running.
+    const conn = makeConnection("neo4j", { port: 7687, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider).toBeDefined();
+    expect(provider.type).toBe("neo4j");
+    expect(provider.getCapabilities().queryLanguage).toBe("cypher");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a neo4j connection with readOnly: true is built, since its provider keeps the mode", async () => {
+    const conn = { ...makeConnection("neo4j", { port: 7687, database: undefined }), readOnly: true };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("neo4j");
+  });
+
   test('creates provider for type "libredb"', async () => {
     // A path the platform owns rather than a hardcoded "/tmp/...", which is not a directory
     // on Windows at all. Nothing opens this file: `createDatabaseProvider` constructs and

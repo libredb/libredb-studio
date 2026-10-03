@@ -114,7 +114,6 @@ describe("getCapabilities", () => {
       defaultPort: 7687,
       statementTerminator: "none",
       containerLevels: GRAPH_CONTAINER_LEVELS,
-      containerPathShapes: "exact",
       objectKinds: GRAPH_OBJECT_KINDS,
       schemaRefreshPattern: "(?!)",
     } as unknown as ReturnType<Neo4jProvider["getCapabilities"]>);

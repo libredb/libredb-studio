@@ -32,6 +32,7 @@ describe("fenceTagEngine", () => {
       "prometheus",
       "kafka",
       "etcd",
+      "neo4j",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -100,6 +101,17 @@ describe("fenceTagEngine", () => {
     // The product name is the tag that DOES name the engine, and the canonical-engine
     // walk above asserts it.
     expect(isQueryFenceTag("cassandra")).toBe(true);
+  });
+
+  test("cypher names a language, so it holds a query without naming an engine", () => {
+    // The `cql` rule (Neo4j spec 6.4): Cypher is a language several graph engines speak, Memgraph among
+    // them, so reading `cypher` as "written for Neo4j" would put a claim in the model's mouth the moment a
+    // second graph engine connects. A query tag only, never an engine.
+    expect(isQueryFenceTag("cypher")).toBe(true);
+    expect(fenceTagEngine("cypher")).toBeNull();
+    // The product name is the tag that DOES name the engine.
+    expect(isQueryFenceTag("neo4j")).toBe(true);
+    expect(fenceTagEngine("neo4j")).toBe("neo4j");
   });
 
   test("promql is a language tag that still names one engine, because one type-id runs PromQL", () => {
