@@ -24,14 +24,46 @@ import {
   type TaggedObject,
   toJsonText,
 } from "@/lib/db/console/tagged-json";
-import { FILTER_IDENTIFIER, int64Digits, type TemplateParam } from "./expr";
+import { checkDenseElements, checkMultiVector, type VectorTarget, vectorNumbers } from "@/lib/db/vector/dense";
+import { checkSparse, sparseFromIndexMap } from "@/lib/db/vector/sparse";
+import type { VectorDType } from "@/lib/db/vector/types";
+import type {
+  DescribeAliasRequest,
+  DescribeCollectionRequest,
+  DescribeCollectionResponse,
+  DescribeDatabaseRequest,
+  DescribeIndexRequest,
+  DescribeIndexResponse,
+  GetCollectionStatisticsRequest,
+  GetLoadStateRequest,
+  HybridSearchRequest,
+  ListAliasesRequest,
+  QueryRequest,
+  SearchRequest,
+  ShowPartitionsRequest,
+  WireCollectionSchema,
+  WireFieldSchema,
+  WireIDs,
+  WireKeyValuePair,
+} from "./client";
+import { FILTER_IDENTIFIER, idsFilter, int64Digits, type TemplateParam, type TypedIds, templateValues } from "./expr";
+import {
+  encodePlaceholderGroup,
+  floatVectorBytes,
+  int8VectorBytes,
+  type MilvusPlaceholderType,
+  sparseVectorBytes,
+  textBytes,
+} from "./placeholder-group";
 import {
   endpointKeySentence,
   MILVUS_BOUNDS,
   MILVUS_CONSISTENCY_LEVELS,
   MILVUS_CONSOLE,
+  MILVUS_DISTANCE_METRICS,
   MILVUS_DOCUMENTED_REFUSALS,
   MILVUS_ENDPOINT_KEYS,
+  MILVUS_INDEX_SEARCH_KEYS,
   MILVUS_REFUSED_CONSISTENCY,
   MILVUS_REQUIRED_KEYS,
   MILVUS_RERANK_PARAMS,
@@ -39,6 +71,7 @@ import {
   MILVUS_ROUTES,
   MILVUS_SEARCH_PARAMETERS,
   MILVUS_SEARCH_PARAMS_KEYS,
+  MILVUS_SIMILARITY_METRICS,
   MILVUS_SUB_REQUEST_KEYS,
   MILVUS_SUB_REQUEST_REFUSALS,
   MILVUS_UNDOCUMENTED_REFUSALS,
@@ -909,5 +942,702 @@ function hybridPhase0(base: Phase0Base, body: TaggedObject): HybridPhase0 {
     partitionNames: readPartitionNames(body.partitionNames),
     consistency: readConsistency(body.consistencyLevel),
     grouping,
+  };
+}
+
+// -- phase 1 and lowering ----------------------------------------------------------------------------------------
+
+/** How the DescribeIndex of a search was read: answered, refused for want of IndexDetail, or not read. */
+export type IndexReading =
+  | { readonly kind: "read"; readonly response: DescribeIndexResponse }
+  | { readonly kind: "unreadable" }
+  | { readonly kind: "not-read" };
+
+export interface MilvusPhase1Reads {
+  /** The DescribeCollection fetched for this request, never a cache (E12). */
+  readonly collection?: DescribeCollectionResponse;
+  readonly index: IndexReading;
+}
+
+/** Where the score column's meaning comes from (3.3, 5.5). */
+export type ScoreSource =
+  | { readonly kind: "metric"; readonly metric: string }
+  | { readonly kind: "fused"; readonly strategy: "rrf" | "weighted" }
+  | { readonly kind: "unreadable" }
+  | { readonly kind: "unreported" };
+
+/** What results.ts needs to turn a query or get answer into rows. */
+export interface RowShape {
+  readonly schema: WireCollectionSchema;
+  readonly limit: number;
+  readonly offset: number;
+}
+
+/** What results.ts needs to turn a search answer into rows. */
+export interface SearchShape {
+  readonly schema: WireCollectionSchema;
+  readonly nq: number;
+  readonly limit: number;
+  readonly offset: number;
+  readonly score: ScoreSource;
+  readonly groupingField: WireFieldSchema | undefined;
+}
+
+/** One console request, lowered: the client call it makes and what its answer needs. */
+export type MilvusOperation =
+  | { readonly kind: "listDatabases"; readonly db: string }
+  | { readonly kind: "describeDatabase"; readonly db: string; readonly request: DescribeDatabaseRequest }
+  | { readonly kind: "showCollections"; readonly db: string }
+  | { readonly kind: "describeCollection"; readonly db: string; readonly request: DescribeCollectionRequest }
+  | {
+      readonly kind: "getCollectionStatistics";
+      readonly db: string;
+      readonly request: GetCollectionStatisticsRequest;
+    }
+  | { readonly kind: "getLoadState"; readonly db: string; readonly request: GetLoadStateRequest }
+  | { readonly kind: "showPartitions"; readonly db: string; readonly request: ShowPartitionsRequest }
+  | { readonly kind: "describeIndex"; readonly db: string; readonly request: DescribeIndexRequest }
+  | { readonly kind: "listAliases"; readonly db: string; readonly request: ListAliasesRequest }
+  | { readonly kind: "describeAlias"; readonly db: string; readonly request: DescribeAliasRequest }
+  | { readonly kind: "query"; readonly db: string; readonly request: QueryRequest; readonly shape: RowShape }
+  | { readonly kind: "count"; readonly db: string; readonly request: QueryRequest }
+  | { readonly kind: "search"; readonly db: string; readonly request: SearchRequest; readonly shape: SearchShape }
+  | {
+      readonly kind: "hybridSearch";
+      readonly db: string;
+      readonly request: HybridSearchRequest;
+      readonly shape: SearchShape;
+    };
+
+const VECTOR_TYPES: readonly string[] = [
+  "FloatVector",
+  "Float16Vector",
+  "BFloat16Vector",
+  "Int8Vector",
+  "BinaryVector",
+  "SparseFloatVector",
+  "ArrayOfVector",
+];
+
+function isVectorType(dataType: string): boolean {
+  return VECTOR_TYPES.includes(dataType);
+}
+
+const DENSE_DTYPES: Readonly<Record<string, VectorDType>> = {
+  FloatVector: "float32",
+  Float16Vector: "float16",
+  BFloat16Vector: "bfloat16",
+  Int8Vector: "int8",
+  BinaryVector: "binary",
+};
+
+function typeParam(field: WireFieldSchema, key: string): string | undefined {
+  return field.type_params.find((pair) => pair.key === key)?.value;
+}
+
+function describedDimension(field: WireFieldSchema): number | null {
+  const text = typeParam(field, "dim");
+  return text !== undefined && /^[0-9]+$/.test(text) ? Number(text) : null;
+}
+
+/**
+ * The vector target a described field declares, or undefined for a field that is not a vector: the dtype is the
+ * value domain Studio reads and checks, the dimension the declared one (bits for a binary vector).
+ */
+export function vectorTargetOf(field: WireFieldSchema): VectorTarget | undefined {
+  if (field.data_type === "SparseFloatVector") {
+    return { name: field.name, kind: "sparse", dtype: "float32", dimension: null };
+  }
+  if (field.data_type === "ArrayOfVector") {
+    return { name: field.name, kind: "multi", dtype: "float32", dimension: describedDimension(field) };
+  }
+  const dtype = own(DENSE_DTYPES, field.data_type);
+  return dtype === undefined
+    ? undefined
+    : { name: field.name, kind: "dense", dtype, dimension: describedDimension(field) };
+}
+
+/** A described dimension outside the default server maximum is refused before it drives a check (5.6, R43 M10). */
+function checkDescribedDimension(target: VectorTarget, key: string): void {
+  const dimension = target.dimension;
+  if (target.kind === "sparse") return;
+  const binary = target.dtype === "binary";
+  const valid =
+    dimension !== null &&
+    (binary
+      ? dimension % 8 === 0 && dimension >= 8 && dimension <= MILVUS_BOUNDS.maxBinaryDimension
+      : dimension >= MILVUS_BOUNDS.minDenseDimension && dimension <= MILVUS_BOUNDS.maxDenseDimension);
+  if (!valid) {
+    const range = binary ? "a multiple of 8 from 8 to 262,144 bits" : "2 to 32,768";
+    throw refusal(
+      1,
+      key,
+      `${target.name} declares the dimension ${dimension ?? "none"}, outside the default server maximum (${range}), so Studio does not search it.`,
+    );
+  }
+}
+
+function schemaOf(reads: MilvusPhase1Reads): WireCollectionSchema {
+  const schema = reads.collection?.schema;
+  if (schema === undefined || schema === null) {
+    throw new TypeError("Phase 1 of an entities route needs the DescribeCollection answer fetched for it");
+  }
+  return schema;
+}
+
+/** Every name a projection can resolve under rule 1: the fields, the dynamic field when listed, struct arrays. */
+function declaredNames(schema: WireCollectionSchema): ReadonlySet<string> {
+  return new Set([
+    ...schema.fields.map((field) => field.name),
+    ...schema.struct_array_fields.map((field) => field.name),
+  ]);
+}
+
+/** outputFields after phase 1: the three projection rules of 5.4, or the default list of 5.4. */
+function projectOutput(output: OutputSelection, schema: WireCollectionSchema, collection: string): string[] {
+  if (output.kind === "default") {
+    return schema.fields.filter((field) => !isVectorType(field.data_type)).map((field) => field.name);
+  }
+  if (output.kind === "count") return [COUNT_STAR];
+  const names = declaredNames(schema);
+  return output.entries.map((entry) => {
+    if (entry === "*" || names.has(entry)) return entry;
+    if (!schema.enable_dynamic_field) {
+      throw refusal(
+        1,
+        "outputFields",
+        `${shown(entry)} is not a field of ${collection}, and ${collection} has no dynamic field.`,
+      );
+    }
+    if (!FILTER_IDENTIFIER.test(entry)) {
+      throw refusal(
+        1,
+        "outputFields",
+        `${shown(entry)} is not a field of ${collection} and cannot be named as a dynamic key: name $meta to read every dynamic key.`,
+      );
+    }
+    return entry;
+  });
+}
+
+function primaryKeyOf(schema: WireCollectionSchema): WireFieldSchema {
+  const key = schema.fields.find((field) => field.is_primary_key);
+  if (key === undefined) throw new TypeError("A described collection has no primary key field");
+  return key;
+}
+
+/** Ids typed by the freshly described key (E12, 5.4): Int64 digits under E12's rule, VarChar strings only. */
+function typedIds(ids: readonly TaggedJson[], key: WireFieldSchema, path: string, refuseDuplicates: boolean): TypedIds {
+  if (key.data_type === "Int64") {
+    const values = ids.map((id, index) => {
+      const digits =
+        typeof id === "string"
+          ? int64Digits(id)
+          : id !== null && isTaggedInt(id) && checkIntRange(id, "int64")
+            ? int64Digits(toJsonText(id))
+            : undefined;
+      if (digits === undefined) {
+        throw refusal(
+          1,
+          `${path}[${index}]`,
+          `${path}[${index}] is not an Int64 written as plain digits, and the primary key ${key.name} is Int64.`,
+        );
+      }
+      return digits;
+    });
+    checkDuplicates(values, path, refuseDuplicates);
+    return { kind: "int64", values };
+  }
+  const values = ids.map((id, index) => {
+    if (typeof id !== "string") {
+      throw refusal(1, `${path}[${index}]`, `The primary key ${key.name} is ${key.data_type}: give ids as strings.`);
+    }
+    return id;
+  });
+  checkDuplicates(values, path, refuseDuplicates);
+  return { kind: "string", values };
+}
+
+function checkDuplicates(values: readonly string[], path: string, refuse: boolean): void {
+  if (!refuse) return;
+  const seen = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) throw refusal(1, path, `${path} names ${shown(value)} twice.`);
+    seen.add(value);
+  }
+}
+
+/** partitionNames on a partition-key collection: Milvus refuses them with code 1100 (R42 M15). */
+function checkPartitionKey(schema: WireCollectionSchema, partitionNames: readonly string[], collection: string): void {
+  const key = schema.fields.find((field) => field.is_partition_key);
+  if (key !== undefined && partitionNames.length > 0) {
+    throw refusal(
+      1,
+      "partitionNames",
+      `${collection} is partitioned by its key field ${key.name}, so Milvus refuses partitionNames: filter on ${key.name} instead.`,
+    );
+  }
+}
+
+function consistencyFields(consistency: MilvusConsistency): {
+  readonly consistency_level?: string;
+  readonly use_default_consistency: boolean;
+} {
+  return consistency.kind === "default"
+    ? { use_default_consistency: true }
+    : { consistency_level: consistency.level, use_default_consistency: false };
+}
+
+function partitionFields(partitionNames: readonly string[]): { readonly partition_names?: readonly string[] } {
+  return partitionNames.length === 0 ? {} : { partition_names: partitionNames };
+}
+
+function templateFields(
+  templates: Readonly<Record<string, TemplateParam>>,
+): Pick<QueryRequest, "expr_template_values"> {
+  return Object.keys(templates).length === 0 ? {} : { expr_template_values: templateValues(templates) };
+}
+
+function pair(key: string, value: string): WireKeyValuePair {
+  return { key, value };
+}
+
+/** Phase 1 and the lowering of 5.4: the request a client call sends, with what its answer needs. */
+export function milvusPhase1(request: MilvusPhase0, reads: MilvusPhase1Reads): MilvusOperation {
+  const db = request.db;
+  switch (request.op) {
+    case "databases/list":
+      return { kind: "listDatabases", db };
+    case "databases/describe":
+      return { kind: "describeDatabase", db, request: {} };
+    case "collections/list":
+      return { kind: "showCollections", db };
+    case "collections/describe":
+      return { kind: "describeCollection", db, request: { collection_name: request.collection } };
+    case "collections/get_stats":
+      return { kind: "getCollectionStatistics", db, request: { collection_name: request.collection } };
+    case "collections/get_load_state":
+      return {
+        kind: "getLoadState",
+        db,
+        request: { collection_name: request.collection, ...partitionFields(request.partitionNames) },
+      };
+    case "partitions/list":
+      return { kind: "showPartitions", db, request: { collection_name: request.collection } };
+    case "indexes/list":
+      return { kind: "describeIndex", db, request: { collection_name: request.collection } };
+    case "indexes/describe":
+      return {
+        kind: "describeIndex",
+        db,
+        request: { collection_name: request.collection, index_name: request.indexName },
+      };
+    case "aliases/list":
+      return {
+        kind: "listAliases",
+        db,
+        request: request.collection === undefined ? {} : { collection_name: request.collection },
+      };
+    case "aliases/describe":
+      return { kind: "describeAlias", db, request: { alias: request.alias } };
+    case "entities/query":
+      return lowerQuery(request, schemaOf(reads));
+    case "entities/get":
+      return lowerGet(request, schemaOf(reads));
+    case "entities/search":
+      return lowerSearch(request, schemaOf(reads), reads.index);
+    case "entities/hybrid_search":
+      return lowerHybrid(request, schemaOf(reads), reads.index);
+  }
+}
+
+function lowerQuery(request: QueryPhase0, schema: WireCollectionSchema): MilvusOperation {
+  checkPartitionKey(schema, request.partitionNames, request.collection);
+  const common = {
+    collection_name: request.collection,
+    expr: request.filter,
+    ...partitionFields(request.partitionNames),
+    ...consistencyFields(request.consistency),
+    ...templateFields(request.templates),
+  };
+  if (request.output.kind === "count") {
+    // The canonical spelling, with no limit and no offset (R40 F14, M23).
+    return { kind: "count", db: request.db, request: { ...common, output_fields: [COUNT_STAR], query_params: [] } };
+  }
+  const queryParams = [pair("limit", String(request.limit)), pair("offset", String(request.offset))];
+  if (request.orderByFields.length > 0) queryParams.push(pair("order_by_fields", request.orderByFields.join(",")));
+  return {
+    kind: "query",
+    db: request.db,
+    request: {
+      ...common,
+      output_fields: projectOutput(request.output, schema, request.collection),
+      query_params: queryParams,
+    },
+    shape: { schema, limit: request.limit, offset: request.offset },
+  };
+}
+
+function lowerGet(request: GetPhase0, schema: WireCollectionSchema): MilvusOperation {
+  checkPartitionKey(schema, request.partitionNames, request.collection);
+  const key = primaryKeyOf(schema);
+  if (!FILTER_IDENTIFIER.test(key.name)) {
+    throw refusal(
+      1,
+      "id",
+      `The primary key ${shown(key.name)} cannot be written in a filter, so Studio cannot get by it.`,
+    );
+  }
+  const filter = idsFilter(key.name, typedIds(request.ids, key, "id", false));
+  return {
+    kind: "query",
+    db: request.db,
+    request: {
+      collection_name: request.collection,
+      expr: filter.expr,
+      expr_template_values: filter.values,
+      output_fields: projectOutput(request.output, schema, request.collection),
+      ...partitionFields(request.partitionNames),
+      ...consistencyFields(request.consistency),
+      query_params: [pair("limit", String(MILVUS_BOUNDS.maxRows))],
+    },
+    shape: { schema, limit: request.ids.length, offset: 0 },
+  };
+}
+
+/** The vector field a search names: a declared vector field, or `<struct>[<field>]` of an embedding list (5.4). */
+function annsTarget(schema: WireCollectionSchema, annsField: string, key: string, collection: string) {
+  const declared = schema.fields.find((field) => field.name === annsField);
+  const element = /^(.+)\[(.+)\]$/.exec(annsField);
+  const field =
+    declared ??
+    (element === null
+      ? undefined
+      : schema.struct_array_fields
+          .find((struct) => struct.name === element[1])
+          ?.fields.find((sub) => sub.name === element[2] || sub.name === annsField));
+  const target = field === undefined ? undefined : vectorTargetOf(field);
+  if (field === undefined || target === undefined) {
+    throw refusal(1, key, `${shown(annsField)} is not a vector field of ${collection}.`);
+  }
+  if (field.data_type === "ArrayOfVector" && field.element_type !== "FloatVector") {
+    throw refusal(
+      1,
+      key,
+      `${annsField} is an embedding list of ${field.element_type}; Studio searches one of FloatVector only.`,
+    );
+  }
+  checkDescribedDimension(target, key);
+  return { field, target };
+}
+
+/** The function that produces a field, if any (5.4: text query data). */
+function producingFunction(schema: WireCollectionSchema, field: WireFieldSchema): string | undefined {
+  return schema.functions.find((fn) => fn.output_field_names.includes(field.name))?.type;
+}
+
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+function numbersOf(target: VectorTarget, values: readonly TaggedJson[], path: string): readonly number[] {
+  const numbers = vectorNumbers(target, values);
+  if ("sentence" in numbers) throw refusal(1, path, numbers.sentence);
+  const refused = checkDenseElements(target, numbers);
+  if (refused !== null) throw refusal(1, path, refused.sentence);
+  return numbers;
+}
+
+/** The query vectors of `data`, checked in the field's dtype against the fresh describe, as placeholder bytes. */
+function placeholderOf(
+  data: readonly TaggedJson[],
+  field: WireFieldSchema,
+  target: VectorTarget,
+  schema: WireCollectionSchema,
+  key: string,
+): Uint8Array {
+  let type: MilvusPlaceholderType | undefined;
+  const values = data.map((item, index) => {
+    const path = `${key}[${index}]`;
+    const [itemType, bytes] = encodeItem(item, field, target, schema, path);
+    if (type !== undefined && type !== itemType) {
+      throw refusal(1, key, `${key} mixes kinds of query: every element searches ${field.name} the same way.`);
+    }
+    type = itemType;
+    return bytes;
+  });
+  return encodePlaceholderGroup(type as MilvusPlaceholderType, values);
+}
+
+function encodeItem(
+  item: TaggedJson,
+  field: WireFieldSchema,
+  target: VectorTarget,
+  schema: WireCollectionSchema,
+  path: string,
+): readonly [MilvusPlaceholderType, Uint8Array] {
+  if (typeof item === "string") {
+    if (target.dtype === "binary") {
+      if (!BASE64.test(item))
+        throw refusal(1, path, `${path} is not base64: a BinaryVector query is base64 or a list of bytes.`);
+      const bytes = Array.from(atob(item), (character) => character.charCodeAt(0));
+      const refused = checkDenseElements(target, bytes);
+      if (refused !== null) throw refusal(1, path, refused.sentence);
+      return ["BinaryVector", Uint8Array.from(bytes)];
+    }
+    const producer = producingFunction(schema, field);
+    if (producer === "BM25") return ["VarChar", textBytes(item)];
+    if (producer === "TextEmbedding") {
+      throw refusal(
+        1,
+        path,
+        `${field.name} is produced by an embedding function, so text sent to it would make Milvus call the embedding provider; Studio never sends a request that reaches a service the server calls. Send the vector itself.`,
+      );
+    }
+    throw refusal(
+      1,
+      path,
+      `${path} is text, and only a field a BM25 function produces takes text; ${field.name} takes a vector.`,
+    );
+  }
+  if (target.kind === "sparse") {
+    if (!isObject(item))
+      throw refusal(1, path, `${path}: ${field.name} is sparse and takes an index map such as {"17": 0.4}.`);
+    const vector = sparseFromIndexMap(target, item, MILVUS_BOUNDS.sparseIndexBound);
+    if ("sentence" in vector) throw refusal(1, path, vector.sentence);
+    const refused = checkSparse(target, vector, MILVUS_BOUNDS.sparseIndexBound);
+    if (refused !== null) throw refusal(1, path, refused.sentence);
+    return ["SparseFloatVector", sparseVectorBytes(vector)];
+  }
+  if (!isList(item)) throw refusal(1, path, `${path}: ${field.name} takes a list of numbers.`);
+  if (target.kind === "multi") {
+    const rowTarget: VectorTarget = { ...target, kind: "dense" };
+    const rows = item.map((row, index) => {
+      if (!isList(row))
+        throw refusal(1, `${path}[${index}]`, `${path}[${index}]: an embedding list holds rows of numbers.`);
+      return numbersOf(rowTarget, row, `${path}[${index}]`);
+    });
+    const refused = checkMultiVector(target, rows, MILVUS_BOUNDS.maxEmbeddingElements);
+    if (refused !== null) throw refusal(1, path, refused.sentence);
+    return ["EmbListFloatVector", floatVectorBytes(rows.flat())];
+  }
+  const numbers = numbersOf(target, item, path);
+  if (target.dtype === "binary") return ["BinaryVector", Uint8Array.from(numbers)];
+  if (target.dtype === "int8") return ["Int8Vector", int8VectorBytes(numbers)];
+  return ["FloatVector", floatVectorBytes(numbers)];
+}
+
+type IndexFound =
+  | { readonly kind: "found"; readonly indexType: string; readonly metric: string }
+  | { readonly kind: "none" }
+  | { readonly kind: "unreadable" };
+
+function indexOf(reading: IndexReading, annsField: string): IndexFound {
+  if (reading.kind === "unreadable") return { kind: "unreadable" };
+  if (reading.kind === "not-read") throw new TypeError("This search needs the DescribeIndex answer fetched for it");
+  const description = reading.response.index_descriptions.find((entry) => entry.field_name === annsField);
+  if (description === undefined) return { kind: "none" };
+  const param = (key: string) => description.params.find((entry) => entry.key === key)?.value ?? "";
+  return { kind: "found", indexType: param("index_type"), metric: param("metric_type") };
+}
+
+/** The metric and the search parameters against the field's index (E11, E28, 5.5: IndexDetail). */
+function checkAgainstIndex(
+  index: IndexFound,
+  annsField: string,
+  metric: string | undefined,
+  params: TaggedObject | undefined,
+  key: string,
+): void {
+  const named = Object.keys(params ?? {});
+  if (index.kind === "unreadable") {
+    if (metric !== undefined || named.length > 0) {
+      throw refusal(
+        1,
+        key,
+        `This search names a metric or a search parameter, which Studio checks against the index, and this Milvus user cannot read the index: grant IndexDetail, or leave both out.`,
+      );
+    }
+    return;
+  }
+  if (index.kind === "none") {
+    if (metric !== undefined || named.length > 0) {
+      throw refusal(1, key, `${annsField} has no index, so it takes no metric and no search parameter.`);
+    }
+    return;
+  }
+  if (metric !== undefined && metric !== index.metric) {
+    throw refusal(
+      1,
+      key,
+      `${annsField} is indexed with ${index.metric}, and this request names ${shown(metric)}: Milvus answers a metric mismatch as if the collection were not loaded, so Studio refuses it here.`,
+    );
+  }
+  const allowed = own(MILVUS_INDEX_SEARCH_KEYS, index.indexType);
+  for (const name of named) {
+    if (allowed === undefined) {
+      throw refusal(
+        1,
+        `${key}.${name}`,
+        `Studio sends no search parameter to a ${index.indexType} index, which it has not measured.`,
+      );
+    }
+    if (!allowed.includes(name)) {
+      const takes = allowed.length === 0 ? "no search parameter" : allowed.join(", ");
+      throw refusal(1, `${key}.${name}`, `A ${index.indexType} index does not take ${name}; it takes ${takes}.`);
+    }
+  }
+  if (params?.radius !== undefined && params.range_filter !== undefined) {
+    const radius = Number(toJsonText(params.radius));
+    const rangeFilter = Number(toJsonText(params.range_filter));
+    const similarity = MILVUS_SIMILARITY_METRICS.includes(index.metric);
+    if (!similarity && !MILVUS_DISTANCE_METRICS.includes(index.metric)) {
+      throw refusal(1, `${key}.range_filter`, `Studio cannot order a range for the ${index.metric} metric.`);
+    }
+    const ordered = similarity ? rangeFilter > radius : rangeFilter < radius;
+    if (!ordered) {
+      const side = similarity ? "above" : "below";
+      throw refusal(
+        1,
+        `${key}.range_filter`,
+        `With ${index.metric}, range_filter must lie ${side} radius and never equal it; Milvus retries a reversed pair for seconds before it refuses.`,
+      );
+    }
+  }
+}
+
+function groupingFieldOf(schema: WireCollectionSchema, grouping: GroupingPhase0 | undefined, collection: string) {
+  if (grouping === undefined) return undefined;
+  const field = schema.fields.find((candidate) => candidate.name === grouping.field);
+  if (field === undefined)
+    throw refusal(1, "groupingField", `${shown(grouping.field)} is not a field of ${collection}.`);
+  if (isVectorType(field.data_type)) {
+    throw refusal(1, "groupingField", `${field.name} is a vector field; Milvus groups by a scalar field.`);
+  }
+  return field;
+}
+
+function groupingPairs(grouping: GroupingPhase0 | undefined): WireKeyValuePair[] {
+  if (grouping === undefined) return [];
+  const pairs = [pair("group_by_field", grouping.field)];
+  if (grouping.size !== undefined) pairs.push(pair("group_size", String(grouping.size)));
+  if (grouping.strict !== undefined) pairs.push(pair("strict_group_size", String(grouping.strict)));
+  return pairs;
+}
+
+function paramsText(params: TaggedObject | undefined): string {
+  return params === undefined ? "{}" : toJsonText(params);
+}
+
+function lowerSearch(request: SearchPhase0, schema: WireCollectionSchema, reading: IndexReading): MilvusOperation {
+  checkPartitionKey(schema, request.partitionNames, request.collection);
+  const { field, target } = annsTarget(schema, request.annsField, "annsField", request.collection);
+  const groupingField = groupingFieldOf(schema, request.grouping, request.collection);
+  const index = indexOf(reading, request.annsField);
+  const { metric, params, roundDecimal } = request.searchParams;
+  checkAgainstIndex(index, request.annsField, metric, params, "searchParams");
+  let input: Pick<SearchRequest, "placeholder_group" | "ids">;
+  if (request.input.kind === "ids") {
+    const ids = typedIds(request.input.values, primaryKeyOf(schema), "ids", true);
+    const wire: WireIDs = ids.kind === "int64" ? { int_id: { data: ids.values } } : { str_id: { data: ids.values } };
+    input = { ids: wire };
+  } else {
+    input = { placeholder_group: placeholderOf(request.input.values, field, target, schema, "data") };
+  }
+  const searchParams = [
+    pair("anns_field", request.annsField),
+    pair("topk", String(request.limit)),
+    pair("offset", String(request.offset)),
+    pair("params", paramsText(params)),
+    pair("round_decimal", String(roundDecimal)),
+    ...(metric === undefined ? [] : [pair("metric_type", metric)]),
+    ...groupingPairs(request.grouping),
+  ];
+  const score: ScoreSource =
+    index.kind === "found"
+      ? { kind: "metric", metric: index.metric }
+      : index.kind === "unreadable"
+        ? { kind: "unreadable" }
+        : { kind: "unreported" };
+  return {
+    kind: "search",
+    db: request.db,
+    request: {
+      collection_name: request.collection,
+      ...partitionFields(request.partitionNames),
+      dsl: request.filter,
+      dsl_type: "BoolExprV1",
+      ...input,
+      output_fields: projectOutput(request.output, schema, request.collection),
+      search_params: searchParams,
+      nq: String(request.input.values.length),
+      ...consistencyFields(request.consistency),
+      ...templateFields(request.templates),
+    },
+    shape: {
+      schema,
+      nq: request.input.values.length,
+      limit: request.limit,
+      offset: request.offset,
+      score,
+      groupingField,
+    },
+  };
+}
+
+function lowerHybrid(request: HybridPhase0, schema: WireCollectionSchema, reading: IndexReading): MilvusOperation {
+  checkPartitionKey(schema, request.partitionNames, request.collection);
+  const groupingField = groupingFieldOf(schema, request.grouping, request.collection);
+  const outputFields = projectOutput(request.output, schema, request.collection);
+  const nq = request.subRequests[0].data.length;
+  const requests = request.subRequests.map((sub, index) => {
+    const key = `search[${index}]`;
+    const { field, target } = annsTarget(schema, sub.annsField, `${key}.annsField`, request.collection);
+    if (sub.params !== undefined || sub.metric !== undefined) {
+      checkAgainstIndex(indexOf(reading, sub.annsField), sub.annsField, sub.metric, sub.params, `${key}.params`);
+    }
+    // No consistency and no ids in a sub-request: Milvus reads the top level only (R40 F3).
+    return {
+      collection_name: request.collection,
+      ...partitionFields(request.partitionNames),
+      dsl: sub.filter,
+      dsl_type: "BoolExprV1" as const,
+      placeholder_group: placeholderOf(sub.data, field, target, schema, `${key}.data`),
+      output_fields: outputFields,
+      search_params: [
+        pair("anns_field", sub.annsField),
+        pair("topk", String(sub.limit)),
+        pair("params", paramsText(sub.params)),
+        ...(sub.metric === undefined ? [] : [pair("metric_type", sub.metric)]),
+      ],
+      nq: String(nq),
+      ...templateFields(sub.templates),
+    };
+  });
+  const rankParams = [
+    pair("strategy", request.rerank.strategy),
+    pair("params", paramsText(request.rerank.params)),
+    pair("limit", String(request.limit)),
+    pair("offset", String(request.offset)),
+    pair("round_decimal", "-1"),
+    ...groupingPairs(request.grouping),
+  ];
+  return {
+    kind: "hybridSearch",
+    db: request.db,
+    request: {
+      collection_name: request.collection,
+      ...partitionFields(request.partitionNames),
+      requests,
+      rank_params: rankParams,
+      output_fields: outputFields,
+      ...consistencyFields(request.consistency),
+    },
+    shape: {
+      schema,
+      nq,
+      limit: request.limit,
+      offset: request.offset,
+      score: { kind: "fused", strategy: request.rerank.strategy },
+      groupingField,
+    },
   };
 }
