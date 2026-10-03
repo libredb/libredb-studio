@@ -2,7 +2,9 @@ import { afterAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { credentialWarningFor } from "@/lib/db/credential-warnings";
 import { checkLibClosure, CREDENTIAL_WARNING_FRAME, requireClosure } from "../../scripts/check-lib-closure.mjs";
+import { declareCredentialWarnings, SYNTHETIC_PAIR } from "../helpers/synthetic-credential-warnings";
 
 const roots: string[] = [];
 afterAll(() => {
@@ -24,6 +26,19 @@ const GOOD = {
   "workspace.js": "'use strict';\nrequire('./chunk-c.js');\n",
   "chunk-c.js": "function StudioWorkspace() {}\n",
 };
+
+describe("CREDENTIAL_WARNING_FRAME", () => {
+  test("is the frame credentialWarningFor builds its sentence from, so the check looks for the string it ships", () => {
+    const restore = declareCredentialWarnings("etcd", [SYNTHETIC_PAIR]);
+    try {
+      expect(credentialWarningFor("etcd", { user: "root", password: "Milvus" })).toBe(
+        `${CREDENTIAL_WARNING_FRAME}${SYNTHETIC_PAIR.message}`,
+      );
+    } finally {
+      restore();
+    }
+  });
+});
 
 describe("requireClosure", () => {
   test("follows every relative require, in either quote, once each", () => {
