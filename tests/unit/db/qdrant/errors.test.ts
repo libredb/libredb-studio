@@ -393,6 +393,31 @@ describe("toProviderError: a request that never completed (6.10, QE3)", () => {
     ).toContain("larger than the 1,500 bytes Studio reads");
   });
 
+  test("past the cap, the error names the request's limit and the vectors it asked for (spec 6.6)", () => {
+    const tooLarge = (requestBody: string) =>
+      toProviderError(new TransportError("too-large", "x"), { ...CONTEXT, requestBody }).message;
+    const CAP = "Qdrant's answer is larger than the 16 MiB Studio reads for one response, so it was not read.";
+    const ADVICE = "Lower limit, or set with_vector to false or to the vectors needed.";
+    expect(tooLarge('{"limit":1000,"with_vector":true}')).toBe(
+      `${CAP} The request asked for limit 1000 with every vector. ${ADVICE}`,
+    );
+    expect(tooLarge('{"limit":50,"with_vector":["text","colbert"]}')).toBe(
+      `${CAP} The request asked for limit 50 with the vectors "text", "colbert". ${ADVICE}`,
+    );
+    expect(tooLarge('{"limit":10,"with_vectors":true}')).toBe(
+      `${CAP} The request asked for limit 10 with every vector. ${ADVICE}`,
+    );
+    expect(tooLarge('{"limit":10,"with_vector":false}')).toBe(
+      `${CAP} The request asked for limit 10 with no vectors. ${ADVICE}`,
+    );
+    expect(tooLarge('{"ids":[1,2,3],"with_vector":true}')).toBe(
+      `${CAP} The request asked for 3 ids with every vector. ${ADVICE}`,
+    );
+    expect(tooLarge('{"searches":[{"limit":10,"with_vector":true},{"limit":5}]}')).toBe(
+      `${CAP} The request's searches asked for limit 10 with every vector; limit 5 with no vectors. ${ADVICE}`,
+    );
+  });
+
   test.each([
     [
       "redirect",

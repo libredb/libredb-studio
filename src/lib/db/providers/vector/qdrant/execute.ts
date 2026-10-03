@@ -28,7 +28,7 @@ import { QDRANT_BOUNDS } from "./routes";
 /** What failed, for errors.ts to word: a non-2xx answer, or what the transport threw. */
 export type QdrantFailure =
   | { readonly kind: "answer"; readonly op: QdrantOp; readonly answer: QdrantAnswer }
-  | { readonly kind: "thrown"; readonly op: QdrantOp; readonly error: unknown };
+  | { readonly kind: "thrown"; readonly op: QdrantOp; readonly error: unknown; readonly body?: string };
 
 export interface QdrantExecution {
   /** The client's send, narrowed to the console's operations. */
@@ -97,7 +97,12 @@ export async function executeQdrant(
       answer = await run.send(request, handle.signal);
     } catch (error) {
       if (handle.signal.aborted) throw stopped();
-      throw run.fail({ kind: "thrown", op: request.op, error });
+      throw run.fail({
+        kind: "thrown",
+        op: request.op,
+        error,
+        ...(request.body === undefined ? {} : { body: request.body }),
+      });
     }
     if (!ok(answer)) throw run.fail({ kind: "answer", op: request.op, answer });
     return answer;

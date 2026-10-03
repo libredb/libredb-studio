@@ -304,7 +304,11 @@ export class QdrantProvider extends BaseDatabaseProvider {
       // The request's own deadline words a timeout, as execute.ts set it for the operation (spec 6.6).
       fail: (failure: QdrantFailure) => {
         const context = errorContext(options, "request", failure.op, qdrantDeadlineMs(failure.op, this.queryTimeout));
-        return toProviderError(failure.kind === "answer" ? answerFailure(failure.answer) : failure.error, context);
+        if (failure.kind === "answer") return toProviderError(answerFailure(failure.answer), context);
+        return toProviderError(
+          failure.error,
+          failure.body === undefined ? context : { ...context, requestBody: failure.body },
+        );
       },
       queryTimeoutMs: this.queryTimeout,
     });

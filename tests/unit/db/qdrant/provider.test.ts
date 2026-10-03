@@ -10,6 +10,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
 import type { QdrantAnswer, QdrantRequest, QdrantRouteTemplates } from "@/lib/db/providers/vector/qdrant/client";
 import { QDRANT_DEFAULT_PORT } from "@/lib/db/providers/vector/qdrant/connection-options";
 import { qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
@@ -342,6 +343,18 @@ describe("the query path", () => {
       return recordedAnswer(request);
     });
     await expect(broken.provider.query("GET /collections/docs")).rejects.toThrow("in a way Studio does not recognise");
+  });
+
+  test("an answer past the transport cap names the request's limit and the vectors it asked for", async () => {
+    const { provider } = await connected((request) => {
+      if (request.op === "scroll_points") throw new TransportError("too-large", "past the cap");
+      return recordedAnswer(request);
+    });
+    await expect(
+      provider.query('POST /collections/docs/points/scroll\n{"limit": 1000, "with_vector": true}'),
+    ).rejects.toThrow(
+      "Qdrant's answer is larger than the 16 MiB Studio reads for one response, so it was not read. The request asked for limit 1000 with every vector. Lower limit, or set with_vector to false or to the vectors needed.",
+    );
   });
 
   test("cancelQuery answers false for a run it does not know", async () => {

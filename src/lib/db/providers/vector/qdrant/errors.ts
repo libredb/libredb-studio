@@ -41,6 +41,8 @@ export interface QdrantErrorContext {
   readonly timeoutMs: number;
   /** `secretForms` of the connection's secret (3.9). */
   readonly secretForms: readonly string[];
+  /** The body a console request sent, which the transport cap's error reads its limit and vectors from. */
+  readonly requestBody?: string;
   /** The clock a Retry-After date is measured against; the system clock when absent. */
   readonly now?: () => Date;
 }
@@ -176,6 +178,31 @@ function answerError(error: QdrantError, context: QdrantErrorContext): Error {
   }
 }
 
+const CAP_ADVICE = "Lower limit, or set with_vector to false or to the vectors needed.";
+
+/** What one search asked for: its `limit` (or its ids) and its `with_vector` (or the query alias `with_vectors`). */
+function askedOf(search: Readonly<Record<string, unknown>>): string {
+  const { limit, ids } = search;
+  const count = typeof limit === "number" ? `limit ${limit}` : `${Array.isArray(ids) ? ids.length : 0} ids`;
+  const vectors = search.with_vector ?? search.with_vectors;
+  if (vectors === true) return `${count} with every vector`;
+  if (Array.isArray(vectors))
+    return `${count} with the vectors ${vectors.map((name) => JSON.stringify(name)).join(", ")}`;
+  return `${count} with no vectors`;
+}
+
+/** Spec 6.6's transport cap: the cap, then the request's limit and vectors with the advice, when a body was sent. */
+function tooLargeSentence(context: QdrantErrorContext): string {
+  const cap = `Qdrant's answer is larger than the ${formatBytes(context.responseCapBytes)} Studio reads for one response, so it was not read.`;
+  if (context.requestBody === undefined) return `${cap} Ask for fewer points, or leave the vectors out.`;
+  const body = JSON.parse(context.requestBody) as Readonly<Record<string, unknown>>;
+  if (Array.isArray(body.searches)) {
+    const asked = (body.searches as readonly Readonly<Record<string, unknown>>[]).map(askedOf).join("; ");
+    return `${cap} The request's searches asked for ${asked}. ${CAP_ADVICE}`;
+  }
+  return `${cap} The request asked for ${askedOf(body)}. ${CAP_ADVICE}`;
+}
+
 function transportError(error: TransportError, context: QdrantErrorContext): Error {
   const { host, port } = context.endpoint;
   const connection = (sentence: string) => new ConnectionError(sentence, PROVIDER, host, port);
@@ -189,10 +216,7 @@ function transportError(error: TransportError, context: QdrantErrorContext): Err
     case "aborted":
       return new QueryCancelledError("The request to Qdrant was cancelled.", PROVIDER);
     case "too-large":
-      return new QueryError(
-        `Qdrant's answer is larger than the ${formatBytes(context.responseCapBytes)} Studio reads for one response, so it was not read. Ask for fewer points, or leave the vectors out.`,
-        PROVIDER,
-      );
+      return new QueryError(tooLargeSentence(context), PROVIDER);
     case "redirect":
       return connection(
         `Qdrant at ${endpointOf(context)} answered with a redirect, which Studio never follows. ${error.message}`,
