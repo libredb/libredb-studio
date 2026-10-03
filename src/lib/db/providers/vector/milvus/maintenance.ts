@@ -217,10 +217,15 @@ function memoryFacts(read: MemoryRead): MaintenancePreview["facts"] {
   return [...perNode, { label: "Data loaded on query nodes", value: formatMilvusBytes(total) }];
 }
 
+/** Said when GetMetrics answered but listed no query node with both memory figures, so no memory fact is drawn. */
+const NO_NODE_MEMORY = "GetMetrics listed no query node with its memory figures.";
+
 function memoryNote(read: MemoryRead): string {
-  return "unavailable" in read
-    ? `The server reported no query-node memory: ${read.unavailable}`
-    : `Memory figures are ${METRICS_NOTE}; in standalone the memory is the whole process's.`;
+  if ("unavailable" in read) return `The server reported no query-node memory: ${read.unavailable}`;
+  const reported = read.nodes.some((node) => node.memory !== undefined && node.memoryUsage !== undefined);
+  return reported
+    ? `Memory figures are ${METRICS_NOTE}; in standalone the memory is the whole process's.`
+    : `The server reported no query-node memory: ${NO_NODE_MEMORY}`;
 }
 
 function vectorFieldFact(field: VectorFieldInfo, indexes: readonly WireIndexDescription[]): string {

@@ -403,6 +403,18 @@ describe("the Load preview", () => {
     expect(preview.facts.map((fact) => fact.label)).toEqual(["Load state", "Vector field vec"]);
   });
 
+  test("a GetMetrics answer with no query node, or none with its memory, says so in the note, never 'as reported'", async () => {
+    for (const metrics of ['{"nodes_info":[]}', '{"nodes_info":[{"infos":{"type":"querynode","id":1}}]}']) {
+      const client = createFakeMilvusClient({ ...CATALOG, metrics });
+      // oxlint-disable-next-line no-await-in-loop -- one preview at a time, each over its own client.
+      const preview = await previewMilvusMaintenance(client, testSurface(), "load", ["default", "docs_int64"]);
+      expect(preview.facts.map((fact) => fact.label)).toEqual(["Load state", "Rows (estimate)", "Vector field vec"]);
+      expect(preview.note).toBe(
+        "The server reported no query-node memory: GetMetrics listed no query node with its memory figures.",
+      );
+    }
+  });
+
   test("an index that names no type or metric is said so, never guessed", async () => {
     const client = createFakeMilvusClient({
       databases: {
