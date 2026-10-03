@@ -9,7 +9,8 @@
  * connect, and delegates the monitoring reads to monitoring-reads.ts, whose answers monitoring.ts shapes.
  *
  * A server outside 5.26 connects and is reported untested in the overview's version. A failed version read
- * does not fail the connection: the overview then says the version is unknown.
+ * does not fail the connection, so the overview then says the version is unknown, unless the server answers
+ * that the connection's database does not exist.
  */
 import type { GraphClientFactory } from "@/lib/db/graph/bolt/client";
 import { GraphClientError } from "@/lib/db/graph/bolt/client";
@@ -55,6 +56,9 @@ export const NEO4J_ENGINE_PROFILE: GraphEngineProfile = {
   catalog: neo4jCatalog,
   mapError: mapNeo4jError,
 };
+
+/** The status code of a run on a database the server does not hold. */
+const DATABASE_NOT_FOUND = "Neo.ClientError.Database.DatabaseNotFound";
 
 /** A pattern no statement matches: a read-only connection runs nothing that changes the schema (SR20). */
 const SCHEMA_REFRESH_NEVER = "(?!)";
@@ -109,13 +113,24 @@ export class Neo4jProvider extends GraphBaseProvider {
   // Lifecycle (spec 6.1)
   // ==========================================================================
 
-  /** The base's connect, then the kernel's version, read once; its failure is logged and leaves it unknown. */
+  /**
+   * The base's connect, then the kernel's version, read once on the connection's database. The base's verify
+   * never touches that database, so this read is the first that does: a database the server does not hold
+   * fails the connect, and the client is closed. Any other failure of the read is logged and leaves the
+   * version unknown.
+   */
   public override async connect(): Promise<void> {
     await super.connect();
     try {
       this.server = await readServerVersion(this.client(), this.database());
     } catch (error) {
       this.server = undefined;
+      if (error instanceof GraphClientError && error.code === DATABASE_NOT_FOUND) {
+        await this.disconnect().catch((closeError: unknown) => this.logError("connect cleanup", closeError));
+        const mapped = this.profile.mapError(error);
+        this.setError(mapped);
+        throw mapped;
+      }
       this.logError("server version read", error);
     }
   }

@@ -7,7 +7,7 @@
  */
 import { describe, expect, spyOn, test } from "bun:test";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { ConnectionError } from "@/lib/db/errors";
+import { ConnectionError, QueryError } from "@/lib/db/errors";
 import {
   type BoltClientConfig,
   type GraphClient,
@@ -157,6 +157,29 @@ describe("connect", () => {
     } finally {
       logged.mockRestore();
     }
+  });
+
+  test("a configured database the server does not hold fails the connect, and the client is closed", async () => {
+    const missing = new GraphClientError("query", "Graph not found: nope", "Neo.ClientError.Database.DatabaseNotFound");
+    const transport = capturedFactory({ [NEO4J_MONITORING_STATEMENTS.components]: missing });
+    let closed = 0;
+    const factory = (config: BoltClientConfig): GraphClient => {
+      const client = transport.factory(config);
+      return {
+        ...client,
+        async close() {
+          closed += 1;
+          await client.close();
+        },
+      };
+    };
+    const provider = new Neo4jProvider({ ...CONNECTION, database: "nope" }, {}, factory);
+    const failure = await provider.connect().catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(QueryError);
+    expect((failure as QueryError).message).toBe("Graph not found: nope");
+    expect(provider.isConnected()).toBe(false);
+    expect(closed).toBe(1);
+    expect(transport.calls.map((call) => call.options.database)).toEqual(["nope"]);
   });
 
   test("a reconnect reads the version again", async () => {
