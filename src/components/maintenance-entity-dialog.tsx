@@ -155,6 +155,19 @@ type PreviewState =
   | { readonly status: "failed"; readonly message: string };
 
 /** What the preview says, or why there is none yet. */
+/**
+ * Each fact with a key of its own. A label may repeat, as a preview naming each vector field with its index state does,
+ * so the key is the label and how many facts before it carried that label.
+ */
+function factKeys(facts: MaintenancePreview["facts"]): [string, MaintenancePreview["facts"][number]][] {
+  const seen = new Map<string, number>();
+  return facts.map((fact) => {
+    const ordinal = seen.get(fact.label) ?? 0;
+    seen.set(fact.label, ordinal + 1);
+    return [`${fact.label}#${ordinal}`, fact];
+  });
+}
+
 function PreviewBody({ state }: Readonly<{ state: PreviewState }>) {
   if (state.status === "loading") {
     return (
@@ -171,8 +184,8 @@ function PreviewBody({ state }: Readonly<{ state: PreviewState }>) {
       <p className="text-sm text-fg">{preview.summary}</p>
       {preview.facts.length > 0 && (
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-          {preview.facts.map((fact) => (
-            <div key={fact.label} className="contents">
+          {factKeys(preview.facts).map(([key, fact]) => (
+            <div key={key} className="contents">
               <dt className="text-fg-tertiary">{fact.label}</dt>
               <dd className="font-mono break-all text-fg">{fact.value}</dd>
             </div>

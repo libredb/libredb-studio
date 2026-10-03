@@ -1,5 +1,5 @@
 import "../setup-dom";
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import React from "react";
 import {
@@ -185,6 +185,29 @@ describe("MaintenanceEntityDialog with a preview", () => {
 
     await waitFor(() => expect(confirmButton()?.disabled).toBe(false));
     expect(view.queryByRole("textbox")).toBeNull();
+  });
+
+  test("facts that share a label are each drawn, with no duplicate-key warning", async () => {
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { view } = renderDialog(
+        PREVIEWED,
+        resolving({
+          summary: "Loads the collection.",
+          facts: [
+            { label: "Vector field", value: "embedding: indexed" },
+            { label: "Vector field", value: "sparse: not indexed" },
+          ],
+        }),
+      );
+
+      await waitFor(() => expect(view.getByText("sparse: not indexed")).toBeTruthy());
+      expect(view.getByText("embedding: indexed")).toBeTruthy();
+      expect(view.getAllByText("Vector field")).toHaveLength(2);
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   test("a refused preview shows the refusal, with no confirm button and no field", async () => {
