@@ -1,5 +1,5 @@
 /**
- * The comparator of two snapshot records (tests/live/support/compare.ts; vector-family spec 4.2 VF10, R51 U19):
+ * The comparator of two snapshot records (tests/live/support/compare.ts; vector-family spec 4.2):
  * stable fields must be equal outside the harness prefix, volatile fields are recorded only, the scratch
  * collections are compared on schema, configuration, aliases and load state only, and anything unclassified fails.
  */

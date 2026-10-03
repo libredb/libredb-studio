@@ -1,6 +1,6 @@
 /**
  * The record a vector live harness writes when it snapshots every collection outside its own prefix, before and
- * after a run (vector-family spec 4.2 VF10 and 3.9, R51 U19). It holds no provider code: PR 4's and PR 4q's
+ * after a run (vector-family spec 4.2 and 3.9). It holds no provider code: the Milvus and Qdrant providers'
  * collectors fill it through their own admin clients, with read calls only, and `compare.ts` judges two of them.
  *
  * A field that cannot be read without a state change is recorded as `{ unavailable: reason }`, from a closed set

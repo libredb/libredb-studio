@@ -1,5 +1,5 @@
 /**
- * The vector live harnesses' snapshot record (tests/live/support/snapshot.ts; vector-family spec 4.2 VF10, R51 U19):
+ * The vector live harnesses' snapshot record (tests/live/support/snapshot.ts; vector-family spec 4.2):
  * the closed set of unavailable reasons, the read that records one and fails loudly on anything else, and the
  * parser that refuses a record the schema does not allow.
  */

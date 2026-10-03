@@ -1,6 +1,6 @@
 /**
  * `expectCalls`, the one assertion every refusal test of the vector family makes about the calls a provider sent
- * (vector-family spec 3.9, R51 U18): a phase 0 refusal leaves the log empty, and a phase 1 refusal holds exactly
+ * (vector-family spec 3.9): a phase 0 refusal leaves the log empty, and a phase 1 refusal holds exactly
  * its metadata calls, in order.
  *
  * A log is the array a fake client records into, or an object carrying that array as `calls`, the shape

@@ -1,6 +1,6 @@
 /**
  * `expectCalls` (tests/helpers/call-log.ts), the assertion every refusal test of the vector family makes about the
- * calls a provider sent (vector-family spec 3.9, R51 U18): an empty log for phase 0, exactly the metadata calls for
+ * calls a provider sent (vector-family spec 3.9): an empty log for phase 0, exactly the metadata calls for
  * phase 1, in order.
  */
 import { describe, expect, test } from "bun:test";

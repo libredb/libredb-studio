@@ -2,9 +2,9 @@
  * What tests/live/vector-evidence.ts derives from the two seeds' manifests (vector-family spec 7.3), kept pure and
  * apart from the run, so tests/unit/db/vector/evidence-derive.test.ts holds every rule over small manifests.
  *
- * - The expected `VectorFieldInfo[]` of every seeded collection (spec 3.3), the target PR 4's and PR 4q's
- *   `schema.ts` tests reproduce from their own captures. The native-to-family tables below are this file's, and an
- *   index type they do not name maps to `opaque`.
+ * - The expected `VectorFieldInfo[]` of every seeded collection (spec 3.3), the target the Milvus and Qdrant
+ *   providers' `schema.ts` tests reproduce from their own captures. The native-to-family tables below are this
+ *   file's, and an index type they do not name maps to `opaque`.
  * - The expected cells in Studio's cell form: dense as numbers, binary as byte arrays, Milvus sparse as an index map
  *   in ascending index order, Qdrant sparse as `{indices, values}`, derived from what the seed says the server
  *   stores and never from a REST base64 answer.

@@ -1,6 +1,6 @@
 /**
- * The comparator of two snapshot records, one taken before a live run and one after (vector-family spec 4.2
- * VF10, R51 U19). Collections under the harness prefix are the harness's own and are skipped. Every other
+ * The comparator of two snapshot records, one taken before a live run and one after (vector-family spec 4.2).
+ * Collections under the harness prefix are the harness's own and are skipped. Every other
  * collection's stable fields must be equal; its volatile fields are recorded for information only; the shared
  * writable scratch collections, named by their collection keys, are compared on schema, configuration, aliases and
  * load state only, whatever class the caller gives those four, because other agents write rows there. A field the caller classified as neither stable nor volatile, or as both, fails the

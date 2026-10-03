@@ -1,5 +1,5 @@
 /**
- * The wrapper a vector live harness puts around its own setup client (vector-family spec 4.2 VF10, R51 U19): a
+ * The wrapper a vector live harness puts around its own setup client (vector-family spec 4.2): a
  * mutating call whose target lies outside the harness prefix throws before the wire, so the harness can only ever
  * write what it owns. Every method the client exposes must be declared a read or a mutation; an undeclared one
  * throws when it is reached for, and a mutation whose targets cannot be named throws too, because a target that

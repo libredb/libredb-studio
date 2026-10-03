@@ -1,6 +1,6 @@
 /**
  * The mutation-target wrapper of the vector live harnesses (tests/live/support/mutation-guard.ts; vector-family
- * spec 4.2 VF10, R51 U19): a mutating call outside the harness prefix throws before the wire, and so does every
+ * spec 4.2): a mutating call outside the harness prefix throws before the wire, and so does every
  * call the rules cannot place.
  */
 import { describe, expect, test } from "bun:test";

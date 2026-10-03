@@ -95,7 +95,7 @@ export function deriveBlock(markdown: string): string | null {
   return block === null ? null : neutraliseComments(fillPlaceholders(block));
 }
 
-/** The nine Milvus console requests of the design's examples (R22 3.5 and 3.8), written for this repository. */
+/** The nine Milvus console requests of the design's examples, written for this repository. */
 export const MILVUS_REQUESTS: readonly { readonly name: string; readonly text: string }[] = [
   { name: "collections-list", text: 'POST /v2/vectordb/collections/list\n{"dbName": "default"}' },
   { name: "collections-describe", text: 'POST /v2/vectordb/collections/describe\n{"collectionName": "unloaded_big"}' },

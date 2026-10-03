@@ -1,7 +1,7 @@
 /**
  * The vector consoles' route tables as test data (tests/fixtures/vector/routes/, derived by
  * tests/live/vector-route-tables.ts; vector-family spec 3.4 and 8.2): the derivation's rules over small inputs, and
- * the committed tables' shape, which PR 4's and PR 4q's routes.ts tests later hold route for route.
+ * the committed tables' shape, which the Milvus and Qdrant providers' routes.ts tests later hold route for route.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

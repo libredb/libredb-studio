@@ -9,7 +9,7 @@
  * - Qdrant: the 17 operations of the v1 console and the full v1.19.1 table, read from the OpenAPI document at tag
  *   v1.19.1, pinned by its sha256: method, path, path parameters, query keys, and the body's presence and schema.
  *
- * PR 4 and PR 4q each add a test that their routes.ts equals the matching file route for route.
+ * The Milvus and Qdrant providers each add a test that their routes.ts equals the matching file route for route.
  */
 import { createHash } from "node:crypto";
 
@@ -57,7 +57,7 @@ export const QDRANT_V1_OPERATIONS = [
   "collection_cluster_info",
 ] as const;
 
-/** The query keys v1 accepts, on the routes whose OpenAPI declares them (decision QD6, R51 U29). */
+/** The query keys v1 accepts, on the routes whose OpenAPI declares them. */
 export const QDRANT_V1_QUERY_KEYS = ["consistency", "timeout", "with", "completed_limit"] as const;
 
 export interface BodyKey {
