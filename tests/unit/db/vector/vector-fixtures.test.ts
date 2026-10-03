@@ -9,6 +9,12 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import {
+  expectedMilvusCells,
+  expectedQdrantCells,
+  type MilvusManifest,
+  type QdrantManifest,
+} from "../../../live/vector-evidence-derive";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const DIR = path.join(ROOT, "tests/fixtures/vector");
@@ -348,6 +354,19 @@ describe("the derived files", () => {
       (entry) => entry.collection === "edge_values" && entry.field === "f16" && entry.match.value === 2,
     );
     expect(overflow?.cell).toEqual([null, 1, 2, 3]);
+  });
+
+  test("the committed expected cells are exactly what the manifests derive, signed zeros included", () => {
+    const milvus = read("milvus/expected-cells.json") as { cells: unknown; excluded: unknown };
+    const qdrant = read("qdrant/expected-cells.json") as { cells: unknown; excluded: unknown };
+    const fromMilvus = expectedMilvusCells(read("milvus/manifest.json") as MilvusManifest);
+    const fromQdrant = expectedQdrantCells(read("qdrant/manifest.json") as QdrantManifest);
+    expect({ cells: milvus.cells, excluded: milvus.excluded }).toEqual({ ...fromMilvus });
+    expect({ cells: qdrant.cells, excluded: qdrant.excluded }).toEqual({ ...fromQdrant });
+    const edge = (
+      milvus.cells as { collection: string; field: string; match: { value: unknown }; cell: number[] }[]
+    ).find((entry) => entry.collection === "default/edge_values" && entry.field === "f32" && entry.match.value === 3);
+    expect(Object.is(edge?.cell[0], -0)).toBe(true);
   });
 
   test("the excluded fields are named with their reasons", () => {

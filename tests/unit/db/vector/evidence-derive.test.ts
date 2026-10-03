@@ -15,6 +15,7 @@ import {
   milvusNonFiniteScore,
   type QdrantManifest,
   scoreText,
+  serialiseFixture,
   type VectorIndexKindJson,
 } from "../../../live/vector-evidence-derive";
 
@@ -435,6 +436,12 @@ describe("compareCell", () => {
     expect(compareCell([0.1], [0.2])).toEqual({ status: "differs", detail: "cell[0]: expected 0.1, REST holds 0.2" });
   });
 
+  test("zero keeps its sign: -0 equals only -0", () => {
+    expect(compareCell([-0], [-0])).toEqual({ status: "equal" });
+    expect(compareCell([-0], [0])).toEqual({ status: "differs", detail: "cell[0]: expected -0, REST holds 0" });
+    expect(compareCell([0], [-0])).toEqual({ status: "differs", detail: "cell[0]: expected 0, REST holds -0" });
+  });
+
   test("null equals only null", () => {
     expect(compareCell([null, 1], [null, 1])).toEqual({ status: "equal" });
     expect(compareCell([null], [65504])).toEqual({
@@ -466,5 +473,24 @@ describe("compareCell", () => {
       status: "differs",
       detail: "cell[0]: expected 2 elements, REST holds 3",
     });
+  });
+});
+
+describe("serialiseFixture", () => {
+  test("writes -0 as -0.0, so the file parses back to the signed zero the seed stored", () => {
+    const text = serialiseFixture({ cell: [-0, 0, 1.5, -2], nested: { zero: -0 } });
+    expect(text).toBe(
+      '{\n  "cell": [\n    -0.0,\n    0,\n    1.5,\n    -2\n  ],\n  "nested": {\n    "zero": -0.0\n  }\n}\n',
+    );
+    const parsed = JSON.parse(text) as { cell: number[]; nested: { zero: number } };
+    expect(Object.is(parsed.cell[0], -0)).toBe(true);
+    expect(Object.is(parsed.cell[1], 0)).toBe(true);
+    expect(Object.is(parsed.nested.zero, -0)).toBe(true);
+  });
+
+  test("refuses content that already holds its placeholder for the signed zero", () => {
+    expect(() => serialiseFixture({ text: "\u0000negative-zero\u0000" })).toThrow(
+      "the content holds the serialiser's placeholder for -0",
+    );
   });
 });

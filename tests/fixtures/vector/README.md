@@ -57,6 +57,7 @@ A run replaces `milvus/`, `qdrant/` and `expected-scores.json` whole.
 Each capture is `{ "$captured": {...}, "outcome": "pass" | "fail" | "empty-body", "payload": {...} }`.
 `$captured` holds `engine`, `image`, `digest`, `version` (the server's own), `date`, `runtime`, `surface`, and `request` (`method`, `path`, `headers` and `body` as sent).
 `payload` holds `status`, `bodyBytes` and `body`, the exact text the server sent, because a JSON parser rounds an integer above 2^53: read it with `quoteUnsafeIntegers` (`src/lib/db/utils/json-integers.ts`).
+A negative zero is written as `-0.0`, which `JSON.parse` reads back as `-0`: the Milvus seed stores one in `edge_values`, and `JSON.stringify` alone would write it as `0`.
 No password, key or token is in any file: the Milvus `authorization` header is written as `<token>`, and the harness refuses to write a file that holds any form of the credential it sent.
 
 ### The cross-check

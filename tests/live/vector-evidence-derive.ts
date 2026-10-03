@@ -437,6 +437,26 @@ export function milvusNonFiniteScore(manifest: MilvusManifest): MilvusNonFiniteS
 
 // -- the comparison with REST -----------------------------------------------------------------------------------
 
+/** JSON text that writes a negative zero as -0, which JSON.stringify writes as 0. */
+function signedText(value: unknown): string {
+  return Object.is(value, -0) ? "-0" : JSON.stringify(value);
+}
+
+const NEGATIVE_ZERO = "\u0000negative-zero\u0000";
+
+/**
+ * A fixture file's text: JSON indented by two, with a newline at the end, and every negative zero written as -0.0,
+ * which JSON.parse reads back as -0. JSON.stringify alone writes -0 as 0, and the seeds store -0 on purpose.
+ */
+export function serialiseFixture(content: object): string {
+  const placeholder = JSON.stringify(NEGATIVE_ZERO);
+  if (JSON.stringify(content).includes(placeholder)) {
+    throw new Error("the content holds the serialiser's placeholder for -0");
+  }
+  const text = JSON.stringify(content, (_key, value: unknown) => (Object.is(value, -0) ? NEGATIVE_ZERO : value), 2);
+  return `${text.replaceAll(placeholder, "-0.0")}\n`;
+}
+
 export type CellComparison =
   | { readonly status: "equal" }
   | { readonly status: "differs" | "not-comparable"; readonly detail: string };
@@ -455,8 +475,8 @@ export function compareCell(expected: unknown, rest: unknown, at = "cell"): Cell
       : { status: "differs", detail: `${at}: expected null, REST holds ${JSON.stringify(rest)}` };
   }
   if (typeof expected === "number") {
-    if (typeof rest === "number" && Math.fround(expected) === Math.fround(rest)) return EQUAL;
-    return { status: "differs", detail: `${at}: expected ${expected}, REST holds ${JSON.stringify(rest)}` };
+    if (typeof rest === "number" && Object.is(Math.fround(expected), Math.fround(rest))) return EQUAL;
+    return { status: "differs", detail: `${at}: expected ${signedText(expected)}, REST holds ${signedText(rest)}` };
   }
   if (Array.isArray(expected)) {
     if (!Array.isArray(rest)) return { status: "not-comparable", detail: `${at}: REST holds ${typeof rest}` };

@@ -35,6 +35,7 @@ import {
   milvusNonFiniteScore,
   type QdrantHnswConfig,
   type QdrantManifest,
+  serialiseFixture,
 } from "./vector-evidence-derive";
 
 type Engine = "milvus" | "qdrant";
@@ -635,10 +636,6 @@ function hnswDifferences(manifest: QdrantManifest, recorded: readonly Recorded[]
   );
 }
 
-function serialise(content: object): string {
-  return `${JSON.stringify(content, null, 2)}\n`;
-}
-
 function assertNoSecret(name: string, text: string): void {
   for (const form of SECRET_FORMS) {
     if (text.includes(form)) throw new Error(`${name} would hold the credential this run sends: nothing written`);
@@ -694,13 +691,13 @@ async function captureRun(): Promise<number> {
   const files = new Map<string, string>([
     ["milvus/manifest.json", manifestText.milvus],
     ["qdrant/manifest.json", manifestText.qdrant],
-    ["milvus/expected-fields.json", serialise({ $derived: DERIVED, fields: expectedMilvusFields(milvus) })],
-    ["qdrant/expected-fields.json", serialise({ $derived: DERIVED, fields: expectedQdrantFields(qdrant) })],
-    ["milvus/expected-cells.json", serialise({ $derived: DERIVED, ...cells.milvus })],
-    ["qdrant/expected-cells.json", serialise({ $derived: DERIVED, ...cells.qdrant })],
+    ["milvus/expected-fields.json", serialiseFixture({ $derived: DERIVED, fields: expectedMilvusFields(milvus) })],
+    ["qdrant/expected-fields.json", serialiseFixture({ $derived: DERIVED, fields: expectedQdrantFields(qdrant) })],
+    ["milvus/expected-cells.json", serialiseFixture({ $derived: DERIVED, ...cells.milvus })],
+    ["qdrant/expected-cells.json", serialiseFixture({ $derived: DERIVED, ...cells.qdrant })],
     [
       "expected-scores.json",
-      serialise({
+      serialiseFixture({
         $derived: { by: DERIVED.by, from: "milvus/manifest.json and qdrant/search-non-finite.json" },
         milvus: milvusNonFiniteScore(milvus),
         qdrant: {
@@ -714,7 +711,7 @@ async function captureRun(): Promise<number> {
     ],
     ...recorded.map((entry): [string, string] => [
       `${entry.capture.engine}/${entry.capture.name}.json`,
-      serialise(record(entry, provenance[entry.capture.engine])),
+      serialiseFixture(record(entry, provenance[entry.capture.engine])),
     ]),
   ]);
   for (const [name, text] of files) assertNoSecret(name, text);
@@ -741,7 +738,7 @@ async function captureRun(): Promise<number> {
     },
     written: [...files.keys()].sort(),
   };
-  writeFileSync(reportFile, serialise(report));
+  writeFileSync(reportFile, serialiseFixture(report));
   console.error(`wrote ${files.size} files under tests/fixtures/vector`);
   return 0;
 }
