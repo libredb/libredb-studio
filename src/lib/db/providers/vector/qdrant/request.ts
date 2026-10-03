@@ -142,7 +142,8 @@ export interface QdrantWire {
   readonly shape: QdrantResultShape;
 }
 
-const UUID = /^[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}$/;
+/** A UUID as the server reads one: 32 hex digits, or the hyphenated form; a form with only some hyphens is refused. */
+const UUID = /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
 const DIGITS = /^[0-9]+$/;
 const SHOWN = 80;
 

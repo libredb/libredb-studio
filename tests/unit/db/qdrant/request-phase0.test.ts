@@ -203,6 +203,10 @@ describe("point ids (QE14)", () => {
     ["-1", "ids[0] is -1, outside the range of a point id, 0 to 18446744073709551615."],
     ['"42"', 'ids[0] is the string "42": write the id as a bare number, because Qdrant refuses a digit string.'],
     ['"not-a-uuid"', 'ids[0] is "not-a-uuid", which is neither an unsigned integer nor a UUID.'],
+    [
+      '"8d8f53130a2e-4c3b-9f1e-2b7c1d0e5a44"',
+      'ids[0] is "8d8f53130a2e-4c3b-9f1e-2b7c1d0e5a44", which is neither an unsigned integer nor a UUID.',
+    ],
     ["1.5", "ids[0] must be a point id, an unsigned integer or a UUID string, found a number."],
     [
       '{"kind": "int", "digits": "42"}',
@@ -228,7 +232,7 @@ describe("point ids (QE14)", () => {
     );
   });
 
-  test("a point id in the path is the parser's: uint64 digits or a hyphenated UUID", () => {
+  test("a point id in the path is the parser's: uint64 digits or a UUID", () => {
     expect(plan("GET /collections/docs/points/18446744073709551615").request.params.id).toBe("18446744073709551615");
     expect(() => parseQdrantRequest("GET /collections/docs/points/18446744073709551616")).toThrow(
       "is neither an unsigned 64-bit integer nor a UUID",
