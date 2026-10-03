@@ -305,8 +305,9 @@ Each label gets a colour of the chart palette in order of first appearance, cycl
 A node's caption is the first present property among `name`, `title` and `label`, then a key ending in `name`, then `description`, then `id`, then the first string property that is not a non-finite float (`NaN`, `Infinity`, `-Infinity`), else the first label, else the `elementId`, compared without case and cut to at most 24 characters with an ellipsis.
 A relationship's caption is its type, and an arrow shows its direction.
 The legend lists the labels with their colour and count, and the relationship types with their count.
+The legend and the inspector share one column, a scroll region named "Graph legend and details" that takes focus by Tab, so the arrow keys scroll it.
 A click on a node or a relationship opens the inspector beside the canvas, under it on a narrow screen, with its labels or type, its `elementId` and every property; Escape clears the selection.
-The layout is fcose, rerun by Re-layout; a dragged node stays where it is dropped, and the toolbar holds Fit the graph, Zoom in, Zoom out, Re-layout, Export PNG and Export JSON.
+The layout is fcose, rerun by Re-layout; a fit never zooms in past 1, so a small graph is drawn at its own size and not blown up, while Zoom in and `+` go up to 3; a dragged node stays where it is dropped, and the toolbar holds Fit the graph, Zoom in, Zoom out, Re-layout, Export PNG and Export JSON.
 The canvas takes focus and is named "Graph of N nodes and M relationships"; there `+` and `-` zoom, `0` fits and the arrow keys pan.
 Export PNG draws the whole graph on the theme's background, and Export JSON writes `{ "nodes": [...], "relationships": [...] }` of the drawn elements in their tagged forms.
 Masking follows the grid's rule: when the grid would mask, a property whose key the masking config flags is masked in the captions, the inspector and both exports.

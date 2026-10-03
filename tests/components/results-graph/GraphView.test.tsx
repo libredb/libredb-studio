@@ -136,6 +136,22 @@ describe("GraphView: what is drawn", () => {
     expect(canvas.getAttribute("tabindex")).toBe("0");
   });
 
+  test("the legend and inspector column is a named scroll region the keyboard can reach", async () => {
+    const { cy, getByRole } = await mount();
+    const column = getByRole("region", { name: "Graph legend and details" });
+    expect(column.getAttribute("tabindex")).toBe("0");
+    const classes = column.className.split(/\s+/);
+    expect(classes).toContain("overflow-auto");
+    expect(classes).toContain("focus-visible:outline-2");
+    expect(within(column).getByRole("region", { name: "Legend" })).not.toBeNull();
+    act(() => {
+      cy.$id("n:4:a").emit("tap");
+    });
+    expect(within(column).getByRole("region", { name: "Inspector" })).not.toBeNull();
+    column.focus();
+    expect(document.activeElement).toBe(column);
+  });
+
   test("lists labels with colour and count, and relationship types with count", async () => {
     const { getByRole } = await mount();
     const legend = within(getByRole("region", { name: "Legend" }));

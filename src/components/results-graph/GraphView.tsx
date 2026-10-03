@@ -17,8 +17,9 @@
  *
  * Keyboard: the canvas is focusable; `+` and `=` zoom in, `-` zooms out, `0` fits,
  * the arrow keys pan, and Escape clears the selection; a key held with Ctrl, Cmd or
- * Alt is left to the browser. A press on the canvas focuses it. The toolbar, the
- * inspector and the legend are ordinary DOM, reached by Tab.
+ * Alt is left to the browser. A press on the canvas focuses it. The toolbar is
+ * ordinary DOM, reached by Tab, and so is the column that holds the inspector and
+ * the legend: a focusable scroll region, which the arrow keys scroll.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FileBraces, ImageDown, Maximize, RefreshCw, X, ZoomIn, ZoomOut } from "lucide-react";
@@ -301,10 +302,20 @@ export function GraphView({
           {/* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           {!ready && <ViewLoading label="Drawing the graph" className="absolute inset-0" />}
         </div>
-        <div className="shrink-0 max-h-[40%] md:max-h-none md:w-72 overflow-auto border-t md:border-t-0 md:border-l border-hairline">
+        {/*
+          oxlint-disable jsx-a11y/no-noninteractive-tabindex --
+          A scroll region with no focusable child is out of the keyboard's reach, so the
+          column takes focus itself and the arrow keys scroll it.
+        */}
+        <section
+          aria-label="Graph legend and details"
+          tabIndex={0}
+          className="shrink-0 max-h-[40%] md:max-h-none md:w-72 overflow-auto border-t md:border-t-0 md:border-l border-hairline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-hue-blue"
+        >
+          {/* oxlint-enable jsx-a11y/no-noninteractive-tabindex */}
           {selected && <Inspector selected={selected} graph={graph} onClose={clearSelection} />}
           <Legend graph={graph} palette={theme.series} />
-        </div>
+        </section>
       </div>
     </div>
   );
