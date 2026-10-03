@@ -209,6 +209,20 @@ describe("collections", () => {
     expect(toJsonValue(map)).toEqual({ n: 5 });
   });
 
+  test("a key named __proto__ stays a key of the map, not its prototype", () => {
+    const json = toJsonValue(JSON.parse('{"__proto__": {"x": 1}, "a": 2}')) as Record<string, unknown>;
+    expect(Object.getPrototypeOf(json)).toBe(Object.prototype);
+    expect(Object.keys(json)).toEqual(["__proto__", "a"]);
+    expect(JSON.stringify(json)).toBe('{"__proto__":{"x":1},"a":2}');
+  });
+
+  test("a node property named __proto__ stays a property", () => {
+    const odd = new Node(neo4j.int(4), ["Odd"], JSON.parse('{"__proto__": 1}'), "4:db:4");
+    const json = toJsonValue(odd) as { properties: Record<string, unknown> };
+    expect(Object.keys(json.properties)).toEqual(["__proto__"]);
+    expect(JSON.stringify(json.properties)).toBe('{"__proto__":1}');
+  });
+
   test("every converted value serialises without loss", () => {
     const value = { big: neo4j.int("9223372036854775807"), nan: Number.NaN, node: alice };
     expect(JSON.parse(JSON.stringify(toJsonValue(value)))).toEqual({
@@ -247,6 +261,41 @@ describe("cell bound (SR16)", () => {
     let value: unknown = alice;
     for (let i = 0; i < MAX_CELL_DEPTH - 1; i++) value = { v: value };
     expect(boundedJsonCell(value).replaced).toBe("depth");
+  });
+
+  /** `value` inside `lists` single-element lists. */
+  function wrap(value: unknown, lists: number): unknown {
+    let out = value;
+    for (let i = 0; i < lists; i++) out = [out];
+    return out;
+  }
+
+  /** The nesting depth of a JSON value: 0 for a scalar, 1 for a flat list or map. */
+  function jsonDepth(value: unknown): number {
+    if (value === null || typeof value !== "object") return 0;
+    const children = Array.isArray(value) ? value : Object.values(value);
+    return 1 + children.reduce<number>((deepest, child) => Math.max(deepest, jsonDepth(child)), 0);
+  }
+
+  // Each value opens this many levels of its own: a point and a byte array one (the
+  // object or the list), a node and a relationship two (the object and its properties),
+  // a path four (the object, its node and relationship lists, the members, their properties).
+  test.each([
+    ["a point", new Point(neo4j.int(7203), 1, 2), 1],
+    ["a byte array", new Uint8Array([1, 2]), 1],
+    ["a signed byte array", new Int8Array([-1]), 1],
+    ["a node", alice, 2],
+    ["a relationship", knows, 2],
+    ["a path", new Path(alice, bob, [new PathSegment(alice, knows, bob)]), 4],
+    ["a zero-length path", new Path(alice, alice, []), 4],
+  ] as const)("%s exactly at the depth bound is kept, one level deeper is replaced", (_, value, levels) => {
+    const fits = boundedJsonCell(wrap(value, MAX_CELL_DEPTH - levels));
+    expect(fits.replaced).toBeUndefined();
+    expect(jsonDepth(fits.value)).toBe(MAX_CELL_DEPTH);
+    expect(boundedJsonCell(wrap(value, MAX_CELL_DEPTH - levels + 1))).toEqual({
+      value: "<value nested too deeply>",
+      replaced: "depth",
+    });
   });
 
   test("a cell over 1 MiB of JSON is replaced, naming its size", () => {

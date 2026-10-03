@@ -47,7 +47,7 @@ import {
   type GraphRunResult,
   type GraphServerInfo,
 } from "./client";
-import { boundedJsonCell, MAX_CELL_DEPTH } from "./record-values";
+import { boundedJsonCell, MAX_CELL_DEPTH, setOwn } from "./record-values";
 
 /** The narrow shape of a driver record this file reads: its keys, and a value by position. */
 export interface BoltRecord {
@@ -213,7 +213,7 @@ async function readResult(result: BoltResult, maxRows: number): Promise<GraphRun
     const row: Record<string, unknown> = {};
     fields.forEach((field, index) => {
       const cell = boundedJsonCell(record.get(index));
-      row[field] = cell.value;
+      setOwn(row, field, cell.value);
       if (cell.replaced !== undefined && !warned.has(field)) {
         warned.add(field);
         warnings.push(warningFor(field, cell.replaced));
@@ -273,17 +273,22 @@ export function buildBoltClient(config: BoltClientConfig, lib: BoltDriverModule 
     const { signal } = options;
     if (signal?.aborted) throw new GraphClientError("cancelled", "The query was cancelled before it was sent");
 
-    const session = driver.session({
-      database: options.database,
-      defaultAccessMode: lib.session.READ,
-      fetchSize: Math.min(options.maxRows + 1, MAX_FETCH_SIZE),
-    });
+    let session: BoltSession;
+    try {
+      session = driver.session({
+        database: options.database,
+        defaultAccessMode: lib.session.READ,
+        fetchSize: Math.min(options.maxRows + 1, MAX_FETCH_SIZE),
+      });
+    } catch (error) {
+      throw toGraphClientError(error);
+    }
     let closing: Promise<void> | undefined;
     const closeSession = (): Promise<void> => {
       if (closing === undefined) {
         closing = session.close();
-        // Awaited in `finally` below; this only keeps a failure that lands before then
-        // from being reported as unhandled.
+        // Awaited below; this only keeps a failure that lands before then from being
+        // reported as unhandled.
         closing.catch(() => undefined);
       }
       return closing;
@@ -302,6 +307,10 @@ export function buildBoltClient(config: BoltClientConfig, lib: BoltDriverModule 
       void closeSession();
       stop(new GraphClientError("timeout", `The query did not finish within ${options.timeoutMs} ms`));
     }, options.timeoutMs + TIMER_GRACE_MS);
+    const release = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    };
 
     const reading = (async () => {
       const result = session.run(statement, undefined, {
@@ -314,15 +323,25 @@ export function buildBoltClient(config: BoltClientConfig, lib: BoltDriverModule 
     // failure is the cancellation already reported, not a second error.
     reading.catch(() => undefined);
 
+    let outcome: GraphRunResult;
     try {
-      return await Promise.race([reading, stopped]);
+      outcome = await Promise.race([reading, stopped]);
+    } catch (error) {
+      release();
+      // The run's own failure is the one reported: a close that also fails (a session
+      // closed on a dead connection, say) says nothing more about it.
+      await closeSession().catch(() => undefined);
+      throw toGraphClientError(error);
+    }
+    release();
+    // After a complete result, a failed close is the run's failure: the connection the
+    // result came over did not end cleanly.
+    try {
+      await closeSession();
     } catch (error) {
       throw toGraphClientError(error);
-    } finally {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      await closeSession();
     }
+    return outcome;
   }
 
   return { verify, run, close: () => driver.close() };

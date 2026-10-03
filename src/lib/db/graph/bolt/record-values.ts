@@ -9,6 +9,9 @@
  *
  * Classes are recognised by the driver's own predicates, never by duck typing, and in a
  * fixed order: an Integer is checked before any object, a temporal value before a map.
+ * Typed arrays other than Int8Array (the driver decodes a byte array as Int8Array or
+ * Uint8Array and builds no other) keep their elements' values, signed or not: the
+ * unsigned-byte rule is for bytes only.
  * Nothing loses precision: an Integer past 2^53 becomes its exact decimal string, a
  * temporal value its ISO-8601 text with nanoseconds and zone, a non-finite float its
  * name. Nodes, relationships and paths become the tagged forms of `../values.ts`.
@@ -32,8 +35,11 @@ import {
   isPoint,
   isRelationship,
   isTime,
+  isUnboundRelationship,
+  isUUID,
   type Node,
   type Relationship,
+  Vector,
 } from "neo4j-driver-lite";
 import { GRAPH_TAG, type GraphNodeJson, type GraphPathJson, type GraphRelationshipJson } from "../values";
 
@@ -61,10 +67,19 @@ function isPlainObject(value: object): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+/**
+ * Sets `key` as an own, enumerable data property. A plain assignment of `__proto__`
+ * would replace the object's prototype instead and leave the key out, so maps and rows
+ * are written through here.
+ */
+export function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
+}
+
 function properties(source: Record<string, unknown>, depth: number, limit: number): Record<string, unknown> {
   if (depth > limit) throw new TooDeep();
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(source)) out[key] = convert(source[key], depth + 1, limit);
+  for (const key of Object.keys(source)) setOwn(out, key, convert(source[key], depth + 1, limit));
   return out;
 }
 
@@ -139,9 +154,12 @@ function convert(value: unknown, depth: number, limit: number): unknown {
     return value.map((item) => convert(item, depth + 1, limit));
   }
   if (isPlainObject(value)) return properties(value, depth, limit);
-  // A Vector (whose backing array is not its value), a UUID, an unbound relationship,
-  // the driver's UnsupportedType for a type newer than 6.2.0, or any other class: the
-  // text the driver writes for it.
+  // The driver's own text for a UUID, a Vector (whose backing array is not its value)
+  // and an unbound relationship, which only appears inside a path the driver has already
+  // resolved. 6.2.0 exports no vector predicate from neo4j-driver-lite, so the Vector is
+  // recognised by its exported class.
+  if (isUUID(value) || value instanceof Vector || isUnboundRelationship(value)) return value.toString();
+  // The driver's UnsupportedType for a type newer than 6.2.0, or any other class.
   return String(value);
 }
 

@@ -41,6 +41,10 @@ interface Script {
     protocolVersion?: { getMajor(): number; getMinor(): number };
   };
   readonly verifyError?: unknown;
+  /** Thrown by `driver.session` itself. */
+  readonly sessionError?: unknown;
+  /** The rejection of `session.close`, after it has released a hanging iterator. */
+  readonly closeError?: unknown;
 }
 
 function record(row: Record<string, unknown>): BoltRecord {
@@ -78,6 +82,7 @@ function fakeLib(script: Script = {}) {
         },
         session(config) {
           calls.sessions.push(config);
+          if (script.sessionError !== undefined) throw script.sessionError;
           let release: (() => void) | undefined;
           const closed = new Promise<void>((resolve) => {
             release = resolve;
@@ -88,6 +93,7 @@ function fakeLib(script: Script = {}) {
               calls.closes++;
               open = false;
               release?.();
+              if (script.closeError !== undefined) throw script.closeError;
             },
             run(...args): BoltResult {
               calls.runs.push(args);
@@ -445,6 +451,52 @@ describe("run", () => {
     expect(calls.closes).toBe(1);
   });
 
+  test("a column named __proto__ is a key of the row, not its prototype", async () => {
+    const { lib } = fakeLib({ records: [JSON.parse('{"__proto__": 1, "b": 2}') as Record<string, unknown>] });
+    const result = await buildBoltClient(BASE, lib).run("RETURN 1 AS `__proto__`, 2 AS b", RUN);
+    expect(result.fields).toEqual(["__proto__", "b"]);
+    const [row] = result.rows;
+    expect(Object.getPrototypeOf(row)).toBe(Object.prototype);
+    expect(Object.keys(row)).toEqual(["__proto__", "b"]);
+    expect(JSON.stringify(row)).toBe('{"__proto__":1,"b":2}');
+  });
+
+  test("a session the driver refuses to open is a classified error, and nothing is left to close", async () => {
+    const { lib, calls } = fakeLib({ sessionError: new Error("The fetch size must be a positive number") });
+    const error = await rejection(buildBoltClient(BASE, lib).run("RETURN 1", RUN));
+    expect(error.category).toBe("query");
+    expect(error.message).toBe("The fetch size must be a positive number");
+    expect(calls.runs).toEqual([]);
+    expect(calls.closes).toBe(0);
+  });
+
+  test("a close failure after a complete result is a classified error", async () => {
+    const lost = fakeLib({
+      records: [{ i: 1 }],
+      closeError: new neo4j.Neo4jError("connection lost", "ServiceUnavailable", "08000", ""),
+    });
+    const error = await rejection(buildBoltClient(BASE, lost.lib).run("RETURN 1 AS i", RUN));
+    expect(error.category).toBe("connection");
+    expect(error.message).toBe("connection lost");
+    expect(lost.calls.closes).toBe(1);
+
+    const raw = fakeLib({ records: [{ i: 1 }], closeError: new Error("socket hang up") });
+    const rawError = await rejection(buildBoltClient(BASE, raw.lib).run("RETURN 1 AS i", RUN));
+    expect(rawError.category).toBe("query");
+    expect(rawError.message).toBe("socket hang up");
+  });
+
+  test("a close failure after a run error leaves the run's error", async () => {
+    const { lib, calls } = fakeLib({
+      runError: new neo4j.Neo4jError("Invalid input 'MATC'", "Neo.ClientError.Statement.SyntaxError", "42001", ""),
+      closeError: new Error("socket hang up"),
+    });
+    const error = await rejection(buildBoltClient(BASE, lib).run("MATC (n) RETURN n", RUN));
+    expect(error.category).toBe("syntax");
+    expect(error.message).toBe("Invalid input 'MATC'");
+    expect(calls.closes).toBe(1);
+  });
+
   test("close closes the driver", async () => {
     const { lib, calls } = fakeLib();
     await buildBoltClient(BASE, lib).close();
@@ -464,6 +516,17 @@ describe("cancel and timeout", () => {
     expect(calls.closes).toBe(0);
     controller.abort();
     expect(calls.closes).toBe(1);
+    const error = await rejection(running);
+    expect(error.category).toBe("cancelled");
+    expect(calls.closes).toBe(1);
+  });
+
+  test("a close failure on abort leaves the cancellation", async () => {
+    const { lib, calls } = fakeLib({ hang: true, closeError: new Error("socket hang up") });
+    const controller = new AbortController();
+    const running = buildBoltClient(BASE, lib).run("RETURN 1", { ...RUN, signal: controller.signal });
+    await Bun.sleep(5);
+    controller.abort();
     const error = await rejection(running);
     expect(error.category).toBe("cancelled");
     expect(calls.closes).toBe(1);
