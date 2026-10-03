@@ -1234,7 +1234,7 @@ describe("the generated statement addresses an object by its path", () => {
     ];
     expect(generateTableQuery(["APP", "CUSTOMERS"], db2Caps, columns)).toBe(
       `-- Not read by this preview: "NOTES" CLOB(1048576). ${db2Caps.previewProjection?.omittedNote}\n` +
-        'SELECT "ID", VARGRAPHIC("NAME") AS "NAME" FROM "APP"."CUSTOMERS";',
+        'SELECT "ID", "NAME" FROM "APP"."CUSTOMERS";',
     );
   });
 
