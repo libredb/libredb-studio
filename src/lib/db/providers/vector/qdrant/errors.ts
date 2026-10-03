@@ -64,6 +64,13 @@ function serverWords(text: string): string {
   return text.trim();
 }
 
+/** The three refusals strict mode answers, as measured; any other "Bad request:" is the request's own input. */
+const STRICT_MODE: readonly string[] = [
+  "Bad request: Limit exceeded",
+  "Bad request: Index required but not found",
+  "Bad request: Exact search disabled",
+];
+
 function categoryOf(status: number, words: string): QdrantError["category"] {
   if (status === 401) return "unauthenticated";
   if (status === 403) {
@@ -74,7 +81,7 @@ function categoryOf(status: number, words: string): QdrantError["category"] {
   if (status === 404) return words.startsWith("Not found: Collection ") ? "collection-not-found" : "not-found";
   if (status === 408 && words.startsWith("Timeout:")) return "timeout";
   if (status === 429) return "rate-limited";
-  if (status === 400) return words.startsWith("Bad request:") ? "strict-mode" : "input";
+  if (status === 400) return STRICT_MODE.some((prefix) => words.startsWith(prefix)) ? "strict-mode" : "input";
   if (status === 422) return "input";
   if (status === 503) return "unavailable";
   if (status >= 500) return words.includes("Timeout error: Operation") ? "timeout" : "server";

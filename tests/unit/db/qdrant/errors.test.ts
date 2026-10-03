@@ -90,6 +90,8 @@ describe("answerFailure: the status decides, the text refines", () => {
       "strict-mode",
     ],
     [json(400, "Bad request: Exact search disabled!. Help: Set exact=false."), "strict-mode"],
+    // Strict mode is only the three measured refusals; any other "Bad request:" is the request's own input.
+    [json(400, 'Bad request: Shard key "x" not found'), "input"],
     [
       json(
         429,
