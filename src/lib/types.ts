@@ -429,7 +429,9 @@ export interface ColumnSchema {
    * absent from most rows.
    *
    * Absent means declared, which is every column of every engine that shipped before the field existed. Optional
-   * because this type is part of the published package surface. `machineColumns` in `src/lib/db/detailed-object.ts`
+   * because this type is part of the published package surface. The object tree and the mobile column list show
+   * "(sampled)" beside such a column's type; the Source is provider-authored and states the sample itself.
+   * `machineColumns` in `src/lib/db/detailed-object.ts`
    * keeps a sampled column from every model and MCP surface, because its name was read out of the data.
    */
   provenance?: "sampled";

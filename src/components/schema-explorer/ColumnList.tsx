@@ -1,5 +1,5 @@
 import React from "react";
-import type { DetailedObject } from "@/lib/db/detailed-object";
+import { sampledMark, type DetailedObject } from "@/lib/db/detailed-object";
 import { Key, Hash } from "lucide-react";
 
 interface ColumnListProps {
@@ -31,9 +31,9 @@ export const ColumnList = React.memo(function ColumnList({ columns, indexes }: C
 
           <span
             className="text-xs font-mono text-muted-foreground/60 uppercase group-hover/col:text-muted-foreground shrink-0 max-w-[40%] truncate"
-            title={column.type}
+            title={column.type + sampledMark(column)}
           >
-            {column.type.split("(")[0]}
+            {column.type.split("(")[0] + sampledMark(column)}
           </span>
         </div>
       ))}

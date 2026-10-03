@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   detailedObjects,
   machineColumns,
+  sampledMark,
   objectAtPath,
   relationObjects,
   rowWritableObjects,
@@ -302,5 +303,12 @@ describe("schemaContextOf over a sampled column", () => {
   test("leaves the schema it was handed unchanged for the human views", () => {
     schemaContextOf(sampledSchema);
     expect(sampledSchema[0].columns.map((column) => column.name)).toEqual(["category", SAMPLED_MARKER]);
+  });
+});
+
+describe("sampledMark", () => {
+  test("is the suffix the human views add to a sampled column's type, and nothing for a declared one", () => {
+    expect(sampledMark({ provenance: "sampled" })).toBe(" (sampled)");
+    expect(sampledMark({})).toBe("");
   });
 });

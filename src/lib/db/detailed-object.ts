@@ -161,6 +161,11 @@ export function machineColumns(columns: readonly ColumnSchema[]): readonly Colum
     : columns;
 }
 
+/** What a human view adds to a column's type text: " (sampled)" for a sampled column, nothing for a declared one. */
+export function sampledMark(column: Pick<ColumnSchema, "provenance">): string {
+  return column.provenance === "sampled" ? " (sampled)" : "";
+}
+
 /**
  * The schema as the AI panels are handed it, which is `schemaContext` on both shells: its JSON,
  * with every `readRanges` left out (etcd spec 3.4, E13).
