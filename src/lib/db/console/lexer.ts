@@ -101,11 +101,11 @@ export function tokenizeLine(
   charge?: (token: ConsoleToken, line: string) => unknown,
 ): { readonly tokens: readonly ConsoleToken[]; readonly state: ConsoleLineState } {
   const tokens: ConsoleToken[] = [];
-  let reading = true;
+  const read = { stopped: false };
   const push = (kind: ConsoleTokenKind, start: number, end: number) => {
     if (end <= start) return;
     const token: ConsoleToken = { kind, line: lineNumber, start, end };
-    if (charge?.(token, line) === false) reading = false;
+    if (charge?.(token, line) === false) read.stopped = true;
     tokens.push(token);
   };
   let { section, inString, depth } = state;
@@ -142,7 +142,7 @@ export function tokenizeLine(
     depth = 0;
   }
 
-  while (at < line.length && reading) {
+  while (at < line.length && !read.stopped) {
     const character = line[at];
     if (isWhitespace(character)) {
       const end = skipWhitespace(line, at);
