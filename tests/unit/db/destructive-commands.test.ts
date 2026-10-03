@@ -562,14 +562,14 @@ describe("statementRefusal and the console text bound", () => {
       "The statement is 8 bytes in UTF-8, over the 7-byte limit for this connection type. Shorten it to run it.",
     );
     expect(consoleTextOverLimit("é".repeat(4), 8)).toBeUndefined();
-    expect(consoleTextOverLimit("😀😀", 8)).toBeUndefined();
-    expect(consoleTextOverLimit("😀😀", 7)).toContain("8 bytes");
+    expect(consoleTextOverLimit("\u{1F600}\u{1F600}", 8)).toBeUndefined();
+    expect(consoleTextOverLimit("\u{1F600}\u{1F600}", 7)).toContain("8 bytes");
     expect(consoleTextOverLimit("\ud800", 2)).toContain("3 bytes");
     expect(consoleTextOverLimit("€", 2)).toContain("3 bytes");
   });
 
   test("counts what Buffer.byteLength counts", () => {
-    for (const text of ["", "ascii", "çğış", "日本語", "😀 ok", "\ud800x", "x\udc00", "a߿bࠀc"]) {
+    for (const text of ["", "ascii", "çğış", "日本語", "\u{1F600} ok", "\ud800x", "x\udc00", "a߿bࠀc"]) {
       const bytes = Buffer.byteLength(text, "utf8");
       expect(consoleTextOverLimit(text, bytes)).toBeUndefined();
       if (bytes > 0) expect(consoleTextOverLimit(text, bytes - 1)).toContain(`${bytes} bytes`);
