@@ -14,14 +14,21 @@ import { expect, test } from "@playwright/test";
  * `boltEndpointOf` calls, so it is not spelled in uri.ts; the userinfo test is the control showing that
  * `boltEndpointOf` is what answers. It runs on the second server because Test Connection spends the
  * shared account's per-process rate-limit bucket.
+ *
+ * It signs in as the admin, not the user the other second-server specs share: the query bucket is keyed
+ * on the account (src/lib/api/rate-limit.ts), and on a CI run whose earlier specs and retries spent the
+ * user's 120 slots, this spec's Test Connection answered "Too many requests" instead of its refusal.
+ * The dialog it checks is the same for either role.
  */
 test.describe("Neo4j in the connection dialog", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/login");
-    await page.locator('input[type="email"]').fill("user@libredb.org");
-    await page.locator('input[type="password"]').fill("test-user");
+    await page.locator('input[type="email"]').fill("admin@libredb.org");
+    await page.locator('input[type="password"]').fill("test-admin");
     await page.getByRole("button", { name: "Sign In" }).click();
-    await page.waitForURL("/");
+    // The admin lands on the Admin Dashboard; the editor is one navigation away.
+    await page.waitForURL(/\/admin/);
+    await page.goto("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
     const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
