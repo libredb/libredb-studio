@@ -84,9 +84,14 @@ const resultOf = (name: string) =>
   (JSON.parse(quoteUnsafeIntegers(capturedAnswer(qdrantCapture(name)).text)) as { result: unknown }).result;
 
 describe("the captures on disk (7.3)", () => {
-  test("the directory holds exactly the catalog, the OpenAPI extract and the README", () => {
+  test("the directory holds exactly the catalog, the OpenAPI extract, the console's OpenAPI facts and the README", () => {
     expect(filesOnDisk()).toEqual(
-      [...QDRANT_FIXTURE_NAMES.map((name) => `${name}.json`), "README.md", "openapi-extract.json"].sort(),
+      [
+        ...QDRANT_FIXTURE_NAMES.map((name) => `${name}.json`),
+        "README.md",
+        "openapi-extract.json",
+        "openapi-schemas.json",
+      ].sort(),
     );
     expect(QDRANT_FIXTURE_NAMES).toHaveLength(235);
   });
@@ -118,7 +123,7 @@ describe("the captures on disk (7.3)", () => {
   });
 
   test("no capture holds a key, a JWT or a PEM block: the credential header is a placeholder", () => {
-    for (const file of filesOnDisk().filter((name) => name.endsWith(".json") && name !== "openapi-extract.json")) {
+    for (const file of filesOnDisk().filter((name) => name.endsWith(".json") && !name.startsWith("openapi-"))) {
       const text = readFileSync(path.join(QDRANT_FIXTURES_DIR, file), "utf8");
       const capture = JSON.parse(text) as ReturnType<typeof qdrantCapture>;
       const headers = capture.$captured.request.headers;
