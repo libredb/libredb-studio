@@ -755,7 +755,7 @@ describe("the adapter over the recorded wire (5.1, E15, E16)", () => {
       client.describeCollection(smuggled, call("probe_db")),
       client.describeCollection({ collection_name: "notes" }, call("default")),
     ]);
-    expect(wire.calls.map((logged) => (logged.args?.[0] as { db_name: string }).db_name)).toEqual([
+    expect(wire.calls.map((logged) => (logged.args?.[0] as { db_name?: string } | undefined)?.db_name)).toEqual([
       "probe_db",
       "default",
     ]);
