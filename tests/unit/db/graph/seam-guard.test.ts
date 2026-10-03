@@ -18,6 +18,10 @@
  * - `graph-base-provider.ts` imports from `bolt/` only the `bolt/client` interface, so the
  *   transport an engine runs on is chosen by its composition root (spec 3.5);
  * - the Neo4j provider imports from no other provider directory;
+ * - the browser-shipped set (`neo4j/profile.ts`, and `src/lib/db/graph-policy-profiles.ts`,
+ *   which `QueryEditor` imports) imports no Node built-in, nothing from `bolt/` or
+ *   `graph-base-provider`, and from the provider directories only an engine's `profile`
+ *   module, so no catalog, error table or transport reaches the client bundle;
  * - every module name in these files is a plain string.
  *
  * Each rule is proven both ways: the real sources pass, and a planted sample fails
@@ -35,6 +39,9 @@ const GRAPH = "src/lib/db/graph";
 const NEO4J = "src/lib/db/providers/graph/neo4j";
 const PROVIDERS = "src/lib/db/providers";
 const BASE_PROVIDER = `${GRAPH}/graph-base-provider.ts`;
+const POLICY_PROFILES = "src/lib/db/graph-policy-profiles.ts";
+/** Files outside the pure graph directory that the editor ships to the browser. */
+const BROWSER_SHIPPED = new Set([`${NEO4J}/profile.ts`, POLICY_PROFILES]);
 const DRIVER_IMPORTERS = new Set([`${GRAPH}/bolt/bolt-client.ts`, `${GRAPH}/bolt/record-values.ts`]);
 const BANNED_NAMES = new Set([
   "executeQuery",
@@ -106,7 +113,10 @@ function within(path: string, dir: string): boolean {
 }
 
 function isPure(file: string): boolean {
-  return within(file, GRAPH) && !within(file, `${GRAPH}/bolt`) && file !== `${GRAPH}/graph-base-provider.ts`;
+  return (
+    BROWSER_SHIPPED.has(file) ||
+    (within(file, GRAPH) && !within(file, `${GRAPH}/bolt`) && file !== `${GRAPH}/graph-base-provider.ts`)
+  );
 }
 
 function namesOutsideComments(sf: ts.SourceFile): Array<{ name: string; position: number }> {
@@ -152,6 +162,9 @@ function violations(file: string, text: string): string[] {
         out.push(`${where} imports ${specifier}, server-only, into the pure set`);
       }
     }
+    if (BROWSER_SHIPPED.has(file) && within(target, PROVIDERS) && !target.endsWith("/profile")) {
+      out.push(`${where} imports ${specifier}, which is not a profile module, into the browser-shipped set`);
+    }
     if (file === BASE_PROVIDER && within(target, `${GRAPH}/bolt`) && target !== `${GRAPH}/bolt/client`) {
       out.push(`${where} imports ${specifier}; the base provider may import only bolt/client from the transport`);
     }
@@ -169,10 +182,11 @@ function violations(file: string, text: string): string[] {
 }
 
 describe("the real sources", () => {
-  const files = [...filesUnder(GRAPH), ...filesUnder(NEO4J)];
+  const files = [...filesUnder(GRAPH), ...filesUnder(NEO4J), POLICY_PROFILES];
 
-  test("the guard reads the graph layer, including the Bolt transport", () => {
+  test("the guard reads the graph layer, including the Bolt transport and the browser-shipped set", () => {
     expect(files).toContain(`${GRAPH}/values.ts`);
+    for (const file of BROWSER_SHIPPED) expect(files).toContain(file);
     expect(files).toContain(`${GRAPH}/bolt/bolt-client.ts`);
     expect(files).toContain(`${GRAPH}/bolt/record-values.ts`);
   });
@@ -255,6 +269,42 @@ describe("planted violations fail by name", () => {
     expect(violations(BASE_PROVIDER, text)).toEqual([
       expect.stringContaining(`imports ${specifier}; the base provider may import only bolt/client`),
     ]);
+  });
+
+  test.each([
+    ["the catalog", `${NEO4J}/profile.ts`, 'import { neo4jCatalog } from "./catalog";', "not a profile module"],
+    ["the error table", `${NEO4J}/profile.ts`, 'import { mapNeo4jError } from "./errors";', "not a profile module"],
+    [
+      "the provider",
+      POLICY_PROFILES,
+      'import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j";',
+      "not a profile module",
+    ],
+    ["a Node built-in", `${NEO4J}/profile.ts`, 'import { readFileSync } from "node:fs";', "Node built-in"],
+    [
+      "the Bolt directory",
+      POLICY_PROFILES,
+      'import type { GraphClient } from "@/lib/db/graph/bolt/client";',
+      "server-only",
+    ],
+    [
+      "the base provider",
+      `${NEO4J}/profile.ts`,
+      'import type { GraphEngineProfile } from "@/lib/db/graph/graph-base-provider";',
+      "server-only",
+    ],
+  ])("the browser-shipped set importing %s", (_, file, text, phrase) => {
+    expect(violations(file, text)).toEqual([expect.stringContaining(phrase)]);
+  });
+
+  test("the browser-shipped set may import a profile module and the pure graph layer", () => {
+    expect(
+      violations(
+        POLICY_PROFILES,
+        'import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";\nimport type { GraphPolicyProfile } from "@/lib/db/graph/profile";',
+      ),
+    ).toEqual([]);
+    expect(violations(`${NEO4J}/catalog.ts`, 'import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";')).toEqual([]);
   });
 
   test("the Neo4j provider importing another provider", () => {
