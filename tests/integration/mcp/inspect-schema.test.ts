@@ -258,7 +258,7 @@ describe("the answer", () => {
  */
 describe("sampled columns", () => {
   /** Rewrites the real SQLite provider's columns of one table until the returned restore runs. */
-  function withColumns(table: string, rewrite: (columns: ColumnSchema[]) => ColumnSchema[]): () => void {
+  function withColumns(table: string, rewrite: (columns: readonly ColumnSchema[]) => ColumnSchema[]): () => void {
     const original = SQLiteProvider.prototype.describeObject;
     SQLiteProvider.prototype.describeObject = async function (this: SQLiteProvider, path, kind) {
       const detail = await original.call(this, path, kind);
