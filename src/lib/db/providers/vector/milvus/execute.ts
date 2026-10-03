@@ -30,12 +30,20 @@ import {
   type DescribeIndexRequest,
   type MilvusClient,
   MilvusError,
+  type QueryRequest,
+  type QueryResults,
   type WireIndexDescription,
   type WireKeyValuePair,
 } from "./client";
-import { type MilvusErrorConnection, type MilvusErrorContext, toMilvusError, toProviderError } from "./errors";
+import {
+  isReceiveCapError,
+  type MilvusErrorConnection,
+  type MilvusErrorContext,
+  toMilvusError,
+  toProviderError,
+} from "./errors";
 import { fieldTypeText } from "./milvus-vocabulary";
-import { statisticsRowCount } from "./monitoring";
+import { loadStateWord, statisticsRowCount } from "./monitoring";
 import {
   type IndexReading,
   type MilvusOperation,
@@ -162,27 +170,108 @@ async function readIndex(run: Run, collection: string): Promise<IndexReading> {
   }
 }
 
-/** A query, a count or a search: one call, its answer shaped by results.ts. */
+const NOT_LOADED = 101;
+
+/**
+ * A failed query, count or search, worded. A valid request on a collection that is not loaded answers 101: the
+ * collection's load state is then read once, so the sentence names it. That read is a courtesy of the sentence, so
+ * where it fails the sentence names no state, and nothing ever loads the collection.
+ */
+async function entityFailure(run: Run, collection: string, error: unknown): Promise<Error> {
+  if (!(error instanceof MilvusError) || error.status?.code !== NOT_LOADED) return toProviderError(error, run.errors);
+  let loadState: string | undefined;
+  try {
+    loadState = loadStateWord((await run.client.getLoadState({ collection_name: collection }, run.call)).state);
+  } catch {
+    loadState = undefined;
+  }
+  return toProviderError(error, { ...run.errors, ...(loadState === undefined ? {} : { loadState }) });
+}
+
+async function entityCall<T>(run: Run, collection: string, invoke: (call: CallOptions) => Promise<T>): Promise<T> {
+  try {
+    return await invoke(run.call);
+  } catch (error) {
+    throw await entityFailure(run, collection, error);
+  }
+}
+
+function withLimit(request: QueryRequest, limit: number): QueryRequest {
+  return {
+    ...request,
+    query_params: request.query_params.map((pair) =>
+      pair.key === "limit" ? { key: "limit", value: String(limit) } : pair,
+    ),
+  };
+}
+
+/**
+ * A query or a get, whose answer may pass the client's receive cap: it is then asked again with half its limit, under
+ * the same permit and the same deadline, until an answer fits; a single row that does not fit fails naming the cap.
+ * Only the cap's own failure does this: a connection the server dropped is never asked again.
+ */
+async function runQuery(
+  run: Run,
+  operation: Extract<EntityOperation, { readonly kind: "query" }>,
+): Promise<QueryResult> {
+  const collection = operation.request.collection_name;
+  const asked = Number(operation.request.query_params.find((pair) => pair.key === "limit")?.value);
+  let limit = asked;
+  let answer: QueryResults | undefined;
+  while (answer === undefined) {
+    const request = limit === asked ? operation.request : withLimit(operation.request, limit);
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- one Query at a time, each asked only after the last one failed.
+      answer = await run.client.query(request, run.call);
+    } catch (error) {
+      if (!isReceiveCapError(error) || limit <= 1) {
+        // oxlint-disable-next-line no-await-in-loop -- the failure is worded once, and the loop ends with it.
+        throw await entityFailure(run, collection, error);
+      }
+      limit = Math.max(1, Math.floor(limit / 2));
+    }
+  }
+  if (limit === asked) return queryResult(answer, operation.shape, { executionTime: run.elapsed() });
+  const result = queryResult(answer, { ...operation.shape, limit }, { executionTime: run.elapsed() });
+  return {
+    ...result,
+    warnings: [
+      ...(result.warnings ?? []),
+      {
+        message: `Milvus's answer was larger than this connection's receive cap, so Studio asked again for ${limit.toLocaleString("en-US")} rows; ask for fewer rows or fewer fields to see the rest.`,
+      },
+    ],
+    pagination: {
+      limit,
+      offset: operation.shape.offset,
+      hasMore: false,
+      totalReturned: result.rowCount,
+      wasLimited: true,
+    },
+  };
+}
+
+/** A query, a count or a search: its call, and its answer shaped by results.ts. */
 async function runEntity(run: Run, operation: EntityOperation): Promise<QueryResult> {
+  const collection = operation.request.collection_name;
   const options = () => ({ executionTime: run.elapsed() });
   switch (operation.kind) {
     case "query":
-      return queryResult(
-        await send(run, (call) => run.client.query(operation.request, call)),
-        operation.shape,
+      return runQuery(run, operation);
+    case "count":
+      return countResult(
+        await entityCall(run, collection, (call) => run.client.query(operation.request, call)),
         options(),
       );
-    case "count":
-      return countResult(await send(run, (call) => run.client.query(operation.request, call)), options());
     case "search":
       return searchResult(
-        await send(run, (call) => run.client.search(operation.request, call)),
+        await entityCall(run, collection, (call) => run.client.search(operation.request, call)),
         operation.shape,
         options(),
       );
     case "hybridSearch":
       return searchResult(
-        await send(run, (call) => run.client.hybridSearch(operation.request, call)),
+        await entityCall(run, collection, (call) => run.client.hybridSearch(operation.request, call)),
         operation.shape,
         options(),
       );

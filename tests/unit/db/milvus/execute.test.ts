@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { RequestRefusal } from "@/lib/db/console/dialect";
 import { QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import {
   executeMilvusConsole,
   MILVUS_ENTITIES_DEADLINE_MS,
@@ -396,5 +397,109 @@ describe("cancel, by the request's id", () => {
     await settle();
     closing.abort(new QueryCancelledError("The connection to Milvus was closed."));
     expect(await running).toBeInstanceOf(QueryCancelledError);
+  });
+});
+
+/** A common.Status 101, as Milvus answers a valid request on a collection that is not loaded. */
+const notLoaded = () => failedStatus(101, "UnexpectedError", "collection not loaded[collection=469489107428444006]");
+/** The client's receive cap, as the adapter classifies it. */
+const receiveCap = () =>
+  new MilvusError("receive-cap", "Received message larger than max (16777300 vs 16777216)", { grpcCode: 8 });
+
+describe("a collection that is not loaded", () => {
+  test("the sentence names the collection and its state, read once after the refusal, and nothing loads it", async () => {
+    const { client, run } = executor();
+    client.on("query", notLoaded);
+    client.on("getLoadState", () => ({ status: OK, state: "LoadStateNotLoad" }));
+    const error = await failure(run(QUERY));
+    expect(error.message).toBe(
+      "Collection docs_int64 is not loaded (state NotLoad). Query, get, count and search need a loaded collection, and loading uses query-node memory that every client of this cluster shares. An admin can load it from Operations; Studio never loads a collection on its own.",
+    );
+    expect(methodsOf(client)).toEqual(["describeCollection", "query", "getLoadState"]);
+  });
+
+  test("a search and a count meet the same sentence", async () => {
+    const searching = executor();
+    searching.client.on("search", notLoaded);
+    expect((await failure(searching.run(SEARCH))).message).toStartWith(
+      "Collection docs_int64 is not loaded (state Loaded).",
+    );
+    const counting = executor();
+    counting.client.on("query", notLoaded);
+    const count = request("entities/query", { collectionName: "docs_int64", outputFields: ["count(*)"] });
+    expect((await failure(counting.run(count))).message).toStartWith("Collection docs_int64 is not loaded");
+  });
+
+  test("where the state cannot be read, the sentence names none", async () => {
+    const { client, run } = executor();
+    client.on("query", notLoaded);
+    client.on("getLoadState", () => permissionDenied("GetLoadState"));
+    expect((await failure(run(QUERY))).message).toStartWith(
+      "Collection docs_int64 is not loaded. Query, get, count and search",
+    );
+  });
+});
+
+describe("an answer past the receive cap", () => {
+  const limitOf = (call: { args?: readonly unknown[] }) => {
+    const sent = call.args?.[1] as { query_params: { key: string; value: string }[] } | undefined;
+    return sent?.query_params.find((pair) => pair.key === "limit")?.value;
+  };
+
+  test("a query is asked again with half its limit, under the same permit, and the result says so", async () => {
+    const { client, run, acquisitions } = executor();
+    let asked = 0;
+    client.on("query", () => {
+      asked += 1;
+      return asked <= 2 ? receiveCap() : undefined;
+    });
+    const result = await run(request("entities/query", { collectionName: "docs_int64", filter: "", limit: 100 }));
+    const queries = client.calls.filter((call) => call.method === "query");
+    expect(queries.map(limitOf)).toEqual(["100", "50", "25"]);
+    expect(acquisitions()).toBe(1);
+    expect(result.warnings).toContainEqual({
+      message:
+        "Milvus's answer was larger than this connection's receive cap, so Studio asked again for 25 rows; ask for fewer rows or fewer fields to see the rest.",
+    });
+    expect(result.pagination).toEqual({ limit: 25, offset: 0, hasMore: false, totalReturned: 0, wasLimited: true });
+  });
+
+  test("a get is asked again the same way", async () => {
+    const { client, run } = executor();
+    let asked = 0;
+    client.on("query", () => {
+      asked += 1;
+      return asked === 1 ? receiveCap() : undefined;
+    });
+    await run(request("entities/get", { collectionName: "docs_int64", id: [1, 2, 3] }));
+    expect(client.calls.filter((call) => call.method === "query").map(limitOf)).toEqual(["1000", "500"]);
+  });
+
+  test("a single row past the cap fails naming the cap", async () => {
+    const { client, run } = executor();
+    client.on("query", receiveCap);
+    const error = await failure(run(request("entities/query", { collectionName: "docs_int64", filter: "", limit: 3 })));
+    expect(error.message).toStartWith(
+      "Milvus's answer to the entities/query request is larger than this connection's receive cap of 16 MiB",
+    );
+    expect(client.calls.filter((call) => call.method === "query").map(limitOf)).toEqual(["3", "1"]);
+  });
+
+  test("a search past the cap is not asked again", async () => {
+    const { client, run } = executor();
+    client.on("search", receiveCap);
+    const error = await failure(run(SEARCH));
+    expect(error.message).toContain("receive cap of 16 MiB");
+    expect(methodsOf(client).filter((method) => method === "search")).toHaveLength(1);
+  });
+
+  test("a dropped connection is not the cap: nothing is asked again", async () => {
+    const { client, run } = executor();
+    client.on(
+      "query",
+      () => new MilvusError("ping-goaway", "Bandwidth exhausted or memory limit exceeded", { grpcCode: 8 }),
+    );
+    await failure(run(QUERY));
+    expect(methodsOf(client).filter((method) => method === "query")).toHaveLength(1);
   });
 });
