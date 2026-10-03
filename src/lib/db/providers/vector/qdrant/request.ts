@@ -10,7 +10,13 @@ import {
   taggedNumber,
   toJsonText,
 } from "@/lib/db/console/tagged-json";
-import { checkDenseElements, type VectorRefusal, type VectorTarget, vectorNumbers } from "@/lib/db/vector/dense";
+import {
+  checkDenseElements,
+  checkMultiVector,
+  type VectorRefusal,
+  type VectorTarget,
+  vectorNumbers,
+} from "@/lib/db/vector/dense";
 import { sparseFromIndicesValues } from "@/lib/db/vector/sparse";
 import type { VectorFieldInfo } from "@/lib/db/vector/types";
 import type { QueryWarning } from "@/lib/types";
@@ -19,6 +25,7 @@ import {
   QDRANT_BOUNDS,
   QDRANT_CONSOLE,
   QDRANT_ENUMS,
+  QDRANT_GATES,
   QDRANT_KEYS,
   QDRANT_LOCAL_MODELS,
   QDRANT_QUERY_ALIAS,
@@ -1189,5 +1196,151 @@ export function qdrantPhase0(request: ConsoleRequest<QdrantOp>): QdrantPhase0 {
     warnings: walk.warnings,
     literals: walk.literals,
     usings: walk.usings,
+  };
+}
+
+const PLAIN_VERSION = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+
+function refuseLater(message: string, key: string | null = null): never {
+  throw new RequestRefusal(message, 1, key);
+}
+
+function atLeast(version: string, needs: string): boolean {
+  const have = version.split(".").map(Number);
+  const want = needs.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    if (have[index] !== want[index]) return have[index] > want[index];
+  }
+  return true;
+}
+
+/**
+ * The version gates: a key newer than the server is refused by name with the version it needs, with no call. A
+ * version that is missing or is not a plain `major.minor.patch` refuses every gated key.
+ */
+export function qdrantVersionGates(plan: QdrantPhase0, version: string | null): void {
+  const plain = version !== null && PLAIN_VERSION.test(version);
+  for (const id of plan.gates) {
+    const gate = QDRANT_GATES[id];
+    if (plain && atLeast(version, gate.needs)) continue;
+    const server = plain
+      ? `this server is ${version}`
+      : `this server reported ${version === null ? "no version" : `the version ${shown(version)}, which is not a plain major.minor.patch`}`;
+    refuse(
+      `${gate.key} needs Qdrant ${gate.needs} or later, and ${server}. An older server ignores the key or answers an error that names no key, so Studio refuses it.`,
+      gate.key,
+    );
+  }
+}
+
+function vectorOf(
+  facts: QdrantCollectionFacts,
+  use: { readonly where: string; readonly using: string },
+  collection: string,
+): VectorFieldInfo {
+  const found = facts.vectors.find((vector) => vector.name === use.using);
+  if (found !== undefined) return found;
+  const names = facts.vectors.map((vector) => (vector.name === "" ? "the unnamed vector" : vector.name));
+  const holds = names.length === 0 ? "it has no vector" : `it has ${names.join(", ")}`;
+  if (use.using === "") {
+    return refuseLater(
+      `The collection ${shown(collection)} has no unnamed vector, so the search needs "using" with a vector's name: ${holds}.`,
+      "using",
+    );
+  }
+  return refuseLater(
+    `${use.where} names ${shown(use.using)}, which is no vector of the collection ${shown(collection)}: ${holds}.`,
+    "using",
+  );
+}
+
+const named = (vector: VectorFieldInfo): string => (vector.name === "" ? "the unnamed vector" : shown(vector.name));
+
+/** The literal checked against its vector, and what is written in its place: its numbers as doubles. */
+function checkedLiteral(literal: VectorLiteral, vector: VectorFieldInfo): TaggedJson | undefined {
+  const target: VectorTarget = vector;
+  const mismatch = (written: string, hint: string) =>
+    refuseLater(
+      `${literal.where} is ${written}, and ${named(vector)} is a ${vector.kind === "multi" ? "multivector" : `${vector.kind} vector`}: ${hint}.`,
+      "query",
+    );
+  if (literal.kind === "text") {
+    if (vector.kind !== "sparse") {
+      mismatch(
+        "a text for the local BM25 model, which writes a sparse vector",
+        'aim it at a sparse vector with "using"',
+      );
+    }
+    return undefined;
+  }
+  if (literal.kind === "sparse") {
+    if (vector.kind !== "sparse") mismatch("a sparse vector", "write a list of numbers");
+    return undefined;
+  }
+  if (vector.kind === "sparse") mismatch("a list of numbers", 'write {"indices": [...], "values": [...]}');
+  if (vector.dimension !== null && (vector.dimension < 1 || vector.dimension > QDRANT_BOUNDS.maxDenseSize)) {
+    refuseLater(
+      `${named(vector)} declares the size ${vector.dimension}, outside 1 to ${QDRANT_BOUNDS.maxDenseSize}, so no query vector fits it.`,
+      "query",
+    );
+  }
+  const numbers = (values: readonly TaggedJson[]) => vectorNumbers(target, values) as readonly number[];
+  let refused: VectorRefusal | null;
+  let written: TaggedJson;
+  if (literal.kind === "multi") {
+    if (vector.kind !== "multi") mismatch("a list of lists", "write one list of numbers");
+    const rows = (literal.node as readonly (readonly TaggedJson[])[]).map(numbers);
+    refused = checkMultiVector(target, rows, QDRANT_BOUNDS.maxMultivectorElements);
+    written = rows;
+  } else {
+    const values = numbers(literal.node as readonly TaggedJson[]);
+    // A flat list aimed at a multivector is one row of it: the row's length and elements are checked as a row's.
+    refused = checkDenseElements({ ...target, kind: "dense" }, values);
+    written = values;
+  }
+  if (refused !== null) refuseLater(`${literal.where}: ${refused.sentence}`, "query");
+  return written;
+}
+
+function rewritten(value: TaggedJson, replacements: ReadonlyMap<TaggedJson, TaggedJson>): TaggedJson {
+  const replacement = replacements.get(value);
+  if (replacement !== undefined) return replacement;
+  if (Array.isArray(value)) return value.map((entry) => rewritten(entry, replacements));
+  if (!isObject(value)) return value;
+  const copy: Record<string, TaggedJson> = Object.create(null);
+  for (const key of Object.keys(value)) copy[key] = rewritten(value[key], replacements);
+  return copy;
+}
+
+/**
+ * Phase 1: every vector the request names exists, every query vector fits the vector it is aimed at, and the body
+ * is written. `facts` holds each collection `collections` named, described for this request. Throws a phase 1
+ * `RequestRefusal`; makes no call.
+ */
+export function qdrantPhase1(plan: QdrantPhase0, facts: ReadonlyMap<string, QdrantCollectionFacts>): QdrantWire {
+  const factsOf = (collection: string): QdrantCollectionFacts => {
+    const found = facts.get(collection);
+    if (found === undefined) throw new Error(`The collection ${collection} was not described for this request`);
+    return found;
+  };
+  const replacements = new Map<TaggedJson, TaggedJson>();
+  const own = plan.collections.length === 0 ? null : factsOf(plan.collections[0]);
+  if (own !== null) {
+    const main = plan.collections[0];
+    for (const use of plan.usings) {
+      if (use.needed) vectorOf(factsOf(use.collection ?? main), use, use.collection ?? main);
+    }
+    for (const literal of plan.literals) {
+      const written = checkedLiteral(literal, vectorOf(own, literal, main));
+      if (written !== undefined) replacements.set(literal.node, written);
+    }
+  }
+  const exact = plan.body !== null && plan.body.exact === true;
+  return {
+    op: plan.route.op,
+    params: plan.request.params,
+    query: plan.request.query,
+    ...(plan.body === null ? {} : { body: toJsonText(rewritten(plan.body, replacements)) }),
+    shape: { op: plan.route.op, facts: own, searches: plan.searches, exact, warnings: plan.warnings },
   };
 }
