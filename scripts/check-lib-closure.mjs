@@ -103,7 +103,20 @@ function main(argv) {
   process.exit(failures.length === 0 ? 0 : 1);
 }
 
-// CLI entry only when executed directly (the unit test imports this module).
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/**
+ * Whether this file runs as the program rather than as the unit test's import. Real paths are compared on both
+ * sides, as `scripts/generate-etcd-descriptor.mjs` does, so the check also runs from a symlinked checkout, where
+ * `process.argv[1]` keeps the link and `import.meta.url` is the real file (docs/BACKLOG.md REL5).
+ * @param {string | undefined} argv1
+ */
+function isDirectExecution(argv1) {
+  return (
+    argv1 !== undefined &&
+    fs.existsSync(argv1) &&
+    fs.realpathSync(argv1) === fs.realpathSync(fileURLToPath(import.meta.url))
+  );
+}
+
+if (isDirectExecution(process.argv[1])) {
   main(process.argv.slice(2));
 }
