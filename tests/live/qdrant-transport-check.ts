@@ -549,23 +549,23 @@ async function main(): Promise<void> {
     const connection = options({ port: relay.port });
     const qdrant = createRestQdrantClient(connection, ROUTES);
     const dots = await outcome(connection, qdrant, request("get_collection", { collection_name: ".." }));
+    const encoded = await outcome(connection, qdrant, request("get_collection", { collection_name: "%2e%2e" }));
     const before = relay.accepted();
     const legacy = await outcome(connection, qdrant, request("get_collection", { collection_name: "a:b" }));
-    const encoded = await outcome(connection, qdrant, request("get_collection", { collection_name: "%2e%2e" }));
     qdrant.close();
     relay.close();
     const missing = "The collection does not exist or is not visible to this credential.";
     report(
       "T10",
-      "`..` is refused before the wire; `a:b` and `%2e%2e` reach the server as collection names",
+      "`..` and `%2e%2e` are refused before the wire; `a:b` reaches the server as a collection name",
       !dots.ok &&
         dots.name === "QueryError" &&
+        !encoded.ok &&
+        encoded.name === "QueryError" &&
         before === 0 &&
         !legacy.ok &&
-        legacy.message === missing &&
-        !encoded.ok &&
-        encoded.message === missing,
-      { dots, before, legacy, encoded },
+        legacy.message === missing,
+      { dots, encoded, before, legacy },
     );
   }
 

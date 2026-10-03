@@ -188,19 +188,7 @@ describe("the client builds exactly the 17 routes of the pinned OpenAPI document
       "snapshots",
       "locks",
     ];
-    const values = [
-      "healthz",
-      "telemetry",
-      "%2e%2e",
-      "..%2f..%2ftelemetry",
-      "a?b",
-      "a#b",
-      "a b",
-      "a:b",
-      "a\\b",
-      "été",
-      "x;y",
-    ];
+    const values = ["healthz", "telemetry", "a?b", "a#b", "a b", "a:b", "a\\b", "été", "x;y"];
     const { wire, qdrant } = client();
     for (const op of QDRANT_OPS) {
       for (const value of values) {
@@ -289,13 +277,20 @@ describe("QE1: a name is refused before it reaches a path, and every other chara
     ["a NUL", "a\u0000b"],
     ["256 characters", "a".repeat(256)],
     ["a value that is not text", 7 as unknown as string],
+    ["two percent-encoded dots", "%2e%2e"],
+    ["one dot and one upper-case percent-encoded dot", "%2E."],
+    ["one percent-encoded dot", "%2e"],
+    ["a dot and a percent-encoded dot", ".%2e"],
+    ["a percent-encoded slash", "a%2fb"],
+    ["a percent-encoded NUL", "a%00b"],
+    ["percent-encoded dot segments toward another route", "..%2f..%2ftelemetry"],
   ])("%s is refused with zero requests", async (_what, name) => {
     const { wire, qdrant } = client();
     const error = await refused(() =>
       qdrant.send(request("get_collection", { params: { collection_name: name } }), signal()),
     );
     expect(error.message).toBe(
-      "A collection name or point id in the request path is empty, `.` or `..`, holds `/` or a NUL character, or is longer than 255 characters, so nothing was sent.",
+      "A collection name or point id in the request path is empty, `.` or `..`, holds `/` or a NUL character, as written or once percent-decoded, or is longer than 255 characters, so nothing was sent.",
     );
     expectCalls(wire, []);
   });
@@ -320,7 +315,8 @@ describe("QE1: a name is refused before it reaches a path, and every other chara
 
   test.each([
     ["a:b", "/collections/a%3Ab"],
-    ["%2e%2e", "/collections/%252e%252e"],
+    ["%zz%2e", "/collections/%25zz%252e"],
+    ["100%", "/collections/100%25"],
     ["a b", "/collections/a%20b"],
     ["a?b#c", "/collections/a%3Fb%23c"],
     ["a".repeat(255), `/collections/${"a".repeat(255)}`],

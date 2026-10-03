@@ -15,8 +15,9 @@
  *
  * A path parameter is refused when it is empty, `.` or `..`, holds `/` or a NUL, or is longer than 255 characters:
  * the server's own read-path rule, checked here because URL parsing would turn a dot segment into another route.
- * Every other character reaches the server through `encodeURIComponent`, so a collection from before 1.5 named
- * `a:b` still opens. The answer is handed back whatever its status: errors.ts reads it.
+ * The dot-segment, slash and NUL checks apply to the value once percent-decoded as well, so `%2e%2e` or `a%2fb` is
+ * refused too and a proxy that decodes the path sees no dot segment (QE1). Every other character reaches the server
+ * through `encodeURIComponent`, so a collection from before 1.5 named `a:b` still opens. The answer is handed back whatever its status: errors.ts reads it.
  *
  * It has no logger and logs nothing at any level (QE19).
  */
@@ -44,7 +45,7 @@ const PARAMETER = /^\{([a-z_]+)\}$/;
 const QUERY_KEY = /^[a-z_]+$/;
 
 const INVALID_NAME =
-  "A collection name or point id in the request path is empty, `.` or `..`, holds `/` or a NUL character, or is longer than 255 characters, so nothing was sent.";
+  "A collection name or point id in the request path is empty, `.` or `..`, holds `/` or a NUL character, as written or once percent-decoded, or is longer than 255 characters, so nothing was sent.";
 
 const MALFORMED_NAME =
   "A collection name or point id in the request path is not well-formed Unicode text, so nothing was sent.";
@@ -103,16 +104,31 @@ function refuse(message: string): never {
   throw new QueryError(message, PROVIDER);
 }
 
+/** A dot segment, or a value holding `/` or a NUL: what would take a path out of its one segment. */
+function escapesItsSegment(value: string): boolean {
+  return value === "." || value === ".." || value.includes("/") || value.includes("\0");
+}
+
+/**
+ * The value percent-decoded once, so a proxy that decodes it sees no dot segment. A value that is not valid
+ * percent-encoding is checked as written.
+ */
+function percentDecoded(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /** QE1's read-path rule for one path parameter, then its encoding. The server counts the 255 in characters, as this does. */
 function segmentOf(value: unknown): string {
   if (
     typeof value !== "string" ||
     value === "" ||
-    value === "." ||
-    value === ".." ||
-    value.includes("/") ||
-    value.includes("\0") ||
-    [...value].length > MAX_NAME_LENGTH
+    [...value].length > MAX_NAME_LENGTH ||
+    escapesItsSegment(value) ||
+    escapesItsSegment(percentDecoded(value))
   ) {
     refuse(INVALID_NAME);
   }
