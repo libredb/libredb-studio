@@ -31,7 +31,10 @@ export type CypherTokenKind =
   | "number"
   /** `$name` or `` $`name` ``; its value is the name. */
   | "parameter"
-  /** `//` to the end of the line, or a block comment from slash-star to the first star-slash. */
+  /**
+   * `//` to the next carriage return or the end of the line, or a block comment from slash-star to
+   * the first star-slash.
+   */
   | "comment"
   /** One punctuation mark, or one character no token begins with. */
   | "punct"
@@ -272,8 +275,13 @@ export function tokenizeCypherLine(
       continue;
     }
     if (two === "//") {
-      piece("comment", i, line.length, 0, false);
-      break;
+      // The server's lexer ends a line comment at a carriage return as well as at a newline, so a
+      // comment read past a bare carriage return would hide code the server runs.
+      const carriageReturn = line.indexOf("\r", i + 2);
+      const end = carriageReturn === -1 ? line.length : carriageReturn;
+      piece("comment", i, end, 0, false);
+      i = end;
+      continue;
     }
     if (two === "/*") {
       const scan = scanBlockComment(line, i + 2);

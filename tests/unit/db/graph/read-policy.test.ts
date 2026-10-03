@@ -352,6 +352,22 @@ describe("denied words", () => {
   });
 });
 
+describe("a line comment ended by a carriage return", () => {
+  test("hides nothing: the text after the carriage return is code, as the server reads it", () => {
+    for (const [text, code, subject] of [
+      ["WITH 1 AS x //\rLOAD CSV FROM 'http://h/x' AS row\nRETURN x", "denied-word", "LOAD"],
+      ["MATCH (n) //\rCREATE (m)\nRETURN n", "denied-word", "CREATE"],
+      ["RETURN 1 //\rTERMINATE TRANSACTIONS 'neo4j-transaction-1'\n", "denied-word", "TERMINATE"],
+      ["RETURN 1 //\rCALL apoc.load.json('http://h/x') YIELD value\nRETURN 1", "denied-namespace", "apoc."],
+      ["RETURN 1 //\rSHOW USERS\n", "denied-show", "SHOW USERS"],
+      ["RETURN 1 // x\r\nCREATE (n)", "denied-word", "CREATE"],
+    ] as const) {
+      const refusal = refusalOf(text);
+      expect([refusal.code, refusal.subject], JSON.stringify(text)).toEqual([code, subject]);
+    }
+  });
+});
+
 describe("an empty profile", () => {
   test("its empty deny lists refuse nothing: the policy holds no denied word, prefix or namespace", () => {
     for (const text of [

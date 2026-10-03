@@ -184,6 +184,31 @@ describe("comments", () => {
     ]);
   });
 
+  test("a line comment ends at a carriage return as well, as the server's lexer ends it", () => {
+    expect(lexCypher("// x\rCREATE\n1").map((token) => [token.kind, token.text])).toEqual([
+      ["comment", "// x"],
+      ["whitespace", "\r"],
+      ["word", "CREATE"],
+      ["whitespace", "\n"],
+      ["number", "1"],
+    ]);
+    expect(lexCypher("// x\r\n1").map((token) => [token.kind, token.text])).toEqual([
+      ["comment", "// x"],
+      ["whitespace", "\r"],
+      ["whitespace", "\n"],
+      ["number", "1"],
+    ]);
+    expect(tokenizeCypherLine("RETURN 1 //\rLOAD", CYPHER_INITIAL_STATE).tokens.map((token) => token.text)).toEqual([
+      "RETURN",
+      " ",
+      "1",
+      " ",
+      "//",
+      "\r",
+      "LOAD",
+    ]);
+  });
+
   test("a block comment may span lines and does not nest", () => {
     expect(only("/* a\n\nb */").text).toBe("/* a\n\nb */");
     expect(pairs("/**/1")).toEqual([
@@ -365,6 +390,7 @@ describe("tokenizeCypherLine", () => {
     for (const text of [
       ...CYPHER_CORPUS.map((entry) => entry.text),
       "MATCH /* a\n\nCREATE\nb */ RETURN '1\n2', `x\ny`, $`p\nq`\r\nRETURN 1",
+      "WITH 1 AS x //\rLOAD CSV FROM 'http://h/x' AS row\nRETURN x // y\r\nRETURN 2",
     ]) {
       const whole = lexCypher(text);
       const { tokens: lines } = byLines(text);
