@@ -982,6 +982,88 @@ describe("useQueryExecution", () => {
   });
 
   /**
+   * The vector declaration describes the rows on screen, as the fields do: a page that declares none (an empty last
+   * page, or a provider that declares from the rows it returned) must not turn the rows already shown back into JSON.
+   */
+  test("a Load More page that declares no vectorColumns keeps the rows' declaration", async () => {
+    const vectorColumns = { emb: { kind: "dense", dtype: "float32", dimension: 3 } } as const;
+    const existingRows = [{ id: 1, emb: [1, 2, 3] }];
+    const tabWithResults = createTab({
+      result: {
+        rows: existingRows,
+        fields: ["id", "emb"],
+        rowCount: 1,
+        executionTime: 5,
+        vectorColumns,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+      },
+      allRows: existingRows,
+      currentOffset: 1,
+    });
+    const { tabs, setTabs } = mutableTabs([tabWithResults]);
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: {
+          rows: [],
+          fields: [],
+          rowCount: 0,
+          executionTime: 5,
+          pagination: { limit: 1, offset: 1, hasMore: false, totalReturned: 0, wasLimited: false },
+        },
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabWithResults, setTabs });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+
+    await waitFor(() => expect(tabs[0].result!.pagination!.hasMore).toBe(false));
+    expect(tabs[0].result!.vectorColumns).toEqual(vectorColumns);
+  });
+
+  test("a Load More page over an undeclared result leaves vectorColumns absent", async () => {
+    const existingRows = [{ id: 1 }];
+    const tabWithResults = createTab({
+      result: {
+        rows: existingRows,
+        fields: ["id"],
+        rowCount: 1,
+        executionTime: 5,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+      },
+      allRows: existingRows,
+      currentOffset: 1,
+    });
+    const { tabs, setTabs } = mutableTabs([tabWithResults]);
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: {
+          rows: [{ id: 2 }],
+          fields: ["id"],
+          rowCount: 1,
+          executionTime: 5,
+          pagination: { limit: 1, offset: 1, hasMore: false, totalReturned: 1, wasLimited: true },
+        },
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabWithResults, setTabs });
+
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+
+    await waitFor(() => expect(tabs[0].result!.rows).toHaveLength(2));
+    expect(Object.hasOwn(tabs[0].result!, "vectorColumns")).toBe(false);
+  });
+
+  /**
    * A fresh run REPLACES, so the paging state of the statement before it cannot bleed
    * into the one after it: a tab that had scrolled to offset 200 and then ran something
    * else must not ask that new statement for row 201.

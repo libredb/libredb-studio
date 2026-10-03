@@ -687,6 +687,11 @@ export function useQueryExecution({
                 // header-less, cell-less stripes. A table whose size is an exact multiple
                 // of the page size reaches that state in one click.
                 fields: resultData.fields.length > 0 ? resultData.fields : t.result.fields,
+                // The vector declaration describes those rows too, so a page that declares none keeps theirs, as
+                // the embedded adapter's load-more does (`carriedChannels` in `use-query-adapter.ts`).
+                ...((resultData.vectorColumns ?? t.result.vectorColumns) !== undefined && {
+                  vectorColumns: resultData.vectorColumns ?? t.result.vectorColumns,
+                }),
                 rows: newAllRows,
                 rowCount: newAllRows.length,
               },
