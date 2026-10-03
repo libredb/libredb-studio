@@ -11,7 +11,19 @@
  * etcd provider's (src/lib/db/providers/keyvalue/etcd/errors.ts), made under the isolation rule (decision Q1a), plus
  * the row etcd's table lacks: alert 45, a client certificate the server read as expired (R42 F7).
  */
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  QueryCancelledError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
+import { serverText } from "@/lib/db/utils/server-text";
+import type { DatabaseType } from "@/lib/types";
 import { MilvusError, type MilvusErrorCategory, type MilvusTlsFailure, type WireStatus } from "./client";
+
+const PROVIDER: DatabaseType = "milvus";
 
 // gRPC status codes (grpc/grpc `doc/statuscodes.md`), the numbers grpc-js reports.
 const CANCELLED = 1;
@@ -199,4 +211,273 @@ export function statusFailure(status: WireStatus | null | undefined, rpc: string
 /** Whether a failure is the client's receive cap, the one failure part C's query and get retry with half the limit. */
 export function isReceiveCapError(error: unknown): boolean {
   return error instanceof MilvusError && error.category === "receive-cap";
+}
+
+// -- the provider's half ---------------------------------------------------------------------------------------------
+
+export interface MilvusErrorConnection {
+  /** The endpoint as the connection names it (the tunnel's far end when there is one), never the local forward. */
+  readonly host: string;
+  readonly port: number;
+  /** Absent on a plaintext channel; `serverName` is the identity the certificate is checked against (E6). */
+  readonly tls?: { readonly serverName: string; readonly clientCertificate: boolean };
+  /** False under Bun, which reports no TLS alert (R42 F5). */
+  readonly runtimeReportsTlsCause: boolean;
+  readonly receiveCapBytes: number;
+  /** The deadline the call ran under. */
+  readonly timeoutMs: number;
+}
+
+export interface MilvusErrorContext {
+  /** What ran, in Studio's words: "query", "search", "Load of docs_int64", "connection test". */
+  readonly operation: string;
+  /** True for Load and Release: after the send, the outcome is unknown and is never resent (E7). */
+  readonly write: boolean;
+  readonly database?: string;
+  readonly collection?: string;
+  /** The load state, when the caller read it, for the not-loaded sentence. */
+  readonly loadState?: string;
+  readonly connection: MilvusErrorConnection;
+  /** `secretForms` of the configured credential (connection-options.ts); every text passes `serverText` with them. */
+  readonly secretForms: readonly string[];
+}
+
+const UNKNOWN_OUTCOME = "It may have been applied: read the collection's load state before you run it again.";
+const QUERY_NODE_CODES: ReadonlySet<number> = new Set([2000, 2001, 2099]);
+/** The one place a query-node rejection's text is read: a closed list of fragments in Studio's own words (E20, R43). */
+const QUERY_NODE_FRAGMENTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/vector dimension mismatch/, "the query vector's dimension does not match the field's"],
+  [/for group by operator/, "the group-by field's type cannot be grouped"],
+  [/metric type not match/, "the metric does not match the index's"],
+  [/\b(?:radius|range_filter)\b/, "the range search parameters were refused"],
+];
+/** The categories whose request may have left and been applied: a Load or Release meeting one has an unknown outcome. */
+const AFTER_SEND: ReadonlySet<MilvusErrorCategory> = new Set([
+  "connection-dropped",
+  "ping-goaway",
+  "unavailable",
+  "transport",
+  "deadline-exceeded",
+  "cancelled",
+  "receive-cap",
+  "unknown",
+]);
+
+const LAST_ERROR = "No connection established. Last error: ";
+const DEADLINE_PEER = /,remote_addr=[^,]*/g;
+
+/** A runtime's or grpc-js's text without the address it carries, which through a tunnel is the local forward. */
+function withoutAddress(detail: string): string {
+  const lastError = detail.indexOf(LAST_ERROR);
+  const code = lastError < 0 ? undefined : runtimeCode(detail.slice(lastError + LAST_ERROR.length));
+  if (code !== undefined) return code;
+  if (detail.startsWith(NAME_RESOLUTION_FAILED)) return "Name resolution failed";
+  return detail.replace(DEADLINE_PEER, "");
+}
+
+/** The server's words after Studio's, withheld whole when they hold any form of the secret (VF9). */
+function serverWords(error: MilvusError, context: MilvusErrorContext): string {
+  return ` (Milvus: ${serverText(error.detail, context.secretForms)})`;
+}
+
+/** The runtime's words after Studio's, without the address, and withheld like a server's. */
+function runtimeWords(error: MilvusError, context: MilvusErrorContext): string {
+  return ` (${withoutAddress(serverText(error.detail, context.secretForms))})`;
+}
+
+function endpointOf(connection: MilvusErrorConnection): string {
+  const host = connection.host.includes(":") ? `[${connection.host}]` : connection.host;
+  return `${host}:${connection.port}`;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes % (1024 * 1024) === 0) return `${bytes / (1024 * 1024)} MiB`;
+  if (bytes % 1024 === 0) return `${bytes / 1024} KiB`;
+  return `${bytes.toLocaleString("en-US")} bytes`;
+}
+
+function notConnectedSentence(connection: MilvusErrorConnection): string {
+  const endpoint = endpointOf(connection);
+  if (connection.tls === undefined) {
+    return `No Milvus answered a plaintext connection at ${endpoint}. If this Milvus serves TLS, choose an SSL mode under SSL / TLS; otherwise check the host, the port and the tunnel.`;
+  }
+  if (connection.runtimeReportsTlsCause) {
+    return `No Milvus answered a TLS connection at ${endpoint}: check the host, the port, the SSL mode and the tunnel.`;
+  }
+  const unreported = `No TLS connection to Milvus at ${endpoint} was established, and this runtime does not report why`;
+  return connection.tls.clientCertificate
+    ? `${unreported}: check the host, the port, the SSL mode, the client certificate and the tunnel.`
+    : `${unreported}. No client certificate is configured: if this Milvus requires one (tlsMode 2), add it under SSL / TLS; otherwise check the host, the port, the SSL mode and the tunnel.`;
+}
+
+function tlsSentence(failure: MilvusTlsFailure | undefined, connection: MilvusErrorConnection): string {
+  switch (failure) {
+    case "chain":
+      return "The server's certificate is not signed by the CA under SSL / TLS: paste the CA that issued Milvus's certificate.";
+    case "name":
+      return `The certificate does not name ${connection.tls?.serverName ?? connection.host}: connect by a name or address the certificate carries.`;
+    case "not-tls":
+      return "This port did not answer TLS: set SSL mode to disable, or use Milvus's TLS port.";
+    case "client-certificate-required":
+      return connection.tls?.clientCertificate === true
+        ? "Milvus asked for a client certificate and did not accept the one configured under SSL / TLS."
+        : "This Milvus requires a client certificate (tlsMode 2), and none is configured: add the client certificate and key under SSL / TLS.";
+    case "client-certificate-refused":
+      return "Milvus refused the client certificate under SSL / TLS: it must be issued for client authentication by the CA Milvus trusts.";
+    case "client-certificate-expired":
+      return "Milvus refused the client certificate under SSL / TLS because it has expired (client certificate expired): paste a current one.";
+    case undefined:
+      return "The TLS connection to Milvus failed.";
+  }
+}
+
+function notLoadedSentence(context: MilvusErrorContext): string {
+  const subject = context.collection === undefined ? "The collection" : `Collection ${context.collection}`;
+  const state = context.loadState === undefined ? "" : ` (state ${context.loadState})`;
+  return `${subject} is not loaded${state}. Query, get, count and search need a loaded collection, and loading uses query-node memory that every client of this cluster shares. An admin can load it from Operations; Studio never loads a collection on its own.`;
+}
+
+function statusError(error: MilvusError, context: MilvusErrorContext): QueryError {
+  const status = error.status ?? { code: -1, errorCode: "" };
+  const { operation } = context;
+  if (status.code === 101) return new QueryError(notLoadedSentence(context), PROVIDER);
+  if (status.code === 1100) {
+    return new QueryError(
+      `Milvus refused the ${operation}'s input: correct the request and run it again.${serverWords(error, context)}`,
+      PROVIDER,
+    );
+  }
+  if (status.code === 100 || status.errorCode === "CollectionNotExists") {
+    const name = context.collection ?? "named";
+    const database = context.database ?? "default";
+    return new QueryError(
+      `Collection ${name} does not exist in database ${database}.${serverWords(error, context)}`,
+      PROVIDER,
+    );
+  }
+  if (status.code === 800) {
+    return new QueryError(
+      `Database ${context.database ?? "named"} does not exist.${serverWords(error, context)}`,
+      PROVIDER,
+    );
+  }
+  if (QUERY_NODE_CODES.has(status.code)) {
+    // The raw text carries the knowhere configuration, a trace id and a C++ path, and may echo a value (E20).
+    const fragment = QUERY_NODE_FRAGMENTS.find(([pattern]) => pattern.test(error.detail));
+    return new QueryError(
+      `Milvus rejected the request on the query node${fragment === undefined ? "" : `: ${fragment[1]}`}.`,
+      PROVIDER,
+    );
+  }
+  return new QueryError(
+    `Milvus refused the ${operation} with code ${status.code} (${status.errorCode}).${serverWords(error, context)}`,
+    PROVIDER,
+  );
+}
+
+function unknownOutcome(error: MilvusError, context: MilvusErrorContext, lead: string): QueryError {
+  return new QueryError(`${lead}${runtimeWords(error, context)} ${UNKNOWN_OUTCOME}`, PROVIDER);
+}
+
+/** The provider's half: the one table from a Milvus failure to the repository's classes (5.10). */
+export function toProviderError(error: unknown, context: MilvusErrorContext): Error {
+  if (error instanceof DatabaseConfigError && error.provider === undefined) {
+    return new DatabaseConfigError(error.message, PROVIDER);
+  }
+  if (!(error instanceof MilvusError)) {
+    // A local refusal, or a defect, surfaces as itself and is never dressed up as Milvus's answer.
+    if (error instanceof Error) return error;
+    return new Error(`The Milvus provider received a thrown value that is not an Error: ${String(error)}`);
+  }
+  const { operation, connection } = context;
+  if (context.write && AFTER_SEND.has(error.category)) {
+    return unknownOutcome(error, context, `Milvus did not confirm the ${operation}: the call ended after it was sent.`);
+  }
+  const { host, port } = connection;
+  switch (error.category) {
+    case "not-connected":
+      return new ConnectionError(notConnectedSentence(connection) + runtimeWords(error, context), PROVIDER, host, port);
+    case "tls":
+      return new ConnectionError(
+        tlsSentence(error.tlsFailure, connection) + runtimeWords(error, context),
+        PROVIDER,
+        host,
+        port,
+      );
+    case "closed":
+      return new ConnectionError("This connection to Milvus is closed: connect again.", PROVIDER, host, port);
+    case "connection-dropped":
+      return new ConnectionError(
+        `The connection to Milvus was lost; run it again.${runtimeWords(error, context)}`,
+        PROVIDER,
+        host,
+        port,
+      );
+    case "ping-goaway":
+      return new ConnectionError(
+        `The Milvus server dropped the connection (a keepalive GOAWAY); run it again.${runtimeWords(error, context)}`,
+        PROVIDER,
+        host,
+        port,
+      );
+    case "transport":
+      return new ConnectionError(
+        `A transport failure ended the ${operation} at ${endpointOf(connection)}.`,
+        PROVIDER,
+        host,
+        port,
+      );
+    case "unavailable":
+      return new ConnectionError(
+        `Milvus did not answer the ${operation}.${runtimeWords(error, context)}`,
+        PROVIDER,
+        host,
+        port,
+      );
+    case "unauthenticated":
+      return new AuthenticationError(
+        `Milvus refused the user name or password (or token).${serverWords(error, context)}`,
+        PROVIDER,
+      );
+    case "permission-denied":
+      return new QueryError(
+        `The Milvus user lacks the privilege for the ${operation}.${serverWords(error, context)}`,
+        PROVIDER,
+      );
+    case "unimplemented":
+      return new QueryError(
+        `The ${operation} is not supported by this server version.${serverWords(error, context)}`,
+        PROVIDER,
+      );
+    case "receive-cap":
+      return new QueryError(
+        `Milvus's answer to the ${operation} is larger than this connection's receive cap of ${formatBytes(connection.receiveCapBytes)}: narrow the request.${runtimeWords(error, context)}`,
+        PROVIDER,
+      );
+    case "deadline-exceeded":
+      return new TimeoutError(
+        `The ${operation} reached its deadline of ${connection.timeoutMs.toLocaleString("en-US")} ms.${runtimeWords(error, context)}`,
+        PROVIDER,
+        connection.timeoutMs,
+      );
+    case "cancelled":
+      return new QueryCancelledError(`The ${operation} was cancelled.`, PROVIDER);
+    case "status":
+      return statusError(error, context);
+    case "malformed":
+      return new QueryError(
+        `Milvus's answer to the ${operation} carried no status, so Studio does not read it.`,
+        PROVIDER,
+      );
+    case "unknown":
+      return new QueryError(`The ${operation} failed.${runtimeWords(error, context)}`, PROVIDER);
+  }
+}
+
+/** A FieldData column of a type this provider does not decode: named, never guessed (E20). */
+export function unsupportedDataTypeError(dataType: number | string): QueryError {
+  return new QueryError(
+    `Milvus returned a field of unsupported type ${dataType}, which Studio does not read rather than guess.`,
+    PROVIDER,
+  );
 }
