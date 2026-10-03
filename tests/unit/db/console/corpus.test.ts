@@ -4,8 +4,9 @@
  *
  * The corpus: the nine Milvus console requests of the design's examples and the 257 Qdrant documentation blocks,
  * both under tests/fixtures/vector/corpus/; both engines' refusal corpora and seven string-and-comment fixtures,
- * written below as exact bytes; the bound cases; and the tag-shaped objects. The route tables are stand-ins built
- * from tests/fixtures/vector/routes/, which the Milvus and Qdrant providers replace with their own routes.ts.
+ * written below as exact bytes; the bound cases; and the tag-shaped objects. The Qdrant v1 route table is the
+ * provider's own (src/lib/db/providers/vector/qdrant/routes.ts), read under the stand-in dialect so the bound cases
+ * keep their 2 MiB texts; the other tables are stand-ins built from tests/fixtures/vector/routes/.
  *
  * Under Node: the helper is bundled for Node and run in a child process. CI's Node is 24; the PR's completion
  * sequence runs this file a second time with Node 26 first on PATH.
@@ -19,6 +20,7 @@ import type { ConsoleDialectSpec, RouteSpec } from "@/lib/db/console/dialect";
 import { classifyConsole } from "@/lib/db/console/guard";
 import { ConsoleRefusal, parseConsole } from "@/lib/db/console/parser";
 import { isTaggedFloat, isTaggedInt, type TaggedJson } from "@/lib/db/console/tagged-json";
+import { QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { type CorpusCase, type CorpusOutcome, type CorpusTable, corpusOutcomes } from "../../../helpers/console-corpus";
 import {
   type FixtureRouteJson,
@@ -46,7 +48,7 @@ const QDRANT_FULL_STAND_IN: ConsoleDialectSpec = {
 
 const TABLES: Readonly<Record<string, CorpusTable>> = {
   milvus: { spec: MILVUS_STAND_IN, routes: standInRoutes(milvusTable, allRead) },
-  qdrant: { spec: QDRANT_STAND_IN, routes: standInRoutes(qdrantV1Table, allRead) },
+  qdrant: { spec: QDRANT_STAND_IN, routes: QDRANT_ROUTES },
   "qdrant-full": {
     spec: QDRANT_FULL_STAND_IN,
     routes: standInRoutes(qdrantFullTable, (route: FixtureRouteJson) => (v1Ops.has(route.op) ? "read" : "write")),
