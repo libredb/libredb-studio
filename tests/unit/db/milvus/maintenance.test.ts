@@ -646,6 +646,30 @@ describe("Load", () => {
     expect(context.lock.held).toBe(false);
   });
 
+  test("a progress read that fails after Milvus accepted the Load says it continues on the server, never 'run it again'", async () => {
+    const failures = [
+      () => new MilvusError("connection-dropped", "Connection dropped", { grpcCode: 14 }),
+      () => new MilvusError("deadline-exceeded", "Deadline exceeded after 10s"),
+      () => permissionDenied("GetLoadingProgress"),
+    ];
+    for (const fail of failures) {
+      const client = createFakeMilvusClient(CATALOG);
+      client.on("getLoadingProgress", fail);
+      const { context } = maintenance();
+      // oxlint-disable-next-line no-await-in-loop -- one Load at a time, each over its own client.
+      const result = await runMilvusMaintenance(client, context, "load", "docs_int64", "default");
+      expect(result).toEqual({
+        success: true,
+        executionTime: 0,
+        message:
+          "Load accepted: Milvus accepted the Load of collection docs_int64 of database default and continues it on the server, and Studio could not read its progress; do not run it again: the collection reads Loaded once Milvus finishes.",
+      });
+      expect(result.message).not.toContain("run it again.");
+      expectCalls(client, ["getLoadState", "loadCollection", "getLoadingProgress"]);
+      expect(context.lock.held).toBe(false);
+    }
+  });
+
   test("an unknown collection is refused by the first read, with no LoadCollection", async () => {
     const client = createFakeMilvusClient(CATALOG);
     const { context } = maintenance();

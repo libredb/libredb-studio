@@ -25,6 +25,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { expectCalls } from "../../helpers/call-log";
@@ -198,6 +199,22 @@ describe("POST /api/db/maintenance: Load and Release", () => {
       result: "failure",
       reason: "maintenance_execution_failed",
     });
+  });
+
+  test("a Load the server accepted is audited as a success when its progress read then fails", async () => {
+    const connection = await serve();
+    client.on(
+      "getLoadingProgress",
+      () => new MilvusError("connection-dropped", "Connection dropped", { grpcCode: 14 }),
+    );
+    const response = await maintenance(
+      post("/api/db/maintenance", { connection, type: "load", target: "docs_int64", container: "default" }),
+    );
+    expect(response.status).toBe(200);
+    expect((await parseResponseJSON<{ message: string }>(response)).message).toStartWith("Load accepted:");
+    expect(auditEvents).toHaveLength(1);
+    expect(auditEvents[0]).toMatchObject({ action: "LOAD", target: "docs_int64", result: "success" });
+    expect(methods().filter((method) => method === "loadCollection")).toHaveLength(1);
   });
 
   test("a Release is audited as RELEASE", async () => {

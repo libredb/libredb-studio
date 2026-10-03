@@ -20,7 +20,7 @@ import type {
   MaintenanceResult,
 } from "@/lib/db/types";
 import type { VectorFieldInfo } from "@/lib/db/vector/types";
-import type { MilvusClient, WireIndexDescription } from "./client";
+import type { GetLoadingProgressResponse, MilvusClient, WireIndexDescription } from "./client";
 import type { MilvusReadOnlySource } from "./connection-options";
 import { statusFailure, toProviderError } from "./errors";
 import {
@@ -342,7 +342,8 @@ const PERCENTAGE = /^[0-9]+$/;
 
 /**
  * GetLoadingProgress at once, then every second for at most 10 seconds, a permit only for each call and none while it
- * sleeps. Milvus reports only 0, 50 and 100, and continues a load after Studio stops watching it.
+ * sleeps. Milvus reports only 0, 50 and 100, and continues a load after Studio stops watching it, or after a progress
+ * read fails: that Load was accepted, so it reads as accepted, never as a failure to run again.
  */
 async function watchLoad(
   client: MilvusMaintenanceClient,
@@ -352,10 +353,18 @@ async function watchLoad(
   const { database, collection } = target;
   const started = context.now();
   for (;;) {
-    // oxlint-disable-next-line no-await-in-loop -- one progress read at a time, each under its own permit.
-    const answer = await surfaceCall(context, `load progress read of collection ${collection}`, target, (options) =>
-      client.getLoadingProgress({ collection_name: collection }, options),
-    );
+    let answer: GetLoadingProgressResponse;
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- one progress read at a time, each under its own permit.
+      answer = await surfaceCall(context, `load progress read of collection ${collection}`, target, (options) =>
+        client.getLoadingProgress({ collection_name: collection }, options),
+      );
+    } catch (error) {
+      // Milvus accepted the Load, so a progress read that fails is no failure of the Load and never invites a resend.
+      // Anything that is not a provider error is a defect and surfaces as itself.
+      if (!(error instanceof DatabaseError)) throw error;
+      return `Load accepted: Milvus accepted the Load of collection ${collection} of database ${database} and continues it on the server, and Studio could not read its progress; do not run it again: the collection reads Loaded once Milvus finishes.`;
+    }
     if (!PERCENTAGE.test(answer.progress)) {
       throw new QueryError(
         `Milvus answered the load progress of collection ${collection} with no percentage; the load continues on the server.`,
