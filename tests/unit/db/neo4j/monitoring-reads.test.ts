@@ -155,7 +155,9 @@ describe("readOverview", () => {
 
   test("a cut label listing is a floor", async () => {
     const { client } = replacing({ [NEO4J_CATALOG_STATEMENTS.label]: { ...rows({ label: "A" }), truncated: true } });
-    expect((await readOverview(client, DATABASE, SERVER)).tableCountSampledFrom).toBeDefined();
+    const overview = await readOverview(client, DATABASE, SERVER);
+    expect(overview.tableCount).toBe(1);
+    expect(overview.tableCountSampledFrom).toBe("one catalog read that stopped at its row bound");
   });
 
   test("a server that cannot be reached is thrown, not reported as a refusal", async () => {
