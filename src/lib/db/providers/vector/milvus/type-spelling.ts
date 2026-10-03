@@ -23,6 +23,9 @@ const DENSE_TEXT = /^([A-Za-z0-9]+)(?:\(([0-9]+|\?)\))?$/;
 /** `SparseFloatVector`, or `SparseFloatVector(<function type>: <function name>)` for a function's output. */
 const SPARSE_TEXT = /^SparseFloatVector(?:\(([A-Za-z0-9]+): (.+)\))?$/;
 
+/** The engine's name for a struct array field's type, a column of its own that may hold an embedding list. */
+export const STRUCT_ARRAY_TYPE = "ArrayOfStruct";
+
 /** An embedding list: one or more vectors per row, whose dimension its text does not carry. */
 const EMBEDDING_LIST = "ArrayOfVector";
 

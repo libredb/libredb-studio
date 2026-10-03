@@ -120,6 +120,15 @@ describe("milvusSelectQuery, Generate Command", () => {
     },
   );
 
+  test("a struct array field, which may hold an embedding list, is never an output field", () => {
+    const text = milvusSelectQuery(
+      ["default", "c"],
+      [column("id", "Int64", true), column("vec", "FloatVector(4)"), column("clips", "ArrayOfStruct")],
+    );
+    expect(text).toContain('"outputFields": ["id"]');
+    expect(text).not.toContain("clips");
+  });
+
   test("a BM25 output field gets a runnable text search and a comment asking for the user's own words", () => {
     const columns = [
       column("id", "Int64", true),

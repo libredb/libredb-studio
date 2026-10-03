@@ -17,11 +17,9 @@ import type { ColumnSchema } from "@/lib/types";
 import type { DescribeCollectionResponse, WireCollectionSchema, WireFieldSchema, WireIndexDescription } from "./client";
 import { fieldTypeText, scoreSemantics } from "./milvus-vocabulary";
 import { vectorTargetOf } from "./request";
+import { STRUCT_ARRAY_TYPE } from "./type-spelling";
 
 const PROVIDER: DatabaseType = "milvus";
-
-/** The engine's name for a struct array field's type. */
-const STRUCT_ARRAY_TYPE = "ArrayOfStruct";
 
 /** The schema of a describe answer; an answer without one is refused in Studio's words, never read as empty. */
 export function describedSchema(describe: DescribeCollectionResponse): WireCollectionSchema {

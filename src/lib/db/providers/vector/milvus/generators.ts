@@ -16,7 +16,7 @@ import type { VectorTarget } from "@/lib/db/vector/dense";
 import { probeVector } from "@/lib/db/vector/probe";
 import type { ColumnSchema } from "@/lib/types";
 import { shortestFloat32 } from "./float32-text";
-import { functionOfType, vectorTargetOfType } from "./type-spelling";
+import { functionOfType, STRUCT_ARRAY_TYPE, vectorTargetOfType } from "./type-spelling";
 
 /** The click's page: the REST default and etcd's first page; an empty filter needs an explicit limit. */
 export const MILVUS_CLICK_LIMIT = 100;
@@ -143,7 +143,8 @@ function commentTemplate(
  * Generate Command: a runnable search over the collection's first dense field with a readable dimension,
  * its probe in data and a comment naming the field, its type and its dimension, then one comment line for each other
  * vector field; else a runnable text search over a field a BM25 function produces; else a comment-only template. The
- * output fields are the static scalar fields, never a vector, and the dynamic field is left to the server's default.
+ * output fields are the static scalar fields, never a vector nor a struct array field, which may hold an embedding
+ * list, and the dynamic field is left to the server's default.
  */
 export function milvusSelectQuery(path: readonly string[], columns: readonly ColumnSchema[]): string {
   const vectors = vectorColumns(columns);
@@ -151,7 +152,12 @@ export function milvusSelectQuery(path: readonly string[], columns: readonly Col
     return `# Collection ${path[path.length - 1]} has no vector field, so there is nothing to search: this reads its entities.\n${milvusTableQuery(path)}`;
   }
   const outputs = columns
-    .filter((column) => column.name !== DYNAMIC_COLUMN && vectorTargetOfType(column.name, column.type) === null)
+    .filter(
+      (column) =>
+        column.name !== DYNAMIC_COLUMN &&
+        column.type !== STRUCT_ARRAY_TYPE &&
+        vectorTargetOfType(column.name, column.type) === null,
+    )
     .map((column) => column.name);
   const dense = vectors.find((vector) => vector.target.kind === "dense" && vector.target.dimension !== null);
   const denseData = dense === undefined ? undefined : milvusProbeText(dense.target);
