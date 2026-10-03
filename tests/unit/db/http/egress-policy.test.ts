@@ -7,6 +7,7 @@ import {
   assertPublicDnsAnswers,
   guardedNodeOptions,
   httpTransportFetch,
+  LOOPBACK_NETWORKS,
   publicAddressLookup,
 } from "@/lib/db/http/egress-policy";
 import { nodeRequestJson } from "@/lib/db/providers/document/couchbase/http-transport";
@@ -114,6 +115,29 @@ describe("opt-in HTTP database destination policy", () => {
       expect(hits).toBe(1);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+});
+
+describe("LOOPBACK_NETWORKS", () => {
+  /** Two addresses inside each row, so a row that is listed and not consumed by the blocked list fails here. */
+  const PROBES: Record<string, readonly string[]> = {
+    "127.0.0.0": ["127.0.0.1", "127.255.255.254"],
+    "::1": ["[::1]", "0:0:0:0:0:0:0:1"],
+  };
+
+  test("are exactly the IPv4 and IPv6 loopback networks", () => {
+    expect(LOOPBACK_NETWORKS).toEqual([
+      ["127.0.0.0", 8, "ipv4"],
+      ["::1", 128, "ipv6"],
+    ]);
+    expect(LOOPBACK_NETWORKS.map(([network]) => network)).toEqual(Object.keys(PROBES));
+  });
+
+  test("the blocked list refuses an address inside every row", () => {
+    process.env[flag] = "true";
+    for (const [network] of LOOPBACK_NETWORKS) {
+      for (const host of PROBES[network]) expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
     }
   });
 });
