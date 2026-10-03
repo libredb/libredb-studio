@@ -26,19 +26,31 @@ import {
   type sendUnaryData,
 } from "@grpc/grpc-js";
 import type { MethodDefinition, ServiceDefinition } from "@grpc/proto-loader";
+import {
+  type CallOptions,
+  type MilvusClient,
+  type MilvusClientFactory,
+  MilvusError,
+} from "@/lib/db/providers/vector/milvus/client";
 import type { MilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
-import { toMilvusError } from "@/lib/db/providers/vector/milvus/errors";
+import { toMilvusError, toProviderError } from "@/lib/db/providers/vector/milvus/errors";
 import {
   allowlistedService,
   allowlistFindings,
   ClosingCredentials,
   channelOptions,
+  createGrpcMilvusClient,
+  deadlineMs,
   grpcWireTransport,
   MILVUS_ALLOWLISTED_RPCS,
   MILVUS_LOADER_OPTIONS,
+  type MilvusRpc,
   type MilvusWireCall,
   milvusDefinition,
+  SYSTEM_INFO_REQUEST,
 } from "@/lib/db/providers/vector/milvus/grpc-client";
+import { expectCalls } from "../../../helpers/call-log";
+import { okStatus, type RecordedMilvusAnswer, recordedMilvusWire, statusError } from "../../../helpers/milvus-wire";
 
 const OK = { code: 0, error_code: "Success", reason: "", retriable: false, detail: "", extra_info: {} };
 const VERSION_ANSWER = { status: OK, version: "3.0.2" };
@@ -596,4 +608,305 @@ describe("over grpc-js: nothing of a channel outlives close() (E16, copied from 
     silent.listener.close();
     expect(silent.held.size).toBe(0);
   });
+});
+
+// A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
+const TEST_PASSWORD = "password";
+const base64 = (value: string) => Buffer.from(value, "utf8").toString("base64");
+const call = (db = "default", signal = new AbortController().signal): CallOptions => ({ db, signal });
+
+/** One call of each seam method, with the request the RPC carries on the wire, `db_name` added where the message has it. */
+const INVOKE: ReadonlyArray<
+  readonly [MilvusRpc, (client: MilvusClient, options: CallOptions) => Promise<unknown>, object]
+> = [
+  ["GetVersion", (c, o) => c.getVersion(o), {}],
+  ["CheckHealth", (c, o) => c.checkHealth(o), {}],
+  ["GetMetrics", (c, o) => c.getMetricsSystemInfo(o), { request: SYSTEM_INFO_REQUEST }],
+  ["ListDatabases", (c, o) => c.listDatabases(o), {}],
+  ["DescribeDatabase", (c, o) => c.describeDatabase({}, o), { db_name: "probe_db" }],
+  ["ShowCollections", (c, o) => c.showCollections(o), { db_name: "probe_db" }],
+  [
+    "DescribeCollection",
+    (c, o) => c.describeCollection({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+  [
+    "BatchDescribeCollection",
+    (c, o) => c.batchDescribeCollection({ collection_name: ["a", "b"] }, o),
+    { collection_name: ["a", "b"], db_name: "probe_db" },
+  ],
+  [
+    "DescribeIndex",
+    (c, o) => c.describeIndex({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+  [
+    "GetLoadState",
+    (c, o) => c.getLoadState({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+  [
+    "GetLoadingProgress",
+    (c, o) => c.getLoadingProgress({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+  [
+    "GetCollectionStatistics",
+    (c, o) => c.getCollectionStatistics({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+  [
+    "ShowPartitions",
+    (c, o) => c.showPartitions({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+  ["ListAliases", (c, o) => c.listAliases({}, o), { db_name: "probe_db" }],
+  ["DescribeAlias", (c, o) => c.describeAlias({ alias: "al" }, o), { alias: "al", db_name: "probe_db" }],
+  [
+    "Query",
+    (c, o) => c.query({ collection_name: "notes", expr: "id > 0", output_fields: ["id"], query_params: [] }, o),
+    { collection_name: "notes", expr: "id > 0", output_fields: ["id"], query_params: [], db_name: "probe_db" },
+  ],
+  [
+    "Search",
+    (c, o) =>
+      c.search(
+        { collection_name: "notes", dsl: "", dsl_type: "BoolExprV1", output_fields: [], search_params: [], nq: "1" },
+        o,
+      ),
+    {
+      collection_name: "notes",
+      dsl: "",
+      dsl_type: "BoolExprV1",
+      output_fields: [],
+      search_params: [],
+      nq: "1",
+      db_name: "probe_db",
+    },
+  ],
+  [
+    "HybridSearch",
+    (c, o) => c.hybridSearch({ collection_name: "notes", requests: [], rank_params: [], output_fields: [] }, o),
+    { collection_name: "notes", requests: [], rank_params: [], output_fields: [], db_name: "probe_db" },
+  ],
+  [
+    "LoadCollection",
+    (c, o) => c.loadCollection({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+  [
+    "ReleaseCollection",
+    (c, o) => c.releaseCollection({ collection_name: "notes" }, o),
+    { collection_name: "notes", db_name: "probe_db" },
+  ],
+];
+
+/** The smallest successful answer of every RPC: a status of its own, or, for Load and Release, the status itself. */
+const minimal = (rpc: MilvusRpc) => () =>
+  rpc === "LoadCollection" || rpc === "ReleaseCollection" ? okStatus : { status: okStatus };
+const EVERY_ANSWER = Object.fromEntries(INVOKE.map(([rpc]) => [rpc, minimal(rpc)]));
+
+async function recorded(
+  options: MilvusConnectionOptions = PLAINTEXT,
+  answers: Partial<Record<MilvusRpc, RecordedMilvusAnswer>> = EVERY_ANSWER,
+) {
+  const wire = recordedMilvusWire(answers);
+  const client = await createGrpcMilvusClient(options, wire.transport);
+  return { wire, client };
+}
+
+describe("the adapter over the recorded wire (5.1, E15, E16)", () => {
+  test("the factory opens one channel with the options and sends nothing, and binds as a MilvusClientFactory", async () => {
+    const { wire } = await recorded();
+    expect(wire.opened).toEqual([PLAINTEXT]);
+    expectCalls(wire, []);
+    const factory: MilvusClientFactory<MilvusConnectionOptions> = (options) =>
+      createGrpcMilvusClient(options, wire.transport);
+    (await factory(PLAINTEXT)).close();
+    expect(wire.opened).toHaveLength(2);
+  });
+
+  test.each(INVOKE.map(([rpc, invoke, request]) => [rpc, invoke, request] as const))(
+    "%s sends exactly its request, with db_name from CallOptions where the message carries it",
+    async (rpc, invoke, request) => {
+      const { wire, client } = await recorded();
+      await invoke(client, call("probe_db"));
+      expectCalls(wire, [{ method: rpc, args: [request, {}] }]);
+    },
+  );
+
+  test("getMetricsSystemInfo always writes the fixed system_info request (E29)", () => {
+    expect(SYSTEM_INFO_REQUEST).toBe('{"metric_type": "system_info"}');
+  });
+
+  test("the credential travels only as authorization: base64 of user:password, or of the token (E4)", async () => {
+    const pair = await recorded({ ...PLAINTEXT, auth: { kind: "password", user: "root", password: TEST_PASSWORD } });
+    await pair.client.getVersion(call());
+    expectCalls(pair.wire, [{ method: "GetVersion", args: [{}, { authorization: base64(`root:${TEST_PASSWORD}`) }] }]);
+    const token = await recorded({ ...PLAINTEXT, auth: { kind: "token", token: TEST_PASSWORD } });
+    await token.client.getVersion(call());
+    expectCalls(token.wire, [{ method: "GetVersion", args: [{}, { authorization: base64(TEST_PASSWORD) }] }]);
+  });
+
+  test("a db_name written into a request is replaced by CallOptions.db, and two concurrent calls each reach their own (E16)", async () => {
+    const { wire, client } = await recorded();
+    const smuggled = { collection_name: "notes", db_name: "other" } as unknown as { collection_name: string };
+    await Promise.all([
+      client.describeCollection(smuggled, call("probe_db")),
+      client.describeCollection({ collection_name: "notes" }, call("default")),
+    ]);
+    expect(wire.calls.map((logged) => (logged.args?.[0] as { db_name: string }).db_name)).toEqual([
+      "probe_db",
+      "default",
+    ]);
+  });
+
+  test("each call's deadline is its class's, 30 s for queries and searches and 10 s for the rest, capped by the query timeout (E14)", async () => {
+    expect(INVOKE.map(([rpc]) => [rpc, deadlineMs(rpc, 60_000)])).toEqual(
+      INVOKE.map(([rpc]) => [rpc, rpc === "Query" || rpc === "Search" || rpc === "HybridSearch" ? 30_000 : 10_000]),
+    );
+    expect(deadlineMs("Query", 5000)).toBe(5000);
+    const { wire, client } = await recorded({ ...PLAINTEXT, callTimeoutMs: 60_000 });
+    await client.search(
+      { collection_name: "c", dsl: "", dsl_type: "BoolExprV1", output_fields: [], search_params: [], nq: "1" },
+      call(),
+    );
+    await client.getLoadState({ collection_name: "c" }, call());
+    expect(wire.deadlines[0]).toBeGreaterThan(29_900);
+    expect(wire.deadlines[0]).toBeLessThanOrEqual(30_000);
+    expect(wire.deadlines[1]).toBeGreaterThan(9_900);
+    expect(wire.deadlines[1]).toBeLessThanOrEqual(10_000);
+  });
+
+  test("every common.Status is checked: code 0 with CollectionNotExists, a non-zero code and no status are errors (E20)", async () => {
+    const answers = {
+      DescribeCollection: () => ({
+        status: { ...okStatus, error_code: "CollectionNotExists", reason: "collection not found" },
+      }),
+      Query: () => ({
+        status: { ...okStatus, code: 101, error_code: "UnexpectedError", reason: "collection not loaded" },
+      }),
+      GetVersion: () => ({ status: null, version: "3.0.2" }),
+      LoadCollection: () => ({ ...okStatus, code: 65535, error_code: "UnexpectedError", reason: "no index" }),
+    };
+    const { client } = await recorded(PLAINTEXT, answers);
+    expect(await failure(client.describeCollection({ collection_name: "x" }, call()))).toMatchObject({
+      category: "status",
+      status: { code: 0, errorCode: "CollectionNotExists" },
+    });
+    expect(
+      await failure(client.query({ collection_name: "x", expr: "", output_fields: [], query_params: [] }, call())),
+    ).toMatchObject({
+      category: "status",
+      status: { code: 101 },
+    });
+    expect(await failure(client.getVersion(call()))).toMatchObject({ category: "malformed" });
+    expect(await failure(client.loadCollection({ collection_name: "x" }, call()))).toMatchObject({
+      category: "status",
+      status: { code: 65535 },
+    });
+  });
+
+  test("a transport failure is classified by the error table", async () => {
+    const { client } = await recorded(PLAINTEXT, {
+      ListDatabases: () => {
+        throw statusError(16, "auth check failure, please check username and password are correct");
+      },
+    });
+    expect(await failure(client.listDatabases(call()))).toMatchObject({ category: "unauthenticated", grpcCode: 16 });
+  });
+
+  test("a signal aborted before the call sends nothing, and reads as a cancel, or as a deadline for a timeout", async () => {
+    const { wire, client } = await recorded();
+    const cancel = new AbortController();
+    cancel.abort();
+    expect(await failure(client.getVersion(call("default", cancel.signal)))).toMatchObject({ category: "cancelled" });
+    const timeout = new AbortController();
+    timeout.abort(new DOMException("The operation timed out.", "TimeoutError"));
+    expect(await failure(client.getVersion(call("default", timeout.signal)))).toMatchObject({
+      category: "deadline-exceeded",
+    });
+    expectCalls(wire, []);
+  });
+
+  test("a call's own abort while it waits cancels it (E14)", async () => {
+    const { client } = await recorded(PLAINTEXT, { Search: () => new Promise(() => undefined) });
+    const controller = new AbortController();
+    const pending = failure(
+      client.search(
+        { collection_name: "c", dsl: "", dsl_type: "BoolExprV1", output_fields: [], search_params: [], nq: "1" },
+        call("default", controller.signal),
+      ),
+    );
+    controller.abort();
+    expect(await pending).toMatchObject({ category: "cancelled" });
+  });
+
+  test("close() closes the channel once; every later call rejects as closed and sends nothing", async () => {
+    const { wire, client } = await recorded();
+    client.close();
+    client.close();
+    expect(wire.closes()).toBe(1);
+    const error = await failure(client.getVersion(call()));
+    expect(error).toBeInstanceOf(MilvusError);
+    expect(error).toMatchObject({ category: "closed" });
+    expectCalls(wire, []);
+  });
+});
+
+describe("the adapter over grpc-js: the wire both ways", () => {
+  test("a request reaches the server with its db_name and authorization, and the answer decodes", async () => {
+    const seen: Array<{ readonly db: unknown; readonly authorization: unknown }> = [];
+    const { server, port } = await serve({
+      DescribeCollection: (serverCall, callback) => {
+        seen.push({ db: serverCall.request.db_name, authorization: serverCall.metadata.get("authorization")[0] });
+        callback(null, { status: OK, collection_name: "notes", collectionID: "469489107428444006", shards_num: 1 });
+      },
+    });
+    const client = await createGrpcMilvusClient(
+      at(port, { auth: { kind: "password", user: "root", password: TEST_PASSWORD } }),
+    );
+    const answer = await client.describeCollection({ collection_name: "notes" }, call("probe_db"));
+    client.close();
+    server.forceShutdown();
+    expect(seen).toEqual([{ db: "probe_db", authorization: base64(`root:${TEST_PASSWORD}`) }]);
+    expect(answer).toMatchObject({
+      collection_name: "notes",
+      collectionID: "469489107428444006",
+      shards_num: 1,
+      schema: null,
+    });
+  });
+
+  test("a LoadCollection whose answer is lost is sent once and reads may have been applied (E7, Review Focus 3)", async () => {
+    let received = 0;
+    const dropping = await http2Server((stream) => {
+      stream.on("data", () => {
+        received++;
+        stream.session?.destroy();
+      });
+    });
+    const client = await createGrpcMilvusClient(at(dropping.port));
+    const error = await failure(client.loadCollection({ collection_name: "docs_int64" }, call()));
+    await Bun.sleep(1000);
+    client.close();
+    dropping.server.close();
+    expect(received).toBe(1);
+    const mapped = toProviderError(error, {
+      operation: "Load of docs_int64",
+      write: true,
+      collection: "docs_int64",
+      connection: {
+        host: "127.0.0.1",
+        port: dropping.port,
+        runtimeReportsTlsCause: true,
+        receiveCapBytes: CAP,
+        timeoutMs: 10_000,
+      },
+      secretForms: [],
+    });
+    expect(mapped.message).toContain(
+      "It may have been applied: read the collection's load state before you run it again.",
+    );
+  }, 10_000);
 });

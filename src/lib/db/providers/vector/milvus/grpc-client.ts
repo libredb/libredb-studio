@@ -27,8 +27,9 @@ import {
   type VerifyOptions,
 } from "@grpc/grpc-js";
 import { fromJSON, type MethodDefinition, type PackageDefinition, type ServiceDefinition } from "@grpc/proto-loader";
-import type { MilvusConnectionOptions, MilvusTlsOptions } from "./connection-options";
-import { MilvusUnsentStatus } from "./errors";
+import { type CallOptions, type MilvusClient, MilvusError, type WireStatus } from "./client";
+import type { MilvusAuth, MilvusConnectionOptions, MilvusTlsOptions } from "./connection-options";
+import { MilvusUnsentStatus, statusFailure, toMilvusError } from "./errors";
 import { MILVUS_DESCRIPTOR } from "./proto/descriptor";
 
 /**
@@ -341,4 +342,101 @@ function unaryCall(client: Client, rpc: MilvusRpc, request: object, call: Milvus
     );
     release = cancelOnAbort(call.signal, () => pending.cancel());
   });
+}
+
+// -- the adapter -----------------------------------------------------------------------------------------------------
+
+/** E14's method classes: queries and searches 30 s, every other call 10 s. */
+const QUERY_CLASS: ReadonlySet<MilvusRpc> = new Set(["Query", "Search", "HybridSearch"]);
+const QUERY_CLASS_MS = 30_000;
+const OTHER_CLASS_MS = 10_000;
+
+/** A call's deadline: its class's, capped by the connection's query timeout (E14). */
+export function deadlineMs(rpc: MilvusRpc, callTimeoutMs: number): number {
+  return Math.min(QUERY_CLASS.has(rpc) ? QUERY_CLASS_MS : OTHER_CLASS_MS, callTimeoutMs);
+}
+
+/** The one GetMetrics request the adapter writes (E29): no caller can ask for another metric. */
+export const SYSTEM_INFO_REQUEST = '{"metric_type": "system_info"}';
+
+/** The RPCs whose request message has no `db_name` field; every other one carries `CallOptions.db` (E16). */
+const WITHOUT_DB_NAME: ReadonlySet<MilvusRpc> = new Set(["GetVersion", "CheckHealth", "GetMetrics", "ListDatabases"]);
+/** The RPCs whose answer is a `common.Status` itself. */
+const ANSWERS_A_STATUS: ReadonlySet<MilvusRpc> = new Set(["LoadCollection", "ReleaseCollection"]);
+
+/** E4: base64 of `user:password`, or of the token when the user is empty (R09 F7, R04 F5); nothing else carries it. */
+function authorizationOf(auth: MilvusAuth): Readonly<Record<string, string>> {
+  switch (auth.kind) {
+    case "none":
+      return {};
+    case "password":
+      return { authorization: Buffer.from(`${auth.user}:${auth.password}`, "utf8").toString("base64") };
+    case "token":
+      return { authorization: Buffer.from(auth.token, "utf8").toString("base64") };
+  }
+}
+
+/**
+ * `MilvusClient` over a transport, `grpcWireTransport` by default. It opens the one channel and sends nothing until a
+ * method is called; it has no logger, no retry and no Connect. Every answer's `common.Status` is checked, and every
+ * failure is classified by `toMilvusError`, so a caller sees a `MilvusError` and nothing else.
+ */
+export async function createGrpcMilvusClient(
+  options: MilvusConnectionOptions,
+  transport: MilvusWireTransport = grpcWireTransport,
+): Promise<MilvusClient> {
+  const channel = transport(options);
+  const metadata = authorizationOf(options.auth);
+  let closed = false;
+
+  const send = async <T>(rpc: MilvusRpc, request: object, call: CallOptions): Promise<T> => {
+    if (closed) throw new MilvusError("closed", "The client is closed");
+    if (call.signal.aborted) throw toMilvusError(call.signal.reason, call.signal);
+    // CallOptions.db last, so no request can name another database (E16).
+    const wire = WITHOUT_DB_NAME.has(rpc) ? request : { ...request, db_name: call.db };
+    let answer: object;
+    try {
+      answer = await channel.unary(rpc, wire, {
+        metadata,
+        deadline: new Date(Date.now() + deadlineMs(rpc, options.callTimeoutMs)),
+        signal: call.signal,
+      });
+    } catch (error) {
+      throw toMilvusError(error, call.signal);
+    }
+    const status = ANSWERS_A_STATUS.has(rpc)
+      ? (answer as WireStatus)
+      : (answer as { readonly status?: WireStatus | null }).status;
+    const failure = statusFailure(status, rpc);
+    if (failure !== undefined) throw failure;
+    return answer as T;
+  };
+
+  return {
+    getVersion: (o) => send("GetVersion", {}, o),
+    checkHealth: (o) => send("CheckHealth", {}, o),
+    getMetricsSystemInfo: (o) => send("GetMetrics", { request: SYSTEM_INFO_REQUEST }, o),
+    listDatabases: (o) => send("ListDatabases", {}, o),
+    describeDatabase: (r, o) => send("DescribeDatabase", r, o),
+    showCollections: (o) => send("ShowCollections", {}, o),
+    describeCollection: (r, o) => send("DescribeCollection", r, o),
+    batchDescribeCollection: (r, o) => send("BatchDescribeCollection", r, o),
+    describeIndex: (r, o) => send("DescribeIndex", r, o),
+    getLoadState: (r, o) => send("GetLoadState", r, o),
+    getLoadingProgress: (r, o) => send("GetLoadingProgress", r, o),
+    getCollectionStatistics: (r, o) => send("GetCollectionStatistics", r, o),
+    showPartitions: (r, o) => send("ShowPartitions", r, o),
+    listAliases: (r, o) => send("ListAliases", r, o),
+    describeAlias: (r, o) => send("DescribeAlias", r, o),
+    query: (r, o) => send("Query", r, o),
+    search: (r, o) => send("Search", r, o),
+    hybridSearch: (r, o) => send("HybridSearch", r, o),
+    loadCollection: (r, o) => send("LoadCollection", r, o),
+    releaseCollection: (r, o) => send("ReleaseCollection", r, o),
+    close: () => {
+      if (closed) return;
+      closed = true;
+      channel.close();
+    },
+  };
 }
