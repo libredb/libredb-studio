@@ -10,7 +10,7 @@
  * export can see it.
  */
 import { describe, expect, test } from "bun:test";
-import { buildResultGraph, captionOf, hasGraphValues, paletteColor } from "@/lib/db/graph/result-graph";
+import { MAX_WALK_DEPTH, buildResultGraph, captionOf, hasGraphValues, paletteColor } from "@/lib/db/graph/result-graph";
 import type { GraphNodeJson, GraphPathJson, GraphRelationshipJson } from "@/lib/db/graph/values";
 
 function node(id: string, labels: string[] = ["Person"], properties: Record<string, unknown> = {}): GraphNodeJson {
@@ -354,22 +354,65 @@ describe("captionOf", () => {
 
 describe("hasGraphValues", () => {
   test("is false for an empty or graph-free result", () => {
-    expect(hasGraphValues([])).toBe(false);
-    expect(hasGraphValues([{ n: 1, s: "<value too large: 9 bytes>", m: { k: [null] } }])).toBe(false);
+    expect(hasGraphValues([], [])).toBe(false);
+    expect(hasGraphValues([{ n: 1, s: "<value too large: 9 bytes>", m: { k: [null] } }], ["n", "s", "m"])).toBe(false);
   });
 
   test("finds a top-level node, relationship or path", () => {
-    expect(hasGraphValues([{ x: 1 }, { x: a }])).toBe(true);
-    expect(hasGraphValues([{ r: ab }])).toBe(true);
-    expect(hasGraphValues([{ p: path([c], []) }])).toBe(true);
+    expect(hasGraphValues([{ x: 1 }, { x: a }], ["x"])).toBe(true);
+    expect(hasGraphValues([{ r: ab }], ["r"])).toBe(true);
+    expect(hasGraphValues([{ p: path([c], []) }], ["p"])).toBe(true);
   });
 
   test("finds one inside lists and maps", () => {
-    expect(hasGraphValues([{ x: [1, { deep: [ab] }] }])).toBe(true);
+    expect(hasGraphValues([{ x: [1, { deep: [ab] }] }], ["x"])).toBe(true);
   });
 
   test("counts only what can be drawn, so an empty path offers no tab", () => {
-    expect(hasGraphValues([{ p: path([], []) }])).toBe(false);
+    expect(hasGraphValues([{ p: path([], []) }], ["p"])).toBe(false);
     expect(buildResultGraph([{ p: path([], []) }], ["p"], { maxNodes: 300 }).nodes).toEqual([]);
+  });
+
+  test("reads only the result's fields, as the drawing does, so it never offers a tab that draws nothing", () => {
+    const rows = [{ x: 1, extra: a }];
+    expect(hasGraphValues(rows, ["x"])).toBe(false);
+    expect(buildResultGraph(rows, ["x"], { maxNodes: 300 }).nodes).toEqual([]);
+  });
+});
+
+describe("walk depth", () => {
+  function nestedIn(levels: number, inner: unknown): unknown {
+    let cell = inner;
+    for (let level = 0; level < levels; level += 1) cell = [cell];
+    return cell;
+  }
+
+  test("a cell nested far deeper than any engine returns is walked without throwing", () => {
+    expect(hasGraphValues([{ j: nestedIn(20000, 1) }], ["j"])).toBe(false);
+    expect(buildResultGraph([{ j: nestedIn(20000, a) }], ["j"], { maxNodes: 300 }).nodes).toEqual([]);
+  });
+
+  test("a graph value is found down to the depth a Neo4j cell may reach, and not below it", () => {
+    expect(hasGraphValues([{ j: nestedIn(MAX_WALK_DEPTH - 1, a) }], ["j"])).toBe(true);
+    expect(hasGraphValues([{ j: nestedIn(MAX_WALK_DEPTH, a) }], ["j"])).toBe(false);
+  });
+});
+
+describe("without Intl.Segmenter", () => {
+  test("the module loads, finds graph values and still cuts captions by code point", async () => {
+    const segmenter = Intl.Segmenter;
+    Reflect.deleteProperty(Intl, "Segmenter");
+    try {
+      const fresh: typeof import("@/lib/db/graph/result-graph") = await import(
+        "../../../../src/lib/db/graph/result-graph.ts?without-segmenter"
+      );
+      expect(fresh.hasGraphValues([{ x: a }], ["x"])).toBe(true);
+      expect(fresh.captionOf(node("n:1", ["L"], { name: "Alice" }))).toBe("Alice");
+      expect(fresh.captionOf(node("n:1", ["L"], { name: `${"x".repeat(23)}\u{1F600}\u{1F600}` }))).toBe(
+        `${"x".repeat(23)}…`,
+      );
+    } finally {
+      Intl.Segmenter = segmenter;
+    }
   });
 });

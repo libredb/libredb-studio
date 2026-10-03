@@ -56,7 +56,15 @@ export interface ResultGraphOptions {
 
 const CAPTION_LENGTH = 24;
 const ELLIPSIS = "…";
-const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+
+/**
+ * How deep the walk looks into a cell, the cell itself being depth 1. The Bolt
+ * transport replaces a cell nested deeper than this (`MAX_CELL_DEPTH` in
+ * `bolt/record-values.ts`, not imported here so this module stays browser-safe),
+ * so every graph value an engine returns is found; another engine's JSON may nest
+ * without limit, and the bound keeps that from overflowing the stack.
+ */
+export const MAX_WALK_DEPTH = 32;
 
 /**
  * Every graph value in a cell, in depth-first order. A path yields its member
@@ -65,8 +73,8 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
  * JSON of a graph value, which also covers a cell the transport replaced with a
  * "value too large" note.
  */
-function* graphValuesIn(cell: unknown): Generator<GraphNodeJson | GraphRelationshipJson> {
-  if (typeof cell !== "object" || cell === null) return;
+function* graphValuesIn(cell: unknown, depth = 1): Generator<GraphNodeJson | GraphRelationshipJson> {
+  if (typeof cell !== "object" || cell === null || depth > MAX_WALK_DEPTH) return;
   if (isGraphValueJson(cell)) {
     if (cell["~graph"] !== "path") {
       yield cell;
@@ -78,7 +86,7 @@ function* graphValuesIn(cell: unknown): Generator<GraphNodeJson | GraphRelations
     }
     return;
   }
-  for (const item of Array.isArray(cell) ? cell : Object.values(cell)) yield* graphValuesIn(item);
+  for (const item of Array.isArray(cell) ? cell : Object.values(cell)) yield* graphValuesIn(item, depth + 1);
 }
 
 function maskProperties(
@@ -93,9 +101,23 @@ function asText(value: unknown): string {
   return typeof value === "string" ? value : typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
-/** Counts visible characters (grapheme clusters), so a cut never splits an emoji sequence or a flag. */
+let graphemes: Intl.Segmenter | undefined;
+
+/**
+ * The visible characters of a text: grapheme clusters, so a cut never splits an
+ * emoji sequence or a flag. Built on first use, never at module load, because a
+ * browser inside the supported range may lack `Intl.Segmenter` (Firefox before
+ * 125) and this module loads with the results panel for every engine; there the
+ * cut falls back to code points, which still never splits a surrogate pair.
+ */
+function visibleCharacters(text: string): string[] {
+  if (typeof Intl.Segmenter !== "function") return Array.from(text);
+  graphemes ??= new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  return Array.from(graphemes.segment(text), (part) => part.segment);
+}
+
 function truncate(text: string): string {
-  const chars = Array.from(graphemes.segment(text), (part) => part.segment);
+  const chars = visibleCharacters(text);
   return chars.length <= CAPTION_LENGTH ? text : `${chars.slice(0, CAPTION_LENGTH - 1).join("")}${ELLIPSIS}`;
 }
 
@@ -121,12 +143,14 @@ export function captionOf(node: Pick<GraphNodeJson, "elementId" | "labels" | "pr
 }
 
 /**
- * True when any cell of any row holds a drawable graph value, at any depth: a
- * node, a relationship, or a path with at least one member. A path with no
- * members draws nothing, so it offers no tab; Neo4j never returns one.
+ * True when any field of any row holds a drawable graph value, down to
+ * `MAX_WALK_DEPTH`: a node, a relationship, or a path with at least one member.
+ * A path with no members draws nothing, so it offers no tab; Neo4j never returns
+ * one. It reads the same fields `buildResultGraph` draws, so a tab it offers is
+ * never empty.
  */
-export function hasGraphValues(rows: readonly Record<string, unknown>[]): boolean {
-  return rows.some((row) => Object.values(row).some((cell) => !graphValuesIn(cell).next().done));
+export function hasGraphValues(rows: readonly Record<string, unknown>[], fields: readonly string[]): boolean {
+  return rows.some((row) => fields.some((field) => !graphValuesIn(row[field]).next().done));
 }
 
 /** The palette colour of a slot, cycling when labels outnumber colours; undefined for no slot. */

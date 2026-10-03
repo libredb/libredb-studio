@@ -282,7 +282,7 @@ export const BottomPanel = React.memo(function BottomPanel({
     tab whose result has none keeps it), so it is read as Results until a graph is
     back, rather than leaving the panel on a tab the strip no longer shows.
   */
-  const offersGraph = useMemo(() => hasGraphValues(result?.rows ?? []), [result]);
+  const offersGraph = useMemo(() => hasGraphValues(result?.rows ?? [], result?.fields ?? []), [result]);
   const mode = requestedMode === "graph" && !offersGraph ? "results" : requestedMode;
 
   /*
