@@ -78,6 +78,20 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * A vector cell with every element read as the float32 Qdrant stores: the server writes a float32 as its shortest text
+ * (9.622787) and the fixture holds its float64 widening (9.622787475585938), and both name the same float32. A sparse
+ * vector's `indices` are u32 and stay exact, since a float32 would merge neighbours above 2^24.
+ */
+function asFloat32(value: unknown, key?: string): unknown {
+  if (typeof value === "number") return key === "indices" ? value : Math.fround(value);
+  if (Array.isArray(value)) return value.map((item) => asFloat32(item, key));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, asFloat32(item, name)]));
+  }
+  return value;
+}
+
 // ---- a raw REST client of the harness's own, for the collector, the setup and the REST side of every comparison ----
 
 interface Rest {
@@ -316,7 +330,24 @@ async function main(): Promise<void> {
   const open = new QdrantProvider(connection("live-open", 6333));
   await open.connect();
 
-  const EXAMPLES: readonly [string, string, (result: QueryResult) => void][] = [
+  /**
+   * Example 5 names no limit, so Studio sends the server's default of 10 explicitly: its rows are the hits REST returns
+   * for the same body sent as written and again with `"limit": 10`, however many points the seed's sparse vectors match.
+   */
+  const SPARSE_BODY = '{"query": {"indices": [1, 3, 5, 7], "values": [0.1, 0.2, 0.3, 0.4]}, "using": "keywords"}';
+  const sameHitsAsRest = async (result: QueryResult) => {
+    const path = "/collections/docs/points/query";
+    const studioIds = canonical(studioPointIds(result));
+    for (const body of [SPARSE_BODY, SPARSE_BODY.replace(/}$/, ', "limit": 10}')]) {
+      const rest = await send(OPEN, "POST", path, body);
+      assert(rest.status === 200, `REST answered ${rest.status} to ${body}`);
+      const restIds = restPointIds(parse(rest).result);
+      assert(restIds !== null && restIds.length <= 10, `REST answered ${rest.text.slice(0, 200)}`);
+      assert(studioIds === canonical(restIds), `${result.rows.length} rows, REST ${restIds.length} for ${body}`);
+    }
+  };
+
+  const EXAMPLES: readonly [string, string, (result: QueryResult) => void | Promise<void>][] = [
     ["1 collections", "GET /collections", (r) => assert(JSON.stringify(r.rows).includes("docs"), "docs missing")],
     ["2 one point", "GET /collections/docs/points/42", (r) => assert(r.rows.length === 1, `${r.rows.length} rows`)],
     [
@@ -329,11 +360,7 @@ async function main(): Promise<void> {
       'POST /collections/plain/points/query?consistency=majority\n{"query": [0.2, 0.1, 0.9, 0.7], "filter": {"must": [{"key": "city", "match": {"value": "London"}}]}, "params": {"hnsw_ef": 128, "exact": false}, "limit": 3}',
       (r) => assert(r.rows.length <= 3, `${r.rows.length} rows`),
     ],
-    [
-      "5 sparse query",
-      'POST /collections/docs/points/query\n{"query": {"indices": [1, 3, 5, 7], "values": [0.1, 0.2, 0.3, 0.4]}, "using": "keywords"}',
-      (r) => assert(r.rows.length === 10, `${r.rows.length} rows, not the explicit default 10`),
-    ],
+    ["5 sparse query", `POST /collections/docs/points/query\n${SPARSE_BODY}`, sameHitsAsRest],
     [
       "6 exact count",
       'POST /collections/docs/points/count\n{"filter": {"must": [{"key": "category", "match": {"value": "alpha"}}]}, "exact": true}',
@@ -361,7 +388,7 @@ async function main(): Promise<void> {
     ],
   ];
   for (const [name, text, expectResult] of EXAMPLES) {
-    await check(`example ${name}`, async () => expectResult(await open.query(text)));
+    await check(`example ${name}`, async () => await expectResult(await open.query(text)));
   }
 
   await check("ids above 2^53 read exactly those points", async () => {
@@ -416,7 +443,10 @@ async function main(): Promise<void> {
         const value = read.rows[0]?.[column];
         const copied = formatCellCopy(value, { vector: read.vectorColumns?.[column] });
         const where = `${cell.collection} ${String(cell.match.value)} ${column}`;
-        assert(canonical(JSON.parse(copied)) === canonical(cell.cell), `${where}: the copy differs`);
+        assert(
+          canonical(asFloat32(JSON.parse(copied))) === canonical(asFloat32(cell.cell)),
+          `${where}: the copy differs as float32`,
+        );
         // The copied text goes into the body as it is, so a float written `1.0` stays one (a parse would make it 1).
         const body = `{"query": ${copied}${cell.field === "" ? "" : `, "using": "${cell.field}"`}, "limit": 5}`;
         const path = `/collections/${cell.collection}/points/query`;
