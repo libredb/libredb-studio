@@ -103,14 +103,17 @@ const IMF_FIXDATE =
 
 /**
  * The wait a Retry-After header names, in whole seconds: the value when it is 1 to 9 digits, or the seconds until
- * an IMF-fixdate, 0 when that date has passed. Undefined for an absent or malformed value, which is never echoed.
+ * an IMF-fixdate, 0 when that date has passed. Undefined for an absent or malformed value, which is never echoed,
+ * and for an IMF-fixdate that is no real date: a day its month does not have, or a weekday it does not fall on.
  */
 export function retryAfterSeconds(retryAfter: string | null, now: Date): number | undefined {
   if (retryAfter === null) return undefined;
   if (DELAY_SECONDS.test(retryAfter)) return Number(retryAfter);
   if (!IMF_FIXDATE.test(retryAfter)) return undefined;
   const at = Date.parse(retryAfter);
-  if (Number.isNaN(at)) return undefined;
+  // A date that reads back as other text is no real date: an impossible day rolls over, a wrong weekday is ignored,
+  // and an unparsable one reads back as "Invalid Date".
+  if (new Date(at).toUTCString() !== retryAfter) return undefined;
   return Math.max(0, Math.ceil((at - now.getTime()) / 1000));
 }
 

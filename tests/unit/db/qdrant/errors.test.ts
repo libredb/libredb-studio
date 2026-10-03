@@ -176,6 +176,15 @@ describe("retryAfterSeconds (6.10)", () => {
     expect(retryAfterSeconds("Sat, 99 Oct 2026 12:00:30 GMT", NOW)).toBeUndefined();
     expect(retryAfterSeconds(null, NOW)).toBeUndefined();
   });
+
+  test.each([
+    ["a day the month does not have, in the past", "Sat, 31 Feb 2026 00:00:00 GMT"],
+    ["a day the month does not have, in the future", "Tue, 31 Nov 2026 00:00:00 GMT"],
+    ["a weekday the date does not fall on", "Mon, 03 Oct 2026 12:00:30 GMT"],
+    ["an hour past 23", "Sat, 03 Oct 2026 24:00:30 GMT"],
+  ])("an IMF-fixdate with %s names no wait", (_what, value) => {
+    expect(retryAfterSeconds(value, NOW)).toBeUndefined();
+  });
 });
 
 describe("toProviderError: Studio's sentence first, the server's text after it (QE20)", () => {
