@@ -470,7 +470,8 @@ bun run test
 
 ### 11.4 The live check
 
-`tests/live/milvus-live-check.ts` runs a real `MilvusProvider` against the fixtures on Node 24, Node 26 and Bun, and fails on any change outside its own collections, after the copy loop, the REST equivalence run, every refusal corpus, the telemetry check, Load and Release on a private copy and the search ceilings: `bun tests/live/milvus-live-check.ts --service milvus`.
+[`tests/live/milvus-live-check.ts`](../../tests/live/milvus-live-check.ts) runs a real `MilvusProvider` against the fixtures on Node 24, Node 26 and Bun, and fails on any change outside its own collections, after the copy loop, the REST equivalence run, every refusal corpus, the telemetry check, Load and Release on a collection of its own and the search ceilings.
+Copy the users' passwords out first, into a directory outside the repository: `docker cp libredb-milvus-seed:/credentials "$dir/credentials"`, then `bun tests/live/milvus-live-check.ts --credentials "$dir/credentials"`.
 
 ## 12. Running Milvus for Studio
 
