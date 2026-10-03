@@ -156,10 +156,13 @@ describe("cypherCompletionContext", () => {
     expect(at("call db.schema.vi")).toEqual({ kind: "procedure", start: 5 });
   });
 
-  test("after SHOW, the forms whose words the text has begun", () => {
-    expect(at("SHOW ")).toEqual({ kind: "show", start: 5 });
-    expect(at("SHOW IN")).toEqual({ kind: "show", start: 5 });
-    expect(at("SHOW RANGE ")).toEqual({ kind: "show", start: 5 });
+  test("after SHOW, the forms whose words the text has begun; only the word being typed is replaced", () => {
+    expect(at("SHOW ")).toEqual({ kind: "show", start: 5, showWords: [] });
+    expect(at("SHOW IN")).toEqual({ kind: "show", start: 5, showWords: [] });
+    expect(at("SHOW RANGE ")).toEqual({ kind: "show", start: 11, showWords: ["RANGE"] });
+    expect(at("show range in")).toEqual({ kind: "show", start: 11, showWords: ["RANGE"] });
+    // A form's words on two lines: the replaced text is still on the cursor's line.
+    expect(at("SHOW NODE\nUNIQUENESS CON")).toEqual({ kind: "show", start: 21, showWords: ["NODE", "UNIQUENESS"] });
     // Words no form begins with leave the SHOW context.
     expect(at("SHOW INDEXES YIELD ")).toEqual({ kind: "keyword", start: 19 });
   });
@@ -238,7 +241,23 @@ describe("registerCypherCompletionProvider", () => {
   });
 
   test("after SHOW, the profile's allowed forms that match what is typed, a name placeholder dropped", () => {
-    expect(labelsOf(suggest("SHOW RANGE |"))).toEqual(["RANGE INDEXES"]);
+    // The item names the whole form but inserts and filters on the words still to come, over a range that
+    // holds no space and no newline, so Monaco's filtering never scores a separator.
+    const range = suggest("SHOW RANGE |");
+    expect(labelsOf(range)).toEqual(["RANGE INDEXES"]);
+    expect(range[0]).toMatchObject({ insertText: "INDEXES", filterText: "INDEXES" });
+    expect(range[0]!.range).toEqual({ startLineNumber: 1, startColumn: 12, endLineNumber: 1, endColumn: 12 });
+    const typing = suggest("SHOW RANGE IN|");
+    expect(typing.map((item) => [item.label, item.insertText, item.filterText])).toEqual([
+      ["RANGE INDEXES", "INDEXES", "INDEXES"],
+    ]);
+    expect(typing[0]!.range).toEqual({ startLineNumber: 1, startColumn: 12, endLineNumber: 1, endColumn: 14 });
+    const twoLines = suggest("SHOW RELATIONSHIP\nUNI|");
+    expect(twoLines.map((item) => item.insertText)).toEqual(["UNIQUENESS CONSTRAINTS"]);
+    expect(twoLines[0]!.range).toEqual({ startLineNumber: 2, startColumn: 1, endLineNumber: 2, endColumn: 4 });
+    // A form already written in full has nothing left to insert, and is not offered as an empty item.
+    expect(suggest("SHOW INDEXES |")).toEqual([]);
+    expect(suggest("SHOW DATABASE |")).toEqual([]);
     const all = labelsOf(suggest("SHOW |"));
     expect(all).toContain("INDEXES");
     expect(all).toContain("DATABASE");

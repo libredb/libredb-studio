@@ -83,17 +83,20 @@ function expectedScope(token: Pick<CypherToken, "kind" | "text" | "value">): str
 /**
  * The text as `lexCypher` reads it, as the editor must draw it: each significant token, cut at every
  * newline it holds, because the editor reads one physical line at a time. A piece that is empty after
- * the cut (an empty line inside a comment or a string) is drawn as nothing.
+ * the cut (an empty line inside a comment or a string) is drawn as nothing. The one known difference is
+ * a backticked parameter's later lines: the line state carries it as `backtick`, so they are drawn as a
+ * quoted identifier (pinned on its own by the backticked-parameter test below).
  */
 function lexerPieces(text: string): Piece[] {
   const pieces: Piece[] = [];
   for (const token of lexCypher(text)) {
     if (token.kind === "whitespace") continue;
-    const scope = expectedScope(token);
+    let scope = expectedScope(token);
     let at = token.start;
     for (const part of token.text.split("\n")) {
       if (part.length > 0) pieces.push({ start: at, end: at + part.length, scope });
       at += part.length + 1;
+      if (token.kind === "parameter") scope = expectedScope({ kind: "backtick", text: "", value: "" });
     }
   }
   return pieces;
@@ -115,6 +118,13 @@ function editorPieces(provider: Monaco.languages.TokensProvider, text: string): 
     offset += line.length + 1;
   }
   return pieces;
+}
+
+/** A corpus case's text by name, so a case the editor tests lean on is the one the lexer and the policy read. */
+function corpusText(name: string): string {
+  const entry = CYPHER_CORPUS.find((candidate) => candidate.name === name);
+  if (entry === undefined) throw new Error(`no corpus case named ${JSON.stringify(name)}`);
+  return entry.text;
 }
 
 describe("registerCypherLanguage", () => {
@@ -217,12 +227,24 @@ describe("registerCypherLanguage", () => {
   });
 
   test("constructs spanning lines, an empty line inside them included, are drawn as the lexer reads them", () => {
+    // The corpus case is drawn by the corpus test above; this one pins what that equality means here.
     const provider = cypherProvider();
-    const text = "MATCH /* a\n\nCREATE\nb */ (n:`x\ny`) RETURN '1\n\n2', n";
+    const text = corpusText("a comment and a string each spanning lines, an empty line inside them");
     expect(editorPieces(provider, text)).toEqual(lexerPieces(text));
     // The control: the multi-line comment's middle line is a comment, not the keyword it holds.
     expect(editorPieces(provider, text).find((piece) => text.slice(piece.start, piece.end) === "CREATE")?.scope).toBe(
       "comment",
+    );
+  });
+
+  test("a backticked label spanning lines is drawn as the lexer reads it", () => {
+    // Not a corpus case: quote.test.ts round-trips every corpus name through `quoteCypherName`, which
+    // refuses a name holding a newline.
+    const provider = cypherProvider();
+    const text = "MATCH (n:`x\n\ny`) RETURN n";
+    expect(editorPieces(provider, text)).toEqual(lexerPieces(text));
+    expect(editorPieces(provider, text).find((piece) => text.slice(piece.start, piece.end) === "y`")?.scope).toBe(
+      "identifier.quoted",
     );
   });
 
@@ -231,7 +253,7 @@ describe("registerCypherLanguage", () => {
     // editor has no way to know the later line belongs to a parameter: the boundaries agree, the colour
     // of the continuation is the quoted identifier's.
     const provider = cypherProvider();
-    const text = "RETURN $`p\nq`, 1";
+    const text = corpusText("a backticked parameter spanning lines");
     const bounds = (pieces: Piece[]) => pieces.map(({ start, end }) => [start, end]);
     expect(bounds(editorPieces(provider, text))).toEqual(bounds(lexerPieces(text)));
     expect(editorPieces(provider, text).map((piece) => piece.scope)).toEqual([

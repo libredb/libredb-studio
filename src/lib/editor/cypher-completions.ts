@@ -12,7 +12,8 @@
  * - after `:` (or `|`) inside a relationship pattern: relationship types;
  * - after an identifier and `.`: the property names of every label and relationship type;
  * - after `CALL`: the profile's allowed procedures, the only ones the read policy lets through;
- * - after `SHOW`: the profile's allowed forms that begin with the words typed so far;
+ * - after `SHOW`: the profile's allowed forms that begin with the words typed so far, each inserting only
+ *   the words still to come, so the replaced text never holds a space or a newline for Monaco to filter on;
  * - elsewhere: the lexer's keyword table.
  *
  * The profile is handed in by the caller (`graphPolicyProfileOf` in `src/lib/db/graph-policy-profiles.ts`),
@@ -73,6 +74,8 @@ export type CypherCompletionKind = "label" | "relationship-type" | "property" | 
 export interface CypherCompletionContext {
   readonly kind: CypherCompletionKind;
   readonly start: number;
+  /** For `show` only: the complete words already typed after `SHOW`, uppercased. */
+  readonly showWords?: readonly string[];
 }
 
 /** The innermost bracket still open among `tokens`, or undefined when none is. */
@@ -126,13 +129,13 @@ export function cypherCompletionContext(
     return { kind: "procedure", start: name < end ? significant[name].start : start };
   }
 
-  // SHOW, then nothing or words that begin an allowed form: the whole form is replaced.
+  // SHOW, then nothing or words that begin an allowed form: only the word being typed is replaced, and the
+  // words before it are handed on, so an item inserts the rest of its form.
   let form = end;
   while (form >= 1 && significant[form - 1].kind === "word" && significant[form - 1].value !== "SHOW") form -= 1;
   if (significant[form - 1]?.value === "SHOW") {
-    const words = significant.slice(form, end).map((token) => token.value);
-    if (words.length === 0 || beginsAForm(words, showForms))
-      return { kind: "show", start: form < end ? significant[form].start : start };
+    const showWords = significant.slice(form, end).map((token) => token.value);
+    if (showWords.length === 0 || beginsAForm(showWords, showForms)) return { kind: "show", start, showWords };
   }
 
   if (before?.text === ":" || before?.text === "|") {
@@ -210,16 +213,28 @@ export function registerCypherCompletionProvider(
         property: () => names(schema.properties, Kind.Field, "Property"),
         procedure: () => words(policy?.readPolicy.allowedProcedures ?? [], Kind.Function, "Procedure"),
         show: () => {
-          // The words already complete after SHOW; the one being typed is Monaco's to filter on.
-          const typed = text
-            .slice(context.start)
-            .split(/\s+/)
-            .slice(0, -1)
-            .map((word) => word.toUpperCase());
-          const forms = showForms
-            .filter((form) => beginsAForm(typed, [form]))
-            .map((form) => form.filter((word) => word !== "*").join(" "));
-          return words([...new Set(forms)], Kind.Keyword, "SHOW form");
+          // Labelled with the whole form, inserted and filtered on the words after those already typed; the
+          // one being typed is Monaco's to filter on. A form typed in full leaves nothing to offer.
+          const typed = context.showWords ?? [];
+          const items = new Map<string, Monaco.languages.CompletionItem>();
+          for (const form of showForms) {
+            if (!beginsAForm(typed, [form])) continue;
+            const label = form.filter((word) => word !== "*").join(" ");
+            const rest = form
+              .slice(typed.length)
+              .filter((word) => word !== "*")
+              .join(" ");
+            if (rest === "" || items.has(label)) continue;
+            items.set(label, {
+              label,
+              kind: Kind.Keyword,
+              insertText: rest,
+              filterText: rest,
+              range,
+              detail: "SHOW form",
+            });
+          }
+          return [...items.values()];
         },
         keyword: () => words([...CYPHER_KEYWORDS].sort(), Kind.Keyword, "Keyword"),
       };

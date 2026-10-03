@@ -523,21 +523,6 @@ describe("POST /api/db/profile", () => {
    * run, so "nothing was sent" cannot pass because the request never reached a provider. The
    * table and column names are distinctive so the message can be shown not to echo them.
    */
-  test("refuses a Cypher connection with a 400 that names the language, and sends nothing (Neo4j spec 6.5)", async () => {
-    // Correct as a fall-through: `offersColumnProfiling` names the two languages the route writes.
-    const cypherProvider = createMockProvider({ capabilities: { queryLanguage: "cypher" } });
-    mockGetOrCreateProvider.mockResolvedValueOnce(cypherProvider);
-    const body = { connection: validConnection, tablePath: ["neo4j", "(:Person)"], columns: ["name"] };
-
-    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
-    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
-
-    expect(refused.status).toBe(400);
-    expect(data.code).toBe("CONFIG_ERROR");
-    expect(data.error).toContain('"cypher"');
-    expect(cypherProvider.query).not.toHaveBeenCalled();
-  });
-
   test("refuses a PromQL connection with a 400 that names the language, and sends nothing", async () => {
     const promqlProvider = createMockProvider({ capabilities: { queryLanguage: "promql" } });
     const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
@@ -624,5 +609,20 @@ describe("POST /api/db/profile", () => {
     expect(data.error).toContain('"json" in the etcd dialect');
     expect(data.error).not.toContain("refusal_probe");
     expect(etcdProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("refuses a Cypher connection with a 400 that names the language, and sends nothing (Neo4j spec 6.5)", async () => {
+    // Correct as a fall-through: `offersColumnProfiling` names the two languages the route writes.
+    const cypherProvider = createMockProvider({ capabilities: { queryLanguage: "cypher" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(cypherProvider);
+    const body = { connection: validConnection, tablePath: ["neo4j", "(:Person)"], columns: ["name"] };
+
+    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
+
+    expect(refused.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toContain('"cypher"');
+    expect(cypherProvider.query).not.toHaveBeenCalled();
   });
 });
