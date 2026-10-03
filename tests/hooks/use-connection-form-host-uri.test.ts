@@ -97,6 +97,43 @@ describe("useConnectionForm: an address in the Host box", () => {
     expect([sent.host, sent.port, sent.ssl]).toEqual(["localhost", 6333, undefined]);
   });
 
+  test("a typed address is split when the user leaves the Host box, so the dialog shows what Test and Save use", () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setPort("6333"));
+    act(() => result.current.setHost("https://localhost", "insertText"));
+    expect([result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "https://localhost",
+      "6333",
+      "disable",
+    ]);
+    act(() => result.current.settleHost());
+    expect([result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "localhost",
+      "443",
+      "verify-system",
+    ]);
+  });
+
+  test("leaving a Host box that holds a host, or a refused address, changes nothing but the refusal", () => {
+    restores.push(declareHostUri("etcd", ["http", "https"]));
+    const { result } = renderForm();
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setPort("2379"));
+    act(() => result.current.setHost("db.internal", "insertText"));
+    act(() => result.current.settleHost());
+    expect([result.current.host, result.current.port, result.current.sslMode]).toEqual([
+      "db.internal",
+      "2379",
+      "disable",
+    ]);
+    act(() => result.current.setHost("https://user:pw@db.internal", "insertText"));
+    act(() => result.current.settleHost());
+    expect(result.current.host).toBe("https://user:pw@db.internal");
+    expect(result.current.testResult).toEqual({ tone: "error", message: USERINFO_SENTENCE });
+  });
+
   test("a typed https:// address is saved split, with SSL Mode raised", async () => {
     restores.push(declareHostUri("etcd", ["http", "https"]));
     const { result, onConnect } = renderForm();

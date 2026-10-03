@@ -114,6 +114,7 @@ function getDefaultForm() {
     setName: mock(() => {}),
     host: "localhost",
     setHost: mock(() => {}),
+    settleHost: mock(() => {}),
     port: "5432",
     setPort: mock(() => {}),
     user: "",

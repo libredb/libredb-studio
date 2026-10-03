@@ -544,6 +544,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     // A refusal is about the text it read, so an edit takes it away; any other result stays until the next test.
     setTestResult((current) => (current !== null && current === hostRefusal.current ? null : current));
     if (inputType === undefined || !WHOLE_VALUE_INPUTS.has(inputType)) return;
+    splitHostAddress(text);
+  };
+
+  /** Fills Host, Port and SSL Mode from an accepted address, or shows the refusal of a refused one. */
+  const splitHostAddress = (text: string) => {
     const hostBox = readHostBox(type, text);
     if (hostBox.kind === "host") return;
     if (hostBox.kind === "refused") {
@@ -558,6 +563,13 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       setShowSSL(true);
     }
   };
+
+  /**
+   * The Host box as the user leaves it: a typed address is split as a paste is, so the dialog shows the host, port
+   * and SSL Mode that Test Connection and Save will use, rather than splitting only inside `buildConnection`. A
+   * keystroke never splits, because `http://l` is already a whole address.
+   */
+  const settleHost = () => splitHostAddress(host);
 
   const buildConnection = useCallback((): DatabaseConnection => {
     // The Host box read here, because every test and save passes through this function: an address typed rather
@@ -1002,6 +1014,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setName,
     host,
     setHost: setHostFromInput,
+    settleHost,
     port,
     setPort,
     user,

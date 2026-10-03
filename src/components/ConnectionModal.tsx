@@ -166,6 +166,7 @@ export function ConnectionModal({
     setName,
     host,
     setHost,
+    settleHost,
     port,
     setPort,
     user,
@@ -622,6 +623,7 @@ export function ConnectionModal({
                         id="host"
                         value={host}
                         onChange={(e) => setHost(e.target.value, (e.nativeEvent as InputEvent).inputType)}
+                        onBlur={settleHost}
                         placeholder="localhost"
                         autoComplete="off"
                         aria-describedby={describedByHint(uiConfig, "host")}

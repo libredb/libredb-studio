@@ -96,6 +96,7 @@ const mockSetType = mock(() => {});
 const mockSetName = mock(() => {});
 const mockSetQueryTimeout = mock(() => {});
 const mockSetHost = mock(() => {});
+const mockSettleHost = mock(() => {});
 const mockSetPort = mock(() => {});
 const mockSetUser = mock(() => {});
 const mockSetPassword = mock(() => {});
@@ -153,6 +154,7 @@ function getDefaultForm() {
     credentialWarning: undefined as string | undefined,
     host: "localhost",
     setHost: mockSetHost,
+    settleHost: mockSettleHost,
     port: "5432",
     setPort: mockSetPort,
     user: "",
@@ -1613,6 +1615,16 @@ describe("ConnectionModal: the Host box address and the credential warning", () 
     mockFormOverrides = {};
     mockDeclaredCopy = {};
     mockSetHost.mockClear();
+    mockSettleHost.mockClear();
+  });
+
+  test("settles the Host box when the user leaves it, so a typed address is split before Test and Save", () => {
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    fireEvent.input(host, { target: { value: "https://localhost" }, inputType: "insertText" });
+    expect(mockSettleHost).not.toHaveBeenCalled();
+    fireEvent.blur(host);
+    expect(mockSettleHost).toHaveBeenCalledTimes(1);
   });
 
   test("hands the Host box's text to the form with the input kind that delivered it", () => {
