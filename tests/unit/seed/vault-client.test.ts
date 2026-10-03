@@ -253,6 +253,41 @@ describe("vault-client", () => {
       expect(headersOf(calls[calls.length - 1])["X-Vault-Token"]).toBe("lease-token");
     });
 
+    it("trims surrounding whitespace from VAULT_K8S_TOKEN_PATH before reading the token", async () => {
+      process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+      process.env.VAULT_ROLE = "studio";
+      const { dir, tokenPath } = writeServiceAccountToken("sa-jwt\n");
+      tokenDirs.push(dir);
+      process.env.VAULT_K8S_TOKEN_PATH = ` ${tokenPath}\n`;
+
+      const { calls, fetchImpl } = transport((url) => {
+        if (url.endsWith("/v1/auth/kubernetes/login")) {
+          return jsonResponse({ auth: { client_token: "lease-token", lease_duration: 3600 } });
+        }
+        return secretResponse("pg-secret");
+      });
+
+      const value = await readVaultSecret(PASSWORD_PATH, "password", { fetch: fetchImpl });
+
+      expect(value).toBe("pg-secret");
+      const login = calls.find((c) => c.url.endsWith("/v1/auth/kubernetes/login"))!;
+      expect(JSON.parse(login.init.body as string)).toEqual({ role: "studio", jwt: "sa-jwt" });
+    });
+
+    it("falls back to the default token path when VAULT_K8S_TOKEN_PATH is only whitespace", async () => {
+      process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+      process.env.VAULT_ROLE = "studio";
+      process.env.VAULT_K8S_TOKEN_PATH = "   ";
+      const { calls, fetchImpl } = transport(() => secretResponse("pg-secret"));
+
+      // The whitespace-only value must be treated as unset and fall back to the default
+      // path, which does not exist here — so the failure names the default path, not "   ".
+      await expect(readVaultSecret(PASSWORD_PATH, "password", { fetch: fetchImpl })).rejects.toThrow(
+        /serviceaccount\/token/,
+      );
+      expect(calls).toHaveLength(0);
+    });
+
     it("logs in at the mount named by VAULT_K8S_AUTH_PATH, ignoring surrounding slashes", async () => {
       process.env.VAULT_ADDR = "http://127.0.0.1:8200";
       process.env.VAULT_ROLE = "studio";
@@ -276,14 +311,37 @@ describe("vault-client", () => {
       }
     });
 
-    it("falls back to the kubernetes mount when VAULT_K8S_AUTH_PATH is empty or only slashes", async () => {
+    it("trims surrounding whitespace from VAULT_K8S_AUTH_PATH before stripping slashes", async () => {
       process.env.VAULT_ADDR = "http://127.0.0.1:8200";
       process.env.VAULT_ROLE = "studio";
       const { dir, tokenPath } = writeServiceAccountToken("sa-jwt");
       tokenDirs.push(dir);
       process.env.VAULT_K8S_TOKEN_PATH = tokenPath;
 
-      for (const mount of ["", "/"]) {
+      for (const mount of [" orion ", "orion\n", " /orion/ "]) {
+        resetVaultCache();
+        process.env.VAULT_K8S_AUTH_PATH = mount;
+        const { calls, fetchImpl } = transport((url) => {
+          if (url === "http://127.0.0.1:8200/v1/auth/orion/login") {
+            return jsonResponse({ auth: { client_token: "lease-token", lease_duration: 3600 } });
+          }
+          if (url.includes("/v1/auth/")) return jsonResponse({ errors: ["permission denied"] }, 403);
+          return secretResponse("pg-secret");
+        });
+
+        expect(await readVaultSecret(PASSWORD_PATH, "password", { fetch: fetchImpl })).toBe("pg-secret");
+        expect(calls[0].url).toBe("http://127.0.0.1:8200/v1/auth/orion/login");
+      }
+    });
+
+    it("falls back to the kubernetes mount when VAULT_K8S_AUTH_PATH is empty, only slashes or only whitespace", async () => {
+      process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+      process.env.VAULT_ROLE = "studio";
+      const { dir, tokenPath } = writeServiceAccountToken("sa-jwt");
+      tokenDirs.push(dir);
+      process.env.VAULT_K8S_TOKEN_PATH = tokenPath;
+
+      for (const mount of ["", "/", "   ", " \n\t "]) {
         resetVaultCache();
         process.env.VAULT_K8S_AUTH_PATH = mount;
         const { calls, fetchImpl } = transport((url) => {
