@@ -40,12 +40,12 @@ const mockGetSession = mock(
 );
 const mockAuditPush = mock((_event?: unknown) => ({}));
 
+// The spread form, not a hand-written five-key stub: `src/lib/auth.ts` exports seven
+// names and only one of them is being replaced here (BACKLOG D85).
+const realAuth = await import("@/lib/auth");
 mock.module("@/lib/auth", () => ({
+  ...realAuth,
   getSession: mockGetSession,
-  signJWT: mock(async () => "mock-token"),
-  verifyJWT: mock(async () => null),
-  login: mock(async () => {}),
-  logout: mock(async () => {}),
 }));
 
 mock.module("@/lib/seed/resolve-connection", () => {
