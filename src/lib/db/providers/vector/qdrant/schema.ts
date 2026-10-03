@@ -280,6 +280,7 @@ export function qdrantIndexes(collection: QdrantCollection): readonly IndexSchem
 export function qdrantCollectionFacts(collection: QdrantCollection): QdrantCollectionFacts {
   return {
     vectors: qdrantVectorFields(collection),
+    typeTexts: new Map(qdrantVectors(collection).map((vector) => [vector.name, vector.typeText])),
     reconstructed: new Set(
       qdrantVectors(collection)
         .filter((vector) => vector.shape.datatype === "turbo4")

@@ -53,8 +53,10 @@ import {
 
 /** What a described collection tells a request and its result: written by the provider's schema module. */
 export interface QdrantCollectionFacts {
-  /** Every vector of the collection, the unnamed one under the name "". `nativeType` is the column's type text. */
+  /** Every vector of the collection, the unnamed one under the name "". */
   readonly vectors: readonly VectorFieldInfo[];
+  /** Each vector's column type text, `Dense(384, float32, Cosine; stored normalised)` and the rest, by vector name. */
+  readonly typeTexts: ReadonlyMap<string, string>;
   /** The names of the vectors the server answers as a reconstruction of what was stored (datatype turbo4). */
   readonly reconstructed: ReadonlySet<string>;
   /** Each indexed payload key and its index type. */

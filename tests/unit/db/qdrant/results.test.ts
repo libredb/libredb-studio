@@ -12,6 +12,7 @@ import {
   qdrantPhase1,
 } from "@/lib/db/providers/vector/qdrant/request";
 import { qdrantResult } from "@/lib/db/providers/vector/qdrant/results";
+import { qdrantDeclaredColumns, readQdrantCollection } from "@/lib/db/providers/vector/qdrant/schema";
 import { capturedText, dense, factsOf, seededFacts } from "../../../helpers/qdrant-facts";
 
 const options = { executionTime: 7 };
@@ -39,12 +40,19 @@ describe("point ids and vectors from the seeded captures", () => {
     expect(result.fields).toEqual(["id", "vector.text", "vector.image", "vector.colbert", "vector.keywords", "seq"]);
     expect(result.columnTypes).toEqual({
       id: "uint64 or UUID",
-      "vector.text": "float32(384)",
-      "vector.image": "float32(64)",
-      "vector.colbert": "float32(16) multivector",
-      "vector.keywords": "sparse float32",
+      "vector.text": "Dense(384, float32, Cosine; stored normalised)",
+      "vector.image": "Dense(64, float32, Euclid)",
+      "vector.colbert": "Multi(16, float32, Dot, max_sim)",
+      "vector.keywords": "Sparse(idf)",
       seq: "integer",
     });
+    // The grid's type for a vector column is the tree's type for the same column.
+    const declared = qdrantDeclaredColumns(
+      readQdrantCollection("docs", (JSON.parse(capturedText("describe-docs")) as { result: unknown }).result),
+    );
+    for (const column of ["vector.text", "vector.image", "vector.colbert", "vector.keywords"]) {
+      expect(result.columnTypes?.[column]).toBe(declared.find((entry) => entry.name === column)?.type);
+    }
     expect(result.vectorColumns).toEqual({
       "vector.text": { kind: "dense", dtype: "float32", dimension: 384 },
       "vector.image": { kind: "dense", dtype: "float32", dimension: 64 },

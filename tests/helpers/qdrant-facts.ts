@@ -1,12 +1,13 @@
 /**
  * Qdrant collection facts and answers for the console's tests, from PR 1v's committed captures under
- * tests/fixtures/vector/qdrant/: each seeded collection's `VectorFieldInfo[]` from expected-fields.json, its turbo4
- * vectors and payload index types from its describe capture, and an answer's exact text from a capture. Nothing
- * here calls a server.
+ * tests/fixtures/vector/qdrant/: each seeded collection's `VectorFieldInfo[]` from expected-fields.json, its type
+ * texts, turbo4 vectors and payload index types from its describe capture, and an answer's exact text from a
+ * capture. Nothing here calls a server.
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { QdrantCollectionFacts } from "@/lib/db/providers/vector/qdrant/request";
+import { qdrantVectors, readQdrantCollection } from "@/lib/db/providers/vector/qdrant/schema";
 import type { VectorFieldInfo } from "@/lib/db/vector/types";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures", "vector", "qdrant");
@@ -43,8 +44,10 @@ export function seededFacts(collection: string): QdrantCollectionFacts {
   const declared = described.result.config.params.vectors ?? {};
   const named: Readonly<Record<string, DescribedVector>> =
     "size" in declared ? { "": declared as DescribedVector } : (declared as Readonly<Record<string, DescribedVector>>);
+  const typed = qdrantVectors(readQdrantCollection(collection, described.result));
   return {
     vectors,
+    typeTexts: new Map(typed.map((vector) => [vector.name, vector.typeText])),
     reconstructed: new Set(Object.keys(named).filter((name) => named[name].datatype === "turbo4")),
     payloadIndexTypes: new Map(
       Object.entries(described.result.payload_schema).map(([key, index]) => [key, index.data_type]),
@@ -52,9 +55,17 @@ export function seededFacts(collection: string): QdrantCollectionFacts {
   };
 }
 
-/** Facts for a synthetic collection of the given vectors, with no payload index and nothing reconstructed. */
+/**
+ * Facts for a synthetic collection of the given vectors, with no payload index and nothing reconstructed; each
+ * vector's type text is the `nativeType` its synthetic field declares.
+ */
 export function factsOf(vectors: readonly VectorFieldInfo[]): QdrantCollectionFacts {
-  return { vectors, reconstructed: new Set(), payloadIndexTypes: new Map() };
+  return {
+    vectors,
+    typeTexts: new Map(vectors.map((vector) => [vector.name, vector.nativeType])),
+    reconstructed: new Set(),
+    payloadIndexTypes: new Map(),
+  };
 }
 
 /** A dense vector field, as a synthetic collection declares it. */

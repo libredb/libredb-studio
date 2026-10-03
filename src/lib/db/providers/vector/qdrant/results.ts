@@ -309,7 +309,7 @@ function points(
   const vectorColumns: Record<string, VectorColumn> = {};
   for (const [column, field] of columns.vectors) {
     if (field === null) continue;
-    columnTypes[column] = field.nativeType;
+    columnTypes[column] = shape.facts?.typeTexts.get(field.name) ?? field.nativeType;
     vectorColumns[column] = qdrantVectorColumn(field);
   }
   for (const column of columns.payload) {
