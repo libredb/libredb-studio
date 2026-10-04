@@ -131,14 +131,14 @@ export function detectEngine(service: DiscoveredService): EngineMatch | null {
 }
 
 /**
- * The password in Valkey's VALKEY_EXTRA_FLAGS: the token after --requirepass, with one pair of
- * surrounding quotes removed, as valkey-server's own argument parser removes them.
+ * The password in Valkey's VALKEY_EXTRA_FLAGS: the token after --requirepass, up to the next blank, as
+ * written. The official image expands the variable unquoted (`exec "$@" $VALKEY_EXTRA_FLAGS`), so the shell
+ * splits it on blanks and removes no quotes: a quote is part of the password valkey-server enforces
+ * (measured on valkey/valkey:8.0.1-alpine), and a value with a blank in it cannot be set at all.
  */
 export function valkeyPasswordOf(flags: string): string | undefined {
-  const match = /(?:^|\s)--requirepass\s+(?:"([^"]*)"|'([^']*)'|(\S+))/.exec(flags);
-  if (match === null) return undefined;
-  const token = match[1] ?? match[2] ?? match[3];
-  return token === "" ? undefined : token;
+  const match = /(?:^|\s)--requirepass\s+(\S+)/.exec(flags);
+  return match === null ? undefined : match[1];
 }
 
 function redisPasswordOf(service: DiscoveredService, variant: EngineMatch["variant"]): string | undefined {

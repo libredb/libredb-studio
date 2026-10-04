@@ -751,13 +751,14 @@ Any other image is ignored and is not reported as skipped.
 | `mysql` | 3306 | `root` | `MYSQL_ROOT_PASSWORD`, required | `mysql` | none |
 | `mongodb` | 27017 | `MONGO_INITDB_ROOT_USERNAME`, required | `MONGO_INITDB_ROOT_PASSWORD`, required | none | `authSource: admin` |
 | `redis` (Redis) | 6379 | none | the variable `requirepassEnv` names, else none | `0` | none |
-| `redis` (Valkey) | 6379 | none | the token after `--requirepass` in `VALKEY_EXTRA_FLAGS`, quotes removed, else none | `0` | none |
+| `redis` (Valkey) | 6379 | none | the token after `--requirepass` in `VALKEY_EXTRA_FLAGS`, as written, quotes included, else none | `0` | none |
 | `redis` (KeyDB) | 6379 | none | `KEYDB_PASSWORD`, else none | `0` | none |
 | `redis` (Dragonfly) | 6379 | none | `DFLY_requirepass`, else none | `0` | none |
 
 The host is always the exporter's host for that service and must match `^[a-z0-9]([a-z0-9-]{0,251}[a-z0-9])?$`; a service whose host does not is skipped with a reason.
 A missing required field skips the service with a reason.
 The official redis image ignores `REDIS_PASSWORD` on its own, and the redis one-click template makes it effective through `--requirepass $REDIS_PASSWORD` in its command, which is why the password comes through `requirepassEnv`.
+The official valkey image passes `VALKEY_EXTRA_FLAGS` to the server unquoted, so quote characters around the `--requirepass` value are part of the password it enforces, and a value with a blank in it cannot be set at all; Studio therefore takes the token as written.
 Credentials are a snapshot of the environment CapRover set: a password changed later inside the database makes the connection fail with an authentication error.
 
 ### What every discovered connection gets

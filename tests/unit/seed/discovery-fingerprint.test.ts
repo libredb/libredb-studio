@@ -237,9 +237,11 @@ describe("valkeyPasswordOf", () => {
     ["--maxmemory 1gb --requirepass s3cret --appendonly yes", "s3cret"],
     ["--requirepass    s3cret", "s3cret"],
     ["--requirepass\ts3cret", "s3cret"],
-    ['--requirepass "s3 cret"', "s3 cret"],
-    ["--requirepass 's3 cret'", "s3 cret"],
-    ['--requirepass "s3cret" --maxmemory 1gb', "s3cret"],
+    // The official image expands VALKEY_EXTRA_FLAGS unquoted, so quotes reach valkey-server as part of the password.
+    ['--requirepass "s3cret"', '"s3cret"'],
+    ["--requirepass 's3cret'", "'s3cret'"],
+    ['--requirepass "s3cret" --maxmemory 1gb', '"s3cret"'],
+    ['--requirepass ""', '""'],
     ["--requirepass p=a$$w0rd", "p=a$$w0rd"],
   ])("reads %s as %s", (flags, password) => {
     expect(valkeyPasswordOf(flags)).toBe(password);
@@ -250,7 +252,6 @@ describe("valkeyPasswordOf", () => {
     ["other flags only", "--maxmemory 1gb"],
     ["the flag without a value", "--requirepass"],
     ["the flag followed by blanks only", "--requirepass   "],
-    ["an empty quoted value", '--requirepass ""'],
     ["a longer flag name", "--requirepassword s3cret"],
     ["the flag glued to another token", "x--requirepass s3cret"],
   ])("finds no password in %s", (_label, flags) => {
@@ -432,8 +433,8 @@ describe("mapToSeedConnection (spec section 9.4)", () => {
     expect(result.ok && "password" in result.connection).toBe(false);
   });
 
-  it("maps Valkey with the password from VALKEY_EXTRA_FLAGS, quotes removed", () => {
-    const svc = service("valkey/valkey:8", { VALKEY_EXTRA_FLAGS: "--requirepass 'v pw' --maxmemory 1gb" });
+  it("maps Valkey with the password from VALKEY_EXTRA_FLAGS as written, quotes included", () => {
+    const svc = service("valkey/valkey:8", { VALKEY_EXTRA_FLAGS: "--requirepass 'v-pw' --maxmemory 1gb" });
     expect(mapToSeedConnection(svc, matchOf(svc))).toEqual({
       ok: true,
       connection: {
@@ -442,7 +443,7 @@ describe("mapToSeedConnection (spec section 9.4)", () => {
         type: "redis",
         host: "srv-captain--app1",
         port: 6379,
-        password: "v pw",
+        password: "'v-pw'",
         database: "0",
         ...forced,
       },
