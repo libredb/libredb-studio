@@ -365,13 +365,30 @@ target that fails on most views in most schemas. `kindAcceptsRowWrites()`
 to be written for that to hold.
 
 **`prokind` costs the routine folders, never the container.** `pg_proc.prokind` arrived in
-PostgreSQL 11, and the wire-compatible forks do not all have it; a server without it answers
-`42703` for the routine arm of the counting statement. `countObjects()` re-runs the statement with
-that arm removed, so the relations and the triggers still carry their counts and only `function`
-and `procedure` carry `{ unavailable }` with the server's own sentence. Losing two folders to a
-missing column is the right cost; losing the whole schema to it is not. The retry is keyed on the
-column name as well as the code, because `42703` is "undefined column" generally and re-running
-without the routine arm repairs nothing when the missing column was in an arm that survives.
+PostgreSQL 11, and the wire-compatible forks do not all have it. When the counting statement is
+refused with a sentence that names `prokind`, `countObjects()` re-runs it with the routine arm
+removed, so the relations and the triggers still carry their counts and only `function` and
+`procedure` carry `{ unavailable }` with the server's own sentence. Losing two folders to a missing
+column is the right cost; losing the whole schema to it is not.
+
+The retry is keyed on the column name, under ANY SQLSTATE, the way every other fallback in
+[postgres.ts](../../src/lib/db/providers/sql/postgres.ts) is keyed on the identifier it repairs.
+Only the routine arm names `prokind`, so a refusal that names it is a refusal of that arm. Any
+other refusal (a missing column in an arm the retry keeps, a statement timeout, a cancel, a
+serialization failure, a lost connection) is not retried: every folder carries that sentence from
+the first read, so a timeout is not waited out twice and is never filed under the routine pair. If
+the retry is refused too, the routine pair keeps the first sentence and the rest carry the retry's.
+
+The retry used to be keyed on `42703` as well, and that lost the whole tree on Materialize.
+Measured on Materialize v26.44.1 on 2026-10-04 with `\set VERBOSITY verbose`: the routine arm
+answers `ERROR: XX000: column "p.prokind" does not exist`, so the retry never ran and all seven
+folders, in every schema, showed that sentence and could not be opened. `XX000` is Materialize's
+generic internal error, so keying on it instead would read every internal failure as a missing
+column. On the same server the routine-free statement answers the tables, views and materialized
+views, so those three folders count and list, and only Functions and Procedures stay closed:
+`listObjects()` for them runs the same `prokind` filter and is refused the same way. PostgreSQL 18.6, which has the column, and RisingWave 3.1.0, whose `pg_proc`
+has it too, answer the full statement on the first read and draw all seven folders, measured the
+same day.
 
 **Three facts, not two.** `KindCount` is `{ count }` or `{ unavailable }`, and every declared kind
 is seeded at `{ count: 0 }` before the read. So a folder the engine has and this schema holds none

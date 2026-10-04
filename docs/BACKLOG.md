@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D225, U17 · 137
+- [Drivers and connections](#drivers-and-connections) — D1-D226, U17 · 138
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U85 · 79
@@ -765,20 +765,25 @@ from the pane.
 **Done when:** either the pane shows the cluster's own bytes, or the edit half is refused on a
 definition whose re-serialisation is not byte-identical to what was read.
 
-### D62. Two PostgreSQL source refusals are unverified on CockroachDB and Materialize
+### D62. The PostgreSQL source refusals never fire on Materialize, which answers XX000
 
 `PostgresProvider.readObjectSource` reports exactly two SQLSTATEs as a refusal part, 42883 (`pg_get_*`
-absent) and 42703 (`pg_proc.prokind` absent), and both arms exist because this type id also serves
-CockroachDB and Materialize.
+absent) and 42703 (`pg_proc.prokind` absent), and the docblock on `isMissingSourceCatalogError` in
+`src/lib/db/providers/sql/postgres.ts` still says both arms are reachable because this type id
+serves CockroachDB and Materialize.
 
-The sentences in `tests/integration/db/postgres-provider.test.ts` are the SHAPE PostgreSQL 18.4
-answers for a missing function and a missing column, measured; neither fork was brought up. The
-provider carries no string of its own, so a wording difference cannot break it, and what is
-unverified is only the claim that those two SQLSTATEs are what a fork answers there.
+Both forks have been measured since, and the docblock is wrong about both (recorded in
+`docs/providers/postgres.md` §3.1.5): CockroachDB v26.2.5 has every surface and needs neither arm,
+and Materialize (v26.40.0, and again v26.44.1 on 2026-10-04) answers `XX000` for
+`pg_get_functiondef`, `pg_get_triggerdef` and `p.prokind` alike, so every routine and trigger source
+read there RAISES rather than answering a refusal part. The object counts hit the same `XX000` and
+now key on the column name instead of the code (#1351); the source read was left alone because
+`XX000` is Materialize's generic internal error, and keying on it would turn real internal
+failures into refusals.
 
-**Done when:** each fork is brought up, a view's and a routine's source is asked for through the
-shipped statements, and the SQLSTATE and the sentence are recorded in `docs/providers/postgres.md`.
-If either answers a third code, that arm is a code change and not a doc change.
+**Done when:** the source read decides by the identifier the refusal names (as the counts and
+every schema fallback in that file do) or the decision to keep it raising is recorded, and the
+`isMissingSourceCatalogError` docblock states what the forks actually answer.
 
 ### D63. `postgres.ts`'s `describeObject` still binds `[path[0], path[1]]`
 
@@ -2497,6 +2502,16 @@ Reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-
 Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.25.
 
 **Done when:** the pinned `db2-node` writes a bound value to a `CLOB(1M)`, a `DBCLOB(1M)` and a `BLOB(1M)` alone and beside other parameters, K24 probes `GONE` on 12.1 and 11.5, and the editor refusal, the preview rule and the warning are removed with it.
+
+### D226. Object search, inventory and agent grounding still list routines on Materialize and fail
+
+Materialize's `pg_proc` has no `prokind`, so `PostgresProvider.listObjects()` for `function` and `procedure` is refused with `column "p.prokind" does not exist` (`XX000`).
+The object tree is spared since #1351: the count marks both kinds unavailable and the tree does not open an unavailable folder.
+Three other callers list every declared kind without asking the count first, so one refused kind fails the whole read: the search route (`src/app/api/db/objects/search/route.ts`, the `listObjects(container, kind.id)` loop), the inventory route (`src/app/api/db/objects/inventory/route.ts`, the `listObjects(pair.container, pair.kind)` loop), and the agent's inventory grounding (`src/lib/agent/tools.ts`), which skips a kind whose count was refused only when the kind declares `countIsListing`, and the PostgreSQL routine kinds do not.
+
+Found 2026-10-04 by the review of the #1351 fix; pre-existing, not measured end to end through those three surfaces.
+
+**Done when:** on a Materialize connection, search, inventory and the agent's grounding answer for tables, views and materialized views, with the two routine kinds reported as unavailable rather than failing the read.
 
 ## Value interpolation
 
