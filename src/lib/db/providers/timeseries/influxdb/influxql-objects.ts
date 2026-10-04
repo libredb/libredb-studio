@@ -58,8 +58,8 @@ const MEASUREMENT_SAMPLE = "the first 2,000 measurements SHOW MEASUREMENTS retur
 
 /** What one surface call runs with; the provider builds one per call. */
 export interface InfluxqlCatalogContext {
-  /** One `/query` under its own permit. */
-  readonly send: InfluxSend<"query">;
+  /** One unchunked `/query` under its own permit: every catalog text is a SHOW (R53). */
+  readonly send: InfluxSend<"query-unchunked">;
   /** The surface call's one deadline (R43): every read of the call is handed the same signal. */
   readonly signal: () => AbortSignal;
   /** The generation `/ping` reported, which decides whether `_internal` is browsed. */
@@ -89,7 +89,7 @@ async function catalogRead(
   if ("refused" in run) throw new QueryError(run.refused, "influxdb");
   const values: Readonly<Record<string, string>> =
     run.database === undefined ? { q: text } : { q: text, db: run.database };
-  const answer = await context.send({ route: "query", values }, context.signal());
+  const answer = await context.send({ route: "query-unchunked", values }, context.signal());
   if (answer.status !== 200) throw new InfluxAnswerError(answer, INFLUXQL_ROUTES.query.path);
   return readInfluxqlCatalogRows(answer.text, columns);
 }

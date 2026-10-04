@@ -63,15 +63,21 @@ const CONTAINERS: Readonly<Record<InfluxFixtureVersion, readonly string[]>> = {
 
 const EMPTY_RESULT = '{"results":[{"statement_id":0}]}\n';
 
+/** An answer for one text: a capture, or one chosen by the rest of the request. */
+type ExtraAnswer = InfluxCapture | ((request: RecordedInfluxRequest) => InfluxCapture);
+
 /** The seeded server of one line: each request answered by the capture of what it asks. */
-function recordedServer(version: InfluxFixtureVersion, extra: Readonly<Record<string, InfluxCapture>> = {}) {
+function recordedServer(version: InfluxFixtureVersion, extra: Readonly<Record<string, ExtraAnswer>> = {}) {
   const capture = (name: string) => loadInfluxCapture(version, name);
   const answer = (request: RecordedInfluxRequest): InfluxCapture => {
     const path = new URL(request.url).pathname;
     if (path === "/ping") return capture(version === "3.12.0-core" ? "ping-auth" : "ping-anon");
     if (path === "/health") return capture("health-anon");
     const q = request.form?.q ?? "";
-    if (Object.hasOwn(extra, q)) return extra[q];
+    if (Object.hasOwn(extra, q)) {
+      const scripted = extra[q];
+      return typeof scripted === "function" ? scripted(request) : scripted;
+    }
     if (q === "SHOW DATABASES") return capture("show-databases-admin");
     // The capture was taken as `SHOW MEASUREMENTS ON "home"`; its six names are under the provider's LIMIT 2001.
     if (q === 'SHOW MEASUREMENTS ON "home" LIMIT 2001') return capture("show-measurements-home");
@@ -217,6 +223,37 @@ describe.each([...INFLUX_FIXTURE_VERSIONS])("InfluxDB %s, replayed", (version) =
     const error = await rejection(provider.query(home.request.form?.q as string));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe(S.truncated);
+    await provider.disconnect();
+  });
+
+  test("R53: SHOW TAG KEYS and SHOW TAG VALUES over every measurement show their rows, sent unchunked", async () => {
+    // Each text is answered as the line answered it: chunked when the request asks for chunks, whole otherwise. The
+    // captures name their database with db=home; the texts here name it with ON, as the connection names none.
+    const shows = [
+      ['SHOW TAG KEYS ON "home"', "show-tag-keys-all"],
+      ['SHOW TAG VALUES ON "home" WITH KEY = "room"', "show-tag-values-room"],
+    ] as const;
+    const { provider, wire } = recordedServer(
+      version,
+      Object.fromEntries(
+        shows.map(([q, name]) => [
+          q,
+          (request: RecordedInfluxRequest) =>
+            loadInfluxCapture(version, request.form?.chunked === "true" ? `${name}-chunked` : name),
+        ]),
+      ),
+    );
+    await provider.connect();
+    for (const [q, name] of shows) {
+      // oxlint-disable-next-line no-await-in-loop -- one run at a time on one provider.
+      const result = await provider.query(q);
+      expect(wire.requests.at(-1)?.form).toEqual({ db: "home", q });
+      const whole = JSON.parse(loadInfluxCapture(version, name).body) as {
+        results: { series: { values: unknown[] }[] }[];
+      };
+      expect(result.rowCount).toBe(whole.results[0].series.reduce((sum, entry) => sum + entry.values.length, 0));
+      expect(result.rowCount).toBeGreaterThan(1);
+    }
     await provider.disconnect();
   });
 });

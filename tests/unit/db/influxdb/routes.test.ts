@@ -45,7 +45,20 @@ describe("INFLUXQL_ROUTES", () => {
           chunk_size: { fixed: "1000" },
         },
       },
+      "query-unchunked": {
+        method: "POST",
+        path: "/query",
+        query: {},
+        form: { db: { fill: "optional" }, q: { fill: "required" } },
+      },
     });
+  });
+
+  test("the unchunked row sends exactly db and q, for SHOW, EXPLAIN and the catalog reads (R53)", () => {
+    const whole = INFLUXQL_ROUTES["query-unchunked"];
+    expect([whole.method, whole.path, whole.body]).toEqual(["POST", "/query", undefined]);
+    expect(Object.keys(whole.query)).toEqual([]);
+    expect(Object.keys(whole.form ?? {})).toEqual(["db", "q"]);
   });
 
   test("the query route is a form POST with no URL query key and no JSON body (R14)", () => {

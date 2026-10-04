@@ -91,6 +91,10 @@ const EXPECTED_CAPTURES: Readonly<Record<string, readonly EvidenceLine[]>> = {
   "show-tag-keys-home": ALL,
   "show-field-keys-home": ALL,
   "show-retention-policies-home": ALL,
+  "show-tag-keys-all-chunked": ALL,
+  "show-tag-keys-all": ALL,
+  "show-tag-values-room-chunked": ALL,
+  "show-tag-values-room": ALL,
   "show-measurements-edge": [V3],
   "preview-home": ALL,
   "preview-edge-empty": ALL,
@@ -373,6 +377,20 @@ describe("the whole plan (E22)", () => {
     const get = byCapture(V3, "get-64k-414");
     expect([get.kind, get.method, get.path, get.form]).toEqual(["raw", "GET", "/query", undefined]);
     expect(get.query?.q).toBe(textOf(byCapture(V3, "form-64k-quotes")));
+  });
+
+  test("captures each multi-measurement SHOW on every line chunked and unchunked, the same text otherwise (R53)", () => {
+    for (const line of ALL) {
+      for (const capture of ["show-tag-keys-all", "show-tag-values-room"]) {
+        const whole = PLAN.find((entry) => entry.line === line && entry.capture === capture) as EvidenceEntry;
+        const chunked = PLAN.find(
+          (entry) => entry.line === line && entry.capture === `${capture}-chunked`,
+        ) as EvidenceEntry;
+        expect(Object.keys(whole.form ?? {})).toEqual(["db", "q"]);
+        expect(chunked.form).toEqual({ ...whole.form, chunked: "true", chunk_size: "1000" });
+        expect([whole.method, whole.path, chunked.method, chunked.path]).toEqual(["POST", "/query", "POST", "/query"]);
+      }
+    }
   });
 
   test("marks only the two truncation captures as cut, each with the cut 3.12.0 gives it (R39)", () => {

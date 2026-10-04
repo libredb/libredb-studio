@@ -14,8 +14,9 @@ import {
   resolveSessionDatabase,
 } from "@/lib/db/providers/timeseries/influxdb/run-database";
 
+// R54 (4): every option the sentence names exists; a container row has no action, and SHOW names its database with ON.
 const CHOOSE =
-  'Choose a database: open the statement from a database in the tree, set Database on the connection, or name it in the statement as "db".."measurement".';
+  'Choose a database: open the statement from a measurement in the tree, set Database on the connection, or name it in the statement as "db".."measurement" (ON "db" for SHOW).';
 // R44 (1): one sentence true on every line that hides `_internal`, 2.x and an unknown generation included.
 const INTERNAL =
   "Studio does not read the _internal database on this server; on InfluxDB 3 it holds the server's token table.";

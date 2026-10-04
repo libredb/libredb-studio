@@ -31,8 +31,9 @@ const INTERNAL_DATABASE = "_internal";
 const SESSION_NAMES_SHOWN = 10;
 
 export const RUN_DATABASE_SENTENCES = {
+  // R54 (4): a container row has no action, so the tree option is a measurement; a SHOW names its database with ON.
   chooseDatabase:
-    'Choose a database: open the statement from a database in the tree, set Database on the connection, or name it in the statement as "db".."measurement".',
+    'Choose a database: open the statement from a measurement in the tree, set Database on the connection, or name it in the statement as "db".."measurement" (ON "db" for SHOW).',
   // One sentence for every generation that hides `_internal`, 2.x and unknown included, with no branch (R44).
   internalHidden:
     "Studio does not read the _internal database on this server; on InfluxDB 3 it holds the server's token table.",

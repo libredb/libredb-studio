@@ -253,7 +253,7 @@ Studio chooses it per run, in this order:
 4. Otherwise the connection's Database field; a field set to `_internal` on a line that hides it is refused with the sentence of step 1.
 5. Otherwise the only database the credential lists at connect, `_internal`, `_monitoring` and `_tasks` never counted.
 6. Otherwise the run is refused:
-   > Choose a database: open the statement from a database in the tree, set Database on the connection, or name it in the statement as "db".."measurement".
+   > Choose a database: open the statement from a measurement in the tree, set Database on the connection, or name it in the statement as "db".."measurement" (ON "db" for SHOW).
 
 Sent with no database: `SHOW DATABASES`, `SHOW USERS`, `SHOW GRANTS FOR`, `SHOW QUERIES`, `SHOW STATS`, `SHOW DIAGNOSTICS`, `SHOW SHARDS`, `SHOW SHARD GROUPS`, `SHOW SUBSCRIPTIONS`, `SHOW CONTINUOUS QUERIES`.
 
@@ -276,7 +276,9 @@ What runs, as plan mode states it:
 InfluxQL: one SELECT, SHOW or EXPLAIN statement, no INTO, no Flux; name a measurement as "db".."measurement".
 ```
 
-Every run is `POST /query` with no URL query string and an `application/x-www-form-urlencoded` body of exactly `db`, `q`, `chunked=true` and `chunk_size`.
+Every run is `POST /query` with no URL query string and an `application/x-www-form-urlencoded` body.
+A `SELECT` sends exactly `db`, `q`, `chunked=true` and `chunk_size`.
+A `SHOW` or an `EXPLAIN`, and every read of the tree, sends exactly `db` and `q`, unchunked: chunked, 1.13.1 and 2.9.1 answer a `SHOW TAG KEYS` or `SHOW TAG VALUES` over more than one measurement with one complete document per measurement, which Studio cannot tell from a second statement, while unchunked they answer one document.
 It is a form POST because 3.12.0 refuses a GET whose request target passes 65,534 characters (414), while a 64 KiB form body answers 200 on all three lines, and because the statement then stays out of URL access logs and proxy request-line limits.
 `epoch` is never sent, so times arrive as RFC3339 text with nanoseconds.
 
@@ -287,7 +289,9 @@ It is a form POST because 3.12.0 refuses a GET whose request target passes 65,53
 | `GET /ping` | none | none |
 | `GET /health` | none | none |
 | `POST /query` | none | `db` (optional), `q` (required), `chunked=true`, `chunk_size=1000` |
+| `POST /query` | none | `db` (optional), `q` (required) |
 
+The first `POST /query` row sends a `SELECT`, the second a `SHOW` or an `EXPLAIN`.
 The client builds a request from a row and nothing else, so no other path or key reaches the wire: never `u`, `p`, `params`, `epoch`, `rp`, `pretty`, `async`, `time_format` or `verbose`.
 
 ### 5.3 What the policy refuses
@@ -334,6 +338,8 @@ A truncated 200, whose body ends before it completes, is a failure, never zero r
 When the answer holds results for more than one statement although the policy read one, Studio shows no row and reports the disagreement between its reader and the server (section 10).
 An InfluxQL `LIMIT` acts per series, so a result can hold more rows than its `LIMIT`; the provider's own row cut (section 5.5) bounds the grid and reports itself on `wasLimited`.
 When the server cuts a result at its `max-row-limit` it marks it partial, and Studio shows the notice "InfluxDB marked this result partial: the server cut it (max-row-limit)." with the rows.
+A notice the server sends with a result (`messages`) is shown with the rows, and passes the same `serverText` rule as an error text (section 10), so one that holds a form of the credential is withheld whole.
+An answer nested deeper than 64 levels is refused as not JSON before it is read.
 
 ### 5.5 Bounds
 
@@ -342,8 +348,8 @@ When the server cuts a result at its `max-row-limit` it marks it partial, and St
 | Statement text | 65,536 bytes of UTF-8, counted before the text is read |
 | Response | 16 MiB per answer, past which the socket is closed and the run fails |
 | Rows | 10,000 rows per result, reported on `wasLimited` |
-| Cells | 250,000 cells (rows times columns) per result |
-| Chunk size | `chunk_size=1000` points per document of the chunked answer |
+| Cells | 250,000 cells (rows times columns) per result; a result with more columns keeps the first 250,000 and reports itself on `wasLimited` |
+| Chunk size | `chunk_size=1000` points per document of the chunked answer to a `SELECT` |
 | Listings | 2,000 names per database or measurement listing; a count past it is a floor |
 | Statement deadline | the connection's query timeout |
 | Tree, connect and monitoring | 10 seconds for each call, every read of the call included, under the query timeout |

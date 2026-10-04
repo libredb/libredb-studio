@@ -1,10 +1,12 @@
 /**
  * A `/query` answer as a result (InfluxDB spec 3.4, 5.1 steps 10 and 11, 5.3 C5; E5).
  *
- * Every `/query` is sent chunked (I9), so a 200 body is one or more JSON documents: newline-separated on 1.x and
- * 2.x, back to back with no separator on 3.x, and a series cut by `chunk_size` continues in the next document with
+ * A SELECT is sent chunked (I9), so its 200 body is one or more JSON documents: newline-separated on 1.x and 2.x,
+ * back to back with no separator on 3.x, and a series cut by `chunk_size` continues in the next document with
  * `partial: true` on the series and its result (K5, the `group-by-room-partial` captures). 3.12.0 answers a chunked
- * read that matches nothing with zero bytes, which is an empty result.
+ * read that matches nothing with zero bytes, which is an empty result. A SHOW or an EXPLAIN is sent unchunked (R53),
+ * because 1.x and 2.x answer a chunked SHOW over several measurements with one complete document per measurement,
+ * which step 3 could not tell from a second statement; unchunked, its body is one document.
  *
  * `shapeInfluxqlBody` reads the whole body in one order, each step over every document before the next:
  *
@@ -22,6 +24,7 @@
  * no pattern reads the server's text (R40): the split is a character scan and the rest reads parsed values.
  */
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { serverText } from "@/lib/db/utils/server-text";
 import type { QueryWarning } from "@/lib/types";
 import type { InfluxShapeLimits, ShapedResult } from "./connection-options";
 import { INFLUX_ERROR_SENTENCES, InfluxAnswerShapeError } from "./errors";
@@ -32,14 +35,22 @@ const MEASUREMENT_COLUMN_RENAMED = "measurement (series)";
 
 const JSON_WHITESPACE: ReadonlySet<string> = new Set([" ", "\t", "\n", "\r"]);
 
+/**
+ * R47, R54: the deepest nesting a document may have, its own object counted as level one. A cell sits at level 8
+ * (`results`, its result, `series`, a series, `values`, a row), so a cell may nest 56 levels, far above anything a
+ * server writes, and no later `JSON.stringify` of a row can overflow the stack.
+ */
+const MAX_DOCUMENT_DEPTH = 64;
+
 function notJson(): InfluxAnswerShapeError {
   return new InfluxAnswerShapeError("not-json");
 }
 
 /**
  * Splits a `/query` body into its JSON documents: newline-separated (1.x, 2.x) or back to back (3.x). String-aware:
- * a brace inside a string does not end a document. Text between documents that is not whitespace, and a document
- * that never closes, are refused as not JSON; whether a document is valid JSON is `JSON.parse`'s to say.
+ * a brace inside a string does not end a document. Text between documents that is not whitespace, a document that
+ * never closes, and one nested deeper than `MAX_DOCUMENT_DEPTH` are refused as not JSON; whether a document is valid
+ * JSON is `JSON.parse`'s to say.
  */
 export function splitJsonDocuments(text: string): readonly string[] {
   const documents: string[] = [];
@@ -62,6 +73,7 @@ export function splitJsonDocuments(text: string): readonly string[] {
       inString = true;
     } else if (character === "{" || character === "[") {
       depth += 1;
+      if (depth > MAX_DOCUMENT_DEPTH) throw notJson();
     } else if (character === "}" || character === "]") {
       depth -= 1;
       if (depth === 0) documents.push(text.slice(start, index + 1));
@@ -192,17 +204,25 @@ function gridRow(
   lead?: string,
 ): Record<string, unknown> {
   const cells = new Map<string, unknown>(fields.map((field) => [field, null]));
-  if (lead !== undefined) cells.set(lead, series.name ?? null);
-  for (const [key, value] of Object.entries(series.tags)) cells.set(key, value);
+  // A column the cell budget left out of `fields` is not a cell (R54).
+  const put = (key: string, value: unknown) => {
+    if (cells.has(key)) cells.set(key, value);
+  };
+  if (lead !== undefined) put(lead, series.name ?? null);
+  for (const [key, value] of Object.entries(series.tags)) put(key, value);
   series.columns.forEach((column, index) => {
-    cells.set(column, values[index] ?? null);
+    put(column, values[index] ?? null);
   });
   return Object.fromEntries(cells);
 }
 
-/** The server's notices, once each in first-seen order, then the partial marker of the last document. */
-function engineWarnings(statements: readonly Result[]): readonly QueryWarning[] {
-  const messages = [...new Set(statements.flatMap((result) => result.messages))];
+/**
+ * The server's notices, each through `serverText` with the connection's secret forms as an error text is (R54), once
+ * each in first-seen order, then the partial marker of the last document.
+ */
+function engineWarnings(statements: readonly Result[], secretForms: readonly string[]): readonly QueryWarning[] {
+  const notices = statements.flatMap((result) => result.messages).map((message) => serverText(message, secretForms));
+  const messages = [...new Set(notices)];
   const warnings: QueryWarning[] = messages.map((message) => ({ message }));
   if (statements.at(-1)?.partial === true) warnings.push({ message: INFLUX_ERROR_SENTENCES.partial as string });
   return warnings;
@@ -226,11 +246,23 @@ export function readInfluxqlCatalogRows(text: string, columns: readonly string[]
   return rows;
 }
 
-/** A `/query` 200 body as one grid (spec 5.1 step 10). Throws `InfluxAnswerShapeError`. */
-export function shapeInfluxqlBody(text: string, limits: InfluxShapeLimits): ShapedResult {
+/**
+ * A `/query` 200 body as one grid (spec 5.1 step 10). The grid keeps no more columns than the cell budget, and a
+ * column past it sets `cut` as a row past it does (R54), as `shapeJsonlBody` keeps none. `secretForms` are the
+ * connection's (`InfluxConnectionOptions.secretForms`), which the server's notices pass. Throws
+ * `InfluxAnswerShapeError`.
+ */
+export function shapeInfluxqlBody(
+  text: string,
+  limits: InfluxShapeLimits,
+  secretForms: readonly string[],
+): ShapedResult {
   const statements = statementResults(splitJsonDocuments(text).map(readDocument));
   const series = statements.flatMap((result) => result.series);
-  const { fields, lead } = gridColumns(series);
+  const grid = gridColumns(series);
+  const columnsCut = grid.fields.length > limits.cellBudget;
+  const fields = columnsCut ? grid.fields.slice(0, limits.cellBudget) : grid.fields;
+  const { lead } = grid;
   const kept = Math.min(limits.rowCut, Math.floor(limits.cellBudget / Math.max(fields.length, 1)));
   const rows: Record<string, unknown>[] = [];
   let total = 0;
@@ -240,5 +272,5 @@ export function shapeInfluxqlBody(text: string, limits: InfluxShapeLimits): Shap
       if (rows.length < kept) rows.push(gridRow(fields, entry, values, lead));
     }
   }
-  return { fields, rows, cut: total > kept, warnings: engineWarnings(statements) };
+  return { fields, rows, cut: columnsCut || total > kept, warnings: engineWarnings(statements, secretForms) };
 }

@@ -1,0 +1,19 @@
+{
+  "version": "2.9.1",
+  "name": "show-tag-values-room",
+  "image": "influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "db": "home",
+      "q": "SHOW TAG VALUES WITH KEY = \"room\""
+    },
+    "auth": "token"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"home\",\"columns\":[\"key\",\"value\"],\"values\":[[\"room\",\"Kitchen\"],[\"room\",\"Living Room\"]]},{\"name\":\"we\\\"ird name;x\",\"columns\":[\"key\",\"value\"],\"values\":[[\"room\",\"a\"]]}]}]}\n"
+}

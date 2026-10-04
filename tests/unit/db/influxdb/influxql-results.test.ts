@@ -16,6 +16,7 @@ import {
   shapeInfluxqlBody,
   splitJsonDocuments,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-results";
+import { secretForms, serverText } from "@/lib/db/utils/server-text";
 import {
   INFLUX_FIXTURE_VERSIONS,
   type InfluxFixtureVersion,
@@ -24,15 +25,17 @@ import {
 } from "../../../helpers/influxdb-fixtures";
 
 const LIMITS: InfluxShapeLimits = { rowCut: INFLUX_ROW_CUT, cellBudget: INFLUX_CELL_BUDGET };
+/** A connection with no password or token: no notice is withheld. */
+const NO_SECRETS: readonly string[] = [];
 
 function shapeCapture(version: InfluxFixtureVersion, name: string, limits: InfluxShapeLimits = LIMITS) {
-  return shapeInfluxqlBody(loadInfluxCapture(version, name).body, limits);
+  return shapeInfluxqlBody(loadInfluxCapture(version, name).body, limits, NO_SECRETS);
 }
 
 /** The fault (and server text) a body is refused with. */
 function refusal(text: string): { fault: string; serverText: string | undefined } {
   try {
-    shapeInfluxqlBody(text, LIMITS);
+    shapeInfluxqlBody(text, LIMITS, NO_SECRETS);
   } catch (error) {
     expect(error).toBeInstanceOf(InfluxAnswerShapeError);
     const shape = error as InfluxAnswerShapeError;
@@ -87,6 +90,21 @@ describe("splitJsonDocuments", () => {
       expect(docs).toHaveLength(14);
       for (const text of docs) expect(() => JSON.parse(text)).not.toThrow();
     }
+  });
+
+  test("R54: a document nested 64 levels deep is split, and one nested 65 levels deep is not JSON (R47)", () => {
+    const nested = (levels: number) => `{"a":${"[".repeat(levels - 1)}${"]".repeat(levels - 1)}}`;
+    expect(splitJsonDocuments(nested(64))).toEqual([nested(64)]);
+    expect(splitFault(nested(65))).toBe("not-json");
+    expect(splitFault(`{"s":"${"[".repeat(100)}"}${nested(65)}`)).toBe("not-json");
+    expect(splitJsonDocuments(`{"s":"${"[".repeat(100)}"}`)).toHaveLength(1);
+  });
+
+  test("R54: a cell nested 200,000 levels deep is refused before it is parsed, so no result overflows the stack", () => {
+    const deep = doc({
+      series: [{ name: "m", columns: ["a"], values: [] }],
+    }).replace('"values":[]', `"values":[[${"[".repeat(200_000)}${"]".repeat(200_000)}]]`);
+    expect(refusal(deep)).toEqual({ fault: "not-json", serverText: undefined });
   });
 
   test("a multi-MiB hostile body is split in linear time (R40)", () => {
@@ -287,7 +305,7 @@ describe("flattening", () => {
         { name: "b", tags: { measurement: "y" }, columns: ["time", "v"], values: [["t2", 2]] },
       ],
     });
-    const byTag = shapeInfluxqlBody(tagged, LIMITS);
+    const byTag = shapeInfluxqlBody(tagged, LIMITS, NO_SECRETS);
     expect(byTag.fields).toEqual(["measurement (series)", "measurement", "time", "v"]);
     expect(byTag.rows[1]).toEqual({ "measurement (series)": "b", measurement: "y", time: "t2", v: 2 });
 
@@ -297,17 +315,21 @@ describe("flattening", () => {
         { name: "b", columns: ["time"], values: [["t2"]] },
       ],
     });
-    expect(shapeInfluxqlBody(column, LIMITS).fields).toEqual(["measurement (series)", "time", "measurement"]);
+    expect(shapeInfluxqlBody(column, LIMITS, NO_SECRETS).fields).toEqual([
+      "measurement (series)",
+      "time",
+      "measurement",
+    ]);
   });
 
   test("one series name: no measurement column, even when a column is named measurement", () => {
     const body = doc({ series: [{ name: "a", columns: ["time", "measurement"], values: [["t1", "m"]] }] });
-    expect(shapeInfluxqlBody(body, LIMITS).fields).toEqual(["time", "measurement"]);
+    expect(shapeInfluxqlBody(body, LIMITS, NO_SECRETS).fields).toEqual(["time", "measurement"]);
   });
 
   test("a series without a name or values (SHOW RETENTION POLICIES on 1.x, an empty series)", () => {
     const body = doc({ series: [{ columns: ["name", "default"], values: [["autogen", true]] }, { columns: ["x"] }] });
-    const shaped = shapeInfluxqlBody(body, LIMITS);
+    const shaped = shapeInfluxqlBody(body, LIMITS, NO_SECRETS);
     expect(shaped.fields).toEqual(["name", "default", "x"]);
     expect(shaped.rows).toEqual([{ name: "autogen", default: true, x: null }]);
   });
@@ -317,7 +339,7 @@ describe("flattening", () => {
       doc({ series: [{ name: "m", columns: ["time", "b"], values: [["t1", 1]], partial: true }], partial: true }),
       doc({ series: [{ name: "m", columns: ["time", "a", "b"], values: [["t2", 2, 3], ["t3"]] }] }),
     ].join("\n");
-    const shaped = shapeInfluxqlBody(body, LIMITS);
+    const shaped = shapeInfluxqlBody(body, LIMITS, NO_SECRETS);
     expect(shaped.fields).toEqual(["time", "b", "a"]);
     expect(shaped.rows).toEqual([
       { time: "t1", b: 1, a: null },
@@ -328,7 +350,7 @@ describe("flattening", () => {
 
   test("keys that look like array indices keep first-seen order", () => {
     const body = doc({ series: [{ name: "m", columns: ["time", "2", "1", "__proto__"], values: [["t", 2, 1, 0]] }] });
-    const shaped = shapeInfluxqlBody(body, LIMITS);
+    const shaped = shapeInfluxqlBody(body, LIMITS, NO_SECRETS);
     expect(shaped.fields).toEqual(["time", "2", "1", "__proto__"]);
     expect(Object.hasOwn(shaped.rows[0], "__proto__")).toBe(true);
     expect(shaped.rows[0]["1"]).toBe(1);
@@ -341,7 +363,7 @@ describe("warnings", () => {
       doc({ series: [{ name: "m", columns: ["time"], values: [["t1"]], partial: true }], partial: true }),
       doc({ series: [{ name: "m", columns: ["time"], values: [["t2"]] }], partial: true }),
     ].join("\n");
-    const shaped = shapeInfluxqlBody(body, LIMITS);
+    const shaped = shapeInfluxqlBody(body, LIMITS, NO_SECRETS);
     expect(shaped.rows).toHaveLength(2);
     expect(shaped.warnings).toEqual([{ message: INFLUX_ERROR_SENTENCES.partial as string }]);
     expect(shaped.cut).toBe(false);
@@ -357,7 +379,24 @@ describe("warnings", () => {
         ],
       }),
     ].join("");
-    expect(shapeInfluxqlBody(body, LIMITS).warnings).toEqual([{ message: "first" }, { message: "second" }]);
+    expect(shapeInfluxqlBody(body, LIMITS, NO_SECRETS).warnings).toEqual([{ message: "first" }, { message: "second" }]);
+  });
+
+  test("R54: a notice holding the configured secret, raw or as base64, is withheld as an error text is", () => {
+    const secret = "s3cr3t-token-value";
+    const forms = secretForms([secret]);
+    const base64 = Buffer.from(secret).toString("base64");
+    const body = doc({
+      messages: [
+        { level: "warning", text: `echo token Token ${secret}` },
+        { level: "warning", text: `echo basic ${base64}` },
+        { level: "info", text: "plain" },
+      ],
+    });
+    const withheld = serverText(secret, forms);
+    expect(withheld).not.toContain(secret);
+    expect(shapeInfluxqlBody(body, LIMITS, forms).warnings).toEqual([{ message: withheld }, { message: "plain" }]);
+    expect(shapeInfluxqlBody(body, LIMITS, NO_SECRETS).warnings).toHaveLength(3);
   });
 });
 
@@ -373,6 +412,36 @@ describe("bounds (spec 5.5)", () => {
     expect(shaped.fields).toHaveLength(3);
     expect(shaped.rows).toHaveLength(2);
     expect(shaped.cut).toBe(true);
+  });
+
+  test("R54: one series of more columns than the cell budget keeps the budget's columns and sets cut", () => {
+    const columns = Array.from({ length: 600_000 }, (_, index) => `c${index}`);
+    const shaped = shapeInfluxqlBody(doc({ series: [{ name: "m", columns, values: [] }] }), LIMITS, NO_SECRETS);
+    expect(shaped.fields).toEqual(columns.slice(0, INFLUX_CELL_BUDGET));
+    expect(shaped.rows).toEqual([]);
+    expect(shaped.cut).toBe(true);
+  });
+
+  test("R54: series whose distinct tags pass the cell budget keep the budget's columns and set cut", () => {
+    const series = Array.from({ length: 6 }, (_, index) => ({
+      name: "m",
+      tags: { [`t${index}`]: "v" },
+      columns: ["time", "value"],
+      values: [[`t${index}`, index]],
+    }));
+    const shaped = shapeInfluxqlBody(doc({ series }), { rowCut: INFLUX_ROW_CUT, cellBudget: 4 }, NO_SECRETS);
+    expect(shaped.fields).toEqual(["t0", "t1", "t2", "t3"]);
+    expect(shaped.rows).toEqual([{ t0: "v", t1: null, t2: null, t3: null }]);
+    expect(shaped.cut).toBe(true);
+  });
+
+  test("R54: as many columns as the cell budget is not a cut by itself", () => {
+    const shaped = shapeInfluxqlBody(
+      doc({ series: [{ name: "m", columns: ["a", "b"], values: [[1, 2]] }] }),
+      { rowCut: INFLUX_ROW_CUT, cellBudget: 2 },
+      NO_SECRETS,
+    );
+    expect([shaped.fields, shaped.rows, shaped.cut]).toEqual([["a", "b"], [{ a: 1, b: 2 }], false]);
   });
 
   test("exactly at the bounds nothing is cut", () => {

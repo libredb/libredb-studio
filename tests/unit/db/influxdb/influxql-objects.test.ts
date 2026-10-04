@@ -27,7 +27,7 @@ import type { InfluxGeneration } from "@/lib/db/providers/timeseries/influxdb/ve
 import { type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 
 interface Sent {
-  readonly request: InfluxRequest<"query">;
+  readonly request: InfluxRequest<"query-unchunked">;
   readonly signal: AbortSignal;
 }
 
@@ -130,7 +130,7 @@ describe("readInfluxqlDatabases", () => {
       { path: ["_internal"], name: "_internal", level: 0, isSessionDefault: false },
       { path: ["bench"], name: "bench", level: 0, isSessionDefault: false },
     ]);
-    expect(sent.map((entry) => entry.request)).toEqual([{ route: "query", values: { q: "SHOW DATABASES" } }]);
+    expect(sent.map((entry) => entry.request)).toEqual([{ route: "query-unchunked", values: { q: "SHOW DATABASES" } }]);
     expect(sent[0].signal).toBe(signals[0]);
     expectAllowed(sent);
   });
@@ -264,7 +264,7 @@ describe("listInfluxqlMeasurements and countInfluxqlMeasurements", () => {
     const { sent, context } = recordingSend([body("1.13.1", "show-measurements-home")]);
     const objects = await listInfluxqlMeasurements(context("v1"), "home");
     expect(sent.map((entry) => entry.request)).toEqual([
-      { route: "query", values: { q: 'SHOW MEASUREMENTS ON "home" LIMIT 2001', db: "home" } },
+      { route: "query-unchunked", values: { q: 'SHOW MEASUREMENTS ON "home" LIMIT 2001', db: "home" } },
     ]);
     expect(objects.map((object) => object.name)).toEqual([
       "edge",

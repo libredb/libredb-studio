@@ -13,7 +13,7 @@ import {
   type InfluxConnectionOptions,
   type InfluxType,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
-import { INFLUXQL_ROUTES, SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
+import { INFLUXQL_ROUTES, type InfluxRouteTable, SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
 import type { DatabaseConnection } from "@/lib/types";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
@@ -243,7 +243,9 @@ describe("the credential on the wire (E14)", () => {
     async (type, extra, header) => {
       const server = await recorder();
       const connection = options(type, server.port, extra);
-      const client = createInfluxClient(connection, type === "influxdb" ? INFLUXQL_ROUTES : SQL_ROUTES);
+      // The routes both tables hold; `query-unchunked` is the InfluxQL table's alone (R53).
+      const routes: InfluxRouteTable<"ping" | "health" | "query"> = type === "influxdb" ? INFLUXQL_ROUTES : SQL_ROUTES;
+      const client = createInfluxClient(connection, routes);
       clients.push(client);
       await client.send({ route: "query", values: { q: "SELECT 1", db: "home" } }, deadline());
       const [seen] = server.seen;

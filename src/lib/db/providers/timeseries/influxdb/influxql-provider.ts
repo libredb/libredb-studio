@@ -401,11 +401,13 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     const context = this.errorContext(options, "query", version.generation, run.database, options.callTimeoutMs);
     const handle = this.runs.begin(queryId, AbortSignal.timeout(options.callTimeoutMs));
     try {
+      // R53: a SELECT is read chunked; a SHOW or an EXPLAIN is read whole, as one document per statement.
+      const route: InfluxqlRouteId = verdict.statement === "SELECT" ? "query" : "query-unchunked";
       const { result: answer, executionTime } = await this.trackQuery(() =>
-        this.measureExecution(() => this.send(session.client, { route: "query", values }, handle.signal)),
+        this.measureExecution(() => this.send(session.client, { route, values }, handle.signal)),
       );
       if (answer.status !== 200) throw new InfluxAnswerError(answer, INFLUXQL_ROUTES.query.path);
-      const shaped = shapeInfluxqlBody(answer.text, SHAPE_LIMITS);
+      const shaped = shapeInfluxqlBody(answer.text, SHAPE_LIMITS, options.secretForms);
       return {
         fields: [...shaped.fields],
         rows: [...shaped.rows],

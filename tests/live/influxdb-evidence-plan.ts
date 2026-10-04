@@ -69,15 +69,20 @@ function readerOf(line: EvidenceLine): EvidencePrincipal {
   return line === V1 || line === V2 ? "read" : "admin";
 }
 
-/** An InfluxQL read as the provider sends it: a chunked `POST /query` with a form body. */
+/**
+ * An InfluxQL read as the provider sends it: a `POST /query` with a form body, chunked unless `chunked` is false,
+ * which is how the provider sends a SHOW or an EXPLAIN (R53).
+ */
 function influxql(
   capture: string,
   line: EvidenceLine,
   principal: EvidencePrincipal,
   q: string,
-  options: { readonly db?: string; readonly chunkSize?: string } = {},
+  options: { readonly db?: string; readonly chunkSize?: string; readonly chunked?: false } = {},
 ): EvidenceEntry {
   const db: Readonly<Record<string, string>> = options.db === undefined ? {} : { db: options.db };
+  const chunking: Readonly<Record<string, string>> =
+    options.chunked === false ? {} : { chunked: "true", chunk_size: options.chunkSize ?? "1000" };
   return {
     capture,
     line,
@@ -85,7 +90,7 @@ function influxql(
     kind: "statement",
     method: "POST",
     path: "/query",
-    form: { ...db, q, chunked: "true", chunk_size: options.chunkSize ?? "1000" },
+    form: { ...db, q, ...chunking },
     language: "influxql",
   };
 }
@@ -230,6 +235,15 @@ function perEngineLine(line: EvidenceLine): EvidenceEntry[] {
     influxql("show-tag-keys-home", line, reader, 'SHOW TAG KEYS ON "home" FROM "home"', { db: "home" }),
     influxql("show-field-keys-home", line, reader, 'SHOW FIELD KEYS ON "home" FROM "home"', { db: "home" }),
     influxql("show-retention-policies-home", line, reader, 'SHOW RETENTION POLICIES ON "home"', { db: "home" }),
+    // R53: a SHOW over every measurement of home, chunked as SELECT is sent and unchunked as SHOW is sent. 1.x and
+    // 2.x answer the chunked form with one complete statement_id 0 document per measurement.
+    influxql("show-tag-keys-all-chunked", line, reader, "SHOW TAG KEYS", { db: "home" }),
+    influxql("show-tag-keys-all", line, reader, "SHOW TAG KEYS", { db: "home", chunked: false }),
+    influxql("show-tag-values-room-chunked", line, reader, 'SHOW TAG VALUES WITH KEY = "room"', { db: "home" }),
+    influxql("show-tag-values-room", line, reader, 'SHOW TAG VALUES WITH KEY = "room"', {
+      db: "home",
+      chunked: false,
+    }),
     // 3: the tree preview, with rows and empty.
     influxql("preview-home", line, reader, previewOf("home"), { db: "home" }),
     influxql("preview-edge-empty", line, reader, previewOf("edge"), { db: "home" }),

@@ -176,6 +176,7 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 
 const path = (request: RecordedInfluxRequest): string => new URL(request.url).pathname;
 
+/** The chunked form fields a SELECT carries; a SHOW or an EXPLAIN carries none (R53). */
 const QUERY_FORM = { chunked: "true", chunk_size: "1000" };
 
 /**
@@ -316,7 +317,7 @@ describe("connect (spec 6.2)", () => {
       "GET /health",
       "POST /query",
     ]);
-    expect(requests[2].form).toEqual({ q: "SHOW DATABASES", ...QUERY_FORM });
+    expect(requests[2].form).toEqual({ q: "SHOW DATABASES" });
     expect(requests[2].headers).toEqual({
       authorization: `Basic ${Buffer.from("admin:admin-password").toString("base64")}`,
     });
@@ -482,6 +483,75 @@ describe("the query pipeline (spec 5.1)", () => {
     expect(result.warnings).toBeUndefined();
   });
 
+  const SHOW_LINES = [
+    ["1.13.1", "v1"],
+    ["2.9.1", "v2"],
+    ["3.12.0-core", "v3"],
+  ] as const;
+  const MULTI_MEASUREMENT_SHOWS = ["show-tag-keys-all", "show-tag-values-room"] as const;
+
+  /** Answers as the line did: its chunked capture when the request asks for chunks, the unchunked one otherwise. */
+  const asTheLineAnswers =
+    (version: InfluxFixtureVersion, name: string): ScriptedAnswer =>
+    (request) =>
+      capture(version, request.form?.chunked === "true" ? `${name}-chunked` : name);
+
+  /**
+   * The rows of an unchunked capture: every series of its one result, led by the measurement when there is more than
+   * one (3.12.0 holds the `room` tag on `home` alone).
+   */
+  function rowsOf(answer: InfluxCapture): Record<string, unknown>[] {
+    const document = JSON.parse(answer.body) as {
+      results: { series: { name: string; columns: string[]; values: unknown[][] }[] }[];
+    };
+    const { series: entries } = document.results[0];
+    const lead = new Set(entries.map((entry) => entry.name)).size > 1;
+    return entries.flatMap((entry) =>
+      entry.values.map((values) =>
+        Object.fromEntries([
+          ...(lead ? [["measurement", entry.name]] : []),
+          ...entry.columns.map((column, index) => [column, values[index]]),
+        ]),
+      ),
+    );
+  }
+
+  test.each(SHOW_LINES)(
+    "R53: on %s a SHOW over several measurements is sent unchunked and shows every measurement's rows",
+    async (version, line) => {
+      for (const name of MULTI_MEASUREMENT_SHOWS) {
+        const whole = capture(version, name);
+        const text = whole.request.form?.q as string;
+        // oxlint-disable-next-line no-await-in-loop -- each statement connects its own provider in turn.
+        const { provider, requests } = await connected(line, [asTheLineAnswers(version, name)], { database: "home" });
+        // oxlint-disable-next-line no-await-in-loop -- the provider was connected just above.
+        const result = await provider.query(text);
+        expect(requests.at(-1)?.form).toEqual({ db: "home", q: text });
+        expect(result.rows).toEqual(rowsOf(whole));
+        expect(result.rows.length).toBeGreaterThan(1);
+      }
+    },
+  );
+
+  test("R53: the chunked answer of 1.x and 2.x is what C5 refuses, so SHOW must not be sent chunked", async () => {
+    for (const version of ["1.13.1", "2.9.1"] as const) {
+      const chunked = capture(version, "show-tag-keys-all-chunked");
+      const documents = chunked.body.trim().split("\n");
+      expect(documents.length).toBeGreaterThan(1);
+      expect(documents.every((document) => !document.includes('"partial"'))).toBe(true);
+    }
+  });
+
+  test("R53: an EXPLAIN is sent unchunked and a SELECT keeps the chunked row", async () => {
+    const { provider, requests } = await connected("v1", [EMPTY_RESULT, EMPTY_RESULT], { database: "home" });
+    await provider.query('EXPLAIN SELECT count(temp) FROM "home"');
+    await provider.query('SELECT count(temp) FROM "home"');
+    expect(requests.slice(3).map((request) => request.form)).toEqual([
+      { db: "home", q: 'EXPLAIN SELECT count(temp) FROM "home"' },
+      { db: "home", q: 'SELECT count(temp) FROM "home"', ...QUERY_FORM },
+    ]);
+  });
+
   test("bound parameters are refused before any request", async () => {
     const { provider, requests } = await connected("v1");
     const error = await rejection(provider.query("SELECT * FROM m", [1]));
@@ -561,7 +631,7 @@ describe("the query pipeline (spec 5.1)", () => {
     const { provider, requests } = await connected("v1", [CONNECT.v1[2], CONNECT.v1[2]], { database: "home" });
     await provider.query("SHOW DATABASES");
     await provider.query("  show /* c */ databases ;");
-    expect(requests[3].form).toEqual({ q: "SHOW DATABASES", ...QUERY_FORM });
+    expect(requests[3].form).toEqual({ q: "SHOW DATABASES" });
     expect(requests[4].form?.db).toBeUndefined();
   });
 
@@ -592,9 +662,7 @@ describe("the query pipeline (spec 5.1)", () => {
         // oxlint-disable-next-line no-await-in-loop -- one run at a time, in order.
         await provider.query(text);
       }
-      expect(requests.slice(3).map((request) => request.form)).toEqual(
-        SERVER_WIDE_TEXTS.map((q) => Object.assign({ q }, QUERY_FORM)),
-      );
+      expect(requests.slice(3).map((request) => request.form)).toEqual(SERVER_WIDE_TEXTS.map((q) => ({ q })));
     }
   });
 
@@ -729,6 +797,17 @@ describe("the query pipeline (spec 5.1)", () => {
     expect(result.warnings).toEqual([{ message: "deprecated" }]);
   });
 
+  test("R54: a notice echoing the connection's password is withheld, as the same text in an error is", async () => {
+    const body = `${JSON.stringify({
+      results: [{ statement_id: 0, messages: [{ level: "warning", text: "echo token Token admin-password" }] }],
+    })}\n`;
+    const { provider } = await connected("v1", [built(200, body)], { database: "home" });
+    const result = await provider.query("SELECT * FROM m");
+    expect(result.warnings).toEqual([
+      { message: "(the server's text was withheld because it contained the configured credential)" },
+    ]);
+  });
+
   test("cancelQuery aborts a running run, which is QueryCancelledError; an unknown id answers false", async () => {
     const { provider } = await connected("v1", [], { database: "home" }, {}, hangingAfter(3));
     const running = rejection(provider.query("SELECT * FROM m", undefined, "q-cancel-1"));
@@ -815,7 +894,7 @@ describe("the object surface (spec 4)", () => {
     expect(objects.map((object) => object.path)).toEqual(
       ["edge", "edge cases,m", "home", "numbers", "sparse", 'we"ird name;x'].map((name) => ["home", name]),
     );
-    expect(requests[3].form).toEqual({ db: "home", q: `SHOW MEASUREMENTS ON "home" LIMIT 2001`, ...QUERY_FORM });
+    expect(requests[3].form).toEqual({ db: "home", q: `SHOW MEASUREMENTS ON "home" LIMIT 2001` });
   });
 
   test("a container path that is not [database] and an undeclared kind are refused with no request", async () => {

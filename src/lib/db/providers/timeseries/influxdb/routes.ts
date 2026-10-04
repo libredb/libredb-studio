@@ -29,7 +29,7 @@ export interface InfluxRoute {
   readonly form?: Readonly<Record<string, RouteValue>>;
 }
 
-export type InfluxqlRouteId = "ping" | "health" | "query";
+export type InfluxqlRouteId = "ping" | "health" | "query" | "query-unchunked";
 export type SqlRouteId = "ping" | "health" | "query" | "databases";
 export type InfluxRouteTable<Id extends string> = Readonly<Record<Id, InfluxRoute>>;
 
@@ -66,6 +66,15 @@ export const INFLUXQL_ROUTES: InfluxRouteTable<InfluxqlRouteId> = deepFreeze({
       chunked: { fixed: "true" },
       chunk_size: { fixed: String(INFLUXQL_CHUNK_SIZE) },
     },
+  },
+  "query-unchunked": {
+    // R53: every SHOW and EXPLAIN, the catalog reads among them. Chunked, 1.13.1 and 2.9.1 answer a SHOW over more
+    // than one measurement with one complete `statement_id` 0 document per measurement, which C5 cannot tell from a
+    // hidden second statement; unchunked, the same servers answer one document. SELECT keeps the chunked row.
+    method: "POST",
+    path: "/query",
+    query: {},
+    form: { db: { fill: "optional" }, q: { fill: "required" } },
   },
 });
 
