@@ -26,10 +26,16 @@ const MANAGE_NO_EXP_URL_SAFE = "e30.eyJhY2Nlc3MiOiJtIiwic3ViIjoieHg_Pz8_Pz4-In0.
 type Credential = { user?: string; password?: string };
 
 describe("CREDENTIAL_WARNINGS", () => {
-  test("milvus and qdrant are the shipped types that declare credential warnings (vector-family spec 3.12)", () => {
-    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual(["milvus", "qdrant"]);
+  test("milvus, qdrant, influxdb and influxdb3 are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12)", () => {
+    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual(["milvus", "qdrant", "influxdb", "influxdb3"]);
     expect(CREDENTIAL_WARNINGS.milvus?.map((entry) => entry.kind)).toEqual(["pair", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.qdrant?.map((entry) => entry.kind)).toEqual(["jwt", "no-secret"]);
+  });
+
+  test("influxdb and influxdb3 each declare one no-secret entry (InfluxDB spec E12)", () => {
+    const record: Readonly<Record<string, readonly { readonly kind: string }[] | undefined>> = CREDENTIAL_WARNINGS;
+    expect(record.influxdb?.map((entry) => entry.kind)).toEqual(["no-secret"]);
+    expect(record.influxdb3?.map((entry) => entry.kind)).toEqual(["no-secret"]);
   });
 });
 
