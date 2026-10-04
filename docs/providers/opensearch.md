@@ -80,7 +80,7 @@ Three things are OpenSearch-shaped:
 
 One directory serves **two type-ids**. Everything the two products disagree about on the wire is a row
 in the transport's dialect table
-([http-transport.ts:357-409](../../src/lib/db/providers/sql/search/http-transport.ts)) and everything
+([http-transport.ts:508-603](../../src/lib/db/providers/sql/search/http-transport.ts)) and everything
 they disagree about above it is one field of `SearchProduct`
 ([index.ts:211](../../src/lib/db/providers/sql/search/index.ts)):
 
@@ -254,7 +254,7 @@ Four properties the code depends on:
 - **The alias is a separate member.** Upstream declares `{"name":"who"}` for the same statement — the
   alias *is* the name there — so reading `name` alone would label this column `customer`, which is a
   **wrong** label rather than a missing one. `describeColumns()`
-  ([http-transport.ts:509](../../src/lib/db/providers/sql/search/http-transport.ts)) prefers the alias
+  ([http-transport.ts:715](../../src/lib/db/providers/sql/search/http-transport.ts)) prefers the alias
   when the dialect declares an `aliasKey`, and the alias is what the user typed, so it is what the grid
   must show.
 - **Rows are positional**, so each row is rebuilt against the declared column list rather than read as
@@ -263,7 +263,7 @@ Four properties the code depends on:
   HTTP 400, `IllegalArgumentException`, "Multiple entries with same key: c=2 and c=1" — where upstream
   answers 200 with two columns named `c`. So the seam's uniqueness invariant is load-bearing on exactly
   one of the two products, and `disambiguate()`
-  ([http-transport.ts:489](../../src/lib/db/providers/sql/search/http-transport.ts)) can never fire
+  ([http-transport.ts:695](../../src/lib/db/providers/sql/search/http-transport.ts)) can never fire
   here. That is a fact about this engine, not dead code.
 - **`total` and `size` accompany every answer**, so `SearchQueryResult.totalHits` is a real number here
   and `null` upstream. It is deliberately **not used** by the provider
@@ -276,7 +276,7 @@ classifies a failure here either ([§3.6](#36-two-fault-vocabularies-in-one-clus
 
 Both products spell the paging token `cursor`, and the transport follows it until the engine stops
 sending one, bounded by `MAX_PAGES = 1000`
-([http-transport.ts:151](../../src/lib/db/providers/sql/search/http-transport.ts)). The measurement
+([http-transport.ts:326](../../src/lib/db/providers/sql/search/http-transport.ts)). The measurement
 that made this necessary came from upstream — an aggregation over 1500 distinct values answered 1000
 rows plus a cursor with no page size ever requested, and page two carried **no column declaration** —
 so the loop carries page one's declaration forward and rebuilds later pages against it
@@ -316,7 +316,7 @@ Three consequences, all deliberate:
   rather than to a configuration error for exactly this reason — it describes a statement problem, not
   a deployment one ([§10](#10-error-handling)).
 - **`ParserException` is matched by SHAPE**, not by name (`syntaxTypePattern: /ParserException$/`,
-  [http-transport.ts:408](../../src/lib/db/providers/sql/search/http-transport.ts)). Two members of
+  [http-transport.ts:601](../../src/lib/db/providers/sql/search/http-transport.ts)). Two members of
   that family were measured and the grammar has several, so matching the suffix means a third is
   classified correctly the first time a user hits it rather than reported as an engine fault. Anything
   the table has never seen becomes `engine` — "reached, understood, and refused" — rather than a guess.
@@ -324,7 +324,7 @@ Three consequences, all deliberate:
 **The useful text is in `details`, not in `reason`.** Measured, `reason` is the literal constant
 `"Invalid SQL query"` for a mistyped keyword, an unknown column and an unparseable LIMIT alike, while
 `details` holds the sentence that names the fault. So `faultMessage()`
-([http-transport.ts:600](../../src/lib/db/providers/sql/search/http-transport.ts)) prefers `details`
+([http-transport.ts:806](../../src/lib/db/providers/sql/search/http-transport.ts)) prefers `details`
 here and falls back to `reason`, and it strips one trailing sentence:
 
 ```json
@@ -336,7 +336,7 @@ here and falls back to `reason`, and it strips one trailing sentence:
 
 That footer instructs the reader to re-send the request in another format to see the raw engine
 response — advice about this product's REST API, not about the statement the user just wrote — so it is
-removed ([`OPENSEARCH_DETAILS_FOOTER`, http-transport.ts:246](../../src/lib/db/providers/sql/search/http-transport.ts)).
+removed ([`OPENSEARCH_DETAILS_FOOTER`, http-transport.ts:421](../../src/lib/db/providers/sql/search/http-transport.ts)).
 Everything else is carried through **verbatim**, because the engine's own wording is the only text that
 tells a user which part of their statement is wrong.
 
@@ -376,7 +376,7 @@ deliberately not implemented.
 which is the one signal that tells a deadline apart from a user's cancellation — measured on Node 24
 and Bun, the thrown value cannot: `controller.abort(new Error("x"))` throws that Error verbatim, with
 nothing abort-shaped about it. `requestFailure()`
-([http-transport.ts:707](../../src/lib/db/providers/sql/search/http-transport.ts)) therefore consults
+([http-transport.ts:913](../../src/lib/db/providers/sql/search/http-transport.ts)) therefore consults
 `signal.aborted` **before** the thrown value.
 
 ### 3.9 Columns are labelled with mapping types, not SQL types
@@ -467,7 +467,7 @@ connection-form hook's unparseable-string message deliberately omits both search
 ### 4.3 TLS
 
 `config.ssl` with any `mode` but `disable` switches the transport from `http` to `https`
-([http-transport.ts:819](../../src/lib/db/providers/sql/search/http-transport.ts)). `ssl` is a
+([http-transport.ts:1127](../../src/lib/db/providers/sql/search/http-transport.ts)). `ssl` is a
 first-class `DatabaseConnection` field and independent of the form's `connectionFields`, so it applies
 even though this form shows no TLS row of its own, and an explicit `disable` turns TLS **off** as
 firmly as an explicit mode turns it on (the #264 lesson).
@@ -493,7 +493,7 @@ switch, not the upstream key: the plugin is *installed* rather than a licensed f
 disabled by name.
 
 An IPv6 literal host is bracketed before it becomes a URL authority
-([http-transport.ts:431](../../src/lib/db/providers/sql/search/http-transport.ts)).
+([http-transport.ts:1128](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
 
 ### 4.4 Endpoint validation and redirects
@@ -535,7 +535,7 @@ error message, which is more useful than anything substituted here
 
 | Source | `QueryResult` field | Notes |
 |---|---|---|
-| `datarows` | `rows` | Rebuilt from the positional arrays, keyed by the declared names |
+| `datarows` | `rows` | Rebuilt from the positional arrays, keyed by the declared names; an integer past 2^53 arrives as its exact digits (see below) |
 | `schema[].alias ?? schema[].name` | `fields` | Declared order; the **alias wins** ([§3.4](#34-the-success-envelope-schemadatarows-a-separate-alias-and-a-count)) |
 | — | `rowCount` | `rows.length`. There is no second number: no statement here reaches a document, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by this process**. Neither the body nor the headers carry any timing |
@@ -576,7 +576,18 @@ works on both ([§6](#6-schema-introspection)). A statement the user types thems
 exactly as this engine serves it — an object cell simply arrives as a JSON object in the grid, with the
 mapping type (`object`, `nested`) as its label.
 
-No value rewriting happens anywhere in this provider.
+One value rewrite happens in this provider, and only for row values. A `long` arrives in `datarows`
+as an **unquoted** JSON number, and `JSON.parse` rounds one past 2^53 with no error: measured on
+3.9.0 on 2026-10-04, `9223372036854775807` and `9007199254740993` were shown as
+`9223372036854776000` and `9007199254740992` in the grid, the API and every export. The SQL answer and
+each cursor page therefore go through
+[`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) before they are parsed
+(`parseRowsJson` in
+[`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts)), so such a value
+reaches the grid as its exact digits, a string, the way Druid's and Trino's transports hand one over.
+An integer inside the safe range, and every float, stays a number. The REST reads (mappings,
+listings, object definitions) are parsed as before, which is why the object source still re-spells a
+long past 2^53 (D61).
 
 ### 5.4 Dialect traps a user will hit
 
@@ -768,7 +779,7 @@ top_queries-2026.08.18-74305    (engine bookkeeping, NO leading dot)
 On an *empty* cluster two of three indices are the engine's. The dot convention catches the first and
 **not** the second, so the transport carries a second rule for the date-suffixed query-insights shape
 (`/^top_queries-\d{4}\.\d{2}\.\d{2}-\d+$/`,
-[http-transport.ts:264](../../src/lib/db/providers/sql/search/http-transport.ts)) — which makes this a
+[http-transport.ts:439](../../src/lib/db/providers/sql/search/http-transport.ts)), which makes this a
 judgement rather than a rule, and is why the seam exposes a **flag** the provider decides about
 (`isSystemIndex()`, [introspect.ts:156](../../src/lib/db/providers/sql/search/introspect.ts)) rather
 than a filter applied on the wire. Hiding them is what the object surface does: `isSystemIndex()` is consulted for every listing and
@@ -782,7 +793,7 @@ statement, not to the inventory ([introspect.ts:324-336](../../src/lib/db/provid
 and on this product the quote character is a **backtick** ([§5.4](#54-dialect-traps-a-user-will-hit)).
 
 **The flattening.** `flattenProperties()`
-([http-transport.ts:776](../../src/lib/db/providers/sql/search/http-transport.ts)) descends both
+([http-transport.ts:999](../../src/lib/db/providers/sql/search/http-transport.ts)) descends both
 `properties` (objects) and `fields` (multi-fields), emitting containers, leaves and dotted children:
 for `probe_shapes` that is `address`/object, `address.city`/keyword, `items`/nested, `items.sku`/keyword,
 `note`/text, `note.keyword`/keyword. The output set is specified by the upstream product's own
@@ -971,7 +982,7 @@ Those same three kinds declare `hasColumns: true` (#789), which is what gives an
 in the object tree; a `pipeline` and a `template` declare nothing and stay leaves, so no column read
 is ever issued for them. An `alias` row and a `data stream` row show the mapping of **one** backing
 index: the transport takes the first entry of a `_mapping` payload keyed by concrete index name
-(`src/lib/db/providers/sql/search/http-transport.ts:1266`), so an alias spanning two indices shows
+(`src/lib/db/providers/sql/search/http-transport.ts:1283`), so an alias spanning two indices shows
 whichever the cluster answered first, with nothing on screen to say the other is missing.
 
 #### `describeObjects`, the bulk column read (#789)
@@ -1450,7 +1461,7 @@ The `unreachable` message quotes the cause from **both** places a runtime puts i
 runs on two: on Node a refused socket is `TypeError: fetch failed` whose `cause.code` is
 `ECONNREFUSED`, while Bun throws `Error: Unable to connect. Is the computer able to access the url?`
 with `code: "ConnectionRefused"` on the error **itself** and no cause at all
-([http-transport.ts:677-729](../../src/lib/db/providers/sql/search/http-transport.ts)).
+([http-transport.ts:883-935](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
 | Situation | Error |
 |---|---|
@@ -1632,6 +1643,9 @@ because the provider exposes no `cancelQuery`
 - **An index whose mapping has `nested` fields reports more documents than a `SELECT` returns.**
   Measured here: `probe_shapes` is 2 documents in `_cat/indices` and 1 row to `SELECT COUNT(*)`
   ([§7](#7-monitoring--health)).
+- **`COUNT(DISTINCT ...)` is approximate**, and so is the Data Profiler's distinct count, which is that
+  aggregate. Measured on 3.9.0: 50,000 documents with 50,000 distinct `long` ids answer
+  `COUNT(DISTINCT id)` = 50,106. The null counts, MIN and MAX beside it are exact.
 - **`totalHits` is reported by this product and deliberately dropped**, so no surface behaves
   differently between the two type-ids — the upstream product sends no count at all
   ([§5.2](#52-result-shaping)).

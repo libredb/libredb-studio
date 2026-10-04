@@ -60,6 +60,7 @@ import {
 import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { carriesLossyNumber } from "../../utils/json-integers";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
@@ -802,8 +803,16 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return parts;
   }
 
-  /** Pretty-print a JSON value; leave non-JSON strings as-is. */
+  /**
+   * Pretty-print a JSON value; leave non-JSON strings as-is.
+   *
+   * A value holding a number the round trip through JSON.parse would print differently is
+   * left as stored too: measured on 0.2.2, a stored `{"n":9007199254740993}` was shown as
+   * `"n": 9007199254740992`, `12345678901234567890.12` as 12345678901234567000 and `1e400`
+   * as null, and Copy, every export and an edit-and-put cycle then carried the rounded value.
+   */
   private renderValue(value: string): string {
+    if (carriesLossyNumber(value)) return value;
     try {
       return JSON.stringify(JSON.parse(value), null, 2);
     } catch {

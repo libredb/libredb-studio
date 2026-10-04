@@ -869,6 +869,11 @@ both the reason and the alternative, which is more useful than anything this pro
 | header row 2 (SQL types) | `columnTypes` | Keyed by the same disambiguated names; **absent** when the payload declared no types. The native types (header row 1) deliberately do not travel — they lie for an expression ([§3.5](#35-the-sql-type-labels-the-column-because-the-native-type-lies)) |
 | `X-Druid-Response-Context.missingSegments` | `warnings` | One warning naming how many segments were unavailable, and **absent** for a whole answer or an answer that said nothing about availability ([§13](#13-known-limitations--future-work)) |
 
+**`COUNT(DISTINCT ...)` answers an estimate.** Druid documents it as an alias for
+`APPROX_COUNT_DISTINCT` while the query context's `useApproximateCountDistinct` is `true`, its default,
+and the only context key this provider sends is `timeout`. So the Data Profiler's distinct count, which
+is that aggregate, is an estimate on Druid; its null counts, MIN and MAX are exact.
+
 ### 5.3 `ARRAY` cells arrive as JSON strings
 
 Druid's `sqlStringifyArrays` query context defaults to **true**, so an array column comes back as

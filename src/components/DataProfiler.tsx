@@ -20,6 +20,27 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ShortcutsDialog } from "@/components/ShortcutsDialog";
 
+/**
+ * The null share a card draws. Read only on a column without `error`, which the route
+ * always answers with its null figures; the fallback exists for the type alone.
+ */
+const nullPercentOf = (column: ColumnProfile): number => column.nullPercent ?? 0;
+
+/** "N distinct", or "distinct unknown" where the engine refused the count: never a 0 it did not measure. */
+const distinctLabel = (column: ColumnProfile): string =>
+  column.distinctCount === undefined ? "distinct unknown" : `${column.distinctCount.toLocaleString()} distinct`;
+
+/**
+ * The mean null share over the columns whose nulls were counted. A column the engine could
+ * not count has no share, and averaging it in as 0 % is what made a table that failed to
+ * profile read as one with no NULLs at all.
+ */
+function averageNullText(columns: readonly ColumnProfile[]): string {
+  const counted = columns.flatMap((column) => (column.nullPercent === undefined ? [] : [column.nullPercent]));
+  if (counted.length === 0) return "n/a";
+  return `${Math.round(counted.reduce((sum, share) => sum + share, 0) / counted.length)}%`;
+}
+
 interface DataProfilerProps {
   isOpen: boolean;
   onClose: () => void;
@@ -90,9 +111,10 @@ export function DataProfiler({
       );
       const profileSummary = data.columns
         .filter((c) => !withheld.has(c.name))
-        .map(
-          (c) =>
-            `${c.name}: ${c.nullPercent}% null, ${c.distinctCount} distinct, min=${c.minValue || "N/A"}, max=${c.maxValue || "N/A"}`,
+        .map((c) =>
+          c.nullPercent === undefined
+            ? `${c.name}: could not be profiled`
+            : `${c.name}: ${c.nullPercent}% null, ${distinctLabel(c)}, min=${c.minValue || "N/A"}, max=${c.maxValue || "N/A"}`,
         )
         .join("\n");
 
@@ -226,6 +248,8 @@ export function DataProfiler({
 
   if (!isOpen) return null;
 
+  const omitted = profile?.omittedColumns ?? [];
+
   return (
     <>
       {/*
@@ -312,20 +336,23 @@ export function DataProfiler({
                   </div>
                   <div className="bg-surface rounded-lg p-3 border border-hairline">
                     <p className="text-xs font-medium text-fg-muted">Columns</p>
-                    <p className="text-xs font-medium text-fg mt-1">{profile.columns.length}</p>
+                    <p className="text-xs font-medium text-fg mt-1">
+                      {omitted.length > 0
+                        ? `${profile.columns.length} of ${profile.columns.length + omitted.length}`
+                        : profile.columns.length}
+                    </p>
                   </div>
                   <div className="bg-surface rounded-lg p-3 border border-hairline">
                     <p className="text-xs font-medium text-fg-muted">Avg Null %</p>
-                    <p className="text-xs font-medium text-fg mt-1">
-                      {profile.columns.length > 0
-                        ? Math.round(
-                            profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length,
-                          )
-                        : 0}
-                      %
-                    </p>
+                    <p className="text-xs font-medium text-fg mt-1">{averageNullText(profile.columns)}</p>
                   </div>
                 </div>
+
+                {omitted.length > 0 && (
+                  <p className="text-xs text-fg-muted">
+                    {`Not profiled, past the first ${profile.columns.length} columns: ${omitted.join(", ")}`}
+                  </p>
+                )}
 
                 {/* Column Profiles */}
                 <div className="space-y-2">
@@ -342,7 +369,7 @@ export function DataProfiler({
                             </span>
                           )}
                         </div>
-                        <span className="text-xs text-fg-muted">{col.distinctCount.toLocaleString()} distinct</span>
+                        <span className="text-xs text-fg-muted">{distinctLabel(col)}</span>
                       </div>
 
                       {col.error ? (
@@ -355,26 +382,26 @@ export function DataProfiler({
                               <div
                                 className={cn(
                                   "h-full rounded-full transition-all",
-                                  col.nullPercent > 50
+                                  nullPercentOf(col) > 50
                                     ? "bg-danger-tint"
-                                    : col.nullPercent > 20
+                                    : nullPercentOf(col) > 20
                                       ? "bg-warning-tint"
                                       : "bg-success-tint",
                                 )}
-                                style={{ width: `${100 - col.nullPercent}%` }}
+                                style={{ width: `${100 - nullPercentOf(col)}%` }}
                               />
                             </div>
                             <span
                               className={cn(
                                 "text-xs font-mono w-10 text-right",
-                                col.nullPercent > 50
+                                nullPercentOf(col) > 50
                                   ? "text-danger"
-                                  : col.nullPercent > 20
+                                  : nullPercentOf(col) > 20
                                     ? "text-warning"
                                     : "text-success",
                               )}
                             >
-                              {col.nullPercent}% null
+                              {nullPercentOf(col)}% null
                             </span>
                           </div>
 
@@ -411,6 +438,13 @@ export function DataProfiler({
                                 );
                               })()}
                           </div>
+
+                          {/* Measures the engine refused for this column, each with its reason */}
+                          {col.warnings?.map((warning) => (
+                            <p key={warning} className="text-xs text-warning mt-1">
+                              {warning}
+                            </p>
+                          ))}
 
                           {/* Sample Values */}
                           {col.sampleValues && col.sampleValues.length > 0 && (

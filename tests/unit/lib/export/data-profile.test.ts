@@ -37,6 +37,21 @@ describe("dataProfileText", () => {
     expect(dataProfileText(profile([bare]), new Map(), "csv")).toBe(`${headers}\nnotes,,7,7,100,0,,,,`);
   });
 
+  test("CSV leaves a figure the engine could not produce empty, and writes every reason in Error", () => {
+    // Empty, not 0: a 0 there reads as a measured value (E2E-007).
+    const failed: ColumnProfile = { name: "geom", totalRows: 9, error: "ORA-22849" };
+    const partial: ColumnProfile = {
+      name: "body",
+      totalRows: 4,
+      nullCount: 2,
+      nullPercent: 50,
+      warnings: ["Distinct count: no DISTINCT on text", "Min/max: no MIN on text"],
+    };
+    expect(dataProfileText(profile([failed, partial]), new Map(), "csv")).toBe(
+      `${headers}\ngeom,,9,,,,,,,ORA-22849\nbody,,4,2,50,,,,,Distinct count: no DISTINCT on text; Min/max: no MIN on text`,
+    );
+  });
+
   test("CSV keeps commas, quotes, newlines and Unicode in their original columns", () => {
     const awkward: ColumnProfile = {
       ...column,

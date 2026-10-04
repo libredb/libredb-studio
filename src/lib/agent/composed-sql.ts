@@ -29,12 +29,11 @@
  *
  * On the plan side: the composed form is the ESTIMATING one on both engines, never
  * the executing one. `src/lib/explain`'s PostgreSQL strategy is deliberately not
- * reused for this — its `buildSql` ignores the `mode` argument and always emits
- * `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, which RUNS the statement it explains.
- * That is correct for the editor's Explain button (a user asked for real timings)
- * and exactly wrong here, where the approval-gated `sql.explain.analyze` descriptor
- * is the only thing allowed to execute a plan. Teaching the strategy registry to
- * honour its own mode argument is a separate, editor-visible change (#194).
+ * reused for this. Its `buildSql` honours the mode since #1311 (`estimate` builds
+ * `EXPLAIN (FORMAT JSON)`, `analyze` the executing `EXPLAIN (ANALYZE, BUFFERS, FORMAT
+ * JSON)`), but it is the EDITOR's strategy, selected by a capability the provider
+ * measures at connect, and the agent path needs a form fixed per dialect that the
+ * approval-gated `sql.explain.analyze` descriptor alone may turn into an executing one.
  */
 
 import { quoteLiteral } from "@/lib/sql/values";

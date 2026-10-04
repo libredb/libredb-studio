@@ -140,7 +140,6 @@ services:
     environment:
       LICENSE: accept
       DB2INSTANCE: db2inst1
-      # No ! [ ] ^ or | in it: db2-node 1.0.22 sends those five wrongly (K23 in docs/providers/db2.md).
       DB2INST1_PASSWORD: Password123
       DBNAME: testdb
       ARCHIVE_LOGS: "false"

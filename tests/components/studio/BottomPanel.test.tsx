@@ -451,6 +451,14 @@ describe("BottomPanel", () => {
       expect(capturedResultsGridProps.supportsResultPagination).toBe(true);
     });
 
+    test("the columns the editor must not write are the provider's own (K24)", () => {
+      const refused = { type: "^(CLOB|DBCLOB|BLOB)$", reason: "not written" };
+      const props = pagedProps({ supportsResultPagination: true, inlineEditRefusedColumns: refused });
+      render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      expect(capturedResultsGridProps.inlineEditRefusedColumns).toBe(refused);
+    });
+
     test("a provider that cannot page hands down its false, not an absent flag", () => {
       // Criterion 4. `false` and `undefined` render identically — the grid gates on
       // `=== true` — so only reading the value back tells a provider that declared it

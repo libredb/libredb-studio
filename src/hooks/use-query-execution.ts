@@ -10,8 +10,9 @@ import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-commands";
-import { isMultiStatement } from "@/lib/sql/statement-splitter";
+import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -20,6 +21,7 @@ import { newLocalId } from "@/lib/ids";
 import { getExplainStrategy, type ExplainStrategy } from "@/lib/explain";
 import type { ExplainFormat } from "@/lib/db/types";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
+import { sandboxRefusal } from "@/lib/editor/sandbox-refusal";
 import { buildConnectionPayload } from "./use-connection-payload";
 
 export interface QueryExecutionOptions {
@@ -54,19 +56,44 @@ interface UseQueryExecutionParams {
    * the same `schemaRefreshPattern`, and until this existed only the first one was refreshed.
    */
   onObjectsChanged?: () => void;
+  /**
+   * The server ended the open transaction while running a statement in it: a typed COMMIT or
+   * ROLLBACK, or a statement the engine commits implicitly. The route answers `inTransaction: false`
+   * and the BEGIN/COMMIT/ROLLBACK controls must stop offering a transaction that is gone.
+   */
+  onTransactionEnded?: () => void;
   queryEditorRef: RefObject<QueryEditorRef | null>;
 }
+
+/**
+ * Whether a SANDBOX rollback answer confirms that the rollback happened. Only a 2xx
+ * does; a fetch that threw never reached the route and is not an answer either.
+ */
+async function rollbackConfirmed(request: Promise<Response>): Promise<boolean> {
+  try {
+    return (await request).ok;
+  } catch {
+    return false;
+  }
+}
+
+/** What the user is told when a SANDBOX run's changes were NOT rolled back. */
+const SANDBOX_NOT_ROLLED_BACK = {
+  title: "Not Rolled Back",
+  variant: "destructive" as const,
+};
 
 /**
  * Why an explain run cannot proceed, phrased for the user. Absent metadata means
  * "not loaded yet", not "unsupported" — blaming the database type there would be
  * misleading.
  */
-function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean) {
+function explainRefusal(metadata: ProviderMetadata | null, hasStrategy: boolean, oneStatement: boolean) {
   if (!metadata) {
     return { title: "Not Ready", description: "Connection metadata is still loading. Try again in a moment." };
   }
   if (hasStrategy && metadata.capabilities.supportsExplain) {
+    if (!oneStatement) return { title: "Not Supported", description: "Only a single statement can be explained." };
     return { title: "Not Supported", description: "Only SELECT statements can be explained." };
   }
   return { title: "Not Supported", description: "EXPLAIN is not available for this database type." };
@@ -144,6 +171,7 @@ export function useQueryExecution({
   playgroundMode,
   fetchSchema,
   onObjectsChanged,
+  onTransactionEnded,
   queryEditorRef,
 }: UseQueryExecutionParams) {
   /**
@@ -156,7 +184,9 @@ export function useQueryExecution({
    * and raised no toast: tab A sat on "Executing…" forever, with no result and
    * no error. Keying the map by tab is what keeps one tab's Run out of another's.
    */
-  const runsRef = useRef(new Map<string, { controller: AbortController; queryId: string }>());
+  const runsRef = useRef(
+    new Map<string, { controller: AbortController; queryId: string; planQueryId: string | undefined }>(),
+  );
 
   /**
    * The id of the LAST run started on each tab — which run owns the tab's results.
@@ -277,7 +307,20 @@ export function useQueryExecution({
       // run, a page (`offset`) or playground mode skips, so none of those paths can carry it to a route. It counts as
       // the tab's newest run: a run still in flight there is superseded, as a new run supersedes it, so its late
       // answer cannot land over the refusal.
-      const refusal = statementRefusal(queryToExecute, activeConnection.type);
+      //
+      // SANDBOX adds its own refusal on the same terms: a statement that would commit the
+      // transaction SANDBOX is about to roll back (see `sandboxRefusal`). Asked only of a
+      // run that will open that transaction, the same condition `isPlaygroundRun` reads below.
+      const refusal =
+        statementRefusal(queryToExecute, activeConnection.type) ??
+        (playgroundMode && !transactionActive && !isExplain && !executionOptions?.offset
+          ? sandboxRefusal(
+              queryToExecute,
+              resolveSqlGrammar(activeConnection.type),
+              metadata?.capabilities.implicitCommitStatements,
+              metadata?.capabilities.implicitCommitExceptions,
+            )
+          : undefined);
       if (refusal !== undefined) {
         runsRef.current.get(targetTabId)?.controller.abort();
         runsRef.current.delete(targetTabId);
@@ -353,11 +396,28 @@ export function useQueryExecution({
       // The refusal stays here even though the statement itself is now built on the
       // server (#574): a statement nothing can explain must not become a request at
       // all, so the user gets this toast rather than a 400.
+      //
+      // And only of ONE statement. An EXPLAIN prefixes one, so `EXPLAIN SELECT 1; INSERT
+      // ...` explains the SELECT and then RUNS the INSERT: measured on Materialize 26.44.1,
+      // AlloyDB Omni 17.9 and Cloudberry 2.1.0, a RUN of that text applied the INSERT twice
+      // through its background plan request (#1311). Read under the connection's own
+      // dialect, the same reading that sends a run to `/api/db/multi-query` below, and the
+      // same count `POST /api/db/query` refuses an explain by. A fragment of comments only
+      // is not counted: `SELECT 1; -- note` is one statement to explain, though the run
+      // route below still splits it in two. A text with a run the grammar cannot close
+      // is not one statement either: the splitter finds no boundary in it, yet
+      // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL.
+      const grammar = resolveSqlGrammar(activeConnection.type);
+      const oneStatement =
+        countCodeStatements(queryToExecute, grammar) <= 1 && !hasUnterminatedSpan(queryToExecute, grammar);
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
       const explainAccepted =
-        isExplain && explainSupported && (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) !== null;
+        isExplain &&
+        explainSupported &&
+        oneStatement &&
+        (explainStrategy?.buildSql(queryToExecute, "analyze") ?? null) !== null;
       if (isExplain && !explainAccepted) {
-        toast({ ...explainRefusal(metadata, Boolean(explainStrategy)), variant: "destructive" });
+        toast({ ...explainRefusal(metadata, Boolean(explainStrategy), oneStatement), variant: "destructive" });
         setTabs((prev) =>
           prev.map((t) => (t.id === targetTabId ? { ...t, isExecuting: false, isLoadingMore: false } : t)),
         );
@@ -374,7 +434,25 @@ export function useQueryExecution({
       runsRef.current.get(targetTabId)?.controller.abort();
       const abortController = new AbortController();
       const queryId = `q-${Date.now()}-${newLocalId()}`;
-      runsRef.current.set(targetTabId, { controller: abortController, queryId });
+
+      // Whether this run also asks for a plan in the background (SELECT only, one
+      // statement only). Asked of the STATIC strategy, which is all this side has before
+      // a response: whether a statement is explainable at all is a question about the
+      // statement, and every strategy answers it the same way. The statement the engine
+      // sees is built on the server (#574).
+      //
+      // The plan request gets an id of its own so Cancel can reach it on the server:
+      // without one, measured on PostgreSQL 18.6, Cancel left the plan statement
+      // `active` after the run's own backend went idle (#1311). Its own rather than the
+      // run's, because a provider tracks one statement per id.
+      const sendsPlan =
+        !isExplain &&
+        !isLoadMore &&
+        oneStatement &&
+        explainStrategy !== null &&
+        explainStrategy.buildSql(queryToExecute, "estimate") !== null;
+      const planQueryId = sendsPlan ? `${queryId}-plan` : undefined;
+      runsRef.current.set(targetTabId, { controller: abortController, queryId, planQueryId });
       lastRunRef.current.set(targetTabId, queryId);
 
       /**
@@ -405,8 +483,23 @@ export function useQueryExecution({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ ...runPayload, action: "begin" }),
           });
+          // No transaction, no SANDBOX run. This used to log and carry on, so the statement
+          // ran unprotected and the toast still said it had been rolled back: measured on
+          // RisingWave 3.1.0, whose BEGIN opens nothing, an INSERT and a DELETE stayed applied
+          // (the DELETE without the confirmation dialog, which SANDBOX skips because it
+          // promises a rollback).
           if (!beginRes.ok) {
-            logger.warn("Playground transaction BEGIN failed", { route: "use-query-execution" });
+            const answer = await beginRes.json().catch(() => ({}));
+            const description =
+              typeof answer?.error === "string" ? answer.error : "The transaction SANDBOX needs could not be opened.";
+            commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
+            toast({
+              title: "Sandbox Unavailable",
+              // The server's sentence may or may not end in a period ("Transaction already active").
+              description: `${/[.!?]$/.test(description) ? description : `${description}.`} Nothing was run.`,
+              variant: "destructive",
+            });
+            return false;
           }
         }
 
@@ -443,7 +536,7 @@ export function useQueryExecution({
           // reads the statement with: whether a `;` is code depends on the
           // engine's comment, quoting and bracket rules, and a fragment this
           // disagrees about is a fragment the route RUNS (S1).
-          isMultiStatement(queryToExecute, resolveSqlGrammar(activeConnection.type));
+          isMultiStatement(queryToExecute, grammar);
 
         // Use transaction endpoint if a transaction is active or in playground mode
         const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;
@@ -478,49 +571,46 @@ export function useQueryExecution({
           signal: abortController.signal,
         });
 
-        // Run EXPLAIN in background for non-explain queries (SELECT only)
+        // Run EXPLAIN in background for non-explain queries (one SELECT only, see
+        // `sendsPlan`). It asks for the `estimate`, which plans without executing: the
+        // run itself is the execution, and a second one is a second write (#1311).
         //
         // Typed as `Response | null` because its rejection is handled at creation
         // (below), not where it is consumed: the consumer only runs after the main
         // query settles, and a plan request that fails first — or is aborted with
         // its run — would be an unhandled rejection until then.
         let explainPromise: Promise<Response | null> | null = null;
-        if (!isExplain && !isLoadMore && explainStrategy) {
-          // Asked of the STATIC strategy, which is all this side has before a
-          // response: whether a statement is explainable at all is a question about
-          // the statement, and every strategy answers it the same way. The
-          // statement the engine sees is built on the server (#574).
-          if (explainStrategy.buildSql(queryToExecute, "estimate") !== null) {
-            explainPromise = appFetch("/api/db/query", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...runPayload,
-                sql: queryToExecute,
-                options: {},
-                explain: { mode: "estimate" },
-                // The server prefixes the statement to build the EXPLAIN, so its
-                // placeholders are the same ones in the same order and the same
-                // values bind them. Without this the plan request would run
-                // unbound and the panel would keep the previous plan (PR #304).
-                ...(params && { params }),
-              }),
-              // The plan belongs to this run, so it dies with it. Without the
-              // signal, cancelling the query — or unmounting the studio — leaves
-              // a request nobody can stop, which lands a plan on a tab that has
-              // moved on.
-              signal: abortController.signal,
-            }).catch((err) => {
-              // Aborting is this hook's own doing, not a failure worth reporting.
-              if (!(err instanceof DOMException && err.name === "AbortError")) {
-                logger.warn("Background EXPLAIN fetch failed", {
-                  route: "use-query-execution",
-                  error: err instanceof Error ? err.message : String(err),
-                });
-              }
-              return null;
-            });
-          }
+        if (sendsPlan) {
+          explainPromise = appFetch("/api/db/query", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...runPayload,
+              sql: queryToExecute,
+              options: {},
+              explain: { mode: "estimate" },
+              queryId: planQueryId,
+              // The server prefixes the statement to build the EXPLAIN, so its
+              // placeholders are the same ones in the same order and the same
+              // values bind them. Without this the plan request would run
+              // unbound and the panel would keep the previous plan (PR #304).
+              ...(params && { params }),
+            }),
+            // The plan belongs to this run, so it dies with it. Without the
+            // signal, cancelling the query (or unmounting the studio) leaves
+            // a request nobody can stop, which lands a plan on a tab that has
+            // moved on.
+            signal: abortController.signal,
+          }).catch((err) => {
+            // Aborting is this hook's own doing, not a failure worth reporting.
+            if (!(err instanceof DOMException && err.name === "AbortError")) {
+              logger.warn("Background EXPLAIN fetch failed", {
+                route: "use-query-execution",
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+            return null;
+          });
         }
 
         const response = await mainQueryPromise;
@@ -720,26 +810,55 @@ export function useQueryExecution({
           };
         });
 
-        // Playground mode: auto-rollback after getting results
-        if (isPlaygroundRun) {
-          try {
-            await appFetch("/api/db/transaction", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ...runPayload, action: "rollback" }),
-            });
-          } catch {
-            logger.warn("Playground transaction rollback failed", { route: "use-query-execution" });
-          }
+        // The server ended the transaction inside this run, so there is nothing left to roll back.
+        // The OUTCOME is not known here and is not claimed: a COMMIT or an implicitly committing
+        // statement kept the work, a ROLLBACK (or a COMMIT of a failed PostgreSQL transaction)
+        // discarded it, and the server reports the same idle state after either.
+        const transactionEnded = useTransaction && resultData.inTransaction === false;
+        if (transactionEnded && !isPlaygroundRun) {
+          onTransactionEnded?.();
           toast({
-            title: "Playground",
-            description: "Changes auto-rolled back. No data was modified.",
+            title: "Transaction Ended",
+            description:
+              "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly). Check what was kept.",
+            variant: "destructive",
           });
         }
 
+        // Playground mode: auto-rollback after getting results, and say it only when it happened.
+        if (isPlaygroundRun) {
+          if (transactionEnded) {
+            toast({
+              ...SANDBOX_NOT_ROLLED_BACK,
+              description:
+                "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly), so SANDBOX could not roll it back. Check what was kept.",
+            });
+          } else if (
+            await rollbackConfirmed(
+              appFetch("/api/db/transaction", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...runPayload, action: "rollback" }),
+              }),
+            )
+          ) {
+            toast({
+              title: "Playground",
+              description: "Changes auto-rolled back. No data was modified.",
+            });
+          } else {
+            logger.warn("Playground transaction rollback failed", { route: "use-query-execution" });
+            toast({
+              ...SANDBOX_NOT_ROLLED_BACK,
+              description: "The rollback was not confirmed by the server, so the changes may have been kept.",
+            });
+          }
+        }
+
         // Refresh schema after DDL/write operations (pattern from provider capabilities)
-        // Skip schema refresh in playground mode since changes are rolled back
-        if (!isExplain && !isPlaygroundRun && metadata) {
+        // Skip schema refresh in playground mode since changes are rolled back, unless the server
+        // committed them anyway: then the catalog did change and the tree has to say so.
+        if (!isExplain && (!isPlaygroundRun || transactionEnded) && metadata) {
           if (shouldRefreshSchema(queryToExecute, metadata.capabilities.schemaRefreshPattern)) {
             fetchSchema(activeConnection);
             // The tree's cache is its own and nothing else can reach it, so the same statement
@@ -767,16 +886,23 @@ export function useQueryExecution({
         // would otherwise count one the user never sees.
         return !resultData.hasError && !isSuperseded();
       } catch (error) {
-        // Playground mode: rollback on error too
+        // Playground mode: rollback on error too. A statement that failed may still have
+        // changed something first (a multi-statement text), so an unconfirmed rollback is
+        // reported here as well rather than only logged.
         if (isPlaygroundRun) {
-          try {
-            await appFetch("/api/db/transaction", {
+          const rolledBack = await rollbackConfirmed(
+            appFetch("/api/db/transaction", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ ...runPayload, action: "rollback" }),
-            });
-          } catch {
+            }),
+          );
+          if (!rolledBack) {
             logger.warn("Playground transaction rollback failed", { route: "use-query-execution" });
+            toast({
+              ...SANDBOX_NOT_ROLLED_BACK,
+              description: "The rollback was not confirmed by the server, so any changes may have been kept.",
+            });
           }
         }
         // A superseded run must not clear the flags the newer run just set: the
@@ -839,6 +965,7 @@ export function useQueryExecution({
       toast,
       fetchSchema,
       onObjectsChanged,
+      onTransactionEnded,
       metadata,
       transactionActive,
       playgroundMode,
@@ -967,17 +1094,22 @@ export function useQueryExecution({
       run.controller.abort();
 
       // Also cancel on the server side: aborting the fetch drops the response,
-      // it does not stop the statement the engine is still executing.
+      // it does not stop the statement the engine is still executing. That holds for
+      // the run's background plan request as much as for the run, so both are named
+      // (#1311).
       if (activeConnection) {
+        const connection = buildConnectionPayload(activeConnection);
+        const ids = run.planQueryId === undefined ? [run.queryId] : [run.queryId, run.planQueryId];
         try {
-          await appFetch("/api/db/cancel", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ...buildConnectionPayload(activeConnection),
-              queryId: run.queryId,
-            }),
-          });
+          await Promise.all(
+            ids.map((queryId) =>
+              appFetch("/api/db/cancel", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ...connection, queryId }),
+              }),
+            ),
+          );
         } catch {
           logger.warn("Query cancellation request failed", { route: "use-query-execution" });
         }

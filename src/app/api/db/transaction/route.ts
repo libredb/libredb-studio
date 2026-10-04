@@ -128,7 +128,14 @@ export async function POST(req: NextRequest) {
         const prepared = provider.prepareQuery(sql, options);
         const result = await provider.queryInTransaction(prepared.query, bound.params);
 
-        touchTransaction(connection.id);
+        // The provider ends its session when the SERVER says the statement ended the
+        // transaction: a typed COMMIT or ROLLBACK, or a statement the engine commits implicitly (MySQL
+        // DDL). Reported rather than hidden, because the caller is about to ask for a
+        // ROLLBACK that would answer success and undo nothing (SANDBOX said "Changes
+        // auto-rolled back" over a committed CREATE TABLE). The record goes with it.
+        const stillInTransaction = provider.isInTransaction();
+        if (stillInTransaction) touchTransaction(connection.id);
+        else releaseTransaction(connection.id);
 
         // THE SAME CONJUNCT AS `/api/db/query` (#816), for the same reason and on purpose.
         //
@@ -146,7 +153,7 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({
           ...result,
-          inTransaction: true,
+          inTransaction: stillInTransaction,
           pagination: {
             limit: prepared.limit,
             offset: prepared.offset,

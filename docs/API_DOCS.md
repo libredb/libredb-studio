@@ -485,6 +485,8 @@ Milvus and Qdrant each declare a bound of 1,048,576 bytes and InfluxDB (InfluxQL
 
 Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
 
+**`inTransaction` in a transaction `query` answer.** `POST /api/db/transaction` answers its `query` action with `inTransaction`, and `false` there means the server ended the transaction while running the statement: a typed `COMMIT` or `ROLLBACK`, or a statement the engine commits implicitly (MySQL DDL). The answer does not say whether the work was kept, because the server reports the same state after either; the session is released, and a following `rollback` answers 400 "No active transaction" rather than reporting a rollback that undid nothing. A `begin` the server accepts without opening a transaction (RisingWave's `BEGIN`) answers 400 with the reason, and nothing has been held.
+
 **Query plan (optional):**
 ```json
 {
@@ -521,8 +523,23 @@ A `params` array may accompany an explain request. The strategies only prefix th
 placeholders are the same ones in the same order and the values bind the built statement, which is how a
 generated statement that sends its values separately still gets a plan.
 
-Two refusals, each a 400 that runs nothing:
+`estimate` never executes the statement, on any strategy: on PostgreSQL it is `EXPLAIN (FORMAT JSON)`,
+and only `analyze` builds `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, which runs it. The editor asks for
+the estimate in the background beside every run of a SELECT, so an executing estimate would run every
+SELECT twice; until #1311 the PostgreSQL strategy did exactly that.
 
+A `queryId` may accompany an explain request like any other, and `POST /api/db/cancel` with that id
+stops the plan statement on the server. The editor gives its background plan request an id of its own
+and cancels it together with the run.
+
+Three refusals, each a 400 that runs nothing:
+
+- `Only a single statement can be explained` when `sql` holds more than one statement, read under the
+  connection type's own grammar (a `;` inside a quote or a comment does not count, and neither does a
+  trailing one). An EXPLAIN prefixes one statement: handed `SELECT 1; INSERT ...`, PostgreSQL explains
+  the SELECT and then runs the INSERT. A text with a quote or comment the grammar cannot close is refused
+  the same way, since no boundary can be read in it (`SELECT E'\''; INSERT ...` is two statements to
+  PostgreSQL). Refused before a provider is opened (#1311).
 - `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
   format at all.
 - `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The
@@ -1397,6 +1414,13 @@ The exact strings differ: `explain` and `query-safety` return `"Query is require
 `describe-schema` returns `"Schema context required"` — treat the status code, not the message text,
 as the contract.
 
+`query-safety` bounds its wait for the model: a provider request that has not finished after 30 seconds
+(`QUERY_SAFETY_ROUTE_TIMEOUT_MS` in `src/lib/llm/query-safety.ts`) is aborted, and a request that had not
+started streaming answers `504 { "error": "The AI safety analysis did not finish in time.", "code": "TIMEOUT_ERROR" }`;
+one that had started ends there. A caller that disconnects aborts the provider request as well. The bound is
+fixed, not configurable: the Query Safety dialog, the only caller in this repo, stops waiting after 15 seconds
+(`QUERY_SAFETY_ANALYSIS_TIMEOUT_MS`), aborts its request and lets the statement run without the analysis.
+
 **Provider-surfaced errors**
 
 These come from the configured **LLM provider** (bad API key, quota, safety filter), not from session
@@ -2130,7 +2154,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
-| `TIMEOUT_ERROR` | Query exceeded time limit (408) |
+| `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
 | `POOL_EXHAUSTED` | Connection pool exhausted (503) |
 | `DATABASE_ERROR` | Generic database error (500) |

@@ -345,6 +345,46 @@ The declared type is unaffected — `columnTypes` still names the column `bigint
 ([§5.4](#54-declared-column-types)) — so the SQL-DDL export writes `BIGINT` for a column whose values
 now arrive as strings, rather than the `TEXT` a value-shaped guess would produce.
 
+### 3.8 On a server that sends UTF-8 under a utf8mb3 label, utf8mb3 columns are read as UTF-8
+
+mysql2 picks a column's decoder from the collation id in its metadata and ships the whole utf8mb3
+family (33 `utf8mb3_general_ci`, 76 `utf8mb3_tolower_ci`, 83 `utf8mb3_bin`, 192-215, 223 and
+MariaDB's utf8mb3 ids) as **`cesu8`**. Databend, StarRocks and Apache Doris label **every** text
+column 33 whatever the session asked for, while the bytes they send are plain UTF-8. CESU-8 has no
+4-byte form, so every character outside the BMP came back as four U+FFFD, in the grid, the row
+detail, `/api/db/query` and every export. Two-byte and three-byte characters (Turkish letters, CJK)
+were unaffected, which is what hid it.
+
+Measured 2026-10-04 on Databend 1.2.881, StarRocks 4.1.6 and Doris 4.1.3: `hex()` of a stored value
+holds `f09f9880` for U+1F600, so the wire is right and the decoder is not. Asking for utf8mb4 does not
+help: mysql2 already asks for `UTF8MB4_UNICODE_CI` (224), and `UTF8MB4_GENERAL_CI`,
+`UTF8MB4_0900_AI_CI` or a `SET NAMES utf8mb4` left the column at 33 on all three.
+
+**Measured at connect, not keyed on the type id.** `probeUtf8UnderUtf8mb3()`
+([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) sends `SELECT '<U+1F600>' AS probe` and flags
+the server when the column comes back labelled utf8mb3 and the value decodes to U+FFFD, that is when
+the server sent 4-byte UTF-8 under a utf8mb3 label. MySQL 26.7.0, MariaDB 13.0.2 and TiDB v7.5.1
+answer the probe with a utf8mb4 label and the character itself, so they are not flagged and decode
+exactly as mysql2 decides. A refused probe is a "no".
+
+**Scoped to the statement, not the process.** For a flagged pool, every acquired connection is marked,
+and `runStatement` sends its statements through mysql2's callback API, where the command object is
+visible. The command emits `fields` once the column definitions are read and before the row parser is
+built, and both the text and the binary parser read `field.encoding` when a row arrives, so
+`readUtf8mb3AsUtf8()` relabels that statement's `cesu8` columns to `utf8` and the values decode right.
+mysql2's shared `CharsetToEncoding` table is never written, so another provider's pool, or a host
+application's own mysql2 when this runs as the npm package, keeps its decoding. A `typeCast` could not
+do this: mysql2 3.24 hands it the type and column name but not the collation, so it cannot tell a
+utf8mb3 `VARCHAR` from a latin1 one or from a `VARBINARY`.
+
+Only `cesu8` columns move: latin1, binary (63) and utf8mb4 columns keep their decoder, so `BLOB`,
+`VARBINARY` and `BINARY` still arrive as bytes ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)).
+Errors reach the caller unchanged.
+
+> **A column NAME outside the BMP still reads as U+FFFD on these servers.** mysql2 decodes the name
+> while it parses the definition, before `fields` fires, so `SELECT 1 AS "<U+1F600>"` comes back with
+> a four-U+FFFD key. Values are repaired; aliases are not.
+
 ---
 
 ## 4. Connection
@@ -630,11 +670,65 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. |
+| `beginTransaction()` | `pool.getConnection()` + `START TRANSACTION`, arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, and refuses a `START TRANSACTION` that opened nothing ([§6.0](#60-what-the-server-says-about-the-transaction)). |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |
+
+### 6.0 What the server says about the transaction
+
+MySQL commits the open transaction implicitly before a DDL statement and a list of others (the
+manual's "Statements That Cause an Implicit Commit"), and the `ROLLBACK` that follows answers
+success and undoes nothing, neither the statement nor anything run before it in the same
+transaction. Measured 2026-10-04 on MySQL 26.7.0 through mysql2: `START TRANSACTION`, an `INSERT`,
+`CREATE TABLE t2`, `ROLLBACK` left both the table and the row. SANDBOX had said "Changes auto-rolled
+back. No data was modified." over the same sequence.
+
+The OK packet says so: the status flags read `16387` after `START TRANSACTION`, `3` after the
+`INSERT` and `16386` after the `CREATE`, and bit 0 (`SERVER_STATUS_IN_TRANS`) is the transaction.
+`mysql2` exposes those flags only as `ResultSetHeader.serverStatus` ([§6.1](#61-endopenquerytransaction-is-not-implemented-here-because-the-driver-cannot-be-asked)),
+so the provider reads them where a header exists, and three things follow:
+
+- **`implicitCommitStatements`** names the leading keywords of those statements, and SANDBOX
+  refuses a text containing one before anything is sent
+  ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)). `SET` and `LOAD` are left out:
+  only `SET autocommit = 1`, `SET PASSWORD` and `LOAD DATA` on NDB commit, and refusing every `SET`
+  would refuse the session variables a SANDBOX run needs. **`implicitCommitExceptions`** lets
+  through what a listed keyword would catch and that does not commit: `CREATE TEMPORARY` and `DROP
+  TEMPORARY` (the manual's own exception, and measured: the flag stays set after `CREATE TEMPORARY
+  TABLE` on every server below; the temporary table outlives the rollback on the pooled connection,
+  which is session state rather than data), and MariaDB's `ANALYZE SELECT` / `ANALYZE FORMAT`, a
+  read. MariaDB's `BEGIN NOT ATOMIC` compound block stays refused under `BEGIN`: it can run DDL.
+- **`queryInTransaction()` ends the session when a header reports bit 0 cleared**, which catches what
+  the list does not name (`SET autocommit = 1`, a typed `COMMIT`, a `CALL` whose procedure runs DDL,
+  judged by the call's own header, the last element of its answer). A best-effort `ROLLBACK` is sent
+  first (answered with a plain OK where the transaction is really gone), so a server that cleared
+  the flag with a transaction still open could not hand that transaction to the pool. The
+  connection is released and `POST /api/db/transaction` answers `inTransaction: false`, which the
+  editor reports as "Not Rolled Back" (SANDBOX) or "Transaction Ended", without claiming whether
+  the work was kept: a typed `ROLLBACK` clears the flag exactly as a commit does. A read answers
+  rows and no header, so it is never judged, and a read never ends a transaction.
+- **`beginTransaction()` refuses a `START TRANSACTION` whose header reports bit 0 cleared**, the
+  MySQL-wire twin of what RisingWave does over the PostgreSQL wire (see the PostgreSQL provider's
+  §8.0). It sends the same statement the driver's own `beginTransaction()` sends, directly, because
+  that method resolves to nothing and the header is the evidence. A server that answers no header at
+  all is not refused: there is nothing to read, and MySQL always sends one.
+
+Which servers this reading was measured on, 2026-10-04 through mysql2, one connection each:
+`START TRANSACTION`, `INSERT`, `CREATE TABLE`, `INSERT`, `ROLLBACK`, then a count.
+
+| Server | after START | after INSERT | after CREATE | after the next INSERT | rows after ROLLBACK |
+|---|---|---|---|---|---|
+| MySQL 26.7.0 (`mysql:latest`) | 16387 (set) | 3 (set) | 16386 (cleared) | 2 (autocommit) | 2 |
+| Percona Server 8.4.11-11 | 16387 (set) | 3 (set) | 16386 (cleared) | 2 (autocommit) | 2 |
+| MariaDB 13.0.2 (`mariadb:latest`) | 3 (set) | 3 (set) | 2 (cleared) | 2 (autocommit) | 2 |
+| TiDB v7.5.1 (`pingcap/tidb:latest`) | 3 (set) | 3 (set) | 2 (cleared) | 2 (autocommit) | 2 |
+
+Every one of them commits the DDL and everything before it, and every one reports it in the flag.
+**Not measured:** StarRocks, Apache Doris, Databend, SingleStore, OceanBase and Vitess. On those the
+list above still refuses DDL in SANDBOX, and a `START TRANSACTION` they answer with the flag cleared
+is refused; one that sets the flag without a real transaction would not be caught.
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
 
@@ -1624,7 +1718,9 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
-| `supportsTransactions` | `true` — the transaction runs on one held connection through the driver's own `beginTransaction()`, so the trio and the SANDBOX toggle are offered (#464) |
+| `supportsTransactions` | `true`: the transaction runs on one held connection opened with `START TRANSACTION`, so the trio and the SANDBOX toggle are offered (#464) |
+| `implicitCommitStatements` | `ALTER`, `ANALYZE`, `BEGIN`, `CACHE`, `CHANGE`, `CHECK`, `CREATE`, `DROP`, `FLUSH`, `GRANT`, `INSTALL`, `LOCK`, `OPTIMIZE`, `RENAME`, `REPAIR`, `RESET`, `REVOKE`, `START`, `STOP`, `TRUNCATE`, `UNINSTALL`, `UNLOCK`: the statements MySQL commits implicitly, which SANDBOX refuses before sending ([§6.0](#60-what-the-server-says-about-the-transaction)) |
+| `implicitCommitExceptions` | `CREATE TEMPORARY`, `DROP TEMPORARY`, `ANALYZE SELECT`, `ANALYZE FORMAT`: matched by the list above and committing nothing ([§6.0](#60-what-the-server-says-about-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; InnoDB declares them, so an empty list means this schema (or this role) has none, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` |
@@ -1779,6 +1875,16 @@ branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), the 
 literals, the wire protocol each statement takes, and wide integers (the pool option on both
 connection forms, and two ids differing only past 2^53 staying two values through `query()` and
 through the JSON the API response is made of).
+
+utf8mb3 decoding ([§3.8](#38-on-a-server-that-sends-utf-8-under-a-utf8mb3-label-utf8mb3-columns-are-read-as-utf-8))
+is pinned in its own file,
+[`tests/integration/db/mysql-wire-decoding.test.ts`](../../tests/integration/db/mysql-wire-decoding.test.ts),
+because the mock above never runs mysql2's parsers. Nothing is mocked there: the real provider and the
+real mysql2 pool talk to mysql2's own `createServer()`, run once as a server that labels UTF-8 text 33
+and once as an honest one. It pins a value outside the BMP decoding right over the text and the
+prepared protocol, a binary column staying bytes, a refusal failing exactly as on mysql2's own path, an
+unflagged pool decoding a 33 column as mysql2 alone does while a flagged one is connected beside it,
+and mysql2's `CharsetToEncoding` table left as it ships after every test.
 
 It also covers **the object surface** ([§7.1](#71-the-object-surface-789)) in two blocks. `object
 surface` holds the seven conformance tests: the declared kinds and roles on each server, the

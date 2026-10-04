@@ -779,6 +779,7 @@ describe("createDatabaseProvider", () => {
     };
 
     const declaringTypes: string[] = [];
+    const implicitCommitTypes: string[] = [];
     for (const type of SHIPPED_DATABASE_TYPES) {
       const provider = (await createDatabaseProvider(makeConnection(type, overrides[type] ?? {}))) as unknown as Record<
         string,
@@ -792,7 +793,21 @@ describe("createDatabaseProvider", () => {
 
       expect(declared).toBe(implementsTrio);
       if (declared === true) declaringTypes.push(type);
+
+      // A list of statements that commit a transaction is a claim about a transaction, so a
+      // provider with none must not declare one: SANDBOX is never offered there to read it.
+      const implicit = (provider.getCapabilities as () => { implicitCommitStatements?: readonly string[] })()
+        .implicitCommitStatements;
+      if (implicit !== undefined) {
+        expect(declared).toBe(true);
+        implicitCommitTypes.push(type);
+        for (const keyword of implicit) expect(keyword).toBe(keyword.toUpperCase());
+      }
     }
+
+    // MySQL and Oracle commit around DDL; PostgreSQL declares its own COMMIT synonyms; SQL
+    // Server rolls DDL back and has none.
+    expect(implicitCommitTypes.sort()).toEqual(["mysql", "oracle", "postgres"]);
 
     // The positive half, pinned by name: exactly four providers hold a transaction
     // session, so a fifth (or a lost one) fails here and not only in the loop above.

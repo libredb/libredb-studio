@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createLLMProvider } from "@/lib/llm";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
+import { ApiErrorCode } from "@/lib/api/error-codes";
+import { logger } from "@/lib/logger";
+import { QUERY_SAFETY_ROUTE_TIMEOUT_MS } from "@/lib/llm/query-safety";
 
 function buildSafetySystemPrompt(databaseType: string, schemaContext: string): string {
   return `You are a Database Safety Analyst. Your job is to analyze SQL queries BEFORE they are executed and warn the user about potential dangers.
@@ -54,6 +57,11 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/ai/query-safety", bucket: "ai", request: req });
   if ("response" in guard) return guard.response;
 
+  // Bounds the provider request, which had no bound: a model that never answered held this request
+  // open for as long as the connection lived. The caller going away ends it as well.
+  const deadline = AbortSignal.timeout(QUERY_SAFETY_ROUTE_TIMEOUT_MS);
+  const signal = AbortSignal.any([req.signal, deadline]);
+
   try {
     const { query, schemaContext, databaseType } = await req.json();
 
@@ -77,6 +85,7 @@ Return your analysis as a JSON code block.`;
         { role: "system", content: systemPrompt },
         { role: "user", content: userMessage },
       ],
+      signal,
     });
 
     return new Response(stream, {
@@ -86,6 +95,14 @@ Return your analysis as a JSON code block.`;
       },
     });
   } catch (error) {
+    // The provider reports the abort as a stream error; the deadline is what it really was.
+    if (deadline.aborted) {
+      logger.warn("Query safety analysis timed out", { timeoutMs: QUERY_SAFETY_ROUTE_TIMEOUT_MS });
+      return NextResponse.json(
+        { error: "The AI safety analysis did not finish in time.", code: ApiErrorCode.TIMEOUT_ERROR },
+        { status: 504 },
+      );
+    }
     return createErrorResponse(error, { route: "api/ai/query-safety" });
   }
 }

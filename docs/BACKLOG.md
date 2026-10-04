@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D225, U17 · 140
+- [Drivers and connections](#drivers-and-connections) — D1-D226, U17 · 138
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U85 · 79
-- [Dependencies](#dependencies) — P1-P9 · 8
-- [Documentation](#documentation) — DOC3-DOC9 · 6
+- [Dependencies](#dependencies) — P1-P9 · 7
+- [Documentation](#documentation) — DOC3-DOC10 · 7
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -567,30 +567,6 @@ is a major already carrying seventeen providers.
 mapping, with the precedence between the node map, the external addresses and the user's own port
 stated where a reader meets it.
 
-### D54. The data profiler can only profile columns on PostgreSQL-family engines
-
-`src/app/api/db/profile/route.ts:132-133` casts every column with `${safeCol}::text` to take
-its `MIN` and `MAX`. That is PostgreSQL's cast syntax, and it is written once for every engine:
-SQL Server, Oracle, MySQL, ClickHouse and the rest reject it, so each column comes back as
-"Could not profile this column" while the row count and the column list beside it are correct.
-The failure is per column and the panel still renders, which is why it reads as a data problem
-rather than a dialect one.
-
-Measured in a browser during #789's review, on SQL Server 2022 against `shop.dbo.customers`:
-three columns, three refusals, two rows counted correctly.
-
-Pre-existing and not caused by #789: `git show main:src/app/api/db/profile/route.ts` carries the
-identical two lines. It became visible because the object tree's row menu now offers Profile on
-every relation of every engine, where the flat explorer offered it on the tables it listed.
-
-Closing it is a per-dialect text cast measured on each engine rather than a one-line change:
-Oracle has `TO_CHAR`, SQL Server `CAST(x AS NVARCHAR(MAX))`, MySQL `CAST(x AS CHAR)`, ClickHouse
-`toString`, and `MIN`/`MAX` over a cast do not order the same way everywhere, so what the two
-numbers MEAN needs stating per engine rather than assuming a lexicographic answer is wanted.
-
-**Done when:** a column profiles on every engine whose provider offers the action, or the action
-is not offered where it cannot answer, with the engine's own sentence rather than a generic one.
-
 ### D55. The admin Operations table list does not print a row's schema
 
 Two tables with the same label in different schemas render as identical rows, so an operator
@@ -992,6 +968,11 @@ Read in the tree at the same commit: `src/lib/db/providers/sql/postgres.ts` retu
 from `query()`, and `src/app/api/db/query/route.ts` reads `result.rows.length`.
 
 Found while probing D74. Not caused by it and not fixed by it.
+
+The route's `explain` arm refuses such a text since #1311 (`Only a single statement can be explained`,
+read under the connection type's grammar, before a provider is opened), because there the second
+statement was not only a 500: the background plan request re-ran the INSERT after a leading SELECT. A
+plain run without `explain` still reaches the provider and is what this entry is about.
 
 **Done when:** the route either refuses a text carrying more than one statement with a sentence, or the
 provider names which result of an array it answers with. The first is the smaller change and is what
@@ -1540,7 +1521,7 @@ Not fixed in #1085: each remedy costs the inventory's read, which every connecti
 ### D108. One redirected listing fails the whole Elasticsearch or OpenSearch object count
 
 `countObjects` in `src/lib/db/providers/sql/search/index.ts` reads the five kinds together and turns a failed listing into that kind's `unavailable` answer, but only for the transport's own error: anything that is not a `SearchTransportError` is rethrown (`:1189`).
-Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1531`), and that throws a `ConnectionError`, outside the class the count catches.
+Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1556`), and that throws a `ConnectionError`, outside the class the count catches.
 So one listing a proxy redirects rejects the whole count with the redirect's message, where a refusal of the same listing marks only that kind and still counts the other four.
 
 Reproduced 2026-09-23 through the provider's own `countObjects`, with `fetch` replaced and the pipeline listing answering a 302 and then, as the control, a 403, from the repository root:
@@ -2001,6 +1982,7 @@ Measured 2026-10-02 in the etcd branch's regression pass, the same on `origin/ma
 
 Found by the etcd provider's regression pass on SQLite (#1089), which changes no SQL provider.
 Not fixed there: the SQLite provider is outside that PR.
+Since #1323 routes on the driver's result column count, a value-setting `PRAGMA` such as `PRAGMA foreign_keys = ON` reaches `run()` as well, so node:sqlite reports the previous write's count for it too, while bun:sqlite reports 0.
 
 **Done when:** a statement that changes no row reports no changed rows on both SQLite drivers, read from the statement itself rather than the connection's last count, and a test runs a `DELETE` then a `CREATE TABLE` on one connection and pins the second answer.
 
@@ -2055,7 +2037,7 @@ Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
 
 ### D145. Db2 Create Table is off until the dialog and the import have Db2 column types
 
-Inline row edit and the import into an existing table came back with `db2-node` 1.0.24, which reads non-ASCII text back as written and refuses a DECIMAL that does not fit its column, measured on Db2 12.1 and 11.5 by `tests/live/db2-live-check.ts` (K1 and K22 in `docs/providers/db2.md`).
+Inline row edit and the import into an existing table came back with `db2-node` 1.0.24, which reads non-ASCII text back as written and refuses a DECIMAL that does not fit its column, measured on Db2 12.1 and 11.5 by `tests/live/db2-live-check.ts` (K1 and K22 in `docs/providers/db2.md`), and 1.0.25 stores a BOOLEAN edit too (K16, fixed).
 `db2Capabilities` (`src/lib/db/providers/sql/db2/capabilities.ts`) still sets `supportsCreateTable` to false, which also withholds an import into a new table, because neither path can spell a Db2 table.
 `CreateTableModal` (`src/components/CreateTableModal.tsx`) has no Db2 row in `DIALECTS` and refuses to open without one, and `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, which Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` and so cuts every fraction.
 
@@ -2122,20 +2104,6 @@ Measured 2026-10-03: no `provenance:` assignment exists in either provider, and 
 
 **Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
 
-### D152. A SQLite BLOB reaches the grid as an object keyed by byte index
-
-bun:sqlite and node:sqlite read a BLOB as a `Uint8Array`, and the SQLite provider (`src/lib/db/providers/sql/sqlite.ts`, through `sqlite-driver.ts`) returns it unchanged in the result rows.
-The query route serializes the result with `JSON.stringify`, which writes a `Uint8Array` as an object keyed by index, so the standalone grid receives `{"0":1,"1":2,"2":171,"3":255}` for the four bytes `01 02 ab ff`.
-`asBytes` in `src/lib/export/binary.ts` takes a live `Uint8Array` or the `{"type":"Buffer","data":[...]}` form a Node `Buffer` serializes to, and that object is neither, so every reader that goes through `asBytes` (the grid cell, the row detail, Copy Cell, the CSV and SQL export writers, inline editing and the agent's result tool) treats the value as a JSON object rather than as binary.
-PostgreSQL `bytea` and SQL Server `varbinary` arrive in the `Buffer` form and show and copy as `\x` hex.
-Measured 2026-10-03 in the browser pass of #1248, on the CI images of that branch and of `main` before it: the SQLite cell showed and copied the object form on both, and the PostgreSQL and SQL Server cells showed and copied `\x0102abff`.
-The libSQL transport also decodes a BLOB to a `Uint8Array` (`decodeBlob` in `src/lib/db/providers/sql/libsql/hrana-transport.ts`); that path was not measured.
-
-Found by the browser pass of the vector results grid (#1248).
-Not fixed there: the defect predates that PR, and its cause is in what the provider hands the route, not in the grid.
-
-**Done when:** a SQLite BLOB reaches the browser in a form `asBytes` reads, the grid shows it as `\x` hex and Copy Cell writes the whole value, a provider test reads a BLOB and asserts the serialized form, and the libSQL provider is measured the same way and fixed or recorded.
-
 ### D153. The etcd connection-options test can outrun bun's five-second hook timeout
 
 The file-level `beforeAll` in `tests/unit/db/etcd/connection-options.test.ts` makes its certificates at test time with `openssl`, eight of them over a new RSA-2048 key, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
@@ -2176,21 +2144,6 @@ Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 
 
 **Done when:** users paste commented Milvus bodies; then the dialect declares `bodyComments: true` in one data change, with corpus cases for a comment inside a string, after a value and at the end of the body.
 
-### D159. db2-node refuses a password holding `!` that the server accepts
-
-The Db2 compose service set `DB2INST1_PASSWORD=Password123!` until #1301 changed it to `Password123`, and the server takes it: `CONNECT TO TESTDB USER db2inst1 USING "Password123!"` succeeds in the container's own command line processor.
-Studio, over `db2-node` 1.0.22 with the insecure opt-in, is refused with "Authentication failed: Security check failed: severity=8, check_code=0x0F (user id or password invalid), requested_secmec=0x0009, accepted_secmec=0x0003, credential_encoding=Ebcdic037", and `db2diag` logs "Password validation for user db2inst1 failed".
-After the password is changed to letters and digits only, the same connection succeeds at once.
-The likely cause is how the driver encodes `!` in EBCDIC code page 037 (the refusal names `credential_encoding=Ebcdic037`).
-Measured 2026-10-04 through `db2-node` 1.0.24 on 12.1, by changing one test user's password one character at a time: `!`, `^`, `[`, `]` and `|` are refused and every other ASCII punctuation character is accepted, the five being the ones EBCDIC code pages 037 and 500 place differently.
-The refusal is the same over TLS with the driver's default mechanism, over TLS with `securityMechanism: "userPassword"`, and without TLS with it, and `credentialEncoding: "utf8"` is refused too.
-The provider refuses such a password before connecting and names the characters (K23 in `docs/providers/db2.md`, from #1301), so the server's "user id or password invalid" no longer sends a person to check a password that is right.
-Reported upstream on 2026-10-04 as [gurungabit/db2-node#25](https://github.com/gurungabit/db2-node/issues/25).
-
-Found 2026-10-03 by the browser pass of #1246, whose change does not touch Db2.
-
-**Done when:** the pinned `db2-node` carries the fix for gurungabit/db2-node#25, measured live with each of the five characters with and without TLS, and the provider's refusal (`assertPasswordSendable`) and K23 are removed with it.
-
 ### D160. The Db2 compose service can skip its object fixture on a fresh volume
 
 On the first start of a fresh volume, `docker/db2-init/01-object-fixture.sh` printed "db2-init: fixture already loaded", yet `SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TABSCHEMA IN ('APP','REPORTING')` returned 0.
@@ -2198,6 +2151,7 @@ Running `/var/custom-fixture/01-object-fixture.sql` by hand then loaded it with 
 The script loads the fixture only when its count query prints exactly `0`, and prints the skip message for anything else, so a query that fails or warns at that point of the start reads as a loaded fixture.
 
 Found 2026-10-03 by the browser pass of #1246.
+Seen again on 2026-10-04, on three fresh volumes in a row (12.1.0.0 twice, 11.5.9.0 once), each printing the skip message over an empty `APP`; run by hand moments after "Setup has completed", the same count query answered `SQL1024N A database connection does not exist`, which the script reads as a loaded fixture.
 
 **Done when:** the script tells a failed or warning count query from a non-zero count and fails loudly on the first, a fresh volume gets the fixture, and the check that the fixture loaded is part of the service's own start.
 
@@ -2249,7 +2203,7 @@ Not fixed there: the ClickHouse paste path is outside that work.
 
 `readObjectSource` in `src/lib/db/providers/sql/db2/objects.ts` reads a definition as at most two 16336-byte `HEX(VARCHAR(SUBSTRING(...)))` chunks beside its length (`src/lib/db/providers/sql/db2/catalog.ts`), so a longer one is shown partial.
 That bound came from `db2-node` 1.0.22, which could not fetch a CLOB at all (K7 in `docs/providers/db2.md`).
-1.0.24 fetches a CLOB selected on its own: `SELECT TEXT FROM SYSCAT.VIEWS WHERE ...` answered all 40067 bytes of a view definition four times running on 12.1, while a LOB beside other columns can still come back wrong (K4), so the length and `ORIGIN` would stay in a statement of their own.
+1.0.24 fetches a CLOB selected on its own: `SELECT TEXT FROM SYSCAT.VIEWS WHERE ...` answered all 40067 bytes of a view definition four times running on 12.1, and 1.0.25 reads a LOB beside other columns exactly too (K4, fixed), measured on 12.1 and 11.5 with a 50000-byte CLOB, so the length and `ORIGIN` can share the statement.
 
 Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.24.
 
@@ -2534,7 +2488,22 @@ Found 2026-10-04 by the review of the Oxia provider (ruling R38 of its PR).
 
 **Done when:** a record walk shows every record of such a key, each with its shard, or the entry is closed because `get -p` is judged enough.
 
-### D225. Object search, inventory and agent grounding still list routines on Materialize and fail
+### D225. db2-node writes nothing for a value bound to a large CLOB, DBCLOB or BLOB column
+
+A parameter whose target is a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer answers 0 changed rows, with no error and no diagnostic, and the row keeps its old value (K24 in `docs/providers/db2.md`).
+Beside other parameters the whole statement writes nothing on 1.0.25, where 1.0.24 refused it with "parameter descriptor count 1 does not match parameter count 2".
+At 32767 bytes the value is written, and `CAST(? AS VARCHAR(n))` or `CAST(? AS VARBINARY(n))` is written at any declared length; the 1.0.25 README's own `CAST(? AS BLOB(1M))` example writes nothing.
+Measured 2026-10-04 on Db2 12.1.0.0 and 11.5.9.0 through `db2-node` 1.0.24 and 1.0.25 (`tests/live/db2-known-issues.ts`, row K24).
+The grid's inline editor binds every value, so an edit of such a cell would be reported saved and lost.
+Contained: the provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns` (`src/lib/db/providers/sql/db2/capabilities.ts`), so `ResultsGrid` opens no editor on such a cell and shows the reason on it; a result declares these columns without their length, so every one is refused, a short one included.
+The table preview still leaves them out and a result holding one carries a warning (`src/lib/db/providers/sql/db2/values.ts`); an import writes literals and is not affected.
+Reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31).
+
+Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.25.
+
+**Done when:** the pinned `db2-node` writes a bound value to a `CLOB(1M)`, a `DBCLOB(1M)` and a `BLOB(1M)` alone and beside other parameters, K24 probes `GONE` on 12.1 and 11.5, and the editor refusal, the preview rule and the warning are removed with it.
+
+### D226. Object search, inventory and agent grounding still list routines on Materialize and fail
 
 Materialize's `pg_proc` has no `prokind`, so `PostgresProvider.listObjects()` for `function` and `procedure` is refused with `column "p.prokind" does not exist` (`XX000`).
 The object tree is spared since #1351: the count marks both kinds unavailable and the tree does not open an unavailable folder.
@@ -3012,7 +2981,7 @@ Found by the acceptance pass of the vector-family work; the default predates it.
 `buildResultExport` (`src/lib/export/result-export.ts:892-893`) writes the JSON export as `jsonText(rows)`, the raw rows, so a PostgreSQL `bytea` or SQL Server `varbinary` value is written as `{"type":"Buffer","data":[0,1,...]}`.
 The grid, Copy Cell, the row detail and the CSV export show the same value as `\x` hex, through `asBytes` in `src/lib/export/binary.ts`.
 Measured 2026-10-03 in the acceptance pass of the vector-family work: a 100-byte `bytea` and a 100-byte `varbinary` each exported to JSON as the Buffer object with 100 numbers, and copied as `\x00010203...`.
-D152 has a separate cause: a SQLite BLOB never reaches the export as bytes at all.
+A SQLite or libSQL `BLOB` now arrives in the same `Buffer` form, so it is written the same way.
 
 Found by the acceptance pass of the vector-family work; the JSON writer dates from #422.
 
@@ -4029,17 +3998,6 @@ Found 2026-09-30 by the etcd PR's knip run (#1089), which removed the other hint
 
 **Done when:** `knip.json` either declares a compiler for `.css` or states that the project's stylesheets are out of scope in a form knip accepts, and `bun run knip` prints no configuration hint.
 
-### P7. The TLS library compiled into the db2-node addon is inside four RustSec advisories
-
-`db2-node` 1.0.22, the Db2 provider's driver (#786), compiles `rustls` 0.23.37 and `rustls-webpki` 0.103.10 into its native addon.
-Checked on 2026-10-03 against the RustSec advisory database, `rustls` 0.23.37 is inside RUSTSEC-2026-0285 (patched in 0.23.45), and `rustls-webpki` 0.103.10 is inside RUSTSEC-2026-0098, RUSTSEC-2026-0099 and RUSTSEC-2026-0104 (patched in 0.103.13).
-That library is what protects a Db2 connection's password on the wire, since without TLS the password travels in cleartext (section 3.3 of `docs/providers/db2.md`).
-The crates are linked into the `.node` binary, so no lockfile, override or `cargo update` on our side reaches them: only a new `db2-node` release can.
-Re-checked on 2026-10-04 for the move to 1.0.24: its `Cargo.lock` carries the same `rustls` 0.23.37 and `rustls-webpki` 0.103.10, and OSV still places both inside those four advisories.
-Reported upstream on 2026-10-04 as [gurungabit/db2-node#24](https://github.com/gurungabit/db2-node/issues/24).
-
-**Done when:** a `db2-node` release links `rustls` 0.23.45 or later and `rustls-webpki` 0.103.13 or later, its `Cargo.lock` is re-checked against the advisory database, `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run on it, and the pin in `package.json` and section 12 of `docs/providers/db2.md` move to it.
-
 ### P9. Two dev dependencies resolve undici 7.28.0, inside a high advisory
 
 `bun.lock` resolves `undici@7.28.0` for `@workflow/world-local` 4.2.4 and `@workflow/world-vercel` 4.6.2 (`bun.lock:1233,1237,2665`), which arrive through the devDependencies `workflow` 4.8.1 and `@workflow/world-local`, and 7.28.0 is inside the range of GHSA-w293-vg96-wgc3 (high, from 7.24.1 below 7.29.1).
@@ -4205,6 +4163,16 @@ Found 2026-09-30 while re-deriving the etcd PR's numerals (reconciliation N-76).
 Not fixed there: completing each table needs facts that PR did not measure, and neither gains an etcd row alone.
 
 **Done when:** both tables are re-derived from the tree, each with a test or a comment naming the command that derives it.
+
+### DOC10. Seven translated READMEs still describe the Db2 provider as of db2-node 1.0.22
+
+The Db2 row of `README_es.md`, `README_hi.md`, `README_ja.md`, `README_pt.md`, `README_ru.md`, `README_ur.md` and `README_zh.md` says the driver misreads non-ASCII text, BIGINT past 2^53, BOOLEAN, XML and LOBs, and that inline editing and import are off.
+1.0.24 turned inline editing and the import back on and fixed every one of those reads but the LOB one, and 1.0.25 fixed that too; `README.md` carries the current sentence.
+
+Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.25.
+Not fixed there: the change was English-only, and seven translations of a provider row are a documentation change of their own.
+
+**Done when:** each translated Db2 row says what `README.md`'s does, and `bun run readme:check` passes.
 
 ## Release pipeline
 

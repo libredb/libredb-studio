@@ -1583,6 +1583,38 @@ describe("ResultsGrid", () => {
       expect(container.querySelectorAll(".cursor-text").length).toBe(0);
     });
 
+    test("a column whose declared type the provider refuses opens no editor, and says why (K24)", () => {
+      // Db2 declares a CLOB, DBCLOB or BLOB column by its bare name, and db2-node writes nothing
+      // for a value bound to one declared 32768 bytes or longer, so its provider refuses the type.
+      const onCellChange = mock(() => {});
+      const reason = "db2-node writes nothing for a value bound to this column";
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, {
+          result: {
+            ...mockResult,
+            rows: [{ id: 1, name: "Alice", email: "alice-notes" }],
+            columnTypes: { id: "INTEGER", name: "VARCHAR(20)", email: "CLOB" },
+          },
+          editingEnabled: true,
+          inlineEditRefusedColumns: { type: "^(CLOB|DBCLOB|BLOB)$", reason },
+          onCellChange,
+          pendingChanges: [],
+        }),
+      );
+      fireEvent.click(getByTestId("view-table"));
+
+      const row = findDesktopRow(container, "Alice")!;
+      const refused = within(row).getByText("alice-notes").parentElement!;
+      expect(refused.getAttribute("title")).toBe(reason);
+      expect(refused.classList.contains("cursor-text")).toBe(false);
+      fireEvent.doubleClick(refused);
+      expect(findEditInput(container)).toBeUndefined();
+
+      // The column beside it, whose type the rule does not match, still edits.
+      fireEvent.doubleClick(findDesktopCell(container, "Alice")!);
+      expect(findEditInput(container)).not.toBeUndefined();
+    });
+
     test("Enter key commits a desktop-table edit and calls onCellChange", () => {
       const onCellChange = mock(() => {});
       const { container, getByTestId } = render(

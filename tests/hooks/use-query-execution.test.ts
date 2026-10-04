@@ -2475,6 +2475,126 @@ describe("useQueryExecution", () => {
     expect(body.explain).toEqual({ mode: "estimate" });
   });
 
+  /**
+   * An EXPLAIN prefixes ONE statement. The whole text of `SELECT 1 AS a; INSERT ...`
+   * used to go to the plan request because it starts with a SELECT, and the INSERT
+   * after it ran a second time there: measured on Materialize 26.44.1, AlloyDB Omni
+   * 17.9 and Cloudberry 2.1.0 (#1311). The run itself takes the multi-statement route
+   * and is unaffected.
+   */
+  test("no background plan for a multi-statement run that starts with a SELECT", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: { ...mockQueryResult, multiStatement: true, statementCount: 2, executedCount: 2, statements: [] },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1 AS a; INSERT INTO users (name) VALUES ('dup')", undefined, false, {
+        skipSafety: true,
+      });
+    });
+
+    const planCalls = fetchMock.mock.calls.filter((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return typeof init?.body === "string" && JSON.parse(init.body).explain !== undefined;
+    });
+    expect(planCalls).toHaveLength(0);
+    expect(
+      fetchMock.mock.calls.some((call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query")),
+    ).toBe(true);
+  });
+
+  // `E'\\''` is one quote character to PostgreSQL, so the INSERT after the `;` is a
+  // statement of its own, but the splitter cannot tell whether that backslash escapes
+  // and finds no boundary. Text it cannot resolve is not one statement to plan.
+  test("no background plan for a text whose statement boundaries cannot be resolved", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT E'\\''; INSERT INTO users (name) VALUES ('dup')", undefined, false, {
+        skipSafety: true,
+      });
+    });
+
+    const planCalls = fetchMock.mock.calls.filter((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return typeof init?.body === "string" && JSON.parse(init.body).explain !== undefined;
+    });
+    expect(planCalls).toHaveLength(0);
+  });
+
+  // A note after the final `;` is not a second statement: the splitter keeps it as a
+  // fragment of its own, and counting it dropped the plan and refused the Explain
+  // button for one SELECT.
+  test("a trailing comment does not make one SELECT a multi-statement explain", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; -- note", undefined, true);
+    });
+
+    const queryCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(queryCalls).toHaveLength(1);
+    expect(JSON.parse((queryCalls[0][1] as RequestInit).body as string).explain).toEqual({ mode: "analyze" });
+    expect(mockToastError).not.toHaveBeenCalledWith("Not Supported", expect.anything());
+  });
+
+  test("a trailing comment keeps the background plan of one SELECT", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+      "/api/db/multi-query": {
+        ok: true,
+        json: { ...mockQueryResult, multiStatement: true, statementCount: 2, executedCount: 2, statements: [] },
+      },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; -- note");
+    });
+
+    const planCalls = fetchMock.mock.calls.filter((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return typeof init?.body === "string" && JSON.parse(init.body).explain !== undefined;
+    });
+    expect(planCalls).toHaveLength(1);
+  });
+
+  test("the Explain button refuses a multi-statement text and sends nothing", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1 AS a; INSERT INTO users (name) VALUES ('dup')", undefined, true);
+    });
+
+    expect(fetchMock.mock.calls.some((call) => typeof call[0] === "string" && call[0].includes("/api/db/"))).toBe(
+      false,
+    );
+    expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+      description: "Only a single statement can be explained.",
+    });
+  });
+
   test("the stored plan carries the format the response names, not the static one", async () => {
     // The server built the statement, so only it knows which form the engine
     // accepted. A MySQL-wire relative that refused `FORMAT=JSON` answers a plain
@@ -3014,14 +3134,20 @@ describe("useQueryExecution", () => {
     }
   });
 
-  // ── Playground BEGIN failure is logged and execution continues ─────────
+  // ── Playground BEGIN failure stops the run ────────────────────────────
+  //
+  // It used to log and carry on, so the statement ran with no transaction under it and the
+  // toast still said it had been rolled back. Measured on RisingWave 3.1.0, whose BEGIN opens
+  // nothing: an INSERT and a DELETE stayed applied.
 
-  test("playground mode continues when transaction BEGIN fails", async () => {
+  test("playground mode runs nothing when transaction BEGIN fails", async () => {
+    const sent: string[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/api/db/transaction")) {
         const body = JSON.parse((init?.body as string) || "{}");
+        sent.push(body.action);
         if (body.action === "begin") {
           return new Response(JSON.stringify({ error: "begin failed" }), {
             status: 500,
@@ -3043,20 +3169,198 @@ describe("useQueryExecution", () => {
 
     const { result } = renderHook(() => useQueryExecution(params));
 
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    expect(returned).toBe(false);
+    expect(sent).toEqual(["begin"]);
+    expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
+      description: "begin failed. Nothing was run.",
+    });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("a BEGIN refusal with no readable reason still stops the run", async () => {
+    mockGlobalFetch({
+      "/api/db/transaction": () => ({ ok: false, status: 502, text: "<html>bad gateway</html>" }),
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
     await act(async () => {
       await result.current.executeQuery("UPDATE users SET active = false");
     });
 
-    // Query still runs and the playground toast is shown despite BEGIN failing
-    expect(mockToastSuccess).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
+      description: "The transaction SANDBOX needs could not be opened. Nothing was run.",
+    });
+  });
+
+  // ── The server ended the transaction inside the run ───────────────────
+
+  function transactionRoute(queryAnswer: Record<string, unknown>) {
+    const actions: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const body = JSON.parse((init?.body as string) || "{}");
+      if (url.includes("/api/db/transaction")) actions.push(body.action);
+      const answer = body.action === "query" ? queryAnswer : mockQueryResult;
+      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    return actions;
+  }
+
+  test("playground mode does not claim a rollback when the statement ended the transaction", async () => {
+    const originalFetch = globalThis.fetch;
+    const actions = transactionRoute({ ...mockQueryResult, inTransaction: false });
+    const params = createDefaultParams({ playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("ALTER TABLE a RENAME TO b");
+    });
+
+    // Nothing is left to roll back, so no ROLLBACK is asked for and none is announced.
+    expect(actions).toEqual(["begin", "query"]);
+    // The catalog really changed, so the tree is re-read as for any committed DDL.
+    expect(params.fetchSchema).toHaveBeenCalledTimes(1);
+    expect(mockToastError).toHaveBeenCalledWith("Not Rolled Back", {
+      description:
+        "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly), so SANDBOX could not roll it back. Check what was kept.",
+    });
+    expect(mockToastSuccess).not.toHaveBeenCalledWith("Playground", expect.anything());
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("an open transaction the server ended is closed in the UI, and the user told", async () => {
+    const originalFetch = globalThis.fetch;
+    const actions = transactionRoute({ ...mockQueryResult, inTransaction: false });
+    const onTransactionEnded = mock(() => {});
+    const params = createDefaultParams({ transactionActive: true, onTransactionEnded });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE t (id INT)");
+    });
+
+    expect(actions).toEqual(["query"]);
+    expect(onTransactionEnded).toHaveBeenCalledTimes(1);
+    expect(mockToastError).toHaveBeenCalledWith("Transaction Ended", {
+      description:
+        "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly). Check what was kept.",
+    });
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("a ROLLBACK typed into an open transaction is not reported as committed", async () => {
+    // The server reports the same idle state after a ROLLBACK as after a COMMIT, so the
+    // toast names neither outcome; it used to say "its changes are committed".
+    const originalFetch = globalThis.fetch;
+    transactionRoute({ ...mockQueryResult, inTransaction: false });
+    const onTransactionEnded = mock(() => {});
+    const params = createDefaultParams({ transactionActive: true, onTransactionEnded });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("ROLLBACK");
+    });
+
+    expect(onTransactionEnded).toHaveBeenCalledTimes(1);
+    const calls = mockToastError.mock.calls as unknown as [string, { description: string }][];
+    const ended = calls.find((call) => call[0] === "Transaction Ended");
+    expect(ended?.[1].description).toContain("Check what was kept.");
+    expect(ended?.[1].description).not.toContain("committed");
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("a BEGIN refusal that already ends in a period is not given a second one", async () => {
+    mockGlobalFetch({
+      "/api/db/transaction": () => ({ ok: false, status: 400, json: { error: "No transaction here." } }),
+    });
+    const params = createDefaultParams({ playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
+      description: "No transaction here. Nothing was run.",
+    });
+  });
+
+  test("an open transaction that is still open leaves the controls alone", async () => {
+    const originalFetch = globalThis.fetch;
+    transactionRoute({ ...mockQueryResult, inTransaction: true });
+    const onTransactionEnded = mock(() => {});
+    const params = createDefaultParams({ transactionActive: true, onTransactionEnded });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("INSERT INTO t VALUES (1)");
+    });
+
+    expect(onTransactionEnded).not.toHaveBeenCalled();
     expect(mockToastError).not.toHaveBeenCalled();
 
     globalThis.fetch = originalFetch;
   });
 
+  // ── SANDBOX refuses what would commit its transaction ─────────────────
+
+  test("playground mode refuses a statement the provider declares as committing implicitly", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/": { ok: true, json: mockQueryResult } });
+    const params = createDefaultParams({
+      playgroundMode: true,
+      metadata: {
+        ...mockMetadata,
+        capabilities: { ...mockMetadata.capabilities, implicitCommitStatements: ["CREATE"] },
+      },
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery("CREATE TABLE sbx (id INT)");
+    });
+
+    expect(returned).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Statement Refused", {
+      description:
+        "SANDBOX cannot run CREATE: on this database it can end the open transaction (it commits implicitly, or runs code that may), so the rollback that follows could undo nothing. Turn SANDBOX off to run it for real.",
+    });
+  });
+
+  test("the same statement runs outside playground mode", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/": { ok: true, json: mockQueryResult } });
+    const params = createDefaultParams({
+      metadata: {
+        ...mockMetadata,
+        capabilities: { ...mockMetadata.capabilities, implicitCommitStatements: ["CREATE"] },
+      },
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE sbx (id INT)");
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalledWith("Statement Refused", expect.anything());
+  });
+
   // ── Playground rollback fetch failures are swallowed ───────────────────
 
-  test("playground rollback failure after success is swallowed", async () => {
+  test("playground rollback failure after success is reported, not claimed", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -3084,14 +3388,16 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("UPDATE users SET active = false");
     });
 
-    // Rollback failure is swallowed and the playground toast is still shown
-    expect(mockToastSuccess).toHaveBeenCalled();
-    expect(mockToastError).not.toHaveBeenCalled();
+    // The rollback never answered, so nothing may say it happened.
+    expect(mockToastSuccess).not.toHaveBeenCalledWith("Playground", expect.anything());
+    expect(mockToastError).toHaveBeenCalledWith("Not Rolled Back", {
+      description: "The rollback was not confirmed by the server, so the changes may have been kept.",
+    });
 
     globalThis.fetch = originalFetch;
   });
 
-  test("playground rollback failure after query error is swallowed", async () => {
+  test("playground rollback failure after query error is reported too", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -3122,8 +3428,10 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("UPDATE users SET broken");
     });
 
-    // Rollback failure is swallowed; the original query error toast is shown
-    expect(mockToastError).toHaveBeenCalled();
+    // The original query error toast is shown, and so is the unconfirmed rollback.
+    expect(mockToastError).toHaveBeenCalledWith("Not Rolled Back", {
+      description: "The rollback was not confirmed by the server, so any changes may have been kept.",
+    });
 
     globalThis.fetch = originalFetch;
   });
@@ -3293,6 +3601,62 @@ describe("useQueryExecution", () => {
       });
 
       expect(explainCalls(calls)[0].init.signal?.aborted).toBe(true);
+    });
+
+    /**
+     * Aborting the fetch drops the response; it does not stop the statement on the
+     * server. The plan request used to carry no `queryId`, so `/api/db/cancel` had
+     * nothing to name: measured on PostgreSQL 18.6, after Cancel the user's backend was
+     * idle while the plan's `EXPLAIN (ANALYZE ...) SELECT pg_sleep(30)` stayed `active`
+     * until it ended on its own (#1311). The plan gets an id of its own, because the
+     * server tracks one statement per id, and Cancel names both.
+     */
+    test("cancelling a run cancels its background plan on the server too", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      const runId = mainCalls(calls)[0].body.queryId;
+      const planId = explainCalls(calls)[0].body.queryId;
+      expect(typeof runId).toBe("string");
+      expect(typeof planId).toBe("string");
+      expect(planId).not.toBe(runId);
+
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+
+      const cancelled = calls.filter((c) => c.url.includes("/api/db/cancel")).map((c) => c.body.queryId);
+      expect(cancelled).toEqual([runId, planId]);
+    });
+
+    // The Explain button's own run IS the plan request (`analyze`), it sends no second
+    // one, and it carries the run's id, so Cancel names exactly that.
+    test("an Explain run sends one cancellable request and cancels only that", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users", undefined, true);
+      });
+      await flush();
+
+      const queryCalls = calls.filter((c) => c.url.includes("/api/db/query"));
+      expect(queryCalls).toHaveLength(1);
+      expect(queryCalls[0].body.explain).toEqual({ mode: "analyze" });
+
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+
+      const cancelled = calls.filter((c) => c.url.includes("/api/db/cancel")).map((c) => c.body.queryId);
+      expect(cancelled).toEqual([queryCalls[0].body.queryId]);
     });
 
     test("unmounting aborts whatever is still in flight", async () => {

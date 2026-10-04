@@ -3,15 +3,17 @@
  * one still PRESENT in the installed driver, or GONE?
  *
  * WHY THIS EXISTS. The provider was first measured against db2-node 1.0.22, whose defects K1 to
- * K22 were reported upstream as gurungabit/db2-node#12, and moved to 1.0.24, which fixed most of
- * them; docs/providers/db2.md lists what is still PRESENT on 1.0.24 and what was fixed. Every
- * workaround is a bet that a defect is still there, and every lifted one a bet that it stays
- * gone, so a driver bump starts here: run this against the old and the new version and compare
- * the lines. On 1.0.24 the expected report is GONE for every row but K4, K15, K16 and K17; a GONE
- * that turns PRESENT again is a regression the provider no longer guards against. It drives
- * db2-node directly, never the provider, because the question is what the driver does on its own.
- * K23, the password characters the driver sends wrongly, has no probe: it needs a Db2 user whose
- * password holds one of them, and section 4 of docs/providers/db2.md says how to re-measure it.
+ * K22 were reported upstream as gurungabit/db2-node#12 and fixed in 1.0.24, and moved to 1.0.25,
+ * which fixed K4, K15, K16, K17 and K23 (gurungabit/db2-node#19 to #25); docs/providers/db2.md
+ * lists what is still PRESENT and what was fixed. Every workaround is a bet that a defect is
+ * still there, and every lifted one a bet that it stays gone, so a driver bump starts here: run
+ * this against the old and the new version and compare the lines. On 1.0.25 the expected report
+ * is GONE for every row but K24, and PRESENT for M3, which is not a defect but the reason the
+ * provider refuses an array parameter; a GONE that turns PRESENT again is a regression the
+ * provider no longer guards against. It drives db2-node directly, never the provider, because
+ * the question is what the driver does on its own. K23 needs a Db2 user whose password holds
+ * ! ^ [ ] and |, named by DB2_K23_USER and DB2_K23_PASSWORD, and reports "not probed" without
+ * one; section 13 of docs/providers/db2.md says how to make it.
  *
  * It is a REPORT and exits 0 whatever it finds: one line per known issue,
  * `K<n> <short name>: PRESENT | GONE | ERROR <message>`, under a header naming the driver version
@@ -83,6 +85,40 @@ function first(result: { rows: Array<Record<string, unknown>> }): unknown {
   return row === undefined ? undefined : Object.values(row)[0];
 }
 
+/** A value as text that compares a Buffer by its bytes and everything else by its JSON. */
+function canonical(value: unknown): string {
+  if (value instanceof Uint8Array) return `bytes:${Buffer.from(value).toString("hex")}`;
+  return typeof value === "bigint" ? `bigint:${value}` : JSON.stringify(value);
+}
+
+/**
+ * Null when `columns` read together (or `*`) answer what each column read on its own answers,
+ * row for row in `ID` order, or `C` order when there is no `ID`; otherwise what differed.
+ */
+async function compareMixed(
+  c: Client,
+  table: string,
+  columns: readonly string[],
+  rows: number,
+  projection = columns.map((name) => `"${name}"`).join(", "),
+): Promise<string | null> {
+  const order = columns.includes("ID") ? "ID" : "LENGTH(C)";
+  const mixed = await attempt(() => c.query(`SELECT ${projection} FROM ${table} ORDER BY ${order}`));
+  if (!mixed.ok) return `failed: ${message(mixed.error)}`;
+  const names = mixed.value.columns.map((column) => column.name);
+  if (mixed.value.rows.length !== rows || names.length !== columns.length) {
+    return `${mixed.value.rows.length} of ${rows} rows, ${names.length} of ${columns.length} columns`;
+  }
+  const wrong: string[] = [];
+  for (const name of columns) {
+    const alone = await c.query(`SELECT "${name}" FROM ${table} ORDER BY ${order}`);
+    alone.rows.forEach((row, index) => {
+      if (canonical(row[name]) !== canonical(mixed.value.rows[index]?.[name])) wrong.push(`${name} row ${index + 1}`);
+    });
+  }
+  return wrong.length === 0 ? null : `differs from the column read alone at ${wrong.join(", ")}`;
+}
+
 /** EBCDIC code page 037 for the characters a test password plausibly holds. */
 function ebcdic037(text: string): Buffer | null {
   const bytes: number[] = [];
@@ -143,24 +179,38 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
   [
     "K4 a LOB beside other columns",
     async (c) => {
-      // 1.0.22 lost rows and columns of SELECT * over a mixed table; 1.0.24 still does when a LOB
-      // or XML column shares the row, and returns a CLOB's bytes as the BLOB beside it.
-      const declared = Number(
-        first(await c.query("SELECT COUNT(*) FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'ALLTYPES'")),
-      );
+      // 1.0.22 lost rows and columns of SELECT * over a mixed table, and 1.0.24 still did when a LOB
+      // or XML column shared the row: it answered a CLOB's bytes as the BLOB beside it, dropped rows
+      // of a CLOB(1M) beside a GRAPHIC when a later LOB was NULL, and failed a CLOB beside a DOUBLE.
+      // Each mixed read is compared, row for row, with the same columns read one at a time.
       const present: string[] = [];
-      const all = await attempt(() => c.query("SELECT * FROM APP.ALLTYPES"));
-      if (!all.ok) present.push(`SELECT * failed: ${message(all.error)}`);
-      else if (all.value.rows.length !== 3 || all.value.columns.length < declared) {
-        present.push(
-          `SELECT * answered ${all.value.rows.length} of 3 rows, ${all.value.columns.length} of ${declared} columns`,
-        );
+      // Written as literals, never bound: a bound CLOB or BLOB writes nothing (K24). The third CLOB is
+      // 50000 bytes, longer than one DRDA block, so it arrives as externalised LOB data.
+      const big = `CAST(REPEAT('L', 30000) AS CLOB(1M)) || REPEAT('M', 20000)`;
+      await c.query(
+        `CREATE TABLE ${SCHEMA}.K4 (ID INTEGER, G GRAPHIC(5), D DOUBLE, C CLOB(1M), DB DBCLOB(1K), B BLOB(1M), X XML)`,
+      );
+      await c.query(
+        `INSERT INTO ${SCHEMA}.K4 VALUES (1, G'ＡＢ', 1.5, 'first clob', G'日本', BLOB(X'0001FEFF'), '<a>1</a>')`,
+      );
+      await c.query(`INSERT INTO ${SCHEMA}.K4 (ID, G, D) VALUES (2, G'ＣＤ', 2.5)`);
+      await c.query(`INSERT INTO ${SCHEMA}.K4 VALUES (3, G'ＥＦ', 3.5, ${big}, G'語', BLOB(X'AABB'), '<a>3</a>')`);
+      for (const columns of [
+        ["ID", "G", "C"],
+        ["ID", "D", "C"],
+        ["C", "B"],
+        ["ID", "G", "D", "C", "DB", "B", "X"],
+      ]) {
+        const mismatch = await compareMixed(c, `${SCHEMA}.K4`, columns, 3);
+        if (mismatch !== null) present.push(`${columns.join(", ")}: ${mismatch}`);
       }
-      const pair = await attempt(() => c.query("SELECT C_CLOB, C_BLOB FROM APP.ALLTYPES WHERE ID = 1"));
-      const blob = pair.ok ? pair.value.rows[0]?.C_BLOB : undefined;
-      if (!(blob instanceof Uint8Array) || Buffer.from(blob).toString("hex") !== "0001feff") {
-        present.push("a BLOB beside a CLOB is not its own bytes");
-      }
+      const declared = (
+        await c.query(
+          "SELECT COLNAME FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'ALLTYPES' ORDER BY COLNO",
+        )
+      ).rows.map((row) => String(row.COLNAME));
+      const all = await compareMixed(c, "APP.ALLTYPES", declared, 3, "*");
+      if (all !== null) present.push(`SELECT * over APP.ALLTYPES: ${all}`);
       return present.length === 0 ? "GONE" : `PRESENT (${present.join("; ")})`;
     },
   ],
@@ -308,8 +358,16 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
   [
     "K15 duplicate column names collapse in a row",
     async (c) => {
-      const result = await c.query(`SELECT 1 AS A, 2 AS A ${DUMMY}`);
-      return Object.keys(result.rows[0] ?? {}).length < 2 ? "PRESENT" : "GONE";
+      // Object rows key by name, so they still hold one value; 1.0.25 added `rowMode: "array"`,
+      // which the provider reads with, and the question is whether that keeps both.
+      const sql = `SELECT 1 AS A, 2 AS A ${DUMMY}`;
+      const objects = await c.query(sql);
+      console.log(`   K15 object rows: ${JSON.stringify(objects.rows[0])}`);
+      const arrays = await attempt(() => c.query(sql, [], { rowMode: "array" }));
+      if (!arrays.ok) return `PRESENT (rowMode "array" refused: ${message(arrays.error)})`;
+      const names = arrays.value.columns.map((column) => column.name).join(",");
+      const row = JSON.stringify(arrays.value.rows[0]);
+      return names === "A,A" && row === "[1,2]" ? "GONE" : `PRESENT (array rows answered ${names} ${row})`;
     },
   ],
   [
@@ -330,26 +388,51 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
       const when = new Date() as unknown as string;
       const date = await attempt(() => c.query(`UPDATE ${SCHEMA}.K16 SET TS = ? WHERE ID = 1`, [when]));
       if (!date.ok) present.push("Date refused");
-      // 1.0.22 failed a BOOLEAN bound beside another parameter. 1.0.24 binds a JS boolean there,
-      // and refuses the string "true" alone or beside others, with an error a caller sees.
+      // 1.0.22 failed a BOOLEAN bound beside another parameter, and 1.0.24 bound a JS boolean there
+      // but refused the string "true", alone or beside others; 1.0.25 takes both.
       const boolean = await attempt(() => c.query(`INSERT INTO ${SCHEMA}.K16 (ID, B) VALUES (?, ?)`, [2, true]));
       if (!boolean.ok) present.push("BOOLEAN in a parameter list");
-      const text = await attempt(() => c.query(`UPDATE ${SCHEMA}.K16 SET B = ? WHERE ID = 1`, ["true"]));
-      if (!text.ok) present.push(`BOOLEAN bound as the text "true" refused: ${message(text.error)}`);
+      // The grid's inline editor binds a BOOLEAN as the text it shows, so both words are bound and read back.
+      for (const [word, expected] of [
+        ["true", true],
+        ["false", false],
+      ] as const) {
+        const text = await attempt(() => c.query(`UPDATE ${SCHEMA}.K16 SET B = ? WHERE ID = 1`, [word]));
+        if (!text.ok) {
+          present.push(`BOOLEAN bound as the text "${word}" refused: ${message(text.error)}`);
+          continue;
+        }
+        const stored = first(await c.query(`SELECT B FROM ${SCHEMA}.K16 WHERE ID = 1`));
+        if (stored !== expected) present.push(`BOOLEAN bound as the text "${word}" stored ${String(stored)}`);
+      }
       return present.length === 0 ? "GONE" : `PRESENT (${present.join(", ")})`;
     },
   ],
   [
-    "K17 some driver errors carry no sqlstate",
+    "K17 client-side driver errors carry no classification",
     async (c) => {
-      // A failure the driver raises itself: the K8 decode error while K8 is present, and the
-      // refusal of an out-of-range bound DECIMAL once K22 is fixed, which the server would have
-      // answered with SQLSTATE 22003.
-      const decode = await attempt(() => c.query("VALUES CAST(CURRENT TIMESTAMP AS TIMESTAMP(0))"));
-      const result = decode.ok ? await attempt(() => c.query(`VALUES CAST(? AS DECIMAL(5,2))`, ["12345.67"])) : decode;
-      if (result.ok) throw new Error("neither client-side failure happens any more, so K17 has no shape to show");
-      console.log(`   K17 error: ${sqlCodes(result.error)} ${message(result.error)}`);
-      return (result.error as { sqlstate?: string }).sqlstate === undefined ? "PRESENT" : "GONE";
+      // They still carry no SQLSTATE, which only a server can give; 1.0.25 added `driverCode`, which
+      // the provider maps, so each failure the driver raises itself must carry one.
+      const failures: Array<[string, string, () => Promise<unknown>]> = [
+        [
+          "DB2_PARAMETER_TYPE",
+          "an out-of-range DECIMAL",
+          () => c.query(`VALUES CAST(? AS DECIMAL(5,2))`, ["12345.67"]),
+        ],
+        ["DB2_PARAMETER_COUNT", "one parameter too many", () => c.query(`VALUES CAST(? AS INTEGER)`, [1, 2])],
+        ["DB2_PARAMETER_TYPE", "a BOOLEAN that is no word", () => c.query(`VALUES CAST(? AS BOOLEAN)`, ["maybe"])],
+      ];
+      const present: string[] = [];
+      for (const [expected, what, run] of failures) {
+        const result = await attempt(run);
+        if (result.ok) throw new Error(`${what} no longer fails, so K17 has no shape to show`);
+        const driverCode = (result.error as { driverCode?: string }).driverCode;
+        console.log(
+          `   K17 ${what}: driverCode=${driverCode ?? "none"} ${sqlCodes(result.error)} ${message(result.error)}`,
+        );
+        if (driverCode !== expected) present.push(`${what} answered driverCode ${driverCode ?? "none"}`);
+      }
+      return present.length === 0 ? "GONE" : `PRESENT (${present.join(", ")})`;
     },
   ],
   [
@@ -409,6 +492,63 @@ const probes: Array<[string, (c: Client) => Promise<Verdict>]> = [
       return stored === "12345.67" ? "GONE" : `PRESENT (stored ${stored})`;
     },
   ],
+  [
+    "K23 a password holding ! ^ [ ] or | is sent wrongly",
+    async () => {
+      // Needs a Db2 user whose password holds those characters, which the compose service has
+      // not: DB2_K23_USER names one, and DB2_K23_PASSWORD its password. Section 4 of
+      // docs/providers/db2.md says how to make one.
+      const user = process.env.DB2_K23_USER;
+      const password = process.env.DB2_K23_PASSWORD;
+      if (user === undefined || password === undefined) return "PRESENT (not probed: DB2_K23_USER is not set)";
+      const held = ["!", "^", "[", "]", "|"].filter((character) => password.includes(character));
+      if (held.length < 5) throw new Error(`DB2_K23_PASSWORD holds only ${held.join(" ")} of ! ^ [ ] |`);
+      const client = new Client({ ...BASE, user, password });
+      const connected = await attempt(() => client.connect());
+      if (!connected.ok) return `PRESENT (${message(connected.error)})`;
+      await client.close();
+      return "GONE";
+    },
+  ],
+  [
+    "K24 a bound LOB of 32768 bytes or more writes nothing",
+    async (c) => {
+      // Measured on 1.0.24 and 1.0.25: a parameter whose target is a CLOB, DBCLOB or BLOB declared
+      // 32768 bytes or longer answers 0 changed rows, no error and no diagnostic, and nothing is
+      // written, alone or beside other parameters; at 32767 bytes it is written. The control row
+      // below keeps the probe honest: if it fails, the statement itself is wrong, not the driver.
+      await c.query(
+        `CREATE TABLE ${SCHEMA}.K24 (ID INTEGER, C CLOB(1M), D DBCLOB(1M), B BLOB(1M), S CLOB(32767), V VARCHAR(10))`,
+      );
+      await c.query(`INSERT INTO ${SCHEMA}.K24 (ID) VALUES (1)`);
+      const control = await c.query(`UPDATE ${SCHEMA}.K24 SET S = ? WHERE ID = 1`, ["s"]);
+      if (control.rowCount !== 1) throw new Error(`the CLOB(32767) control wrote ${control.rowCount} rows`);
+      const present: string[] = [];
+      const writes: Array<[string, string, Array<string | number | Buffer>]> = [
+        ["CLOB(1M)", `UPDATE ${SCHEMA}.K24 SET C = ? WHERE ID = 1`, ["c"]],
+        ["DBCLOB(1M)", `UPDATE ${SCHEMA}.K24 SET D = ? WHERE ID = 1`, ["d"]],
+        ["BLOB(1M)", `UPDATE ${SCHEMA}.K24 SET B = ? WHERE ID = 1`, [Buffer.from([1])]],
+        ["CLOB(1M) beside a VARCHAR", `UPDATE ${SCHEMA}.K24 SET V = ?, C = ? WHERE ID = ?`, ["v", "c", 1]],
+      ];
+      for (const [what, sql, params] of writes) {
+        const result = await attempt(() => c.query(sql, params));
+        if (!result.ok) present.push(`${what} refused: ${message(result.error)}`);
+        else if (result.value.rowCount !== 1) present.push(`${what} answered ${result.value.rowCount} rows`);
+      }
+      const row = (await c.query(`SELECT LENGTH(C) AS C, LENGTH(D) AS D, LENGTH(B) AS B, V FROM ${SCHEMA}.K24`))
+        .rows[0];
+      console.log(`   K24 stored: ${JSON.stringify(row)}`);
+      return present.length === 0 ? "GONE" : `PRESENT (${present.join("; ")})`;
+    },
+  ],
+  [
+    "M3 an array parameter is read as binary bytes",
+    async (c) => {
+      // Not a defect the driver will fix, the reason the provider refuses an array parameter.
+      const result = await attempt(() => c.query(`VALUES HEX(CAST(? AS VARBINARY(4)))`, [[1, 2]]));
+      return result.ok && first(result.value) === "0102" ? "PRESENT" : "GONE";
+    },
+  ],
 ];
 
 async function main(): Promise<void> {
@@ -429,7 +569,7 @@ async function main(): Promise<void> {
       console.log(`${name}: ${outcome.ok ? outcome.value : `ERROR ${message(outcome.error)}`}`);
     }
   } finally {
-    for (const table of ["K1", "K3", "K5", "K16", "K19", "K22"])
+    for (const table of ["K1", "K3", "K4", "K5", "K16", "K19", "K22", "K24"])
       await attempt(() => client.query(`DROP TABLE ${SCHEMA}.${table}`));
     const dropped = await attempt(() => client.query(`DROP SCHEMA ${SCHEMA} RESTRICT`));
     if (!dropped.ok) console.log(`cleanup: schema ${SCHEMA} was left behind: ${message(dropped.error)}`);

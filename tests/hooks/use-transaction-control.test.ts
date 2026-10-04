@@ -198,4 +198,26 @@ describe("useTransactionControl", () => {
     expect(result.current.transactionActive).toBe(false);
     expect(result.current.playgroundMode).toBe(false);
   });
+
+  test("markTransactionEnded closes the transaction the server ended, and leaves SANDBOX alone", async () => {
+    const connection = makeConnection();
+    mockGlobalFetch({
+      "/api/db/transaction": { ok: true, status: 200, json: { success: true } },
+    });
+
+    const { result } = renderHook(() => useTransactionControl({ activeConnection: connection }));
+    await act(async () => {
+      await result.current.handleTransaction("begin");
+    });
+    act(() => {
+      result.current.setPlaygroundMode(true);
+    });
+
+    act(() => {
+      result.current.markTransactionEnded();
+    });
+
+    expect(result.current.transactionActive).toBe(false);
+    expect(result.current.playgroundMode).toBe(true);
+  });
 });

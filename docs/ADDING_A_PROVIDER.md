@@ -573,7 +573,9 @@ the load-bearing part; a naive digit-run rewrite corrupts `"id: 9007199254740993
 Either way the number reaches the UI as an exact string, which is what the `pg` driver already does
 for `int8`. The generalisable lesson: check the widest integer type your engine supports against
 `Number.MAX_SAFE_INTEGER` before trusting `JSON.parse`, and expect to write the fix yourself when the
-server offers no switch.
+server offers no switch. Check the exact decimal type too: ClickHouse's 64-bit setting does not cover
+`Decimal`, which needs `output_format_json_quote_decimals=1` as well, and a fraction cannot be rescued
+from the text afterwards, because nothing in it tells a lossy decimal from a float printed in full.
 
 **The response envelope does not always describe the rows.** Couchbase's `signature` is `"*"` for
 `SELECT *`, and `{ id, "*" }` for a wildcard mixed with named projections. Taking those keys
@@ -650,6 +652,12 @@ control that only emits invalid input. That is the defect class
   strategy declines, so the button is dead while only the background pre-warm works. When the engine
   has no analyze equivalent, return the estimate for both modes — `sqlite-queryplan.ts` and
   `couchbase-json.ts` both do exactly that.
+- **The `estimate` mode must never execute the statement.** The editor sends it in the background
+  beside every run of a SELECT, so an executing estimate runs every SELECT twice. `postgres-json.ts`
+  once ignored the mode and answered `EXPLAIN (ANALYZE, ...)` for both, and on PostgreSQL a single RUN
+  of `SELECT nextval('s')` advanced the sequence by two (#1311). Only `analyze` may build an executing
+  form; `tests/unit/lib/explain/registry.test.ts` checks every registered strategy's estimate for
+  `ANALYZE`, and its format list is a `Record` so a new format cannot be left out of it.
 - **Decide what is explainable with `classifySelectPrefix()`**
   ([`explain/select-prefix.ts`](../src/lib/explain/select-prefix.ts)), never with a fresh regex. It
   accepts a leading CTE and leading SQL comments as well as a bare `SELECT`, which every dialect here
@@ -783,8 +791,11 @@ Every field and what it controls:
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
+| `inlineEditRefusedColumns` | `{ type: string; reason: string }?` | The result columns the inline editor must not write where the engine takes its `UPDATE` for other columns. `type` is a regular expression source matched against the type the result declares for the column (`QueryResult.columnTypes`); each matching cell opens no editor and shows `reason`. Db2 sets it for CLOB, DBCLOB and BLOB, which db2-node does not write when bound (K24). Absent refuses no column |
 | `supportsResultPagination` | `boolean?` | Whether your `prepareQuery` really applies a positive `offset`. `false` hides the results grid's Load More control. Not the same question as `supportsExternalQueryLimiting`; measure it, do not infer it. Optional and gated on `=== true` for the same published-interface reason as the flag above |
 | `supportsTransactions` | `boolean?` | Whether THIS PROVIDER implements the interactive transaction session `POST /api/db/transaction` drives (`beginTransaction`/`commitTransaction`/`rollbackTransaction` over one held connection). `false` withholds the editor toolbar's BEGIN/COMMIT/ROLLBACK trio **and** the SANDBOX toggle, which auto-rolls-back through the same route. It is about the provider's surface, not the engine: SQLite has `BEGIN` and still declares `false`. Optional for the published-interface reason above; the UI gates on `=== true`, so an absent flag and an unresolved metadata fetch both read as no transactions (#464) |
+| `implicitCommitStatements` | `readonly string[]?` | The statements that can END the open transaction on this engine beyond the `COMMIT`/`ROLLBACK`/`ABORT` every engine has, each an upper-cased sequence of leading words (`"CREATE"`, `"PREPARE TRANSACTION"`): implicitly committing DDL (MySQL, Oracle), a dialect's own COMMIT synonym (PostgreSQL's `END`), or code the provider cannot check afterwards (an Oracle PL/SQL block). SANDBOX refuses a text containing one before anything is sent, because the `ROLLBACK` it ends with would answer success and could undo nothing. Declare it only with `supportsTransactions: true`. A provider that can read the server's transaction state should also refuse a `BEGIN` that opened nothing and end its session when a statement ended the transaction, so the route can answer `inTransaction: false` (see `postgres.ts` and `mysql.ts`) |
+| `implicitCommitExceptions` | `readonly string[]?` | Word sequences an `implicitCommitStatements` entry would match that do NOT end the transaction (Oracle's `ALTER SESSION`, MySQL's `CREATE TEMPORARY`). Read only together with that list |
 | `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty foreign-key list means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
 | `tablesAreDerivedGroupings` | `boolean?` | Whether the relation-shaped rows of this provider are objects the engine holds, or groupings this server derived from a bounded scan. `true` on Redis, LibreDB and etcd only. Where it is true the schema explorer hides the items that *address* the row, `Profile Table`, `Generate Count Query` and both per-row maintenance items, all of which name the row to a route that needs a real object, and keeps the ones that merely name it (`Select`, `Generate`, `Copy Name`, `Generate Code`). It does not gate `Generate Test Data`: since #1085 (decision D-M) both row menus offer that item only where the kind of the row declares `acceptsRowWrites` and the engine declares `supportsInlineRowEdit`. With `keyScan` beside it, it is also one half of the gate on `Browse Keys`, the row-menu item that opens the key-space panel with the row's own name as its pattern: a glob under `keyScan.pattern: "glob"` and a bare prefix under `"prefix"`: a prefix is only a glob on an engine whose rows are prefixes. The agent layer states it to a plan run in one sentence. Consumers gate on `=== true`, so an absent flag reads as "ordinary objects" |
 | `enforcesReadOnly` | `true?` | Whether this provider refuses every write, object edit and maintenance operation before any request while the connection's `readOnly` is true, or while it was opened with `ProviderExecutionContext.readOnly`, naming the read-only mode in the refusal. Nothing under `src/` reads the field: the seed schema, `assertReadOnlyHonoured` in `factory.ts` and the connection form decide before a provider exists, so they read `READ_ONLY_ENFORCED` in `src/lib/db/compatibility.ts`, and `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration for every type-id. Only the literal `true` is declared, so an absent flag reads as "a read-only connection is refused here" (#1089) |
@@ -975,9 +986,9 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      eleven shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
-      `libsql`, `prometheus`, `qdrant`, `influxdb` and `influxdb3`
-      each add nothing here
+      fourteen shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
+      `libsql`, `sqlite`, `prometheus`, `qdrant`, `milvus`, `influxdb`, `influxdb3` and `oxia`
+      each add nothing here (`milvus` and `oxia` only extend the `//dependencies` note)
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
       stack does not grow for everyone. An EMBEDDED engine gets no service at all — SQLite, DuckDB and

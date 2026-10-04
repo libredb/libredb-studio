@@ -2,8 +2,8 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import React, { useState, useEffect, useMemo } from "react";
-import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X, Info } from "lucide-react";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { TypedConfirmField } from "@/components/typed-confirm";
 import { useReturnFocus } from "@/hooks/use-return-focus";
+import { QUERY_SAFETY_ANALYSIS_TIMEOUT_MS } from "@/lib/llm/query-safety";
 import { cn } from "@/lib/utils";
 import {
   isDestructiveNonSqlQuery,
@@ -55,8 +56,12 @@ interface QuerySafetyDialogProps {
   connectionName?: string;
   onClose: () => void;
   onProceed: () => void;
-  /** Optional API adapter: when provided, bypasses the built-in /api/ai/query-safety fetch. */
-  onAnalyzeSafety?: (params: { query: string; schemaContext: string }) => Promise<SafetyAnalysis>;
+  /**
+   * Optional API adapter: when provided, bypasses the built-in /api/ai/query-safety fetch. `signal` aborts when the
+   * dialog stops waiting (the person skipped the analysis, the wait ran out, or the dialog closed); an adapter that
+   * honours it stops its own request, and an answer that arrives after it is ignored either way.
+   */
+  onAnalyzeSafety?: (params: { query: string; schemaContext: string; signal?: AbortSignal }) => Promise<SafetyAnalysis>;
 }
 
 function parseSafetyResponse(text: string): SafetyAnalysis | null {
@@ -95,6 +100,23 @@ function typedConfirmationText(ask: TypedConfirmationAsk, connectionName: string
   // An empty name is no name: an exact comparison would let an empty field confirm it.
   return connectionName === "" ? undefined : connectionName;
 }
+
+/**
+ * Why the dialog stopped waiting for the AI analysis before it answered: the person chose to skip it, or it did not
+ * finish within QUERY_SAFETY_ANALYSIS_TIMEOUT_MS. Either way Execute no longer waits on it.
+ */
+type AnalysisStopped = "skipped" | "timed-out";
+
+const ANALYSIS_STOPPED_NOTICE: Record<AnalysisStopped, { title: string; detail: string }> = {
+  "timed-out": {
+    title: "AI analysis could not be completed",
+    detail: `The AI safety analysis did not finish within ${QUERY_SAFETY_ANALYSIS_TIMEOUT_MS / 1000} seconds and was stopped. Review the statement yourself before running it.`,
+  },
+  skipped: {
+    title: "AI analysis skipped",
+    detail: "The AI analysis was stopped before it answered. Review the statement yourself before running it.",
+  },
+};
 
 const RISK_CONFIG = {
   safe: {
@@ -148,6 +170,11 @@ export function QuerySafetyDialog({
   const [analysis, setAnalysis] = useState<SafetyAnalysis | null>(null);
   const [rawResponse, setRawResponse] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [stopped, setStopped] = useState<AnalysisStopped | null>(null);
+  // The analysis in flight, so Skip, the wait running out and closing the dialog can all stop it.
+  const analysisRun = useRef<AbortController | null>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const skipButton = useRef<HTMLButtonElement>(null);
   // Whether the typed confirmation's field matches (#1089, section 5.5). The field reports it when it mounts and on
   // every change, so each opening starts from false: the field's own state lives inside the dialog content.
   const [typedMatches, setTypedMatches] = useState(false);
@@ -185,7 +212,8 @@ export function QuerySafetyDialog({
   );
   const typedExpected = typedAsk === undefined ? undefined : typedConfirmationText(typedAsk, connectionName);
   // Proceed waits for the analysis and for an exact match, and a refusal in place of the field is never a match,
-  // whatever was typed before it replaced the field.
+  // whatever was typed before it replaced the field. The wait for the analysis is bounded: Skip ends it at once and
+  // QUERY_SAFETY_ANALYSIS_TIMEOUT_MS ends it anyway, so a slow or hung model can no longer hold every write back.
   const proceedBlocked = isAnalyzing || (typedAsk !== undefined && (typedExpected === undefined || !typedMatches));
   // False keeps the statement on this device (#1089, E10).
   const sendsToModel = vocabularySendsToModel(databaseType as DatabaseType | undefined);
@@ -194,8 +222,13 @@ export function QuerySafetyDialog({
   // (react-hooks/immutability) rejects reading a `const` binding from a position
   // earlier than its declaration. Pure code motion - no hook order changes.
   const analyzeQuery = async () => {
+    const run = new AbortController();
+    analysisRun.current = run;
+    const { signal } = run;
+    const timer = setTimeout(() => stopWaiting(run, "timed-out"), QUERY_SAFETY_ANALYSIS_TIMEOUT_MS);
     setIsAnalyzing(true);
     setError(null);
+    setStopped(null);
 
     try {
       let filteredSchema = "";
@@ -220,7 +253,8 @@ export function QuerySafetyDialog({
 
       if (onAnalyzeSafety) {
         // Platform adapter: use callback instead of fetch
-        const result = await onAnalyzeSafety({ query, schemaContext: filteredSchema });
+        const result = await onAnalyzeSafety({ query, schemaContext: filteredSchema, signal });
+        if (signal.aborted) return;
         setAnalysis(result);
       } else {
         // Default: existing fetch behavior
@@ -228,6 +262,7 @@ export function QuerySafetyDialog({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query, schemaContext: filteredSchema, databaseType }),
+          signal,
         });
 
         if (!response.ok) {
@@ -243,21 +278,53 @@ export function QuerySafetyDialog({
         let fullResponse = "";
         while (true) {
           const { done, value } = await reader.read();
+          // A run stopped while a chunk was on its way: what it streamed is no longer shown.
+          if (signal.aborted) return;
           if (done) break;
           fullResponse += new TextDecoder().decode(value);
           setRawResponse(fullResponse);
         }
 
         const parsed = parseSafetyResponse(fullResponse);
-        if (parsed) {
+        if (parsed && !signal.aborted) {
           setAnalysis(parsed);
         }
       }
     } catch (err) {
+      // An aborted run was stopped on purpose, and the reason is already on screen.
+      if (signal.aborted) return;
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setIsAnalyzing(false);
+      clearTimeout(timer);
+      // A run that was stopped already said so, and a newer run may be the one in flight now.
+      if (analysisRun.current === run) {
+        analysisRun.current = null;
+        setIsAnalyzing(false);
+      }
     }
+  };
+
+  /**
+   * Stops waiting for `run`, the analysis in flight: aborts its request, drops what it streamed so far (half a
+   * verdict is not one) and says why Execute no longer waits for it. A run that already ended is left alone.
+   */
+  function stopWaiting(run: AbortController, why: AnalysisStopped) {
+    if (analysisRun.current !== run) return;
+    analysisRun.current = null;
+    run.abort();
+    // The Skip button leaves with the wait it ended. Focus that was on it goes to Cancel, where the dialog put it
+    // on opening, rather than to the Execute button this just enabled.
+    if (document.activeElement === skipButton.current) cancelButton.current?.focus();
+    setIsAnalyzing(false);
+    setRawResponse("");
+    setStopped(why);
+  }
+
+  const skipAnalysis = () => {
+    if (analysisRun.current) stopWaiting(analysisRun.current, "skipped");
+    // A click does not always focus the button it lands on (Safari, a pointer that moved), so Cancel takes focus
+    // here whatever had it.
+    cancelButton.current?.focus();
   };
 
   useEffect(() => {
@@ -266,9 +333,16 @@ export function QuerySafetyDialog({
       analyzeQuery();
     }
     return () => {
+      // Closing the dialog, or a new statement, ends the wait for this one: its request stops too.
+      analysisRun.current?.abort();
+      analysisRun.current = null;
+      // The aborted run's own `finally` no longer owns the spinner, so it is cleared here: the dialog stays
+      // mounted between openings, and the next one may post nothing at all.
+      setIsAnalyzing(false);
       setAnalysis(null);
       setRawResponse("");
       setError(null);
+      setStopped(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, query, sendsToModel]);
@@ -338,6 +412,23 @@ export function QuerySafetyDialog({
               <span className="text-xs">Analyzing query safety...</span>
             </div>
           )}
+
+          {/*
+            A live region (an output is role="status") mounted for as long as the dialog is, so a screen reader
+            hears why the Execute button just became usable: a region inserted together with its text is often
+            not announced at all.
+          */}
+          <output className="block">
+            {stopped && (
+              <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
+                <Info strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
+                <div>
+                  <span className="text-xs font-medium text-warning">{ANALYSIS_STOPPED_NOTICE[stopped].title}</span>
+                  <p className="text-xs text-fg-tertiary mt-0.5">{ANALYSIS_STOPPED_NOTICE[stopped].detail}</p>
+                </div>
+              </div>
+            )}
+          </output>
 
           {error && (
             <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger">
@@ -444,7 +535,20 @@ export function QuerySafetyDialog({
         )}
 
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-hairline bg-surface">
-          <AlertDialogCancel className="h-auto border-0 bg-fill px-4 py-2 text-xs font-medium text-fg-tertiary shadow-none transition-colors hover:bg-fill-strong dark:bg-fill dark:hover:bg-fill-strong hover:text-fg-tertiary rounded-lg">
+          {isAnalyzing && (
+            <button
+              ref={skipButton}
+              type="button"
+              onClick={skipAnalysis}
+              className="mr-auto px-3 py-2 rounded-lg text-xs font-medium text-fg-tertiary hover:bg-fill hover:text-fg-secondary transition-colors"
+            >
+              Skip analysis
+            </button>
+          )}
+          <AlertDialogCancel
+            ref={cancelButton}
+            className="h-auto border-0 bg-fill px-4 py-2 text-xs font-medium text-fg-tertiary shadow-none transition-colors hover:bg-fill-strong dark:bg-fill dark:hover:bg-fill-strong hover:text-fg-tertiary rounded-lg"
+          >
             <span>Cancel</span>
           </AlertDialogCancel>
           <button

@@ -34,19 +34,22 @@ export class OllamaProvider extends BaseLLMProvider {
    * Stream completion from Ollama
    */
   public async stream(options: LLMStreamOptions): Promise<ReadableStream<Uint8Array>> {
-    return this.streamWithRetry(async () => {
-      const model = this.getModel(options);
-      const messages = this.buildMessages(options);
+    return this.streamWithRetry(
+      async () => {
+        const model = this.getModel(options);
+        const messages = this.buildMessages(options);
 
-      try {
-        const response = await this.fetchStream(model, messages, options);
-        await this.validateResponse(response);
+        try {
+          const response = await this.fetchStream(model, messages, options);
+          await this.validateResponse(response);
 
-        return createStreamFromSSEResponse(response, "ollama");
-      } catch (error) {
-        throw this.mapError(error);
-      }
-    });
+          return createStreamFromSSEResponse(response, "ollama");
+        } catch (error) {
+          throw this.mapError(error);
+        }
+      },
+      { signal: options.signal },
+    );
   }
 
   /**
@@ -81,6 +84,7 @@ export class OllamaProvider extends BaseLLMProvider {
         ...(options.temperature !== undefined && { temperature: options.temperature }),
         ...(options.maxTokens !== undefined && { max_tokens: options.maxTokens }),
       }),
+      signal: options.signal,
     });
 
     return response;
