@@ -67,8 +67,12 @@ export const DiscoveryExportSchema = z
     checkedAt: ISO_TIME,
     status: ExporterStatusSchema,
     network: z.object({ name: z.string().min(1), id: z.string().min(1) }).nullable(),
-    services: z.array(DiscoveredServiceSchema).max(500),
-    excluded: z.array(z.string().min(1).max(63)).max(500),
+    // The count is checked before any element is validated, so an oversized list costs one issue, not one per element.
+    services: z.array(z.unknown()).max(500).pipe(z.array(DiscoveredServiceSchema)),
+    excluded: z
+      .array(z.unknown())
+      .max(500)
+      .pipe(z.array(z.string().min(1).max(63))),
   })
   // Before its first successful listing the exporter has no services or excluded apps to report, and no success.
   .superRefine((file, ctx) => {

@@ -232,6 +232,24 @@ describe("parseDiscoveryExport: invalid files", () => {
     );
   });
 
+  // The count is checked before any entry is validated, so an oversized list costs one issue. Validated first,
+  // a file under the size cap could make zod collect millions of issues: memory the parser must not spend.
+  it("counts the services before validating them: 501 empty objects give one issue", () => {
+    const services = Array.from({ length: 501 }, () => ({}));
+    expect(parse(validExport({ services }))).toEqual({
+      ok: false,
+      reason: "the file does not match the export schema at services (too_big)",
+    });
+  });
+
+  it("counts the excluded names before validating them: 501 numbers give one issue", () => {
+    const excluded = Array(501).fill(1);
+    expect(parse(validExport({ services: [], excluded }))).toEqual({
+      ok: false,
+      reason: "the file does not match the export schema at excluded (too_big)",
+    });
+  });
+
   it("refuses an excluded name over 63 characters", () => {
     expect(reasonOf(parse(validExport({ excluded: ["e".repeat(64)] })))).toBe(
       "the file does not match the export schema at excluded.0 (too_big)",
