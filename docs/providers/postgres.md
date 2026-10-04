@@ -16,7 +16,7 @@
 | **Connection pooling** | Yes — `pg.Pool` (min 2 / max 10 by default) |
 | **Connection string** | Supported (`postgres://` / `postgresql://`) |
 | **Transactions** | Yes — explicit `BEGIN`/`COMMIT`/`ROLLBACK` with auto-rollback timeout |
-| **Query cancellation** | Yes — PID tracking + `pg_cancel_backend` |
+| **Query cancellation** | Yes: PID tracking + `pg_cancel_backend`, then the wire-protocol CancelRequest where that is refused ([§5.3](#53-query-cancellation)) |
 | **Agent read-only profile** | Yes — `BEGIN READ ONLY` + extended-protocol single statement (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/postgres.ts`](../../src/lib/db/providers/sql/postgres.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
@@ -1267,7 +1267,7 @@ The statement timeout is **separate** from pool config: `ProviderOptions.queryTi
 `DEFAULT_QUERY_TIMEOUT` = 60000 ms) is applied as the pool's `statement_timeout`.
 
 `connect()` is idempotent (a second call while a pool exists is a no-op). `getPoolStats()` exposes
-live `{ total, idle, active, waiting }` counts. Every query acquires a client from the pool and
+live `{ total, max, idle, active, waiting }` counts: `total` is the clients open right now and `max` is the configured pool ceiling, which the Monitoring > Pool tab shows as its own number and uses as the utilization denominator. Every query acquires a client from the pool and
 releases it in a `finally` block.
 
 #### Idle-client failures are handled, not fatal
@@ -1422,10 +1422,43 @@ comment-led final `SELECT`; it now reads `isSelectQuery()` from the same classif
 
 ### 5.3 Query cancellation
 
-A query issued with a `queryId` records its backend PID in a `Map`. `cancelQuery(queryId)`
-([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the PID up and calls
-`pg_cancel_backend(pid)` on a fresh pooled client, returning whether the cancel signalled. Exposed
-via `POST /api/db/cancel`.
+A query issued with a `queryId` records its backend PID and its pooled client in a `Map`.
+`cancelQuery(queryId)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the run up
+and calls `pg_cancel_backend(pid)` on a fresh pooled client, returning true when the cancel
+signalled. Exposed via `POST /api/db/cancel`.
+
+Three engines this provider connects to do not honour `pg_cancel_backend`, measured on 2026-10-03
+and 2026-10-04: CockroachDB v26.3.2 answers `unknown function: pg_cancel_backend()`, Materialize
+26.44.1 refuses it with a bound parameter (`pg_cancel_backend in this position not yet supported`),
+and RisingWave 3.1.0 answers `f`. Each kept running the statement, and before #1364 that was the end
+of the cancel. Where `pg_cancel_backend` is refused or answers false, `cancelQuery` now sends the
+wire protocol's own CancelRequest for the run's session
+([`pg-wire-cancel.ts`](../../src/lib/db/providers/sql/pg-wire-cancel.ts)): a fresh connection to the
+address the client connected to (a tunnel's local end when there is one), carrying the process id and
+secret key the server handed that session at startup. CockroachDB v26.3.2 ended `SELECT
+pg_sleep(20)` on it within a second, and RisingWave's wire-protocol cancel was seen to work in the
+same test pass; Materialize was not measured with it.
+
+The server never answers a CancelRequest, so `cancelQuery` answers true only once the run has ended,
+within 3 s of sending it; a run still going after that is false, and the editor says the cancel was
+not confirmed.
+
+**Encrypted wherever the session is.** When the connection uses TLS (any SSL mode but `disable`), the
+cancel connection sends an SSLRequest first, upgrades with the same TLS options and server name the
+session itself used, and only then sends the CancelRequest, as `pg`'s own cancel and libpq since
+PostgreSQL 17 do. A server that answers the SSLRequest with `N` gets nothing, since the session was
+configured to require TLS, and a certificate the session's settings do not trust gets nothing either;
+both are reported as not confirmed. A connection without TLS sends the request in plaintext, as the
+session itself goes. Behind an SNI-routing proxy (a managed service that routes on the TLS server
+name), only the encrypted request can reach the session at all, which is one more reason it is not
+sent in clear. Measured 2026-10-04: over TLS the request stopped `SELECT pg_sleep(20)` about 1.5 s
+into the run on PostgreSQL 18.6 (`ssl=on`) and on CockroachDB v26.3.2 in secure mode alike.
+
+**A window of one round trip remains.** The request is sent only while the run still holds its
+session, checked once the cancel socket is open, because a released session can already be running
+another request's statement. The check narrows the race to the request's own flight time and cannot
+close it: a statement that ends while the 16 bytes travel leaves the key on a session the pool may
+have handed on. That window is inherent to the protocol's cancel, the same one `psql`'s Ctrl+C has.
 
 ### 5.4 Declared column types
 
@@ -1517,6 +1550,23 @@ JSON has no form for those three, and the routes, the agent's row rendering, the
 Measured 2026-10-04 on PostgreSQL 18.6, `SELECT 'NaN'::float8, 'Infinity'::real, '-Infinity'::float8` answered `null` in all three cells of `POST /api/db/query` before and `"NaN"`, `"Infinity"`, `"-Infinity"` after, while psql shows `NaN | Infinity | -Infinity`.
 The SQL INSERT export writes them as quoted literals, `'NaN'`, which PostgreSQL reads back into a `real`, `double precision` or `timestamptz` column, so a replayed file stores the same values where it used to store NULL.
 
+### 5.7 What the SQL INSERT and DDL exports write
+
+The result export reads each cell's declared type ([§5.4](#54-declared-column-types)) for the values whose generic form PostgreSQL refuses (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)):
+
+| Declared | Arrives as | Written as |
+|---|---|---|
+| any `…[]` | a JS array, nested per dimension | `'{"1","2",NULL}'`, every element double-quoted and backslash-escaped; a `json`/`jsonb` element is written as JSON, so an array stays one document and a string keeps its quotes (`pg` `JSON.parse`s each element, so the document `"hello"` arrives as `hello`) |
+| `interval` | `{days: 1, hours: 2}` (`postgres-interval`, zero parts dropped) | `'1 days 2 hours'`; `{}` is `'0 seconds'` |
+| `point` / `circle` | `{x, y}` / `{x, y, radius}` | `'(1,2)'` / `'<(1,2),3>'` |
+
+An array or an object in a `json`/`jsonb` column, or in a result with no declared type, is still the quoted JSON text.
+The DDL keeps an array type (`integer[]`) instead of writing `TEXT`, and writes a bare `bit` as `bit varying` (and `bit[]` as `bit varying[]`), because `pg` returns a bit string such as `1010` that `bit(1)` refuses.
+
+Measured 2026-10-04 on PostgreSQL 18.6: a `SELECT *` over a table with `integer[]`, two-dimensional `integer[]`, `text[]` holding quotes, commas, braces, backslashes and the word `NULL`, `boolean[]`, `jsonb[]`, `timestamptz[]`, `interval`, `point`, `bit(4)`, `varbit`, `money`, `inet`, `int4range` and the scalar types was exported and replayed with `psql`, once into a `CREATE TABLE … (LIKE src)` copy and once into the exported DDL's own table, and `SELECT s::text FROM src s EXCEPT SELECT c::text FROM copy c` answered one row.
+That row differs in one cell that never reaches the export as itself: the JSON document `null` in a `json` column, which JSON cannot tell from SQL NULL.
+Before this, the same file stopped at its first row with `ERROR: malformed array literal: "[1,2,3]"`.
+
 ---
 
 ## 6. Schema introspection
@@ -1595,7 +1645,7 @@ has nothing to divide:
 
 In both cases **`getHealth().cacheHitRatio` is `"N/A"` and `getPerformanceMetrics().cacheHitRatio`
 is absent from the object**, and the Overview and Performance tabs render "Not measured" rather
-than a figure. A ratio that *is* measured as `0` is kept and shown as `0.0%`: a cold cache is a real
+than a figure. When a ratio is measured, `getPerformanceMetrics().cacheHitAdvice` carries the PostgreSQL-specific tip ("Increase shared_buffers") that the Performance tab shows under a ratio below 90%; engines that declare none get a generic line naming no setting. The advice appears only where the PostgreSQL heap counters move: engines that speak the PostgreSQL wire protocol with their own storage report no ratio ("Not measured") and so get no tip. A ratio that *is* measured as `0` is kept and shown as `0.0%`: a cold cache is a real
 reading, and the one the panel most needs to show.
 
 Both SQL statements used to wrap the `NULL` in `COALESCE(..., 100)`, so an unmeasured database

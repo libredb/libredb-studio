@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
-import { DatabaseConfigError, NO_TRANSACTION_OPENED } from "@/lib/db/errors";
+import { DatabaseConfigError, NO_TRANSACTION_OPENED, TRANSACTION_STATE_UNREPORTED } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
@@ -1632,9 +1632,9 @@ describe("MySQLProvider", () => {
 
     /**
      * The OK-packet status flags measured on MySQL 26.7.0 on 2026-10-04 through mysql2:
-     * 16387 after `START TRANSACTION`, 3 after an `INSERT` inside it, 16386 after a
-     * `CREATE TABLE` inside it. Bit 0 is `SERVER_STATUS_IN_TRANS`, and the CREATE cleared it
-     * because MySQL committed the transaction implicitly.
+     * 16387 after `BEGIN` (and `START TRANSACTION`), 3 after an `INSERT` inside it, 16386
+     * after a `CREATE TABLE` inside it. Bit 0 is `SERVER_STATUS_IN_TRANS`, and the CREATE
+     * cleared it because MySQL committed the transaction implicitly.
      */
     function answering(statuses: Record<string, number>) {
       return (sql: string, params?: unknown[]) => {
@@ -1648,8 +1648,9 @@ describe("MySQLProvider", () => {
       };
     }
 
-    test("a START TRANSACTION the server answers without opening one is refused, and the connection goes back", async () => {
-      mockExecuteFn = answering({ "START TRANSACTION": 2 });
+    test("a BEGIN the server answers with a closed transaction is refused, and the connection goes back", async () => {
+      // Bit 1 (autocommit) without bit 0: the server reports its state, and the state is closed.
+      mockExecuteFn = answering({ BEGIN: 2 });
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       const release = spyOn(mockConnection, "release");
@@ -1662,16 +1663,104 @@ describe("MySQLProvider", () => {
       }
     });
 
-    test("a START TRANSACTION that fails releases the connection it borrowed", async () => {
+    test("a BEGIN the server answers with the transaction open is reported as verified", async () => {
+      mockExecuteFn = answering({ BEGIN: 16387 });
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(await provider.beginTransaction({ requireReportedState: true })).toEqual({ stateReported: true });
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    /**
+     * Databend 1.2.881, StarRocks 4.1.6 and Apache Doris 4.1.3 answer every OK packet with
+     * status 0, inside a transaction and out of one (measured 2026-10-04): neither bit 0 nor
+     * bit 1, so the flags say nothing either way.
+     */
+    test("a BEGIN answered with no status bit opens a session whose state is unreported", async () => {
+      mockExecuteFn = answering({ BEGIN: 0, INSERT: 0 });
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(await provider.beginTransaction()).toEqual({ stateReported: false });
+      expect(provider.isInTransaction()).toBe(true);
+
+      // StarRocks and Doris answer an INSERT inside the transaction with status 0 too. That is
+      // not the server ending the transaction, so the session (and the INSERT) are kept.
+      const release = spyOn(mockConnection, "release");
+      try {
+        protocolCalls.length = 0;
+        await provider.queryInTransaction("INSERT INTO t VALUES (1)");
+        expect(provider.isInTransaction()).toBe(true);
+        expect(release).not.toHaveBeenCalled();
+        expect(protocolCalls.some((call) => call.sql === "ROLLBACK")).toBe(false);
+      } finally {
+        release.mockRestore();
+      }
+      await provider.commitTransaction();
+      expect(provider.isInTransaction()).toBe(false);
+    });
+
+    test("a BEGIN answered with no header at all is unreported, not refused", async () => {
       mockExecuteFn = (sql: string) =>
-        sql.startsWith("START TRANSACTION")
-          ? Promise.reject(new Error("Connection lost"))
+        sql === "BEGIN"
+          ? Promise.resolve([[], []] as [unknown, unknown[]])
           : (defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(await provider.beginTransaction()).toEqual({ stateReported: false });
+      await provider.rollbackTransaction();
+    });
+
+    test("an unreported state is refused when the caller needs the rollback proven, and nothing is left open", async () => {
+      mockExecuteFn = answering({ BEGIN: 0 });
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       const release = spyOn(mockConnection, "release");
       try {
-        await expect(provider.beginTransaction()).rejects.toThrow("Connection lost");
+        protocolCalls.length = 0;
+        await expect(provider.beginTransaction({ requireReportedState: true })).rejects.toThrow(
+          TRANSACTION_STATE_UNREPORTED,
+        );
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+        // On Databend and Doris the BEGIN did open a transaction; it is rolled back before the
+        // connection returns to the pool.
+        expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN", "ROLLBACK"]);
+      } finally {
+        release.mockRestore();
+      }
+      // The refusal left nothing behind: a manual transaction opens on the same provider.
+      expect(await provider.beginTransaction()).toEqual({ stateReported: false });
+      await provider.rollbackTransaction();
+    });
+
+    test("a server that refuses a bare BEGIN gets START TRANSACTION instead", async () => {
+      // MariaDB with sql_mode=ORACLE reads BEGIN as the start of a block and answers 1064;
+      // START TRANSACTION opens the transaction there (status 32771, measured on 13.0.2).
+      mockExecuteFn = (sql: string, params?: unknown[]) =>
+        sql === "BEGIN"
+          ? Promise.reject(Object.assign(new Error("You have an error in your SQL syntax"), { errno: 1064 }))
+          : answering({ "START TRANSACTION": 32771 })(sql, params);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls.length = 0;
+      expect(await provider.beginTransaction()).toEqual({ stateReported: true });
+      expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN", "START TRANSACTION"]);
+      await provider.rollbackTransaction();
+    });
+
+    test("a BEGIN that fails in both forms raises the BEGIN's own error and releases the connection", async () => {
+      mockExecuteFn = (sql: string) =>
+        sql === "BEGIN"
+          ? Promise.reject(Object.assign(new Error("syntax error near BEGIN"), { errno: 1064 }))
+          : sql === "START TRANSACTION"
+            ? Promise.reject(new Error("START TRANSACTION refused too"))
+            : (defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const release = spyOn(mockConnection, "release");
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow("syntax error near BEGIN");
         expect(provider.isInTransaction()).toBe(false);
         expect(release).toHaveBeenCalledTimes(1);
       } finally {
@@ -1679,8 +1768,35 @@ describe("MySQLProvider", () => {
       }
     });
 
+    /**
+     * On Databend and Doris `START TRANSACTION` opens nothing, so falling back after a BEGIN
+     * that failed for a reason other than its grammar would hand the user a session that only
+     * looks open. Doris answers its own errors with 1105; a fatal error is a dead connection.
+     */
+    for (const [label, failure] of [
+      ["a non-parse error (1105)", Object.assign(new Error("transaction already begun"), { errno: 1105 })],
+      ["a fatal parse error", Object.assign(new Error("Connection lost"), { errno: 1064, fatal: true })],
+    ] as const) {
+      test(`a BEGIN refused with ${label} is raised as is, with no START TRANSACTION`, async () => {
+        mockExecuteFn = (sql: string) =>
+          sql === "BEGIN" ? Promise.reject(failure) : (answering({ "START TRANSACTION": 0 })(sql) as never);
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        const release = spyOn(mockConnection, "release");
+        try {
+          protocolCalls.length = 0;
+          await expect(provider.beginTransaction()).rejects.toBe(failure);
+          expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN"]);
+          expect(provider.isInTransaction()).toBe(false);
+          expect(release).toHaveBeenCalledTimes(1);
+        } finally {
+          release.mockRestore();
+        }
+      });
+    }
+
     test("a statement MySQL commits implicitly ends the session, so no rollback is pretended", async () => {
-      mockExecuteFn = answering({ "START TRANSACTION": 16387, INSERT: 3, CREATE: 16386 });
+      mockExecuteFn = answering({ BEGIN: 16387, INSERT: 3, CREATE: 16386 });
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       await provider.beginTransaction();
@@ -1707,7 +1823,7 @@ describe("MySQLProvider", () => {
     });
 
     test("a ROLLBACK that fails on an ended session still releases the connection", async () => {
-      const statuses = answering({ "START TRANSACTION": 16387, CREATE: 16386 });
+      const statuses = answering({ BEGIN: 16387, CREATE: 16386 });
       mockExecuteFn = (sql: string, params?: unknown[]) =>
         sql === "ROLLBACK" ? Promise.reject(new Error("Connection lost")) : statuses(sql, params);
       provider = new MySQLProvider(makeMySQLConfig());
@@ -1724,7 +1840,7 @@ describe("MySQLProvider", () => {
     });
 
     test("a ROLLBACK queued behind a statement that ended the session does not release the connection twice", async () => {
-      const statuses = answering({ "START TRANSACTION": 16387, CREATE: 16386 });
+      const statuses = answering({ BEGIN: 16387, CREATE: 16386 });
       let finish: () => void = () => {};
       mockExecuteFn = async (sql: string, params?: unknown[]) => {
         if (sql.startsWith("CREATE")) {
@@ -1762,7 +1878,7 @@ describe("MySQLProvider", () => {
       const header = (serverStatus: number) => ({ fieldCount: 0, affectedRows: 0, serverStatus });
       let callStatus = 3;
       mockExecuteFn = (sql: string) => {
-        if (sql.startsWith("START TRANSACTION")) return Promise.resolve([header(16387), undefined]);
+        if (sql.startsWith("BEGIN")) return Promise.resolve([header(16387), undefined]);
         if (sql.startsWith("CALL")) return Promise.resolve([[[{ id: 1 }], header(callStatus)], undefined]);
         return defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>;
       };
@@ -1781,7 +1897,7 @@ describe("MySQLProvider", () => {
       mockExecuteFn = (sql: string) =>
         sql.startsWith("SELECT")
           ? Promise.resolve([[{ serverStatus: 0 }], [{ name: "serverStatus" }]])
-          : (answering({ "START TRANSACTION": 16387 })(sql) as Promise<[unknown, unknown[] | undefined]>);
+          : (answering({ BEGIN: 16387 })(sql) as Promise<[unknown, unknown[] | undefined]>);
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       await provider.beginTransaction();

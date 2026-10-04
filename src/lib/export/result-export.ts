@@ -4,6 +4,7 @@ import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
 import { jsonText } from "./json";
+import { typedLiteral } from "./typed-literals";
 import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
 
 /**
@@ -194,11 +195,36 @@ const DIALECT_TYPES: Partial<Record<DatabaseType, Partial<Record<InferredKind, s
  * A declared type is engine output — or, through the embeddable shell, whatever the
  * host put in `columnTypes` — so it is data until it has been checked, in a file whose
  * whole purpose is to be run somewhere else unattended (#290). Letters, digits,
- * underscores, spaces, commas and parentheses cover every real spelling
+ * underscores, spaces, commas and parentheses cover most real spellings
  * (`Nullable(Int64)`, `DECIMAL(10, 2)`, `TIMESTAMP WITH TIME ZONE`) and exclude every
  * character that could end the definition list it sits in.
+ *
+ * Three more shapes are real and were written as `TEXT` before #1386, which lost the type
+ * the INSERT beside it needs: a trailing `[]` (Postgres `integer[]`), a single-quoted
+ * argument (ClickHouse `DateTime64(3, 'Europe/Istanbul')`, `Enum8('a' = 1)`), and the
+ * `=` and negative numbers those argument lists hold. A quoted argument may not contain a
+ * quote, a backslash or a line break, so it cannot close early in any dialect, and a `-`
+ * must be followed by a digit, so `--` cannot start a comment.
  */
-const PLAUSIBLE_TYPE = /^[A-Za-z][A-Za-z0-9_(), ]*$/;
+const PLAUSIBLE_TYPE = /^[A-Za-z](?:[A-Za-z0-9_(), =]|-(?=\d)|'[^'\\\r\n]*')*(?:\[\])*$/;
+
+/**
+ * `PLAUSIBLE_TYPE`, plus parentheses that balance outside the quoted arguments.
+ *
+ * The character class alone admits `int) SELECT load_file('/etc/passwd') AS b, (c int`,
+ * which closes the column list it sits in and opens a new one, so a host-supplied
+ * `columnTypes` value could turn the CREATE TABLE into a CREATE TABLE ... AS SELECT. Every
+ * real spelling nests: the depth never drops below zero and ends at zero.
+ */
+function isPlausibleType(declared: string): boolean {
+  if (!PLAUSIBLE_TYPE.test(declared)) return false;
+  let depth = 0;
+  for (const char of declared.replace(/'[^']*'/g, "")) {
+    if (char === "(") depth++;
+    else if (char === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
 
 /** A column's kind, inferred from a value. */
 function inferKind(sample: unknown): InferredKind {
@@ -356,19 +382,7 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
     "timestamp without time zone",
     "timestamp with time zone",
   ],
-  mysql: [
-    "text",
-    "tinytext",
-    "mediumtext",
-    "longtext",
-    "blob",
-    "tinyblob",
-    "mediumblob",
-    "longblob",
-    "timestamp",
-    "datetime",
-    "year",
-  ],
+  mysql: ["text", "tinytext", "mediumtext", "longtext", "blob", "tinyblob", "mediumblob", "longblob", "year"],
   oracle: ["number", "binary_double", "binary_float", "clob", "nclob", "blob", "timestamp", "timestamp with time zone"],
   mssql: [
     "text",
@@ -542,6 +556,23 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
 };
 
 /**
+ * The bare names a dialect narrows below the value its own driver hands back, so the
+ * INSERT this same export writes beside the CREATE TABLE fails or rounds (#1386).
+ *
+ * Kept per dialect because the drivers disagree about the value (`BARE_TYPE_FAMILY` above
+ * says why `bit` cannot have one family): `pg` hands a bit string back as text such as
+ * `1010`, which a bare `bit` (`bit(1)`) refuses with `bit string length 4 does not match
+ * type bit(1)` and `bit varying` takes at any length; `mysql2` hands one back as bytes,
+ * which `bit(64)`, MySQL's widest, takes for every width. MySQL's bare `datetime`,
+ * `timestamp` and `time` have fractional precision 0, which ROUNDS a `.999` replayed into
+ * them up to the next second, so they are written at precision 6.
+ */
+const DIALECT_BARE_SPELLING: Partial<Record<DatabaseType, Readonly<Record<string, string>>>> = {
+  postgres: { bit: "bit varying" },
+  mysql: { bit: "bit(64)", datetime: "datetime(6)", timestamp: "timestamp(6)", time: "time(6)" },
+};
+
+/**
  * A declared type, spelled so the target dialect can parse it without narrowing it.
  *
  * The target dialect is the ACTIVE connection's, not necessarily the one that declared
@@ -564,6 +595,11 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
  */
 function completeDeclaredType(declared: string, dialect: DatabaseType | undefined): string {
   if (declared.includes("(")) return declared;
+  const respelled = dialect === undefined ? undefined : DIALECT_BARE_SPELLING[dialect];
+  // The element type of an array is re-spelled the same way: a Postgres `bit[]` holds the
+  // same `1010` text per element that a bare `bit` refuses.
+  const [, name, dimensions] = /^(.*?)((?:\[\])*)$/.exec(declared.trim().toLowerCase()) as RegExpExecArray;
+  if (respelled !== undefined && Object.hasOwn(respelled, name)) return `${respelled[name]}${dimensions}`;
   // No dialect at all is not an unknown dialect: it means the file names no engine, so
   // there is nothing standing behind ANY private spelling and the portable name is the
   // only defensible one. It is also what this same export's value-shaped path already
@@ -598,7 +634,7 @@ function completeDeclaredType(declared: string, dialect: DatabaseType | undefine
  */
 function sqlTypeOf(column: string, rows: readonly Record<string, unknown>[], source: ResultExportSource): string {
   const declared = source.columnTypes;
-  if (declared !== undefined && Object.hasOwn(declared, column) && PLAUSIBLE_TYPE.test(declared[column])) {
+  if (declared !== undefined && Object.hasOwn(declared, column) && isPlausibleType(declared[column])) {
     return completeDeclaredType(declared[column], source.dialect);
   }
   const kind = inferKind(firstSample(rows, column));
@@ -983,10 +1019,18 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
     const oracleColumns =
       dialect === "oracle" ? columns.map((column) => oracleDateColumn(declaredTypeOf(source, column))) : undefined;
     const floatColumns = columns.map((column) => isFloatColumn(declaredTypeOf(source, column)));
+    const declaredTypes = columns.map((column) => declaredTypeOf(source, column));
+    const scalar = (value: unknown) => sqlValue(value, dialect);
     const statements = rows.map((row) => {
-      const values = columns.map((column, index) =>
-        sqlValue(cellOf(row, column), dialect, oracleColumns?.[index], floatColumns[index]),
-      );
+      const values = columns.map((column, index) => {
+        const cell = cellOf(row, column);
+        // The cells whose literal depends on the declared type first (#1386): an array,
+        // an interval, a map, a BIT. Everything else is written as it always was.
+        return (
+          typedLiteral(cell, declaredTypes[index], dialect, scalar) ??
+          sqlValue(cell, dialect, oracleColumns?.[index], floatColumns[index])
+        );
+      });
       return `INSERT INTO ${tableName} (${quotedColumns.join(", ")}) VALUES (${values.join(", ")});`;
     });
     return sql(statements.join("\n"));

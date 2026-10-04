@@ -138,6 +138,15 @@ export const NO_TRANSACTION_OPENED =
   "This server accepted BEGIN but did not open a transaction, so nothing run in it could be rolled back. Transactions and SANDBOX are not available on this connection.";
 
 /**
+ * What `beginTransaction({ requireReportedState: true })` raises when the server answered the
+ * BEGIN without reporting any transaction state (see `BeginTransactionResult`). SANDBOX asks
+ * for that, because it tells the user their changes were rolled back, and on such a server
+ * nothing Studio can read would show it. A manual transaction is still opened there.
+ */
+export const TRANSACTION_STATE_UNREPORTED =
+  "This server does not report whether a transaction is open, so Studio cannot prove that SANDBOX rolled anything back. SANDBOX is not available on this connection; BEGIN, COMMIT and ROLLBACK still are.";
+
+/**
  * Timeout error - query or connection timeout
  */
 export class TimeoutError extends DatabaseError {

@@ -87,7 +87,7 @@ import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { findCodeWord } from "@/lib/sql/words";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
-import { type DuckDBClient, describeOpenFailure, openDuckDBClient } from "./client";
+import { type DuckDBClient, MEMORY_TARGET, describeOpenFailure, openDuckDBClient } from "./client";
 import {
   readActiveSessions,
   readHealth,
@@ -138,15 +138,14 @@ import {
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
+import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
+import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-/** DuckDB's in-memory target. Accepted wherever a path is, and never touched on disk. */
-const MEMORY_TARGET = ":memory:";
 
 /** DuckDB's default schema; a maintenance target with no schema is resolved into it. */
 const DEFAULT_SCHEMA = "main";
@@ -599,7 +598,18 @@ export class DuckDBProvider extends SQLBaseProvider {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       }
 
-      this.client = await openDuckDBClient(dbPath, { readOnly: false });
+      // An existing file this process cannot write, or whose directory it cannot write, is
+      // opened read-only rather than left to fail (#1404): a read-write open of an
+      // unwritable file answers "Permission denied" and reads nothing at all, and one in an
+      // unwritable directory fails its first commit on the `.wal` it cannot create.
+      const unwritableFile = isUnwritableExistingFile(dbPath);
+      this.client = await openDuckDBClient(dbPath, { readOnly: false, unwritableFile });
+      // Logged once the open succeeded, so a file refused at open is not announced as opened.
+      if (unwritableFile) {
+        logger.info(`[DuckDB] Opened ${dbPath} read-only: this process cannot write the file or its directory`, {
+          provider: "duckdb",
+        });
+      }
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));

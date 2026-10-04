@@ -3,6 +3,7 @@ import { createDatabaseProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { supportsQueryCancel } from "@/lib/db/query-cancel";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,9 @@ export async function POST(req: NextRequest) {
     const provider = await createDatabaseProvider(connection);
 
     return NextResponse.json({
-      capabilities: provider.getCapabilities(),
+      // `supportsQueryCancel` is read off the provider's surface rather than declared by
+      // it: it is the cancel route's own check, so the two cannot disagree (#1364).
+      capabilities: { ...provider.getCapabilities(), supportsQueryCancel: supportsQueryCancel(provider) },
       labels: provider.getLabels(),
     });
   } catch (error) {

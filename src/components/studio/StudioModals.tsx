@@ -4,6 +4,7 @@ import React from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import type { MaskingConfig } from "@/lib/data-masking";
 import { objectAtPath } from "@/lib/db/detailed-object";
 import { DataImportModal } from "@/components/DataImportModal";
 import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
@@ -67,6 +68,12 @@ interface StudioModalsProps {
   showCodeGenerator: boolean;
   profilerPath: readonly string[] | null;
   onCloseProfiler: () => void;
+  /**
+   * What the profiler masks (#1421). The standalone shell hands it the configuration, switch
+   * and role it hands its results grid, so the two mask the same columns; the embedded shell
+   * keeps the built-in patterns its profiler always had. Required, so each shell decides it.
+   */
+  profilerMasking: { config: MaskingConfig; enabled: boolean; role: string | undefined };
   codeGenPath: readonly string[] | null;
   onCloseCodeGen: () => void;
 
@@ -105,6 +112,7 @@ export function StudioModals({
   showCodeGenerator,
   profilerPath,
   onCloseProfiler,
+  profilerMasking,
   codeGenPath,
   onCloseCodeGen,
   showTestDataGenerator,
@@ -157,6 +165,9 @@ export function StudioModals({
           connection={activeConnection}
           schemaContext={schemaContext}
           databaseType={databaseType}
+          maskingConfig={profilerMasking.config}
+          maskingEnabled={profilerMasking.enabled}
+          userRole={profilerMasking.role}
         />
       )}
 

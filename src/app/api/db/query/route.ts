@@ -13,6 +13,7 @@ import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
+import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 
@@ -63,6 +64,11 @@ export async function POST(req: NextRequest) {
 
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
+    }
+    // The id a provider tracks the run under and the cancel route names it by: a provider
+    // sends it on to the engine (ClickHouse) or keys a Map with it, so only a string (#1364).
+    if (queryId !== undefined && typeof queryId !== "string") {
+      return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
     // A connection type that declares a console text bound is held to it here, before the bound parameters, the
@@ -244,7 +250,7 @@ export async function POST(req: NextRequest) {
     let openTransaction: OpenQueryTransactionOutcome = "none";
 
     // Pass queryId to provider for cancellation tracking
-    const supportsCancel = "cancelQuery" in provider;
+    const supportsCancel = supportsQueryCancel(provider);
     let result: Awaited<ReturnType<typeof provider.query>>;
     try {
       result = await provider.query(prepared.query, bound.params, supportsCancel ? queryId : undefined, scope);

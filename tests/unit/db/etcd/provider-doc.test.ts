@@ -372,7 +372,10 @@ describe("docs/SECURITY.md carries the read-only control, its note and its three
       "the read-only precondition",
       "An etcd connection's read-only mode (row 3.8) does not narrow this: it binds a `user` only on a managed seed and only where etcd authenticates the client with a secret only the seeds hold",
     ],
-    ["the cancelled write", "Cancelling an etcd write in the editor shows it as cancelled even when etcd applied it"],
+    [
+      "the cancelled write",
+      "An etcd write cannot be cancelled once it has been sent: the provider's cancel answers false",
+    ],
     [
       "the cases the Kubernetes write protection does not recognise",
       "The etcd provider's Kubernetes write protection is by prefix, and by content only where a single-key write meets a stored Kubernetes envelope",
@@ -502,7 +505,7 @@ describe("docs/providers/etcd.md states the limits of spec E17 and the Kubernete
   test.each([
     "A `put`'s value is part of the statement text, so it reaches query history and saved queries, as a Redis `SET` does.",
     "The editor path writes no audit event for any engine: only the value edit of the Source tab and the maintenance cards are audited.",
-    "Cancelling a write in the editor shows it as cancelled even when etcd applied it: read the key again before you run the command again.",
+    "A write cannot be cancelled once it has left the client: `cancelQuery` answers false, and the editor then says the cancel was not confirmed rather than that it happened (#1364).",
     "A read-only seed restrains only the seeded connection: a `user` can post a connection of their own to the same host and port.",
   ])("E17: %s", (sentence) => {
     expect(limits).toContain(sentence);

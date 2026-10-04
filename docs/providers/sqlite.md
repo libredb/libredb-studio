@@ -243,6 +243,24 @@ SANDBOX toggle from the editor toolbar here. Before that flag existed the only g
 `isTransactionProvider(provider)` inside the route — a runtime shape check the browser cannot read —
 so the controls rendered on every connection and the route answered HTTP 400.
 
+Since #1364 the same holds for Cancel. `/api/db/provider-meta` reports `supportsQueryCancel: false`
+here, read off the provider by the check the cancel route makes, and the provider declares
+`blocksServerWhileRunning: true`. On an engine that cannot cancel, the editor's control reads "Stop
+waiting" and only ends the editor's wait; here even that is withheld, because the server answers
+nothing else until the statement ends, so the control is shown disabled with the reason on hover.
+Before #1364 the button was live, the route answered 400 "Query cancellation is not supported for
+this database type", and the editor said "Query Cancelled" anyway.
+
+**A long statement blocks the whole server, and nothing can stop it.** Both drivers run the
+statement synchronously on the server's only JavaScript thread, and neither exposes
+`sqlite3_interrupt` or a progress handler (checked on Node 24.11, whose `DatabaseSync` offers
+`setAuthorizer` but neither of the two, and Bun 1.4.2). So no cancel and no deadline can reach a
+running statement: the query timeout is checked after it returns. Measured on 2026-10-03 with
+node:sqlite (SQLite 3.50.4): a 300M-row recursive CTE kept running after Cancel, and `/api/health`
+answered after 69.7 s instead of the usual 6 ms, so every user of the instance waited with it. Moving
+SQLite execution to a worker thread that can be terminated is recorded as D227 in
+[`docs/BACKLOG.md`](../BACKLOG.md).
+
 ### 3.5 `endOpenQueryTransaction()` — a transaction a statement left open
 
 A `BEGIN` sent through `query()` is a different thing from the API above: it opens a transaction on
@@ -1186,6 +1204,7 @@ answers with nothing both while it is in flight and when it failed.
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
 | `supportsTransactions` | **`false`** — SQLite HAS `BEGIN`, but this provider holds no session across two requests, so `POST /api/db/transaction` refuses the call. The flag describes the provider's surface, not the engine, and the trio and SANDBOX toggle are withheld rather than offered and then failed (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; `PRAGMA foreign_key_list` reads them whether or not enforcement is on |
+| `blocksServerWhileRunning` | **`true`**: both drivers run a statement synchronously on the server's one thread, so the editor disables Cancel here instead of offering "Stop waiting" ([§3.4](#34-no-transactions-api-no-cancellation-no-pool), #1364) |
 | `singleWriterFile` | **absent (not `true`)** — SQLite is a file engine and is *not* single-writer at OPEN. Measured 2026-08-25 on `bun:sqlite`: a second `new Database(path, { readwrite: true })` on a WAL file this process already holds both opens and writes, because SQLite takes its file locks per transaction. LibreDB declares the flag and SQLite must not: the whole point of the agent profile here is a SECOND, `readonly: true` handle on the same file ([§12.1](#121-where-the-boundary-is)), and declaring it would have made the factory hand the agent the writable one instead |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'check']` |

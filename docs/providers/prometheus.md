@@ -456,7 +456,7 @@ The reported execution time leaves the wait out on purpose, so it measures the s
 `cancelQuery(queryId)` aborts that query's request.
 Prometheus derives the evaluation context from the HTTP request and checks it at fixed points during evaluation, so an abort ends the evaluation at the next checkpoint.
 That was observed on the live server before the method was added (M1): the `prometheus_engine_queries` gauge fell back once the request was aborted, and the aborted query's own query-log line recorded it as canceled.
-Both the cancel route and the query route detect cancellation by presence (`"cancelQuery" in provider`), which is why the method exists only because that measurement held.
+Both the cancel route and the query route detect cancellation by presence (`supportsQueryCancel` in `src/lib/db/query-cancel.ts`), which is why the method exists only because that measurement held.
 
 ### 5.6 EXPLAIN
 

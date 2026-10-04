@@ -45,6 +45,8 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
+  type BeginTransactionOptions,
+  type BeginTransactionResult,
 } from "../../types";
 import {
   DatabaseConfigError,
@@ -52,6 +54,7 @@ import {
   QueryError,
   mapDatabaseError,
   NO_TRANSACTION_OPENED,
+  TRANSACTION_STATE_UNREPORTED,
 } from "../../errors";
 import {
   applySourceBound,
@@ -418,8 +421,14 @@ const MYSQL_IMPLICIT_COMMIT_EXCEPTIONS: readonly string[] = [
 const SERVER_STATUS_IN_TRANS = 1;
 
 /**
- * Whether the server says a transaction is open after the statement that answered
- * `result`, or `undefined` when the answer carries no OK packet to read.
+ * `SERVER_STATUS_AUTOCOMMIT`, bit 1. MySQL sets one of the two bits on every OK packet: bit 0
+ * inside a transaction, bit 1 outside one while autocommit is on.
+ */
+const SERVER_STATUS_AUTOCOMMIT = 2;
+
+/**
+ * The status flags of the OK packet that answered `result`, or `undefined` when the answer
+ * carries none to read.
  *
  * `mysql2` keeps no transaction flag on a connection; it surfaces the status flags only
  * as `ResultSetHeader.serverStatus`. A statement that returns rows answers an array with
@@ -430,11 +439,55 @@ const SERVER_STATUS_IN_TRANS = 1;
  * array) for the `CALL` and a row (an object) for a read, so a column that happens to be
  * named `serverStatus` is never read as the flags.
  */
-function serverReportsOpenTransaction(result: unknown): boolean | undefined {
+function statusFlagsOf(result: unknown): number | undefined {
   const header = Array.isArray(result) ? (Array.isArray(result[0]) ? result[result.length - 1] : undefined) : result;
   if (typeof header !== "object" || header === null || Array.isArray(header)) return undefined;
   const status = (header as { serverStatus?: unknown }).serverStatus;
-  return typeof status === "number" ? (status & SERVER_STATUS_IN_TRANS) !== 0 : undefined;
+  return typeof status === "number" ? status : undefined;
+}
+
+/**
+ * Whether the server says a transaction is open after the statement that answered
+ * `result`, or `undefined` when the answer carries no OK packet to read.
+ */
+function serverReportsOpenTransaction(result: unknown): boolean | undefined {
+  const status = statusFlagsOf(result);
+  return status === undefined ? undefined : (status & SERVER_STATUS_IN_TRANS) !== 0;
+}
+
+/**
+ * Open a transaction on `conn` and answer what the server said to it.
+ *
+ * `BEGIN` first, because it is the one form every MySQL-wire server measured opens a
+ * transaction with. On 2026-10-04 Databend 1.2.881 and Apache Doris 4.1.3 accepted
+ * `START TRANSACTION` and opened nothing (a second session saw the INSERT at once and it
+ * survived the ROLLBACK), while `BEGIN` opened a real one there and on StarRocks 4.1.6; MySQL
+ * documents `BEGIN` as an alias of `START TRANSACTION`, and MySQL 26.7.0 and MariaDB 13.0.2
+ * answer the two with the same status. `START TRANSACTION` is
+ * the fallback for a server that refuses a bare `BEGIN`: MariaDB under `sql_mode=ORACLE`
+ * reads it as the start of a block and answers 1064.
+ *
+ * The fallback keys on that errno, unlike `probeExplainFormat()`, which reads only success
+ * or failure. Here a wrong fallback is harmful: on Databend and Doris `START TRANSACTION`
+ * opens nothing, so a BEGIN that failed for any other reason (a lost connection, a
+ * permission, a transaction already open) would turn into a session that only looks open.
+ * So only a parse error (1064, `ER_PARSE_ERROR`) on a live connection falls back, and if
+ * the fallback fails too, the BEGIN's own error is the one raised.
+ */
+async function openTransaction(conn: PoolConnection): Promise<unknown> {
+  try {
+    const [answer] = await conn.query("BEGIN");
+    return answer;
+  } catch (error) {
+    const { errno, fatal } = error as { errno?: unknown; fatal?: unknown };
+    if (errno !== 1064 || fatal === true) throw error;
+    try {
+      const [answer] = await conn.query("START TRANSACTION");
+      return answer;
+    } catch {
+      throw error;
+    }
+  }
 }
 
 /**
@@ -2442,6 +2495,8 @@ export class MySQLProvider extends SQLBaseProvider {
   // Transaction support: dedicated connection held outside pool
   private txConn: PoolConnection | null = null;
   private txActive = false;
+  /** Whether the server reported the state of the held transaction when it opened (`beginTransaction()`). */
+  private txStateReported = false;
   private txTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -2468,7 +2523,7 @@ export class MySQLProvider extends SQLBaseProvider {
       supportsInlineRowEdit: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.
       supportsResultPagination: true,
-      // START TRANSACTION over one held connection (`beginTransaction()` below).
+      // BEGIN over one held connection (`beginTransaction()` below).
       supportsTransactions: true,
       // DDL, account and table-administration statements commit the open transaction
       // (the MySQL manual's "Statements That Cause an Implicit Commit"), so SANDBOX
@@ -2827,35 +2882,46 @@ export class MySQLProvider extends SQLBaseProvider {
     }
   }
 
-  public async beginTransaction(): Promise<void> {
+  public async beginTransaction(options: BeginTransactionOptions = {}): Promise<BeginTransactionResult> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mysql");
-    this.txConn = await this.pool!.getConnection();
-    // The statement the driver's own `beginTransaction()` sends, issued directly because
-    // that method resolves to nothing and the OK packet is the evidence: a server of the
-    // MySQL wire family that accepts the statement without opening a transaction answers
-    // it with `SERVER_STATUS_IN_TRANS` cleared, and everything run "inside" it would
-    // autocommit while SANDBOX reported a rollback.
-    let opened: boolean | undefined;
+    const conn = await this.pool!.getConnection();
+    this.txConn = conn;
+    // Sent directly rather than through the driver's own `beginTransaction()`, because that
+    // method resolves to nothing and the OK packet is the evidence: a server of the MySQL wire
+    // family that accepts the statement without opening a transaction answers it with
+    // `SERVER_STATUS_IN_TRANS` cleared, and everything run "inside" it would autocommit while
+    // SANDBOX reported a rollback.
+    let status: number | undefined;
     try {
-      const [answer] = await this.txConn.query("START TRANSACTION");
-      opened = serverReportsOpenTransaction(answer);
+      status = statusFlagsOf(await openTransaction(conn));
     } catch (error) {
-      this.txConn.release();
+      conn.release();
       this.txConn = null;
       throw error;
     }
-    if (opened === false) {
-      this.txConn.release();
+    // Neither bit set (or no header) is a server that reports no transaction state at all,
+    // which is a different answer from bit 1 alone, "autocommit, and no transaction open".
+    const stateReported = status !== undefined && (status & (SERVER_STATUS_IN_TRANS | SERVER_STATUS_AUTOCOMMIT)) !== 0;
+    if (stateReported && (status! & SERVER_STATUS_IN_TRANS) === 0) {
+      conn.release();
       this.txConn = null;
       throw new QueryError(NO_TRANSACTION_OPENED, "mysql");
     }
+    if (!stateReported && options.requireReportedState) {
+      // The BEGIN may well have opened one (it does on Databend, StarRocks and Doris), so it is
+      // rolled back before the connection goes back to the pool.
+      await this.endHeldTransaction(conn);
+      throw new QueryError(TRANSACTION_STATE_UNREPORTED, "mysql");
+    }
     this.txActive = true;
+    this.txStateReported = stateReported;
 
     // Auto-rollback after timeout to prevent leaked locks
     this.txTimeout = setTimeout(() => {
       void this.expireTransaction();
     }, MySQLProvider.TX_TIMEOUT_MS);
+    return { stateReported };
   }
 
   public async commitTransaction(): Promise<void> {
@@ -2926,8 +2992,12 @@ export class MySQLProvider extends SQLBaseProvider {
           // statement that commits implicitly (DDL, `SET autocommit = 1`, a typed
           // `COMMIT`) ends it, and from then on the held connection autocommits: a
           // ROLLBACK would answer success and undo nothing. So the session is ended here
-          // and the route reports `inTransaction: false` instead of a rollback.
-          if (serverReportsOpenTransaction(rows) === false) await this.endHeldTransaction(this.txConn!);
+          // and the route reports `inTransaction: false` instead of a rollback. Only on a
+          // server that reported the state at BEGIN: StarRocks and Doris answer an INSERT
+          // inside a transaction with status 0, which says nothing, not "closed".
+          if (this.txStateReported && serverReportsOpenTransaction(rows) === false) {
+            await this.endHeldTransaction(this.txConn!);
+          }
           return { rows, fields };
         } catch (error) {
           throw mapDatabaseError(error, "mysql", sql);

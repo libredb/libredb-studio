@@ -463,6 +463,15 @@ this existed, the probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exp
 round, a string exporting as text and a number as a float. Both execution paths fill it from the same column map - including
 `queryInTransaction()`, which had the map available all along and simply never read it.
 
+### 5.5 What the SQL INSERT export writes for a BIT
+
+`mssql` returns a BIT as a JS boolean, and T-SQL has no boolean literal: an exported `true` is `Msg 207: Invalid column name 'true'`, and that fails the whole batch.
+The SQL INSERT export writes a boolean as `1` / `0` for this dialect (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+Dates need nothing: the ISO text a `Date` becomes (`2024-12-31T23:59:59.997Z`) replays into `datetime`, `datetime2`, `smalldatetime`, `datetimeoffset` and `date`.
+
+Measured 2026-10-04 on SQL Server 2025 (17.0.5005.3): a table of `bit`, the five date and time types, `uniqueidentifier`, `decimal(38,10)`, `bigint`, `money`, `varbinary(max)`, `nvarchar(max)`, `float`, `real`, `tinyint` and `xml` exported and replayed with `sqlcmd` into both a `SELECT * INTO copy … WHERE 1 = 0` copy and the exported DDL's own table without an error.
+Two cells read back differently, both lost by the driver before the export sees them: a `datetimeoffset` keeps its instant but not its offset or its digits past the millisecond, and a `decimal` past 15 significant digits arrives as a rounded JS number.
+
 ---
 
 ## 6. Transactions

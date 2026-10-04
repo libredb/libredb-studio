@@ -20,7 +20,7 @@
 | **Connection string** | Supported (`clickhouse://`, plain `http://` / `https://`) |
 | **EXPLAIN** | `clickhouse-json` — estimate only; ClickHouse's `EXPLAIN` never executes the statement, so there is no separate analyze mode |
 | **Transactions** | Not exposed (ClickHouse has no multi-statement transactions to expose) |
-| **Query cancellation** | No `cancelQuery`; a running statement is killed via maintenance `kill` |
+| **Query cancellation** | Yes: each run gets a generated `query_id`, and `cancelQuery` sends `KILL QUERY ... SYNC` for it ([§5.4](#54-cancellation)) |
 | **Source** | [`src/lib/db/providers/sql/clickhouse/`](../../src/lib/db/providers/sql/clickhouse/) |
 | **Tests** | [`tests/integration/db/clickhouse-provider.test.ts`](../../tests/integration/db/clickhouse-provider.test.ts) + [`tests/unit/db/clickhouse/`](../../tests/unit/db/clickhouse/) + [`tests/unit/lib/explain/clickhouse-json.test.ts`](../../tests/unit/lib/explain/clickhouse-json.test.ts) |
 | **Tracking issue** | [#264 — Add ClickHouse provider](https://github.com/libredb/libredb-studio/issues/264) |
@@ -607,6 +607,15 @@ So there is no handle between two statements for a `BEGIN TRANSACTION` to surviv
 
 This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
 
+### 3.14 What the SQL INSERT and DDL exports write for composite types
+
+A result reaches the export through JSON, where an `Array` is a JS array, a `Map` an object, an unnamed `Tuple` an array and a named one an object.
+Written as quoted JSON those were `Code: 26 ... Cannot parse quoted string` on replay, so the SQL INSERT export reads the declared type ([§3.9](#39-column-types-are-the-declared-strings-verbatim)) and writes `[1, 2, 3]`, `map('k', 1)` and `tuple(7, ['p', 'q'])`, recursing through the element types, `Nullable` and `LowCardinality` included (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+A named tuple's elements are written in the declared order, and a 64-bit integer or a decimal that `output_format_json_quote_64bit_integers` / `output_format_json_quote_decimals` turned into a string is written bare inside a container (a scalar column takes the quoted form as it is).
+
+The DDL keeps a type with a quoted argument, `DateTime64(3, 'Europe/Istanbul')`, `DateTime('UTC')` and `Enum8('a' = 1, 'b' = 2)`, instead of writing `TEXT`.
+
+Measured 2026-10-04 on ClickHouse 26.9: a `MergeTree` table of `Array(Int32)`, `Array(String)` holding a quote and a backslash, `Map(String, Int32)`, `Map(String, Array(String))`, `Array(Array(Nullable(Int32)))`, named and unnamed `Tuple`, `DateTime64(3, 'Europe/Istanbul')`, `DateTime('UTC')`, `Date32`, `UInt64` and `Int128` at their limits, `Decimal(18, 4)`, `Bool`, `UUID`, `IPv4`, `IPv6`, `Enum8` and `LowCardinality(String)` exported and replayed with `clickhouse-client`, into `CREATE TABLE copy AS src` and into the exported DDL's own table, and the TSV of both tables differed in one cell: a `Float64` `-0`, which JavaScript prints as `0`.
 
 ---
 
@@ -758,6 +767,27 @@ that is how the rest of the application calls every provider uniformly.
 The EXPLAIN button is available (`supportsExplain: true`) and renders the plan tree described in
 [§3.12](#312-explain-reuses-the-shared-tree-model). ClickHouse has no analyze mode, so both the
 direct action and the background pre-warm show the same estimated plan.
+
+### 5.4 Cancellation
+
+Aborting the HTTP request does not stop a ClickHouse statement. Measured on 26.9.9.28 before #1364,
+when the provider had no `cancelQuery`: after the editor's Cancel, `system.processes` still listed
+`SELECT count() FROM numbers(200000000000) WHERE sipHash64(number) % 7 = 3` 19 s and 29 s later,
+and the editor had said "Query Cancelled".
+
+Now `query(sql, params, queryId)` runs the statement under a `query_id` the provider generates (a
+random UUID, sent through a neutral `queryId` option on the transport seam) and remembers it against
+the caller's id; `cancelQuery(queryId)` looks that up and sends
+`KILL QUERY WHERE query_id = '<generated id>' SYNC`. The caller's id never reaches the server:
+ClickHouse keeps a query id unique per server user only, so two Studio users sharing one ClickHouse
+account could otherwise run under the same id, and one KILL would stop both. `SYNC` answers once the statement has stopped: one row with
+`kill_status` `finished` per statement it reached, or a 200 with an empty body when nothing matched
+because the statement had already ended (both measured on 26.9.9.28). `cancelQuery` answers true only
+for a `finished` row, so `cant_cancel`, an empty answer and a refused KILL are all false, and the
+editor then says the cancel was not confirmed.
+
+An id this provider is not running is refused before anything is sent, so the cancel route cannot be
+used to kill another session's statement by guessing its id.
 
 ---
 
@@ -1588,7 +1618,8 @@ await provider.disconnect();
 provider uses. `POST /api/db/maintenance` (admin) accepts `optimize` / `analyze` / `kill`;
 `optimize` and `kill` require a `target`, while `analyze` treats a missing one as "the whole pinned
 database" ([§8](#8-maintenance)) — so a client should omit it rather than invent one for
-database-wide statistics. Transaction and cancel routes do not apply — see
+database-wide statistics. `POST /api/db/cancel` stops a statement `POST /api/db/query` started
+under a `queryId` ([§5.4](#54-cancellation)); the transaction routes do not apply, see
 [§13](#13-known-limitations--future-work).
 
 ---
@@ -1597,8 +1628,10 @@ database-wide statistics. Transaction and cancel routes do not apply — see
 
 - **No transactions.** ClickHouse has no multi-statement transaction model to expose over this
   interface, so there is no begin/commit/rollback API here.
-- **No `cancelQuery`.** A running statement is terminated through maintenance `kill` with its
-  `query_id`, which needs its own grant like any other `system.processes` operation.
+- **Maintenance `kill` is a different path from Cancel.** Cancel reaches only a statement this
+  provider started ([§5.4](#54-cancellation)); a statement anyone else runs is terminated through
+  maintenance `kill` with its `query_id`, which needs its own grant like any other
+  `system.processes` operation.
 - **No analyze-mode EXPLAIN.** ClickHouse's `EXPLAIN` never executes the statement; see
   [§3.12](#312-explain-reuses-the-shared-tree-model).
 - **`ALTER TABLE ... UPDATE` and lightweight `DELETE FROM` report zero rows changed even on

@@ -210,6 +210,19 @@ describe("POST /api/db/query", () => {
     expect(data.error).toContain("Authentication required");
   });
 
+  test("a queryId that is not a string returns 400 (#1364)", async () => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1", queryId: 42 },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("queryId must be a string");
+  });
+
   test("passes queryId to provider when cancellation is supported", async () => {
     const providerWithCancel = {
       ...createMockProvider(),

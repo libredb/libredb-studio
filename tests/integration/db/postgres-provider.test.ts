@@ -1039,19 +1039,58 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("cancelQuery()", () => {
+    type Running = { pid: number; client: Record<string, unknown> };
+    const runningOf = (p: unknown) => (p as unknown as { runningQueries: Map<string, Running> }).runningQueries;
+
+    /** A stand-in PostgreSQL that takes a CancelRequest the way the server does: read it, close. */
+    async function cancelListener(onRequest: (bytes: Buffer) => void) {
+      const { createServer } = await import("node:net");
+      const server = createServer((socket) => {
+        socket.on("data", (bytes) => {
+          onRequest(Buffer.from(bytes));
+          socket.end();
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      return {
+        port: typeof address === "object" && address !== null ? address.port : 0,
+        close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+      };
+    }
+
+    /** `pg_cancel_backend` as CockroachDB v26.3.2 answers it. */
+    function refusePgCancelBackend() {
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("pg_cancel_backend")) throw new Error("unknown function: pg_cancel_backend()");
+        return originalMock(sql, params);
+      };
+    }
+
     test("cancels known PID and returns true", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-
-      // We need a query running to have a tracked PID.
-      // Simulate: trigger a query with queryId, then cancel mid-flight.
-      // Since our mock is synchronous, we'll manually set the PID map.
-      // Access the private runningQueryPids map via casting.
-      const providerAny = provider as unknown as { runningQueryPids: Map<string, number> };
-      providerAny.runningQueryPids.set("cancel-test", 12345);
+      runningOf(provider).set("cancel-test", { pid: 12345, client: {} });
 
       const cancelled = await provider.cancelQuery("cancel-test");
       expect(cancelled).toBe(true);
+    });
+
+    test("tracks the run's backend and client while it runs, and forgets both after", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let seen: Running | undefined;
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql === "SELECT 42") seen = runningOf(provider).get("q-run");
+        return originalMock(sql, params);
+      };
+
+      await provider.query("SELECT 42", [], "q-run");
+
+      expect(seen?.client).toBeDefined();
+      expect(runningOf(provider).has("q-run")).toBe(false);
     });
 
     test("returns false for unknown queryId", async () => {
@@ -1061,24 +1100,152 @@ describe("PostgresProvider", () => {
       expect(result).toBe(false);
     });
 
-    test("handles cancel error gracefully and returns false", async () => {
+    // CockroachDB, Materialize and RisingWave do not honour `pg_cancel_backend`, and the
+    // statement kept running (#1364); the wire-protocol cancel reaches the same session.
+    test("falls back to the wire-protocol cancel and confirms once the run ends", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const received: Buffer[] = [];
+      const listener = await cancelListener((bytes) => {
+        received.push(bytes);
+        // The engine stops the statement, and the run's own `finally` forgets it.
+        runningOf(provider).delete("wire-cancel");
+      });
+      try {
+        runningOf(provider).set("wire-cancel", {
+          pid: 1990112,
+          client: { processID: 1990112, secretKey: -1029646662, host: "127.0.0.1", port: listener.port },
+        });
 
-      const providerAny = provider as unknown as { runningQueryPids: Map<string, number> };
-      providerAny.runningQueryPids.set("error-cancel", 99999);
+        expect(await provider.cancelQuery("wire-cancel")).toBe(true);
+        const request = Buffer.concat(received);
+        expect(request.readInt32BE(4)).toBe(80877102);
+        expect(request.readInt32BE(8)).toBe(1990112);
+        expect(request.readInt32BE(12)).toBe(-1029646662);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
 
-      // Override mock to throw on pg_cancel_backend
+    // A session that runs over TLS gets its cancel over TLS: the client's own `ssl` travels
+    // with the request, so the first bytes are an SSLRequest, and a server that does not
+    // answer `S` never sees the key.
+    test("asks for TLS first when the session's client was configured with ssl", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const received: Buffer[] = [];
+      const listener = await cancelListener((bytes) => received.push(bytes));
+      try {
+        runningOf(provider).set("tls-session", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port, ssl: true },
+        });
+
+        expect(await provider.cancelQuery("tls-session")).toBe(false);
+        const first = Buffer.concat(received);
+        expect(first.length).toBe(8);
+        expect(first.readInt32BE(4)).toBe(80877103);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
+
+    test("answers false when the run is still going after the wire-protocol cancel", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const listener = await cancelListener(() => {});
+      // A clock that moves a second per reading, so the confirmation window passes in a few
+      // polls wherever it is first read: the run never ends.
+      const realNow = Date.now;
+      let calls = 0;
+      const now = spyOn(Date, "now").mockImplementation(() => realNow() + 1000 * calls++);
+      try {
+        runningOf(provider).set("still-running", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port },
+        });
+
+        expect(await provider.cancelQuery("still-running")).toBe(false);
+      } finally {
+        now.mockRestore();
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
+
+    test("waits for the run to end before confirming the wire-protocol cancel", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      // The engine takes a moment after the request, as CockroachDB did (about 0.5 s).
+      const listener = await cancelListener(() => {
+        setTimeout(() => runningOf(provider).delete("slow-stop"), 60);
+      });
+      try {
+        runningOf(provider).set("slow-stop", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port },
+        });
+
+        expect(await provider.cancelQuery("slow-stop")).toBe(true);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
+
+    test("answers false without a backend key to name the session by", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        runningOf(provider).set("no-key", { pid: 7, client: { host: "127.0.0.1", port: 1 } });
+
+        expect(await provider.cancelQuery("no-key")).toBe(false);
+      } finally {
+        errors.mockRestore();
+      }
+    });
+
+    // The pool hands a released session to the next request, so a request sent after the run
+    // ended could stop somebody else's statement.
+    test("sends no wire-protocol cancel once the run has ended", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const received: Buffer[] = [];
+      const listener = await cancelListener((bytes) => received.push(bytes));
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         if (sql.includes("pg_cancel_backend")) {
-          throw new Error("Connection lost");
+          // The run ends while `pg_cancel_backend` is being refused.
+          runningOf(provider).delete("ended");
+          throw new Error("unknown function: pg_cancel_backend()");
         }
         return originalMock(sql, params);
       };
+      try {
+        runningOf(provider).set("ended", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port },
+        });
 
-      const result = await provider.cancelQuery("error-cancel");
-      expect(result).toBe(false);
+        expect(await provider.cancelQuery("ended")).toBe(false);
+        expect(received).toEqual([]);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
     });
   });
 
@@ -1316,7 +1483,7 @@ describe("PostgresProvider", () => {
     test("transaction timeout timer fires and auto-rollbacks", async () => {
       // TX_TIMEOUT_MS is a private static read at beginTransaction() call time;
       // shrink it so the auto-rollback timer actually fires in the test
-      // (same private-access-via-cast precedent as runningQueryPids above).
+      // (same private-access-via-cast precedent as runningQueries above).
       const providerStatics = PostgresProvider as unknown as { TX_TIMEOUT_MS: number };
       const originalTimeout = providerStatics.TX_TIMEOUT_MS;
       providerStatics.TX_TIMEOUT_MS = 5;
@@ -2674,6 +2841,8 @@ describe("PostgresProvider", () => {
       const metrics = await provider.getPerformanceMetrics();
 
       expect(metrics.cacheHitRatio).toBe(98.75);
+      // The tuning sentence is PostgreSQL's own and is declared beside the ratio.
+      expect(metrics.cacheHitAdvice).toBe("Increase shared_buffers");
       // Not a metric PostgreSQL publishes; see the note in getPerformanceMetrics().
       expect("bufferPoolUsage" in metrics).toBe(false);
       expect(typeof metrics.deadlocks).toBe("number");
@@ -2782,6 +2951,7 @@ describe("PostgresProvider", () => {
 
       const metrics = await provider.getPerformanceMetrics();
       expect("cacheHitRatio" in metrics).toBe(false);
+      expect("cacheHitAdvice" in metrics).toBe(false);
       mockQueryFn = originalMock;
     });
 
@@ -3104,9 +3274,20 @@ describe("PostgresProvider", () => {
       const stats = provider.getPoolStats();
 
       expect(stats.total).toBe(10);
+      // The configured ceiling, apart from the clients open right now.
+      expect(stats.max).toBe(10);
       expect(stats.idle).toBe(7);
       expect(stats.active).toBe(3); // total - idle
       expect(stats.waiting).toBe(0);
+    });
+
+    test("max is the configured ceiling, not the open client count", async () => {
+      provider = new PostgresProvider(makePgConfig(), { pool: { max: 25 } });
+      await provider.connect();
+      const stats = provider.getPoolStats();
+
+      expect(stats.total).toBe(10);
+      expect(stats.max).toBe(25);
     });
 
     test("not connected returns zeros", () => {

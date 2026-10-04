@@ -743,6 +743,16 @@ CONNECTED provider's `explainFormat` and names that format in its response
 `mysql-json`, which is exactly what it answered before the probe existed, so the client's pre-flight
 refusal for a non-SELECT statement is unchanged.
 
+### 5.6 What the SQL-DDL export writes for dates and BIT
+
+The DDL writes the bare `datetime`, `timestamp` and `time` ([§5.4](#54-declared-column-types)) as `datetime(6)`, `timestamp(6)` and `time(6)`, since precision 0 rounds a replayed `.999` up to the next second (measured on MySQL 26.7.0: `'2024-12-31 23:59:59.999'` into a bare `datetime` reads back as `2025-01-01 00:00:00`), and a bare `bit` as `bit(64)`, which takes every width `mysql2` hands back as bytes where `bit(1)` refuses them (#1386).
+
+The SQL INSERT export still writes a `DATETIME`, `TIMESTAMP` or `DATE` cell as the ISO text the row carries, `'2024-12-31T23:59:59.999Z'`, which MySQL refuses with `ERROR 1292 Incorrect datetime value`.
+Rewriting that text would mean assuming the connection read it with `timezone: "Z"`, which a `ProviderOptions.timezone` or a `?timezone=` in the connection string overrides, and a wrong guess replays a different day without an error.
+The fix belongs at the source: once the provider returns the server's own date text (#1388), the export writes it as it is.
+
+A `bigint unsigned` past the signed range still fails the DDL form, because the declared type is `bigint` ([§5.4](#54-declared-column-types) says why `unsigned` is not part of it).
+
 ---
 
 ## 6. Transactions
@@ -753,7 +763,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `pool.getConnection()` + `START TRANSACTION`, arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, and refuses a `START TRANSACTION` that opened nothing ([§6.0](#60-what-the-server-says-about-the-transaction)). |
+| `beginTransaction(options?)` | `pool.getConnection()` + `BEGIN` (`START TRANSACTION` if `BEGIN` is refused as a parse error), arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, refuses a `BEGIN` the server reports as having opened nothing, and answers `{ stateReported }`; with `requireReportedState` (SANDBOX) it also refuses a server that reports no state at all ([§6.0](#60-what-the-server-says-about-the-transaction)). |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
@@ -783,7 +793,8 @@ so the provider reads them where a header exists, and three things follow:
   TABLE` on every server below; the temporary table outlives the rollback on the pooled connection,
   which is session state rather than data), and MariaDB's `ANALYZE SELECT` / `ANALYZE FORMAT`, a
   read. MariaDB's `BEGIN NOT ATOMIC` compound block stays refused under `BEGIN`: it can run DDL.
-- **`queryInTransaction()` ends the session when a header reports bit 0 cleared**, which catches what
+- **`queryInTransaction()` ends the session when a header reports bit 0 cleared** (on a server that
+  reported its state at BEGIN, see [§6.0.1](#601-servers-that-report-no-transaction-state)), which catches what
   the list does not name (`SET autocommit = 1`, a typed `COMMIT`, a `CALL` whose procedure runs DDL,
   judged by the call's own header, the last element of its answer). A best-effort `ROLLBACK` is sent
   first (answered with a plain OK where the transaction is really gone), so a server that cleared
@@ -792,11 +803,13 @@ so the provider reads them where a header exists, and three things follow:
   editor reports as "Not Rolled Back" (SANDBOX) or "Transaction Ended", without claiming whether
   the work was kept: a typed `ROLLBACK` clears the flag exactly as a commit does. A read answers
   rows and no header, so it is never judged, and a read never ends a transaction.
-- **`beginTransaction()` refuses a `START TRANSACTION` whose header reports bit 0 cleared**, the
-  MySQL-wire twin of what RisingWave does over the PostgreSQL wire (see the PostgreSQL provider's
-  §8.0). It sends the same statement the driver's own `beginTransaction()` sends, directly, because
-  that method resolves to nothing and the header is the evidence. A server that answers no header at
-  all is not refused: there is nothing to read, and MySQL always sends one.
+- **`beginTransaction()` refuses a `BEGIN` whose header reports bit 1 (`SERVER_STATUS_AUTOCOMMIT`)
+  without bit 0**: the server reports its state, and the state is "no transaction", the MySQL-wire
+  twin of what RisingWave does over the PostgreSQL wire (see the PostgreSQL provider's §8.0). It
+  sends the statement directly rather than through the driver's own `beginTransaction()`, because
+  that method resolves to nothing and the header is the evidence. A header with neither bit, or no
+  header at all, is a server that reports no transaction state, which is a different answer
+  ([§6.0.1](#601-servers-that-report-no-transaction-state)).
 
 Which servers this reading was measured on, 2026-10-04 through mysql2, one connection each:
 `START TRANSACTION`, `INSERT`, `CREATE TABLE`, `INSERT`, `ROLLBACK`, then a count.
@@ -809,9 +822,61 @@ Which servers this reading was measured on, 2026-10-04 through mysql2, one conne
 | TiDB v7.5.1 (`pingcap/tidb:latest`) | 3 (set) | 3 (set) | 2 (cleared) | 2 (autocommit) | 2 |
 
 Every one of them commits the DDL and everything before it, and every one reports it in the flag.
-**Not measured:** StarRocks, Apache Doris, Databend, SingleStore, OceanBase and Vitess. On those the
-list above still refuses DDL in SANDBOX, and a `START TRANSACTION` they answer with the flag cleared
-is refused; one that sets the flag without a real transaction would not be caught.
+**Not measured:** SingleStore, OceanBase and Vitess. On those the list above still refuses DDL in
+SANDBOX, and a `BEGIN` they answer with bit 1 alone is refused; one that sets bit 0 without a real
+transaction would not be caught.
+
+#### 6.0.1 Servers that report no transaction state
+
+Databend, StarRocks and Apache Doris answer **every** OK packet with status `0`: neither bit 0 nor
+bit 1, before a transaction, inside one and after it. MySQL never does that, because one of the two
+bits is always set. So status `0` is not "closed", it is "not said". The first reading of the flag
+([#1324](https://github.com/libredb/libredb-studio/pull/1324)) took it as "closed" and refused BEGIN
+and SANDBOX on all three, although all three run transactions.
+
+Measured 2026-10-04 through mysql2, one connection running the statements and a second one
+counting the rows:
+
+| Server | `START TRANSACTION`, `INSERT`, `ROLLBACK` | `BEGIN`, `INSERT`, `ROLLBACK` | Other places that might report it |
+|---|---|---|---|
+| Databend 1.2.881 (`datafuselabs/databend:latest`) | the row is visible to the second session at once and survives the ROLLBACK: nothing was opened | the row is invisible to the second session and the ROLLBACK discards it | `@@in_transaction` answers `"0"` inside a BEGIN too, and `@@autocommit` answers `"0"` while the server autocommits; no `information_schema.innodb_trx` |
+| StarRocks 4.1.6-6862092 (`starrocks/allin1-ubuntu:latest`) | discarded | discarded | no `@@in_transaction` (1193); the OK packet's `info` text reads `'status':'PREPARE'` inside and `'ABORTED'` after the ROLLBACK |
+| Apache Doris 4.1.3-rc02 (`apache/doris:all-in-one-4.1.3`) | the INSERT's `info` reads `'status':'VISIBLE'` and the row survives the ROLLBACK: nothing was opened | discarded (`PREPARE`, then `ABORTED`) | no `@@in_transaction` (1105) |
+
+The `info` text is each vendor's own message, not a field of the protocol, so nothing reads it.
+Inside a transaction StarRocks refuses DDL (5305, "Explicit transaction only support
+begin/commit/rollback/insert/update/delete/set/select/show statements") and a read of a table the
+transaction already wrote (5307); Doris accepts only `INSERT`, `UPDATE`, `DELETE`, `COMMIT` and
+`ROLLBACK` ("This is in a transaction, only insert, update, delete, commit, rollback is
+acceptable."). Those refusals are the engines' own and reach the editor as they are.
+
+That is why the provider opens with **`BEGIN`**: the MySQL manual makes it an alias of `START
+TRANSACTION`, and MySQL 26.7.0 and MariaDB 13.0.2 answer both with the same status (16387 and 3,
+measured the same day), while on Databend and Doris it is the only one of the two that opens
+anything. A server that refuses a bare `BEGIN` as a parse error gets `START TRANSACTION` instead:
+MariaDB 13.0.2 under `sql_mode=ORACLE` reads `BEGIN` as the start of a block and answers 1064, and
+opens the transaction with `START TRANSACTION` (status 32771). Only errno 1064
+(`ER_PARSE_ERROR`) on a live connection falls back, unlike the EXPLAIN probe (§5.5), which reads
+only success or failure: on Databend and Doris `START TRANSACTION` opens nothing, so a `BEGIN`
+that failed for another reason (a lost connection, a permission, a transaction already open)
+would become a session that only looks open. Any other error, and a fallback that fails too,
+raise the `BEGIN`'s own error.
+
+What follows from status `0` at BEGIN:
+
+- **A manual transaction is opened**, and `beginTransaction()` answers `{ stateReported: false }`.
+  `POST /api/db/transaction` passes that on, and the editor says Studio cannot verify the
+  transaction on this server; a ROLLBACK is reported as "Rollback Sent", not as "All changes have
+  been discarded", and a COMMIT as "Commit Sent", not as "All changes have been saved".
+- **No statement in that session is judged by its status.** StarRocks and Doris answer an `INSERT`
+  inside the transaction with a header whose status is `0`; reading that as "closed" would end the
+  session and roll the INSERT back. The cost is that a statement that does end the transaction
+  there is not noticed either.
+- **SANDBOX is refused.** It asks with `requireReportedState`, and on such a server the provider
+  rolls back what the BEGIN opened, releases the connection and throws `TRANSACTION_STATE_UNREPORTED`
+  ([`errors.ts`](../../src/lib/db/errors.ts)); the route answers 400 with that sentence and the
+  editor shows "Sandbox Unavailable ... Nothing was run.". SANDBOX promises a rollback, and nothing
+  the server answers there could show one happened.
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
 
@@ -1908,7 +1973,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
-| `supportsTransactions` | `true`: the transaction runs on one held connection opened with `START TRANSACTION`, so the trio and the SANDBOX toggle are offered (#464) |
+| `supportsTransactions` | `true`: the transaction runs on one held connection opened with `BEGIN` ([§6.0.1](#601-servers-that-report-no-transaction-state)), so the trio and the SANDBOX toggle are offered (#464) |
 | `implicitCommitStatements` | `ALTER`, `ANALYZE`, `BEGIN`, `CACHE`, `CHANGE`, `CHECK`, `CREATE`, `DROP`, `FLUSH`, `GRANT`, `INSTALL`, `LOCK`, `OPTIMIZE`, `RENAME`, `REPAIR`, `RESET`, `REVOKE`, `START`, `STOP`, `TRUNCATE`, `UNINSTALL`, `UNLOCK`: the statements MySQL commits implicitly, which SANDBOX refuses before sending ([§6.0](#60-what-the-server-says-about-the-transaction)) |
 | `implicitCommitExceptions` | `CREATE TEMPORARY`, `DROP TEMPORARY`, `ANALYZE SELECT`, `ANALYZE FORMAT`: matched by the list above and committing nothing ([§6.0](#60-what-the-server-says-about-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; InnoDB declares them, so an empty list means this schema (or this role) has none, not the engine |

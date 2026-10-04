@@ -13,6 +13,9 @@ interface UseTransactionControlParams {
 export function useTransactionControl({ activeConnection }: UseTransactionControlParams) {
   const [transactionActive, setTransactionActive] = useState(false);
   const [playgroundMode, setPlaygroundMode] = useState(false);
+  // The server answered BEGIN without reporting any transaction state (`stateReported: false`
+  // from the route), so nothing Studio reads can confirm what a ROLLBACK discarded.
+  const [stateUnreported, setStateUnreported] = useState(false);
   const { toast } = useToast();
 
   const handleTransaction = useCallback(
@@ -36,29 +39,49 @@ export function useTransactionControl({ activeConnection }: UseTransactionContro
         }
 
         if (action === "begin") {
+          const unreported = data.stateReported === false;
           setTransactionActive(true);
+          setStateUnreported(unreported);
           toast({
             title: "Transaction Started",
-            description: "BEGIN — all queries will run in this transaction until you COMMIT or ROLLBACK.",
+            description: unreported
+              ? "BEGIN sent. This server does not report transaction state, so Studio cannot verify that the transaction is open or notice a statement that ends it. Queries run on this connection until you COMMIT or ROLLBACK."
+              : "BEGIN — all queries will run in this transaction until you COMMIT or ROLLBACK.",
           });
         } else if (action === "commit") {
           setTransactionActive(false);
-          toast({ title: "Transaction Committed", description: "All changes have been saved." });
+          toast(
+            stateUnreported
+              ? {
+                  title: "Commit Sent",
+                  description: "This server does not report transaction state, so Studio cannot verify what was saved.",
+                }
+              : { title: "Transaction Committed", description: "All changes have been saved." },
+          );
         } else if (action === "rollback") {
           setTransactionActive(false);
-          toast({ title: "Transaction Rolled Back", description: "All changes have been discarded." });
+          toast(
+            stateUnreported
+              ? {
+                  title: "Rollback Sent",
+                  description:
+                    "This server does not report transaction state, so Studio cannot verify what was discarded.",
+                }
+              : { title: "Transaction Rolled Back", description: "All changes have been discarded." },
+          );
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : "Unknown error";
         toast({ title: "Transaction Error", description: msg, variant: "destructive" });
       }
     },
-    [activeConnection, toast],
+    [activeConnection, toast, stateUnreported],
   );
 
   const resetTransactionState = useCallback(() => {
     setTransactionActive(false);
     setPlaygroundMode(false);
+    setStateUnreported(false);
   }, []);
 
   // The server ended the transaction itself (a COMMIT typed in it, or a statement the engine

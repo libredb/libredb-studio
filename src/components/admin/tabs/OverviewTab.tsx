@@ -93,6 +93,9 @@ const GAUGE_COLORS = {
   critical: "#ef4444",
 };
 
+// A gauge with nothing to measure: not the failure red of a 0, and not a verdict either way.
+const NEUTRAL_GAUGE_COLOR = "#71717a"; // zinc-500, the theme's fg-muted, which reads on both grounds
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getGaugeColor(value: number, thresholds = { warning: 70, critical: 50 }) {
@@ -267,7 +270,8 @@ export function OverviewTab({ user }: OverviewTabProps) {
     const total = history.length;
     const successful = history.filter((h) => h.status === "success").length;
     const failed = total - successful;
-    const successRate = total > 0 ? Math.round((successful / total) * 100) : 0;
+    // null, not 0: with no queries there is nothing to divide, and 0 reads as every query failing.
+    const successRate = total > 0 ? Math.round((successful / total) * 100) : null;
     const avgTime = total > 0 ? Math.round(history.reduce((sum, h) => sum + h.executionTime, 0) / total) : 0;
 
     const now = new Date();
@@ -312,7 +316,8 @@ export function OverviewTab({ user }: OverviewTabProps) {
 
   const avgLatency = useMemo(() => {
     const healthy = fleetHealth.filter((h) => h.status !== "error");
-    if (healthy.length === 0) return 0;
+    // null, not 0: no reachable connection means nothing was timed, and 0 ms would rate as excellent.
+    if (healthy.length === 0) return null;
     return Math.round(healthy.reduce((sum, h) => sum + h.latencyMs, 0) / healthy.length);
   }, [fleetHealth]);
 
@@ -425,7 +430,7 @@ function HeroStatusBanner({
   healthScore: number;
   fleetHealth: FleetHealthItem[];
   connections: DatabaseConnection[];
-  queryStats: { total: number; successRate: number; avgTime: number };
+  queryStats: { total: number; successRate: number | null; avgTime: number };
   todayQueries: number;
   yesterdayQueries: number;
   totalDBSize: string;
@@ -807,9 +812,9 @@ function KeyMetricsSection({
   todayQueries,
   yesterdayQueries,
 }: {
-  queryStats: { total: number; successRate: number; avgTime: number };
+  queryStats: { total: number; successRate: number | null; avgTime: number };
   healthScore: number;
-  avgLatency: number;
+  avgLatency: number | null;
   todayQueries: number;
   yesterdayQueries: number;
 }) {
@@ -822,18 +827,19 @@ function KeyMetricsSection({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricGauge
           label="Query Success"
-          value={queryStats.successRate}
-          unit="%"
-          color={getGaugeColor(queryStats.successRate)}
+          value={queryStats.successRate ?? 0}
+          displayValue={queryStats.successRate === null ? "N/A" : undefined}
+          unit={queryStats.successRate === null ? "" : "%"}
+          color={queryStats.successRate === null ? NEUTRAL_GAUGE_COLOR : getGaugeColor(queryStats.successRate)}
         />
         <MetricGauge label="Fleet Health" value={healthScore} unit="%" color={getGaugeColor(healthScore)} />
         <MetricGauge
           label="Avg Response"
-          value={Math.min(avgLatency, 500)}
-          displayValue={`${avgLatency}`}
-          unit="ms"
+          value={Math.min(avgLatency ?? 0, 500)}
+          displayValue={avgLatency === null ? "N/A" : `${avgLatency}`}
+          unit={avgLatency === null ? "" : "ms"}
           maxValue={500}
-          color={getGaugeColorReverse(avgLatency)}
+          color={avgLatency === null ? NEUTRAL_GAUGE_COLOR : getGaugeColorReverse(avgLatency)}
         />
         <MetricBigNumber
           label="Total Queries"

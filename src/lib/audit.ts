@@ -298,6 +298,8 @@ interface AuditFilterOptions {
   result?: "success" | "failure";
   connectionName?: string;
   since?: string;
+  /** Keep at most this many of the newest matches. Absent, NaN or negative means all of them. */
+  limit?: number;
 }
 
 export class AuditRingBuffer {
@@ -325,18 +327,30 @@ export class AuditRingBuffer {
     return [...this.events];
   }
 
+  /**
+   * The newest `count` events, newest first. The buffer appends, so it is stored oldest
+   * first; the people reading it (Admin > Audit and its exports) want the event that just
+   * happened at the top, not below a page of sign-ins from when the server started.
+   */
   getRecent(count: number): AuditEvent[] {
-    return this.events.slice(-count);
+    return this.newestFirst(this.events, count);
   }
 
+  /** Every match, newest first, capped to `opts.limit` of the newest when one is given. */
   filter(opts: AuditFilterOptions): AuditEvent[] {
-    return this.events.filter((e) => {
+    const matches = this.events.filter((e) => {
       if (opts.type && e.type !== opts.type) return false;
       if (opts.result && e.result !== opts.result) return false;
       if (opts.connectionName && e.connectionName !== opts.connectionName) return false;
       if (opts.since && e.timestamp < opts.since) return false;
       return true;
     });
+    return this.newestFirst(matches, opts.limit);
+  }
+
+  private newestFirst(chronological: AuditEvent[], limit?: number): AuditEvent[] {
+    const reversed = [...chronological].reverse();
+    return limit !== undefined && limit >= 0 ? reversed.slice(0, limit) : reversed;
   }
 
   clear() {

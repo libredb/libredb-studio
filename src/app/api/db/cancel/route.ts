@@ -3,6 +3,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { supportsQueryCancel } from "@/lib/db/query-cancel";
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -19,18 +20,22 @@ export async function POST(req: NextRequest) {
     if (!queryId) {
       return NextResponse.json({ error: "Connection and queryId are required" }, { status: 400 });
     }
+    if (typeof queryId !== "string") {
+      return NextResponse.json({ error: "queryId must be a string", cancelled: false }, { status: 400 });
+    }
 
     const provider = await getOrCreateProvider(connection);
 
-    // Check if provider supports cancellation
-    if (!("cancelQuery" in provider) || typeof (provider as Record<string, unknown>).cancelQuery !== "function") {
+    // The same check `/api/db/provider-meta` reports as `supportsQueryCancel`, so the editor
+    // does not offer a Cancel this refuses (#1364).
+    if (!supportsQueryCancel(provider)) {
       return NextResponse.json(
         { error: "Query cancellation is not supported for this database type", cancelled: false },
         { status: 400 },
       );
     }
 
-    const cancelled = await (provider as { cancelQuery(queryId: string): Promise<boolean> }).cancelQuery(queryId);
+    const cancelled = await provider.cancelQuery(queryId);
 
     return NextResponse.json({ cancelled });
   } catch (error) {

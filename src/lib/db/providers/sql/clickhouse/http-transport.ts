@@ -407,6 +407,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
 
     const database = opts.database ?? this.database;
     if (database) params.set("database", database);
+    if (opts.queryId !== undefined) params.set("query_id", opts.queryId);
 
     return endpointUrl(this.origin, "/", params);
   }

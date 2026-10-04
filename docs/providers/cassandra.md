@@ -353,9 +353,12 @@ cancel, abort or kill method (checked against its API surface: `connect`, `execu
 `stream`, `batch`, `getReplicas`, `getState`, `log`, `shutdown`).
 
 `cancelQuery()` is therefore **not implemented**. Both routes detect support by the method's presence
-(`"cancelQuery" in provider`), so its absence is what makes `/api/db/cancel` answer *"Query
-cancellation is not supported for this database type"* — which is true — instead of reporting a
-cancellation that silently failed. `search/index.ts` declined the same method for the same reason.
+(`supportsQueryCancel` in [`query-cancel.ts`](../../src/lib/db/query-cancel.ts)), so its absence is
+what makes `/api/db/cancel` answer *"Query cancellation is not supported for this database type"*,
+which is true, instead of reporting a cancellation that silently failed. Since #1364
+`/api/db/provider-meta` reports the same check as `supportsQueryCancel: false`, and the editor shows
+its Cancel control as "Stop waiting": it ends the editor's wait and says the statement keeps
+running on the cluster. `search/index.ts` declined the same method for the same reason.
 
 The only bound on a running statement is the client-side `readTimeout` (default 12000 ms, set from
 the provider's query timeout). After it expires this client stops **waiting**; the coordinator carries

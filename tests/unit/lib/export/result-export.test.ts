@@ -399,6 +399,40 @@ describe("buildResultExport — the type the engine itself declared", () => {
 
     expect(file.content).toContain('"a" BIGINT');
   });
+
+  // #1386: these three were written as TEXT, which lost the type the INSERT beside them
+  // needs (an `integer[]` literal does not replay into TEXT as an array).
+  test("keeps an array type, a quoted type argument and a negative enum value", () => {
+    const ddl = (type: string) =>
+      buildResultExport("sql-ddl", source({ rows: [{ a: null }], fields: ["a"], columnTypes: { a: type } })).content;
+
+    expect(ddl("integer[]")).toContain('"a" integer[]');
+    expect(ddl("timestamp with time zone[]")).toContain('"a" timestamp with time zone[]');
+    expect(ddl("integer[][]")).toContain('"a" integer[][]');
+    expect(ddl("DateTime64(3, 'Europe/Istanbul')")).toContain(`"a" DateTime64(3, 'Europe/Istanbul')`);
+    expect(ddl("Enum8('a' = 1, 'b' = -2)")).toContain(`"a" Enum8('a' = 1, 'b' = -2)`);
+  });
+
+  test("still refuses a quoted argument that could close early or a comment", () => {
+    const ddl = (type: string) =>
+      buildResultExport("sql-ddl", source({ rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: type } })).content;
+
+    for (const type of [
+      "Enum8('a\\', 1)",
+      "Enum8('a'' = 1)",
+      "DateTime64(3, 'UTC\n')",
+      "Int32 -- comment",
+      "Int32 - 1",
+      "integer[]x",
+      "integer[1]",
+      // Closes the column list and opens a new one: the character class alone admits it.
+      "int) SELECT load_file('/etc/passwd') AS b, (c int",
+      "Int32)",
+      "Nullable(Int32",
+    ]) {
+      expect(ddl(type)).toContain('"a" BIGINT');
+    }
+  });
 });
 
 describe("buildResultExport — a column name that is also a prototype member", () => {
@@ -677,9 +711,30 @@ describe("buildResultExport — a declared type that cannot stand alone", () => 
   });
 
   test("keeps the MySQL types that already stand for their whole family", () => {
-    for (const bare of ["text", "longtext", "blob", "tinyblob", "datetime", "timestamp", "year"]) {
-      expect(ddl({ c: bare }, "mysql")).toContain(`\`c\` ${bare}`);
+    for (const bare of ["text", "longtext", "blob", "tinyblob", "year"]) {
+      expect(ddl({ c: bare }, "mysql")).toBe(`CREATE TABLE users (\n  \`c\` ${bare}\n);`);
     }
+  });
+
+  // #1386: a bare `datetime`, `timestamp` and `time` are fractional precision 0 on MySQL,
+  // which rounds the `.999` the INSERT beside it carries up to the next second, and a bare
+  // `bit` is `bit(1)`, which refuses the wider value `mysql2` hands back as bytes.
+  test("widens the MySQL names whose bare form rounds or refuses the exported value", () => {
+    expect(ddl({ c: "datetime" }, "mysql")).toContain("`c` datetime(6)");
+    expect(ddl({ c: "timestamp" }, "mysql")).toContain("`c` timestamp(6)");
+    expect(ddl({ c: "time" }, "mysql")).toContain("`c` time(6)");
+    expect(ddl({ c: "bit" }, "mysql")).toContain("`c` bit(64)");
+  });
+
+  test("writes Postgres's bare bit as bit varying, which takes the bit string at its own length", () => {
+    expect(ddl({ c: "bit" }, "postgres")).toContain('"c" bit varying');
+    expect(ddl({ c: "bit[]" }, "postgres")).toContain('"c" bit varying[]');
+    expect(ddl({ c: "bit[][]" }, "postgres")).toContain('"c" bit varying[][]');
+  });
+
+  test("keeps a bare bit on the dialects with no measured re-spelling", () => {
+    expect(ddl({ c: "bit" }, "mssql")).toContain("[c] bit");
+    expect(ddl({ c: "datetime" }, undefined)).toContain('"c" TIMESTAMP');
   });
 
   test("spells Oracle's bare character and byte types as its unbounded ones", () => {
@@ -1186,6 +1241,127 @@ describe("buildResultExport - Oracle date and timestamp literals", () => {
         `VALUES ('x''); DROP TABLE x; -- 2026-09-01 10:30:00');`,
       );
     });
+  });
+});
+
+describe("buildResultExport: a cell whose literal depends on its declared type (#1386)", () => {
+  // Each row below is the shape the value has after the trip through JSON that every
+  // result takes to the browser, and the declared type is what the provider reports in
+  // `columnTypes`. The literal is the one replayed into the engine's own copy of the table
+  // on 2026-10-04.
+  const insert = (
+    dialect: Parameters<typeof buildResultExport>[1]["dialect"],
+    row: Record<string, unknown>,
+    columnTypes: Record<string, string>,
+  ) => buildResultExport("sql-insert", source({ rows: [row], fields: Object.keys(row), dialect, columnTypes })).content;
+
+  test("writes a Postgres array as an array literal, not as JSON", () => {
+    expect(insert("postgres", { a: [1, 2, 3] }, { a: "integer[]" })).toContain(`VALUES ('{"1","2","3"}');`);
+    expect(insert("postgres", { a: [] }, { a: "integer[]" })).toContain(`VALUES ('{}');`);
+    expect(
+      insert(
+        "postgres",
+        {
+          a: [
+            [1, 2],
+            [3, null],
+          ],
+        },
+        { a: "integer[]" },
+      ),
+    ).toContain(`VALUES ('{{"1","2"},{"3",NULL}}');`);
+  });
+
+  test("escapes a Postgres text element that holds a quote, a comma, a brace or the word NULL", () => {
+    const content = insert(
+      "postgres",
+      { a: ["q'x", "a,b", "{b}", "NULL", null, 'say "hi"', "back\\slash"] },
+      { a: "text[]" },
+    );
+
+    expect(content).toContain(`VALUES ('{"q''x","a,b","{b}","NULL",NULL,"say \\"hi\\"","back\\\\slash"}');`);
+  });
+
+  test("writes each element of a json or jsonb array as one document, arrays included", () => {
+    expect(insert("postgres", { a: [{ a: 1 }, [1, 2]] }, { a: "jsonb[]" })).toContain(
+      `VALUES ('{"{\\"a\\":1}","[1,2]"}');`,
+    );
+  });
+
+  test("leaves an array in a jsonb column as the JSON document it is", () => {
+    expect(insert("postgres", { a: [1, 2] }, { a: "jsonb" })).toContain(`VALUES ('[1,2]');`);
+    expect(insert("postgres", { a: [1, 2] }, {})).toContain(`VALUES ('[1,2]');`);
+  });
+
+  test("writes a Postgres interval as interval text", () => {
+    expect(insert("postgres", { a: { days: 1, hours: 2 } }, { a: "interval" })).toContain(`VALUES ('1 days 2 hours');`);
+    expect(
+      insert("postgres", { a: { years: -1, months: -2, days: 3, seconds: -1, milliseconds: -500 } }, { a: "interval" }),
+    ).toContain(`VALUES ('-1 years -2 months 3 days -1 seconds -500 milliseconds');`);
+    expect(insert("postgres", { a: {} }, { a: "interval" })).toContain(`VALUES ('0 seconds');`);
+  });
+
+  test("writes a Postgres point and circle in their input syntax", () => {
+    expect(insert("postgres", { a: { x: 1, y: 2 } }, { a: "point" })).toContain(`VALUES ('(1,2)');`);
+    expect(insert("postgres", { a: { x: 1, y: 2, radius: 3 } }, { a: "circle" })).toContain(`VALUES ('<(1,2),3>');`);
+  });
+
+  test("writes the elements of an interval, point or bytea array in their own text forms", () => {
+    expect(insert("postgres", { a: [{ days: 1 }, {}] }, { a: "interval[]" })).toContain(
+      `VALUES ('{"1 days","0 seconds"}');`,
+    );
+    expect(insert("postgres", { a: [{ x: 1, y: 2 }] }, { a: "point[]" })).toContain(`VALUES ('{"(1,2)"}');`);
+    expect(insert("postgres", { a: [{ type: "Buffer", data: [1, 255] }] }, { a: "bytea[]" })).toContain(
+      `VALUES ('{"\\\\x01ff"}');`,
+    );
+    expect(insert("postgres", { a: [true, false] }, { a: "boolean[]" })).toContain(`VALUES ('{"true","false"}');`);
+  });
+
+  // The MySQL date writer is left out until the provider reads the server's own date text
+  // (#1388), since it would have to guess the connection's timezone.
+  test("leaves a MySQL date to the generic writer", () => {
+    expect(insert("mysql", { a: "2024-12-31T23:59:59.999Z" }, { a: "datetime" })).toContain(
+      "VALUES ('2024-12-31T23:59:59.999Z');",
+    );
+  });
+
+  test("writes a SQL Server BIT as 1 and 0, since T-SQL has no true or false", () => {
+    expect(insert("mssql", { a: true, b: false }, { a: "bit", b: "bit" })).toContain("VALUES (1, 0);");
+  });
+
+  test("still writes true and false where the dialect reads them", () => {
+    expect(insert("postgres", { a: true }, { a: "boolean" })).toContain("VALUES (true);");
+  });
+
+  test("writes a ClickHouse Array, Map and Tuple as ClickHouse literals", () => {
+    expect(insert("clickhouse", { a: [1, 2, 3] }, { a: "Array(Int32)" })).toContain("VALUES ([1, 2, 3]);");
+    expect(insert("clickhouse", { a: { k: 1, "it's": 2 } }, { a: "Map(String, Int32)" })).toContain(
+      "VALUES (map('k', 1, 'it''s', 2));",
+    );
+    expect(insert("clickhouse", { a: {} }, { a: "Map(String, Int32)" })).toContain("VALUES (map());");
+    expect(insert("clickhouse", { a: [1, "x"] }, { a: "Tuple(Int32, String)" })).toContain("VALUES (tuple(1, 'x'));");
+    expect(insert("clickhouse", { a: { b: ["p"], a: 7 } }, { a: "Tuple(a Int32, b Array(String))" })).toContain(
+      "VALUES (tuple(7, ['p']));",
+    );
+    expect(insert("clickhouse", { a: [[1, null], []] }, { a: "Array(Array(Nullable(Int32)))" })).toContain(
+      "VALUES ([[1, NULL], []]);",
+    );
+  });
+
+  test("writes a quoted 64-bit integer inside a ClickHouse container bare", () => {
+    expect(insert("clickhouse", { a: ["18446744073709551615"] }, { a: "Array(UInt64)" })).toContain(
+      "VALUES ([18446744073709551615]);",
+    );
+    expect(insert("clickhouse", { a: { "1": "2.5" } }, { a: "Map(UInt8, Decimal(9, 2))" })).toContain(
+      "VALUES (map(1, 2.5));",
+    );
+  });
+
+  test("leaves a dialect with no typed form, and a scalar ClickHouse column, to the generic writer", () => {
+    expect(insert("sqlite", { a: [1, 2] }, { a: "integer[]" })).toContain(`VALUES ('[1,2]');`);
+    expect(insert("clickhouse", { a: "18446744073709551615" }, { a: "UInt64" })).toContain(
+      "VALUES ('18446744073709551615');",
+    );
   });
 });
 

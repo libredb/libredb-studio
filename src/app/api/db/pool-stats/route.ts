@@ -20,7 +20,9 @@ export async function POST(request: NextRequest) {
     // Check if provider has getPoolStats
     if ("getPoolStats" in provider && typeof (provider as Record<string, unknown>).getPoolStats === "function") {
       const stats = (
-        provider as { getPoolStats: () => { total: number; idle: number; active: number; waiting: number } }
+        provider as {
+          getPoolStats: () => { total: number; idle: number; active: number; waiting: number; max?: number };
+        }
       ).getPoolStats();
       return NextResponse.json(stats);
     }

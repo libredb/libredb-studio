@@ -504,8 +504,8 @@ kube-apiserver compacts etcd every 5 minutes, so Compact history is for a NOSPAC
 - `readOnly` binds a `user` only on a managed seed and only where etcd authenticates the client; a saved connection puts its credentials in the user's browser, and the user can clear the toggle.
 - A read-only seed restrains only the seeded connection: a `user` can post a connection of their own to the same host and port.
   On an etcd that authenticates nobody, it restrains nobody who knows the address.
-- Cancelling a write in the editor shows it as cancelled even when etcd applied it: read the key again before you run the command again.
-  The editor's handling of the cancel route's answer is filed as U61.
+- A write cannot be cancelled once it has left the client: `cancelQuery` answers false, and the editor then says the cancel was not confirmed rather than that it happened (#1364).
+  Read the key again before you run the command again.
 - Kubernetes writes are refused by prefix, and by content only where a single-key write meets a stored envelope: under a custom prefix, a range write, a value written between a `txn`'s read of its single-key targets and its send, a `lease revoke`, a new key, and a key holding Kubernetes JSON or CBOR are not recognised.
 - A secret stored under a custom prefix in an envelope Studio does not know is shown.
 - A connection names one endpoint; a list of endpoints with failover is filed as D131.
