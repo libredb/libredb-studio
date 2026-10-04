@@ -690,6 +690,11 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * which is not SQL text either: its strings escape with a backslash and `//` opens a comment outside a string.
  * Its provider extends `BaseDatabaseProvider` and parses the text with the shared console parser.
  *
+ * `influxdb` takes one InfluxQL statement (InfluxDB spec 5.7), which is not SQL text either: InfluxQL strings
+ * escape with a backslash, `/.../` is a regex where the parser asks for one, and a `--` comment ends at a lone
+ * `\r`, so a SQL span reader misreads where a literal ends. The provider reads the text with its own lexer
+ * (`src/lib/db/providers/timeseries/influxdb/influxql-lexer.ts`) and refuses every write before sending it.
+ *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
  * `SQLBaseProvider`.
@@ -713,6 +718,9 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * hiding behind a comment. The other direction is the one #297 measured - reading
  * non-SQL as SQL prompted on ordinary reads - so a wrong answer here costs either a
  * gate that never asks or a gate an operator learns to click through.
+ *
+ * `influxdb3` is absent for the search pair's reason: its text is SQL and its provider extends `SQLBaseProvider`,
+ * so the SQL gate reads it and will prompt on a `DELETE` or `DROP` the provider then refuses, a documented cost.
  */
 const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "mongodb",
@@ -723,6 +731,7 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "neo4j",
   "milvus",
   "qdrant",
+  "influxdb",
 ]);
 
 /**

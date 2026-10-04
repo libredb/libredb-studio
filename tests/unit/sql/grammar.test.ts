@@ -577,6 +577,11 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // A Qdrant console request is a request line and one JSON body, not SQL text: its strings escape with a
   // backslash and `//` opens a comment, which a SQL span reader cannot follow (vector-family spec 6.4).
   qdrant: false,
+  // An InfluxQL statement is not SQL text: its strings escape with a backslash, `/.../` is a regex where the parser
+  // asks for one, and a `--` comment ends at a lone `\r`, none of which a SQL span reader follows (SPEC 5.7).
+  influxdb: false,
+  // SQL under the DataFusion grammar row: the provider extends SQLBaseProvider, so the SQL gate reads its text.
+  influxdb3: true,
 };
 
 describe("readsSqlText", () => {

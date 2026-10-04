@@ -6,6 +6,12 @@ import {
   readEtcdOperations,
 } from "@/lib/db/providers/keyvalue/etcd/guard";
 import {
+  INFLUXQL_DESTRUCTIVE_OPERATIONS,
+  INFLUXQL_MAX_TEXT_BYTES,
+  influxqlRefusal,
+  readInfluxqlOperations,
+} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import {
   MILVUS_DESTRUCTIVE_OPERATIONS,
   milvusRefusal,
   readMilvusOperations,
@@ -477,6 +483,19 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
     typedConfirmation: etcdTypedConfirmation,
     // A put's value is part of the statement, so no etcd statement is posted for an AI analysis (#1089 E10).
     safetyAnalysis: false,
+  },
+  // InfluxDB (InfluxDB spec 5.7): the browser-safe InfluxQL policy the provider runs reads the text, so what asks and
+  // what runs are one reading. An allowed statement only reads, so nothing asks; what the policy refuses (a write,
+  // `INTO`, a second statement, a lexical fault) the editor refuses before anything is sent, and on 1.x and 2.x that
+  // policy is the only boundary before `DROP DATABASE`.
+  influxdb: {
+    operations: INFLUXQL_DESTRUCTIVE_OPERATIONS,
+    read: readInfluxqlOperations,
+    decidesAlone: true,
+    // A statement carries tag values and filters, so no InfluxQL statement is posted for an AI analysis (R21).
+    safetyAnalysis: false,
+    refuse: influxqlRefusal,
+    maxTextBytes: INFLUXQL_MAX_TEXT_BYTES,
   },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
   // Milvus (vector-family spec 5.7, E10): the provider's own guard.ts reads the text with the parser the provider

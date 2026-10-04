@@ -11,6 +11,11 @@ import {
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
+import {
+  INFLUXQL_MAX_TEXT_BYTES,
+  INFLUXQL_POLICY_SENTENCES,
+  influxqlRefusal,
+} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { MILVUS_CONSOLE } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
@@ -317,7 +322,7 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka, etcd, neo4j, milvus and qdrant and for no other type", () => {
+  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant and influxdb and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
@@ -325,6 +330,7 @@ describe("vocabularyDecidesAlone", () => {
       "neo4j",
       "milvus",
       "qdrant",
+      "influxdb",
     ]);
   });
 
@@ -334,9 +340,10 @@ describe("vocabularyDecidesAlone", () => {
 });
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
-  test("carries a row for exactly the eight types whose text is not SQL", () => {
+  test("carries a row for exactly the nine types whose text is not SQL", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([
       "etcd",
+      "influxdb",
       "kafka",
       "milvus",
       "mongodb",
@@ -449,11 +456,12 @@ describe("vocabularySendsToModel", () => {
 
   // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
   // values included, on this deployment (#1089 E10).
-  test("keeps etcd's, Milvus's and Qdrant's statements from the AI analysis, and no other shipped type's", () => {
+  test("keeps etcd's, Milvus's, Qdrant's and InfluxDB's statements from the AI analysis, and no other shipped type's", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual([
       "etcd",
       "milvus",
       "qdrant",
+      "influxdb",
     ]);
   });
 
@@ -533,9 +541,9 @@ describe("the etcd row", () => {
 
 /**
  * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
- * and never stored. Milvus's and Qdrant's rows are the shipped rows that declare both fields; every rule here is
- * driven by the stand-in row, so it is pinned apart from any engine's grammar, and each engine's own is pinned in
- * describe("the milvus row") and describe("the qdrant row").
+ * and never stored. Milvus's, Qdrant's and InfluxDB's rows are the shipped rows that declare both fields; every rule
+ * here is driven by the stand-in row, so it is pinned apart from any engine's grammar, and each engine's own is pinned
+ * in describe("the milvus row"), describe("the qdrant row") and describe("the influxdb row").
  */
 describe("statementRefusal and the console text bound", () => {
   const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
@@ -546,8 +554,8 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("only milvus's and qdrant's rows declare a refusal and a bound, so no other shipped type changes", () => {
-    const declaring: readonly string[] = ["milvus", "qdrant"];
+  test("only milvus's, qdrant's and influxdb's rows declare a refusal and a bound, so no other shipped type changes", () => {
+    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb"];
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
       if (declaring.includes(type)) continue;
       expect(row?.refuse).toBeUndefined();
@@ -697,5 +705,63 @@ describe("the milvus row", () => {
   test("refuses a text one byte past the bound before guard.ts reads it", () => {
     const over = `# ${"x".repeat(MILVUS_CONSOLE.maxTextBytes)}\n${READ}`;
     expect(statementRefusal(over, "milvus")).toContain(`over the ${MILVUS_CONSOLE.maxTextBytes}-byte limit`);
+  });
+});
+
+/**
+ * InfluxDB's row (SPEC 5.7, I17): the browser-safe InfluxQL policy decides, an allowed statement only reads, so no
+ * operation asks, the row keeps every statement from the AI analysis, and the editor refuses what the policy refuses,
+ * past the dialect's own byte bound. `influxdb3` has no row: its text is SQL, and the SQL half of the gate reads it.
+ */
+describe("the influxdb row", () => {
+  const READ = "SELECT mean(temp) FROM home WHERE time > now() - 1h GROUP BY time(5m)";
+
+  test("decides alone, names no destructive operation and asks about no read", () => {
+    const row = NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb;
+    expect(row?.decidesAlone).toBe(true);
+    expect(row?.operations.size).toBe(0);
+    expect(row?.read(READ)).toEqual([]);
+    expect(isDestructiveNonSqlQuery(READ, "influxdb")).toBe(false);
+    expect(row?.typedConfirmation).toBeUndefined();
+  });
+
+  test("keeps every statement from the AI analysis, because a statement carries tag values and filters", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb?.safetyAnalysis).toBe(false);
+    expect(vocabularySendsToModel("influxdb")).toBe(false);
+  });
+
+  test("refuses with the policy's verdict, by reference, and declares the 65,536-byte bound", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb?.refuse).toBe(influxqlRefusal);
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb?.maxTextBytes).toBe(INFLUXQL_MAX_TEXT_BYTES);
+    expect(consoleTextByteLimit("influxdb")).toBe(65_536);
+  });
+
+  test("refuses DROP DATABASE before the run with the policy's sentence", () => {
+    const refusal = statementRefusal("DROP DATABASE x", "influxdb");
+    expect(refusal).toBe(influxqlRefusal("DROP DATABASE x"));
+    expect(refusal).toBe(INFLUXQL_POLICY_SENTENCES.notARead("DROP"));
+  });
+
+  test.each([
+    ["a regex holding an escaped slash", "SELECT * FROM x WHERE a =~ /a\\/b/"],
+    ["a string holding a backslash-escaped quote", "SELECT 'it\\'s' FROM x"],
+  ])("sends %s with no operation and no prompt, where a SQL span reader would misread it", (_label, text) => {
+    expect(statementRefusal(text, "influxdb")).toBeUndefined();
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb?.read(text)).toEqual([]);
+    expect(isDestructiveNonSqlQuery(text, "influxdb")).toBe(false);
+  });
+
+  test("refuses a text one byte past the bound before the policy reads it", () => {
+    const over = `${READ} -- ${"x".repeat(INFLUXQL_MAX_TEXT_BYTES)}`.slice(0, INFLUXQL_MAX_TEXT_BYTES + 1);
+    expect(new TextEncoder().encode(over).length).toBe(65_537);
+    expect(statementRefusal(over, "influxdb")).toBe(
+      "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
+    );
+  });
+
+  test("influxdb3 has no row: its text is SQL, so the SQL half of the gate reads it", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.influxdb3).toBeUndefined();
+    expect(readsSqlText("influxdb3")).toBe(true);
+    expect(statementRefusal("DROP TABLE home", "influxdb3")).toBeUndefined();
   });
 });
