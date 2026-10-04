@@ -8,8 +8,9 @@
  * SEED_CACHE_TTL_MS, by one recompute shared between concurrent callers, while staleness is
  * evaluated on every call against the cached export. A cached copy is already up to one scan old
  * when it is read, so it can turn stale inside the TTL while the exporter keeps writing: a stale copy
- * is re-read, at most every STALE_REREAD_MS, and the connections are withdrawn only once the file
- * itself is older than SEED_DISCOVERY_MAX_AGE_MS, without waiting for the TTL.
+ * is re-read, at most every STALE_REREAD_MS (or once per SEED_CACHE_TTL_MS when that is shorter), and
+ * the connections are withdrawn only once the file itself is older than SEED_DISCOVERY_MAX_AGE_MS,
+ * without waiting for the TTL.
  *
  * Never throws, except that an error thrown by the logger itself is raised, not swallowed: it rejects
  * every caller that shares that recompute, and the cache stored before logging serves later calls. Any
@@ -146,7 +147,8 @@ async function current(deps: DiscoveryDeps): Promise<Evaluation | null> {
 function snapshotFor(path: string, at: number, deps: DiscoveryDeps): Promise<Snapshot> {
   // readAt comes from this same clock, so a negative age can only mean the clock stepped back: the cache has expired.
   // A copy is already up to one scan interval old when it is read, so it can turn stale inside the TTL while
-  // the exporter keeps writing fresh files: a stale copy is re-read, at most every STALE_REREAD_MS.
+  // the exporter keeps writing fresh files: a stale copy is re-read, at most every STALE_REREAD_MS
+  // (or once per SEED_CACHE_TTL_MS when that is shorter).
   const ttl =
     cache !== null && cache.file.kind === "parsed" && !isFresh(cache.file.data.generatedAt, at)
       ? Math.min(cacheTtlMs(), STALE_REREAD_MS)

@@ -551,7 +551,7 @@ SEED_CACHE_TTL_MS=300000
 
 In Kubernetes, ConfigMap updates propagate in ~60-120s (kubelet sync period). Combined with the cache TTL, expect ~2-3 minutes for changes to take effect.
 
-The same TTL governs the [Platform discovery (CapRover)](#platform-discovery-caprover) export: Studio re-reads that file at most once per `SEED_CACHE_TTL_MS` while its copy is fresh, and at most every 5 seconds once that copy has turned stale; the CapRover template sets the TTL to 5 seconds.
+The same TTL governs the [Platform discovery (CapRover)](#platform-discovery-caprover) export: Studio re-reads that file at most once per `SEED_CACHE_TTL_MS` while its copy is fresh, and at most every 5 seconds (or once per `SEED_CACHE_TTL_MS` when that is shorter) once that copy has turned stale; the CapRover template sets the TTL to 5 seconds.
 An open tab refetches the managed list every `max(SEED_CACHE_TTL_MS, 5000)` milliseconds, at most 60 seconds, while it is visible, and on focus, so a change to the seed file or to the export reaches it without a reload.
 With the default of 60000 an open tab refreshes once a minute; the auto-connect template sets 5000, so its tabs refresh every 5 seconds.
 A change to the seed file therefore reaches an open tab after at most `SEED_CACHE_TTL_MS` plus one refresh interval, about two minutes with the defaults; with a TTL above 60000 the tab still asks every 60 seconds, and the server answers most of those reads from its cache.
@@ -796,9 +796,9 @@ The marker that does this is set by the discovery source, not derived from the i
 
 ### Freshness and state
 
-Studio re-reads the export at most once per `SEED_CACHE_TTL_MS`, and concurrent requests share one read.
+Studio re-reads the export at most once per `SEED_CACHE_TTL_MS` while its copy is fresh, and concurrent requests share one read.
 The age of `generatedAt` is checked on every request against the cached export.
-A cached copy that has turned stale is re-read, at most every 5 seconds, so the discovered connections are withdrawn once the file itself is older than `SEED_DISCOVERY_MAX_AGE_MS`, without waiting for the TTL, and a long `SEED_CACHE_TTL_MS` never withdraws the connections of an exporter that keeps writing.
+A cached copy that has turned stale is re-read, at most every 5 seconds (or once per `SEED_CACHE_TTL_MS` when that is shorter), so the discovered connections are withdrawn once the file itself is older than `SEED_DISCOVERY_MAX_AGE_MS`, without waiting for the TTL, and a long `SEED_CACHE_TTL_MS` never withdraws the connections of an exporter that keeps writing.
 For that, the exporter's `DISCOVERY_INTERVAL_MS` must stay well below `SEED_DISCOVERY_MAX_AGE_MS`; the defaults are 10 and 60 seconds.
 A `generatedAt` ahead of Studio's own clock counts as fresh.
 
