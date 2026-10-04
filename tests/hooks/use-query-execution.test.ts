@@ -914,6 +914,80 @@ describe("useQueryExecution", () => {
   });
 
   /**
+   * Run A fails, run B is cancelled: the pane must not show A's error as if it were B's
+   * (#1294). Both shapes a cancel arrives in are checked, the fetch's own abort and the
+   * server's 499.
+   */
+  test("a run cancelled by the user leaves no earlier run's error on the tab", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.includes("/api/db/cancel")) return new Response(JSON.stringify({ success: true }), { status: 200 });
+      const body = JSON.parse(String(init?.body)) as { sql: string };
+      if (body.sql.startsWith("SELEC ")) {
+        return new Response(JSON.stringify({ error: 'near "SELEC": syntax error' }), { status: 400 });
+      }
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        });
+      });
+    }) as typeof fetch;
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELEC * FROM x");
+    });
+    expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+
+    let second: Promise<boolean> | undefined;
+    act(() => {
+      second = result.current.executeQuery("SELECT pg_sleep(30)");
+    });
+    await act(async () => {
+      await result.current.cancelQuery();
+      await second;
+    });
+
+    expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", {
+      description: "Query execution was cancelled.",
+    });
+    expect(tabs[0].isExecuting).toBe(false);
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  test("a run the server reports as cancelled leaves no earlier run's error on the tab", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    mockGlobalFetch({
+      "/api/db/query": async (req) => {
+        const body = (await req.json()) as { sql: string };
+        return body.sql.startsWith("SELEC ")
+          ? { ok: false, status: 400, json: { error: 'near "SELEC": syntax error' } }
+          : {
+              ok: false,
+              status: 499,
+              json: { error: "Query was cancelled", code: "QUERY_CANCELLED", statusCode: 499 },
+            };
+      },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("SELEC * FROM x");
+    });
+    expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT pg_sleep(30)");
+    });
+
+    expect(tabs[0].isExecuting).toBe(false);
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  /**
    * The word is not the signal. A message that only CONTAINS "cancelled" was read as a
    * cancellation and kept the previous statement's rows, so an engine refusing a column or
    * an enum value of that name looked like a cancel the user never asked for.

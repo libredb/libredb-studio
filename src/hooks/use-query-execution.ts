@@ -336,6 +336,10 @@ export function useQueryExecution({
                 ...t,
                 isExecuting: !isLoadMore,
                 isLoadingMore: isLoadMore,
+                // A new run answers the failure before it, whatever its own outcome: a run that
+                // is then cancelled must not leave the previous run's error in the pane (#1294).
+                // A page and an EXPLAIN never owned that error, so they leave it alone.
+                runError: isLoadMore || isExplain ? t.runError : undefined,
               }
             : t,
         ),

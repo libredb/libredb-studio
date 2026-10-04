@@ -1172,6 +1172,91 @@ describe("useQueryAdapter", () => {
   });
 
   /**
+   * Run A fails, run B is cancelled: the pane must not show A's error as if it were B's
+   * (#1294). Each run entry point claims the tab, so each one is checked.
+   */
+  describe("a cancelled run leaves no earlier run's error on the tab", () => {
+    /** A host that refuses `SELEC` and never answers anything else, so the run is still in flight at the cancel. */
+    const hostThatHangs = () =>
+      mock((_id: string, sql: string) =>
+        sql.startsWith("SELEC ")
+          ? Promise.reject(new Error('near "SELEC": syntax error'))
+          : new Promise<WorkspaceQueryResult>(() => {}),
+      );
+
+    test("on executeQuery", async () => {
+      const { tabs, setTabs } = createMutableTabs([makeTab()]);
+      const params = makeHookParams({ onQueryExecute: hostThatHangs(), tabs, setTabs, currentTab: tabs[0] });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELEC * FROM x");
+      });
+      expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+
+      act(() => {
+        void result.current.executeQuery("SELECT pg_sleep(30)");
+      });
+      act(() => {
+        result.current.cancelQuery();
+      });
+
+      expect(tabs[0].isExecuting).toBe(false);
+      expect(tabs[0].runError).toBeUndefined();
+    });
+
+    test("on forceExecuteQuery", async () => {
+      const { tabs, setTabs } = createMutableTabs([makeTab()]);
+      const params = makeHookParams({ onQueryExecute: hostThatHangs(), tabs, setTabs, currentTab: tabs[0] });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      await act(async () => {
+        result.current.forceExecuteQuery("SELEC * FROM x");
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+
+      act(() => {
+        result.current.forceExecuteQuery("DELETE FROM users");
+      });
+      act(() => {
+        result.current.cancelQuery();
+      });
+
+      expect(tabs[0].isExecuting).toBe(false);
+      expect(tabs[0].runError).toBeUndefined();
+    });
+
+    test("on handleUnlimitedQuery", async () => {
+      const { tabs, setTabs } = createMutableTabs([makeTab()]);
+      const params = makeHookParams({ onQueryExecute: hostThatHangs(), tabs, setTabs, currentTab: tabs[0] });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELEC * FROM x", tabId: "tab-1" });
+      });
+      await act(async () => {
+        result.current.handleUnlimitedQuery();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(tabs[0].runError).toBe('near "SELEC": syntax error');
+
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM users", tabId: "tab-1" });
+      });
+      act(() => {
+        result.current.handleUnlimitedQuery();
+      });
+      act(() => {
+        result.current.cancelQuery();
+      });
+
+      expect(tabs[0].isExecuting).toBe(false);
+      expect(tabs[0].runError).toBeUndefined();
+    });
+  });
+
+  /**
    * The channels a paged commit used to drop.
    *
    * The first-page commit spreads `carriedChannels(result)`; this one rebuilt the result
