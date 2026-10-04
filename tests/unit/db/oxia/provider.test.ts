@@ -413,7 +413,7 @@ describe("query (SB2-5.2, SB2-5.3)", () => {
       `-a names another address than this connection's ${endpoint}: Host and Port on the connection decide where Studio connects.`,
     );
     await expect(provider.query("-n other get /a")).rejects.toThrow(
-      "-n names another namespace than this connection's `default`: Namespace is set on the connection, and empty means default.",
+      "-n names another namespace than this connection's default: Namespace is set on the connection, and empty means default.",
     );
     expect(fake.calls.map((entry) => entry.rpc)).toEqual(["GetShardAssignments"]);
   });

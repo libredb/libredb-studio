@@ -649,8 +649,9 @@ describe("-a and -n", () => {
     ]);
     expect(refusal("get --namespace Default /a", SERVER)).toEqual({
       code: "connection-flag",
+      // Plain text, as the result panel shows it: no Markdown backticks (ruling R34).
       message:
-        "-n names another namespace than this connection's `default`: Namespace is set on the connection, and empty means default.",
+        "-n names another namespace than this connection's default: Namespace is set on the connection, and empty means default.",
       line: 1,
       column: 4,
     });

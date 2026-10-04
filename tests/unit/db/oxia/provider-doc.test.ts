@@ -564,7 +564,7 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
     const address = parserRefusal("get -a other.example.com:6648 /a", context);
     expect(refused).toContain(placeholder(address, ENDPOINT_VALUES));
     const namespace = parserRefusal("get -n other /a", context);
-    expect(refused).toContain(placeholder(namespace, { "`tenant-a`": "`<namespace>`" }));
+    expect(refused).toContain(placeholder(namespace, { "tenant-a": "<namespace>" }));
   });
 
   test("13. every example parses, and is a read", () => {

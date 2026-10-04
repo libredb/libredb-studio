@@ -417,7 +417,7 @@ function checkGlobal(
   if (value !== context.namespace)
     return refusal(
       "connection-flag",
-      `-n names another namespace than this connection's \`${context.namespace}\`: Namespace is set on the connection, and empty means default.`,
+      `-n names another namespace than this connection's ${context.namespace}: Namespace is set on the connection, and empty means default.`,
       word,
     );
   state.matched.push("namespace");
