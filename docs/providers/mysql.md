@@ -630,11 +630,42 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `pool.getConnection()` + `beginTransaction()`, arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active. |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. |
+| `beginTransaction()` | `pool.getConnection()` + `START TRANSACTION`, arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, and refuses a `START TRANSACTION` that opened nothing ([§6.0](#60-what-the-server-says-about-the-transaction)). |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |
+
+### 6.0 What the server says about the transaction
+
+MySQL commits the open transaction implicitly before a DDL statement and a list of others (the
+manual's "Statements That Cause an Implicit Commit"), and the `ROLLBACK` that follows answers
+success and undoes nothing, neither the statement nor anything run before it in the same
+transaction. Measured 2026-10-04 on MySQL 26.7.0 through mysql2: `START TRANSACTION`, an `INSERT`,
+`CREATE TABLE t2`, `ROLLBACK` left both the table and the row. SANDBOX had said "Changes auto-rolled
+back. No data was modified." over the same sequence.
+
+The OK packet says so: the status flags read `16387` after `START TRANSACTION`, `3` after the
+`INSERT` and `16386` after the `CREATE`, and bit 0 (`SERVER_STATUS_IN_TRANS`) is the transaction.
+`mysql2` exposes those flags only as `ResultSetHeader.serverStatus` ([§6.1](#61-endopenquerytransaction-is-not-implemented-here-because-the-driver-cannot-be-asked)),
+so the provider reads them where a header exists, and three things follow:
+
+- **`implicitCommitStatements`** names the leading keywords of those statements, and SANDBOX
+  refuses a text containing one before anything is sent
+  ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)). `SET` and `LOAD` are left out:
+  only `SET autocommit = 1`, `SET PASSWORD` and `LOAD DATA` on NDB commit, and refusing every `SET`
+  would refuse the session variables a SANDBOX run needs.
+- **`queryInTransaction()` ends the session when a header reports bit 0 cleared**, which catches what
+  the list does not name (`SET autocommit = 1`, a typed `COMMIT`, a `CALL` whose procedure runs DDL,
+  judged by the call's own header, the last element of its answer). The connection is released and
+  `POST /api/db/transaction` answers `inTransaction: false`, which the editor reports as "Not Rolled
+  Back" (SANDBOX) or "Transaction Ended" instead of announcing a rollback. A read answers rows and
+  no header, so it is never judged, and a read never ends a transaction.
+- **`beginTransaction()` refuses a `START TRANSACTION` whose header reports bit 0 cleared**, the
+  MySQL-wire twin of what RisingWave does over the PostgreSQL wire (see the PostgreSQL provider's
+  §8.0). It sends the same statement the driver's own `beginTransaction()` sends, directly, because
+  that method resolves to nothing and the header is the evidence. A server that answers no header at
+  all is not refused: there is nothing to read, and MySQL always sends one.
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
 
@@ -1624,7 +1655,8 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `supportsCreateTable` | `true` (from base) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core MySQL DML |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
-| `supportsTransactions` | `true` — the transaction runs on one held connection through the driver's own `beginTransaction()`, so the trio and the SANDBOX toggle are offered (#464) |
+| `supportsTransactions` | `true`: the transaction runs on one held connection opened with `START TRANSACTION`, so the trio and the SANDBOX toggle are offered (#464) |
+| `implicitCommitStatements` | `ALTER`, `ANALYZE`, `BEGIN`, `CACHE`, `CHANGE`, `CHECK`, `CREATE`, `DROP`, `FLUSH`, `GRANT`, `INSTALL`, `LOCK`, `OPTIMIZE`, `RENAME`, `REPAIR`, `RESET`, `REVOKE`, `START`, `STOP`, `TRUNCATE`, `UNINSTALL`, `UNLOCK`: the statements MySQL commits implicitly, which SANDBOX refuses before sending ([§6.0](#60-what-the-server-says-about-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; InnoDB declares them, so an empty list means this schema (or this role) has none, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` |

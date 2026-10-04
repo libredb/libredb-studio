@@ -69,6 +69,7 @@ import {
   ExecutionProfileError,
   QueryError,
   mapDatabaseError,
+  NO_TRANSACTION_OPENED,
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
@@ -2613,7 +2614,22 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "postgres");
     this.txClient = await this.pool!.connect();
-    await this.txClient.query("BEGIN");
+    try {
+      await this.txClient.query("BEGIN");
+    } catch (error) {
+      this.txClient.release();
+      this.txClient = null;
+      throw error;
+    }
+    // The ReadyForQuery byte after BEGIN is the server saying whether a transaction is open.
+    // A PostgreSQL-wire relative can accept the statement and open none: RisingWave answers
+    // `I` with a NOTICE (see NO_TRANSACTION_OPENED), so every statement run in the "session"
+    // autocommitted and SANDBOX's ROLLBACK undid nothing. Refused here, before anything runs.
+    if (this.txClient.getTransactionStatus() === "I") {
+      this.txClient.release();
+      this.txClient = null;
+      throw new QueryError(NO_TRANSACTION_OPENED, "postgres");
+    }
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks. Single-line callback
@@ -2647,6 +2663,14 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public isInTransaction(): boolean {
     return this.txActive;
+  }
+
+  /** Let go of a session the SERVER already ended: nothing is left to commit or roll back. */
+  private endHeldTransaction(): void {
+    this.clearTxTimeout();
+    this.txClient?.release();
+    this.txClient = null;
+    this.txActive = false;
   }
 
   /**
@@ -2807,6 +2831,13 @@ export class PostgresProvider extends SQLBaseProvider {
           return await this.txClient!.query(sql, params);
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
+        } finally {
+          // PostgreSQL's DDL is transactional, so this is not about DDL: it is a statement
+          // that ENDS the transaction itself, a typed `COMMIT` or `END` in a multi-statement
+          // text. The server reports `I` afterwards and the held client is just a pooled
+          // client again, so a ROLLBACK would undo nothing. The session is ended here and the
+          // route reports `inTransaction: false` instead.
+          if (this.txClient?.getTransactionStatus() === "I") this.endHeldTransaction();
         }
       });
 

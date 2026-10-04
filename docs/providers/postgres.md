@@ -1591,8 +1591,8 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active. |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. |
+| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
 | `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active. |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
 | `isInTransaction()` | Current state. |
@@ -1605,6 +1605,32 @@ offer BEGIN/COMMIT/ROLLBACK and the auto-rolled-back SANDBOX toggle at all. It i
 than inferred because the route's own gate is `isTransactionProvider(provider)`, a runtime shape
 check no client can read, so before #464 those controls rendered on every
 connection — including the ten providers that answer HTTP 400.
+
+### 8.0 A `BEGIN` that opens nothing, and a statement that ends the transaction
+
+Both are read off the server's own ReadyForQuery status byte (`getTransactionStatus()`, the same
+reading §8.1 uses), never off the statement text and never off the connection's type id.
+
+- **`beginTransaction()` refuses a `BEGIN` the server answered with status `I`.** Measured
+  2026-10-04 on RisingWave 3.1.0: `BEGIN` succeeds with the NOTICE "Read-write transaction is not
+  supported yet. Please specify `READ ONLY` to start a read-only transaction. For compatibility,
+  this statement will still succeed but no transaction is actually started." and the byte stays
+  `I`. Before this check, SANDBOX ran an `INSERT` and a `DELETE` there with no transaction under
+  them, its `ROLLBACK` answered "there is no transaction in progress" as a NOTICE, and the UI said
+  "Changes auto-rolled back. No data was modified." while both changes stayed. The client goes
+  back to the pool and the error is `NO_TRANSACTION_OPENED` ([`errors.ts`](../../src/lib/db/errors.ts)),
+  a `QueryError`, so `POST /api/db/transaction` answers 400 with that sentence and the editor runs
+  nothing. The same byte reads `T` after `BEGIN` on PostgreSQL 18, so nothing changes there.
+- **`queryInTransaction()` ends the session when the byte reads `I` after the statement.**
+  PostgreSQL's DDL is transactional, so this is not about DDL: it is a text that ends the
+  transaction itself, a typed `COMMIT` or `END` inside a multi-statement run. The client is
+  released and the route answers `inTransaction: false`, which the editor reports as "Not Rolled
+  Back" (SANDBOX) or "Transaction Ended" instead of announcing a rollback. A failed statement leaves
+  the byte at `E`, so the session stays for the `ROLLBACK` it needs.
+
+The declared half of the same guard, `implicitCommitStatements`, is absent here: nothing in
+PostgreSQL's grammar commits a transaction it runs inside, except `COMMIT` itself, which SANDBOX
+refuses on every engine ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)).
 
 ### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
 
@@ -1705,7 +1731,8 @@ Overrides the SQL base defaults:
 | `supportsCreateTable` | `true` |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
-| `supportsTransactions` | `true` — `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#464) |
+| `supportsTransactions` | `true`: `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#464). A relative whose `BEGIN` opens nothing (RisingWave) is refused at `beginTransaction()` rather than declared per type id ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
+| `implicitCommitStatements` | absent: PostgreSQL's DDL is transactional, so SANDBOX rolls a `CREATE TABLE` back like any other statement ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; an empty `foreignKeys` list is then a fact about the schema or the reading role, never about the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |

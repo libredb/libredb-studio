@@ -1326,6 +1326,16 @@ describe("OracleProvider", () => {
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
     });
 
+    test("declares the DDL Oracle commits implicitly, so SANDBOX refuses it", () => {
+      // "Oracle Database implicitly commits the current transaction before and after every
+      // DDL statement": a ROLLBACK after one answers success and undoes nothing.
+      const implicit = provider.getCapabilities().implicitCommitStatements;
+
+      expect(implicit).toContain("CREATE");
+      expect(implicit).toContain("TRUNCATE");
+      expect(implicit).not.toContain("INSERT");
+    });
+
     test("the vacuum label names the index rebuild, and the surfaces send that", () => {
       // Oracle has no VACUUM; this slot has said "Rebuild Indexes" since the provider
       // shipped, and the global card gated on the literal `vacuum` never showed it.

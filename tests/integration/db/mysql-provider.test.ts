@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, NO_TRANSACTION_OPENED } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
@@ -972,6 +972,10 @@ describe("MySQLProvider", () => {
       expect(caps.supportsResultPagination).toBe(true);
       // One held connection carries the transaction, so the trio is offered (#464).
       expect(caps.supportsTransactions).toBe(true);
+      // DDL commits the open transaction on MySQL, so SANDBOX must refuse it.
+      expect(caps.implicitCommitStatements).toContain("CREATE");
+      expect(caps.implicitCommitStatements).toContain("TRUNCATE");
+      expect(caps.implicitCommitStatements).not.toContain("SET");
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -1526,6 +1530,111 @@ describe("MySQLProvider", () => {
       expect(provider.isInTransaction()).toBe(true);
       await provider.rollbackTransaction();
       expect(provider.isInTransaction()).toBe(false);
+    });
+
+    /**
+     * The OK-packet status flags measured on MySQL 26.7.0 on 2026-10-04 through mysql2:
+     * 16387 after `START TRANSACTION`, 3 after an `INSERT` inside it, 16386 after a
+     * `CREATE TABLE` inside it. Bit 0 is `SERVER_STATUS_IN_TRANS`, and the CREATE cleared it
+     * because MySQL committed the transaction implicitly.
+     */
+    function answering(statuses: Record<string, number>) {
+      return (sql: string, params?: unknown[]) => {
+        const status = Object.entries(statuses).find(([prefix]) => sql.trim().toUpperCase().startsWith(prefix))?.[1];
+        return status === undefined
+          ? (defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>)
+          : Promise.resolve([{ fieldCount: 0, affectedRows: 0, serverStatus: status }, undefined] as [
+              unknown,
+              undefined,
+            ]);
+      };
+    }
+
+    test("a START TRANSACTION the server answers without opening one is refused, and the connection goes back", async () => {
+      mockExecuteFn = answering({ "START TRANSACTION": 2 });
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const release = spyOn(mockConnection, "release");
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow(NO_TRANSACTION_OPENED);
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        release.mockRestore();
+      }
+    });
+
+    test("a START TRANSACTION that fails releases the connection it borrowed", async () => {
+      mockExecuteFn = (sql: string) =>
+        sql.startsWith("START TRANSACTION")
+          ? Promise.reject(new Error("Connection lost"))
+          : (defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const release = spyOn(mockConnection, "release");
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow("Connection lost");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        release.mockRestore();
+      }
+    });
+
+    test("a statement MySQL commits implicitly ends the session, so no rollback is pretended", async () => {
+      mockExecuteFn = answering({ "START TRANSACTION": 16387, INSERT: 3, CREATE: 16386 });
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+
+      await provider.queryInTransaction("INSERT INTO t VALUES (1)");
+      expect(provider.isInTransaction()).toBe(true);
+      // A read carries no OK packet to judge, and a read never ends a transaction.
+      await provider.queryInTransaction("SELECT 1");
+      expect(provider.isInTransaction()).toBe(true);
+
+      const release = spyOn(mockConnection, "release");
+      try {
+        await provider.queryInTransaction("CREATE TABLE t2 (id INT)");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+        await expect(provider.rollbackTransaction()).rejects.toThrow("No active transaction");
+      } finally {
+        release.mockRestore();
+      }
+    });
+
+    test("a CALL is judged by its own header, the last element of its answer", async () => {
+      const header = (serverStatus: number) => ({ fieldCount: 0, affectedRows: 0, serverStatus });
+      let callStatus = 3;
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("START TRANSACTION")) return Promise.resolve([header(16387), undefined]);
+        if (sql.startsWith("CALL")) return Promise.resolve([[[{ id: 1 }], header(callStatus)], undefined]);
+        return defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>;
+      };
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+
+      await provider.queryInTransaction("CALL still_open()");
+      expect(provider.isInTransaction()).toBe(true);
+      callStatus = 2;
+      await provider.queryInTransaction("CALL runs_ddl()");
+      expect(provider.isInTransaction()).toBe(false);
+    });
+
+    test("a row with a column named serverStatus is never read as the status flags", async () => {
+      mockExecuteFn = (sql: string) =>
+        sql.startsWith("SELECT")
+          ? Promise.resolve([[{ serverStatus: 0 }], [{ name: "serverStatus" }]])
+          : (answering({ "START TRANSACTION": 16387 })(sql) as Promise<[unknown, unknown[] | undefined]>);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+
+      await provider.queryInTransaction("SELECT 0 AS serverStatus");
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
     });
 
     test("double beginTransaction throws", async () => {
@@ -2863,7 +2972,10 @@ describe("MySQLProvider non-SELECT statements", () => {
   });
 
   test("queryInTransaction() answers the same envelope for a non-SELECT", async () => {
-    mockExecuteFn = () => Promise.resolve([makeResultSetHeader({ affectedRows: 1, insertId: 7 }), undefined]);
+    // serverStatus 3: autocommit and SERVER_STATUS_IN_TRANS, what MySQL answers for an
+    // INSERT inside a transaction. The shared header's 2 is an autocommitted statement.
+    mockExecuteFn = () =>
+      Promise.resolve([makeResultSetHeader({ affectedRows: 1, insertId: 7, serverStatus: 3 }), undefined]);
 
     provider = new MySQLProvider(makeMySQLConfig());
     await provider.connect();

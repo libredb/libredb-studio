@@ -3013,14 +3013,20 @@ describe("useQueryExecution", () => {
     }
   });
 
-  // ── Playground BEGIN failure is logged and execution continues ─────────
+  // ── Playground BEGIN failure stops the run ────────────────────────────
+  //
+  // It used to log and carry on, so the statement ran with no transaction under it and the
+  // toast still said it had been rolled back. Measured on RisingWave 3.1.0, whose BEGIN opens
+  // nothing: an INSERT and a DELETE stayed applied.
 
-  test("playground mode continues when transaction BEGIN fails", async () => {
+  test("playground mode runs nothing when transaction BEGIN fails", async () => {
+    const sent: string[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
       if (url.includes("/api/db/transaction")) {
         const body = JSON.parse((init?.body as string) || "{}");
+        sent.push(body.action);
         if (body.action === "begin") {
           return new Response(JSON.stringify({ error: "begin failed" }), {
             status: 500,
@@ -3042,20 +3048,159 @@ describe("useQueryExecution", () => {
 
     const { result } = renderHook(() => useQueryExecution(params));
 
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    expect(returned).toBe(false);
+    expect(sent).toEqual(["begin"]);
+    expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
+      description: "begin failed Nothing was run.",
+    });
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("a BEGIN refusal with no readable reason still stops the run", async () => {
+    mockGlobalFetch({
+      "/api/db/transaction": () => ({ ok: false, status: 502, text: "<html>bad gateway</html>" }),
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
     await act(async () => {
       await result.current.executeQuery("UPDATE users SET active = false");
     });
 
-    // Query still runs and the playground toast is shown despite BEGIN failing
-    expect(mockToastSuccess).toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
+      description: "The transaction SANDBOX needs could not be opened. Nothing was run.",
+    });
+  });
+
+  // ── The server ended the transaction inside the run ───────────────────
+
+  function transactionRoute(queryAnswer: Record<string, unknown>) {
+    const actions: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const body = JSON.parse((init?.body as string) || "{}");
+      if (url.includes("/api/db/transaction")) actions.push(body.action);
+      const answer = body.action === "query" ? queryAnswer : mockQueryResult;
+      return new Response(JSON.stringify(answer), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    return actions;
+  }
+
+  test("playground mode does not claim a rollback when the statement committed the transaction", async () => {
+    const originalFetch = globalThis.fetch;
+    const actions = transactionRoute({ ...mockQueryResult, inTransaction: false });
+    const params = createDefaultParams({ playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("ALTER TABLE a RENAME TO b");
+    });
+
+    // Nothing is left to roll back, so no ROLLBACK is asked for and none is announced.
+    expect(actions).toEqual(["begin", "query"]);
+    // The catalog really changed, so the tree is re-read as for any committed DDL.
+    expect(params.fetchSchema).toHaveBeenCalledTimes(1);
+    expect(mockToastError).toHaveBeenCalledWith("Not Rolled Back", {
+      description:
+        "The database ended the transaction while running this statement, so its changes were committed and could not be rolled back.",
+    });
+    expect(mockToastSuccess).not.toHaveBeenCalledWith("Playground", expect.anything());
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("an open transaction the server ended is closed in the UI, and the user told", async () => {
+    const originalFetch = globalThis.fetch;
+    const actions = transactionRoute({ ...mockQueryResult, inTransaction: false });
+    const onTransactionEnded = mock(() => {});
+    const params = createDefaultParams({ transactionActive: true, onTransactionEnded });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE t (id INT)");
+    });
+
+    expect(actions).toEqual(["query"]);
+    expect(onTransactionEnded).toHaveBeenCalledTimes(1);
+    expect(mockToastError).toHaveBeenCalledWith("Transaction Ended", {
+      description: "The database ended the transaction while running this statement, so its changes are committed.",
+    });
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("an open transaction that is still open leaves the controls alone", async () => {
+    const originalFetch = globalThis.fetch;
+    transactionRoute({ ...mockQueryResult, inTransaction: true });
+    const onTransactionEnded = mock(() => {});
+    const params = createDefaultParams({ transactionActive: true, onTransactionEnded });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("INSERT INTO t VALUES (1)");
+    });
+
+    expect(onTransactionEnded).not.toHaveBeenCalled();
     expect(mockToastError).not.toHaveBeenCalled();
 
     globalThis.fetch = originalFetch;
   });
 
+  // ── SANDBOX refuses what would commit its transaction ─────────────────
+
+  test("playground mode refuses a statement the provider declares as committing implicitly", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/": { ok: true, json: mockQueryResult } });
+    const params = createDefaultParams({
+      playgroundMode: true,
+      metadata: {
+        ...mockMetadata,
+        capabilities: { ...mockMetadata.capabilities, implicitCommitStatements: ["CREATE"] },
+      },
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery("CREATE TABLE sbx (id INT)");
+    });
+
+    expect(returned).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Statement Refused", {
+      description:
+        "SANDBOX cannot run CREATE: this database commits the open transaction when it runs one, so the rollback that follows would undo nothing. Turn SANDBOX off to run it for real.",
+    });
+  });
+
+  test("the same statement runs outside playground mode", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/": { ok: true, json: mockQueryResult } });
+    const params = createDefaultParams({
+      metadata: {
+        ...mockMetadata,
+        capabilities: { ...mockMetadata.capabilities, implicitCommitStatements: ["CREATE"] },
+      },
+    });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("CREATE TABLE sbx (id INT)");
+    });
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalledWith("Statement Refused", expect.anything());
+  });
+
   // ── Playground rollback fetch failures are swallowed ───────────────────
 
-  test("playground rollback failure after success is swallowed", async () => {
+  test("playground rollback failure after success is reported, not claimed", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -3083,14 +3228,16 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("UPDATE users SET active = false");
     });
 
-    // Rollback failure is swallowed and the playground toast is still shown
-    expect(mockToastSuccess).toHaveBeenCalled();
-    expect(mockToastError).not.toHaveBeenCalled();
+    // The rollback never answered, so nothing may say it happened.
+    expect(mockToastSuccess).not.toHaveBeenCalledWith("Playground", expect.anything());
+    expect(mockToastError).toHaveBeenCalledWith("Not Rolled Back", {
+      description: "The rollback was not confirmed by the server, so the changes may have been kept.",
+    });
 
     globalThis.fetch = originalFetch;
   });
 
-  test("playground rollback failure after query error is swallowed", async () => {
+  test("playground rollback failure after query error is reported too", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -3121,8 +3268,10 @@ describe("useQueryExecution", () => {
       await result.current.executeQuery("UPDATE users SET broken");
     });
 
-    // Rollback failure is swallowed; the original query error toast is shown
-    expect(mockToastError).toHaveBeenCalled();
+    // The original query error toast is shown, and so is the unconfirmed rollback.
+    expect(mockToastError).toHaveBeenCalledWith("Not Rolled Back", {
+      description: "The rollback was not confirmed by the server, so any changes may have been kept.",
+    });
 
     globalThis.fetch = originalFetch;
   });

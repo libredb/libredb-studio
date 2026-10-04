@@ -84,6 +84,31 @@ const ORACLE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
 // stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
 
 // Shared by getHealth() and getPerformanceMetrics().
+/**
+ * The leading keywords of Oracle's DDL, every one of which commits the open transaction
+ * before it runs and again after it ("Data Definition Language (DDL) Statements" in the SQL
+ * Language Reference: "Oracle Database implicitly commits the current transaction before
+ * and after every DDL statement"). The provider holds no reading of the server's
+ * transaction state, so this declaration is the only guard SANDBOX has here.
+ */
+const ORACLE_IMPLICIT_COMMIT_STATEMENTS: readonly string[] = [
+  "ALTER",
+  "ANALYZE",
+  "ASSOCIATE",
+  "AUDIT",
+  "COMMENT",
+  "CREATE",
+  "DISASSOCIATE",
+  "DROP",
+  "FLASHBACK",
+  "GRANT",
+  "NOAUDIT",
+  "PURGE",
+  "RENAME",
+  "REVOKE",
+  "TRUNCATE",
+];
+
 const CACHE_HIT_RATIO_SQL = `SELECT ROUND(
             (1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
                   NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0)
@@ -1558,6 +1583,9 @@ export class OracleProvider extends SQLBaseProvider {
       supportsResultPagination: true,
       // Oracle is always in a transaction; the held connection commits or rolls back.
       supportsTransactions: true,
+      // Oracle commits before and after every DDL statement, so SANDBOX refuses them
+      // instead of reporting a rollback that undid nothing.
+      implicitCommitStatements: ORACLE_IMPLICIT_COMMIT_STATEMENTS,
       maintenanceOperations: ["analyze", "optimize", "kill"],
       // `optimize` now takes a TABLE and rebuilds that table's own indexes, which is
       // what SQL Server's identically worded control has always done. It used to take

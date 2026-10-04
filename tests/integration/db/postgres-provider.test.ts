@@ -21,6 +21,7 @@ import {
   DatabaseError,
   ExecutionProfileError,
   QueryError,
+  NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
 // The ender's raise is measured through the mapper the two routes answer through, because the
 // cost its docblock states is an HTTP status and not a class name.
@@ -53,6 +54,13 @@ let mockQueryFn: (
  * Tests set it to say what the server would have said.
  */
 let mockTxStatus: "I" | "T" | "E" | null = "I";
+
+/**
+ * Whether a bare `BEGIN` opens a transaction on the mock server. Measured 2026-10-04 on
+ * RisingWave 3.1.0: `BEGIN` succeeds with the NOTICE "no transaction is actually started"
+ * and ReadyForQuery stays `I`, which is what `false` reproduces.
+ */
+let mockBeginOpens = true;
 
 /** A `pg` named-statement config, which is the ONLY shape that reaches Parse rather than a simple query. */
 interface MockParseConfig {
@@ -123,6 +131,10 @@ const mockClient = {
     // test can observe the provider's rollback rather than only the call to it.
     const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql as string);
     if (ended) mockTxStatus = "I";
+    // A bare BEGIN opens one, which PostgreSQL reports as "T" on the very next
+    // ReadyForQuery. `mockBeginOpens = false` is the server that accepts BEGIN and opens
+    // nothing, the way RisingWave does.
+    if (mockBeginOpens && /^\s*BEGIN\s*;?\s*$/i.test(sql as string)) mockTxStatus = "T";
     const answer = mockQueryFn(sql as string, params);
     if (typeof sql !== "string") return answer;
     // One result per statement, which is what `pg` hands back for a multi-statement simple
@@ -1086,6 +1098,85 @@ describe("PostgresProvider", () => {
       await provider.rollbackTransaction();
     });
 
+    test("a BEGIN the server accepts without opening a transaction is refused, and the client goes back", async () => {
+      // RisingWave 3.1.0, measured 2026-10-04: BEGIN succeeds, ReadyForQuery stays "I", and
+      // an INSERT and a DELETE run after it survived the ROLLBACK SANDBOX reported.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const release = spyOn(mockClient, "release");
+      mockBeginOpens = false;
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow(NO_TRANSACTION_OPENED);
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+        // Nothing is held, so the next caller is not told one is already active.
+        await expect(provider.beginTransaction()).rejects.toThrow(NO_TRANSACTION_OPENED);
+      } finally {
+        mockBeginOpens = true;
+        release.mockRestore();
+      }
+    });
+
+    test("a BEGIN that fails releases the client it borrowed", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (/^\s*BEGIN/i.test(sql)) throw new Error("Connection lost");
+        return originalMock(sql, params);
+      };
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow("Connection lost");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a statement that ends the transaction itself ends the session, so no rollback is pretended", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      // A typed COMMIT inside a multi-statement text: the server answers "I" afterwards.
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("COMMIT;")) mockTxStatus = "I";
+        return originalMock(sql, params);
+      };
+      try {
+        await provider.queryInTransaction("INSERT INTO t VALUES (1); COMMIT; SELECT 1");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+        await expect(provider.rollbackTransaction()).rejects.toThrow("No active transaction");
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a failed statement inside the transaction keeps the session for the rollback", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const originalMock = mockQueryFn;
+      mockQueryFn = async () => {
+        mockTxStatus = "E";
+        throw new Error('relation "nope" does not exist');
+      };
+      try {
+        await expect(provider.queryInTransaction("SELECT * FROM nope")).rejects.toThrow("nope");
+        expect(provider.isInTransaction()).toBe(true);
+      } finally {
+        mockQueryFn = originalMock;
+      }
+      await provider.rollbackTransaction();
+      expect(provider.isInTransaction()).toBe(false);
+    });
+
     test("commitTransaction without begin throws", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -1190,7 +1281,10 @@ describe("PostgresProvider", () => {
           issued.push(String(sql));
           const endsTransaction = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(String(sql));
           if (endsTransaction && client.failRollbackWith !== undefined) throw client.failRollbackWith;
-          client.status = endsTransaction ? "I" : afterStatement;
+          // A bare BEGIN opens a transaction whatever the client was built to answer after
+          // its other statements, the way the server reports it.
+          const opens = /^\s*BEGIN\s*;?\s*$/i.test(String(sql));
+          client.status = endsTransaction ? "I" : opens ? "T" : afterStatement;
           return { rows: [], fields: [], rowCount: 0 };
         },
         getTransactionStatus: () => client.status,
@@ -2947,6 +3041,11 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
+    test("declares no implicitly committing statement, because PostgreSQL's DDL is transactional", () => {
+      provider = new PostgresProvider(makePgConfig());
+      expect(provider.getCapabilities().implicitCommitStatements).toBeUndefined();
+    });
+
     // #U9: the target grammar of each operation, declared next to it. PostgreSQL is
     // the engine both surfaces were already right about - every statement here has a
     // one-table form and a whole-database form - so this records the baseline the

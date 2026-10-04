@@ -40,7 +40,13 @@ import {
   type IndexStats,
   type StorageStats,
 } from "../../types";
-import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  QueryError,
+  mapDatabaseError,
+  NO_TRANSACTION_OPENED,
+} from "../../errors";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -148,6 +154,62 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   params === undefined || params.length === 0
     ? queryable.query<T>(sql)
     : queryable.execute<T>(sql, asExecuteParams(params));
+
+/**
+ * The leading keywords of the statements MySQL commits implicitly inside a transaction,
+ * from the manual's "Statements That Cause an Implicit Commit" (13.3.3). `SET` is left
+ * out on purpose: only `SET autocommit = 1` and `SET PASSWORD` commit, and refusing every
+ * `SET` would refuse session variables a SANDBOX run needs. Those two are caught after
+ * the fact instead, by the `SERVER_STATUS_IN_TRANS` read in `queryInTransaction()`.
+ * `LOAD` is left out for the same reason: `LOAD DATA` commits only on NDB tables.
+ */
+const MYSQL_IMPLICIT_COMMIT_STATEMENTS: readonly string[] = [
+  "ALTER",
+  "ANALYZE",
+  "BEGIN",
+  "CACHE",
+  "CHANGE",
+  "CHECK",
+  "CREATE",
+  "DROP",
+  "FLUSH",
+  "GRANT",
+  "INSTALL",
+  "LOCK",
+  "OPTIMIZE",
+  "RENAME",
+  "REPAIR",
+  "RESET",
+  "REVOKE",
+  "START",
+  "STOP",
+  "TRUNCATE",
+  "UNINSTALL",
+  "UNLOCK",
+];
+
+/** `SERVER_STATUS_IN_TRANS`, bit 0 of the status flags every OK packet carries. */
+const SERVER_STATUS_IN_TRANS = 1;
+
+/**
+ * Whether the server says a transaction is open after the statement that answered
+ * `result`, or `undefined` when the answer carries no OK packet to read.
+ *
+ * `mysql2` keeps no transaction flag on a connection; it surfaces the status flags only
+ * as `ResultSetHeader.serverStatus`. A statement that returns rows answers an array with
+ * no header, so a read is not something this can judge, and a read never ends a
+ * transaction. A `CALL` that returns result sets answers an array of them whose LAST
+ * element is the header of the call itself, which is the state after everything the
+ * procedure ran. The two arrays are told apart by their first element, a row set (an
+ * array) for the `CALL` and a row (an object) for a read, so a column that happens to be
+ * named `serverStatus` is never read as the flags.
+ */
+function serverReportsOpenTransaction(result: unknown): boolean | undefined {
+  const header = Array.isArray(result) ? (Array.isArray(result[0]) ? result[result.length - 1] : undefined) : result;
+  if (typeof header !== "object" || header === null || Array.isArray(header)) return undefined;
+  const status = (header as { serverStatus?: unknown }).serverStatus;
+  return typeof status === "number" ? (status & SERVER_STATUS_IN_TRANS) !== 0 : undefined;
+}
 
 /**
  * The EXPLAIN grammars this provider can ask for, most specific first, each paired
@@ -1969,8 +2031,12 @@ export class MySQLProvider extends SQLBaseProvider {
       supportsInlineRowEdit: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.
       supportsResultPagination: true,
-      // The driver's own connection.beginTransaction() over one held connection.
+      // START TRANSACTION over one held connection (`beginTransaction()` below).
       supportsTransactions: true,
+      // DDL, account and table-administration statements commit the open transaction
+      // (the MySQL manual's "Statements That Cause an Implicit Commit"), so SANDBOX
+      // refuses them instead of reporting a rollback that undid nothing.
+      implicitCommitStatements: MYSQL_IMPLICIT_COMMIT_STATEMENTS,
       maintenanceOperations: ["analyze", "optimize", "check", "kill"],
       // MySQL has no VACUUM, and every statement it does have names tables:
       // `ANALYZE/OPTIMIZE/CHECK TABLE <t>` with a target, the same verb over every
@@ -2317,7 +2383,25 @@ export class MySQLProvider extends SQLBaseProvider {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mysql");
     this.txConn = await this.pool!.getConnection();
-    await this.txConn.beginTransaction();
+    // The statement the driver's own `beginTransaction()` sends, issued directly because
+    // that method resolves to nothing and the OK packet is the evidence: a server of the
+    // MySQL wire family that accepts the statement without opening a transaction answers
+    // it with `SERVER_STATUS_IN_TRANS` cleared, and everything run "inside" it would
+    // autocommit while SANDBOX reported a rollback.
+    let opened: boolean | undefined;
+    try {
+      const [answer] = await this.txConn.query("START TRANSACTION");
+      opened = serverReportsOpenTransaction(answer);
+    } catch (error) {
+      this.txConn.release();
+      this.txConn = null;
+      throw error;
+    }
+    if (opened === false) {
+      this.txConn.release();
+      this.txConn = null;
+      throw new QueryError(NO_TRANSACTION_OPENED, "mysql");
+    }
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks
@@ -2354,6 +2438,14 @@ export class MySQLProvider extends SQLBaseProvider {
     return this.txActive;
   }
 
+  /** Let go of a session the SERVER already ended: nothing is left to commit or roll back. */
+  private endHeldTransaction(): void {
+    this.clearTxTimeout();
+    this.txConn?.release();
+    this.txConn = null;
+    this.txActive = false;
+  }
+
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
 
@@ -2361,6 +2453,12 @@ export class MySQLProvider extends SQLBaseProvider {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           const [rows, fields] = await runStatement(this.txConn!, sql, params);
+          // The server's own word on whether the transaction survived the statement. A
+          // statement that commits implicitly (DDL, `SET autocommit = 1`, a typed
+          // `COMMIT`) ends it, and from then on the held connection autocommits: a
+          // ROLLBACK would answer success and undo nothing. So the session is ended here
+          // and the route reports `inTransaction: false` instead of a rollback.
+          if (serverReportsOpenTransaction(rows) === false) this.endHeldTransaction();
           return { rows, fields };
         } catch (error) {
           throw mapDatabaseError(error, "mysql", sql);

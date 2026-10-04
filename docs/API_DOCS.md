@@ -485,6 +485,8 @@ Milvus and Qdrant each declare a bound of 1,048,576 bytes and InfluxDB (InfluxQL
 
 Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
 
+**`inTransaction` in a transaction `query` answer.** `POST /api/db/transaction` answers its `query` action with `inTransaction`, and `false` there means the server ended the transaction while running the statement: a typed `COMMIT`, or a statement the engine commits implicitly (MySQL DDL). Whatever ran is committed, the session is released, and a following `rollback` answers 400 "No active transaction" rather than reporting a rollback that undid nothing. A `begin` the server accepts without opening a transaction (RisingWave's `BEGIN`) answers 400 with the reason, and nothing has been held.
+
 **Query plan (optional):**
 ```json
 {
