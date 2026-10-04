@@ -40,12 +40,18 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
     a plaintext password in them is not the operator's to be warned about. The literal marker is set here,
     after filterByRoles, because filterByRoles copies a fixed field list and SeedConnectionSchema strips an
     undeclared key, so a marker set any earlier would not survive. loadAndResolve above does not include
-    them, so the unfiltered lookup never confirms to a caller that a discovered id exists.
+    them, so the unfiltered lookup never confirms to a caller that a discovered id exists. filterByRoles builds
+    a new object per entry, so the marker is set on that object in place and the loader's cache is not touched.
+
+    A discovered connection whose id the seed file read above also uses is dropped, whichever role the file's
+    connection is for. The loader applies the same rule when it recomputes, but its cache and the seed file's
+    expire independently, so for up to one SEED_CACHE_TTL_MS it can still list an id the file has just gained,
+    and the list would carry that id twice.
   */
-  const discovered = filterByRoles(await getDiscoveredConnections(), roles).map((conn) => ({
-    ...conn,
-    literal: true as const,
-  }));
+  const fileIds = new Set(config?.connections.map((conn) => conn.id));
+  const discovered = filterByRoles(await getDiscoveredConnections(), roles)
+    .filter((conn) => !fileIds.has(conn.seedId))
+    .map((conn) => Object.assign(conn, { literal: true as const }));
 
   const out = [...fromConfig, ...discovered];
 

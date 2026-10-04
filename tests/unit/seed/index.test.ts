@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "path";
 import { getManagedConnections, getSeedConnectionById, getSeedConnectionByIdUnfiltered, resetCache } from "@/lib/seed";
 import { resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
-import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
+import { getDiscoveredConnections, resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import { logger } from "@/lib/logger";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
@@ -153,6 +153,61 @@ describe("seed/index with discovered connections", () => {
     expect(clashing[0]?.host).toBe("file-pg.internal");
     expect(clashing[0]?.password).toBe("admin-secret");
     expect(clashing[0]?.literal).toBeUndefined();
+  });
+
+  /*
+    The seed file gains a connection whose id is the discovered `caprover-pg`. Only the seed file's cache is reset:
+    the loader checks a service's id against the file only when its own cache recomputes, and the two caches expire
+    independently, so this is the window of up to one SEED_CACHE_TTL_MS in which the loader still lists the id.
+  */
+  function gainSeedConnectionWithDiscoveredId(roles: string[]): void {
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "caprover-pg",
+            name: "File PG",
+            type: "postgres",
+            host: "file-pg.internal",
+            password: "${ADMIN_PG_PASS}",
+            roles,
+          },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+  }
+
+  it("lists one connection for an id the seed file gains while the discovery cache is warm", async () => {
+    // Fills the discovery cache: the export's service is listed, marked literal.
+    const before = (await getManagedConnections(["admin"])).filter((c) => c.seedId === "caprover-pg");
+    expect(before).toHaveLength(1);
+    expect(before[0]?.literal).toBe(true);
+
+    gainSeedConnectionWithDiscoveredId(["admin"]);
+    // Control: the loader's cache, which this test did not reset, still lists the id.
+    expect((await getDiscoveredConnections()).map((c) => c.id)).toEqual(["caprover-pg"]);
+
+    const after = (await getManagedConnections(["admin"])).filter((c) => c.seedId === "caprover-pg");
+    expect(after).toHaveLength(1);
+    expect(after[0]?.host).toBe("file-pg.internal");
+    expect(after[0]?.password).toBe("admin-secret");
+    expect(after[0]?.literal).toBeUndefined();
+  });
+
+  it("counts every id in the seed file as taken, including one its role filter hides from the caller", async () => {
+    await getManagedConnections(["admin"]);
+
+    // The file's connection is for standard users, so an admin lists neither it nor the discovered one: the
+    // loader's rule reads every id in the file, and the merge reads the same set.
+    gainSeedConnectionWithDiscoveredId(["user"]);
+
+    const seedIds = (await getManagedConnections(["admin"])).map((c) => c.seedId);
+    expect(seedIds).toEqual([SQLITE_SAMPLE_SEED_ID]);
   });
 
   it("gives a standard user none of the discovered connections", async () => {
