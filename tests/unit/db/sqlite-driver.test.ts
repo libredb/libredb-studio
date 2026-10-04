@@ -693,6 +693,54 @@ describe("the record seam's guards", () => {
 });
 
 // ============================================================================
+// A BLOB cell leaves the seam as a Buffer
+// ============================================================================
+// Both drivers read a BLOB as a plain Uint8Array, and JSON.stringify writes one as an
+// object keyed by index (`{"0":222,"1":173,...}`), which no reader can tell from a
+// document. A Buffer serialises to `{"type":"Buffer","data":[...]}`, the form `asBytes`
+// reads and Postgres `bytea` already arrives in, so the grid, the CSV and the SQL export
+// see bytes.
+
+describe("a BLOB cell leaves the seam as a Buffer", () => {
+  /** A row whose BLOB is a VIEW into a larger buffer, so an offset mistake shows. */
+  function blobRow(): Record<string, unknown> {
+    const backing = new Uint8Array([7, 0xde, 0xad, 0xbe, 0xef, 0x00, 0xff, 7]);
+    return { id: 1, bin: backing.subarray(1, 7), empty: new Uint8Array(0) };
+  }
+
+  test("get() hands back a Buffer over exactly the cell's bytes", () => {
+    const stmt = new (driverReturning(blobRow()))(":memory:").prepare("SELECT bin FROM t");
+    const row = stmt.get() as Record<string, unknown>;
+
+    expect(Buffer.isBuffer(row.bin)).toBe(true);
+    expect(JSON.parse(JSON.stringify(row))).toEqual({
+      id: 1,
+      bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] },
+      empty: { type: "Buffer", data: [] },
+    });
+  });
+
+  test("all() converts every row's BLOB cells the same way", () => {
+    const stmt = new (driverReturning(blobRow()))(":memory:").prepare("SELECT bin FROM t");
+    const [row] = stmt.all() as Record<string, unknown>[];
+
+    expect(Buffer.isBuffer(row?.bin)).toBe(true);
+    expect(Array.from(row?.bin as Uint8Array)).toEqual([0xde, 0xad, 0xbe, 0xef, 0x00, 0xff]);
+  });
+
+  test("the real bun:sqlite driver answers a BLOB in the Buffer form", () => {
+    const db = new (createBunSQLiteDriver(BunDatabase as unknown as BunSQLiteConstructor))(":memory:");
+    const row = db.prepare("SELECT x'DEADBEEF00FF' AS bin, x'' AS empty").get() as Record<string, unknown>;
+
+    expect(JSON.parse(JSON.stringify(row))).toEqual({
+      bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] },
+      empty: { type: "Buffer", data: [] },
+    });
+    db.close(true);
+  });
+});
+
+// ============================================================================
 // The declared-type bridge (#273)
 // ============================================================================
 // A result carries the type each of its columns was DECLARED with. Both drivers
@@ -979,5 +1027,97 @@ describe("the real drivers' declared types (#273)", () => {
     } finally {
       raw.close(true);
     }
+  });
+});
+
+// ============================================================================
+// Whether a statement returns rows
+// ============================================================================
+// The provider used to decide `all()` against `run()` from the statement's leading
+// keyword, and the keyword set knew SELECT, SHOW, DESCRIBE, EXPLAIN and PRAGMA only: a
+// CTE, a bare VALUES list and every `... RETURNING` went to `run()`, which discards the
+// rows and reports the connection's last change count as if it were this statement's.
+// SQLite already knows the answer once a statement is PREPARED - its result column
+// count (`sqlite3_column_count`) - and both drivers publish it before anything runs:
+//
+//   bun:sqlite   `stmt.columnNames`, read at prepare time
+//   node:sqlite  `stmt.columns()`, the same call `declaredColumns` already bridges
+
+describe("returnsRows() bridges the two spellings", () => {
+  test.each([
+    ["bun", () => createBunSQLiteDriver(StubBunDatabase)],
+    ["node", () => createNodeSQLiteDriver(StubDatabaseSync)],
+  ] as const)("the %s adapter answers true for a statement with result columns", (_name, makeDriver) => {
+    expect(new (makeDriver())(":memory:").prepare("SELECT bigints").returnsRows()).toBe(true);
+  });
+
+  test("the bun adapter answers false when bun:sqlite publishes no column names", () => {
+    expect(new (driverReturning({ any: 1 }))(":memory:").prepare("INSERT").returnsRows()).toBe(false);
+  });
+
+  test("the node adapter answers false when node:sqlite's columns() is empty", () => {
+    class NoColumns extends StubDatabaseSync {
+      override prepare(sql: string): ReturnType<NodeDatabaseSyncLike["prepare"]> {
+        return { ...super.prepare(sql), columns: () => [] };
+      }
+    }
+    expect(new (createNodeSQLiteDriver(NoColumns))(":memory:").prepare("INSERT").returnsRows()).toBe(false);
+  });
+});
+
+describe("the real drivers' answer to returnsRows()", () => {
+  let savedDriver: string | undefined;
+
+  beforeEach(() => {
+    savedDriver = process.env.LIBREDB_SQLITE_DRIVER;
+  });
+
+  afterEach(() => {
+    if (savedDriver === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+    else process.env.LIBREDB_SQLITE_DRIVER = savedDriver;
+  });
+
+  /**
+   * Every shape the keyword router got wrong, beside the ones it got right, and the
+   * writes that must stay on `run()`. Measured 2026-10-04 on bun:sqlite (Bun 1.4.2) and
+   * node:sqlite (Node 24.11.0): the two drivers agree on every row.
+   */
+  const SHAPES: [string, boolean][] = [
+    ["SELECT id FROM r", true],
+    ["WITH x AS (SELECT 1 AS a UNION ALL SELECT 2) SELECT a FROM x", true],
+    ["WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 3) SELECT n FROM c", true],
+    ["VALUES (1, 'a'), (2, 'b')", true],
+    ["INSERT INTO r (id) VALUES (9) RETURNING id", true],
+    ["UPDATE r SET id = id RETURNING id", true],
+    ["DELETE FROM r WHERE id = 9 RETURNING *", true],
+    ["PRAGMA journal_mode", true],
+    ["EXPLAIN SELECT 1", true],
+    ["INSERT INTO r (id) VALUES (10)", false],
+    ["UPDATE r SET id = id", false],
+    ["DELETE FROM r WHERE id = 10", false],
+    ["WITH d AS (SELECT 10 AS id) DELETE FROM r WHERE id IN (SELECT id FROM d)", false],
+    ["CREATE TABLE s (id INTEGER)", false],
+    ["PRAGMA user_version = 3", false],
+    ["BEGIN", false],
+  ];
+
+  /** Asked straight after `prepare()`, because that is when the provider has to route. */
+  function answerOf(Driver: SQLiteConstructor, sql: string): boolean {
+    const db = new Driver(":memory:", { create: true, readwrite: true });
+    try {
+      db.exec("CREATE TABLE r (id INTEGER PRIMARY KEY)");
+      return db.prepare(sql).returnsRows();
+    } finally {
+      db.close(true);
+    }
+  }
+
+  test.each(SHAPES)("bun:sqlite: %s -> %p", async (sql, expected) => {
+    process.env.LIBREDB_SQLITE_DRIVER = "bun";
+    expect(answerOf(await loadSQLiteDriver(), sql)).toBe(expected);
+  });
+
+  test.each(SHAPES)("node:sqlite: %s -> %p", async (sql, expected) => {
+    expect(answerOf(await loadNodeSQLiteDriver(), sql)).toBe(expected);
   });
 });

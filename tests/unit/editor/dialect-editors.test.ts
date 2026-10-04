@@ -18,6 +18,8 @@ const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "graph-cypher",
   "milvus",
   "qdrant",
+  "influxql",
+  "oxia",
 ];
 
 describe("DIALECT_EDITORS", () => {
@@ -25,10 +27,12 @@ describe("DIALECT_EDITORS", () => {
     expect(Object.keys(DIALECT_EDITORS).sort()).toEqual([
       "cypher",
       "etcd",
+      "influxql",
       "kafka",
       "libredb",
       "milvus",
       "mongodb",
+      "oxia",
       "promql",
       "qdrant",
       "redis",
@@ -51,6 +55,8 @@ describe("DIALECT_EDITORS", () => {
       cypher: "graph-cypher",
       milvus: "milvus",
       qdrant: "qdrant",
+      influxql: "influxql",
+      oxia: "oxia",
     });
   });
 
@@ -109,7 +115,7 @@ describe("formatterForLanguage", () => {
   test("answers each Monaco language's formatter, and none for a language without one", () => {
     expect(formatterForLanguage("sql")).toBe(DIALECT_EDITORS.sql.format);
     expect(formatterForLanguage("json")).toBe(DIALECT_EDITORS.mongodb.format);
-    for (const language of ["libredb", "redis", "promql", "etcd", "graph-cypher"] as const) {
+    for (const language of ["libredb", "redis", "promql", "etcd", "graph-cypher", "influxql"] as const) {
       expect(formatterForLanguage(language)).toBeUndefined();
     }
   });

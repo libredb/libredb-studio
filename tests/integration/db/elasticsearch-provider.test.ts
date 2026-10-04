@@ -329,7 +329,7 @@ const CAT_INDICES_MIXED_BODY = JSON.stringify([
  * that is not a capture, because it cannot be: this node runs with security
  * disabled, so it has created no `.security-*` index and `_cat` lists no system
  * index at all. The dot prefix is both products' own convention for their
- * bookkeeping (http-transport.ts:255-264), and only the NAME decides the flag, so
+ * bookkeeping (http-transport.ts:427-439), and only the NAME decides the flag, so
  * the rest of the row is an ordinary open index.
  */
 const CAT_INDICES_SYSTEM_BODY = JSON.stringify([
@@ -435,7 +435,7 @@ const NESTED_MAPPING_BODY = JSON.stringify({
 
 /**
  * An index with no mapping yet, CONSTRUCTED from the measurement the transport
- * records (http-transport.ts:944-946): the answer is a present, EMPTY `mappings`
+ * records (http-transport.ts:1285-1287): the answer is a present, EMPTY `mappings`
  * object rather than an error or an absent key. It is not a live capture because
  * the closed probe index it stands in for was dropped after its `_cat` row was
  * captured, and creating one would change the listing every other probe reads.
@@ -474,6 +474,13 @@ const MISSING_INDEX = engineFault(
   400,
   "verification_exception",
   "Found 1 problem\nline 1:15: Unknown index [nope_missing]",
+);
+
+/** `SELECT a FROM closed_idx` after `POST closed_idx/_close` - HTTP 403 on 9.5.3 (#1413). */
+const CLOSED_INDEX = engineFault(
+  403,
+  "cluster_block_exception",
+  "index [closed_idx] blocked by: [FORBIDDEN/4/index closed];",
 );
 
 /** `SELECT nosuchfield FROM probe_orders` - HTTP 400, the same fault name. */
@@ -1483,6 +1490,33 @@ describe("ElasticsearchProvider query", () => {
     expect(result.executionTime).toBeGreaterThanOrEqual(0);
   });
 
+  test("keeps a long and an unsigned_long past 2^53 exact, as their digits", async () => {
+    // Measured on 9.5.3 on 2026-10-04: the engine sends both as UNQUOTED JSON numbers,
+    // and a plain JSON.parse showed 9223372036854776000, 18446744073709552000 and
+    // 9007199254740992 in the grid, the API and every export. A value in the safe
+    // range stays a number, so an ordinary column still sorts and sums as one.
+    const provider = await connectProvider();
+    let page = 0;
+    replyFor = () => {
+      page += 1;
+      return ok(
+        page === 1
+          ? '{"columns":[{"name":"k","type":"keyword"},{"name":"lng","type":"long"},' +
+              '{"name":"ulng","type":"unsigned_long"},{"name":"small","type":"integer"},{"name":"big","type":"long"}],' +
+              '"rows":[["a",9223372036854775807,18446744073709551615,42,9007199254740993]],"cursor":"c1"}'
+          : '{"rows":[["b",-9223372036854775808,0,7,9007199254740991]]}',
+      );
+    };
+
+    const result = await provider.query("SELECT k, lng, ulng, small, big FROM types");
+
+    expect(result.rows).toEqual([
+      { k: "a", lng: "9223372036854775807", ulng: "18446744073709551615", small: 42, big: "9007199254740993" },
+      // A later page is parsed the same way, and 2^53 - 1 is still a number.
+      { k: "b", lng: "-9223372036854775808", ulng: 0, small: 7, big: 9007199254740991 },
+    ]);
+  });
+
   test("labels each column with the engine's own MAPPING type, not a SQL type name", async () => {
     // Measured: `SELECT customer, total` declares `keyword` and `double`, not VARCHAR
     // and DOUBLE. That is the vocabulary the user wrote in their own index mapping and
@@ -1850,6 +1884,19 @@ describe("ElasticsearchProvider error mapping", () => {
     denyEverything();
 
     await expect(provider.query("SELECT id FROM probe_orders")).rejects.toBeInstanceOf(AuthenticationError);
+  });
+
+  test("a 403 for a closed index is the engine's refusal, not a refused login (#1413)", async () => {
+    // Measured on 9.5.3 after `POST closed_idx/_close`: `SELECT a FROM closed_idx` answers
+    // HTTP 403 with this body, and the provider used to report refused credentials.
+    const provider = await connectProvider();
+    overrideSql(fail(403, CLOSED_INDEX));
+
+    const failure = provider.query("SELECT a FROM closed_idx");
+
+    await expect(failure).rejects.toBeInstanceOf(QueryError);
+    await expect(failure).rejects.not.toBeInstanceOf(AuthenticationError);
+    await expect(failure).rejects.toThrow("index [closed_idx] blocked by: [FORBIDDEN/4/index closed];");
   });
 
   test("a socket that never reached the cluster becomes a ConnectionError", async () => {
@@ -2541,7 +2588,7 @@ describe("object surface", () => {
 
     // The declaration against the engine's own answer, one kind each way. An alias row's
     // columns are the mapping of ONE backing index, which is what the transport takes
-    // (`search/http-transport.ts:1266`).
+    // (`search/http-transport.ts:1283`).
     const alias = await provider.describeObject(["probe_orders_alias"], "alias");
     expect(alias.columns.length).toBeGreaterThan(0);
     for (const column of alias.columns) {

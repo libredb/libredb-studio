@@ -322,6 +322,78 @@ describe("OverviewTab", () => {
     });
   });
 
+  const gaugeOf = (label: string) => {
+    const caption = Array.from(document.querySelectorAll("span")).find((el) => el.textContent === label);
+    return caption!.parentElement as HTMLElement;
+  };
+
+  test("Query Success reads N/A in the neutral color before any query has run", async () => {
+    mockGetHistory.mockImplementation(() => [] as never);
+    await act(async () => {
+      render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+
+    await waitFor(() => {
+      const gauge = gaugeOf("Query Success");
+      expect(gauge.textContent).toContain("N/A");
+      expect(gauge.textContent).not.toContain("0");
+      const value = Array.from(gauge.querySelectorAll("span")).find((el) => el.textContent === "N/A") as HTMLElement;
+      expect(value.style.color).not.toBe("");
+      expect(value.style.color).not.toBe("rgb(239, 68, 68)");
+    });
+  });
+
+  test("Query Success reads 100% after one successful query", async () => {
+    await act(async () => {
+      render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+
+    await waitFor(
+      () => {
+        const gauge = gaugeOf("Query Success");
+        expect(gauge.textContent).toContain("100");
+        expect(gauge.textContent).not.toContain("N/A");
+      },
+      { timeout: 3000 },
+    );
+  });
+
+  test("Avg Response reads N/A when no connection answered, and the latency when one did", async () => {
+    await act(async () => {
+      render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    await waitFor(() => {
+      expect(gaugeOf("Avg Response").textContent).toContain("15");
+    });
+    cleanup();
+
+    restoreGlobalFetch();
+    mockGlobalFetch({
+      "/api/admin/audit": { json: { events: [] } },
+      "/api/admin/fleet-health": {
+        json: {
+          results: [
+            {
+              connectionId: "c1",
+              connectionName: "PG Dev",
+              type: "postgres",
+              status: "error",
+              latencyMs: 0,
+              databaseSize: "N/A",
+              activeConnections: 0,
+            },
+          ],
+        },
+      },
+    });
+    await act(async () => {
+      render(<OverviewTab user={{ username: "admin", role: "admin" }} />);
+    });
+    await waitFor(() => {
+      expect(gaugeOf("Avg Response").textContent).toContain("N/A");
+    });
+  });
+
   test("shows user badge in hero section", async () => {
     let renderResult: ReturnType<typeof render>;
     await act(async () => {

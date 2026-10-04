@@ -64,14 +64,18 @@
  * On authentication: both probe clusters run with security DISABLED, and it was
  * measured that a bogus `Basic` header is IGNORED there (HTTP 200 on both), so no
  * 401/403 body could be captured. Rather than invent one, `auth` is decided on the
- * HTTP status alone - the one signal whose meaning is fixed by HTTP itself - and
- * no unmeasured fault name is listed in the tables below.
+ * HTTP status - the one signal whose meaning is fixed by HTTP itself - and no
+ * unmeasured fault name is listed in the tables below. The one exception is a body
+ * that names a fault which is not a security one: Elasticsearch 9.5.3 answers a SQL
+ * read of a closed index with HTTP 403 and `cluster_block_exception` (#1413), and
+ * that is reported as the engine's refusal, in its own words.
  */
 
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import {
   type SearchClusterHealth,
   type SearchDialectId,
@@ -619,6 +623,24 @@ function parseJson(text: string): unknown {
   }
 }
 
+/**
+ * `parseJson` for a body that carries row VALUES: the SQL answer and each of its
+ * cursor pages.
+ *
+ * Both products send a `long` and an `unsigned_long` as UNQUOTED JSON numbers, and
+ * measured on Elasticsearch 9.5.3 and OpenSearch 3.9.0 a plain parse showed
+ * 9223372036854775807 as 9223372036854776000 and 9007199254740993 as
+ * 9007199254740992, in the grid and in every export, with no error. Quoted first,
+ * such a value arrives as its exact digits, the way Druid's and Trino's transports
+ * hand one over; a value in the safe range stays a number.
+ *
+ * Only the row bodies: an object definition is shown as re-serialised JSON
+ * (D61), where turning a number into a string would change what the text says.
+ */
+function parseRowsJson(text: string): unknown {
+  return parseJson(quoteUnsafeIntegers(text));
+}
+
 /** A field the payload reported as usable text, or null when it reported none. */
 function textField(source: Record<string, unknown>, field: string): string | null {
   const value = source[field];
@@ -813,15 +835,34 @@ function categorize(spec: SearchDialectSpec, engineType: string | null): SearchE
   return spec.syntaxTypePattern?.test(engineType) ? "syntax" : "engine";
 }
 
+/** A fault name that is about who is asking rather than about what was asked. */
+const SECURITY_FAULT_TYPE = /security|authenticat|authoriz|permission|access|credential|forbidden/i;
+
+/**
+ * Whether an `error` envelope names an engine fault that is NOT a security one (#1413).
+ *
+ * Elasticsearch spells a security refusal `security_exception` on both 401 and 403, and
+ * reuses 403 for faults that have nothing to do with credentials. Measured on 9.5.3: a SQL
+ * read of a closed index answers HTTP 403 with `cluster_block_exception`, "index
+ * [closed_idx] blocked by: [FORBIDDEN/4/index closed];". Only an envelope that is an object
+ * naming its type can say so; anything less leaves the status as the evidence.
+ */
+function namesNonSecurityFault(envelope: unknown): boolean {
+  const engineType = textField(asRecord(envelope) ?? {}, ERROR_FIELDS.TYPE);
+  return engineType !== null && !SECURITY_FAULT_TYPE.test(engineType);
+}
+
 /**
  * The failure a non-OK response describes.
  *
  * Three shapes, all measured, in the order they have to be tested:
  *
- * 1. HTTP 401/403 - `auth`, decided on the status because security is disabled on
- *    both probe clusters and no such body could be captured (see the header). This
- *    goes first precisely because it is the one case where the status is the
- *    evidence and the body is not.
+ * 1. HTTP 401/403 - `auth`, unless the body is an engine fault whose type is not a
+ *    security one. A 401/403 with no body, a text body, a string `error` or a
+ *    `security_exception` stays `auth`, decided on the status, which HTTP fixes. A
+ *    403 carrying `cluster_block_exception` is the closed-index refusal (measured on
+ *    Elasticsearch 9.5.3, #1413) and goes on to shape 3 with the engine's reason,
+ *    because telling that user their credentials were refused sends them the wrong way.
  * 2. `error` as a STRING - `unreachable`. Measured only from requests that never
  *    reached the SQL engine at all: the wrong product's endpoint path (ES, HTTP
  *    400, "no handler found for uri [/_plugins/_sql]"), the wrong HTTP method
@@ -835,11 +876,11 @@ function categorize(spec: SearchDialectSpec, engineType: string | null): SearchE
  */
 function responseFailure(spec: SearchDialectSpec, status: number, text: string): SearchTransportError {
   const fallback = `${spec.label} rejected the request with HTTP ${status}`;
-  if (status === HTTP_UNAUTHORIZED || status === HTTP_FORBIDDEN) {
+  const envelope = asRecord(parseJson(text))?.[ERROR_FIELDS.ENVELOPE];
+  if ((status === HTTP_UNAUTHORIZED || status === HTTP_FORBIDDEN) && !namesNonSecurityFault(envelope)) {
     return new SearchTransportError("auth", `${spec.label} refused the credentials (HTTP ${status})`);
   }
 
-  const envelope = asRecord(parseJson(text))?.[ERROR_FIELDS.ENVELOPE];
   if (typeof envelope === "string") {
     return new SearchTransportError(
       "unreachable",
@@ -1183,6 +1224,8 @@ export class SearchHttpTransport implements SearchTransport {
           query: sql,
           ...(this.spec.fieldMultiValueLeniency ? { field_multi_value_leniency: true } : {}),
         }),
+        undefined,
+        parseRowsJson,
       ),
     );
     if (first === null) throw unreadableBody(this.spec, "a SQL result");
@@ -1192,7 +1235,7 @@ export class SearchHttpTransport implements SearchTransport {
     let pages = 1;
 
     while (cursor !== null && cursor !== "" && pages < MAX_PAGES) {
-      const next = asRecord(await this.request(url, signal, JSON.stringify({ cursor })));
+      const next = asRecord(await this.request(url, signal, JSON.stringify({ cursor }), undefined, parseRowsJson));
       if (next === null) throw unreadableBody(this.spec, "a SQL result page");
 
       // The column declaration is page one's; `result.fieldNames` is what the rows
@@ -1504,6 +1547,8 @@ export class SearchHttpTransport implements SearchTransport {
      * see {@link AbsenceRule} and {@link HTTP_NOT_FOUND}.
      */
     absence?: AbsenceRule,
+    /** How a successful body is read; {@link parseRowsJson} for the bodies that carry row values. */
+    parse: (text: string) => unknown = parseJson,
   ): Promise<unknown> {
     let response: Response;
     let text: string;
@@ -1541,6 +1586,6 @@ export class SearchHttpTransport implements SearchTransport {
     }
     if (!response.ok) throw responseFailure(this.spec, response.status, text);
 
-    return parseJson(text);
+    return parse(text);
   }
 }

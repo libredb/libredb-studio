@@ -34,6 +34,7 @@ import {
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
+import { buildResultExport } from "@/lib/export/result-export";
 import { countLibSQLObjects, type LibSQLObjectReader } from "@/lib/db/providers/sql/libsql/objects";
 import type { DatabaseConnection, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
 import { readFileSync } from "node:fs";
@@ -475,6 +476,41 @@ describe("LibSQLProvider query", () => {
       { type: "text", value: "duzenlendi" },
       { type: "integer", value: "9007199254740993" },
     ]);
+    await provider.disconnect();
+  });
+
+  test("hands a BLOB to the wire as bytes, and the SQL export writes it back as X'..'", async () => {
+    // Measured against sqld 0.24.33 on 2026-10-04: `x'DEADBEEF00FF'` answers
+    // `{"type":"blob","base64":"3q2+7wD/"}` and `x''` answers base64 "". Before the
+    // transport decoded to a Buffer, the grid received `{"0":222,...}` and the SQL export
+    // wrote that object as quoted text.
+    server = () =>
+      result(
+        [
+          ["bin", "BLOB"],
+          ["empty", "BLOB"],
+        ],
+        [
+          [
+            { type: "blob", base64: "3q2+7wD/" },
+            { type: "blob", base64: "" },
+          ],
+        ],
+      );
+    const provider = await connected();
+
+    const read = await provider.query("SELECT bin, empty FROM t_types");
+    const wire = JSON.parse(JSON.stringify(read.rows)) as Record<string, unknown>[];
+    expect(wire).toEqual([
+      { bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] }, empty: { type: "Buffer", data: [] } },
+    ]);
+    const exported = buildResultExport("sql-insert", {
+      rows: wire,
+      fields: read.fields,
+      tabName: "t",
+      dialect: "libsql",
+    });
+    expect(exported.content).toBe(`INSERT INTO t ("bin", "empty") VALUES (X'deadbeef00ff', X'');`);
     await provider.disconnect();
   });
 

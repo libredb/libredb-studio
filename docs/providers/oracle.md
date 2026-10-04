@@ -181,8 +181,10 @@ with no `;`, which is the half of that measurement the engine cares about. The O
 was removed with the bound, because once there is no `FETCH FIRST` to spell it did nothing the
 shared return does not already do.
 
-It bounds the GENERATORS only. A `;` a user types is still stripped by the editor's statement reader
-before the statement is sent, and the raw API passes text through untouched.
+It bounds the GENERATORS only. A `;` a user types after a plain statement is still stripped by the
+editor's statement reader before the statement is sent, and the raw API passes text through untouched.
+The one `;` the reader keeps is the one after a PL/SQL unit's `END`, which is part of the unit
+([§5.1](#51-execution)).
 
 ### 3.3 Schema introspection reads the `ALL_*` views, and is not owner-scoped
 
@@ -229,12 +231,20 @@ contract PostgreSQL and SQL Server already follow ([#1102](https://github.com/li
 ### 3.7 Privilege-resilient monitoring
 
 Oracle monitoring reads `V$` dynamic-performance views, which require privileges a typical app user
-may lack. Every monitoring sub-query is wrapped in its own try/catch and degrades rather than failing
+may lack. Every `V$` sub-query is wrapped in its own try/catch and degrades rather than failing
 the whole call — so the dashboard still renders for a low-privilege user, just with gaps. The default
 it degrades to is `N/A` or `[]` where the shape has a place to say "not measured", and — in the
 health and overview readings, where a number would otherwise be invented — **nothing at all**:
 `getHealth().activeConnections` and `getOverview().activeConnections` are both omitted rather than
 reported as `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)).
+
+The guard covers the `V$` reads, the ones a privilege decides. `getTableStats()` and
+`getIndexStats()` read only the `USER_*` / `ALL_*` dictionary views, which every user can read, so
+they are **not** guarded: a failure there is a defect or a dead connection, never a missing grant,
+and it rejects with the engine's sentence. The inherited `getMonitoringData()` records it under
+`errors.tables` / `errors.indexes`, and the Tables, Storage and admin Operations tabs show that
+refusal instead of "No table statistics available". An empty `catch` used to turn exactly such a
+failure into an empty list ([§7.4](#74-what-a-tables-size-counts)).
 
 ---
 
@@ -526,6 +536,30 @@ session saw `COUNT(*) = 0`, and the row was gone for good once the writing conne
 the pool. Bind parameters use Oracle's `:1`-style placeholders.
 Native errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
+**PL/SQL from the editor (#1312).** The grammar's `script` fact for this dialect
+(`src/lib/sql/grammar.ts`) makes the editor's statement reader treat a PL/SQL unit as ONE statement:
+an anonymous block that starts with `DECLARE` or `BEGIN`, and `CREATE [OR REPLACE]
+[EDITIONABLE | NONEDITIONABLE] PROCEDURE | FUNCTION | PACKAGE [BODY] | TRIGGER | TYPE BODY`. The unit
+is read to the `END` that closes its outermost block, and the `;` after that `END` is kept, because
+Oracle refuses the unit without it (`PLS-00103`, "Encountered the symbol end-of-file"). A line holding
+only `/` ends the statement in progress and is never sent, as in SQL*Plus, so a script written for
+SQL*Plus or SQL Developer runs unchanged. A compound trigger is read to its last `END` with each timing
+point a block of its own, a `<<label>>` before a block is read past, and a call spec (`AS LANGUAGE
+JAVA …`, `AS LANGUAGE C …`, `AS EXTERNAL …`, `AS MLE MODULE …`) has no body, so the `;` after it ends
+it. A unit the reader still cannot close on its own needs that `/`, as it does there. A `WITH FUNCTION`
+read is not a unit and is still cut at its inner `;`.
+
+A write inside a block still asks for confirmation: the gate reads into a statement led by `BEGIN`,
+`DECLARE`, `IF`, `THEN` and the other control-flow words, so `BEGIN DELETE FROM emp; END;` asks, and so
+does a block that runs dynamic SQL (`EXECUTE IMMEDIATE`, `DBMS_SQL`), whose text the gate cannot read
+(`docs/editor/query-optimization.md`, multi-statement runs).
+
+Measured before this on 26ai Free 23.26.3: the editor cut `CREATE OR REPLACE PROCEDURE raise_sal(p_pct IN
+NUMBER) AS BEGIN UPDATE emp SET salary = salary * (1 + p_pct/100); END;` at its inner `;`, the first
+fragment answered `success` while `user_objects` showed the procedure INVALID, the second was
+`ORA-00900`, and a trigger cut the same way stayed INVALID on its table so that every later INSERT
+failed with `ORA-04098`.
+
 ### 5.2 Query cancellation
 
 A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(queryId)`
@@ -593,8 +627,8 @@ INSERT INTO r6_lob ("ID", "C", "B") VALUES (1, '{"_events":{"finish":[null]},"_r
 A `BLOB` as a `Buffer` needs nothing further: `asBytes` in
 [`src/lib/export/binary.ts`](../../src/lib/export/binary.ts) accepts both a live `Uint8Array` and the
 `{"type":"Buffer","data":[…]}` JSON it serializes to, which is the same contract a Postgres `bytea`
-and a MySQL `BLOB` already reach the binary cell renderer, the row detail sheet, the CSV and the SQL
-export's binary literal through. Verified by exporting a row and replaying it into Oracle itself:
+and a MySQL `BLOB` already reach the binary cell renderer, the row detail sheet, the CSV, the JSON
+export's `\x…` string (#1381) and the SQL export's binary literal through. Verified by exporting a row and replaying it into Oracle itself:
 
 ```
 SOURCE   {"ID":1,"C":"the quick brown fox","NC":"ncl-value-unicode-café","B":{"type":"Buffer","data":[222,173,190,239,1,2]}}
@@ -1798,7 +1832,8 @@ No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-decl
 ## 8. Monitoring & health
 
 All from `V$`/`USER_*` views; `getMonitoringData()` (inherited) fans them out in parallel. Each
-sub-query is independently privilege-guarded ([§3.7](#37-privilege-resilient-monitoring)).
+`V$` sub-query is independently privilege-guarded; the dictionary-only table and index statistics
+are not ([§3.7](#37-privilege-resilient-monitoring)).
 
 | Method | Primary source | Notes / degradation |
 |--------|----------------|---------------------|
@@ -1807,8 +1842,8 @@ sub-query is independently privilege-guarded ([§3.7](#37-privilege-resilient-mo
 | `getPerformanceMetrics()` | `V$SYSSTAT` | **only** `cacheHitRatio`, and it is **omitted** when `V$SYSSTAT` cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `V$SQL` (top-N by `ELAPSED_TIME`) | `sharedBlksHit`=`BUFFER_GETS`, `sharedBlksRead`=`DISK_READS`; `[]` on failure |
 | `getActiveSessions()` | `V$SESSION` ⋈ `V$SQL` | `pid` = `"SID,SERIAL#"`; wait class/event; `[]` on failure |
-| `getTableStats()` | `ALL_TABLES` + `USER_SEGMENTS` | sizes + `lastAnalyze`; no live/dead tuples, no bloat; `[]` on failure |
-| `getIndexStats()` | `ALL_INDEXES` + `USER_SEGMENTS` + `ALL_IND_COLUMNS` | **`scans` always `0`** (no usage counter exposed); `isPrimary` always `false`; `[]` on failure |
+| `getTableStats()` | `USER_TABLES` + `USER_LOBS` + `USER_INDEXES` + `USER_SEGMENTS` | one row per table the connected user owns; sizes + `lastAnalyze` ([§7.4](#74-what-a-tables-size-counts)); no live/dead tuples, no bloat; **rejects** with the engine's sentence on failure ([§3.7](#37-privilege-resilient-monitoring)) |
+| `getIndexStats()` | `ALL_INDEXES` + `USER_SEGMENTS` + `ALL_IND_COLUMNS` | size summed over every segment of the index, partitions included; **`scans` always `0`** (no usage counter exposed); `isPrimary` always `false`; **rejects** on failure |
 | `getStorageStats()` | `DBA_DATA_FILES` → fallback `USER_SEGMENTS` | per-tablespace size; DBA view falls back to user segments without privilege |
 
 ### 7.1 When the cache hit ratio is not measurable
@@ -1954,6 +1989,44 @@ row, no expected column, or a non-finite value, the measurement is absent and th
 The shared `measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))
 boundary preserves those states without a falsy test that would erase a genuine zero.
 
+### 7.4 What a table's size counts
+
+`USER_SEGMENTS` names each segment for its own object (`SEGMENT_NAME`, with `SEGMENT_TYPE` saying
+what kind) and has **no `TABLE_NAME` column**. From the provider's first version through 0.17.0 the
+table-stats statement selected one from it anyway, so on every Oracle connection the read answered
+`ORA-00904: "TABLE_NAME": invalid identifier`, the empty `catch` returned `[]`, and Monitoring >
+Tables, the Storage tab's table figures and the admin per-table maintenance list all read "no tables"
+(measured on Oracle AI Database 26ai Free 23.26.3.0.0, 2026-10-04). Which table owns an index or a
+LOB is a fact of `USER_INDEXES` and `USER_LOBS`, so the statement now lists every segment a table
+owns through those two and joins `USER_SEGMENTS` by name and kind:
+
+| Counted toward | Segments |
+|----------------|----------|
+| `tableSize` | the table's own (`TABLE`, `TABLE PARTITION`, `TABLE SUBPARTITION`); its LOB segments (`LOBSEGMENT`, `LOB PARTITION`, ...); its LOB indexes (`LOBINDEX`); an index-organized table's top index, where that table's rows live |
+| `indexSize` | every other index on the table, one segment per partition summed |
+
+Everything that stores the rows is the table, the way PostgreSQL's table size includes TOAST. The
+join matches a segment's kind as well as its name because indexes have their own namespace and may
+share a table's name. Measured on the same server with a seeded schema:
+
+| Table | Shape | `tableSize` | `indexSize` |
+|-------|-------|-------------|-------------|
+| `PART_T` | two range partitions, one LOCAL index | 16 MB (2 x 8 MB partitions) | 128 KB (2 x 64 KB) |
+| `DOCS` | CLOB + BLOB, primary key | 7.69 MB (64 KB table + 7.25 MB and 256 KB LOB segments + 2 x 64 KB LOB indexes) | 64 KB |
+| `EMP` | heap, primary key + one index, analyzed | 64 KB, 2000 rows, `lastAnalyze` set | 256 KB |
+| `IOT_T` | index-organized | 64 KB (the top index) | 0 B |
+| `HEAPY` | no row ever inserted (deferred segment creation) | 0 B | 0 B |
+
+A table never analyzed reads `rowCount` 0 and no `lastAnalyze`: both are the optimizer statistics,
+filled by Gather Statistics. `DROPPED = 'NO'` keeps a recycle-bin `BIN$` table out of the list
+wherever the dictionary shows one. An index the user owns on another schema's table is listed in
+`USER_INDEXES` under that table's bare name, so `TABLE_OWNER = USER` keeps it off a same-named table
+here. `schemaName` is the statement's own `USER`, the account the views answer for, which is the owner
+the per-row Gather Statistics and Rebuild Indexes then act on ([§9](#9-maintenance)). It is not the
+configured login name: a proxy login (`app[report]`) or a quoted lower-case user differ from it.
+
+A table stored in a `CLUSTER` has no segment of its own (the cluster holds it), so it reads 0 B.
+
 ---
 
 ## 9. Maintenance
@@ -2065,6 +2138,8 @@ is what lets the Operations tab render those words and send an operation Oracle 
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core Oracle DML |
 | `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY` from this provider's own `prepareQuery` override; page one is `FETCH FIRST n ROWS ONLY` (#816) |
 | `supportsTransactions` | `true` — Oracle is always in a transaction and the held connection commits or rolls back, so the trio and the SANDBOX toggle are offered (#464) |
+| `implicitCommitStatements` | `ALTER`, `ANALYZE`, `ASSOCIATE`, `AUDIT`, `COMMENT`, `CREATE`, `DISASSOCIATE`, `DROP`, `FLASHBACK`, `GRANT`, `NOAUDIT`, `PURGE`, `RENAME`, `REVOKE`, `TRUNCATE`: Oracle's DDL, which "implicitly commits the current transaction before and after every DDL statement" (SQL Language Reference, "Types of SQL Statements"). Plus `BEGIN`, `DECLARE` and `CALL`: a PL/SQL block or a procedure can commit through `EXECUTE IMMEDIATE` or its own `COMMIT`. SANDBOX refuses all of these before sending, because a `ROLLBACK` after one answers success and can undo nothing, and this provider reads no transaction state back from the server to notice afterwards, so the declaration is the only guard here. `COMMIT`, `ROLLBACK` and `ABORT` are refused on every engine |
+| `implicitCommitExceptions` | `ALTER SESSION`, `ALTER SYSTEM`: session and system control, not DDL, so SANDBOX lets them through |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `ALL_CONSTRAINTS`, so an empty list is about the schema or the owner, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'kill']` |
@@ -2142,6 +2217,14 @@ the mock and the provider reading the same declaration. That declaration is hand
 **`oracledb` publishes none** (verified on 6.10.0: no `types`/`typings` field, no `.d.ts` in the
 package, and no `@types/oracledb` dependency here), so a driver upgrade that changes a shape is
 caught by a live probe, not by `tsc`.
+
+**The mock refuses a `USER_SEGMENTS` column the view does not have.** It answered every statement
+it was sent, so `SELECT TABLE_NAME ... FROM USER_SEGMENTS` passed the suite for as long as it shipped
+while the engine refused it with ORA-00904 ([§7.4](#74-what-a-tables-size-counts)). Worse, the
+table-stats statement fell through to the mock's database-size answer, and the old test asserted only
+the field types of that wrong row. The default handler now answers ORA-00904 for any column outside
+the 27 the view has on 23.26.3.0.0, a test pins that the guard refuses the 0.17.0 statement, and the
+table and index statistics are matched before the `USER_SEGMENTS` answers and asserted value by value.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
 > would cross-contaminate if they shared one. They never do: `bun run test` gives every test file its

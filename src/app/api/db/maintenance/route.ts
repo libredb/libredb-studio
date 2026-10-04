@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { emitAuditEvent } from "@/lib/audit";
 import { createErrorResponse } from "@/lib/api/errors";
+import { mapDatabaseError } from "@/lib/db/errors";
 import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
@@ -167,7 +168,12 @@ export async function POST(request: Request) {
       } catch (auditError) {
         logger.error("Failed to record maintenance audit event", auditError, { route: "POST /api/db/maintenance" });
       }
-      throw error;
+      // The driver's error, typed (#1387). A provider hands the engine's refusal on as the driver
+      // raised it, and the outer catch read every untyped error as Studio's own failure: an engine
+      // that refuses the statement (CockroachDB's `VACUUM` syntax error, TiDB's `CHECK TABLE`)
+      // answered 500 INTERNAL_ERROR. Mapped here, a refusal the driver codes as the statement's
+      // own fault answers 400 with the engine's sentence, and anything else keeps a 5xx.
+      throw mapDatabaseError(error, connection.type);
     }
     const duration = Date.now() - startTime;
 

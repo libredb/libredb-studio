@@ -109,6 +109,14 @@ describe("QueryEditor's Format control follows the tab language's registry forma
     expect(formatted).toEqual([]);
   });
 
+  test("an InfluxQL tab, whose record has no formatter, draws no Format control (InfluxDB spec 6.7, I12)", () => {
+    const { queryByText } = render(
+      React.createElement(QueryEditor, { value: "SELECT * FROM cpu WHERE host =~ /a\\/b/", language: "influxql" }),
+    );
+    expect(queryByText("Format")).toBeNull();
+    expect(formatted).toEqual([]);
+  });
+
   test("an SQL tab whose record has no formatter offers no Format SQL context-menu entry", () => {
     // The entry's label stays SQL-only, but it is offered only where the registry gives SQL a formatter, so the
     // menu never offers a Format that does nothing.

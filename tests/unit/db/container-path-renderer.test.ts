@@ -94,6 +94,7 @@ const ENGINES = [
   "src/lib/db/providers/sql/postgres.ts",
   "src/lib/db/providers/sql/sqlite.ts",
   "src/lib/db/providers/sql/trino/objects.ts",
+  "src/lib/db/providers/timeseries/influxdb/influxql-provider.ts",
   "src/lib/db/providers/vector/milvus/index.ts",
 ];
 

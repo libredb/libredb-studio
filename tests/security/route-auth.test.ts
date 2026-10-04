@@ -139,7 +139,7 @@ describe("guardRoute", () => {
     expect("response" in guard).toBe(true);
     const response = (guard as { response: Response }).response;
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Authentication required" });
+    expect(await response.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test("still returns 401 when the permission_denied audit emit throws", async () => {
@@ -439,6 +439,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/api/login-budget":
       "the login failure budgets shared by every route that checks a password, a code or a passkey",
     "@/lib/api/rate-limit": "the in-process token buckets",
+    "@/lib/api/session-ended":
+      "the session-required 401 body and the return-path check for sign-in; data and string checks only",
     "@/lib/api/require-session": "guardRoute itself",
     "@/lib/audit": "the in-process audit ring buffer",
     "@/lib/auth": "session cookie minting and reading",
@@ -455,6 +457,7 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/passkey/webauthn": "WebAuthn verification through @simplewebauthn/server; computation only",
     "@/lib/password-hash": "scrypt for stored account passwords; no provider",
     "@/lib/logger": "structured logging",
+    "@/lib/non-finite": "writes NaN and the infinities in held rows as words; pure, imports nothing",
     "@/lib/oidc": "the OIDC discovery and PKCE exchange",
     "@/lib/seed": "reads seed connection metadata from config; never connects",
     "@/lib/storage/connection-secrets":
@@ -590,7 +593,7 @@ describe("routes that reach a provider require a session", () => {
       const res = await POST(req as never);
 
       expect(res.status).toBe(401);
-      expect(await res.json()).toEqual({ error: "Authentication required" });
+      expect(await res.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
     });
   }
 });

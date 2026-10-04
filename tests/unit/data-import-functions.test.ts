@@ -337,6 +337,59 @@ describe("generateImportSQL", () => {
     expect(offersNewTableImport(undefined)).toBe(true);
   });
 
+  /**
+   * A header is whatever the file says, and a lowercase reserved word passes the bare-name test,
+   * so `CREATE TABLE imp_csv (..., when TEXT)` was a syntax error on PostgreSQL 18.6 (#1396).
+   * Both statements quote every name of the table they create, the same way.
+   */
+  describe("a new table's names are quoted in both statements (#1396)", () => {
+    const reserved: ParsedData = {
+      headers: ["when", "Order Date", "user"],
+      rows: [["2026-10-03", "2026-10-04", "ana"]],
+      totalRows: 1,
+    };
+    const mapping = { when: "when", "Order Date": "Order Date", user: "user" };
+    const cases: Array<[string, ProviderCapabilities, string, string]> = [
+      [
+        "PostgreSQL",
+        { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities,
+        'CREATE TABLE "imp_csv" (\n  "when" TEXT,\n  "Order Date" TEXT,\n  "user" TEXT\n);',
+        'INSERT INTO "imp_csv" ("when", "Order Date", "user")',
+      ],
+      [
+        "MySQL",
+        { queryLanguage: "sql", defaultPort: 3306 } as unknown as ProviderCapabilities,
+        "CREATE TABLE `imp_csv` (\n  `when` TEXT,\n  `Order Date` TEXT,\n  `user` TEXT\n);",
+        "INSERT INTO `imp_csv` (`when`, `Order Date`, `user`)",
+      ],
+      [
+        "SQL Server",
+        { queryLanguage: "sql", defaultPort: 1433 } as unknown as ProviderCapabilities,
+        "CREATE TABLE [imp_csv] (\n  [when] TEXT,\n  [Order Date] TEXT,\n  [user] TEXT\n);",
+        "INSERT INTO [imp_csv] ([when], [Order Date], [user])",
+      ],
+    ];
+    for (const [engine, capabilities, create, insert] of cases) {
+      test(engine, () => {
+        const sql = generateImportSQL(reserved, { kind: "new", name: "imp_csv" }, mapping, undefined, capabilities);
+        expect(sql).toContain(create);
+        expect(sql).toContain(insert);
+      });
+    }
+
+    test("a dotted name is a table in a container", () => {
+      const pg = { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities;
+      const sql = generateImportSQL(reserved, { kind: "new", name: "sales.imp" }, mapping, undefined, pg);
+      expect(sql).toContain('CREATE TABLE "sales"."imp"');
+    });
+
+    test("an existing table's columns keep the mapping's spelling", () => {
+      const pg = { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities;
+      const sql = generateImportSQL(sampleData, existing("users"), { name: "Name" }, undefined, pg);
+      expect(sql).toContain("INSERT INTO users (Name, age, active)");
+    });
+  });
+
   test("a new table is named exactly as it was typed", () => {
     const sql = generateImportSQL(sampleData, { kind: "new", name: "my table" }, { name: "name" });
     expect(sql).toContain("CREATE TABLE my table");
@@ -515,6 +568,43 @@ describe("generateImportSQL", () => {
     // Should have 3 INSERT statements (100 + 100 + 50)
     const insertCount = (sql.match(/INSERT INTO/g) || []).length;
     expect(insertCount).toBe(3);
+  });
+
+  // CQL's INSERT takes one row: on Cassandra 5.0.9 a two-row VALUES list answered "line 3:17
+  // mismatched input ',' expecting EOF" and inserted nothing (#1410).
+  test("writes one INSERT per row where the engine declares no multi-row insert", () => {
+    const cql = {
+      queryLanguage: "sql",
+      defaultPort: 9042,
+      supportsCreateTable: false,
+      supportsMultiRowInsert: false,
+      objectKinds: [{ id: "table", label: "Table", labelPlural: "Tables", acceptsRowWrites: true }],
+    } as unknown as ProviderCapabilities;
+    const data: ParsedData = {
+      headers: ["id", "v"],
+      rows: [
+        ["10", "on"],
+        ["11", "on bir, x"],
+      ],
+      totalRows: 2,
+    };
+    const target: ImportTarget = { kind: "existing", path: ["shop", "e2e_t"] };
+    expect(generateImportSQL(data, target, {}, "cassandra", cql)).toBe(
+      "INSERT INTO shop.e2e_t (id, v)\nVALUES\n  (10, 'on');\n\n" +
+        "INSERT INTO shop.e2e_t (id, v)\nVALUES\n  (11, 'on bir, x');",
+    );
+  });
+
+  test("an explicit multi-row declaration keeps the batches of 100", () => {
+    const rows = Array.from({ length: 150 }, (_, i) => [String(i)]);
+    const data: ParsedData = { headers: ["id"], rows, totalRows: 150 };
+    const caps = {
+      queryLanguage: "sql",
+      defaultPort: 5432,
+      supportsMultiRowInsert: true,
+    } as unknown as ProviderCapabilities;
+    const sql = generateImportSQL(data, existing("items"), { id: "id" }, "postgres", caps);
+    expect((sql.match(/INSERT INTO/g) || []).length).toBe(2);
   });
 
   test("falls back to header name when mapping is empty", () => {

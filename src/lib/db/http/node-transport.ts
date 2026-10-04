@@ -5,7 +5,8 @@
  * its connection sends, and gets back `request` and `close`. Nothing here knows about an engine, and no provider is
  * imported. Server-only: it imports Node built-ins, so nothing browser-side may import it.
  *
- * - One `node:http` or `node:https` Agent per connection, `keepAlive: true`, at most `maxSockets` sockets, destroyed by
+ * - One `node:http` or `node:https` Agent per connection, `keepAlive: true`, at most `maxSockets` sockets, an idle
+ *   socket closed after IDLE_SOCKET_MS so a server's keep-alive timeout never closes one under a request, destroyed by
  *   close(). Never the global agent, which routes through a proxy variable (HTTP_PROXY under NODE_USE_ENV_PROXY=1 on
  *   Node, and under Bun), and never `globalThis.fetch`, so no proxy variable can carry a request or its credential.
  * - With DB_HTTP_BLOCK_PRIVATE_HOSTS on, the guard's literal check runs when the transport is built, before any socket,
@@ -62,6 +63,8 @@ export interface NodeTransportOptions {
   readonly maxSockets: number;
   /** Set once per connection, the credential header among them. */
   readonly headers: Readonly<Record<string, string>>;
+  /** How long a pooled socket may sit idle before the transport closes it; IDLE_SOCKET_MS when absent. */
+  readonly idleSocketMs?: number;
 }
 
 export interface NodeRequest {
@@ -70,6 +73,12 @@ export interface NodeRequest {
   readonly url: string;
   /** UTF-8 JSON text, already serialised. */
   readonly body?: string;
+  /**
+   * Form fields, serialised by the transport with URLSearchParams and sent under
+   * `content-type: application/x-www-form-urlencoded` with its byte length; a request with both `body` and `form` is
+   * refused before any socket, never sent with one of them dropped.
+   */
+  readonly form?: Readonly<Record<string, string>>;
   /** Carries the caller's cancel and the deadline. */
   readonly signal: AbortSignal;
   readonly maxResponseBytes: number;
@@ -85,11 +94,16 @@ export interface NodeResponse {
 
 /** A request that did not complete. Its message never carries a header, the key, a URL query string or a body. */
 export class TransportError extends ConnectionError {
+  /** True only with kind "network": the response callback had run and the body had not ended when the request failed. */
+  readonly truncated: boolean;
+
   constructor(
     readonly kind: "timeout" | "aborted" | "too-large" | "redirect" | "encoding" | "tls" | "network",
     message: string,
+    options?: { readonly truncated?: boolean },
   ) {
     super(message);
+    this.truncated = options?.truncated ?? false;
     this.name = "TransportError";
     Object.setPrototypeOf(this, TransportError.prototype);
   }
@@ -167,12 +181,24 @@ export function nodeTlsMaterial(ssl: SSLConfig | null | undefined, identity: str
 /** The longest Retry-After value kept: an HTTP date is 29 characters, and a longer value is no wait a client can read. */
 const MAX_RETRY_AFTER_LENGTH = 64;
 
+/**
+ * How long a pooled socket may sit idle before this side closes it (#1419): below the keep-alive of the servers this
+ * transport talks to, so the client, never the server, ends an idle socket. Qdrant 1.19.1 (actix-web) closes an idle
+ * keep-alive connection after 5 s (measured 4.8 s after its answer), and a request written on a pooled socket as the
+ * server closed it failed with
+ * ECONNRESET: measured on 2026-10-03/04, 1 of 16 requests separated by 4.93 s pauses, none with 1 s pauses. Node and Bun
+ * both apply the Agent's `timeout` to a free socket only; a request in flight longer than this is not cut by it.
+ */
+export const IDLE_SOCKET_MS = 4000;
+
 const FOREIGN_URL = "Invalid host: the request URL would not address the configured host, so it was not sent";
 const INVALID_MAX_SOCKETS = "Invalid maxSockets: expected a positive integer";
 const INVALID_MAX_RESPONSE_BYTES = "Invalid maxResponseBytes: expected a positive integer";
 const SCHEME_MISMATCH = "Invalid TLS settings: an https origin needs TLS material, and an http origin takes none";
 const CLOSED = "The connection was closed, so the request did not complete";
 const NETWORK_FAILURE = "The request failed before a complete response arrived";
+const TRUNCATED = "The server ended the response before it was complete";
+const BODY_AND_FORM = "Invalid request: give a body or form fields, not both";
 
 /** A runtime error code named in a failure; any other value is left out of the message. */
 const ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -249,17 +275,24 @@ function abortFailure(signal: AbortSignal): TransportError {
     : new TransportError("aborted", "The request was cancelled");
 }
 
-/** Whatever the runtime raised, as a failure whose message holds a code at most. */
-function failureFrom(error: unknown, signal: AbortSignal, overTls: boolean): Error {
+/**
+ * Whatever the runtime raised, as a failure whose message holds a code at most. `responded` is true once the response
+ * callback has run and until the body ends: a network failure then is the server ending the answer early, by a FIN or
+ * an RST, whichever object emits it (R20), and is never read as the answer it cut short. A TLS code stays kind "tls".
+ */
+function failureFrom(error: unknown, signal: AbortSignal, overTls: boolean, responded: boolean): Error {
   // The egress guard's refusal from the Agent's lookup: already worded, and naming no address.
   if (error instanceof DatabaseConfigError) return error;
   // Whatever the runtime threw once the signal fired, the signal says which kind of stop it was.
   if (signal.aborted) return abortFailure(signal);
   const code = errorCode(error);
-  if (code === undefined) return new TransportError("network", NETWORK_FAILURE);
   // A TLS failure stays a failure: nothing is retried over plain HTTP or with weaker verification.
-  if (isTlsCode(code, overTls)) return new TransportError("tls", `The TLS connection failed (${code})`);
-  return new TransportError("network", `${NETWORK_FAILURE} (${code})`);
+  if (code !== undefined && isTlsCode(code, overTls)) {
+    return new TransportError("tls", `The TLS connection failed (${code})`);
+  }
+  // A cut body never emits `end` on either runtime, so the network branch is the only place a truncation shows.
+  if (responded) return new TransportError("network", TRUNCATED, { truncated: true });
+  return new TransportError("network", code === undefined ? NETWORK_FAILURE : `${NETWORK_FAILURE} (${code})`);
 }
 
 function tooLarge(limit: number): TransportError {
@@ -310,16 +343,33 @@ function lowerCased(headers: Readonly<Record<string, string>>): Record<string, s
   return Object.fromEntries(lowered);
 }
 
+/** What a request sends: its text and the content type the transport sets for it. */
+interface Payload {
+  readonly text: string;
+  readonly contentType: string;
+}
+
+/** The request's payload: a form serialised here, a JSON body as given, or undefined for neither. */
+function payloadOf(request: NodeRequest): Payload | undefined {
+  if (request.form !== undefined) {
+    return { text: new URLSearchParams(request.form).toString(), contentType: "application/x-www-form-urlencoded" };
+  }
+  return request.body === undefined ? undefined : { text: request.body, contentType: "application/json" };
+}
+
 function requestHeaders(
   connection: Readonly<Record<string, string>>,
-  body: string | undefined,
+  payload: Payload | undefined,
 ): Record<string, string> {
   return {
     ...connection,
     "accept-encoding": "identity",
-    ...(body === undefined
+    ...(payload === undefined
       ? {}
-      : { "content-type": "application/json", "content-length": String(Buffer.byteLength(body, "utf8")) }),
+      : {
+          "content-type": payload.contentType,
+          "content-length": String(Buffer.byteLength(payload.text, "utf8")),
+        }),
   };
 }
 
@@ -363,7 +413,12 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   const { lookup } = guardedNodeOptions(origin.host);
   const connectionOrigin = new URL(endpointUrl(origin, "/")).origin;
   const connectionHeaders = lowerCased(options.headers);
-  const shared: AgentOptions = { keepAlive: true, maxSockets, ...(lookup === undefined ? {} : { lookup }) };
+  const shared: AgentOptions = {
+    keepAlive: true,
+    timeout: options.idleSocketMs ?? IDLE_SOCKET_MS,
+    maxSockets,
+    ...(lookup === undefined ? {} : { lookup }),
+  };
   const agent = tls === null ? new HttpAgent(shared) : new HttpsAgent({ ...shared, ...tlsAgentOptions(tls) });
   const send = tls === null ? httpRequest : httpsRequest;
   /**
@@ -392,6 +447,8 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
       let incoming: IncomingMessage | undefined;
       let settled = false;
       let started = false;
+      // Set when the response callback runs and cleared when the body ends: a failure in between is a truncation.
+      let responded = false;
       const settle = (): boolean => {
         if (settled) return false;
         settled = true;
@@ -408,11 +465,12 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
         outgoing?.destroy();
         reject(failure);
       };
-      const failWith = (error: unknown): void => fail(failureFrom(error, request.signal, tls !== null));
+      const failWith = (error: unknown): void => fail(failureFrom(error, request.signal, tls !== null, responded));
       const onAbort = (): void => fail(abortFailure(request.signal));
       const start = (): void => {
         started = true;
         sending += 1;
+        const payload = payloadOf(request);
         try {
           outgoing = send(
             {
@@ -421,10 +479,11 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
               path,
               method: request.method,
               agent,
-              headers: requestHeaders(connectionHeaders, request.body),
+              headers: requestHeaders(connectionHeaders, payload),
             },
             (answer) => {
               incoming = answer;
+              responded = true;
               answer.on("error", failWith);
               // Set on every answer a ClientRequest receives; the type is shared with server-side requests.
               const status = answer.statusCode ?? 0;
@@ -457,6 +516,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
                 chunks.push(chunk);
               });
               answer.on("end", () => {
+                responded = false;
                 if (!settle()) return;
                 resolve({
                   status,
@@ -468,7 +528,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
             },
           );
           outgoing.on("error", failWith);
-          outgoing.end(request.body);
+          outgoing.end(payload?.text);
         } catch (error) {
           // node:http refuses some requests by throwing before anything is sent: a header value with a line feed.
           failWith(error);
@@ -486,6 +546,8 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
       // An already-aborted signal never fires "abort" again, and node:http would send the request regardless.
       if (request.signal.aborted) throw abortFailure(request.signal);
       if (!isPositiveInteger(request.maxResponseBytes)) throw new DatabaseConfigError(INVALID_MAX_RESPONSE_BYTES);
+      // Neither is dropped silently: a request naming both is refused before any socket.
+      if (request.body !== undefined && request.form !== undefined) throw new DatabaseConfigError(BODY_AND_FORM);
       const target = parsedUrl(request.url);
       // A URL carrying userinfo would send it as an Authorization header, so it is refused like another origin.
       if (target === null || target.origin !== connectionOrigin || target.username !== "" || target.password !== "") {

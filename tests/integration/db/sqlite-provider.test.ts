@@ -7,7 +7,7 @@
  *   forced deterministically via LIBREDB_SQLITE_DRIVER=node
  */
 
-import { describe, test, expect, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
+import { describe, test, expect, afterEach, beforeAll, beforeEach, afterAll, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { Database as BunDatabase, constants as sqliteConstants } from "bun:sqlite";
 import {
@@ -313,10 +313,11 @@ describe("SQLiteProvider", () => {
       expect(result.rowCount).toBe(0);
     });
 
-    // The provider picks `all()` vs `run()` from `isReadOnlyQuery`, so a SELECT
-    // misread as a write used to come back with no rows and `changes: 0` - the
-    // same comment-blind classification as the missing LIMIT in #275, with a
-    // worse symptom: the user sees an empty grid for a query that has data.
+    // The provider used to pick `all()` vs `run()` from `isReadOnlyQuery`, so a SELECT
+    // misread as a write came back with no rows and `changes: 0` - the same
+    // comment-blind classification as the missing LIMIT in #275, with a worse
+    // symptom: the user sees an empty grid for a query that has data. It now asks
+    // the driver for the result column count, which no comment can hide.
     test("a comment-led SELECT returns its rows instead of an empty write result", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
@@ -424,6 +425,9 @@ describe("SQLiteProvider", () => {
       // one, so POST /api/db/transaction refuses the call and the controls must not
       // be offered (#464). The flag describes the provider's surface, not the engine.
       expect(caps.supportsTransactions).toBe(false);
+      // Both drivers are synchronous, so a running statement holds the server's thread and
+      // the editor disables Cancel rather than offering "Stop waiting" (#1364).
+      expect(caps.blocksServerWhileRunning).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -815,6 +819,7 @@ describe("SQLiteProvider", () => {
           get: () => null,
           run: () => ({ changes: 0 }),
           declaredColumns: () => [],
+          returnsRows: () => true,
         }),
       };
 
@@ -1417,6 +1422,7 @@ function answerReadsMatching(provider: SQLiteProvider, match: string, rows: read
     get: () => rows[0] ?? null,
     run: () => ({ changes: 0 }),
     declaredColumns: () => [],
+    returnsRows: () => true,
   }));
 }
 
@@ -1444,6 +1450,7 @@ function captureReadsMatching(
       get: () => rows[0] ?? null,
       run: () => ({ changes: 0 }),
       declaredColumns: () => [],
+      returnsRows: () => true,
     };
   });
   return captured;
@@ -3388,6 +3395,124 @@ describe("resolveSQLiteDriverName()", () => {
 });
 
 // ============================================================================
+// Statements that return rows without starting with SELECT
+// ============================================================================
+// The provider chose `all()` or `run()` from the leading keyword, and the keyword set
+// had no WITH, no VALUES and no way to see a RETURNING clause, so all three came back
+// as an empty "success" carrying the connection's previous change count. Measured
+// 2026-10-03 on node:sqlite (SQLite 3.50.4): the CTE answered `rows: [], rowCount: 3`,
+// and the RETURNING insert landed with its row dropped. Run on both drivers in-process
+// (Bun 1.4 ships node:sqlite), so the two answers are compared rather than assumed.
+
+describe.each(["bun", "node"] as const)("SQLiteProvider row-returning statements on the %s driver", (driver) => {
+  const originalDriverEnv = process.env.LIBREDB_SQLITE_DRIVER;
+  let rowsProvider: SQLiteProvider;
+
+  beforeEach(async () => {
+    process.env.LIBREDB_SQLITE_DRIVER = driver;
+    rowsProvider = new SQLiteProvider(makeSQLiteConfig({ id: `rows-${driver}` }));
+    await rowsProvider.connect();
+    await rowsProvider.query("CREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT)");
+    // Three rows changed, so a statement that wrongly reports the connection's last
+    // change count is told apart from one that reports its own.
+    await rowsProvider.query("INSERT INTO dept VALUES (1, 'Ops'), (2, 'Eng'), (3, 'Sales')");
+  });
+
+  afterEach(async () => {
+    await rowsProvider.disconnect();
+    if (originalDriverEnv === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+    else process.env.LIBREDB_SQLITE_DRIVER = originalDriverEnv;
+  });
+
+  test("a CTE returns its rows", async () => {
+    const result = await rowsProvider.query("WITH x AS (SELECT 1 AS a UNION ALL SELECT 2) SELECT a FROM x");
+
+    expect(result.rows).toEqual([{ a: 1 }, { a: 2 }]);
+    expect(result.fields).toEqual(["a"]);
+    expect(result.rowCount).toBe(2);
+  });
+
+  test("a recursive CTE returns its rows", async () => {
+    const result = await rowsProvider.query(
+      "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 4) SELECT n FROM c",
+    );
+
+    expect(result.rows).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]);
+  });
+
+  test("a bare VALUES list returns its rows", async () => {
+    const result = await rowsProvider.query("VALUES (1, 'a'), (2, 'b')");
+
+    expect(result.rows).toEqual([
+      { column1: 1, column2: "a" },
+      { column1: 2, column2: "b" },
+    ]);
+    expect(result.rowCount).toBe(2);
+  });
+
+  test("INSERT ... RETURNING writes the row and returns it", async () => {
+    const result = await rowsProvider.query("INSERT INTO dept VALUES (7, 'R&D') RETURNING id, name");
+
+    expect(result.rows).toEqual([{ id: 7, name: "R&D" }]);
+    expect(result.fields).toEqual(["id", "name"]);
+    expect(result.rowCount).toBe(1);
+    const stored = await rowsProvider.query("SELECT name FROM dept WHERE id = 7");
+    expect(stored.rows).toEqual([{ name: "R&D" }]);
+  });
+
+  test("UPDATE ... RETURNING and DELETE ... RETURNING return the rows they touched", async () => {
+    const updated = await rowsProvider.query("UPDATE dept SET name = upper(name) WHERE id <= 2 RETURNING id, name");
+    expect(updated.rows).toEqual([
+      { id: 1, name: "OPS" },
+      { id: 2, name: "ENG" },
+    ]);
+    expect(updated.rowCount).toBe(2);
+
+    const deleted = await rowsProvider.query("DELETE FROM dept WHERE id = 3 RETURNING *");
+    expect(deleted.rows).toEqual([{ id: 3, name: "Sales" }]);
+    expect((await rowsProvider.query("SELECT COUNT(*) AS n FROM dept")).rows).toEqual([{ n: 2 }]);
+  });
+
+  test("a RETURNING statement that matches nothing answers no rows and a zero count", async () => {
+    const result = await rowsProvider.query("DELETE FROM dept WHERE id = 99 RETURNING id");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(0);
+  });
+
+  test("a parameterized RETURNING statement binds its parameters", async () => {
+    const result = await rowsProvider.query("INSERT INTO dept VALUES (?, ?) RETURNING name", [8, "Legal"]);
+
+    expect(result.rows).toEqual([{ name: "Legal" }]);
+  });
+
+  test("a plain INSERT, UPDATE and DELETE still report the rows they changed", async () => {
+    expect((await rowsProvider.query("INSERT INTO dept VALUES (4, 'HR'), (5, 'IT')")).rowCount).toBe(2);
+    const update = await rowsProvider.query("UPDATE dept SET name = 'x' WHERE id IN (1, 2, 4)");
+    expect(update.rows).toEqual([]);
+    expect(update.rowCount).toBe(3);
+    expect((await rowsProvider.query("DELETE FROM dept WHERE id = 5")).rowCount).toBe(1);
+  });
+
+  test("a value-setting PRAGMA answers no rows, and reading it back answers the value", async () => {
+    const set = await rowsProvider.query("PRAGMA user_version = 3");
+    expect(set.rows).toEqual([]);
+
+    const read = await rowsProvider.query("PRAGMA user_version");
+    expect(read.rows).toEqual([{ user_version: 3 }]);
+  });
+
+  test("a CTE-led DELETE without RETURNING is still a write", async () => {
+    const result = await rowsProvider.query(
+      "WITH d AS (SELECT 2 AS id) DELETE FROM dept WHERE id IN (SELECT id FROM d)",
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(1);
+  });
+});
+
+// ============================================================================
 // Node driver (LIBREDB_SQLITE_DRIVER=node -> node:sqlite)
 //
 // Bun refuses to load better-sqlite3 and does not implement node:sqlite, so
@@ -3475,6 +3600,22 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(report.updateRowCount).toBe(1);
     expect(report.deleteRowCount).toBe(1);
 
+    // Row-returning statements that do not start with SELECT: the same answers the
+    // in-process runs of both drivers give above.
+    expect(report.rowReturning).toEqual({
+      cte: { rows: [{ a: 1 }, { a: 2 }], rowCount: 2 },
+      values: {
+        rows: [
+          { column1: 1, column2: "a" },
+          { column1: 2, column2: "b" },
+        ],
+        rowCount: 2,
+      },
+      insertReturning: { rows: [{ id: 3, name: "Cy" }], rowCount: 1 },
+      updateReturning: { rows: [{ name: "Cyd" }], rowCount: 1 },
+      deleteReturning: { rows: [{ id: 3 }], rowCount: 1 },
+    });
+
     // 64-bit ids: the same answer the bun driver gives in-process above.
     // Before the fix this run did not reach here at all - node:sqlite threw
     // ERR_OUT_OF_RANGE on the first read of 9007199254740993.
@@ -3486,6 +3627,11 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     ]);
     expect(report.bigSmallInteger).toEqual([{ one: 1 }]);
     expect(report.bigCount).toEqual([{ count: 2 }]);
+
+    // A BLOB reaches the wire as the Buffer form `asBytes` reads, as under bun.
+    expect(report.blobWire).toEqual([
+      { bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] }, empty: { type: "Buffer", data: [] } },
+    ]);
 
     // #42: on a column with NO affinity the same id used to match nothing at all, so the
     // row was uneditable. One row changes, and it is the one that was read.
@@ -3560,8 +3706,9 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(report.tableCount).toBe(2);
     expect(report.integrity).toContain("OK");
 
-    // Error mapping (same mapDatabaseError path as the bun driver)
-    expect(report.queryErrorName).toBe("DatabaseError");
+    // Error mapping (same mapDatabaseError path as the bun driver). A missing table is the
+    // statement's own fault, read from node:sqlite's `errcode` 1 (SQLITE_ERROR) since #1427.
+    expect(report.queryErrorName).toBe("QueryError");
     expect(report.queryErrorMessage).toContain("no such table");
 
     // ------------------------------------------------------------------
@@ -4760,5 +4907,46 @@ describe("SQLiteProvider on a database file this process cannot write", () => {
     } finally {
       accessSpy.mockRestore();
     }
+  });
+});
+
+// ============================================================================
+// A BLOB round trip: provider, wire, export, replay
+// ============================================================================
+// The whole path a BLOB takes to a user's file and back, on the real bun:sqlite driver.
+// The rows cross `JSON.stringify` and `JSON.parse` exactly as `POST /api/db/query` and
+// the browser do. Before the driver seam handed back a Buffer, the bytes arrived as
+// `{"0":222,...}`, the SQL export wrote that object as quoted text, and the replay
+// below stored a TEXT value in place of the six bytes.
+
+describe("a BLOB survives the wire, the export and a replay", () => {
+  test("the SQL INSERT export writes X'..' and replays to identical bytes", async () => {
+    const provider = new SQLiteProvider(makeSQLiteConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE src (id INTEGER PRIMARY KEY, bin BLOB)");
+    await provider.query("INSERT INTO src VALUES (1, x'DEADBEEF00FF'), (2, x'')");
+
+    const read = await provider.query("SELECT id, bin FROM src ORDER BY id");
+    const wire = JSON.parse(JSON.stringify(read.rows)) as Record<string, unknown>[];
+    expect(wire[0]?.bin).toEqual({ type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] });
+
+    const source = { rows: wire, fields: read.fields, tabName: "dst", dialect: "sqlite" as const };
+    expect(buildResultExport("csv", source).content).toContain("1,\\xdeadbeef00ff");
+    const insert = buildResultExport("sql-insert", source).content;
+    expect(insert.split("\n")).toEqual([
+      `INSERT INTO dst ("id", "bin") VALUES (1, X'deadbeef00ff');`,
+      `INSERT INTO dst ("id", "bin") VALUES (2, X'');`,
+    ]);
+
+    await provider.query("CREATE TABLE dst (id INTEGER PRIMARY KEY, bin BLOB)");
+    await Promise.all(insert.split("\n").map((statement) => provider.query(statement)));
+    const replayed = await provider.query(
+      "SELECT d.id, typeof(d.bin) AS kind, hex(d.bin) AS hex, d.bin = s.bin AS same FROM dst d JOIN src s USING (id) ORDER BY d.id",
+    );
+    expect(replayed.rows).toEqual([
+      { id: 1, kind: "blob", hex: "DEADBEEF00FF", same: 1 },
+      { id: 2, kind: "blob", hex: "", same: 1 },
+    ]);
+    await provider.disconnect();
   });
 });

@@ -97,9 +97,18 @@ describe("AuditRingBuffer", () => {
 
       const recent = buffer.getRecent(3);
       expect(recent).toHaveLength(3);
-      expect(recent[0].action).toBe("action-2");
+      // Newest first: the event that just happened is the first row.
+      expect(recent[0].action).toBe("action-4");
       expect(recent[1].action).toBe("action-3");
-      expect(recent[2].action).toBe("action-4");
+      expect(recent[2].action).toBe("action-2");
+    });
+
+    test("an unusable count answers everything, still newest first", () => {
+      for (let i = 0; i < 3; i++) {
+        buffer.push({ type: "query_execution", action: `action-${i}`, target: "t", user: "u", result: "success" });
+      }
+
+      expect(buffer.getRecent(Number.NaN).map((e) => e.action)).toEqual(["action-2", "action-1", "action-0"]);
     });
   });
 
@@ -147,6 +156,14 @@ describe("AuditRingBuffer", () => {
       const result = buffer.filter({ type: "query_execution" });
       expect(result).toHaveLength(2);
       result.forEach((e) => expect(e.type).toBe("query_execution"));
+    });
+
+    test("answers newest first and keeps only the newest `limit` matches", () => {
+      const all = buffer.filter({ type: "query_execution" });
+      expect(all[0].timestamp >= all[1].timestamp).toBe(true);
+
+      const capped = buffer.filter({ type: "query_execution", limit: 1 });
+      expect(capped).toEqual([all[0]]);
     });
 
     test("filters by result", () => {

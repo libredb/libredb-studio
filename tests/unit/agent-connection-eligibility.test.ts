@@ -129,6 +129,14 @@ describe("which connection a run may be started on", () => {
     expect(startableId(browserCopy(server, { saslMechanism: undefined }), loaded(server))).toBeNull();
   });
 
+  test("a copy that lists other data servers is not startable by the seed id", () => {
+    // Which addresses a read may reach and the token may be sent to: a resolution field.
+    const server = descriptor({ dataServers: "a.internal:6648,b.internal:6648" });
+    expect(startableId(browserCopy(server), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { dataServers: "a.internal:6648" }), loaded(server))).toBeNull();
+    expect(startableId(browserCopy(server, { dataServers: undefined }), loaded(server))).toBeNull();
+  });
+
   // The field a hand-written comparison forgets: it changes which role the agent
   // executes as, which is the whole point of the least-privilege profile (#328).
   test("a copy carrying its own agent credentials is not startable", () => {

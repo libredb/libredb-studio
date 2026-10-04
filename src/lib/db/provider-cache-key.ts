@@ -95,8 +95,11 @@ export async function providerCacheKey(connection: DatabaseConnection & WithTunn
  *   under another mechanism are another principal's secret. Nothing asks for it here: this list is
  *   hand-kept and no compiler walks `DatabaseConnection` for it, and without it two connections
  *   differing only in the mechanism would share one cached provider.
- * - `allowInsecureAuth` decides whether a Db2 provider connects with no TLS at all (#786), so a
- *   connection whose consent was taken back must not be handed a provider opened under it.
+ * - `allowInsecureAuth` decides whether a Db2 or InfluxDB provider sends its secret with no TLS (#786,
+ *   InfluxDB spec I7), and whether an Oxia provider sends its token without TLS, so a connection whose
+ *   consent was taken back must not be handed a provider opened under it.
+ * - `dataServers` decides which hosts receive the token (O6), so a connection whose list changed must
+ *   not be handed a provider whose policy admitted other hosts.
  * - The tunnel's SECRETS and `hostKeyFingerprint`. Its ROUTE is deliberately absent: `tunnelRoute`
  *   frames the four route values inside the fingerprint already, and this is the half that file
  *   explicitly leaves out as "a credential, not a route".
@@ -115,6 +118,7 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     ssl === undefined ? "" : String(ssl.rejectUnauthorized ?? ""),
     connection.saslMechanism ?? "",
     connection.allowInsecureAuth === true ? "insecure-auth" : "",
+    connection.dataServers ?? "",
     tunnel?.authMethod ?? "",
     tunnel?.password ?? "",
     tunnel?.privateKey ?? "",

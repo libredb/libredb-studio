@@ -1,0 +1,1194 @@
+{
+  "header": {
+    "tool": "@node-rs/xxhash",
+    "toolVersion": "1.7.6",
+    "node": "v24.14.0",
+    "command": "node gen.mjs, in a scratch directory holding only @node-rs/xxhash",
+    "crossCheck": {
+      "image": "oxia/oxia:0.16.10",
+      "digest": "oxia/oxia@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322",
+      "shards": 4,
+      "cliCommand": "oxia client -a 127.0.0.1:26690 put <key> v",
+      "keys": 19,
+      "onPredictedShard": 19
+    }
+  },
+  "server": [
+    {
+      "text": "foo",
+      "low32": 125730186
+    },
+    {
+      "text": "bar",
+      "low32": 2687685474
+    },
+    {
+      "text": "baz",
+      "low32": 862947621
+    }
+  ],
+  "measured": [
+    {
+      "text": "",
+      "low32": 953390274
+    },
+    {
+      "text": "a",
+      "low32": 513166879
+    },
+    {
+      "text": "key-1",
+      "low32": 1795303929
+    },
+    {
+      "text": "/a/b",
+      "low32": 973649257
+    },
+    {
+      "text": "ünïcode",
+      "low32": 3621230215
+    },
+    {
+      "text": "__oxia/x",
+      "low32": 2206503242
+    },
+    {
+      "text": "o",
+      "low32": 1928134955
+    },
+    {
+      "text": "ox",
+      "low32": 886832340
+    },
+    {
+      "text": "oxi",
+      "low32": 3098601608
+    },
+    {
+      "text": "oxia",
+      "low32": 1981212581
+    },
+    {
+      "text": "oxia-xxh",
+      "low32": 3939508314
+    },
+    {
+      "text": "oxia-xxh3",
+      "low32": 2466973330
+    },
+    {
+      "text": "oxia-xxh3-oxia-x",
+      "low32": 3233186982
+    },
+    {
+      "text": "oxia-xxh3-oxia-xx",
+      "low32": 2401288181
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-ox",
+      "low32": 2069460726
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia",
+      "low32": 541767697
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-x",
+      "low32": 1681724166
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh",
+      "low32": 2479608593
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3",
+      "low32": 473987945
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-",
+      "low32": 2899325440
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-o",
+      "low32": 1398067642
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-ox",
+      "low32": 324828931
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia",
+      "low32": 3320907782
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-",
+      "low32": 325752159
+    },
+    {
+      "text": "oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh3-oxia-xxh",
+      "low32": 2104931075
+    }
+  ],
+  "generated": [
+    {
+      "length": 0,
+      "xxh3": "2d06800538d394c2"
+    },
+    {
+      "length": 1,
+      "xxh3": "e12ef9d2eb86ceeb"
+    },
+    {
+      "length": 2,
+      "xxh3": "1526811c52b5cfc0"
+    },
+    {
+      "length": 3,
+      "xxh3": "b2b06c45ef888ef4"
+    },
+    {
+      "length": 4,
+      "xxh3": "8b806c96ec81f796"
+    },
+    {
+      "length": 5,
+      "xxh3": "988e18b6a13077ac"
+    },
+    {
+      "length": 6,
+      "xxh3": "172646b9944a9cef"
+    },
+    {
+      "length": 7,
+      "xxh3": "7561869c23da3c1b"
+    },
+    {
+      "length": 8,
+      "xxh3": "65d8b6bd6573b7b0"
+    },
+    {
+      "length": 9,
+      "xxh3": "b5f2eed243ec7bcb"
+    },
+    {
+      "length": 10,
+      "xxh3": "9d3cda07ca4e3e3a"
+    },
+    {
+      "length": 11,
+      "xxh3": "cb028e2fadfe03a2"
+    },
+    {
+      "length": 12,
+      "xxh3": "273553a4206327d5"
+    },
+    {
+      "length": 13,
+      "xxh3": "6587dd7b367cc972"
+    },
+    {
+      "length": 14,
+      "xxh3": "01b3f8c2fde07135"
+    },
+    {
+      "length": 15,
+      "xxh3": "b95c332dcb0d05c0"
+    },
+    {
+      "length": 16,
+      "xxh3": "49d5450d8a85f113"
+    },
+    {
+      "length": 17,
+      "xxh3": "8d676ab55fd41af7"
+    },
+    {
+      "length": 18,
+      "xxh3": "cdd209b526f1a383"
+    },
+    {
+      "length": 19,
+      "xxh3": "a44dc1c0f2a8ad72"
+    },
+    {
+      "length": 20,
+      "xxh3": "39d3349f7d483e56"
+    },
+    {
+      "length": 21,
+      "xxh3": "9430fa6606f35e61"
+    },
+    {
+      "length": 22,
+      "xxh3": "96d2b664e9d7cc77"
+    },
+    {
+      "length": 23,
+      "xxh3": "8c92fb52a67408a5"
+    },
+    {
+      "length": 24,
+      "xxh3": "d78020192cc8cc60"
+    },
+    {
+      "length": 25,
+      "xxh3": "f2078284a99b6b10"
+    },
+    {
+      "length": 26,
+      "xxh3": "047d91e2cf928af5"
+    },
+    {
+      "length": 27,
+      "xxh3": "9bf571e2a741ce37"
+    },
+    {
+      "length": 28,
+      "xxh3": "7b4939fffa527c00"
+    },
+    {
+      "length": 29,
+      "xxh3": "c12231d4bd4e778c"
+    },
+    {
+      "length": 30,
+      "xxh3": "d1513e5d40375d1d"
+    },
+    {
+      "length": 31,
+      "xxh3": "efbbfb8f121dd109"
+    },
+    {
+      "length": 32,
+      "xxh3": "6dbdae88dae0d09c"
+    },
+    {
+      "length": 33,
+      "xxh3": "40625e2b1ae2531c"
+    },
+    {
+      "length": 34,
+      "xxh3": "00213c9daef3c623"
+    },
+    {
+      "length": 35,
+      "xxh3": "ecc268e54c474ca3"
+    },
+    {
+      "length": 36,
+      "xxh3": "568c45bd8420e93d"
+    },
+    {
+      "length": 37,
+      "xxh3": "b3860e2e64a284e1"
+    },
+    {
+      "length": 38,
+      "xxh3": "6c915c084756749d"
+    },
+    {
+      "length": 39,
+      "xxh3": "23d13239e3f3c23d"
+    },
+    {
+      "length": 40,
+      "xxh3": "f8217036fbaa1db7"
+    },
+    {
+      "length": 41,
+      "xxh3": "25daf447ce576f77"
+    },
+    {
+      "length": 42,
+      "xxh3": "ee2a2097ee068460"
+    },
+    {
+      "length": 43,
+      "xxh3": "c7da1efd30f5550f"
+    },
+    {
+      "length": 44,
+      "xxh3": "7510250aad6456b6"
+    },
+    {
+      "length": 45,
+      "xxh3": "396318a6b4e4bfda"
+    },
+    {
+      "length": 46,
+      "xxh3": "f5a6e058cee416cc"
+    },
+    {
+      "length": 47,
+      "xxh3": "06ffea51dce04f7e"
+    },
+    {
+      "length": 48,
+      "xxh3": "4f016ff6f0b061e4"
+    },
+    {
+      "length": 49,
+      "xxh3": "f6dbe6c5ef062e2b"
+    },
+    {
+      "length": 50,
+      "xxh3": "d1a41360caece3bb"
+    },
+    {
+      "length": 51,
+      "xxh3": "230b7a3d0e69e464"
+    },
+    {
+      "length": 52,
+      "xxh3": "9ad3351e27421a54"
+    },
+    {
+      "length": 53,
+      "xxh3": "ab7761b50a706685"
+    },
+    {
+      "length": 54,
+      "xxh3": "c9ec069cca9346b3"
+    },
+    {
+      "length": 55,
+      "xxh3": "930018ae5aaccd00"
+    },
+    {
+      "length": 56,
+      "xxh3": "8a366e984e90bf44"
+    },
+    {
+      "length": 57,
+      "xxh3": "cbc11fd6170806f2"
+    },
+    {
+      "length": 58,
+      "xxh3": "6180c496c150d078"
+    },
+    {
+      "length": 59,
+      "xxh3": "e9c78f212373e2b9"
+    },
+    {
+      "length": 60,
+      "xxh3": "ea1ab6240e1c3f5f"
+    },
+    {
+      "length": 61,
+      "xxh3": "cd09577ce88ea4c4"
+    },
+    {
+      "length": 62,
+      "xxh3": "e2a5e4005c85a55e"
+    },
+    {
+      "length": 63,
+      "xxh3": "f423ef39cdd95e40"
+    },
+    {
+      "length": 64,
+      "xxh3": "126d7b47cbb1d0f0"
+    },
+    {
+      "length": 65,
+      "xxh3": "9b8972aa39b25570"
+    },
+    {
+      "length": 66,
+      "xxh3": "9a48375519543fe1"
+    },
+    {
+      "length": 67,
+      "xxh3": "2a73d60633941fa2"
+    },
+    {
+      "length": 68,
+      "xxh3": "25dbc0b11fce47cc"
+    },
+    {
+      "length": 69,
+      "xxh3": "059c0467d30e65d6"
+    },
+    {
+      "length": 70,
+      "xxh3": "fccc74244de93907"
+    },
+    {
+      "length": 71,
+      "xxh3": "16134a6916ab4ba4"
+    },
+    {
+      "length": 72,
+      "xxh3": "79d3a3d249b3cb8b"
+    },
+    {
+      "length": 73,
+      "xxh3": "957026829ca58872"
+    },
+    {
+      "length": 74,
+      "xxh3": "ffe6f35f020ac8f2"
+    },
+    {
+      "length": 75,
+      "xxh3": "78e88e3c085d02b5"
+    },
+    {
+      "length": 76,
+      "xxh3": "8e05f3353917e26d"
+    },
+    {
+      "length": 77,
+      "xxh3": "61650a255634cb78"
+    },
+    {
+      "length": 78,
+      "xxh3": "7f3eee09d4ad279d"
+    },
+    {
+      "length": 79,
+      "xxh3": "e00ea919b74700c2"
+    },
+    {
+      "length": 80,
+      "xxh3": "1adc6374088b7078"
+    },
+    {
+      "length": 81,
+      "xxh3": "8cc96febf63c1bcf"
+    },
+    {
+      "length": 82,
+      "xxh3": "4347b9985f74d88e"
+    },
+    {
+      "length": 83,
+      "xxh3": "18e1f08ba42c5925"
+    },
+    {
+      "length": 84,
+      "xxh3": "2518593e52ee2890"
+    },
+    {
+      "length": 85,
+      "xxh3": "51f895dc320fc36f"
+    },
+    {
+      "length": 86,
+      "xxh3": "bc92876413183817"
+    },
+    {
+      "length": 87,
+      "xxh3": "b2d77458e2327140"
+    },
+    {
+      "length": 88,
+      "xxh3": "3c4be77a79033b92"
+    },
+    {
+      "length": 89,
+      "xxh3": "590dc9988effd0f2"
+    },
+    {
+      "length": 90,
+      "xxh3": "dce3bdbfffc31afe"
+    },
+    {
+      "length": 91,
+      "xxh3": "2f7f20e1f60ffbe9"
+    },
+    {
+      "length": 92,
+      "xxh3": "df1bfe3539591a0b"
+    },
+    {
+      "length": 93,
+      "xxh3": "21fb6eba2cc97867"
+    },
+    {
+      "length": 94,
+      "xxh3": "27aabd17c4915085"
+    },
+    {
+      "length": 95,
+      "xxh3": "5189b6b8809acd39"
+    },
+    {
+      "length": 96,
+      "xxh3": "261ddafef0930988"
+    },
+    {
+      "length": 97,
+      "xxh3": "a815a9e59a0c66bd"
+    },
+    {
+      "length": 98,
+      "xxh3": "fbef05df8852afc7"
+    },
+    {
+      "length": 99,
+      "xxh3": "57c4050e190b9ff0"
+    },
+    {
+      "length": 100,
+      "xxh3": "f87066a114b0cdbf"
+    },
+    {
+      "length": 101,
+      "xxh3": "bd13a45454f1fb66"
+    },
+    {
+      "length": 102,
+      "xxh3": "3a299c296fed3d25"
+    },
+    {
+      "length": 103,
+      "xxh3": "e2b3c1443558deee"
+    },
+    {
+      "length": 104,
+      "xxh3": "f4ca987810d5a6f0"
+    },
+    {
+      "length": 105,
+      "xxh3": "a7f4b22a68dea816"
+    },
+    {
+      "length": 106,
+      "xxh3": "f2dda6a2647801af"
+    },
+    {
+      "length": 107,
+      "xxh3": "14ac737d29447bb6"
+    },
+    {
+      "length": 108,
+      "xxh3": "b33fe010f5155074"
+    },
+    {
+      "length": 109,
+      "xxh3": "084782c7c9c83bad"
+    },
+    {
+      "length": 110,
+      "xxh3": "d2e4fbfc1aaedd52"
+    },
+    {
+      "length": 111,
+      "xxh3": "1e9bc2d8cac940b3"
+    },
+    {
+      "length": 112,
+      "xxh3": "3e3e91393372b2fc"
+    },
+    {
+      "length": 113,
+      "xxh3": "52537b880276c15b"
+    },
+    {
+      "length": 114,
+      "xxh3": "420adb68aea76d35"
+    },
+    {
+      "length": 115,
+      "xxh3": "015188601af0f180"
+    },
+    {
+      "length": 116,
+      "xxh3": "394f846cdcd43268"
+    },
+    {
+      "length": 117,
+      "xxh3": "99f803a65979b64a"
+    },
+    {
+      "length": 118,
+      "xxh3": "3fb0e721a5ba59a9"
+    },
+    {
+      "length": 119,
+      "xxh3": "b7c80499d6710de8"
+    },
+    {
+      "length": 120,
+      "xxh3": "0d03c74d3f71be93"
+    },
+    {
+      "length": 121,
+      "xxh3": "633161e60e494b05"
+    },
+    {
+      "length": 122,
+      "xxh3": "4b34eb44e934686a"
+    },
+    {
+      "length": 123,
+      "xxh3": "f4186069e94e5105"
+    },
+    {
+      "length": 124,
+      "xxh3": "058a62967a1f7f8a"
+    },
+    {
+      "length": 125,
+      "xxh3": "e6cc757b24a8084f"
+    },
+    {
+      "length": 126,
+      "xxh3": "3c3fa3d460173fb6"
+    },
+    {
+      "length": 127,
+      "xxh3": "318645ea8aa7d900"
+    },
+    {
+      "length": 128,
+      "xxh3": "50abcbca6bb1912f"
+    },
+    {
+      "length": 129,
+      "xxh3": "94874e014aad8e2d"
+    },
+    {
+      "length": 130,
+      "xxh3": "3b189f63ab35be69"
+    },
+    {
+      "length": 131,
+      "xxh3": "480decf3714f92d2"
+    },
+    {
+      "length": 132,
+      "xxh3": "22370ca916743de3"
+    },
+    {
+      "length": 133,
+      "xxh3": "6054295c8d8b51fa"
+    },
+    {
+      "length": 134,
+      "xxh3": "84e4b81f99ec2d55"
+    },
+    {
+      "length": 135,
+      "xxh3": "e9f06ac494b628f1"
+    },
+    {
+      "length": 136,
+      "xxh3": "5212f10ccf596867"
+    },
+    {
+      "length": 137,
+      "xxh3": "5e77b69c13025904"
+    },
+    {
+      "length": 138,
+      "xxh3": "2ab7516e03034396"
+    },
+    {
+      "length": 139,
+      "xxh3": "6daa8e95b2c27c51"
+    },
+    {
+      "length": 140,
+      "xxh3": "6a087a38780819bd"
+    },
+    {
+      "length": 141,
+      "xxh3": "3e0ad676b66d4a4f"
+    },
+    {
+      "length": 142,
+      "xxh3": "8955d441b5e7aeb0"
+    },
+    {
+      "length": 143,
+      "xxh3": "a2f8c10a6811b498"
+    },
+    {
+      "length": 144,
+      "xxh3": "2eefb7668453bd72"
+    },
+    {
+      "length": 145,
+      "xxh3": "e25e3704dac4d6d2"
+    },
+    {
+      "length": 146,
+      "xxh3": "bfa7d1234f887018"
+    },
+    {
+      "length": 147,
+      "xxh3": "896cbbc914d3dcd5"
+    },
+    {
+      "length": 148,
+      "xxh3": "4835542e844eaf40"
+    },
+    {
+      "length": 149,
+      "xxh3": "e5eda4ddd6862dcc"
+    },
+    {
+      "length": 150,
+      "xxh3": "9a28482431fb098a"
+    },
+    {
+      "length": 151,
+      "xxh3": "2e44ba9a2ca122f5"
+    },
+    {
+      "length": 152,
+      "xxh3": "1c19f95b9067e02c"
+    },
+    {
+      "length": 153,
+      "xxh3": "bfb89918a4385f2d"
+    },
+    {
+      "length": 154,
+      "xxh3": "dee0e655eae616d4"
+    },
+    {
+      "length": 155,
+      "xxh3": "44ee37845cb76e72"
+    },
+    {
+      "length": 156,
+      "xxh3": "60c44ccc97dc7ce2"
+    },
+    {
+      "length": 157,
+      "xxh3": "fc175e7b5bf76866"
+    },
+    {
+      "length": 158,
+      "xxh3": "35ee234c79931021"
+    },
+    {
+      "length": 159,
+      "xxh3": "e35942c6d86d9d14"
+    },
+    {
+      "length": 160,
+      "xxh3": "272d5067172bd24f"
+    },
+    {
+      "length": 161,
+      "xxh3": "1bf4e2458d2feb42"
+    },
+    {
+      "length": 162,
+      "xxh3": "8899d7e09dc7f86d"
+    },
+    {
+      "length": 163,
+      "xxh3": "ef43a77356697c5e"
+    },
+    {
+      "length": 164,
+      "xxh3": "29c93f2a68ab3892"
+    },
+    {
+      "length": 165,
+      "xxh3": "e915314ed15662cc"
+    },
+    {
+      "length": 166,
+      "xxh3": "41edb9ab9f483942"
+    },
+    {
+      "length": 167,
+      "xxh3": "e7c32efc62ea3b08"
+    },
+    {
+      "length": 168,
+      "xxh3": "aa0e359f5081271f"
+    },
+    {
+      "length": 169,
+      "xxh3": "b4a0872137315926"
+    },
+    {
+      "length": 170,
+      "xxh3": "df7acf4eb05269b9"
+    },
+    {
+      "length": 171,
+      "xxh3": "1c1caf95442c17b9"
+    },
+    {
+      "length": 172,
+      "xxh3": "f407bb995fe2090b"
+    },
+    {
+      "length": 173,
+      "xxh3": "1a3234a36f64b9cb"
+    },
+    {
+      "length": 174,
+      "xxh3": "fbdc09a43c3b9de6"
+    },
+    {
+      "length": 175,
+      "xxh3": "4550b68bd3a0f073"
+    },
+    {
+      "length": 176,
+      "xxh3": "a24c638294d7db41"
+    },
+    {
+      "length": 177,
+      "xxh3": "ed19bbe6bbc3132e"
+    },
+    {
+      "length": 178,
+      "xxh3": "503c7e20e4e4f74e"
+    },
+    {
+      "length": 179,
+      "xxh3": "8a87607eab3ebf50"
+    },
+    {
+      "length": 180,
+      "xxh3": "8b6f41b6f7d1337f"
+    },
+    {
+      "length": 181,
+      "xxh3": "fedce7d32924c154"
+    },
+    {
+      "length": 182,
+      "xxh3": "978c5d89b6492be2"
+    },
+    {
+      "length": 183,
+      "xxh3": "1b73e5060dd51df6"
+    },
+    {
+      "length": 184,
+      "xxh3": "838194c2b2548ced"
+    },
+    {
+      "length": 185,
+      "xxh3": "cf87931f0cc7ce6d"
+    },
+    {
+      "length": 186,
+      "xxh3": "0a39de8ef0517274"
+    },
+    {
+      "length": 187,
+      "xxh3": "6599352c8962b751"
+    },
+    {
+      "length": 188,
+      "xxh3": "3ea84aa5ec3f0180"
+    },
+    {
+      "length": 189,
+      "xxh3": "e4a6517335e34d6a"
+    },
+    {
+      "length": 190,
+      "xxh3": "52ed5231da31483e"
+    },
+    {
+      "length": 191,
+      "xxh3": "1beae061b88a1cba"
+    },
+    {
+      "length": 192,
+      "xxh3": "c05abfb3e7a8d779"
+    },
+    {
+      "length": 193,
+      "xxh3": "387a4f0f876bce25"
+    },
+    {
+      "length": 194,
+      "xxh3": "0648e0f19e426092"
+    },
+    {
+      "length": 195,
+      "xxh3": "7bb5bd9862138b93"
+    },
+    {
+      "length": 196,
+      "xxh3": "605aa9065b291c28"
+    },
+    {
+      "length": 197,
+      "xxh3": "593b1596fad30cce"
+    },
+    {
+      "length": 198,
+      "xxh3": "21f286e966e9edfa"
+    },
+    {
+      "length": 199,
+      "xxh3": "f608c4f983f04746"
+    },
+    {
+      "length": 200,
+      "xxh3": "fbad87b9eea41798"
+    },
+    {
+      "length": 201,
+      "xxh3": "87e56bf3822c11c9"
+    },
+    {
+      "length": 202,
+      "xxh3": "ec8301bcfee7af6b"
+    },
+    {
+      "length": 203,
+      "xxh3": "06c06aac3547fc6e"
+    },
+    {
+      "length": 204,
+      "xxh3": "9dd05b73a99d361e"
+    },
+    {
+      "length": 205,
+      "xxh3": "a838c2e86d67fbc9"
+    },
+    {
+      "length": 206,
+      "xxh3": "84dc871109588005"
+    },
+    {
+      "length": 207,
+      "xxh3": "952d09261ad0fceb"
+    },
+    {
+      "length": 208,
+      "xxh3": "aa4c531022f75682"
+    },
+    {
+      "length": 209,
+      "xxh3": "620630171f796e54"
+    },
+    {
+      "length": 210,
+      "xxh3": "8af2449dbf1067db"
+    },
+    {
+      "length": 211,
+      "xxh3": "a1f4f2e482c365dc"
+    },
+    {
+      "length": 212,
+      "xxh3": "41daedd969101752"
+    },
+    {
+      "length": 213,
+      "xxh3": "34d31c419b1079f1"
+    },
+    {
+      "length": 214,
+      "xxh3": "241a1d547d1da38a"
+    },
+    {
+      "length": 215,
+      "xxh3": "1c9e64fd25662986"
+    },
+    {
+      "length": 216,
+      "xxh3": "84b338c0794d984c"
+    },
+    {
+      "length": 217,
+      "xxh3": "6550198beb72128c"
+    },
+    {
+      "length": 218,
+      "xxh3": "8955c00c8b93a6ff"
+    },
+    {
+      "length": 219,
+      "xxh3": "2de5c5966a70db14"
+    },
+    {
+      "length": 220,
+      "xxh3": "9e9336a522cc287d"
+    },
+    {
+      "length": 221,
+      "xxh3": "85a932b354765614"
+    },
+    {
+      "length": 222,
+      "xxh3": "32eb267575a810be"
+    },
+    {
+      "length": 223,
+      "xxh3": "edb3ad28fb344dc6"
+    },
+    {
+      "length": 224,
+      "xxh3": "753ffdb93e7fe08d"
+    },
+    {
+      "length": 225,
+      "xxh3": "4a59bf7c3c852d81"
+    },
+    {
+      "length": 226,
+      "xxh3": "40cad1ad94f53cbf"
+    },
+    {
+      "length": 227,
+      "xxh3": "6e3f07bb5219def3"
+    },
+    {
+      "length": 228,
+      "xxh3": "dbf689feaae1312c"
+    },
+    {
+      "length": 229,
+      "xxh3": "0a261d639aba647d"
+    },
+    {
+      "length": 230,
+      "xxh3": "fd003e340c43c3c8"
+    },
+    {
+      "length": 231,
+      "xxh3": "3373b0a2cfab1e39"
+    },
+    {
+      "length": 232,
+      "xxh3": "3e8d7f3e6155d7e1"
+    },
+    {
+      "length": 233,
+      "xxh3": "710a9863cb0c9c04"
+    },
+    {
+      "length": 234,
+      "xxh3": "db102d97be308f40"
+    },
+    {
+      "length": 235,
+      "xxh3": "d9df42e8d3c152f6"
+    },
+    {
+      "length": 236,
+      "xxh3": "04e16db27090938c"
+    },
+    {
+      "length": 237,
+      "xxh3": "4dd2752e1952e638"
+    },
+    {
+      "length": 238,
+      "xxh3": "654104da8c8e5016"
+    },
+    {
+      "length": 239,
+      "xxh3": "77ca9cc309627828"
+    },
+    {
+      "length": 240,
+      "xxh3": "7e145804a9f93009"
+    },
+    {
+      "length": 241,
+      "xxh3": "31c2d8792b29abb5"
+    },
+    {
+      "length": 242,
+      "xxh3": "2fed4d7c7aed52e8"
+    },
+    {
+      "length": 243,
+      "xxh3": "38a01a85ee7cc2c4"
+    },
+    {
+      "length": 244,
+      "xxh3": "bf09e935246b6d68"
+    },
+    {
+      "length": 245,
+      "xxh3": "8016fd46761c40d1"
+    },
+    {
+      "length": 246,
+      "xxh3": "5a4be50aaffa5870"
+    },
+    {
+      "length": 247,
+      "xxh3": "8fc39d7cf2b15ea7"
+    },
+    {
+      "length": 248,
+      "xxh3": "68edcbcb9976d60d"
+    },
+    {
+      "length": 249,
+      "xxh3": "169ef6659e486347"
+    },
+    {
+      "length": 250,
+      "xxh3": "71cfc97e4389178b"
+    },
+    {
+      "length": 251,
+      "xxh3": "a2a1d3e287cdac6f"
+    },
+    {
+      "length": 252,
+      "xxh3": "62385128e5b42ac1"
+    },
+    {
+      "length": 253,
+      "xxh3": "1049d6053647ccae"
+    },
+    {
+      "length": 254,
+      "xxh3": "d0c11950395bf5ad"
+    },
+    {
+      "length": 255,
+      "xxh3": "addaf720be74a888"
+    },
+    {
+      "length": 256,
+      "xxh3": "cdd3578b9df45e59"
+    },
+    {
+      "length": 257,
+      "xxh3": "cb547b74036a7280"
+    },
+    {
+      "length": 511,
+      "xxh3": "5063d53f65a97903"
+    },
+    {
+      "length": 1023,
+      "xxh3": "807c64f5ca5a907b"
+    },
+    {
+      "length": 1024,
+      "xxh3": "4986ea1c273817c6"
+    },
+    {
+      "length": 1025,
+      "xxh3": "8bccc0d0cd347025"
+    },
+    {
+      "length": 2048,
+      "xxh3": "ae9fe389b636a6c4"
+    },
+    {
+      "length": 4096,
+      "xxh3": "c90052126f9618dc"
+    },
+    {
+      "length": 10000,
+      "xxh3": "186acbe93d8891d7"
+    }
+  ]
+}

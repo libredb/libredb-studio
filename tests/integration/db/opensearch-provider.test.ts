@@ -19,10 +19,10 @@
  *
  * - The success envelope is `schema`/`datarows` with `total` and `size` beside it,
  *   not Elasticsearch's `columns`/`rows` with no count at all
- *   (`http-transport.ts:357-364`).
+ *   (`http-transport.ts:554-557`).
  * - `SELECT customer AS who` declares `{"name":"customer","alias":"who"}` here and
  *   `{"name":"who"}` on Elasticsearch, so reading `name` alone would put the WRONG
- *   label on the same statement's column (`http-transport.ts:285-295`).
+ *   label on the same statement's column (`http-transport.ts:724-727`).
  * - A missing index is HTTP **404** (`IndexNotFoundException`) where Elasticsearch
  *   answers HTTP 400 - the same typo, two statuses, which is why categorisation is
  *   body-driven (`http-transport.ts:35-42`).
@@ -31,7 +31,7 @@
  *   `EOFParserException`, ...) while the CORE REST layer keeps Elasticsearch's
  *   lineage and answers `index_not_found_exception` in snake_case, so one product
  *   speaks both vocabularies depending on which endpoint replied
- *   (`http-transport.ts:377-384`).
+ *   (`http-transport.ts:570-577`).
  * - `SELECT 1 AS c, 2 AS c` is REFUSED here (`IllegalArgumentException`, "Multiple
  *   entries with same key") and answers 200 with three columns named `c` on
  *   Elasticsearch, so the seam's uniqueness invariant is load-bearing on exactly
@@ -41,7 +41,7 @@
  * - A stock node ships system indices the dot rule alone does not catch:
  *   `.plugins-ml-config` AND `top_queries-<date>-<n>`, so two of four indices on a
  *   cluster holding two probe indices are not the user's
- *   (`http-transport.ts:252-264`).
+ *   (`http-transport.ts:427-439`).
  *
  * Where a divergence is only visible below the provider - a fault CATEGORY, for
  * instance, since four of them collapse onto one `QueryError` by design
@@ -58,7 +58,14 @@ import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sq
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  QueryCancelledError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
@@ -190,7 +197,7 @@ const PAGE_THREE_BODY = JSON.stringify({ datarows: [["3c1f1d19-0a4b-4a52-9f6a-2b
 // `reason` is a CONSTANT banner here ("Invalid SQL query") and `details` holds the
 // only text specific to the failure, which is the reverse of Elasticsearch, whose
 // `reason` is the good text ("line 1:15: Unknown index [nope_missing]") and which
-// has no `details` at all. `http-transport.ts:600-611` prefers the detail for
+// has no `details` at all. `http-transport.ts:806-817` prefers the detail for
 // exactly that reason.
 // ============================================================================
 
@@ -219,7 +226,7 @@ const MISSING_INDEX_BODY = JSON.stringify({
  *
  * The SQL plugin above answers `IndexNotFoundException` for the same missing
  * index; the CORE REST layer keeps Elasticsearch's lineage. Both are measured, and
- * `http-transport.ts:395-401` lists both spellings for that reason.
+ * `http-transport.ts:590-591` lists both spellings for that reason.
  */
 const MAPPING_NOT_FOUND_BODY = JSON.stringify({
   error: {
@@ -395,7 +402,7 @@ const SHAPES_MAPPING_BODY = JSON.stringify({
  * `GET /` - and `version.distribution` is the member Elasticsearch does not send
  * at all. The fork added it so a client could tell the two apart, so its presence
  * here and its absence there are both readings of the payload
- * (`http-transport.ts:168-182`).
+ * (`http-transport.ts:344-357`).
  */
 const ROOT_BODY = JSON.stringify({
   name: "898fbd5c381a",
@@ -823,7 +830,7 @@ describe("OpenSearch envelope", () => {
 describe("OpenSearch faults", () => {
   /**
    * Every name here is a JAVA CLASS, and every row was measured with one probe
-   * against the live plugin. The table in `http-transport.ts:395-408` is doing real
+   * against the live plugin. The table in `http-transport.ts:588-601` is doing real
    * work: nothing about `EOFParserException` reads as "syntax" to anything but that
    * table, and nothing about `SQLFeatureNotSupportedException` reads as the answer
    * to a MISTYPED keyword - which is what it is here, while Elasticsearch calls the
@@ -1120,6 +1127,31 @@ describe("OpenSearchProvider query preparation", () => {
 // ============================================================================
 
 describe("OpenSearchProvider query", () => {
+  test("keeps a long past 2^53 exact, as its digits, on every page", async () => {
+    // Measured on 3.9.0 on 2026-10-04: `datarows` carries a `long` as an UNQUOTED JSON
+    // number, and a plain JSON.parse showed 9223372036854776000 and 9007199254740992 in
+    // the grid, the API and every export. A value in the safe range stays a number.
+    const provider = await connectProvider();
+    replyFor = (path, body) => {
+      if (!path.startsWith("/_plugins/_sql")) return defaultReply(path, body);
+      if (typeof body?.cursor === "string") {
+        return ok('{"datarows":[["b",-9223372036854775808,7,9007199254740991]],"status":200}');
+      }
+      return ok(
+        '{"schema":[{"name":"k","type":"keyword"},{"name":"lng","type":"long"},{"name":"small","type":"integer"},' +
+          '{"name":"big","type":"long"}],"cursor":"c1","total":2,' +
+          '"datarows":[["a",9223372036854775807,42,9007199254740993]],"size":1,"status":200}',
+      );
+    };
+
+    const result = await provider.query("SELECT k, lng, small, big FROM types");
+
+    expect(result.rows).toEqual([
+      { k: "a", lng: "9223372036854775807", small: 42, big: "9007199254740993" },
+      { k: "b", lng: "-9223372036854775808", small: 7, big: 9007199254740991 },
+    ]);
+  });
+
   test("reports a missing index as a query error even though the answer is a 404", async () => {
     // A status-driven mapping would have made this a ConnectionError and sent the
     // user to check a cluster that answered perfectly well; the same statement on
@@ -1130,6 +1162,29 @@ describe("OpenSearchProvider query", () => {
 
     await expect(failure).rejects.toBeInstanceOf(QueryError);
     await expect(failure).rejects.toThrow("no such index [nope_missing]");
+  });
+
+  test("a 403 naming an engine fault is that fault, not a refused login (#1413)", async () => {
+    // The transport is shared with Elasticsearch, which answers a closed index with 403 and
+    // `cluster_block_exception` (measured on 9.5.3). The same rule holds here: a 401/403 whose body
+    // names a fault that is not a security one is a query error carrying the engine's reason.
+    const provider = await connectProvider();
+    overridePath("/_plugins/_sql", {
+      status: 403,
+      body: JSON.stringify({
+        error: {
+          type: "cluster_block_exception",
+          reason: "index [closed_idx] blocked by: [FORBIDDEN/4/index closed];",
+        },
+        status: 403,
+      }),
+    });
+
+    const failure = provider.query("SELECT a FROM closed_idx");
+
+    await expect(failure).rejects.toBeInstanceOf(QueryError);
+    await expect(failure).rejects.not.toBeInstanceOf(AuthenticationError);
+    await expect(failure).rejects.toThrow("index [closed_idx] blocked by: [FORBIDDEN/4/index closed];");
   });
 
   test("carries the plugin's own wording through, banner and footer removed", async () => {
@@ -1425,7 +1480,7 @@ describe("object surface", () => {
 
     // The declaration against the engine's own answer, one kind each way. A data stream
     // row's columns are the mapping of its CURRENT backing index, which is what the
-    // transport takes (`search/http-transport.ts:1266`).
+    // transport takes (`search/http-transport.ts:1283`).
     const stream = await provider.describeObject(["probe_stream"], "stream");
     expect(stream.columns.length).toBeGreaterThan(0);
     for (const column of stream.columns) {

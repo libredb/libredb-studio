@@ -7,6 +7,8 @@ import {
   computeHistogramBins,
   aggregateData,
   groupByDate,
+  chartCategory,
+  NULL_CATEGORY_LABEL,
 } from "@/components/DataCharts";
 
 // ---------------------------------------------------------------------------
@@ -399,9 +401,85 @@ describe("aggregateData", () => {
     expect(result[0].value).toBe(0);
   });
 
+  // A NULL key is its own group, apart from an empty string, and keeps its null so the
+  // label is chosen in one place (`chartCategory`) for the plain and the grouped chart.
+  test("groups a null or absent category apart from an empty string", () => {
+    const nullRows = [
+      { city: null, n: 1 },
+      { city: "", n: 2 },
+      { city: undefined, n: 4 },
+      { city: "A", n: 8 },
+    ];
+    const result = aggregateData(nullRows, "city", [{ field: "n", aggregation: "sum" }]);
+    expect(result).toEqual([
+      { city: null, n: 5 },
+      { city: "", n: 2 },
+      { city: "A", n: 8 },
+    ]);
+  });
+
+  test("a null category under a date grouping stays null", () => {
+    const result = aggregateData(
+      [
+        { d: null, n: 1 },
+        { d: "2025-01-15T10:00:00Z", n: 2 },
+      ],
+      "d",
+      [{ field: "n", aggregation: "sum" }],
+      "year",
+    );
+    expect(result[0]).toEqual({ d: null, n: 1 });
+  });
+
   test("avg returns 0 for empty group (should not happen but safe)", () => {
     const result = aggregateData([{ cat: "A", val: 10 }], "cat", [{ field: "val", aggregation: "avg" }]);
     expect(result[0].val).toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chartCategory
+// ---------------------------------------------------------------------------
+
+/*
+  Recharts builds a category axis only from the strings, numbers and dates among the
+  x values and still draws the marks by row index, so any other value shortened the
+  axis and slid every later mark onto the next row's category.
+*/
+describe("chartCategory", () => {
+  test("labels null and undefined as the grid does", () => {
+    expect(NULL_CATEGORY_LABEL).toBe("NULL");
+    expect(chartCategory(null)).toBe("NULL");
+    expect(chartCategory(undefined)).toBe("NULL");
+  });
+
+  test("passes strings and finite numbers through unchanged", () => {
+    expect(chartCategory("Ankara")).toBe("Ankara");
+    expect(chartCategory("")).toBe("");
+    expect(chartCategory(0)).toBe(0);
+    expect(chartCategory(42.5)).toBe(42.5);
+  });
+
+  test("spells every value recharts would drop as text", () => {
+    expect(chartCategory(true)).toBe("true");
+    expect(chartCategory(false)).toBe("false");
+    expect(chartCategory(Number.NaN)).toBe("NaN");
+    expect(chartCategory(Number.POSITIVE_INFINITY)).toBe("Infinity");
+    expect(chartCategory(BigInt("9007199254740993"))).toBe("9007199254740993");
+    expect(chartCategory({ a: 1 })).toBe('{"a":1}');
+    expect(chartCategory([1, 2])).toBe("[1,2]");
+  });
+
+  test("names a Date by its ISO text, and an invalid one by its own text", () => {
+    expect(chartCategory(new Date("2026-09-26T22:34:00.000Z"))).toBe("2026-09-26T22:34:00.000Z");
+    expect(chartCategory(new Date("not a date"))).toBe("Invalid Date");
+  });
+
+  test("falls back to plain text for an object JSON cannot write", () => {
+    expect(chartCategory({ id: BigInt(1) })).toBe("[object Object]");
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(chartCategory(cycle)).toBe("[object Object]");
   });
 });
 

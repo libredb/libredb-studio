@@ -20,7 +20,7 @@
 | **Connection string** | Supported (`clickhouse://`, plain `http://` / `https://`) |
 | **EXPLAIN** | `clickhouse-json` — estimate only; ClickHouse's `EXPLAIN` never executes the statement, so there is no separate analyze mode |
 | **Transactions** | Not exposed (ClickHouse has no multi-statement transactions to expose) |
-| **Query cancellation** | No `cancelQuery`; a running statement is killed via maintenance `kill` |
+| **Query cancellation** | Yes: each run gets a generated `query_id`, and `cancelQuery` sends `KILL QUERY ... SYNC` for it ([§5.4](#54-cancellation)) |
 | **Source** | [`src/lib/db/providers/sql/clickhouse/`](../../src/lib/db/providers/sql/clickhouse/) |
 | **Tests** | [`tests/integration/db/clickhouse-provider.test.ts`](../../tests/integration/db/clickhouse-provider.test.ts) + [`tests/unit/db/clickhouse/`](../../tests/unit/db/clickhouse/) + [`tests/unit/lib/explain/clickhouse-json.test.ts`](../../tests/unit/lib/explain/clickhouse-json.test.ts) |
 | **Tracking issue** | [#264 — Add ClickHouse provider](https://github.com/libredb/libredb-studio/issues/264) |
@@ -228,7 +228,7 @@ message strings.
 
 > **Seam rule.** The HTTP envelope identifiers (`X-ClickHouse-Summary`,
 > `X-ClickHouse-Exception-Code`, `X-ClickHouse-Exception-Tag`, `X-ClickHouse-Format`,
-> `default_format`, `output_format_json_quote_64bit_integers`, `elapsed_ns`,
+> `default_format`, `output_format_json_quote_64bit_integers`, `output_format_json_quote_decimals`, `elapsed_ns`,
 > `rows_before_limit_at_least`) must appear **only** in `http-transport.ts`.
 > [`seam-guard.test.ts`](../../tests/unit/db/clickhouse/seam-guard.test.ts) parses every source file
 > in the directory with the TypeScript compiler API — not a grep — and fails the build the moment
@@ -277,7 +277,7 @@ for that format deliberately. The provider then surfaces it as one synthetic col
 `__text` (`RAW_TEXT_COLUMN`, [`index.ts`](../../src/lib/db/providers/sql/clickhouse/index.ts)),
 the same convention Couchbase uses for a scalar projection.
 
-### 3.5 64-bit integers are quoted on purpose, to stop `JSON.parse` from rounding them
+### 3.5 64-bit integers and decimals are quoted on purpose, to stop `JSON.parse` from rounding them
 
 By default `SELECT toUInt64(18446744073709551615)` returns the **unquoted** JSON number
 `18446744073709551615`, which `JSON.parse` silently rounds to `18446744073709552000` — a real,
@@ -290,6 +290,29 @@ an unquoted number. This matches the `pg` driver's existing `int8`-as-string beh
 already renders it correctly with no further change. Every reader in the provider and the
 introspection module accepts both encodings, because `system.asynchronous_metrics` is `Float64` and
 genuinely arrives unquoted in the same response cycle as a quoted `UInt64` counter elsewhere.
+
+**That setting does not cover `Decimal`, so the transport also sends
+`output_format_json_quote_decimals=1`.** Measured on 26.9.9.28 on 2026-10-04: a `Decimal(38, 10)`
+holding `12345678901234567890.1234567891` arrives under the 64-bit setting alone as that **unquoted**
+number, and the grid, the API and every export showed `12345678901234567000` while
+`toString(amount)` in the same row was right. A decimal fraction cannot be rescued after the fact the
+way [`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) rescues an integer, because a
+client reading the text cannot tell a lossy `Decimal` from a `Float64` the server printed in full;
+only the server knows the column type, so the server is asked. With both settings:
+
+| Column type | Value | Arrives as |
+|---|---|---|
+| `Decimal(38, 10)` | 12345678901234567890.1234567891 | `"12345678901234567890.1234567891"` |
+| `Decimal(10, 2)` | 12.34 | `"12.34"` |
+| `Int64` | 9223372036854775807 | `"9223372036854775807"` |
+| `UInt32` | 1 | `1` |
+| `Float64` | 1.5 | `1.5` |
+
+Every `Decimal` is therefore a string, small ones included, which is how the `pg` driver already
+hands over `NUMERIC`; integers up to 32 bits and floats stay numbers. So a `Decimal(10, 2)` column
+now behaves in the UI exactly as a PostgreSQL `NUMERIC` one does: the grid sorts it as text, and the
+pivot table's auto-detection no longer offers it as a value field. No reader in the provider or
+the introspection module reads a `Decimal` column, so nothing internal changed type.
 
 ### 3.6 Writes return an empty 200 body; the row count lives in a header
 
@@ -578,12 +601,23 @@ instance.
 The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) let `POST /api/db/multi-query` end a transaction a failed script left open on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and the reason is the one [§3.11](#311-statelessness-no-session_id-is-pinned) already states: **the engine has no transaction to leave open** on anything this provider holds.
 
-The transport sends one HTTP request per statement and pins no `session_id` ([`http-transport.ts`](../../src/lib/db/providers/sql/clickhouse/http-transport.ts) sets `default_format`, `output_format_json_quote_64bit_integers` and `database`, and nothing else identifies a session), and `close()` there has nothing to release for the same reason.
+The transport sends one HTTP request per statement and pins no `session_id` ([`http-transport.ts`](../../src/lib/db/providers/sql/clickhouse/http-transport.ts) sets `default_format`, `output_format_json_quote_64bit_integers`, `output_format_json_quote_decimals` and `database`, and nothing else identifies a session), and `close()` there has nothing to release for the same reason.
 Session state is what a transaction would live in: `SET max_block_size` was verified to persist inside a pinned `session_id` and not outside one, and ClickHouse's own transaction support is experimental and setting-gated ([§11](#11-testing) and the limitations section).
 So there is no handle between two statements for a `BEGIN TRANSACTION` to survive on, and nothing for a later caller to inherit.
 
 This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
 
+### 3.14 What the SQL INSERT and DDL exports write for composite types
+
+A result reaches the export through JSON, where an `Array` is a JS array, a `Map` an object, an unnamed `Tuple` an array and a named one an object.
+Written as quoted JSON those were `Code: 26 ... Cannot parse quoted string` on replay, so the SQL INSERT export reads the declared type ([§3.9](#39-column-types-are-the-declared-strings-verbatim)) and writes `[1, 2, 3]`, `map('k', 1)` and `tuple(7, ['p', 'q'])`, recursing through the element types, `Nullable` and `LowCardinality` included (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+A named tuple's elements are written in the declared order, and a 64-bit integer or a decimal that `output_format_json_quote_64bit_integers` / `output_format_json_quote_decimals` turned into a string is written bare inside a container (a scalar column takes the quoted form as it is).
+
+A composite that does not have its declared shape (a tuple of the wrong length, a scalar where an `Array` belongs) is skipped with a `-- Row N skipped` comment naming the column, and a non-finite word inside a `Float` element is written as `nan`, `inf` or `-inf`.
+
+The DDL keeps a type with a quoted argument, `DateTime64(3, 'Europe/Istanbul')`, `DateTime('UTC')` and `Enum8('a' = 1, 'b' = 2)`, instead of writing `TEXT`.
+
+Measured 2026-10-04 on ClickHouse 26.9: a `MergeTree` table of `Array(Int32)`, `Array(String)` holding a quote and a backslash, `Map(String, Int32)`, `Map(String, Array(String))`, `Array(Array(Nullable(Int32)))`, named and unnamed `Tuple`, `DateTime64(3, 'Europe/Istanbul')`, `DateTime('UTC')`, `Date32`, `UInt64` and `Int128` at their limits, `Decimal(18, 4)`, `Bool`, `UUID`, `IPv4`, `IPv6`, `Enum8` and `LowCardinality(String)` exported and replayed with `clickhouse-client`, into `CREATE TABLE copy AS src` and into the exported DDL's own table, and the TSV of both tables differed in one cell: a `Float64` `-0`, which JavaScript prints as `0`.
 
 ---
 
@@ -723,7 +757,7 @@ that is how the rest of the application calls every provider uniformly.
 
 | Source | `QueryResult` field | Notes |
 |--------|----------------------|-------|
-| `data` array | `rows` | Objects exactly as the server returned them |
+| `data` array | `rows` | Objects exactly as the server returned them; 64-bit integers and every `Decimal` arrive as strings ([§3.5](#35-64-bit-integers-and-decimals-are-quoted-on-purpose-to-stop-jsonparse-from-rounding-them)) |
 | `meta` array | `fields` | Declared column order; `[]` when the source could not describe the rows (a non-JSON format, or a write) |
 | — | `rowCount` | `rows.length` when there are rows; otherwise `mutationCount` from `X-ClickHouse-Summary`, verbatim, zero included ([§3.6](#36-writes-return-an-empty-200-body-the-row-count-lives-in-a-header)) |
 | `X-ClickHouse-Summary.elapsed_ns` | `executionTime` | The server's own duration, preferred because it excludes network latency; falls back to the envelope's `statistics.elapsed` (seconds), then to the measured wall clock when neither source reported anything |
@@ -735,6 +769,27 @@ that is how the rest of the application calls every provider uniformly.
 The EXPLAIN button is available (`supportsExplain: true`) and renders the plan tree described in
 [§3.12](#312-explain-reuses-the-shared-tree-model). ClickHouse has no analyze mode, so both the
 direct action and the background pre-warm show the same estimated plan.
+
+### 5.4 Cancellation
+
+Aborting the HTTP request does not stop a ClickHouse statement. Measured on 26.9.9.28 before #1364,
+when the provider had no `cancelQuery`: after the editor's Cancel, `system.processes` still listed
+`SELECT count() FROM numbers(200000000000) WHERE sipHash64(number) % 7 = 3` 19 s and 29 s later,
+and the editor had said "Query Cancelled".
+
+Now `query(sql, params, queryId)` runs the statement under a `query_id` the provider generates (a
+random UUID, sent through a neutral `queryId` option on the transport seam) and remembers it against
+the caller's id; `cancelQuery(queryId)` looks that up and sends
+`KILL QUERY WHERE query_id = '<generated id>' SYNC`. The caller's id never reaches the server:
+ClickHouse keeps a query id unique per server user only, so two Studio users sharing one ClickHouse
+account could otherwise run under the same id, and one KILL would stop both. `SYNC` answers once the statement has stopped: one row with
+`kill_status` `finished` per statement it reached, or a 200 with an empty body when nothing matched
+because the statement had already ended (both measured on 26.9.9.28). `cancelQuery` answers true only
+for a `finished` row, so `cant_cancel`, an empty answer and a refused KILL are all false, and the
+editor then says the cancel was not confirmed.
+
+An id this provider is not running is refused before anything is sent, so the cancel route cannot be
+used to kill another session's statement by guessing its id.
 
 ---
 
@@ -1565,7 +1620,8 @@ await provider.disconnect();
 provider uses. `POST /api/db/maintenance` (admin) accepts `optimize` / `analyze` / `kill`;
 `optimize` and `kill` require a `target`, while `analyze` treats a missing one as "the whole pinned
 database" ([§8](#8-maintenance)) — so a client should omit it rather than invent one for
-database-wide statistics. Transaction and cancel routes do not apply — see
+database-wide statistics. `POST /api/db/cancel` stops a statement `POST /api/db/query` started
+under a `queryId` ([§5.4](#54-cancellation)); the transaction routes do not apply, see
 [§13](#13-known-limitations--future-work).
 
 ---
@@ -1574,8 +1630,10 @@ database-wide statistics. Transaction and cancel routes do not apply — see
 
 - **No transactions.** ClickHouse has no multi-statement transaction model to expose over this
   interface, so there is no begin/commit/rollback API here.
-- **No `cancelQuery`.** A running statement is terminated through maintenance `kill` with its
-  `query_id`, which needs its own grant like any other `system.processes` operation.
+- **Maintenance `kill` is a different path from Cancel.** Cancel reaches only a statement this
+  provider started ([§5.4](#54-cancellation)); a statement anyone else runs is terminated through
+  maintenance `kill` with its `query_id`, which needs its own grant like any other
+  `system.processes` operation.
 - **No analyze-mode EXPLAIN.** ClickHouse's `EXPLAIN` never executes the statement; see
   [§3.12](#312-explain-reuses-the-shared-tree-model).
 - **`ALTER TABLE ... UPDATE` and lightweight `DELETE FROM` report zero rows changed even on

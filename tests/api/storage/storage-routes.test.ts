@@ -72,7 +72,7 @@ describe("GET /api/storage", () => {
     mockSession = null;
     const res = await GET(getRequest());
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Authentication required" });
+    expect(await res.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test("returns user data on success", async () => {
@@ -113,7 +113,7 @@ describe("PUT /api/storage/[collection]", () => {
     mockSession = null;
     const res = await makeRequest("connections", []);
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Authentication required" });
+    expect(await res.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test("returns 400 for invalid collection", async () => {
@@ -177,7 +177,7 @@ describe("POST /api/storage/migrate", () => {
     mockSession = null;
     const res = await makeMigrateRequest({});
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Authentication required" });
+    expect(await res.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test("merges data on success", async () => {

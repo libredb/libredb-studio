@@ -27,13 +27,13 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D167, U17 · 111
+- [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
+- [Drivers and connections](#drivers-and-connections) — D1-D227, U17 · 139
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U78 · 72
-- [Dependencies](#dependencies) — P1-P9 · 8
-- [Documentation](#documentation) — DOC3-DOC9 · 6
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
+- [Dependencies](#dependencies) — P1-P9 · 7
+- [Documentation](#documentation) — DOC3-DOC13 · 10
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B93 · 34
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B100 · 36
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -113,6 +113,22 @@ Apache Cassandra 5.0.9, ScyllaDB 2026.2.4 and ClickHouse 26.7.1 (a line comment 
 refused on PostgreSQL 18, MySQL 26.7.0, SQLite, Oracle, SQL Server 2022 and Trino 476. It is undecided
 for elasticsearch and opensearch, and absent with the whole row for couchbase, druid and libredb -
 recorded in the table in `docs/editor/query-optimization.md`.
+
+### S7. Compound statements on MySQL, Db2 and Trino are still cut at their inner `;`
+
+#1312 gave `SqlGrammar` a `script` fact and read procedural bodies for Oracle (PL/SQL units), SQLite
+and libSQL (trigger bodies), and batches for SQL Server. Three dialects with `BEGIN … END` bodies were
+left at the default because no reading of them was measured: MySQL and MariaDB
+(`CREATE PROCEDURE | FUNCTION | TRIGGER | EVENT … BEGIN … END`, which the `mysql` client cuts with
+`DELIMITER`, a client command the server never sees), Db2 SQL PL (`BEGIN ATOMIC … END` and routine
+bodies) and Trino SQL routines (`CREATE FUNCTION … BEGIN … END`). On those the editor still cuts the body
+at its inner `;` and the multi-statement route runs the fragments, the shape #1312 measured on Oracle.
+Oracle's own inline PL/SQL in a query (`WITH FUNCTION f RETURN NUMBER IS BEGIN … END; SELECT f FROM dual`)
+is the same gap inside a dialect that is read: it is not a unit, so it is still cut at its inner `;`.
+
+**Done when:** each dialect's body rule is measured on a live server and written as its `script` row, with
+a test per dialect in `tests/unit/sql/statement-splitter.test.ts` (the MySQL one there pins today's cut).
+MySQL's `BEGIN` alone is a transaction, as SQLite's is, so its rule is not Oracle's `pl-sql`.
 
 ---
 
@@ -297,17 +313,13 @@ identifier-quoting decision rather than a string concat - or asking mysql2 for t
 with the parameters bound client-side. Neither is a one-line change, which is why this is filed
 rather than done inside a labelling PR, and why Databend's registry row reads `query-only` today.
 
-**A second, smaller defect surfaced on the same engine, and it is a crash rather than a failure.**
-`runMaintenance('analyze')` throws `TypeError: rows.filter is not a function`: Databend answers
-`ANALYZE TABLE` with an object where the reader expects an array of `Msg_type` rows. A provider
-that cannot run a maintenance action should report that, not throw a type error out of the route -
-and this is the same shape already recorded once, a mysql2 reply whose type depends on the
-statement.
+The `rows.filter is not a function` crash `runMaintenance('analyze')` hit on the same engine is
+gone: Databend answers `ANALYZE TABLE` with an OK packet, as TiDB and OceanBase do, and the report
+reader now reads that as a statement that ran without a report (`docs/providers/mysql.md` section 9).
 
 **Done when:** the six reads above answer on Databend, with the identifier path decided rather
-than concatenated, and `runMaintenance` on an engine that answers `ANALYZE` with a non-array
-reports a result instead of throwing - both verified against the container, and the reading
-unchanged on MySQL, MariaDB and one analytics relative.
+than concatenated, verified against the container, and the reading unchanged on MySQL, MariaDB and
+one analytics relative.
 
 ### D34. A pinned SSH host key has no way to be set, so the protection resets on restart
 
@@ -347,6 +359,7 @@ Amended 2026-09-25: the mapping now exists three times, the third in the Kafka p
 Amended 2026-09-30: the mapping now exists four times, the fourth in the etcd provider (#1089), `connection-options.ts`, deliberate for the same reason; like Kafka's it is a mapping only, over grpc-js's own TLS, and it adds the IP-identity rule of the etcd design's E5.
 Amended 2026-10-03: the shared helper this entry asks for now exists outside any provider directory, `src/lib/db/http/node-transport.ts`: `createNodeTransport` is the request path for plaintext and TLS alike, built on the Prometheus shape with `rejectRedirect` on both, and `nodeTlsMaterial` is the one TLS mapping a REST provider takes, so later providers reuse it instead of adding a copy; no provider uses it yet, the Qdrant provider will be its first consumer, and moving Couchbase and Prometheus onto it, and the five `fetch` transports, stays open under this entry.
 Amended 2026-10-03 again: the mapping now exists five times, the fifth in the Milvus provider's `connection-options.ts` (vector-family spec 5.1, decision Q1a), deliberate for the reason the fourth was; like etcd's it is a mapping over grpc-js's own TLS, with the IP-identity rule, and the copied channel options add `grpc.enable_retries: 0`, which is an addition and not a copy.
+Amended 2026-10-04: the two gRPC copies are one, `readGrpcTlsPanel` and `grpcTlsIdentity` in `src/lib/db/grpc/tls.ts` with the credentials in `src/lib/db/grpc/credentials.ts`, which etcd and Milvus both take, so the mapping exists four times: Couchbase's, Prometheus's, Kafka's and the shared gRPC one, beside `nodeTlsMaterial`; a new gRPC provider takes the shared one, and the done-when below, which is about the HTTP providers, is unchanged.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -566,30 +579,6 @@ is a major already carrying seventeen providers.
 mapping, with the precedence between the node map, the external addresses and the user's own port
 stated where a reader meets it.
 
-### D54. The data profiler can only profile columns on PostgreSQL-family engines
-
-`src/app/api/db/profile/route.ts:132-133` casts every column with `${safeCol}::text` to take
-its `MIN` and `MAX`. That is PostgreSQL's cast syntax, and it is written once for every engine:
-SQL Server, Oracle, MySQL, ClickHouse and the rest reject it, so each column comes back as
-"Could not profile this column" while the row count and the column list beside it are correct.
-The failure is per column and the panel still renders, which is why it reads as a data problem
-rather than a dialect one.
-
-Measured in a browser during #789's review, on SQL Server 2022 against `shop.dbo.customers`:
-three columns, three refusals, two rows counted correctly.
-
-Pre-existing and not caused by #789: `git show main:src/app/api/db/profile/route.ts` carries the
-identical two lines. It became visible because the object tree's row menu now offers Profile on
-every relation of every engine, where the flat explorer offered it on the tables it listed.
-
-Closing it is a per-dialect text cast measured on each engine rather than a one-line change:
-Oracle has `TO_CHAR`, SQL Server `CAST(x AS NVARCHAR(MAX))`, MySQL `CAST(x AS CHAR)`, ClickHouse
-`toString`, and `MIN`/`MAX` over a cast do not order the same way everywhere, so what the two
-numbers MEAN needs stating per engine rather than assuming a lexicographic answer is wanted.
-
-**Done when:** a column profiles on every engine whose provider offers the action, or the action
-is not offered where it cannot answer, with the engine's own sentence rather than a generic one.
-
 ### D55. The admin Operations table list does not print a row's schema
 
 Two tables with the same label in different schemas render as identical rows, so an operator
@@ -788,20 +777,25 @@ from the pane.
 **Done when:** either the pane shows the cluster's own bytes, or the edit half is refused on a
 definition whose re-serialisation is not byte-identical to what was read.
 
-### D62. Two PostgreSQL source refusals are unverified on CockroachDB and Materialize
+### D62. The PostgreSQL source refusals never fire on Materialize, which answers XX000
 
 `PostgresProvider.readObjectSource` reports exactly two SQLSTATEs as a refusal part, 42883 (`pg_get_*`
-absent) and 42703 (`pg_proc.prokind` absent), and both arms exist because this type id also serves
-CockroachDB and Materialize.
+absent) and 42703 (`pg_proc.prokind` absent), and the docblock on `isMissingSourceCatalogError` in
+`src/lib/db/providers/sql/postgres.ts` still says both arms are reachable because this type id
+serves CockroachDB and Materialize.
 
-The sentences in `tests/integration/db/postgres-provider.test.ts` are the SHAPE PostgreSQL 18.4
-answers for a missing function and a missing column, measured; neither fork was brought up. The
-provider carries no string of its own, so a wording difference cannot break it, and what is
-unverified is only the claim that those two SQLSTATEs are what a fork answers there.
+Both forks have been measured since, and the docblock is wrong about both (recorded in
+`docs/providers/postgres.md` §3.1.5): CockroachDB v26.2.5 has every surface and needs neither arm,
+and Materialize (v26.40.0, and again v26.44.1 on 2026-10-04) answers `XX000` for
+`pg_get_functiondef`, `pg_get_triggerdef` and `p.prokind` alike, so every routine and trigger source
+read there RAISES rather than answering a refusal part. The object counts hit the same `XX000` and
+now key on the column name instead of the code (#1351); the source read was left alone because
+`XX000` is Materialize's generic internal error, and keying on it would turn real internal
+failures into refusals.
 
-**Done when:** each fork is brought up, a view's and a routine's source is asked for through the
-shipped statements, and the SQLSTATE and the sentence are recorded in `docs/providers/postgres.md`.
-If either answers a third code, that arm is a code change and not a doc change.
+**Done when:** the source read decides by the identifier the refusal names (as the counts and
+every schema fallback in that file do) or the decision to keep it raising is recorded, and the
+`isMissingSourceCatalogError` docblock states what the forks actually answer.
 
 ### D63. `postgres.ts`'s `describeObject` still binds `[path[0], path[1]]`
 
@@ -987,6 +981,11 @@ from `query()`, and `src/app/api/db/query/route.ts` reads `result.rows.length`.
 
 Found while probing D74. Not caused by it and not fixed by it.
 
+The route's `explain` arm refuses such a text since #1311 (`Only a single statement can be explained`,
+read under the connection type's grammar, before a provider is opened), because there the second
+statement was not only a 500: the background plan request re-ran the INSERT after a leading SELECT. A
+plain run without `explain` still reaches the provider and is what this entry is about.
+
 **Done when:** the route either refuses a text carrying more than one statement with a sentence, or the
 provider names which result of an array it answers with. The first is the smaller change and is what
 the route's own name claims; D76's single-statement check on the object-edit path is the precedent for
@@ -1095,6 +1094,12 @@ Found while reviewing D87. It is independent of D87 and was not introduced by it
 ENDER to the caller's own scope, which is what makes the first backend's transaction reachable at
 all, and this entry is about the script's own statements being spread across backends in the first
 place.
+
+The same gap has a T-SQL shape that needs no concurrency to describe. Since #1312 the editor sends each
+batch between `GO` lines as one request, so a variable or `#temp` table survives inside a batch, but
+two batches are two `provider.query()` calls on `pool.request()`. A `#temp` table is scoped to its
+SESSION, so `CREATE TABLE #t (a INT)` / `GO` / `SELECT * FROM #t` finds the table only when the second
+batch borrows the same pooled connection, which sqlcmd and SSMS guarantee and this route does not.
 
 **Done when:** either a probe forces the interleave and the result is recorded, or the route holds
 one client for the script's scope. The second changes pool semantics for every caller of `query()`
@@ -1488,7 +1493,7 @@ D37's consolidation removes this if the shared TLS path is built on the Promethe
 ### D105. `StorageStats.sizeBytes` and `TableStats.totalSizeBytes` are required, so an engine that measures no size publishes a zero
 
 `StorageStats` in `src/lib/db/types.ts` declares `sizeBytes: number`, so a storage row carries a number even where the engine publishes no byte count for what the row names.
-Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts:877-878`), and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
+Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts:877-878`), and its per-table "0 B" comes from `readTableStatistics` summing `data_size ?? 0` (`:637-644`), and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
 The agent's `storage` reading forwards the field unchanged (`sizeBytes: store.sizeBytes` in `CURATED_READINGS`, `src/lib/agent/tools.ts`), so a model is handed a zero-byte store that nobody measured.
 The search provider takes the other route and emits no storage row for a size it was not given (`toStorageStats` in `src/lib/db/providers/sql/search/index.ts`).
 D44 is the same fabrication on `DatabaseOverview.databaseSizeBytes`, where the type already allows absence; here the type itself forbids it.
@@ -1534,7 +1539,7 @@ Not fixed in #1085: each remedy costs the inventory's read, which every connecti
 ### D108. One redirected listing fails the whole Elasticsearch or OpenSearch object count
 
 `countObjects` in `src/lib/db/providers/sql/search/index.ts` reads the five kinds together and turns a failed listing into that kind's `unavailable` answer, but only for the transport's own error: anything that is not a `SearchTransportError` is rethrown (`:1189`).
-Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1531`), and that throws a `ConnectionError`, outside the class the count catches.
+Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1556`), and that throws a `ConnectionError`, outside the class the count catches.
 So one listing a proxy redirects rejects the whole count with the redirect's message, where a refusal of the same listing marks only that kind and still counts the other four.
 
 Reproduced 2026-09-23 through the provider's own `countObjects`, with `fetch` replaced and the pipeline listing answering a 302 and then, as the control, a 403, from the repository root:
@@ -1858,7 +1863,7 @@ Not fixed there: the change is to the adapter's log-dir read, whose error table 
 
 ### D126. Concurrent first acquisitions of one connection and profile each open a provider
 
-`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:802-902`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:898`).
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:823-923`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:919`).
 Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
 The editor and agent paths reach this function the same way.
 `/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
@@ -1920,12 +1925,13 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec 6.1).
 
 `@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
 The etcd provider works around it with a server-name override that is not an IP and a `checkServerIdentity` that verifies the IP (spec E5), which depends on grpc-js internals and is why grpc-js is pinned exactly.
+Amended 2026-10-04: the override now lives once, in `grpcTlsIdentity` (`src/lib/db/grpc/tls.ts`) and `grpcChannelCredentials` (`src/lib/db/grpc/credentials.ts`), for every gRPC provider.
 No open grpc-node issue covers it; the closed #1919 is about `0.0.0.0`.
 An upstream issue is drafted in the etcd PR's final report and is posted only with the maintainer's approval.
 
 Found 2026-09-30 by the client measurement of the etcd design (R07, M6).
 
-**Done when:** grpc-node answers the issue with a release that sends no IP as the server name, the etcd provider drops its override for an IP identity, and `tests/unit/db/etcd/tls-handshake.test.ts` still passes on Node 24, Node 26 and Bun.
+**Done when:** grpc-node answers the issue with a release that sends no IP as the server name, the shared gRPC transport drops its override for an IP identity, and `tests/unit/db/etcd/tls-handshake.test.ts` and `tests/unit/db/milvus/tls-handshake.test.ts` still pass on Node 24, Node 26 and Bun.
 
 ### D133. Application secret roots in etcd are shown by default
 
@@ -1994,6 +2000,7 @@ Measured 2026-10-02 in the etcd branch's regression pass, the same on `origin/ma
 
 Found by the etcd provider's regression pass on SQLite (#1089), which changes no SQL provider.
 Not fixed there: the SQLite provider is outside that PR.
+Since #1323 routes on the driver's result column count, a value-setting `PRAGMA` such as `PRAGMA foreign_keys = ON` reaches `run()` as well, so node:sqlite reports the previous write's count for it too, while bun:sqlite reports 0.
 
 **Done when:** a statement that changes no row reports no changed rows on both SQLite drivers, read from the statement itself rather than the connection's last count, and a test runs a `DELETE` then a `CREATE TABLE` on one connection and pins the second answer.
 
@@ -2048,7 +2055,7 @@ Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
 
 ### D145. Db2 Create Table is off until the dialog and the import have Db2 column types
 
-Inline row edit and the import into an existing table came back with `db2-node` 1.0.24, which reads non-ASCII text back as written and refuses a DECIMAL that does not fit its column, measured on Db2 12.1 and 11.5 by `tests/live/db2-live-check.ts` (K1 and K22 in `docs/providers/db2.md`).
+Inline row edit and the import into an existing table came back with `db2-node` 1.0.24, which reads non-ASCII text back as written and refuses a DECIMAL that does not fit its column, measured on Db2 12.1 and 11.5 by `tests/live/db2-live-check.ts` (K1 and K22 in `docs/providers/db2.md`), and 1.0.25 stores a BOOLEAN edit too (K16, fixed).
 `db2Capabilities` (`src/lib/db/providers/sql/db2/capabilities.ts`) still sets `supportsCreateTable` to false, which also withholds an import into a new table, because neither path can spell a Db2 table.
 `CreateTableModal` (`src/components/CreateTableModal.tsx`) has no Db2 row in `DIALECTS` and refuses to open without one, and `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, which Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` and so cuts every fraction.
 
@@ -2115,20 +2122,6 @@ Measured 2026-10-03: no `provenance:` assignment exists in either provider, and 
 
 **Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
 
-### D152. A SQLite BLOB reaches the grid as an object keyed by byte index
-
-bun:sqlite and node:sqlite read a BLOB as a `Uint8Array`, and the SQLite provider (`src/lib/db/providers/sql/sqlite.ts`, through `sqlite-driver.ts`) returns it unchanged in the result rows.
-The query route serializes the result with `JSON.stringify`, which writes a `Uint8Array` as an object keyed by index, so the standalone grid receives `{"0":1,"1":2,"2":171,"3":255}` for the four bytes `01 02 ab ff`.
-`asBytes` in `src/lib/export/binary.ts` takes a live `Uint8Array` or the `{"type":"Buffer","data":[...]}` form a Node `Buffer` serializes to, and that object is neither, so every reader that goes through `asBytes` (the grid cell, the row detail, Copy Cell, the CSV and SQL export writers, inline editing and the agent's result tool) treats the value as a JSON object rather than as binary.
-PostgreSQL `bytea` and SQL Server `varbinary` arrive in the `Buffer` form and show and copy as `\x` hex.
-Measured 2026-10-03 in the browser pass of #1248, on the CI images of that branch and of `main` before it: the SQLite cell showed and copied the object form on both, and the PostgreSQL and SQL Server cells showed and copied `\x0102abff`.
-The libSQL transport also decodes a BLOB to a `Uint8Array` (`decodeBlob` in `src/lib/db/providers/sql/libsql/hrana-transport.ts`); that path was not measured.
-
-Found by the browser pass of the vector results grid (#1248).
-Not fixed there: the defect predates that PR, and its cause is in what the provider hands the route, not in the grid.
-
-**Done when:** a SQLite BLOB reaches the browser in a form `asBytes` reads, the grid shows it as `\x` hex and Copy Cell writes the whole value, a provider test reads a BLOB and asserts the serialized form, and the libSQL provider is measured the same way and fixed or recorded.
-
 ### D153. The etcd connection-options test can outrun bun's five-second hook timeout
 
 The file-level `beforeAll` in `tests/unit/db/etcd/connection-options.test.ts` makes its certificates at test time with `openssl`, eight of them over a new RSA-2048 key, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
@@ -2151,25 +2144,6 @@ Found 2026-10-03 while designing the Qdrant provider (vector-family spec 6.2).
 
 **Done when:** a Qdrant Cloud test cluster passes gate 4 of #424 (captures, the live check and the browser pass), and the provider doc, the README and the listings name it with the tier it measured.
 
-### D155. The gRPC transport exists twice, in the etcd and Milvus providers
-
-`src/lib/db/providers/keyvalue/etcd/grpc-client.ts` and `src/lib/db/providers/vector/milvus/grpc-client.ts` each carry the channel options, the IP-identity rule, the closing-credentials wrapper, the TLS mapping and the call wrapper, because the Milvus provider copied etcd's under the isolation rule (vector-family spec 5.1, decision Q1a: copied, not extracted).
-Two copies are cheaper than a shared module whose first change would touch both providers.
-
-Found 2026-10-03 while building the Milvus provider (vector-family spec 10.4).
-
-**Done when:** a third gRPC provider is designed; its PR first extracts one shared gRPC transport outside any provider directory, moves etcd and Milvus onto it with their own suites unchanged, and adds no third copy.
-
-### D156. The etcd provider sets no `grpc.enable_retries`
-
-The etcd channel options (`src/lib/db/providers/keyvalue/etcd/grpc-client.ts`, `channelOptions`) leave `grpc.enable_retries` at grpc-js's default, while the Milvus copy sets it to 0.
-With the default and no service config, grpc-js 1.14.5 retries only a call that was never sent or whose stream the server refused (`TRANSPARENT_ONLY`, `retrying-call.js` near 131-150), both safe, so no etcd write is sent twice today; the option would make every failure an explicit error and guard against a service config that ever loads.
-Recorded as defence, not as a defect.
-
-Found 2026-10-03 while copying etcd's transport into the Milvus provider (vector-family spec E7, R51 U31).
-
-**Done when:** etcd's `channelOptions()` sets `grpc.enable_retries: 0` with its exact-equality test updated and a fake server that drops the connection after a write sees exactly one call, or this entry is closed by the shared transport of D155.
-
 ### D157. Zilliz Cloud is not claimed
 
 Zilliz Cloud speaks the Milvus API and connects as a `milvus` connection (its address pasted into the Host box, SSL mode `verify-system`, an API key in Password or token, or `db_admin` and its password), and the provider doc says how to try it, but no test cluster has passed gate 4 of #424, so no listing, README or doc claims it (vector-family decision Q13).
@@ -2188,21 +2162,6 @@ Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 
 
 **Done when:** users paste commented Milvus bodies; then the dialect declares `bodyComments: true` in one data change, with corpus cases for a comment inside a string, after a value and at the end of the body.
 
-### D159. db2-node refuses a password holding `!` that the server accepts
-
-The Db2 compose service set `DB2INST1_PASSWORD=Password123!` until #1301 changed it to `Password123`, and the server takes it: `CONNECT TO TESTDB USER db2inst1 USING "Password123!"` succeeds in the container's own command line processor.
-Studio, over `db2-node` 1.0.22 with the insecure opt-in, is refused with "Authentication failed: Security check failed: severity=8, check_code=0x0F (user id or password invalid), requested_secmec=0x0009, accepted_secmec=0x0003, credential_encoding=Ebcdic037", and `db2diag` logs "Password validation for user db2inst1 failed".
-After the password is changed to letters and digits only, the same connection succeeds at once.
-The likely cause is how the driver encodes `!` in EBCDIC code page 037 (the refusal names `credential_encoding=Ebcdic037`).
-Measured 2026-10-04 through `db2-node` 1.0.24 on 12.1, by changing one test user's password one character at a time: `!`, `^`, `[`, `]` and `|` are refused and every other ASCII punctuation character is accepted, the five being the ones EBCDIC code pages 037 and 500 place differently.
-The refusal is the same over TLS with the driver's default mechanism, over TLS with `securityMechanism: "userPassword"`, and without TLS with it, and `credentialEncoding: "utf8"` is refused too.
-The provider refuses such a password before connecting and names the characters (K23 in `docs/providers/db2.md`, from #1301), so the server's "user id or password invalid" no longer sends a person to check a password that is right.
-Reported upstream on 2026-10-04 as [gurungabit/db2-node#25](https://github.com/gurungabit/db2-node/issues/25).
-
-Found 2026-10-03 by the browser pass of #1246, whose change does not touch Db2.
-
-**Done when:** the pinned `db2-node` carries the fix for gurungabit/db2-node#25, measured live with each of the five characters with and without TLS, and the provider's refusal (`assertPasswordSendable`) and K23 are removed with it.
-
 ### D160. The Db2 compose service can skip its object fixture on a fresh volume
 
 On the first start of a fresh volume, `docker/db2-init/01-object-fixture.sh` printed "db2-init: fixture already loaded", yet `SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TABSCHEMA IN ('APP','REPORTING')` returned 0.
@@ -2210,6 +2169,7 @@ Running `/var/custom-fixture/01-object-fixture.sql` by hand then loaded it with 
 The script loads the fixture only when its count query prints exactly `0`, and prints the skip message for anything else, so a query that fails or warns at that point of the start reads as a loaded fixture.
 
 Found 2026-10-03 by the browser pass of #1246.
+Seen again on 2026-10-04, on three fresh volumes in a row (12.1.0.0 twice, 11.5.9.0 once), each printing the skip message over an empty `APP`; run by hand moments after "Setup has completed", the same count query answered `SQL1024N A database connection does not exist`, which the script reads as a loaded fixture.
 
 **Done when:** the script tells a failed or warning count query from a non-zero count and fails loudly on the first, a fresh volume gets the fixture, and the check that the fixture loaded is part of the service's own start.
 
@@ -2261,7 +2221,7 @@ Not fixed there: the ClickHouse paste path is outside that work.
 
 `readObjectSource` in `src/lib/db/providers/sql/db2/objects.ts` reads a definition as at most two 16336-byte `HEX(VARCHAR(SUBSTRING(...)))` chunks beside its length (`src/lib/db/providers/sql/db2/catalog.ts`), so a longer one is shown partial.
 That bound came from `db2-node` 1.0.22, which could not fetch a CLOB at all (K7 in `docs/providers/db2.md`).
-1.0.24 fetches a CLOB selected on its own: `SELECT TEXT FROM SYSCAT.VIEWS WHERE ...` answered all 40067 bytes of a view definition four times running on 12.1, while a LOB beside other columns can still come back wrong (K4), so the length and `ORIGIN` would stay in a statement of their own.
+1.0.24 fetches a CLOB selected on its own: `SELECT TEXT FROM SYSCAT.VIEWS WHERE ...` answered all 40067 bytes of a view definition four times running on 12.1, and 1.0.25 reads a LOB beside other columns exactly too (K4, fixed), measured on 12.1 and 11.5 with a 50000-byte CLOB, so the length and `ORIGIN` can share the statement.
 
 Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.24.
 
@@ -2285,6 +2245,302 @@ The value is right since #789; only the label loses the container.
 Found 2026-10-04 by the browser check of #1303 on a Db2 connection with tables in `APP` and `REPORTING`; every engine with more than one container has it.
 
 **Done when:** each option's label names its container path wherever the engine has containers, the way the object tree qualifies a name, and a component test with two same-named tables in two schemas finds two distinct labels.
+
+### D180. The etcd live check still points at a worktree that no longer exists
+
+`tests/live/etcd-live-check.ts` holds `LANE_E`, the absolute path of the lane worktree the etcd provider was built in, as the working directory of its `--idempotence` run, the compose file its `--service measure --seed` run reads and the mount its `--drive-cluster-container` run takes; its header and `docs/providers/etcd.md` section 11.4 also name the compose project `etcd-lane-e`.
+That worktree was removed after the provider merged, so `--idempotence` fails before any check, with `posix_spawn 'docker'` in a working directory that does not exist (measured 2026-10-04); the four `--service` runs of section 11.4 do not need it and pass.
+Under Node the `etcd-auth` run also stops at its own snapshot: the harness reads the gateway with the global `fetch`, which cannot present the client certificate that fixture requires, while Bun's `fetch` takes one.
+So the Node runs that work are `etcd`, `etcd-cluster` and, with `NODE_EXTRA_CA_CERTS` naming the fixture CA, `etcd-auth-password`.
+
+Found 2026-10-04 while running the live check over the shared gRPC transport.
+
+**Done when:** the script takes the repository root from its own location and the compose project from a flag, `--idempotence` passes from any worktree, and the `etcd-auth` snapshot under Node goes through `node:https` with the client pair.
+
+### D196. A Flux console would be a server-side code surface, so v1 has none
+
+The InfluxDB providers send InfluxQL and SQL only: the route tables in `src/lib/db/providers/timeseries/influxdb/routes.ts` hold no Flux route, and the InfluxQL policy (`influxql-policy.ts`) refuses Flux text before any request.
+Flux is a programming language the server runs, not a query text a lexical policy can bound: from a read-only token it reaches HTTP, TCP and the server's metadata store, so a policy in front of it would promise a boundary it cannot keep.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** a design for Flux that does not rely on a lexical policy is decided by the owner, or the entry is closed as declined.
+
+### D197. InfluxDB 3 reads JSON, so types are lossy and the server never sees a cancel
+
+The `influxdb3` provider reads `/api/v3/query_sql` as `format=jsonl` (`src/lib/db/providers/timeseries/influxdb/sql-results.ts`), so a column's Arrow type reaches the grid only as JSON allows, and a cancel closes the socket while the server finishes the query.
+Arrow Flight over gRPC carries the exact types and a server-side cancel, and needs its own path inside the HTTP egress guard.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** an Arrow Flight path inside the egress guard returns exact 3.x types and cancels server-side, with a live measurement.
+
+### D198. No EXPLAIN strategy for InfluxQL or DataFusion text plans
+
+Both InfluxDB providers declare `supportsExplain: false` (`influxql-provider.ts`, `sql-provider.ts` in `src/lib/db/providers/timeseries/influxdb/`), so the Explain button is hidden, although a typed `EXPLAIN` already returns its plan as rows in the grid.
+No `explainFormat` and no strategy in `src/lib/explain/` reads an InfluxQL or a DataFusion text plan.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** an `explainFormat` and a strategy for each exist, measured on 1.13.1, 2.9.1 and 3.12.
+
+### D199. Retention policies are not a tree level
+
+The `influxdb` tree lists databases and their measurements, and a tree read goes through the database's default retention policy (`"db".."m"`, `src/lib/db/providers/timeseries/influxdb/influxql-objects.ts`), so a measurement written only into a non-default policy previews empty.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** the tree lists policies under a 1.x or 2.x database, and a measurement written only into a non-default policy previews non-empty.
+
+### D200. InfluxDB monitoring shows the overview only
+
+The monitoring page of both InfluxDB types reads `/ping` and `/health` and nothing else (`src/lib/db/providers/timeseries/influxdb/monitoring.ts`): no running queries, performance or storage figures, and `/metrics` is never read.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** running queries, performance and storage come from `/metrics` or the system tables, without exposing other users' query text to non-admins.
+
+### D201. Enterprise resource tokens are handled from documentation, not measured
+
+An InfluxDB 3 Enterprise database token answers `/ping` with 403, and the providers handle it from InfluxData's documentation: the only capture of that answer is synthetic (`tests/fixtures/influxdb/3.12.0-core/ping-forbidden-synthetic.json`), because the pinned Core image cannot produce it.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** a live Enterprise server with a `db:<name>:read` token passes the 403 `/ping` path.
+
+### D202. The InfluxDB cloud products are documented as untested
+
+The providers were measured against InfluxDB 1.13.1, 2.9.1 and 3.12.0 Core only (`tests/fixtures/influxdb/README.md`); InfluxDB Cloud (TSM), Cloud Serverless, Cloud Dedicated and Clustered are claimed nowhere (`src/lib/db/compatibility.ts`).
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** each of Cloud (TSM), Serverless, Dedicated and Clustered passes the live evidence gate or is recorded as not served.
+
+### D203. Qdrant words a truncated answer as an unreachable server
+
+The shared transport marks an answer the server ended after accepting the request with `TransportError.truncated` beside kind `network` (`src/lib/db/http/node-transport.ts`), and the InfluxDB providers word it as a server failure; Qdrant's `src/lib/db/providers/vector/qdrant/errors.ts` reads only the kind, so the same cut reads as a server it could not reach.
+
+Found 2026-10-04 while designing the InfluxDB provider (ruling R3: no file under `src/lib/db/providers/` outside the InfluxDB directory changes in that work).
+
+**Done when:** Qdrant's `errors.ts` reads `TransportError.truncated` and says the server failed after accepting the request, with a test over a truncation.
+
+### D204. The plaintext consent survives a Host or Port change, for Db2 and both InfluxDB types
+
+`src/hooks/use-connection-form.ts:342,490,707` keeps `allowInsecureAuth` when Host or Port is edited and sends it whenever SSL mode is `disable`, so a consent given for one host carries the password or token to the next one typed, while the InfluxDB hint says the secret crosses the network to this host.
+This is existing Db2 behaviour (#786).
+
+Found 2026-10-04 by the security review of the InfluxDB provider design (finding SR1 F8), filed by the review-round rulings rather than fixed there, because the shared form change alters Db2's behaviour inside a provider PR.
+
+**Done when:** the connection form clears `allowInsecureAuth` when Host or Port changes, for every type that takes the field, with a hook test; decided as a shared change outside a provider PR.
+
+### D205. Oxia connections cannot write
+
+v1 reads only (`src/lib/db/providers/keyvalue/oxia/`, DECISIONS O1).
+Writes need a protected-prefix table for Pulsar's metadata (`/admin`, `/managed-ledgers`, `/loadbalance`, `/namespace`, `/schemas`, `/ledgers`) and an expected-version guard, because the server has no authorization and no undo.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O1).
+
+**Done when:** `put`, `delete` and `delete-range` run behind typed confirmation, refuse a protected prefix and send `expected_version`, with `READ_ONLY_ENFORCED.oxia` still true for the mode, measured live on 0.16.x and 0.17.x.
+
+### D206. Oxia ephemeral records and sessions are shown, never made or listed
+
+The Source tab badges an ephemeral record (O11), but no session is created or listed (`getActiveSessions` answers the "Oxia does not list client sessions" state).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O11).
+
+**Done when:** a decision on whether sessions belong in Studio is taken; if yes, a session list from a read the server offers, with a test against 0.17.x.
+
+### D207. No bounded notifications watch on Oxia
+
+`notifications` is refused by name (O10).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O10).
+
+**Done when:** a watch with a time and count bound, the etcd `watch` shape, runs on a server started with `--notifications-enabled`, with a cancel test.
+
+### D208. Oxia namespaces and data servers cannot be listed
+
+The data-server API has no namespace list, so Namespace is typed (O5) and Data servers too (O6).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O5).
+
+**Done when:** a read-only list from the coordinator's admin port is designed with its own dial and authentication rules, or the entry is closed as declined because the admin port is a write surface.
+
+### D209. A port-forwarded Oxia cluster cannot be read
+
+A forward reaches one address while the cluster sends clients to the advertised leaders (O6); the provider doc gives the hosts-file workaround.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O6).
+
+**Done when:** a rewrite map from advertised to reachable address is designed with `grpc.default_authority` handled and measured on a three-server cluster, without weakening SECURITY row 3.14.
+
+### D210. Pasting Pulsar's oxia://host:6648/ns does not split it
+
+The host-URI parser (`src/lib/connection-host-uri.ts`, `HostUriScheme`) takes `http` and `https` only and refuses a path, so the URL goes in three fields by hand (O5).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O5).
+
+**Done when:** the shared parser takes a scheme with a default port and a path-to-Database output, with tests for each existing scheme unchanged.
+
+### D211. An in-cluster Studio cannot read its Oxia token from a file
+
+A pasted OIDC token expires.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O7).
+
+**Done when:** a security decision on reading a server-side path is taken, and if accepted a token-file field with rotation, refused outside a configured directory.
+
+### D212. gRPC providers are outside the HTTP egress guard
+
+grpc-js resolves names itself, so `DB_HTTP_BLOCK_PRIVATE_HOSTS` cannot cover etcd, Milvus or Oxia.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O6).
+
+**Done when:** `src/lib/db/grpc/` resolves each target once, checks the address with `egress-policy.ts` and dials the checked address with the original name as TLS identity, with tests for etcd, Milvus and Oxia.
+
+### D213. No Oxia metrics panel
+
+The server exports Prometheus `/metrics` only, and v1 shows none (O14).
+The Grafana dashboards in `deploy/dashboards/` at Oxia v0.16.10 query metric names the server does not export (for example `oxia_server_db_puts_total` against the exported `oxia_server_db_puts_count_total`).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
+
+**Done when:** a metrics URL panel reads named series with a test over a captured scrape, and the series it reads are the names the server exports.
+
+### D214. Key order is probed because no released Oxia reports it
+
+main carries `key_sorting` in the shard assignments (upstream PR #1388); v1 vendors v0.16.10 and probes (O3, O9).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O9).
+
+**Done when:** a release carries the field; the proto is re-vendored from that tag, the reported order wins over the probe where present, and the probe stays for older servers.
+
+### D215. The POSIX shell-word rules exist twice
+
+The POSIX-shell refusal rules exist twice: `etcd/lexer.ts` and `src/lib/db/console/shell-words.ts`.
+etcd's `lexer.ts` keeps its own word reader while Oxia reads through the engine-neutral shell-word reader (O10).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O10).
+
+**Done when:** etcd's command line reads through the shared module, with `tests/unit/db/etcd/lexer.test.ts` unchanged.
+
+### D216. The Oxia Keys panel discovers folders on its first page only
+
+Discovery runs on the first page of a walk with no pattern, within the bounds SB1-8.5 sets, and never under a folder, because under a folder its cost scales with the number of child nodes (O13; SPEC-RECONCILIATION cross-part ruling).
+A deeper or wider Pulsar tree is narrowed by prefix.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O13).
+
+**Done when:** a lazy children tree is designed if real Pulsar trees show the discovery insufficient, measured on a production-shaped tree.
+
+### D217. Studio's Oxia doc recommends 0.17.1 because of a 0.16 standalone lock
+
+An Oxia 0.16 standalone server (measured on 0.16.10) stops sending shard assignments to every client after one request whose authority is not `host:port`, which Studio never sends, until restarted (upstream #1450, about standalone mode only). 0.17.1 is not affected; fixed on main by #1450, in no 0.16 release as of 2026-10-04.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O2).
+
+**Done when:** a 0.16 release carries #1450; the doc's version note and the `oxia` service of `database-compose.yml` move to it, and the live check passes on it.
+
+### D218. The Oxia cluster dial policy is checked by hand only
+
+No CI job starts the `oxia-cluster` profile; `tests/unit/db/oxia/cluster-policy.test.ts` covers it with synthetic answers.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O15).
+
+**Done when:** a CI job runs `tests/live/oxia-live-check.ts --cluster` against the profile, or the entry is closed because the synthetic test is judged enough.
+
+### D219. The Keys panel and tab titles print a key's control characters raw
+
+The shared Keys panel rows and the tab titles print a key as it is, so a key holding a control character is drawn with it.
+A key `a` followed by U+0000 shows as `a` and a box in its row and title, and its Source tab reads "Source: a", the same as a key `a`.
+Measured on Oxia, which reaches such a key from the Keys panel by design; the panel and the titles are shared, so every engine with such keys draws them the same way.
+
+Found 2026-10-04 by the browser pass of the Oxia provider (step 4).
+
+**Done when:** a key's control characters are shown escaped in the Keys panel rows and in tab titles, for every engine.
+
+### D220. An empty value read successfully is headed as a failed read
+
+The shared Source tab heads an `unavailable` part "This definition could not be read", with an error icon, even when the read succeeded and the value is empty.
+Oxia and etcd both show it above their own "The value is empty (0 bytes)" sentence.
+
+Found 2026-10-04 by the browser pass of the Oxia provider (step 6).
+
+**Done when:** an empty value reads as an empty value, with no failure heading or error icon.
+
+### D221. The Keys panel's empty state under a prefix says the database holds no keys
+
+With a prefix that matches nothing, the shared Keys panel says "This database holds no keys the walk has seen", though only the prefix matched none: measured on an Oxia namespace of 20,077 keys.
+The sentence is the shared panel's, not a provider's.
+
+Found 2026-10-04 by the browser pass of the Oxia provider (step 9).
+
+**Done when:** under a prefix the empty state says that no key under the prefix has been seen, for every engine.
+
+### D222. etcd and Milvus blame a pasted CA when none was pasted
+
+With SSL mode verify-full and the CA field empty, an untrusted server certificate is checked against the runtime's own roots, yet etcd says "The server's certificate is not signed by the CA under SSL / TLS: paste the etcd CA." and Milvus says the same of "the CA under SSL / TLS".
+Both read the panel through the shared `readGrpcTlsPanel`, which accepts verify-full with no CA; Oxia words this case on its own since ruling R35 of its PR.
+
+Found 2026-10-04 by the review of that change.
+
+**Done when:** etcd and Milvus name the trust store when no CA is pasted, as Oxia's `tlsSentence` does.
+
+### D223. A binary value's hex dump is captioned as rendered JSON
+
+The shared Source tab captions a part from its `origin` alone (`sourceCaption` in `src/components/object-source/source-caption.ts`), and a hex dump of a binary value has no origin of its own, so it is captioned "A structured definition, rendered here as JSON."
+Oxia's hex dump and etcd's base64 view of a binary value both carry that caption, though neither is JSON.
+
+Found 2026-10-04 by the review of the Oxia provider (ruling R37 of its PR).
+
+**Done when:** a binary dump part carries a caption that says what it is, for every engine.
+
+### D224. An Oxia key on several shards shows one record in a record walk
+
+Oxia stores a record on the shard its partition key names, so one key written under two partition keys is two records on two shards.
+Every Oxia key walk without `--index` answers such a key once, and `range-scan` (with or without `--prefix`) reads its record on the lowest shard id that listed it, so the other records are not shown.
+An `--index` walk lists the shards one after another, so it shows each copy.
+They are read in the editor with `get -p` and their partition key, and the Source tab of such a key names how many shards hold it.
+
+Found 2026-10-04 by the review of the Oxia provider (ruling R38 of its PR).
+
+**Done when:** a record walk shows every record of such a key, each with its shard, or the entry is closed because `get -p` is judged enough.
+
+### D225. db2-node writes nothing for a value bound to a large CLOB, DBCLOB or BLOB column
+
+A parameter whose target is a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer answers 0 changed rows, with no error and no diagnostic, and the row keeps its old value (K24 in `docs/providers/db2.md`).
+Beside other parameters the whole statement writes nothing on 1.0.25, where 1.0.24 refused it with "parameter descriptor count 1 does not match parameter count 2".
+At 32767 bytes the value is written, and `CAST(? AS VARCHAR(n))` or `CAST(? AS VARBINARY(n))` is written at any declared length; the 1.0.25 README's own `CAST(? AS BLOB(1M))` example writes nothing.
+Measured 2026-10-04 on Db2 12.1.0.0 and 11.5.9.0 through `db2-node` 1.0.24 and 1.0.25 (`tests/live/db2-known-issues.ts`, row K24).
+The grid's inline editor binds every value, so an edit of such a cell would be reported saved and lost.
+Contained: the provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns` (`src/lib/db/providers/sql/db2/capabilities.ts`), so `ResultsGrid` opens no editor on such a cell and shows the reason on it; a result declares these columns without their length, so every one is refused, a short one included.
+The table preview still leaves them out and a result holding one carries a warning (`src/lib/db/providers/sql/db2/values.ts`); an import writes literals and is not affected.
+Reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31).
+
+Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.25.
+
+**Done when:** the pinned `db2-node` writes a bound value to a `CLOB(1M)`, a `DBCLOB(1M)` and a `BLOB(1M)` alone and beside other parameters, K24 probes `GONE` on 12.1 and 11.5, and the editor refusal, the preview rule and the warning are removed with it.
+
+### D226. Object search, inventory and agent grounding still list routines on Materialize and fail
+
+Materialize's `pg_proc` has no `prokind`, so `PostgresProvider.listObjects()` for `function` and `procedure` is refused with `column "p.prokind" does not exist` (`XX000`).
+The object tree is spared since #1351: the count marks both kinds unavailable and the tree does not open an unavailable folder.
+Three other callers list every declared kind without asking the count first, so one refused kind fails the whole read: the search route (`src/app/api/db/objects/search/route.ts`, the `listObjects(container, kind.id)` loop), the inventory route (`src/app/api/db/objects/inventory/route.ts`, the `listObjects(pair.container, pair.kind)` loop), and the agent's inventory grounding (`src/lib/agent/tools.ts`), which skips a kind whose count was refused only when the kind declares `countIsListing`, and the PostgreSQL routine kinds do not.
+
+Found 2026-10-04 by the review of the #1351 fix; pre-existing, not measured end to end through those three surfaces.
+
+**Done when:** on a Materialize connection, search, inventory and the agent's grounding answer for tables, views and materialized views, with the two routine kinds reported as unavailable rather than failing the read.
+
+### D227. A long SQLite statement blocks the whole Studio server, and no cancel or timeout reaches it
+
+`sqlite.ts` runs every statement through `bun:sqlite` or `node:sqlite`, both synchronous, on the server's one JavaScript thread, and neither exposes `sqlite3_interrupt` or a progress handler (Node 24.11's `DatabaseSync` has `setAuthorizer` and neither of those; Bun 1.4.2's `Database` has neither).
+So a running statement cannot be stopped from inside the process, and while it runs no other request is served: measured 2026-10-03 on node:sqlite (SQLite 3.50.4), a 300M-row recursive CTE from the editor made `/api/health` answer after 69.7 s instead of 6 ms, and the 60 s query timeout, checked only after the statement returns, did not end it.
+Since #1364 the editor no longer offers Cancel there (`supportsQueryCancel: false`, `docs/providers/sqlite.md` section 3.4); the block itself is unchanged.
+A1 is the same property on the agent and MCP path.
+
+Found 2026-10-04 while fixing #1364.
+
+**Done when:** SQLite statements run in a worker thread that the provider terminates on cancel and on the query timeout, the SQLite provider implements `cancelQuery`, and a test shows `/api/health` answering while a long statement runs.
 
 ## Value interpolation
 
@@ -2319,7 +2575,9 @@ Two constraints from #269 that do not go away:
   newline-joined payload cannot come back.
 - **Primary-key detection is heuristic.** The hook picks a result column named `id` or ending in
   `_id`. Acceptable for a control gated on an opt-in capability; per-dialect editing on real tables
-  should derive the key from the schema.
+  should derive the key from the schema. A table whose key is named otherwise is refused with
+  "No primary key column detected" (`src/hooks/use-inline-editing.ts:854-859`), which reads as if
+  the table had none (found by the end-to-end test pass of 2026-10-03 and 2026-10-04).
 
 Whether row editing should be universal at all is a product decision. The published
 `WorkspaceFeatures.inlineEditing` flag is deprecated against this entry (#288): it becomes real, or
@@ -2405,8 +2663,7 @@ Measured with a commit counter in a real browser, 27 keystrokes in the editor: t
 Measured with a render counter in each of the three, 27 keystrokes in a real browser: 27 renders each on `main`, 0 each after.
 `BottomPanel` is still handed the tab's statement while its explain view is open, which pairs it with the plan, so in that view alone it re-renders per keystroke.
 The dialogs moved into `StudioModals` and the standalone overlays into `StudioOverlays`.
-Keystroke churn on the shell children was eliminated in #1190.
-What still re-renders on every keystroke, on `main` and on this head alike, is the modal surface: `SaveQueryModal`, `QuerySafetyDialog`, `CreateTableModal`, `DataImportModal`, `DataProfiler`, `CodeGenerator`, `TestDataGenerator`, the two confirmation `AlertDialog`s, `CommandPalette` and `MobileNav`.
+What still re-renders on every keystroke is the modal surface: `SaveQueryModal`, `QuerySafetyDialog`, `CreateTableModal`, `DataImportModal`, `DataProfiler`, `CodeGenerator`, `TestDataGenerator`, the two confirmation `AlertDialog`s, `CommandPalette`, `ShortcutsDialog` and `MobileNav`.
 Neither `StudioModals`, `StudioOverlays` nor the modals are memoized.
 
 ### X9. What `columnTypes` still cannot name, measured
@@ -2749,17 +3006,6 @@ Measured 2026-10-03 in the acceptance pass of the vector-family work, signed in 
 Found by the acceptance pass of the vector-family work; the default predates it.
 
 **Done when:** `MonitoringDashboard` passes the signed-in role to both tabs, a non-admin sees no maintenance or Terminate control on /monitoring, and a component test renders the dashboard as a non-admin and finds none.
-
-### X27. A JSON export writes a binary value in Node's Buffer form
-
-`buildResultExport` (`src/lib/export/result-export.ts:892-893`) writes the JSON export as `jsonText(rows)`, the raw rows, so a PostgreSQL `bytea` or SQL Server `varbinary` value is written as `{"type":"Buffer","data":[0,1,...]}`.
-The grid, Copy Cell, the row detail and the CSV export show the same value as `\x` hex, through `asBytes` in `src/lib/export/binary.ts`.
-Measured 2026-10-03 in the acceptance pass of the vector-family work: a 100-byte `bytea` and a 100-byte `varbinary` each exported to JSON as the Buffer object with 100 numbers, and copied as `\x00010203...`.
-D152 has a separate cause: a SQLite BLOB never reaches the export as bytes at all.
-
-Found by the acceptance pass of the vector-family work; the JSON writer dates from #422.
-
-**Done when:** the owner has decided the JSON form of a binary value (a hex string, a base64 string, or the Buffer form kept and documented), the JSON export writes it for every engine whose driver hands back bytes, and an export test pins it for `bytea` and `varbinary`.
 
 ---
 
@@ -3232,15 +3478,15 @@ Not fixed in #1085: the spec and the rail predate it.
 
 **Done when:** the spec's locator names the editor's RUN button alone (`exact: true`, or a test id of its own), and the spec passes with an LLM configured.
 
-### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Sel" run nothing, and the toolbar Run sends the whole buffer
+### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Selected" run nothing, and the toolbar Run sends the whole buffer
 
-`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Sel" button all end there.
+`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Selected" button all end there.
 The only listener is in `src/hooks/use-query-execution.ts`, which only the standalone `src/components/Studio.tsx` uses.
 The embedded `StudioWorkspace` (`src/workspace/StudioWorkspace.tsx`, the npm package's shell) runs queries through `useQueryAdapter`, which registers none, so in the published shell those three controls never reach the host's `onQueryExecute`.
 The one control that runs there is the toolbar Run, and `executeQuery` in `src/workspace/hooks/use-query-adapter.ts` sends `overrideQuery || tabToExec.query`, the whole buffer: it never asks the editor for `getEffectiveQuery`, as `use-query-execution.ts` does, so neither a selection nor the statement at the caret can be run in that shell.
 On a PromQL tab that is a refusal: a buffer holding `up` and `rate(prometheus_http_requests_total[5m])` on two lines is sent whole, and the server answers `bad_data` with `2:1: parse error: unexpected identifier "rate"`, while `up` alone answers.
 The editor shows its Cmd/Ctrl+Enter hint in both shells, and the shortcut list in `docs/FEATURES.md`, generated from `src/lib/keyboard-shortcuts.ts`, offers it without naming a shell.
-Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Sel" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
+Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Selected" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
 `git log -S'execute-query' -- src/workspace` is empty, so the embedded shell never listened, and `tests/components/StudioWorkspace.test.tsx` mocks `QueryEditor`, so no test reaches the embedded run shortcut.
 
 Found 2026-09-23 by the #1085 review.
@@ -3353,6 +3599,7 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
 ### U58. TablesTab's Vacuum summary card reads 0 and "OK" on an engine that declares no vacuum
 
 `vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card counts the tables whose `bloatRatio` passes 10 as if the engine had a vacuum.
+The table's "Vacuum" column header (`TablesTab.tsx:443`) is drawn on those engines too.
 Ten engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, SQL Server, ClickHouse, Trino, Redis, Couchbase and etcd today, and Db2 LUW after the Db2 PR (#786), which reads no table statistics in its first version.
 All but MySQL publish no `bloatRatio`, so their card shows 0 with a green "OK" wherever the tab has table statistics to read; Redis answers none, so its card reads that only while its database is empty, and N/A once the database holds a key.
 MySQL's `bloatRatio` is `DATA_FREE` as a percentage of the table's data and index bytes, so its card counts the tables past 10 percent under the Vacuum title, a count the fix takes off the card too.
@@ -3378,15 +3625,6 @@ Reproduce with a hook test: type a client certificate under `verify-full`, switc
 Found 2026-09-30 while designing the etcd provider (R12 UX-8).
 
 **Done when:** a mode that draws no client certificate sends none, or draws what it sends, and a hook test pins the switch.
-
-### U61. The editor's cancel discards the cancel route's answer, so a write etcd applied is shown as cancelled
-
-`use-query-execution.ts` aborts its own request, posts the cancel and shows the statement as cancelled whatever the route answers (`cancelQuery` and the cancellation branch of the run's error handling), so a write the engine had applied, for which the etcd provider's `cancelQuery` answers `false`, is shown as cancelled.
-The etcd provider states it as a limit (`docs/providers/etcd.md`, section 13).
-
-Found 2026-09-30 while designing the etcd provider (R12 CF-11).
-
-**Done when:** a cancel whose route answer is `cancelled: false` says that the statement may have run, and a hook test pins both answers.
 
 ### U62. The object-edit wire checks answer for an array with a hole in it
 
@@ -3572,6 +3810,117 @@ Deferred when the Graph tab was added, as outside its first version's scope; the
 
 **Done when:** the toolbar offers at least a hierarchical (breadth-first or dagre-style) layout beside fcose, with an accessible name on the control, any new layout package pinned with its licence checked as cytoscape's were, and a test that switching layouts reruns the chosen one.
 
+### U79. The Charts tab draws a time series over its first tag, not its time column
+
+The default x axis is the first categorical field before any date field (`defaultX` in `src/components/DataCharts.tsx:534`), so a tagged time series, such as an InfluxDB result with a `room` tag beside `time`, is drawn over its tag values; this affects Prometheus today.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25); the InfluxDB provider docs say to pick `time` as the x axis.
+
+**Done when:** with a date field and a "line" suggestion the default x axis is the date field, with a unit test.
+
+### U80. Charts "Group by hour" reads a `Z` timestamp in local time
+
+`groupByDate` (`src/components/DataCharts.tsx:434`) reads a timestamp ending in `Z` through local-time getters, so on a machine outside UTC the grouped ticks disagree with the ungrouped ones; every InfluxDB and Prometheus timestamp is UTC with a `Z`.
+
+Found 2026-10-04 while designing the InfluxDB provider (design decision I25).
+
+**Done when:** `groupByDate` reads a `Z` value in UTC and the grouped tick agrees with the ungrouped one, with a test under a non-UTC `TZ`.
+
+### U81. An InfluxDB 3 connection reads one database, so a server with several needs one connection each
+
+An `influxdb3` connection lists and runs exactly one database, its session database: the connection's `database` field, else the only non-system database the token can list (`src/lib/db/providers/timeseries/influxdb/sql-provider.ts`).
+A server with several databases therefore needs a connection per database, because the query route, the tab model and the editor toolbar carry no database of their own.
+
+Found 2026-10-04 while designing the InfluxDB provider (rulings R1 and R16).
+
+**Done when:** a session-addressed multi-database feature lands: a database level in the tree, a run-body field for the database, a tab field set from the tree, and an editor-toolbar database selector, accepted by the query route only for a type declaring a capability that entry designs, with tests on the route, the tab model and the toolbar.
+
+### U82. The cleartext consent box says "password" on engines whose secret is a token
+
+The consent box the connection dialog draws while SSL Mode is disable is labelled "Send the password without TLS" for every type that takes `allowInsecureAuth` (`src/components/ConnectionModal.tsx`, the `allowInsecureAuth` block).
+On Oxia, `influxdb` and `influxdb3` the secret the box covers is a token: Oxia's field above the box is Token, and its declared hint under the box speaks of the token only.
+The refusals quote the label word for word, so they carry the same word: `CONSENT_CLAUSE` in `src/lib/db/providers/keyvalue/oxia/connection-options.ts` and the cleartext refusal in `src/lib/db/providers/timeseries/influxdb/connection-options.ts`.
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310), in the New connection dialog for Oxia with SSL Mode disable.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the label is shared by every type that takes the field, and the refusals of two other providers quote it.
+
+**Done when:** the label names the secret the type takes, from a declared word in the type's UI config rather than a branch on the type id, every refusal that quotes the label quotes the new one, and a test renders the dialog for a password type and a token type and asserts each label.
+
+### U83. A read-only engine's Source tab calls a key's value a definition it cannot replace
+
+An Oxia key's Value and Metadata tabs in the Source view say "This database offers no way to replace this definition in place.", which is `NOT_OFFERED_SENTENCE` in `src/components/object-source/source-editable.ts`, the sentence `partEditability` gives any part whose provider offers no edit.
+A key's value is not a definition, and the sentence reads as a limit of the engine, when what blocks the edit is that the connection is read-only.
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310), on `/pk/tenant-a/2` and on `/values/over-cap`.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the sentence is shared by every engine's Source tab.
+
+**Done when:** a part that is not offered says why in words that fit the object and the reason, either through a sentence the provider declares for the part or a shared sentence for a read-only connection, and a test pins the sentence for a read-only key-value part and for a definition an engine cannot replace.
+
+### U84. The Keys panel keeps "Scan all" enabled after a walk that answered complete
+
+After a scan that reached the end of the keyspace, "Scan more" is disabled and "Scan all" is not: the Scan more button's `disabled` reads `exhausted` and the Scan all button's does not (`src/components/key-browser/KeyBrowser.tsx`).
+An enabled "Scan all" suggests there is more to read when the walk has already answered that there is not.
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310): the prefix `/pk/` read "Scanned 3", with Scan more disabled and Scan all enabled.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the panel is shared by every key-value engine.
+
+**Done when:** "Scan all" is disabled once the walk is exhausted, as "Scan more" is, and a component test asserts both buttons after a scan that answered complete.
+
+### U85. The agent rail says a conversation "ended when the page reloaded" after in-app navigation
+
+Going from Studio to Monitoring and back with the browser's Back button, without a reload, the rail says "The conversation this browser was in (1 question, ...) ended when the page reloaded. Your next question starts a new one."
+`interrupted` in `src/components/agent/use-agent-run.ts` is the stored thread whenever the mounted rail follows no run, and the rail's `runId` starts empty each time the rail mounts, so a remount after in-app navigation reads as a reload (`agent-thread-ended` in `src/components/agent/AgentRail.tsx`).
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310); nothing in it is specific to Oxia.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the rail is shared by every engine, and the PR does not touch it.
+
+**Done when:** in-app navigation away from Studio and back either keeps following the conversation or says what actually ended it, the reload wording appears only after a reload, and a test remounts the rail without a reload and asserts the notice.
+
+### U86. A MongoDB view's row menu offers Validate, Compact and Check Collection
+
+X25's MongoDB sibling. MongoDB's `maintenanceOperationSpecs` (`src/lib/db/providers/document/mongodb.ts:821-825`) declares `vacuum` ("Compact Collection"), `analyze` ("Validate Collection") and `check` ("Check Collection") with no `kinds`, and an absent `kinds` means every kind, so the object tree's row menu offers all three on a row of kind `view` (`MONGODB_KIND_VIEW`, `:384`).
+The entry opens `/admin/operations?path=...&path=paid_orders`, which says "No tables found ... this page has no row for "paid_orders" to run it on", and nothing is sent.
+Measured on MongoDB 8.2.12 (`mongo:8.2`), view `paid_orders`.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** MongoDB declares `kinds: ["collection"]` on the three specs, and a test asserts that a MongoDB view's row menu offers no maintenance entry.
+
+### U87. Monitoring's Overview and Storage tiles name tables, indexes and a buffer pool on key-value and streaming engines
+
+The Overview and Storage tabs draw the same SQL-shaped tiles for every engine, so a Redis connection reads "Tables 23 · 0 indexes" (23 is `DBSIZE`), "Buffer Pool", "Deadlocks" and "Checkpoint" as "Not measured", and Storage "Tables 0 B / Indexes 0 B / WAL N/A"; Kafka and Redpanda put every byte of topic data under "Other (unattributed)" beside "Tables 0 B 0.0%".
+Measured on Redis 8.10.2, Kafka 4.3.1 and Redpanda v26.2.3.
+The labels are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` at line 210, "Buffer Pool" at 291) and `src/components/monitoring/tabs/StorageTab.tsx` ("Tables" 138, "Indexes" 161, "WAL" 176, "Other (unattributed)" 242).
+U71 is the same gap on the Tables tab.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** a provider declares the noun its objects take (keys, topics, collections) and which overview and storage tiles it fills, the two tabs draw only those under that noun, and a test renders each tab for an engine that fills none of the SQL tiles.
+
+### U88. The result tab strip scrolls with no visible sign, so the last tabs look clipped
+
+`src/components/studio/BottomPanel.tsx:445` makes the result mode tabs a horizontally scrolling strip with its scrollbar hidden, on purpose, so the Export group on the right is never pushed out (comment at `:439-444`).
+At 1440x900 with the Agent panel open, the strip is narrower than its tabs, and "Dashboard" shows as "Dashboar" / "Dashbc" against the Export button; on Neo4j, whose results add a Graph tab, Dashboard is not visible at all (Prometheus 3.15.0, Kafka 4.3.1, Neo4j 2026.09.0).
+Nothing tells the reader the strip scrolls.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** an overflowing strip shows that more tabs exist (an edge fade, scroll buttons, or an overflow menu for the hidden tabs), the Export group still never moves, and a component test pins the overflow indicator.
+
+### U89. A Prometheus rule group's Source tab is titled with its internal key
+
+A Source tab is titled `Source: ${objectPathLabel(object.path)}` (`src/hooks/use-tab-manager.ts:66`), the qualified path joined by dots, so two same-named objects in different containers stay distinguishable.
+A Prometheus rule group's path segment is the engine's `GroupKey`, `<file>;<group>` (`src/lib/db/providers/timeseries/prometheus/objects.ts:189-193`), so the tab reads `Source: /etc/prometheus/rules.yml;e2e_group`, and a rule's tab adds `.<position>:<name>` (Prometheus 3.15.0).
+The tree already shows the readable `name`.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** a Source tab title can use a provider-supplied display form of the path (for a rule group, `e2e_group (rules.yml)`), still unique per path, without a type-id branch in the tab manager, and a test pins the Prometheus rule group's title.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -3701,17 +4050,6 @@ knip does not follow a `.css` import, so a stylesheet imported only for its side
 Found 2026-09-30 by the etcd PR's knip run (#1089), which removed the other hint, `gh` in `ignoreBinaries`, after measuring that no script needs it.
 
 **Done when:** `knip.json` either declares a compiler for `.css` or states that the project's stylesheets are out of scope in a form knip accepts, and `bun run knip` prints no configuration hint.
-
-### P7. The TLS library compiled into the db2-node addon is inside four RustSec advisories
-
-`db2-node` 1.0.22, the Db2 provider's driver (#786), compiles `rustls` 0.23.37 and `rustls-webpki` 0.103.10 into its native addon.
-Checked on 2026-10-03 against the RustSec advisory database, `rustls` 0.23.37 is inside RUSTSEC-2026-0285 (patched in 0.23.45), and `rustls-webpki` 0.103.10 is inside RUSTSEC-2026-0098, RUSTSEC-2026-0099 and RUSTSEC-2026-0104 (patched in 0.103.13).
-That library is what protects a Db2 connection's password on the wire, since without TLS the password travels in cleartext (section 3.3 of `docs/providers/db2.md`).
-The crates are linked into the `.node` binary, so no lockfile, override or `cargo update` on our side reaches them: only a new `db2-node` release can.
-Re-checked on 2026-10-04 for the move to 1.0.24: its `Cargo.lock` carries the same `rustls` 0.23.37 and `rustls-webpki` 0.103.10, and OSV still places both inside those four advisories.
-Reported upstream on 2026-10-04 as [gurungabit/db2-node#24](https://github.com/gurungabit/db2-node/issues/24).
-
-**Done when:** a `db2-node` release links `rustls` 0.23.45 or later and `rustls-webpki` 0.103.13 or later, its `Cargo.lock` is re-checked against the advisory database, `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run on it, and the pin in `package.json` and section 12 of `docs/providers/db2.md` move to it.
 
 ### P9. Two dev dependencies resolve undici 7.28.0, inside a high advisory
 
@@ -3878,6 +4216,46 @@ Found 2026-09-30 while re-deriving the etcd PR's numerals (reconciliation N-76).
 Not fixed there: completing each table needs facts that PR did not measure, and neither gains an etcd row alone.
 
 **Done when:** both tables are re-derived from the tree, each with a test or a comment naming the command that derives it.
+
+### DOC10. Seven translated READMEs still describe the Db2 provider as of db2-node 1.0.22
+
+The Db2 row of `README_es.md`, `README_hi.md`, `README_ja.md`, `README_pt.md`, `README_ru.md`, `README_ur.md` and `README_zh.md` says the driver misreads non-ASCII text, BIGINT past 2^53, BOOLEAN, XML and LOBs, and that inline editing and import are off.
+1.0.24 turned inline editing and the import back on and fixed every one of those reads but the LOB one, and 1.0.25 fixed that too; `README.md` carries the current sentence.
+
+Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.25.
+Not fixed there: the change was English-only, and seven translations of a provider row are a documentation change of their own.
+
+**Done when:** each translated Db2 row says what `README.md`'s does, and `bun run readme:check` passes.
+
+### DOC11. Two PostgreSQL-relative caveats no longer hold on the current images: CockroachDB sessions and OrioleDB index sizes
+
+`src/lib/db/compatibility.ts:380` (CockroachDB, probed on v26.2.6) says "Performance metrics, slow queries and active sessions do work: the pg_stat_* views CockroachDB provides are enough for them."
+On v26.3.2 (`cockroachdb/cockroach:latest`, single node, insecure) Monitoring > Sessions reads "No active sessions found", Overview reads "Connections 0" and Queries reads "pg_stat_statements required", while Studio held connections: `pg_stat_activity` returned 0 rows and `crdb_internal.cluster_sessions` returned 3.
+`src/lib/db/compatibility.ts:419` (OrioleDB, probed on beta 16) and the OrioleDB row of `docs/providers/README.md` say "every index reads 0 bytes".
+On beta 19 (`orioledb/orioledb:latest-pg18`, PostgreSQL 18.6) `pg_indexes_size()` is non-zero and Monitoring > Tables reads 48 kB for `orders` and 8192 bytes for `customers`.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** both caveats and their `probedVersion` are re-measured and rewritten in `src/lib/db/compatibility.ts` and `docs/providers/README.md` to match v26.3.2 and beta 19.
+Reading CockroachDB sessions from `crdb_internal.cluster_sessions` instead of an empty `pg_stat_activity` is a separate change and needs its own entry or issue if wanted.
+
+### DOC12. The FerretDB compatibility entry omits Check Collection, views and Compact, and a maintenance request has no deadline
+
+`src/lib/db/compatibility.ts:696-705` lists FerretDB as `tier: "full"` with three caveats, all about sign-in, version and deployment.
+Measured on FerretDB 2.7.0 (`ghcr.io/ferretdb/ferretdb:latest` over `postgres-documentdb`): Operations > Check Collection answers HTTP 500 `no such command: 'dbCheck'`; a view created in mongosh is listed and counted as an empty collection (count 0); and Run Compact never returns, a self-deadlock in FerretDB itself, so the button stays disabled because `/api/db/maintenance` (`src/app/api/db/maintenance/route.ts`, called from `src/hooks/use-monitoring-data.ts:222` and `:259`) sets no deadline on the operation.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** the FerretDB entry names the three gaps (or the tier is lowered with the reason), and either the maintenance request carries a bounded wait whose expiry the Operations page reports, or the entry's caveat says Compact can hang on FerretDB 2.7.0.
+
+### DOC13. The Elasticsearch and OpenSearch docs say aliases and data streams are not in the tree, and the tree lists them
+
+Section 13 of `docs/providers/elasticsearch.md:1656-1660` and `docs/providers/opensearch.md:1633-1637` still says "Aliases and data streams are not listed in the schema tree", citing `transport.ts:205-219`.
+The same docs' object-kind table (`elasticsearch.md:904`, `opensearch.md:869`) lists the `alias` kind read from `GET /_alias`, and the tree on Elasticsearch 9.5.3 shows Indices, Aliases, Data Streams, Ingest Pipelines and Index Templates.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** both section 13 bullets are removed or rewritten to what the tree shows, the cited `transport.ts` comment is checked for the same stale claim, and the provider-doc tests still pass.
 
 ## Release pipeline
 
@@ -4110,8 +4488,8 @@ bypass.
 The proxy refuses a request on three grounds and audits two of them. `src/proxy.ts` emits
 `origin_mismatch` at `:65` and `insufficient_role` at `:156`, both through `emitAuditEvent`. The third
 is the trailing `catch` at `:173-176`: a token that fails `jwtVerify` because it is forged, tampered,
-expired or truncated falls into `logger.warn("JWT verification failed, redirecting to login")` and
-redirects. Nothing reaches the audit channel.
+expired or truncated falls into `logger.warn("JWT verification failed, refusing the session")` and
+is refused: redirected to `/login` on a page, `401` on an API path. Nothing reaches the audit channel.
 
 An operator reading `GET /api/admin/audit` sees origin and role refusals and no forged-token attempts
 at all, which is the direction the blind spot matters: those are the probes a deployment most wants
@@ -4505,23 +4883,26 @@ not compile until it does.
 
 `mapDatabaseError` classifies on **substring** matching of the engine's message, so an identifier can
 decide the class, and the agent's repairable-versus-environment split inherits the misdiagnosis.
-Verified against the live mapper:
 
-- `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
-  relation is treated as an environment fault and ends the run.
-- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
-  to a model as a statement it could rewrite (bounded at three attempts).
+#1427 settled the half that driver codes can reach: a statement's own fault is now read from the
+driver's code fields (`isStatementFault` in `src/lib/db/errors.ts`: SQLSTATE classes `0A`, `21`, `22`,
+`23`, `42`, `44` from `pg`, `mysql2` and `db2-node`, SQL Server error numbers, Oracle `errorNum`,
+SQLite result codes) before the `timeout`, `cancel`, `pool` and `relation` substring branches, so
+`no such table: pooled_items` is a `QueryError` now, not a `PoolExhaustedError`. What is left runs
+BEFORE that check, on purpose, so that nothing it classified changed class in that PR:
+
 - `relation "user_passwords" does not exist` matches `password` → `AuthenticationError`. Harmless on the
   agent path today only because a query-phase `AuthenticationError` is repairable there, which is a
   coincidence rather than a design.
+- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
+  to a model as a statement it could rewrite (bounded at three attempts).
+- An error with no code field at all (RisingWave answers its parser errors as `XX000`, HTTP drivers
+  carry none) still reaches the substring branches.
 
-Neither direction is a boundary failure: nothing runs that policy did not allow, and the statement and
-repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong before any
-consumer sees the error, so no consumer can correct it.
-
-**Done when:** classification no longer depends on a substring a table or column name can satisfy.
-Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
-each provider already has access to its own.
+**Done when:** the connection and authentication branches read the driver's code first too (SQLSTATE
+class `28` and `08`, MySQL `1045`, SQL Server `18456`, Oracle `1017`), so an identifier can no longer
+decide any class a code could, and the `permission denied` reading (`42501`, now an
+`AuthenticationError` and answered 401) is decided on purpose rather than inherited.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 
@@ -5115,6 +5496,25 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
 **Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` and `RUN_READ_QUERY_ENGINES` name Neo4j, and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
+
+### B94. InfluxDB has no agent execution and no MCP `run_read_query`
+
+Neither the `influxdb` nor the `influxdb3` provider implements `queryReadOnly`, so `AGENT_EXECUTION_ENGINES` names neither, agent auto mode refuses both, and MCP `run_read_query` answers that the engine is not served; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
+Both execution paths guard a statement with SQL readers (`src/lib/db/operations/statement-guard.ts`), and each type needs a statement contract of its own: the InfluxQL read policy for `influxdb`, the DataFusion policy for `influxdb3`.
+
+Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
+
+**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), and agent execution and `run_read_query` serve it, with tests.
+
+### B100. Oxia has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.oxia` is false and the provider implements no `queryReadOnly` (O14; key paths name Pulsar tenants and topics).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
+
+**Done when:** an MCP metadata surface that never returns a key value is designed and `run_read_query` serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
+
+B100 rather than the next free id: InfluxDB, built at the same time, took B94, and the gap kept the two from racing for an id.
 
 ## Passkey deferrals (#785)
 

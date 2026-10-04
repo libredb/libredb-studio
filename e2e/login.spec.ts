@@ -131,11 +131,13 @@ test.describe("Login showcase", () => {
     // item carries an "(embedded)" marker after its label: the hero claims the external
     // engines only, and this is the marker that tells a reader which pill the claim leaves
     // out. The `embedded` flag comes from the same module the page renders from, so the
-    // expectation still names no engine.
+    // expectation still names no engine. Each label is escaped into the pattern, because a label
+    // such as "InfluxDB (InfluxQL)" holds parentheses that a pattern would read as a group.
     const expected = listShowcaseDatabases();
+    const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     await expect(engines.getByRole("listitem")).toHaveCount(expected.length);
     await expect(engines.getByRole("listitem")).toHaveText(
-      expected.map((db) => new RegExp(`^${db.label}\\s*${db.embedded ? "\\(embedded\\)" : ""}$`)),
+      expected.map((db) => new RegExp(`^${literal(db.label)}\\s*${db.embedded ? "\\(embedded\\)" : ""}$`)),
     );
   });
 

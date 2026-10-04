@@ -124,7 +124,22 @@ export type DatabaseType =
   // text is Qdrant's own `METHOD /path` request with one JSON body, so it declares `queryLanguage: "json"` with a
   // `queryDialect` of its own. The connection is one REST endpoint plus TLS and an API key or JWT in `password`;
   // there is no user and no database, and `readOnly` is a mode its provider enforces.
-  | "qdrant";
+  | "qdrant"
+  // InfluxDB (InfluxDB spec I2). A time-series store read over the v1 `/query` endpoint, as a form POST (R14), in
+  // InfluxQL: the TSM generation (1.x, and 2.x through its virtual DBRP mappings) and InfluxDB 3 through its
+  // v1-compatible handler. It declares `queryLanguage: "influxql"`. The connection is a host, a port, an optional
+  // user, a password or token, and an optional database; it is read-only whatever `readOnly` says.
+  | "influxdb"
+  // InfluxDB 3 (InfluxDB spec I2). InfluxDB 3 Core and Enterprise read over `POST /api/v3/query_sql` in Apache
+  // DataFusion SQL, extending `SQLBaseProvider`. The connection is a host, a port, a token in `password` and an
+  // optional database, the one session database whose tables are top-level objects (R1, R16); there is no user.
+  // Served from the same directory as `influxdb` (I2, I23), and read-only whatever `readOnly` says.
+  | "influxdb3"
+  // Oxia (CNCF Sandbox), a sharded key-value store read over its gRPC client API by a client of this repository's
+  // own (`src/lib/db/providers/keyvalue/oxia/`). Its editor text is one `oxia client` read command. Read-only in
+  // this version whatever `readOnly` says. The connection's Database field is the namespace and Password is a bearer
+  // token; `dataServers` lists a cluster's data servers.
+  | "oxia";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -319,10 +334,24 @@ export interface DatabaseConnection {
    * An explicit acceptance of a risk, and never a default. A stock Db2 server without TLS offers
    * only DRDA SECMEC 3, user and cleartext password, so the Db2 provider REFUSES a connection with
    * no TLS unless this is `true`, and then asks db2-node for that mechanism by name, which 1.0.24
-   * refuses to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by no other
-   * engine: each of those either encrypts the password itself or follows its own driver's default.
+   * and later refuse to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by Db2 and by both
+   * InfluxDB types (`influxdb`, `influxdb3`, InfluxDB spec I7), each of which refuses a non-empty secret
+   * with TLS off, to a host that is not loopback and outside a tunnel, unless this is `true`. Oxia reads
+   * it too (DECISIONS O7): its bearer token crosses the network on every call, so an Oxia connection with
+   * a token and no TLS to a host other than this machine is refused unless this is `true`. Read by no
+   * other engine: each of those either encrypts the password itself or follows its own driver's default.
    */
   allowInsecureAuth?: boolean;
+  /**
+   * Oxia only (DECISIONS O6): the public addresses of a cluster's data servers, as `host:port` entries separated by
+   * commas or whitespace, at most 64. A shard leader the server advertises is dialled only when it equals the
+   * address the connection's own bootstrap call was sent to, or one of these entries; every listed leader gets the
+   * connection's TLS mode, CA and client pair and its own host as TLS identity, and the bearer token with them.
+   * Exact entries only, never a pattern: a pattern would send the token to any address it matches. Absent and empty
+   * are one value. Refused together with an SSH tunnel, because the leaders would bypass the tunnel. Read by no
+   * other engine.
+   */
+  dataServers?: string;
   /**
    * Read no catalog when this connection opens.
    *
@@ -504,6 +533,13 @@ export interface QueryWarning {
    * reports no identifier, rather than claiming a zero.
    */
   code?: number | string;
+  /**
+   * The level the engine raised it at, as the server spells it (`WARNING`, `NOTICE`), which
+   * may be localized (`lc_messages`), when it reports one. A PostgreSQL-wire server sends
+   * both levels through the same channel (#1401), and `table "t" does not exist, skipping`
+   * is not a warning.
+   */
+  severity?: string;
 }
 
 /**
@@ -557,6 +593,11 @@ export interface QueryResult {
   rowCount: number;
   executionTime: number;
   explainPlan?: unknown;
+  /**
+   * Set by the client, only when SANDBOX ran this statement and the server CONFIRMED the
+   * rollback. The write's affected-row count is then said to be rolled back (#1425).
+   */
+  rolledBack?: boolean;
   pagination?: QueryPagination;
   /**
    * Notices the engine attached to this run. **Absent** when it reported none -
@@ -582,6 +623,23 @@ export interface QueryResult {
    * **Absent** when the result has no vector column, never an empty object.
    */
   vectorColumns?: Readonly<Record<string, VectorColumn>>;
+  /**
+   * Every result set the text produced, in order, when it produced MORE than one: a T-SQL
+   * batch sent as one request (#1312), or a procedure that returns several. `rows`, `fields`
+   * and `columnTypes` above stay the first set's, as they always were. **Absent** for a text
+   * with one result set or none.
+   *
+   * The multi-statement route reads it to show a batch's last result with rows, the same
+   * rule it applies across a script's statements; `POST /api/db/query` and `POST /api/db/transaction` do not send it.
+   */
+  resultSets?: QueryResultSet[];
+}
+
+/** One result set of a text that produced several (`QueryResult.resultSets`). */
+export interface QueryResultSet {
+  rows: Record<string, unknown>[];
+  fields: string[];
+  columnTypes?: Record<string, string>;
 }
 
 /**
@@ -659,7 +717,19 @@ export interface QueryTab {
    */
   runError?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka" | "etcd" | "cypher" | "milvus" | "qdrant";
+  type:
+    | "sql"
+    | "mongodb"
+    | "redis"
+    | "libredb"
+    | "promql"
+    | "kafka"
+    | "etcd"
+    | "cypher"
+    | "milvus"
+    | "qdrant"
+    | "influxql"
+    | "oxia";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state
@@ -731,6 +801,13 @@ export interface QueryHistoryItem {
   executionTime: number;
   status: "success" | "error";
   executedAt: Date;
+  /**
+   * Absent for an ordinary run. `"explain"` marks a run that asked for the statement's PLAN:
+   * `query` is still the statement itself, and `rowCount` is omitted because the rows of a plan
+   * are not the statement's rows (#1447). Entries stored before this field existed read as
+   * ordinary runs.
+   */
+  kind?: "explain";
   rowCount?: number;
   errorMessage?: string;
 }

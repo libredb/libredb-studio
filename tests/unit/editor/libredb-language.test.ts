@@ -170,7 +170,7 @@ describe("registerLibreDBLanguage", () => {
 
     // ── U10: this tokenizer deliberately has NO cross-line string state ───────
     //
-    // The Redis tokenizer grew one, because that provider's `commandBody()` carries
+    // The Redis tokenizer grew one, because that provider's `readRedisCommandText()` carries
     // quote state across the line break and stores a two-line value
     // (docs/providers/redis.md §3.4a). This provider does not: `firstCommandLine()`
     // takes the first non-comment LINE and `tokenize()` rejects an unmatched quote

@@ -11,6 +11,7 @@ import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
+import { workspaceTabsKey } from "@/lib/storage/local-storage";
 import { useStableCallback } from "@/hooks/use-stable-callback";
 
 /** A tab `closeTab` removed, where it sat, and the workspace it sat in, so its Undo can put it back (#747). */
@@ -71,8 +72,6 @@ function sourceTab(id: string, object: DatabaseObject): QueryTab {
     source: { path: object.path, kind: object.kind },
   };
 }
-
-const WORKSPACE_STORAGE_PREFIX = "libredb_workspace_tabs_v1";
 
 interface PersistedTabState {
   id: string;
@@ -175,10 +174,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
   const [editingTabName, setEditingTabName] = useState("");
   const [isWorkspaceHydrated, setIsWorkspaceHydrated] = useState(false);
 
-  const workspaceKey = useMemo(
-    () => `${WORKSPACE_STORAGE_PREFIX}:${activeConnection?.id ?? "default"}`,
-    [activeConnection?.id],
-  );
+  const workspaceKey = useMemo(() => workspaceTabsKey(activeConnection?.id ?? "default"), [activeConnection?.id]);
   const shouldPersistWorkspace = persistWorkspace ?? process.env.NODE_ENV !== "test";
 
   const currentTab = tabs.find((t) => t.id === activeTabId) || tabs[0];

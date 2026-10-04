@@ -118,6 +118,13 @@ const EXPECTED_COLUMN_KINDS: Readonly<Record<DatabaseType, readonly string[]>> =
   milvus: ["collection"],
   // One kind, a collection, whose columns are its id, its vectors and its payload fields (vector-family spec 6.3).
   qdrant: ["collection"],
+  // One kind each: a measurement, whose columns are its time, tag keys and field keys, and an InfluxDB 3 table, whose
+  // columns are its information-schema columns (InfluxDB spec I11, R16).
+  influxdb: ["measurement"],
+  influxdb3: ["table"],
+  // No kind has columns (consistency ruling 24): a shard and a key are listed and their Source read, and neither
+  // declares `hasColumns` (SB2-7.1).
+  oxia: [],
   libredb: ["table", "collection", "keyspace"],
 });
 
@@ -201,13 +208,15 @@ describe("the fleet census of object column declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (23 with db2, neo4j, milvus and qdrant) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(24);
+    // EXTERNAL_DATABASE_TYPES.length (26 with db2, neo4j, milvus, qdrant, influxdb, influxdb3 and oxia) plus the embedded
+    // store.
+    expect(CENSUS_TYPES).toHaveLength(27);
     expect(Object.keys(EXPECTED_COLUMN_KINDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // A row naming nothing would make its type-id's census pass on the empty set, and the design's
-    // table has no such row: every engine has at least one kind with columns.
+    // A row naming nothing would make its type-id's census pass on the empty set, so the design's
+    // table has one such row, and it is named here: every engine but Oxia has at least one kind with
+    // columns, and Oxia's shard and key declare none (consistency ruling 24).
     const empty = CENSUS_TYPES.filter((type) => EXPECTED_COLUMN_KINDS[type].length === 0);
-    expect(empty).toEqual([]);
+    expect(empty).toEqual(["oxia"]);
   });
 
   test("every kind id the expectation names is a kind its provider actually declares", async () => {

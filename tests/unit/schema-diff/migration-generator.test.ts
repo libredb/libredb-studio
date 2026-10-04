@@ -220,6 +220,57 @@ describe("generateMigrationSQL: CREATE TABLE", () => {
       'ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");',
     );
   });
+
+  // #1395: PostgreSQL 18.6 creates `ui_t_pkey` with the PRIMARY KEY line, so a second
+  // `CREATE UNIQUE INDEX "ui_t_pkey"` stopped the replay with "relation already exists".
+  function withKeyIndex(name: string, columns: string[], unique = true): SchemaDiff {
+    const diff = makeAddedTableDiff();
+    diff.tables[0].indexes.push({
+      action: "added",
+      indexName: name,
+      targetColumns: columns,
+      targetUnique: unique,
+      changes: ["Added index"],
+    });
+    return diff;
+  }
+
+  test("the index that backs the primary key is not created a second time (#1395)", () => {
+    const sql = generateMigrationSQL(withKeyIndex("users_pkey", ["id"]), "postgres");
+    expect(sql).toContain('PRIMARY KEY ("id")');
+    expect(sql).not.toContain("users_pkey");
+    // An ordinary unique index on other columns is still created.
+    expect(sql).toContain('CREATE UNIQUE INDEX "idx_users_email" ON "users" ("email")');
+  });
+
+  test("MySQL's PRIMARY index is skipped the same way (#1395)", () => {
+    const sql = generateMigrationSQL(withKeyIndex("PRIMARY", ["id"]), "mysql");
+    expect(sql).toContain("PRIMARY KEY (`id`)");
+    expect(sql).not.toContain("INDEX `PRIMARY`");
+  });
+
+  test("a composite key's index is recognised whatever its column order (#1395)", () => {
+    const diff = withKeyIndex("users_pkey", ["name", "id"]);
+    diff.tables[0].columns[1].targetIsPrimary = true;
+    const sql = generateMigrationSQL(diff, "postgres");
+    expect(sql).toContain('PRIMARY KEY ("id", "name")');
+    expect(sql).not.toContain("users_pkey");
+  });
+
+  test("an index that only overlaps the key, or is not unique, is still created (#1395)", () => {
+    const partial = generateMigrationSQL(withKeyIndex("idx_users_id_name", ["id", "name"]), "postgres");
+    expect(partial).toContain('CREATE UNIQUE INDEX "idx_users_id_name" ON "users" ("id", "name");');
+    const plain = generateMigrationSQL(withKeyIndex("idx_users_id", ["id"], false), "postgres");
+    expect(plain).toContain('CREATE INDEX "idx_users_id" ON "users" ("id");');
+  });
+
+  test("a table with no key keeps every unique index (#1395)", () => {
+    const diff = withKeyIndex("users_id_key", ["id"]);
+    diff.tables[0].columns[0].targetIsPrimary = false;
+    const sql = generateMigrationSQL(diff, "postgres");
+    expect(sql).not.toContain("PRIMARY KEY");
+    expect(sql).toContain('CREATE UNIQUE INDEX "users_id_key" ON "users" ("id");');
+  });
 });
 
 // ============================================================================
@@ -1049,6 +1100,9 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     neo4j: "engine-has-no-foreign-key",
     milvus: "engine-has-no-foreign-key",
     qdrant: "engine-has-no-foreign-key",
+    influxdb: "engine-has-no-foreign-key",
+    influxdb3: "engine-has-no-foreign-key",
+    oxia: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1172,6 +1226,13 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // Not a table store either (vector-family spec 6.3): a collection holds points whose payloads are schemaless, and
   // the columns the object browser shows are its vectors, its payload indexes and a sample of its payload keys.
   qdrant: { label: "Qdrant", reason: "payloads are schemaless" },
+  // Not a table store either: a measurement's tags and fields come from the points written to it.
+  influxdb: { label: "InfluxDB (InfluxQL)", reason: "created by the points written to it" },
+  // A table's tags and fields come from the line protocol written to it, and the 3.x SQL takes no DDL.
+  influxdb3: { label: "InfluxDB 3 (SQL)", reason: "InfluxDB 3's SQL takes no DDL" },
+  // Not a table store either (SB2-4.3): a key holds opaque bytes, and the columns a read shows are a record's fixed
+  // shape, which nothing declares.
+  oxia: { label: "Oxia", reason: "has no schema, so there is no column definition to change" },
 };
 
 /**
@@ -1348,6 +1409,9 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "neo4j",
           "milvus",
           "qdrant",
+          "influxdb",
+          "influxdb3",
+          "oxia",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1390,10 +1454,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining fifteen each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining sixteen each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the fifteen needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the sixteen needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1411,6 +1475,9 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   neo4j: false, // a Cypher statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   milvus: false, // a Milvus console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   qdrant: false, // a Qdrant console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  influxdb: false, // an InfluxQL statement, not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (`NO_TABLE_DDL`)
+  oxia: false, // an `oxia client` read command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1443,6 +1510,9 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "neo4j",
             "milvus",
             "qdrant",
+            "influxdb",
+            "influxdb3",
+            "oxia",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

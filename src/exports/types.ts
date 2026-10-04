@@ -12,6 +12,7 @@ export type {
   ForeignKeySchema,
   QueryPagination,
   QueryResult,
+  QueryResultSet,
   QueryWarning,
   QueryTab,
   QueryHistoryItem,

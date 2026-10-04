@@ -106,7 +106,15 @@ async function readLiveSchema(conn: DatabaseConnection): Promise<DetailedObject[
   const kinds = relationKindIds(meta.capabilities as ProviderCapabilities);
   if (kinds.length === 0) throw new Error(`${conn.name} declares no object kinds a schema diff can compare`);
 
-  const res = await post("/api/db/objects/inventory", { ...payload, kinds, includeColumns: true });
+  // `includeDefaultSql`: the SQL a migration pastes after DEFAULT, captured now, while the table
+  // is still the table this snapshot describes. On MySQL it costs one DDL read per table with a
+  // default, which a user-initiated read can afford and the agent's inventory does not ask for (#1031).
+  const res = await post("/api/db/objects/inventory", {
+    ...payload,
+    kinds,
+    includeColumns: true,
+    includeDefaultSql: true,
+  });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error);
 

@@ -89,6 +89,16 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // Qdrant (vector-family spec 6): its own provider, doc and integration test, a member of the `vector/` family.
   // Qdrant Cloud speaks the same API and is recorded nowhere until a test cluster passes gate 4 (vector-family spec 6.2).
   qdrant: true,
+  // InfluxDB (InfluxDB spec I2): its own provider class, doc and integration test; the first of two type-ids served by
+  // `timeseries/influxdb/`, one per query language. InfluxDB Cloud, Clustered and Enterprise 1.x are claimed nowhere
+  // until a gate-4 probe measures one.
+  influxdb: true,
+  // InfluxDB 3 (InfluxDB spec I2): its own provider class, doc and integration test, sharing the connection layer of
+  // `timeseries/influxdb/` with `influxdb`. A different engine generation (Rust, Arrow, DataFusion), counted as its
+  // own engine.
+  influxdb3: true,
+  // Oxia (#424): its own provider, doc and integration test, read over its gRPC client API (DECISIONS O2).
+  oxia: true,
   libredb: true,
 });
 
@@ -149,6 +159,12 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   milvus: true,
   // A server or cluster the user already runs, reached over Qdrant's REST API.
   qdrant: true,
+  // A server the user already runs, reached over InfluxDB's v1 HTTP API.
+  influxdb: true,
+  // A server the user already runs, reached over InfluxDB 3's HTTP SQL API.
+  influxdb3: true,
+  // A server or cluster the user already runs, reached over Oxia's gRPC client API.
+  oxia: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -219,6 +235,18 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it
   // refuses every route that is not a read before any request (vector-family spec 4.4).
   qdrant: true,
+  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
+  // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
+  // or `EXPLAIN` before any request; the route table reaches no write endpoint.
+  influxdb: true,
+  // Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin
+  // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and
+  // the 3.12 planner refuses every write besides.
+  influxdb3: true,
+  // Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan`
+  // and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it
+  // holds (O1).
+  oxia: true,
   libredb: false,
 });
 
@@ -230,8 +258,8 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
  *
  * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
  * its entry answers false, and that entry lands with the provider's registration, which the compiler
- * forces. Every other engine answers true. An exhaustive Record for the reason `EXTERNAL` gives, so a
- * new type-id cannot join without someone answering, and frozen like the records above it.
+ * forces. etcd and Oxia answer false; every other engine answers true. An exhaustive Record for the reason
+ * `EXTERNAL` gives, so a new type-id cannot join without someone answering, and frozen like the records above it.
  */
 export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
@@ -253,8 +281,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // The one engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and
-  // a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  // One of the two engines MCP is not offered for (#1089 E12; Oxia is the other): the provider implements no
+  // read-only query path, and a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
   // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
@@ -265,6 +293,13 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4); `run_read_query` does not
   // serve it, because the provider implements no `queryReadOnly`.
   qdrant: true,
+  // Both offered for the two metadata tools (InfluxDB spec I13); `run_read_query` does not serve either, because
+  // neither provider implements `queryReadOnly`.
+  influxdb: true,
+  influxdb3: true,
+  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), so no MCP
+  // surface lists them until one is designed (BACKLOG B100).
+  oxia: false,
   libredb: true,
 });
 
@@ -344,6 +379,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Its table and index counts are the user's own. CockroachDB documents exactly four system schemas, and crdb_internal objects reach pg_tables even though information_schema's BASE TABLE filter never shows them - so before those two schemas were excluded, the overview counted 98 tables (93 crdb_internal, 3 pg_extension) for the 2 the object browser listed, and the two panels disagreed inside one app.",
       "Performance metrics, slow queries and active sessions do work: the pg_stat_* views CockroachDB provides are enough for them.",
       'The Explain panel works, and shows what the query really did. CockroachDB refuses PostgreSQL\'s parenthesised options (`at or near "analyze": syntax error`, and `JSON` is legal there only beside DISTSQL, where it answers a processor diagram rather than a plan), so the grammar is measured at connect and this server gets its own unparenthesised EXPLAIN ANALYZE. Until it was measured the panel showed its "no execution plan" empty state, so a failed plan request read as a query with no plan.',
+      "Maintenance offers Analyze on one table and nothing else. CockroachDB has no VACUUM, no REINDEX and no whole-database ANALYZE (each a 42601 syntax error), so the provider asks the server at connect which of PostgreSQL's six maintenance statements its grammar has and draws no control for the rest; measured on v26.3.2 on 2026-10-04 (#1387). Until then all three were offered and each click answered HTTP 500 with the parser's error.",
     ],
   },
   {
@@ -357,6 +393,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Materialized views are listed beside tables in the object browser, with their columns. Materialize reports them through information_schema.tables as table_type = 'MATERIALIZED VIEW' and they are what its users actually work with, so a browser that listed only BASE TABLE hid the product: revenue_by_region was invisible while the three plain tables showed.",
       "The Explain panel works. Materialize has no rule for EXPLAIN's parenthesised options at all - `(FORMAT JSON)` is refused the same way `(ANALYZE, BUFFERS, FORMAT JSON)` is, and the error names only the first token inside them - and no EXPLAIN ANALYZE either, so the grammar is measured at connect and this server gets the plain EXPLAIN, whose physical plan names the relations it reads, the join strategy and the filters it pushed down. The JSON form its docs publish is not used: it carries no relation names, only internal ids.",
       "Row counts are blank rather than zero. Materialize answers -1 from pg_class.reltuples - PostgreSQL's never-counted sentinel - for tables, views and materialized views alike, so there is no estimate to show and the browser draws no badge. It used to show 0, which read as a measurement nobody made; a table holding three rows said it held none.",
+      "In the object tree, the Functions and Procedures folders show Materialize's own sentence, column \"p.prokind\" does not exist, and do not open; every other folder in the tree counts and lists. Materialize's pg_proc has no prokind column, so it cannot say which routine is a function and which a procedure. It reports that as SQLSTATE XX000 rather than PostgreSQL's 42703, and while the object browser keyed its fallback on 42703 every folder in every schema showed that sentence and nothing could be opened. The fallback now keys on the column the refusal names, under any SQLSTATE, measured on Materialize v26.44.1 on 2026-10-04. Object search, the object inventory and the agent's inventory grounding still list the routine kinds and fail there (D226 in docs/BACKLOG.md). A source created from a load generator is listed under Tables, because Materialize's pg_class reports it as an ordinary table.",
     ],
   },
   {
@@ -371,6 +408,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Expanding a table, a view or a materialized view shows its columns, with their types and in the table's own order, through describeObject() and describeObjects() alike, measured 2026-09-24 (#1075). This caveat used to call the gap the engine's, and it was ours: RisingWave has no json type and refused the json_agg(), json_build_object() and '[]'::json the reads were built with, while it answers every jsonb form, which is what the reads use now. It also refuses a subquery inside an aggregate call, which is how an index's column list was built; that is a LATERAL join now.",
       "Nullability and defaults are read from the engine's catalog, which states neither: pg_attribute answers attnotnull false for every column, so a NOT NULL column and a primary key both read nullable, and pg_attrdef is empty, so no column shows a default, one declared with DEFAULT included. The nullability half is filed as D119.",
       "Foreign keys are empty because RisingWave has none: CREATE TABLE refuses REFERENCES in both its column and its table form. The primary key is listed as an index named after its table, and an index lists every column pg_index.indkey names, which on RisingWave is the key columns followed by every column the index carries, the primary key always among them: an index on (amount, customer_id) of a four-column table reads as amount, customer_id, order_id, note.",
+      "No maintenance operation is offered. RisingWave has none of VACUUM, ANALYZE and REINDEX in PostgreSQL's form, and because its BEGIN opens no transaction the connect-time probe cannot ask about them without running them, so it asks nothing and offers none; measured on 3.1.0 on 2026-10-04 (#1387).",
     ],
   },
   {
@@ -407,6 +445,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Index sizes always read 0 bytes, before and after ANALYZE: index storage lives in DocDB, where pg_relation_size() cannot see it.",
       "The overview's database size reads 0 bytes even with populated tables.",
       "Index types read lsm rather than btree - that is YugabyteDB's real storage, not a misreading.",
+      "Reindex is not offered: YugabyteDB refuses REINDEX in both forms (0A000 REINDEX not supported yet), and the provider asks at connect. Vacuum is offered, and its result quotes the server's NOTICE that VACUUM is a no-op there rather than claiming it completed; measured on 2026.1.2.0 on 2026-10-04 (#1387).",
     ],
   },
   {
@@ -503,6 +542,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "The slow-query panel is always empty: TiDB keeps its slow log in information_schema.SLOW_QUERY, not in the performance_schema view the provider reads.",
       "Storage stats list a phantom InnoDB entry at ibdata1:12M:autoextend, which is a MySQL default echoed back by a server that has no InnoDB.",
       "The Explain panel renders TiDB's own operator tree rather than a MySQL JSON plan: TiDB rejects EXPLAIN FORMAT='json' outright, so the provider sends a plain EXPLAIN and the panel shows the operator tree with estRows as the row estimate (browser, 2026-09-06).",
+      "Of the maintenance actions only Analyze is offered: TiDB answers OPTIMIZE TABLE with 8200 OPTIMIZE TABLE is not supported and does not parse CHECK TABLE, and the provider asks at connect which of the three it has; measured on v8.5.8 on 2026-10-04 (#1387).",
       "Probed on a standalone --store=unistore server only; a PD + TiKV deployment was not probed.",
     ],
   },
@@ -566,6 +606,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Table and index statistics name the physical shard database (vt_probe_0), not the keyspace the connection points at.",
       "Per-index sizes always read 0 bytes: the size query matches information_schema.INNODB_TABLES.NAME against '<database>/%', and Vitess names the InnoDB table after the shard database, so on a keyspace called probe nothing matches.",
       "Setting a session variable can fail where reading it works: SET @@cte_max_recursion_depth is rejected with VT05006 unknown system variable, while SELECT @@cte_max_recursion_depth answers 1000.",
+      "Check Table is not offered: vtgate does not parse CHECK TABLE (syntax error at position 6 near 'CHECK'), and the provider asks at connect which of the three maintenance verbs it has, so Analyze and Optimize are drawn; measured on 24.0.4 on 2026-10-04 (#1387).",
       "Probed on an unsharded single-shard keyspace only (show vitess_shards returns probe/0); nothing here is measured about a sharded keyspace.",
       "No permission-error class could be measured, and the reason is the test image rather than Vitess: vttestserver accepts any username with any password and grants it full rights, and CREATE USER is a vtgate parse error, so no restricted role could be created to test with.",
     ],

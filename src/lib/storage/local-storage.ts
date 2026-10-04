@@ -97,3 +97,21 @@ export function remove(collection: string): void {
   if (!isClient()) return;
   localStorage.removeItem(getKey(collection));
 }
+
+/**
+ * The key one connection's editor tabs live under (the SQL text included). Not a collection:
+ * the tab manager reads and writes it straight, per connection, and it is never synced to the
+ * server. The one place the spelling lives, so `use-tab-manager` and the deletion that has to
+ * clear it cannot drift apart (#1448).
+ */
+const WORKSPACE_TABS_KEY_PREFIX = `${KEY_PREFIX}workspace_tabs_v1`;
+
+export function workspaceTabsKey(connectionId: string): string {
+  return `${WORKSPACE_TABS_KEY_PREFIX}:${connectionId}`;
+}
+
+/** Drop a connection's saved editor tabs; the connection they belonged to is gone. */
+export function removeWorkspaceTabs(connectionId: string): void {
+  if (!isClient()) return;
+  localStorage.removeItem(workspaceTabsKey(connectionId));
+}

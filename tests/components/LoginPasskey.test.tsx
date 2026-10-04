@@ -1,7 +1,12 @@
 import "../setup-dom";
 import React from "react";
 import { mock } from "bun:test";
-import { mockRouterPush, mockRouterRefresh } from "../helpers/mock-navigation";
+import {
+  mockRouterPush,
+  mockRouterRefresh,
+  resetMockSearchParams,
+  setMockSearchParams,
+} from "../helpers/mock-navigation";
 import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import type { PasskeySignInResult } from "@/lib/passkey/client";
 
@@ -96,6 +101,18 @@ describe("LoginPage passkey sign-in", () => {
     fireEvent.click(await passkeyButton(user));
     await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/"));
     expect(mockToastSuccess).toHaveBeenCalledWith("Welcome back, user!");
+  });
+
+  test("a passkey sign-in returns to the page the session ended on (#1420)", async () => {
+    setMockSearchParams(new URLSearchParams({ next: "/admin/audit" }));
+    try {
+      mockSignInWithPasskey.mockImplementation(() => Promise.resolve({ ok: true, role: "user" }));
+      const result = renderLogin();
+      fireEvent.click(await passkeyButton(result));
+      await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/admin/audit"));
+    } finally {
+      resetMockSearchParams();
+    }
   });
 
   test("a failed or cancelled passkey keeps the password form and never submits it", async () => {

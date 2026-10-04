@@ -115,6 +115,76 @@ describe("useTransactionControl", () => {
     expect(mockToastSuccess).toHaveBeenCalledWith("Transaction Rolled Back", expect.any(Object));
   });
 
+  test("a server that reports no transaction state is named in the BEGIN and ROLLBACK toasts", async () => {
+    // Databend, StarRocks and Doris: the BEGIN opened a transaction, and nothing the server
+    // answers can confirm it, so the UI does not claim what the ROLLBACK discarded.
+    let stateReported: boolean | null = false;
+    mockGlobalFetch({
+      "/api/db/transaction": () => ({ ok: true, status: 200, json: { status: "active", stateReported } }),
+    });
+    const { result } = renderHook(() => useTransactionControl({ activeConnection: makeConnection() }));
+
+    await act(async () => {
+      await result.current.handleTransaction("begin");
+    });
+    expect(result.current.transactionActive).toBe(true);
+    expect(mockToastSuccess).toHaveBeenLastCalledWith(
+      "Transaction Started",
+      expect.objectContaining({ description: expect.stringContaining("cannot verify") }),
+    );
+
+    await act(async () => {
+      await result.current.handleTransaction("rollback");
+    });
+    expect(mockToastSuccess).toHaveBeenLastCalledWith(
+      "Rollback Sent",
+      expect.objectContaining({ description: expect.stringContaining("cannot verify what was discarded") }),
+    );
+
+    // The next transaction is judged on its own answer: `null` (a provider that does not say)
+    // gets the ordinary toasts.
+    stateReported = null;
+    await act(async () => {
+      await result.current.handleTransaction("begin");
+    });
+    await act(async () => {
+      await result.current.handleTransaction("rollback");
+    });
+    expect(mockToastSuccess).toHaveBeenLastCalledWith("Transaction Rolled Back", expect.any(Object));
+
+    // A COMMIT there is no more verifiable than a ROLLBACK.
+    stateReported = false;
+    await act(async () => {
+      await result.current.handleTransaction("begin");
+    });
+    await act(async () => {
+      await result.current.handleTransaction("commit");
+    });
+    expect(mockToastSuccess).toHaveBeenLastCalledWith(
+      "Commit Sent",
+      expect.objectContaining({ description: expect.stringContaining("cannot verify what was saved") }),
+    );
+  });
+
+  test("resetTransactionState forgets that the server reported no transaction state", async () => {
+    let stateReported: boolean | null = false;
+    mockGlobalFetch({
+      "/api/db/transaction": () => ({ ok: true, status: 200, json: { status: "active", stateReported } }),
+    });
+    const { result } = renderHook(() => useTransactionControl({ activeConnection: makeConnection() }));
+    await act(async () => {
+      await result.current.handleTransaction("begin");
+    });
+    // A connection switch resets the controls; the next connection's transaction is judged
+    // on its own BEGIN answer, here a provider that does not say.
+    act(() => result.current.resetTransactionState());
+    stateReported = null;
+    await act(async () => {
+      await result.current.handleTransaction("commit");
+    });
+    expect(mockToastSuccess).toHaveBeenLastCalledWith("Transaction Committed", expect.any(Object));
+  });
+
   test("handleTransaction does nothing when activeConnection is null", async () => {
     const fetchMock = mockGlobalFetch({
       "/api/db/transaction": { ok: true, status: 200, json: { success: true } },
@@ -197,5 +267,27 @@ describe("useTransactionControl", () => {
 
     expect(result.current.transactionActive).toBe(false);
     expect(result.current.playgroundMode).toBe(false);
+  });
+
+  test("markTransactionEnded closes the transaction the server ended, and leaves SANDBOX alone", async () => {
+    const connection = makeConnection();
+    mockGlobalFetch({
+      "/api/db/transaction": { ok: true, status: 200, json: { success: true } },
+    });
+
+    const { result } = renderHook(() => useTransactionControl({ activeConnection: connection }));
+    await act(async () => {
+      await result.current.handleTransaction("begin");
+    });
+    act(() => {
+      result.current.setPlaygroundMode(true);
+    });
+
+    act(() => {
+      result.current.markTransactionEnded();
+    });
+
+    expect(result.current.transactionActive).toBe(false);
+    expect(result.current.playgroundMode).toBe(true);
   });
 });

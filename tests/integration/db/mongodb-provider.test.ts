@@ -69,6 +69,14 @@ let mongoIndexReads: string[] = [];
 let mongoFoundCollections: string[] = [];
 /** A server refusal per `<database>.<collection>`, raised when a `find()` cursor is read. */
 let mockFindErrors: Record<string, Error> = {};
+/**
+ * The arguments each collection method received, by method name, last call wins.
+ *
+ * The query JSON is read as Extended JSON, and what that changes is only visible in what the
+ * driver is HANDED: `{"$oid": ...}` has to arrive as an ObjectId and `{"$date": ...}` as a
+ * Date, and a fake that ignored its arguments would answer the same rows either way.
+ */
+let mongoDriverArgs: Record<string, unknown[]> = {};
 /** A placeholder credential: the driver is mocked, so nothing ever authenticates with it. */
 const TEST_PASSWORD = "password";
 
@@ -80,6 +88,24 @@ function pipelineNamespaces(pipeline: Record<string, unknown>[]): string[] {
 }
 /** The `listDatabases` command document the driver received, verbatim. */
 let lastListDatabasesCommand: Record<string, unknown> = {};
+/** Every `listDatabases` command the driver received, in order. */
+let listDatabasesCommands: Record<string, unknown>[] = [];
+/**
+ * Decides whether one `listDatabases` command is refused, and with what. `undefined` answers
+ * every command, which is how MongoDB behaves.
+ */
+let mockListDatabasesRefusal: ((cmd: Record<string, unknown>) => Error | undefined) | undefined;
+
+/** A server error reply as the driver delivers it: named `MongoServerError`, with its code. */
+const mongoServerError = (code: number, message: string): Error => {
+  const error = new Error(message) as Error & { code: number };
+  error.code = code;
+  error.name = "MongoServerError";
+  return error;
+};
+
+/** What FerretDB 2.7.0 replies to `authorizedDatabases`, as measured in #1299. */
+const FERRETDB_UNKNOWN_FIELD = "authorizedDatabases is an unknown field";
 // The URI `buildConnectionString()` composed, as the driver received it. The only
 // place the query string is observable: `MongoClient` is where it goes.
 let lastMongoUri = "";
@@ -170,7 +196,8 @@ function runMockAggregate(
 }
 
 const createMockCollection = (name = "users", dbName = "testdb") => ({
-  find: () => {
+  find: (...args: unknown[]) => {
+    mongoDriverArgs.find = args;
     mongoFoundCollections.push(`${dbName}.${name}`);
     const cursor = createMockCursor(mockDocumentsByNs[`${dbName}.${name}`] ?? mockCollectionData);
     const refusal = mockFindErrors[`${dbName}.${name}`];
@@ -181,9 +208,13 @@ const createMockCollection = (name = "users", dbName = "testdb") => ({
     }
     return cursor;
   },
-  findOne: async () => mockCollectionData[0] || null,
+  findOne: async (...args: unknown[]) => {
+    mongoDriverArgs.findOne = args;
+    return mockCollectionData[0] || null;
+  },
   aggregate: (pipeline?: Record<string, unknown>[]) => ({
     toArray: async () => {
+      mongoDriverArgs.aggregate = [pipeline];
       const stages = pipeline ?? [];
       if ((stages[1] as { $project?: { __ks?: unknown } })?.$project?.__ks !== undefined) {
         mongoAggregatePipelines.push(stages);
@@ -191,26 +222,39 @@ const createMockCollection = (name = "users", dbName = "testdb") => ({
       return runMockAggregate(name, dbName, stages);
     },
   }),
-  countDocuments: async () => mockCollectionData.length,
-  distinct: async (field: string) => mockCollectionData.map((d) => d[field]),
-  insertOne: async () => ({
-    insertedId: "new-id-123",
-    acknowledged: true,
-  }),
-  insertMany: async (docs: Record<string, unknown>[]) => ({
-    insertedCount: docs.length,
-    insertedIds: docs.map((_, i) => `id-${i}`),
-  }),
-  updateOne: async () => ({
-    matchedCount: 1,
-    modifiedCount: 1,
-  }),
-  updateMany: async () => ({
-    matchedCount: 2,
-    modifiedCount: 2,
-  }),
-  deleteOne: async () => ({ deletedCount: 1 }),
-  deleteMany: async () => ({ deletedCount: 3 }),
+  countDocuments: async (...args: unknown[]) => {
+    mongoDriverArgs.countDocuments = args;
+    return mockCollectionData.length;
+  },
+  distinct: async (field: string, ...rest: unknown[]) => {
+    mongoDriverArgs.distinct = [field, ...rest];
+    return mockCollectionData.map((d) => d[field]);
+  },
+  insertOne: async (...args: unknown[]) => {
+    mongoDriverArgs.insertOne = args;
+    // Echoes a statement's own `_id`, as the driver does, so a typed one reaches the result.
+    return { insertedId: (args[0] as { _id?: unknown })._id ?? "new-id-123", acknowledged: true };
+  },
+  insertMany: async (docs: Record<string, unknown>[]) => {
+    mongoDriverArgs.insertMany = [docs];
+    return { insertedCount: docs.length, insertedIds: docs.map((doc, i) => doc._id ?? `id-${i}`) };
+  },
+  updateOne: async (...args: unknown[]) => {
+    mongoDriverArgs.updateOne = args;
+    return { matchedCount: 1, modifiedCount: 1 };
+  },
+  updateMany: async (...args: unknown[]) => {
+    mongoDriverArgs.updateMany = args;
+    return { matchedCount: 2, modifiedCount: 2 };
+  },
+  deleteOne: async (...args: unknown[]) => {
+    mongoDriverArgs.deleteOne = args;
+    return { deletedCount: 1 };
+  },
+  deleteMany: async (...args: unknown[]) => {
+    mongoDriverArgs.deleteMany = args;
+    return { deletedCount: 3 };
+  },
   estimatedDocumentCount: async () => {
     if (isMockView(name, dbName)) throw commandNotSupportedOnView("count", name);
     return 42;
@@ -294,6 +338,9 @@ const createMockDb = (dbName = "testdb") => ({
       if (cmd.buildInfo) return { version: "7.0.0" };
       if (cmd.listDatabases) {
         lastListDatabasesCommand = cmd;
+        listDatabasesCommands.push(cmd);
+        const refusal = mockListDatabasesRefusal?.(cmd);
+        if (refusal !== undefined) throw refusal;
         return { databases: mockDatabaseList, ok: 1 };
       }
       return {};
@@ -572,7 +619,10 @@ function resetObjectSurfaceMocks(): void {
   mongoIndexReads = [];
   mongoFoundCollections = [];
   mockFindErrors = {};
+  mongoDriverArgs = {};
   lastListDatabasesCommand = {};
+  listDatabasesCommands = [];
+  mockListDatabasesRefusal = undefined;
 }
 
 function useObjectFixture(): void {
@@ -949,6 +999,26 @@ describe("MongoDBProvider", () => {
       expect(typeof result.rows[0]._id).toBe("string");
     });
 
+    // Measured 2026-10-03 on mongo 8.2.12: two documents of different shape answered
+    // the first document's keys as the columns, so the other document's fields were in
+    // the rows (and the JSON export) but in no grid column and no CSV/SQL/DDL export.
+    test("find answers the union of the documents' keys as columns, first seen first", async () => {
+      mockDocumentsByNs["testdb.mixed"] = [
+        { _id: new MockObjectId("b1"), name: "B", ts: 1 },
+        { _id: new MockObjectId("a1"), name: "A", balance: 10, tags: ["x"] },
+        { _id: new MockObjectId("c1"), ts: 2, re: "^a" },
+      ];
+      const result = await provider.query(JSON.stringify({ collection: "mixed", operation: "find", filter: {} }));
+      expect(result.fields).toEqual(["_id", "name", "ts", "balance", "tags", "re"]);
+      expect(result.rows.length).toBe(3);
+    });
+
+    test("an empty find answers no columns", async () => {
+      mockDocumentsByNs["testdb.empty"] = [];
+      const result = await provider.query(JSON.stringify({ collection: "empty", operation: "find", filter: {} }));
+      expect(result.fields).toEqual([]);
+    });
+
     // #843: `database` names the database a command runs in, so a collection outside
     // the connected one is reachable. Before the key existed, the same statement
     // silently read the same-named collection in the CONNECTED database instead - a
@@ -1040,6 +1110,239 @@ describe("MongoDBProvider", () => {
 
     test("missing collection throws QueryError", async () => {
       await expect(provider.query(JSON.stringify({ operation: "find" }))).rejects.toThrow();
+    });
+
+    // ------------------------------------------------------------------------
+    // Extended JSON. Plain JSON has no ObjectId and no Date, so before the query was
+    // read as Extended JSON a document shown in the grid could not be found, updated
+    // or deleted by its `_id`: `{"$oid": ...}` reached the server as an operator and
+    // failed `unknown operator: $oid`, and `{"$date": ...}` in an insert was stored
+    // as a subdocument with a `$date` key (measured on MongoDB 8.2.12, 2026-10-03).
+    // ------------------------------------------------------------------------
+
+    describe("Extended JSON", () => {
+      const { BSON } = realMongoDriver;
+      const OID = "650000000000000000000001";
+      const run = (statement: Record<string, unknown>) => provider.query(JSON.stringify(statement));
+
+      test("a $oid filter reaches find as an ObjectId", async () => {
+        await run({ collection: "users", operation: "find", filter: { _id: { $oid: OID } } });
+        const filter = mongoDriverArgs.find[0] as Record<string, unknown>;
+        expect(filter._id).toBeInstanceOf(BSON.ObjectId);
+        expect((filter._id as InstanceType<typeof BSON.ObjectId>).toHexString()).toBe(OID);
+      });
+
+      test("relaxed and canonical $date both reach a range filter as a Date", async () => {
+        const instant = Date.parse("2020-01-01T00:00:00Z");
+        await run({
+          collection: "users",
+          operation: "find",
+          filter: {
+            created: {
+              $gt: { $date: "2020-01-01T00:00:00Z" },
+              $gte: { $date: instant },
+              $lt: { $date: { $numberLong: String(instant) } },
+            },
+          },
+        });
+        const range = (mongoDriverArgs.find[0] as { created: Record<string, unknown> }).created;
+        for (const bound of [range.$gt, range.$gte, range.$lt]) {
+          expect(bound).toBeInstanceOf(Date);
+          expect((bound as Date).getTime()).toBe(instant);
+        }
+      });
+
+      test("every operation reads its filter, pipeline, update and documents as Extended JSON", async () => {
+        const filter = { _id: { $oid: OID } };
+        const when = { $date: "2025-01-01T00:00:00Z" };
+        await run({ collection: "users", operation: "findOne", filter });
+        await run({ collection: "users", operation: "count", filter });
+        await run({ collection: "users", operation: "distinct", field: "name", filter });
+        await run({ collection: "users", operation: "aggregate", pipeline: [{ $match: { when: { $gte: when } } }] });
+        await run({ collection: "users", operation: "insertOne", documents: [{ when }] });
+        await run({ collection: "users", operation: "insertMany", documents: [{ when }, { when }] });
+        await run({ collection: "users", operation: "updateOne", filter, update: { $set: { when } } });
+        await run({ collection: "users", operation: "updateMany", filter, update: { $set: { when } } });
+        await run({ collection: "users", operation: "deleteOne", filter });
+        await run({ collection: "users", operation: "deleteMany", filter });
+
+        const isOid = (value: unknown) => (value as { _id: unknown })._id instanceof BSON.ObjectId;
+        expect(isOid(mongoDriverArgs.findOne[0])).toBe(true);
+        expect(isOid(mongoDriverArgs.countDocuments[0])).toBe(true);
+        expect(isOid(mongoDriverArgs.distinct[1])).toBe(true);
+        expect(isOid(mongoDriverArgs.updateOne[0])).toBe(true);
+        expect(isOid(mongoDriverArgs.updateMany[0])).toBe(true);
+        expect(isOid(mongoDriverArgs.deleteOne[0])).toBe(true);
+        expect(isOid(mongoDriverArgs.deleteMany[0])).toBe(true);
+
+        const pipeline = mongoDriverArgs.aggregate[0] as { $match: { when: { $gte: unknown } } }[];
+        expect(pipeline[0].$match.when.$gte).toBeInstanceOf(Date);
+        expect((mongoDriverArgs.insertOne[0] as { when: unknown }).when).toBeInstanceOf(Date);
+        for (const doc of mongoDriverArgs.insertMany[0] as { when: unknown }[]) expect(doc.when).toBeInstanceOf(Date);
+        expect((mongoDriverArgs.updateOne[1] as { $set: { when: unknown } }).$set.when).toBeInstanceOf(Date);
+        expect((mongoDriverArgs.updateMany[1] as { $set: { when: unknown } }).$set.when).toBeInstanceOf(Date);
+      });
+
+      test("the typed wrappers arrive as the BSON types they name, a 64-bit integer exactly", async () => {
+        await run({
+          collection: "users",
+          operation: "insertOne",
+          documents: [
+            {
+              big: { $numberLong: "9007199254740993" },
+              price: { $numberDecimal: "19.99" },
+              blob: { $binary: { base64: "AQI=", subType: "00" } },
+              uid: { $uuid: "3b241101-e2bb-4255-8caf-4136c566a962" },
+              pattern: { $regularExpression: { pattern: "^th", options: "i" } },
+              ts: { $timestamp: { t: 1700000000, i: 1 } },
+            },
+          ],
+        });
+        const doc = mongoDriverArgs.insertOne[0] as Record<string, unknown>;
+        // 2^53 + 1: a JS number cannot hold it, and relaxed Extended JSON alone would round it
+        // to ...992. A bigint is what the driver writes as a 64-bit integer.
+        expect(doc.big).toBe(BigInt("9007199254740993"));
+        expect(doc.price).toBeInstanceOf(BSON.Decimal128);
+        expect(String(doc.price)).toBe("19.99");
+        expect(doc.blob).toBeInstanceOf(BSON.Binary);
+        expect(doc.uid).toBeInstanceOf(BSON.Binary);
+        expect((doc.uid as InstanceType<typeof BSON.Binary>).sub_type).toBe(4);
+        expect(doc.pattern).toBeInstanceOf(BSON.BSONRegExp);
+        expect(doc.ts).toBeInstanceOf(BSON.Timestamp);
+      });
+
+      test("plain JSON reaches the driver exactly as JSON.parse read it", async () => {
+        // Plain numbers stay JS numbers, so an int32-range integer is still written as int32
+        // and anything else as a double, as before, and operators are left alone.
+        const filter = { age: { $gt: 18, $in: [1, 3000000000, 2.5] }, name: { $type: "string" }, tags: ["a"] };
+        await run({ collection: "users", operation: "find", filter, options: { limit: 10 } });
+        expect(mongoDriverArgs.find[0]).toEqual(filter);
+      });
+
+      test("a malformed wrapper is a QueryError carrying the reason", async () => {
+        const error = await run({ collection: "users", operation: "find", filter: { _id: { $oid: "nope" } } }).catch(
+          (caught: unknown) => caught,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect((error as Error).message).toContain('Invalid Extended JSON in the query at "filter._id"');
+        expect((error as Error).message).toContain("24 character hex string");
+      });
+
+      test("an operator object beside $regex keeps every key, so a delete runs the filter that was written", async () => {
+        // The bson parser alone turns `{"$regex": "^a", "$nin": ["admin"]}` into the bare
+        // regular expression and drops `$nin`, so this `deleteMany` would delete `admin` too.
+        const filter = {
+          name: { $regex: "^a", $nin: ["admin"] },
+          email: { $regex: "^a", $options: "i", $ne: "a@x.io" },
+        };
+        await run({ collection: "users", operation: "deleteMany", filter });
+        expect(mongoDriverArgs.deleteMany[0]).toEqual(filter);
+      });
+
+      test("a wrapper sharing its object with another key is refused, naming both", async () => {
+        for (const [bound, other] of [
+          [{ $date: "2020-01-01T00:00:00Z", $lt: 5 }, "$lt"],
+          [{ $timestamp: { t: 1, i: 1 }, $gt: 0 }, "$gt"],
+          [{ $oid: "650000000000000000000001", note: "x" }, "note"],
+          // The legacy binary form carries `$type` beside `$binary`, so it is refused too.
+          [{ $binary: "AQI=", $type: "00" }, "$type"],
+        ] as const) {
+          const error = await run({ collection: "users", operation: "deleteMany", filter: { f: bound } }).catch(
+            (caught: unknown) => caught,
+          );
+          expect(error).toBeInstanceOf(QueryError);
+          expect((error as Error).message).toContain('at "filter.f"');
+          expect((error as Error).message).toContain(`also has ${other}`);
+        }
+        expect(mongoDriverArgs.deleteMany).toBeUndefined();
+      });
+
+      test("an integral $numberDouble stays a double", async () => {
+        await run({ collection: "users", operation: "insertOne", documents: [{ x: { $numberDouble: "5" } }] });
+        const x = (mongoDriverArgs.insertOne[0] as { x: unknown }).x;
+        expect(x).toBeInstanceOf(BSON.Double);
+        expect(Number(x)).toBe(5);
+      });
+
+      test("a $numberLong outside the 64-bit range is refused, never wrapped to a negative", async () => {
+        const error = await run({
+          collection: "users",
+          operation: "insertOne",
+          documents: [{ n: { $numberLong: "9223372036854775808" } }],
+        }).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(QueryError);
+        expect((error as Error).message).toContain("outside the 64-bit integer range");
+        expect(mongoDriverArgs.insertOne).toBeUndefined();
+
+        // The edges themselves are integers, and an explicit plus sign names the same one.
+        await run({
+          collection: "users",
+          operation: "insertOne",
+          documents: [
+            {
+              min: { $numberLong: "-9223372036854775808" },
+              max: { $numberLong: "9223372036854775807" },
+              signed: { $numberLong: "+7" },
+            },
+          ],
+        });
+        expect(mongoDriverArgs.insertOne[0]).toEqual({
+          min: BigInt("-9223372036854775808"),
+          max: BigInt("9223372036854775807"),
+          signed: BigInt(7),
+        });
+      });
+
+      test("the keys outside the recognised wrappers stay literal subdocuments, as before", async () => {
+        const document = {
+          code: { $code: "function () {}" },
+          ref: { $ref: "users", $id: "abc" },
+          sym: { $symbol: "s" },
+          undef: { $undefined: true },
+          pointer: { $dbPointer: { $ref: "users", $id: "abc" } },
+        };
+        await run({ collection: "users", operation: "insertOne", documents: [document] });
+        expect(mongoDriverArgs.insertOne[0]).toEqual(document);
+      });
+
+      test("a typed _id the write echoes back is a value the response can carry", async () => {
+        // `JSON.stringify` throws on a bigint, which answered a committed insert with an error.
+        const one = await run({
+          collection: "users",
+          operation: "insertOne",
+          documents: [{ _id: { $numberLong: "9007199254740993" } }],
+        });
+        expect(one.rows[0].insertedId).toBe("9007199254740993");
+        expect(() => JSON.stringify(one)).not.toThrow();
+
+        const many = await run({
+          collection: "users",
+          operation: "insertMany",
+          documents: [{ _id: { $numberLong: "5" } }, { _id: { $numberLong: "9007199254740993" } }],
+        });
+        expect(many.rows[0].insertedIds).toEqual([5, "9007199254740993"]);
+
+        const double = await run({
+          collection: "users",
+          operation: "insertOne",
+          documents: [{ _id: { $numberDouble: "2" } }],
+        });
+        expect(double.rows[0].insertedId).toBe(2);
+        expect(() => JSON.stringify([many, double])).not.toThrow();
+      });
+
+      test("a $date that names no instant is refused, never written as the epoch", async () => {
+        // `Date.parse` answers NaN for it, and the driver serialises an invalid Date as 0:
+        // 1970-01-01, in silence.
+        const error = await run({
+          collection: "users",
+          operation: "insertMany",
+          documents: [{ ok: { $date: "2025-01-01T00:00:00Z" } }, { tags: [{ when: { $date: "next tuesday" } }] }],
+        }).catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(QueryError);
+        expect((error as Error).message).toContain("documents.1.tags.0.when");
+        expect(mongoDriverArgs.insertMany).toBeUndefined();
+      });
     });
   });
 
@@ -1597,6 +1900,55 @@ describe("MongoDBProvider", () => {
       expect(typeof result.rows[0]._id).toBe("string");
     });
 
+    // Measured on MongoDB 8.2.12 (#1423): the grid showed `big` as `{"high":2097152,"low":1,"unsigned":false}`,
+    // `ts` the same way, `re` as `{}` and `uid` as `<Binary: 16 bytes>`. The values are the driver's own classes,
+    // as it reads them back: a Long past 2^53 stays a Long and a regular expression is a native RegExp.
+    test("Long, Timestamp, RegExp and UUID values are readable, alone, nested and in arrays (#1423)", async () => {
+      const { BSON } = realMongoDriver;
+      const big = BSON.Long.fromString("9007199254740993");
+      const ts = new BSON.Timestamp({ t: 1700000000, i: 1 });
+      const uid = new BSON.UUID("3b241101-e2bb-4255-8caf-4136c566a962");
+      mockCollectionData = [
+        {
+          big,
+          ts,
+          re: /ab+c/i,
+          bre: new BSON.BSONRegExp("x+", "m"),
+          uid,
+          i32: new BSON.Int32(7),
+          code: new BSON.Code("function () { return 1; }"),
+          min: new BSON.MinKey(),
+          // The suite's driver double for Binary: a plain Binary keeps the placeholder users see.
+          other: new MockBinary(Buffer.from("abc")),
+          nested: { big, ts, at: new Date("2026-10-04T00:00:00.000Z") },
+          list: [big, uid, new MockObjectId("aaa"), [ts], { re: /z/g }],
+          // A document's own field named like the class marker is data, not a class.
+          own: { _bsontype: "Long", n: 1 },
+        },
+      ];
+      const result = await provider.query(JSON.stringify({ collection: "users", operation: "find", filter: {} }));
+      expect(result.rows[0]).toEqual({
+        big: "9007199254740993",
+        ts: "Timestamp(1700000000, 1)",
+        re: "/ab+c/i",
+        bre: "/x+/m",
+        uid: "3b241101-e2bb-4255-8caf-4136c566a962",
+        i32: 7,
+        code: '{"$code":"function () { return 1; }"}',
+        min: '{"$minKey":1}',
+        other: "<Binary: 3 bytes>",
+        nested: { big: "9007199254740993", ts: "Timestamp(1700000000, 1)", at: "2026-10-04T00:00:00.000Z" },
+        list: [
+          "9007199254740993",
+          "3b241101-e2bb-4255-8caf-4136c566a962",
+          "aaa",
+          ["Timestamp(1700000000, 1)"],
+          { re: "/z/g" },
+        ],
+        own: { _bsontype: "Long", n: 1 },
+      });
+    });
+
     test("insertMany returns correct count", async () => {
       const result = await provider.query(
         JSON.stringify({
@@ -1921,6 +2273,61 @@ describe("object surface", () => {
     expect(lastListDatabasesCommand).toEqual({ listDatabases: 1, nameOnly: true, authorizedDatabases: true });
   });
 
+  test("sends listDatabases once on a server that accepts authorizedDatabases", async () => {
+    await objectProvider.listContainers();
+    expect(listDatabasesCommands).toEqual([{ listDatabases: 1, nameOnly: true, authorizedDatabases: true }]);
+  });
+
+  test("retries without authorizedDatabases when the server refuses that field (FerretDB)", async () => {
+    // FerretDB 2.7.0 refuses the flag with BadValue and accepts the command without it.
+    mockListDatabasesRefusal = (cmd) =>
+      cmd.authorizedDatabases === undefined ? undefined : mongoServerError(2, FERRETDB_UNKNOWN_FIELD);
+    const containers = await objectProvider.listContainers();
+    expect(listDatabasesCommands).toEqual([
+      { listDatabases: 1, nameOnly: true, authorizedDatabases: true },
+      { listDatabases: 1, nameOnly: true },
+    ]);
+    expect(containers.map((c) => c.name)).toContain("app");
+  });
+
+  test("raises the second refusal when the retry without authorizedDatabases is refused too", async () => {
+    mockListDatabasesRefusal = (cmd) =>
+      cmd.authorizedDatabases === undefined
+        ? mongoServerError(13, "not authorized on admin to execute command")
+        : mongoServerError(2, FERRETDB_UNKNOWN_FIELD);
+    await expect(objectProvider.listContainers()).rejects.toThrow("not authorized on admin");
+    expect(listDatabasesCommands).toEqual([
+      { listDatabases: 1, nameOnly: true, authorizedDatabases: true },
+      { listDatabases: 1, nameOnly: true },
+    ]);
+  });
+
+  test("does not retry a BadValue that is about something other than authorizedDatabases", async () => {
+    mockListDatabasesRefusal = () => mongoServerError(2, "nameOnly is an unknown field");
+    await expect(objectProvider.listContainers()).rejects.toThrow("nameOnly is an unknown field");
+    expect(listDatabasesCommands).toHaveLength(1);
+  });
+
+  test("does not retry when the refusal is not BadValue", async () => {
+    // An unauthorized role is a real answer about this connection. Dropping the flag would
+    // ask a different question rather than the same one again.
+    mockListDatabasesRefusal = () => mongoServerError(13, `not authorized: ${FERRETDB_UNKNOWN_FIELD}`);
+    await expect(objectProvider.listContainers()).rejects.toThrow("not authorized");
+    expect(listDatabasesCommands).toHaveLength(1);
+  });
+
+  test("does not retry when the failure is not the server's own reply", async () => {
+    // A transport failure is nobody answering at all, whatever its sentence says.
+    mockListDatabasesRefusal = () => {
+      const error = new Error(FERRETDB_UNKNOWN_FIELD) as Error & { code: number };
+      error.code = 2;
+      error.name = "MongoNetworkError";
+      return error;
+    };
+    await expect(objectProvider.listContainers()).rejects.toThrow(FERRETDB_UNKNOWN_FIELD);
+    expect(listDatabasesCommands).toHaveLength(1);
+  });
+
   test("answers nothing under a container, because nothing nests under a database", async () => {
     expect(await objectProvider.listContainers(["app"])).toEqual([]);
   });
@@ -2050,6 +2457,39 @@ describe("object surface", () => {
     // MongoDB has no foreign key constraint at all, which is why the provider declares
     // `declaresForeignKeys: false`.
     expect(detail.foreignKeys).toEqual([]);
+  });
+
+  // A Long's `high`, `low` and `unsigned` and a Timestamp's were inferred as fields and reached Generate Find, the
+  // profiler and the agent's inventory (#1423). Every BSON class is a scalar to inference.
+  test("infers a BSON scalar as one field, never its internals (#1423)", async () => {
+    const { BSON } = realMongoDriver;
+    mockDocumentsByNs["app.customers"] = [
+      {
+        _id: new MockObjectId("c1"),
+        big: BSON.Long.fromString("9007199254740993"),
+        ts: new BSON.Timestamp({ t: 1700000000, i: 1 }),
+        re: /ab+c/i,
+        uid: new BSON.UUID("3b241101-e2bb-4255-8caf-4136c566a962"),
+        min: new BSON.MinKey(),
+        // Subtype 4 but not 16 bytes: not a UUID, so an ordinary binary field.
+        short: new BSON.Binary(Buffer.from("abc"), BSON.Binary.SUBTYPE_UUID),
+        weird: Object.create({ _bsontype: "Unlisted" }),
+        address: { city: "Ankara" },
+      },
+    ];
+    const detail = await objectProvider.describeObject(["app", "customers"], "collection");
+    expect(detail.columns.map((c) => [c.name, c.type])).toEqual([
+      ["_id", "objectId"],
+      ["address", "object"],
+      ["address.city", "string"],
+      ["big", "long"],
+      ["min", "minKey"],
+      ["re", "regex"],
+      ["short", "binary"],
+      ["ts", "timestamp"],
+      ["uid", "uuid"],
+      ["weird", "Unlisted"],
+    ]);
   });
 
   test("describes a view with its fields and claims no indexes for it", async () => {

@@ -16,6 +16,7 @@ import {
   QueryToolbar,
   BottomPanel,
 } from "@/components/studio/index";
+import { cancelControlMode } from "@/components/studio/QueryToolbar";
 import { StudioModals } from "@/components/studio/StudioModals";
 import { StudioOverlays } from "@/components/studio/StudioOverlays";
 import { AgentRail } from "@/components/agent/AgentRail";
@@ -403,6 +404,7 @@ export default function Studio() {
     playgroundMode: txn.playgroundMode,
     fetchSchema: conn.fetchSchema,
     onObjectsChanged: objectsChanged,
+    onTransactionEnded: txn.markTransactionEnded,
     queryEditorRef,
   });
   const { executeQuery, cancelQuery } = queryExec;
@@ -525,6 +527,13 @@ export default function Studio() {
   const [pendingDeleteConnectionId, setPendingDeleteConnectionId] = useState<string | null>(null);
   const deleteConnectionReturnFocus = useReturnFocus();
   const [isCreateTableModalOpen, setIsCreateTableModalOpen] = useState(false);
+  // The container a Create Table was asked for in, `[]` when it was asked for nowhere in
+  // particular (the flat explorer's button), which leaves the statement unqualified (#1391).
+  const [createTableContainer, setCreateTableContainer] = useState<readonly string[]>([]);
+  const openCreateTable = useCallback((container: readonly string[]) => {
+    setCreateTableContainer(container);
+    setIsCreateTableModalOpen(true);
+  }, []);
   const [showDiagram, setShowDiagram] = useState(false);
   const handleShowDiagram = useCallback(() => setShowDiagram(true), []);
   const handleHideDiagram = useCallback(() => setShowDiagram(false), []);
@@ -683,6 +692,11 @@ export default function Studio() {
     });
   }, []);
   const toggleMasking = userCanToggle ? handleToggleMasking : undefined;
+  // The grid's three masking inputs, handed to the profiler as one value it can memoize on.
+  const profilerMasking = useMemo(
+    () => ({ config: maskingConfig, enabled: effectiveMasking, role: user?.role }),
+    [maskingConfig, effectiveMasking, user?.role],
+  );
 
   const handleLoadQuery = useCallback(
     (q: string) => {
@@ -749,6 +763,11 @@ export default function Studio() {
   const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
   const closeTestData = useCallback(() => setTestDataPath(null), []);
   const runModalStatement = useCallback((sql: string) => queryExec.executeQuery(sql), [queryExec.executeQuery]);
+  // The import dialog stays open on a failure and shows its message (#1396), so it is handed both.
+  const runImport = useCallback(
+    (sql: string, onFailure: (message: string) => void) => queryExec.executeQuery(sql, undefined, false, { onFailure }),
+    [queryExec.executeQuery],
+  );
 
   const handleConnect = useCallback(
     (c: DatabaseConnection) => {
@@ -812,6 +831,9 @@ export default function Studio() {
         // fallback name: naming the tab's table would attribute them to a table that
         // never produced them.
         tabName: hydrated === null ? tabMgr.currentTab.name : FALLBACK_TABLE_NAME,
+        // The statement that fetched the tab's own rows names their table when it reads
+        // exactly one (#1386); a run's rows were fetched by no statement of this tab.
+        query: hydrated === null ? tabMgr.currentTab.resultQuery : undefined,
         dialect: conn.activeConnection?.type,
         // The types the engine declared for THIS result, which is what the DDL form
         // writes when they are there — the only source for a computed column.
@@ -819,7 +841,14 @@ export default function Studio() {
         csvDelimiter,
       });
     },
-    [tabMgr.currentTab.result, tabMgr.currentTab.name, maskingConfig, effectiveMasking, conn.activeConnection?.type],
+    [
+      tabMgr.currentTab.result,
+      tabMgr.currentTab.name,
+      tabMgr.currentTab.resultQuery,
+      maskingConfig,
+      effectiveMasking,
+      conn.activeConnection?.type,
+    ],
   );
 
   const exportResults = useCallback(
@@ -1032,10 +1061,10 @@ export default function Studio() {
       onGenerateCode: (object) => setCodeGenPath(object.path),
       onGenerateTestData: (object) => setTestDataPath(object.path),
       onOpenMaintenance: isAdmin ? (object) => openMaintenance("tables", object.path) : undefined,
-      onCreateObject: () => setIsCreateTableModalOpen(true),
+      onCreateObject: openCreateTable,
       onViewSource: openSourceTab,
     }),
-    [handleGenerateSelect, handleGenerateCount, openSourceTab, isAdmin, openMaintenance],
+    [handleGenerateSelect, handleGenerateCount, openSourceTab, isAdmin, openMaintenance, openCreateTable],
   );
 
   const requestDeleteConnection = useCallback((id: string) => {
@@ -1198,6 +1227,7 @@ export default function Studio() {
               onClearQuery={handleClearQuery}
               onExecuteQuery={handleMobileExecuteQuery}
               onCancelQuery={cancelEditorQuery}
+              cancelMode={cancelControlMode(metadata)}
               {...transactionHandlers}
               onToggleEditing={onToggleEditing}
               onImport={openImport}
@@ -1308,7 +1338,7 @@ export default function Studio() {
                             tabMgr.handleGenerateCount(path);
                             setActiveMobileTab("editor");
                           }}
-                          onCreateTableClick={() => setIsCreateTableModalOpen(true)}
+                          onCreateTableClick={() => openCreateTable([])}
                           isAdmin={isAdmin}
                           onOpenMaintenance={openMaintenance}
                           databaseType={conn.activeConnection?.type}
@@ -1382,6 +1412,7 @@ export default function Studio() {
                                 language={editorLanguageForTabType(tabMgr.currentTab.type)}
                                 databaseType={conn.activeConnection?.type}
                                 schemaContext={conn.schemaContext}
+                                defaultContainer={conn.defaultContainer}
                                 capabilities={metadata?.capabilities}
                               />
                             </div>
@@ -1544,13 +1575,14 @@ export default function Studio() {
         showImport
         importModalOpen={isImportModalOpen}
         onCloseImport={closeImport}
-        onImport={runModalStatement}
+        onImport={runImport}
         safetyCheckQuery={queryExec.safetyCheckQuery}
         onCloseSafety={closeSafety}
         onProceedSafety={proceedSafety}
         showCodeGenerator
         profilerPath={profilerPath}
         onCloseProfiler={closeProfiler}
+        profilerMasking={profilerMasking}
         codeGenPath={codeGenPath}
         onCloseCodeGen={closeCodeGen}
         showTestDataGenerator
@@ -1574,6 +1606,7 @@ export default function Studio() {
         onCloseConnectionModal={closeConnectionModal}
         onConnectConnection={handleConnect}
         createTableModalOpen={isCreateTableModalOpen}
+        createTableContainer={createTableContainer}
         onCloseCreateTable={closeCreateTable}
         onTableCreated={runModalStatement}
         pendingDeleteConnectionId={pendingDeleteConnectionId}

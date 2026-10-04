@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
-import type { MaskingRule } from "@/lib/data-masking";
+import type { MaskingPattern } from "@/lib/data-masking";
 
 const headers = "Column,Type,Total Rows,Null Count,Null %,Distinct Count,Min,Max,Sample Values,Error";
 
@@ -18,8 +18,16 @@ const column: ColumnProfile = {
 
 const profile = (columns: ColumnProfile[]): ProfileData => ({ tableName: "users", totalRows: 100, columns });
 
-const emailRule: MaskingRule = { pattern: /email/i, label: "Email", mask: () => "****" };
-const sensitive = new Map<string, MaskingRule>([["email", emailRule]]);
+const emailPattern: MaskingPattern = {
+  id: "custom-email",
+  name: "Email",
+  columnPatterns: ["email"],
+  maskType: "custom",
+  customMask: "****",
+  enabled: true,
+  isBuiltin: false,
+};
+const sensitive = new Map<string, MaskingPattern>([["email", emailPattern]]);
 
 describe("dataProfileText", () => {
   test("empty CSV retains all ten headers", () => {
@@ -35,6 +43,21 @@ describe("dataProfileText", () => {
   test("CSV leaves an absent type, min, max, sample list and error empty", () => {
     const bare: ColumnProfile = { name: "notes", totalRows: 7, nullCount: 7, nullPercent: 100, distinctCount: 0 };
     expect(dataProfileText(profile([bare]), new Map(), "csv")).toBe(`${headers}\nnotes,,7,7,100,0,,,,`);
+  });
+
+  test("CSV leaves a figure the engine could not produce empty, and writes every reason in Error", () => {
+    // Empty, not 0: a 0 there reads as a measured value (E2E-007).
+    const failed: ColumnProfile = { name: "geom", totalRows: 9, error: "ORA-22849" };
+    const partial: ColumnProfile = {
+      name: "body",
+      totalRows: 4,
+      nullCount: 2,
+      nullPercent: 50,
+      warnings: ["Distinct count: no DISTINCT on text", "Min/max: no MIN on text"],
+    };
+    expect(dataProfileText(profile([failed, partial]), new Map(), "csv")).toBe(
+      `${headers}\ngeom,,9,,,,,,,ORA-22849\nbody,,4,2,50,,,,,Distinct count: no DISTINCT on text; Min/max: no MIN on text`,
+    );
   });
 
   test("CSV keeps commas, quotes, newlines and Unicode in their original columns", () => {
@@ -65,7 +88,7 @@ describe("dataProfileText", () => {
   });
 
   test("an absent min and max stay empty on a sensitive column rather than becoming the mask", () => {
-    // `maskValue` answers `NULL` for an absent value, which reads back as a column
+    // `maskValueByPattern` answers `NULL` for an absent value, which reads back as a column
     // that genuinely holds that word. A column with no MIN has nothing to hide.
     const empty: ColumnProfile = { name: "email", totalRows: 0, nullCount: 0, nullPercent: 0, distinctCount: 0 };
     expect(dataProfileText(profile([empty]), sensitive, "csv")).toBe(`${headers}\nemail,,0,0,0,0,,,,`);

@@ -19,7 +19,6 @@ const { GET, POST } = await import("@/app/api/mcp/token/route");
 const mcpRoute = await import("@/app/api/mcp/route");
 const { getSession, signJWT, verifyJWT } = await import("@/lib/auth");
 const { getJwtSecret } = await import("@/lib/config/auth-env");
-const { encryptState } = await import("@/lib/oidc");
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
 const { logger } = await import("@/lib/logger");
 const { verifyMcpToken } = await import("@/lib/mcp/token");
@@ -160,14 +159,20 @@ describe("GET /api/mcp/token", () => {
 describe("a token signed with JWT_SECRET that is not a session", () => {
   test("the OIDC state cookie is refused by GET and POST, and reads nothing", async () => {
     cookieStore = {
-      "auth-token": { value: await encryptState({ code_verifier: "verifier", state: "state", nonce: "nonce" }) },
+      "auth-token": {
+        value: await new SignJWT({ code_verifier: "verifier", state: "state", nonce: "nonce" })
+          .setProtectedHeader({ alg: "HS256" })
+          .setIssuedAt()
+          .setExpirationTime("5m")
+          .sign(getJwtSecret()),
+      },
     };
     const status = await GET();
     expect(status.status).toBe(401);
-    expect(await status.json()).toEqual({ error: "Authentication required" });
+    expect(await status.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
     const mint = await POST(mintRequest());
     expect(mint.status).toBe(401);
-    expect(await mint.json()).toEqual({ error: "Authentication required" });
+    expect(await mint.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test.each([
@@ -209,7 +214,7 @@ describe("POST /api/mcp/token", () => {
   test("answers guardRoute's 401 without a session", async () => {
     const response = await POST(mintRequest());
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Authentication required" });
+    expect(await response.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test("mints for the session's user and role, once, with no-store, verifiable only under the MCP key", async () => {

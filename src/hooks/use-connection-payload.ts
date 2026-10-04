@@ -133,6 +133,9 @@ const CONNECTION_RELEVANCE: Record<keyof DatabaseConnection, FieldRelevance> = {
   // Whether a Db2 connection may connect with no TLS at all (#786): like every transport field
   // below, it decides whether, and how, the connection connects.
   allowInsecureAuth: "resolution",
+  // Which addresses a read may reach and the token may be sent to: two copies differing only here reach different
+  // servers, so they do not resolve to the same connection.
+  dataServers: "resolution",
   ssl: "nested",
   sshTunnel: "nested",
 };

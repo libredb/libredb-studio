@@ -212,7 +212,7 @@ function isGrpcStatus(error: unknown): error is { readonly code: number; readonl
 /**
  * grpc-js's failure of a call that its own signal ended before grpc-js gave it a transport, so its request never left
  * the client. grpc-js words that cancel "Cancelled on client" whether or not the request had left, so the transport
- * raises this in its place (grpc-client.ts `callFailure`), with grpc-js's code, text and message.
+ * raises this in its place (src/lib/db/grpc/channel.ts `callFailure`), with grpc-js's code, text and message.
  */
 export class EtcdUnsentStatus extends Error {
   declare readonly code: number;

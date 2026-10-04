@@ -263,11 +263,11 @@ const NAMED_CITATIONS = [
       "prepareQuery",
       "validate",
       "buildTLSOptions",
+      "openClient",
       "connect",
       "disconnect",
       "query",
       "endOpenQueryTransaction",
-      "commandBody",
       "executeRedisCommand",
       "runCommand",
       "formatResult",
@@ -308,6 +308,7 @@ const NAMED_CITATIONS = [
       "validate",
       "connect",
       "disconnect",
+      "connectWarnings",
       "buildPoolConfig",
       "buildSSLConfig",
       "query",
@@ -329,6 +330,7 @@ const NAMED_CITATIONS = [
       "readObjectSource",
       "getHealth",
       "qualifyMaintenanceTarget",
+      "probeMaintenance",
       "runMaintenance",
       "getPoolStats",
       "getOverview",
@@ -356,6 +358,7 @@ const NAMED_CITATIONS = [
       "connect",
       "disconnect",
       "query",
+      "cancelQuery",
       "mapClickHouseError",
       "countObjects",
       "listObjects",
@@ -559,6 +562,14 @@ describe("redis provider doc", () => {
     );
     expect(read("src/lib/query-generators.ts")).toContain("`keyGrouping` grouping");
     expect(read("src/lib/db/providers/keyvalue/redis.ts")).toMatch(/^function keyGrouping\(/m);
+  });
+
+  // Module-level for the same reason as `keyGrouping()`, so pinned the same way (#1356).
+  test("names connectFailure() where a refused connect gets its typed reason", () => {
+    expect(read("docs/providers/redis.md")).toContain(
+      "(`connectFailure()` in\n[`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))",
+    );
+    expect(read("src/lib/db/providers/keyvalue/redis.ts")).toMatch(/^function connectFailure\(/m);
   });
 });
 

@@ -28,7 +28,7 @@ It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only 
 ### 2.1 Where it sits
 
 `EtcdProvider` extends `BaseDatabaseProvider` in the `keyvalue` family beside Redis, and every module talks to etcd only through the `EtcdClient` interface of `client.ts`, each through the slice it uses.
-`grpc-client.ts` is the one file that imports `@grpc/grpc-js`, and it names only the allowlist of RPCs `tests/unit/db/etcd/seam-guard.test.ts` holds.
+`grpc-client.ts` is the provider's one gRPC file: it reaches `@grpc/grpc-js` only through the shared transport in `src/lib/db/grpc/`, and it names only the allowlist of RPCs `tests/unit/db/etcd/seam-guard.test.ts` holds.
 `lexer.ts`, `commands.ts`, `keys.ts` and `guard.ts` are pure and shipped to the browser, because the confirmation gate, the generators and the editor's tokens provider read them; `write-policy.ts`, which decides the read-only mode and the Kubernetes refusals, runs on the server only.
 
 ### 2.2 Modules
@@ -36,7 +36,7 @@ It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only 
 | File | What it owns |
 |---|---|
 | `client.ts` | The seam: `EtcdClient`, its request and answer types, and `EtcdError` |
-| `grpc-client.ts` | The one gRPC channel, its credentials, the token and its renewal, the `hasleader` table, deadlines and aborts |
+| `grpc-client.ts` | The RPC table over the shared gRPC channel of `src/lib/db/grpc/`, the token and its renewal, the `hasleader` table, deadlines and aborts |
 | `proto/` | The vendored etcd v3.7.2 protos and the descriptor generated from them by `scripts/generate-etcd-descriptor.mjs` |
 | `connection-options.ts` | The connection to options, with the endpoint, credential and TLS checks |
 | `lexer.ts`, `commands.ts` | Every quoting rule, the `schemaRefreshPattern` that reloads the tree after a write, built from those rules, and the etcdctl subset as a declared table |
@@ -58,7 +58,7 @@ The channel never goes through an `http_proxy`, `https_proxy` or `grpc_proxy` va
 ### 2.4 The client, and why
 
 The client is `@grpc/grpc-js` 1.14.5 with `@grpc/proto-loader` 0.8.1, pinned exactly, over a JSON descriptor of the v3.7.2 protos generated ahead of time, with `protobufjs` 7.6.6 pinned as a devDependency for the generator.
-It was chosen by measurement: it passed every check on Node 24 and Node 26, and under Bun all but the two error texts Bun does not report, once two pieces of this provider's own code were in place, a server-name override for a TLS connection to an IP address and `call.cancel()` on every end of a watch.
+It was chosen by measurement: it passed every check on Node 24 and Node 26, and under Bun all but the two error texts Bun does not report, once two pieces of code were in place: a server-name override for a TLS connection to an IP address, now in the shared gRPC transport of `src/lib/db/grpc/`, and `call.cancel()` on every end of a watch, which the adapter still makes.
 `microsoft/etcd3` was set aside: it fails TLS to an IP address on Node 26 and Bun, loads its protos from disk at run time, cannot cancel a call in flight, and has had no functional commit since 2023-07-30.
 etcd's JSON gateway is not used, because it cannot carry client-certificate authentication with RBAC on, and neither k3s's embedded etcd nor kine serves it.
 
@@ -196,6 +196,7 @@ etcd's own plaintext port is not such a port: it closes the connection on a TLS 
 
 A connection names one endpoint, and Studio dials that endpoint, or the local end of its tunnel, and nothing else: the client URLs `member list` shows are data and are never dialled, and `--cluster` is refused.
 A DNS name that resolves to several members reaches the next one when the first fails, through grpc-js's `pick_first` policy.
+The provider keeps grpc-js's transparent retries for this, so a call refused or never started on one member is sent to the next, and because no service config is ever loaded, a call a member has processed is never sent again.
 A member that stops answering without closing its connection, such as a lost host, a partition or a frozen VM, is found by an HTTP/2 keepalive ping sent every 10 seconds while a call is open: a ping unanswered for 6 seconds drops the connection and fails that call, a watch whose window closes first ends as section 5.3 says, and the next command reaches the next member of such a name.
 Every call carries etcd's `hasleader` metadata except the calls a member answers from its own state (`Status`, `Defragment`, `LeaseLeases`, a serializable `MemberList`, a serializable `Range`, and a read-only `txn` of serializable gets), so a call that needs the leader fails at once during a lost quorum instead of waiting seven seconds.
 A connection whose member has no leader is refused at once with the lost-quorum error, so the provider never connects in a degraded state, and only a provider connected before the loss goes on answering the calls a member answers from its own state.
@@ -433,6 +434,7 @@ A read-only connection offers none of the three.
 ## 9. Capabilities & labels
 
 `queryLanguage: "json"` with `queryDialect: "etcd"`, `tablesAreDerivedGroupings: true`, `containerLevels: []`, `defaultPort: 2379`, `enforcesReadOnly: true`, and `false` for explain, table creation, transactions, inline row edits, result pagination, external query limiting, connection strings and foreign keys.
+It also declares `supportsMaintenance: true`, with `maintenanceOperations: ["compact", "defragment", "disarm"]` and the `maintenanceOperationSpecs` of the three cards of section 8; `statementTerminator: "none"`; `objectKinds`, the six kinds of section 6.1; `keyScan`, which pages the Keys panel of section 6.4; and `schemaRefreshPattern`, which reloads the tree after a write (section 2.2).
 A key-prefix row is labelled "Key Prefix", its rows "Key", its read "Get Keys" and its generator "Generate Command"; a click on a group runs `get <group> --prefix --limit=50`, and Generate Command writes that read with the other forms commented below it, or the read alone on a read-only connection.
 A group whose prefix holds a carriage return, a line separator (U+2028) or a paragraph separator (U+2029), which the editor does not keep as the command line spells them, is read through a `txn` whose `get` names the prefix in Go quoting, and Generate Command's one other form for it is the commented `txn` template.
 
@@ -503,8 +505,8 @@ kube-apiserver compacts etcd every 5 minutes, so Compact history is for a NOSPAC
 - `readOnly` binds a `user` only on a managed seed and only where etcd authenticates the client; a saved connection puts its credentials in the user's browser, and the user can clear the toggle.
 - A read-only seed restrains only the seeded connection: a `user` can post a connection of their own to the same host and port.
   On an etcd that authenticates nobody, it restrains nobody who knows the address.
-- Cancelling a write in the editor shows it as cancelled even when etcd applied it: read the key again before you run the command again.
-  The editor's handling of the cancel route's answer is filed as U61.
+- A write cannot be cancelled once it has left the client: `cancelQuery` answers false, and the editor then says the cancel was not confirmed rather than that it happened (#1364).
+  Read the key again before you run the command again.
 - Kubernetes writes are refused by prefix, and by content only where a single-key write meets a stored envelope: under a custom prefix, a range write, a value written between a `txn`'s read of its single-key targets and its send, a `lease revoke`, a new key, and a key holding Kubernetes JSON or CBOR are not recognised.
 - A secret stored under a custom prefix in an envelope Studio does not know is shown.
 - A connection names one endpoint; a list of endpoints with failover is filed as D131.
@@ -515,6 +517,6 @@ kube-apiserver compacts etcd every 5 minutes, so Compact history is for a NOSPAC
 
 ## 14. References
 
-- The design: issue #1089, "Cloud-native control plane".
-- etcd's API reference and its authentication guide, v3.7.
+- The design: issue [#1089](https://github.com/libredb/libredb-studio/issues/1089), "Cloud-native control plane".
+- etcd's [API reference](https://etcd.io/docs/v3.7/learning/api/) and its [authentication guide](https://etcd.io/docs/v3.7/op-guide/authentication/), v3.7.
 - [`docker/etcd/README.md`](../../docker/etcd/README.md) and [`tests/fixtures/etcd/README.md`](../../tests/fixtures/etcd/README.md).

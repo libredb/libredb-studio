@@ -24,6 +24,8 @@ import {
   Neo4jIcon,
   QdrantIcon,
   MilvusIcon,
+  InfluxDBIcon,
+  OxiaIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -61,9 +63,12 @@ export interface DatabaseUIConfig {
     // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
     // `fieldOptions` below declares.
     | "saslMechanism"
-    // Db2 only (#786): the consent to send the password without TLS, drawn as a checkbox while SSL
-    // Mode is disable. The provider refuses a connection with no TLS unless it is set.
+    // Db2 (#786), both InfluxDB types (InfluxDB spec I7), and Oxia for its token: the consent to send the password
+    // without TLS, drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in
+    // `fieldHints`. The provider refuses a connection with no TLS unless it is set.
     | "allowInsecureAuth"
+    // Oxia only (O6): a cluster's data-server addresses, one text box.
+    | "dataServers"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -78,6 +83,11 @@ export interface DatabaseUIConfig {
    * the user reaches an error (#1085). Read through `connectionFieldHint`.
    */
   fieldHints?: Partial<Record<ConnectionField, string>>;
+  /**
+   * The connection dialog's placeholder for a field, where this engine's example differs from the dialog's own.
+   * Read through `connectionFieldPlaceholder`; only the `database` box reads it so far.
+   */
+  fieldPlaceholders?: Partial<Record<ConnectionField, string>>;
   /**
    * The sentence under the connection dialog's Read-only toggle, where this engine's mode differs from
    * the dialog's own sentence, which says the mode can be turned off. Neo4j declares one because its
@@ -217,6 +227,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   // IBM Db2 LUW (#786). No connection-string toggle: a `db2://` paste fills the fields, the Oracle
   // precedent. No password hint: a declared hint is drawn whatever SSL Mode says, and the cleartext
   // warning belongs only to a connection without TLS, where the `allowInsecureAuth` box carries it.
+  // The consent box's sentence is declared here too, so a second engine that takes the box says its own.
   db2: {
     icon: Db2Icon,
     color: "text-hue-purple",
@@ -224,6 +235,10 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "50000",
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    fieldHints: {
+      allowInsecureAuth:
+        "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
   },
   mssql: {
     icon: MSSQLIcon,
@@ -515,6 +530,89 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     },
     hostAcceptsUri: ["http", "https"],
   },
+  influxdb: {
+    // A generic time-series mark drawn for Studio, never InfluxData's logo (InfluxDB spec E19), shared by both types.
+    icon: InfluxDBIcon,
+    // `hue-purple` is Db2's; its `-alt` step is a second identity only because it clears the separation test, which
+    // is why `purple` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry.
+    color: "text-hue-purple-alt",
+    // One connection type per query language: this one sends InfluxQL over the v1 /query API of 1.x, 2.x and 3.x.
+    label: "InfluxDB (InfluxQL)",
+    defaultPort: "8086",
+    // The connection-string box reads http:// and https:// as ClickHouse, so a pasted address belongs in the Host
+    // box, which splits it (hostAcceptsUri below).
+    showConnectionStringToggle: false,
+    // The Prometheus precedent: one password box carries a 1.x password or, with User empty, a 2.x or 3.x token. The
+    // last field is the consent to send it without TLS, drawn while SSL Mode is disable (InfluxDB spec I7).
+    connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password: "1.x: the user's password. 2.x and InfluxDB 3: an API token, with User empty.",
+      database:
+        'A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as "db".."measurement".',
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    // The dialog's own sentence says the mode can be turned off, which is false here: Studio sends no write.
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+    hostAcceptsUri: ["http", "https"],
+  },
+  influxdb3: {
+    // The same mark as the InfluxQL type: one product, two connection types.
+    icon: InfluxDBIcon,
+    // The first hue with no identity `-alt` before it whose `-alt` step clears the separation test, which is why
+    // `violet` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry (InfluxDB spec K-D4).
+    color: "text-hue-violet-alt",
+    // InfluxDB 3 Core's SQL over /api/v3/query_sql.
+    label: "InfluxDB 3 (SQL)",
+    defaultPort: "8181",
+    showConnectionStringToggle: false,
+    // No User field: InfluxDB 3 has no user name, its token is the password, and the connection layer refuses a user
+    // from a seed or the API naming the field.
+    connectionFields: ["host", "port", "password", "database", "allowInsecureAuth"],
+    fieldLabels: { password: "Token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password:
+        "Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token.",
+      database:
+        "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here.",
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+    hostAcceptsUri: ["http", "https"],
+  },
+  oxia: {
+    // A mark drawn for Studio, never Oxia's logo (DECISIONS O16).
+    icon: OxiaIcon,
+    // `hue-orange` is Couchbase's; its `-alt` step joins IDENTITY_ALTS with this entry, measured in
+    // tests/unit/theme-accent-contrast.test.ts next to InfluxDB's `purple-alt` and `violet-alt` (O16, O17).
+    color: "text-hue-orange-alt",
+    label: "Oxia",
+    // The client port of `oxia standalone` and of every data server's public listener (R01, R02 12).
+    defaultPort: "6648",
+    // No URI convention: the CLI takes `-a host:port`, which Host and Port hold (DECISIONS O5).
+    showConnectionStringToggle: false,
+    connectionFields: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
+    fieldLabels: { password: "Token", database: "Namespace", dataServers: "Data servers" },
+    // The namespace an empty Namespace means, where the dialog would show "db" (ruling R34).
+    fieldPlaceholders: { database: "default" },
+    fieldHints: {
+      host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration.",
+      dataServers:
+        "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
+      allowInsecureAuth:
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
+    readOnlyHint:
+      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
+  },
   libredb: {
     icon: LibreDBIcon,
     color: "text-hue-violet",
@@ -612,6 +710,11 @@ export function offersSshTunnel(type: DatabaseType): boolean {
  */
 export function connectionFieldLabel(config: DatabaseUIConfig, field: ConnectionField, fallback: string): string {
   return config.fieldLabels?.[field] ?? fallback;
+}
+
+/** The connection dialog's placeholder for one field: the engine's declared one, or the dialog's own example. */
+export function connectionFieldPlaceholder(config: DatabaseUIConfig, field: ConnectionField, fallback: string): string {
+  return config.fieldPlaceholders?.[field] ?? fallback;
 }
 
 /**

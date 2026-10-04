@@ -79,7 +79,7 @@ Three things are Elasticsearch-shaped, and most decisions below flow from one of
 
 One directory serves **two type-ids**. The two products speak the same shape of SQL over HTTP and
 differ only in wire detail, so everything they disagree about on the wire is a row in the transport's
-dialect table ([http-transport.ts:319](../../src/lib/db/providers/sql/search/http-transport.ts)) and
+dialect table ([http-transport.ts:508-603](../../src/lib/db/providers/sql/search/http-transport.ts)) and
 everything they disagree about above it is one field of `SearchProduct`
 ([index.ts:211](../../src/lib/db/providers/sql/search/index.ts)):
 
@@ -252,12 +252,12 @@ Measured, `SELECT customer, total FROM probe_orders`:
 Three properties the code depends on:
 
 - **Rows are positional**, so each row is rebuilt against the declared column list
-  ([http-transport.ts:541](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
+  ([http-transport.ts:747](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
   as an object. The declared **order** is therefore authoritative in a way object keys never are.
 - **Duplicate output names are legal here.** Measured, `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP
   200 with `[{"name":"c",…},{"name":"c",…},{"name":"c",…}]` and the row `[1,2,3]`. A `SearchRow` is a
   record, so without `disambiguate()`
-  ([http-transport.ts:489](../../src/lib/db/providers/sql/search/http-transport.ts)) the second and
+  ([http-transport.ts:695](../../src/lib/db/providers/sql/search/http-transport.ts)) the second and
   third values would vanish **before** the seam. They reach the grid as `c`, `c (2)`, `c (3)`, and the
   suffix keeps climbing because `SELECT 1 AS c, 2 AS "c (2)", 3 AS c` is legal too. **The same
   statement is refused outright by OpenSearch**, so this invariant is load-bearing on exactly one of
@@ -265,7 +265,7 @@ Three properties the code depends on:
   ([opensearch.md §3.4](./opensearch.md#34-the-success-envelope-schemadatarows-a-separate-alias-and-a-count)).
 - **The alias is folded into `name`.** Measured, `SELECT customer AS who` declares
   `{"name":"who","type":"keyword"}` — the alias *is* the name — so `aliasKey` is `null` for this
-  dialect ([http-transport.ts:320-356](../../src/lib/db/providers/sql/search/http-transport.ts)). The
+  dialect ([http-transport.ts:509-547](../../src/lib/db/providers/sql/search/http-transport.ts)). The
   fork puts it in a separate member, and reading `name` alone would label the same statement's column
   `who` here and `customer` there.
 
@@ -297,16 +297,16 @@ buckets and labelled the result complete — worse than an error, because a user
 has no way to notice 500 missing groups.
 
 The transport's `query()`
-([http-transport.ts:864](../../src/lib/db/providers/sql/search/http-transport.ts)) follows it, and two
+([http-transport.ts:1194](../../src/lib/db/providers/sql/search/http-transport.ts)) follows it, and two
 traps shape the loop, both measured on that same run:
 
 - **Page two carries its rows and NO column declaration.** There is nothing on it to derive names
   from, so page one's declaration is carried forward and later pages are rebuilt against it
-  (`rebuildRows()`, [http-transport.ts:568](../../src/lib/db/providers/sql/search/http-transport.ts)).
+  (`rebuildRows()`, [http-transport.ts:774](../../src/lib/db/providers/sql/search/http-transport.ts)).
   That is also the only way the seam's "these names are exactly the key set of every row" invariant
   can hold across pages.
 - **The loop is bounded** by `MAX_PAGES = 1000`
-  ([http-transport.ts:151](../../src/lib/db/providers/sql/search/http-transport.ts)), because the
+  ([http-transport.ts:326](../../src/lib/db/providers/sql/search/http-transport.ts)), because the
   terminating condition is the *server's* and a seam must not offer an unbounded remote loop. At the
   measured page size that is a million-row ceiling. Hitting it is **reported**, never silently
   accepted — the defect being fixed here is precisely a truncation nobody was told about — and the
@@ -331,7 +331,7 @@ Measured, both directions:
 A status-driven classifier would call the missing index a bad request here and a missing endpoint on
 the fork (which answers **404** for the same typo), and would call a user's arithmetic a server
 failure. So the whole classification lives in a table of measured fault names
-([http-transport.ts:348-353](../../src/lib/db/providers/sql/search/http-transport.ts)) and an
+([http-transport.ts:539-544](../../src/lib/db/providers/sql/search/http-transport.ts)) and an
 unrecognised name becomes `engine` — "reached, understood, and refused" — rather than a guess. This is
 the ClickHouse lesson from #264 arriving again.
 
@@ -365,6 +365,16 @@ own words, instead of failing later on a query.
 disabled and a bogus `Basic` header is *ignored* there (HTTP 200, measured), so no 401/403 body could
 be captured — and rather than invent one, the code uses the one signal whose meaning HTTP itself fixes
 ([http-transport.ts:64-68](../../src/lib/db/providers/sql/search/http-transport.ts)).
+
+The status decides only when the body says nothing better (#1413). Elasticsearch reuses 403 for a
+fault that has nothing to do with credentials: measured on 9.5.3 on 2026-10-04, `SELECT a FROM
+closed_idx` after `POST closed_idx/_close` answers HTTP 403 with `error.type`
+`cluster_block_exception` and the reason `index [closed_idx] blocked by: [FORBIDDEN/4/index
+closed];`. A 401/403 whose body is an `error` object naming a type that is not a security one
+(nothing matching `security`, `authenticat`, `authoriz`, `permission`, `access`, `credential`
+or `forbidden`) is therefore classified by that type
+like any other fault and carries the engine's reason; one with no body, a text body, a string
+`error` or a `security_exception` stays `auth`.
 
 ### 3.7a API key auth (#708)
 
@@ -416,7 +426,7 @@ AbortSignal.timeout(1)           -> DOMException, name "TimeoutError"
 ```
 
 so `requestFailure()`
-([http-transport.ts:707](../../src/lib/db/providers/sql/search/http-transport.ts)) consults
+([http-transport.ts:913](../../src/lib/db/providers/sql/search/http-transport.ts)) consults
 `signal.aborted` **before** the thrown value. The signal knows; the error does not.
 
 ### 3.9 Columns are labelled with mapping types, not SQL types
@@ -473,7 +483,7 @@ The form offers six fields
 | Field | Required | Notes |
 |---|---|---|
 | `host` | **Yes** | `validate()` ([index.ts:529](../../src/lib/db/providers/sql/search/index.ts)) throws `DatabaseConfigError` — "Elasticsearch requires a host". There is no connection string to substitute for it |
-| `port` | No | Defaults to `9200` ([index.ts:151](../../src/lib/db/providers/sql/search/index.ts), and the transport applies the same floor at [http-transport.ts:99](../../src/lib/db/providers/sql/search/http-transport.ts)). One number for both schemes — see [§4.3](#43-tls) |
+| `port` | No | Defaults to `9200` ([index.ts:151](../../src/lib/db/providers/sql/search/index.ts), and the transport applies the same floor at [http-transport.ts:105](../../src/lib/db/providers/sql/search/http-transport.ts)). One number for both schemes; see [§4.3](#43-tls) |
 | `user` / `password` | No | Sent as HTTP Basic **only when `user` is set** and no complete API key pair is, for the security plugin. Measured on a node with security disabled: a bogus `Basic` header is *ignored* (HTTP 200), so credentials are genuinely optional |
 | `apiKeyId` / `apiKeySecret` | No | Sent as `Authorization: ApiKey base64(id:secret)` when **both** are set (trimmed), in preference to `user`/`password` (#708) — see [§3.7a](#37a-api-key-auth-708). Elasticsearch only; OpenSearch **refuses** the pair rather than dropping it |
 | `ssl` | No | Any mode but `disable` switches the transport to `https` ([§4.3](#43-tls)) |
@@ -520,7 +530,7 @@ omits these two (`handlePasteConnectionString` in [`use-connection-form.ts`](../
 ### 4.3 TLS
 
 `config.ssl` with any `mode` but `disable` switches the transport from `http` to `https`
-([http-transport.ts:819](../../src/lib/db/providers/sql/search/http-transport.ts)). `ssl` is a
+([http-transport.ts:1127](../../src/lib/db/providers/sql/search/http-transport.ts)). `ssl` is a
 first-class `DatabaseConnection` field and independent of the form's `connectionFields`, so it applies
 even though this form shows no TLS row of its own, and an explicit `disable` turns TLS **off** as
 firmly as an explicit mode turns it on (the #264 lesson).
@@ -543,7 +553,7 @@ verification, which matters more here than for most providers: a secured Elastic
 one. A publicly-trusted certificate works.
 
 An IPv6 literal host is bracketed before it becomes a URL authority
-([http-transport.ts:431](../../src/lib/db/providers/sql/search/http-transport.ts)).
+([http-transport.ts:1128](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
 
 ### 4.4 Endpoint validation and redirects
@@ -585,7 +595,7 @@ everything it *would* have accepted, which is more useful than anything substitu
 
 | Source | `QueryResult` field | Notes |
 |---|---|---|
-| `rows` | `rows` | Rebuilt from the positional arrays, keyed by the disambiguated column names |
+| `rows` | `rows` | Rebuilt from the positional arrays, keyed by the disambiguated column names; an integer past 2^53 arrives as its exact digits ([§5.3](#53-row-values-arrive-as-the-mappings-json)) |
 | `columns[].name` | `fields` | Declared order, made unique (`c`, `c (2)`); `[]` when the answer described no columns |
 | — | `rowCount` | `rows.length`. There is no second number: no statement here mutates, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by this process**. Neither the body nor the headers carry any timing, so there is no server number to prefer |
@@ -601,13 +611,28 @@ which is the argument [druid.md](./druid.md) makes about its own warnings.
 
 ### 5.3 Row values arrive as the mapping's JSON
 
-No value rewriting happens anywhere in this provider. A `date` field comes back as the engine's own
-string, a `double` as a JSON number, and an object field is not selectable at all
-([§5.4](#54-dialect-traps-a-user-will-hit)). There is no 64-bit-integer rewrite of the kind
-`druid/http-transport.ts` needs, because nothing measured on this endpoint returns an integer outside
-the safe range — a `long` field is a JSON number, and the only counts this provider reads from `_cat`
-arrive as strings and are parsed explicitly
-([http-transport.ts:450](../../src/lib/db/providers/sql/search/http-transport.ts)).
+A `date` field comes back as the engine's own string, a `double` as a JSON number, and an object
+field is not selectable at all ([§5.4](#54-dialect-traps-a-user-will-hit)).
+
+**One rewrite does happen, the 64-bit-integer one `druid/http-transport.ts` needs.** This endpoint
+does return integers outside the safe range: a `long` and an `unsigned_long` are **unquoted** JSON
+numbers in `rows`, and `JSON.parse` rounds one past 2^53 with no error. Measured on 9.5.3 on 2026-10-04, over an index holding one document:
+
+| Mapping | Stored | Shown before this rewrite |
+|---|---|---|
+| `long` | `9223372036854775807` | `9223372036854776000` |
+| `long` | `9007199254740993` | `9007199254740992` |
+| `unsigned_long` | `18446744073709551615` | `18446744073709552000` |
+
+in the grid, the API and every export alike. The SQL answer and each cursor page therefore go through
+[`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) before they are parsed
+(`parseRowsJson` in
+[`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts)), so such a value
+reaches the grid as its exact digits, a string, the way Druid's and Trino's transports hand one over.
+An integer inside the safe range, and every float, stays a number, so an ordinary column still sorts
+as one. The REST reads (mappings, listings, object definitions) are parsed as before: the counts
+this provider reads from `_cat` arrive as strings and are parsed explicitly, and the object source
+still re-spells a long past 2^53 ([Object source](#object-source-789), D61).
 
 ### 5.4 Dialect traps a user will hit
 
@@ -803,7 +828,7 @@ $ DESCRIBE probe_shapes
 Containers appear, leaves appear, and a multi-field appears as a **child** — and `SELECT note.keyword,
 address.city` then returns both columns, so the dotted child is genuinely selectable rather than a
 display convenience. `flattenProperties()`
-([http-transport.ts:776](../../src/lib/db/providers/sql/search/http-transport.ts)) reproduces exactly
+([http-transport.ts:999](../../src/lib/db/providers/sql/search/http-transport.ts)) reproduces exactly
 that set from `_mapping`, descending both `properties` (objects) and `fields` (multi-fields). Nothing
 outside `properties` is read, because a mapping carries siblings like `_meta` that are metadata about
 the mapping rather than fields in it.
@@ -853,7 +878,7 @@ engine's own refusal, which says exactly what happened.
 
 **System indices are hidden by default.** The transport flags an index whose name is dot-prefixed, or
 which matches the fork's date-suffixed query-insights shape
-([http-transport.ts:263-264](../../src/lib/db/providers/sql/search/http-transport.ts)), and
+([http-transport.ts:438-439](../../src/lib/db/providers/sql/search/http-transport.ts)), and
 `isSystemIndex()` ([introspect.ts:156](../../src/lib/db/providers/sql/search/introspect.ts)) is where
 the product decides what to do with the flag. A stock Elasticsearch node ships none of these — the
 measured cluster listed only the three probe indices — but the same code hides two of three on a stock
@@ -1002,7 +1027,7 @@ Those same three kinds declare `hasColumns: true` (#789), which is what gives an
 in the object tree; a `pipeline` and a `template` declare nothing and stay leaves, so no column read
 is ever issued for them. An `alias` row and a `data stream` row show the mapping of **one** backing
 index: the transport takes the first entry of a `_mapping` payload keyed by concrete index name
-(`src/lib/db/providers/sql/search/http-transport.ts:1266`), so an alias spanning two indices shows
+(`src/lib/db/providers/sql/search/http-transport.ts:1283`), so an alias spanning two indices shows
 whichever the cluster answered first, with nothing on screen to say the other is missing.
 
 #### `describeObjects`, the bulk column read (#789)
@@ -1457,14 +1482,14 @@ instead of being quietly swallowed as a query error.
 
 | Category | Measured trigger on this product | Error raised |
 |---|---|---|
-| `auth` | HTTP 401/403 (status-decided; see [§3.7](#37-a-string-valued-error-means-the-request-never-reached-the-sql-engine)) | `AuthenticationError` |
+| `auth` | HTTP 401/403 with no body or a security fault in it (status-decided otherwise; see [§3.7](#37-a-string-valued-error-means-the-request-never-reached-the-sql-engine)) | `AuthenticationError` |
 | `unreachable` | A refused socket, an unresolvable host, or a **string-valued** `error` — the wrong endpoint path, the wrong method, a missing content type | `ConnectionError` carrying host and port |
 | `timeout` | The client deadline expired (`AbortSignal.timeout`) | `TimeoutError` — and the cluster is *still working on the statement* |
 | `cancelled` | The caller aborted | `QueryCancelledError` |
 | `syntax` | `parsing_exception` — `SELEKT 1`, a trailing `;`, `OFFSET`, `INSERT`, `CREATE`, `ALTER` | `QueryError` |
 | `unknown-object` | `verification_exception` (unknown index / column / function), `index_not_found_exception` from `_mapping` | `QueryError` |
 | `unsupported` | *never produced on this product* — the fork's `SQLFeatureNotSupportedException` is what lands here | `QueryError` |
-| `engine` | `arithmetic_exception` (`SELECT 1/0`, HTTP 500), any unrecognised fault name, the paging ceiling, an unreadable body | `QueryError` |
+| `engine` | `arithmetic_exception` (`SELECT 1/0`, HTTP 500), `cluster_block_exception` (a closed index, HTTP 403, #1413), any unrecognised fault name, the paging ceiling, an unreadable body | `QueryError` |
 
 The four that collapse onto `QueryError` do so because they describe the same event to a user — the
 cluster read the statement and refused it — and the engine's own wording, carried through verbatim, is
@@ -1477,7 +1502,7 @@ runs on two: on Node a refused socket is `TypeError: fetch failed` whose `cause.
 `ECONNREFUSED`, while Bun throws `Error: Unable to connect. Is the computer able to access the url?`
 with `code: "ConnectionRefused"` on the error **itself** and no cause at all. Neither runtime's
 top-level message names the reason on its own
-([http-transport.ts:677-729](../../src/lib/db/providers/sql/search/http-transport.ts)).
+([http-transport.ts:883-935](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
 | Situation | Error |
 |---|---|
@@ -1650,6 +1675,9 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
 - **An index whose mapping has `nested` fields reports more documents than a `SELECT` returns**,
   because every nested element is stored as its own document ([§7](#7-monitoring--health)). The
   monitoring panel reports the cluster's count; the editor reports the query's.
+- **`COUNT(DISTINCT ...)` is approximate**, and so is the Data Profiler's distinct count, which is that
+  aggregate. Measured on 9.5.3: 50,000 documents with 50,000 distinct `long` ids answer
+  `COUNT(DISTINCT id)` = 50,106. The null counts, MIN and MAX beside it are exact.
 - **`totalHits` is unavailable on this product.** Nothing in a successful answer carries a
   matching-document count, so the seam's field is `null` here and a caller must read it as "unknown"
   ([§3.4](#34-the-success-envelope-positional-rows-and-a-duplicate-name-that-must-not-vanish)). It is

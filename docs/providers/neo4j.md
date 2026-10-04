@@ -56,6 +56,8 @@ Any other failed version read leaves the version unknown and does not fail the c
 A second `connect()` closes the previous driver first and aborts its statements.
 A `connect()` that overlaps one still in flight awaits that attempt instead of starting its own, so two calls build one driver.
 `disconnect()` aborts every statement in flight and closes the driver.
+A `disconnect()` that lands while a `connect()` is still verifying connectivity or resolving the database wins: that attempt closes the driver it opened instead of keeping it, and rejects with a `ConnectionError` ("Disconnected while connecting; the connection was closed.").
+The provider stays disconnected and records no error from that attempt, and a `connect()` called after the disconnect starts its own attempt rather than joining the one that lost.
 
 ### 2.4 The client, and why
 
@@ -357,6 +359,7 @@ No kind declares `acceptsSourceEdits` or `acceptsRowWrites`: there is no source 
 | Storage stats | none | Bolt reports no store size |
 
 The transactions read names its columns, never the `parameters` column, which can hold a secret, and never `YIELD *`.
+Each `elapsedTime` is read as an ISO 8601 duration of days and time, a sign allowed on each component, and a negative total is shown as 0 ms (#1416): Neo4j 2026.09.0 reported a just-started transaction as `PT-0.001000000S` on about one Sessions load in three, and refusing that value dropped the whole panel. Any other text in that column still refuses the panel, naming the column.
 Each label in a count statement is backticked by the quoting module and checked by the read policy before it runs; a label the quoting refuses is left out, and the server log names every label left out, since the table stats have no field to say so.
 The monitoring reads run through the same READ session path without the user's policy, and a unit test checks every one against the policy: every monitoring read but the transactions read passes it.
 The transactions read stays out of the user allowlist (section 3.2), since a user's `SHOW TRANSACTIONS YIELD *` returns other sessions' query text and parameters, and the monitoring read keeps a fixed column list that names no `parameters` column.
@@ -407,6 +410,7 @@ The read policy is tested over a shared corpus of Cypher texts, `tests/fixtures/
 
 ```bash
 bun tests/run-tests.ts tests/integration/db/neo4j-provider.test.ts
+bun tests/run-tests.ts tests/integration/db/neo4j-bolt-composed.test.ts
 bun run test
 ```
 
@@ -474,5 +478,5 @@ Each line is one run.
 ## 14. References
 
 - The design, decided with the maintainer on 2026-10-03, and its research on the driver, Cypher, the editions and Memgraph.
-- Neo4j's Cypher manual and the `neo4j-driver-lite` 6.2.0 API, for 5.26 LTS.
+- Neo4j's [Cypher manual for Neo4j 5](https://neo4j.com/docs/cypher-manual/5/) and the `neo4j-driver-lite` 6.2.0 [JavaScript driver API](https://neo4j.com/docs/api/javascript-driver/6.2/), for 5.26 LTS.
 - [`docker/neo4j/README.md`](../../docker/neo4j/README.md) and [`tests/fixtures/neo4j/5.26.31/README.md`](../../tests/fixtures/neo4j/5.26.31/README.md).

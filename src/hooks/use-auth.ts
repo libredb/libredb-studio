@@ -1,6 +1,7 @@
 "use client";
 
-import { appFetch } from "@/lib/config/base-path";
+import { appFetch, currentAppPath } from "@/lib/config/base-path";
+import { claimSignInRedirect, signInPath } from "@/lib/api/session-ended";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
@@ -37,9 +38,9 @@ export function useAuth() {
   }, []);
 
   // The server ended this session (for example the account was disabled) and cleared the cookie.
-  // The proxy cannot know that, so the tab goes to the login screen from here.
+  // The proxy cannot know that, so the tab goes to the login screen from here, and comes back after.
   useEffect(() => {
-    if (sessionEnded) router.push("/login");
+    if (sessionEnded && claimSignInRedirect()) router.push(signInPath(currentAppPath()));
   }, [sessionEnded, router]);
 
   const isAdmin = user?.role === "admin";

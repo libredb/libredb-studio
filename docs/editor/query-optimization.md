@@ -187,15 +187,18 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-**MongoDB, Redis, Prometheus, Kafka, etcd, Neo4j, Milvus and Qdrant are the eight types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those eight, which is what `readsSqlText()` reports on.
-Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request or a Qdrant request is not judged by a SQL reader that cannot parse it.
+**MongoDB, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia are the ten types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those ten, which is what `readsSqlText()` reports on.
+Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, an InfluxQL statement, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request, a Qdrant request or an `oxia client` read command is not judged by a SQL reader that cannot parse it.
 
 The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).
 Beyond it, each type whose text is not SQL has a row of its own in `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts`, and a test holds that table to the set `readsSqlText()` reports on.
-The MongoDB and Redis rows name the destructive operations the provider can actually dispatch (`deleteOne`/`deleteMany`/`updateOne`/`updateMany` and the `$out`/`$merge` pipeline stages for MongoDB; `DEL`, `FLUSHALL`, `SET`, `CONFIG SET` and the rest for Redis), and the gate reduces the buffer the way the provider would, to one JSON document or to Redis's first blank-line-delimited block, before looking a name up in it.
+The MongoDB and Redis rows name the destructive operations the provider can actually dispatch (`deleteOne`/`deleteMany`/`updateOne`/`updateMany` and the `$out`/`$merge` pipeline stages for MongoDB; `DEL`, `FLUSHALL`, `SET`, `CONFIG SET` and the rest for Redis), and the gate reduces the buffer the way the provider would, to one JSON document or, for Redis, to the one command the provider's own `readRedisCommandText()` reads (each line is a command, and a second one is refused in the editor before anything is sent), before looking a name up in it.
 Text it cannot read as a command at all is not treated as safe: mongosh syntax, a half-typed document or a broken JSON command body **asks**.
 Before that table existed the answer for both types was a bare `false`, so a `FLUSHALL` and a `deleteMany` ran with no confirmation while a `DELETE FROM` on every SQL engine asked.
 The Prometheus and Kafka rows name no operation, the etcd row names what `guard.ts` classifies, and each of the three is the gate's whole answer, the rows the keyword test does not read in front of: PromQL has no statement that writes, its editor text only ever reaches `POST /api/v1/query`, and a metric may legally be named `update`, `delete` or `drop`, which the keyword test read as a write; a Kafka read request only reads, and a topic may be named any of those too; and etcd's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
+The InfluxDB (InfluxQL) row is read by the InfluxQL policy the provider runs (`src/lib/db/providers/timeseries/influxdb/influxql-policy.ts`), so what asks and what runs are one reading: an allowed statement only reads, so nothing asks, and what the policy refuses the editor refuses before anything is sent.
+InfluxDB 3 (SQL) is not in that set: its text is SQL, read under the DataFusion row of `SQL_GRAMMARS`.
+The Oxia row names no operation and, like the etcd row, is the gate's whole answer: Oxia's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
 The embedded LibreDB is not in that set: its text is read as SQL, and its undecided grammar facts are rows in the table below.
 
 | Fact | Undecided, so left at the default | Established, and it happens to equal the default |
@@ -380,6 +383,66 @@ on MySQL, whose comments are flat, that same text really does drop the table, so
 honest there and the confirmation gate is what must see it. Callers pass the connection's dialect
 (this route, and the editor's multi-statement decision); a call that names none keeps the
 compatibility grammar, the same stated default the rest of `src/lib/sql` applies.
+
+#### Procedural bodies, separator lines and batches (#1312)
+
+A `;` that is code is not always the end of what the engine receives. The grammar's `script` facts
+say where it is not, and the splitter reads them:
+
+| Dialect | Body that holds its `;` | Separator line | One request carries |
+|---------|-------------------------|----------------|---------------------|
+| Oracle | a PL/SQL unit: an anonymous block (`DECLARE` or `BEGIN` first) and `CREATE [OR REPLACE] PROCEDURE`, `FUNCTION`, `PACKAGE [BODY]`, `TRIGGER`, `TYPE BODY`, read to its matching `END`; the `;` after that `END` stays in the text, because Oracle refuses the unit without it | `/` alone on a line (SQL*Plus) | one statement |
+| SQL Server | none needed: the batch holds every body | `GO` alone on a line (sqlcmd, SSMS) | the whole batch between `GO` lines |
+| SQLite, libSQL | `CREATE [TEMP] TRIGGER … BEGIN … END`; a bare `BEGIN` is still a transaction | none | one statement |
+| every other dialect | none: PostgreSQL's routine bodies are `$$` literals the span reader already holds | none | one statement |
+
+Inside a body, `CASE … END` closes a frame and `END IF` / `END LOOP` are skipped, and a declaration
+section shares its block's `END`. A compound trigger's section holds its timing points
+(`BEFORE STATEMENT IS BEGIN … END BEFORE STATEMENT;`) to its own last `END`, a `<<label>>` before a
+block is read past, and a call spec (`AS LANGUAGE …`, `AS EXTERNAL …`, `AS MLE MODULE …`) has no body,
+so the `;` after it ends it. A unit whose frames still never close runs to the next `/` line or the end
+of the input: one statement too long, never a fragment stored INVALID. `GO 5`, sqlcmd's repeat count, is
+not a separator; it reaches the server, which refuses it (measured on SQL Server 2025 RTM-CU9: `Incorrect syntax near 'GO'.`).
+
+Two shapes the reader does not model, both recorded rather than guessed at: an unquoted, unqualified column named
+`end` inside a SQLite trigger body closes the body early (quote it, as `"end"`), and an Oracle
+`WITH FUNCTION` read is not a unit and is still cut at its inner `;`.
+
+Measured in the end-to-end pass of 2026-10-03/04 before these facts existed: Oracle 26ai Free stored a
+procedure cut at its inner `;` INVALID (PLS-00103) while this route reported its first fragment
+`success`, SQLite and libSQL refused a trigger as incomplete input, and SQL Server 2025 answered
+`Must declare the scalar variable "@x"` for `DECLARE @x INT = 5; SELECT @x * 2`, because each fragment
+was its own request on a pooled connection.
+
+When the script's last unit is a T-SQL batch of several statements, its last statement is bounded
+when it is a read and spliced back in place, so `SELECT 1; SELECT * FROM big` is bounded as it was when
+the two were separate requests. The exception is a batch that is a module definition: its first
+statement is `CREATE`, `ALTER` or `CREATE OR ALTER` of a procedure, function, trigger or view, which
+T-SQL requires first in its batch, and everything after it is the body the server stores, where a
+`TOP` would change the procedure rather than the result; that batch is sent as written. SQL Server's
+provider carries every result set of a batch, and the route shows the last one with rows, the same rule
+it applies across a script's statements. A batch's earlier result sets are not sent back one by one,
+which costs nothing the grid showed before: it shows one result, and `statements[i]` is now the
+batch. Across a `GO`, a `#temp` table survives only if the next batch borrows the same pooled
+connection, which nothing guarantees (`docs/BACKLOG.md` D92).
+
+"Run the statement at the cursor" runs a whole body (a PL/SQL unit, a SQLite trigger, a T-SQL module
+batch), but in a T-SQL batch that is a run of statements it still runs only the caret's own statement,
+so a caret on a `SELECT` never sends the `DELETE` written after it. A script whose statements share a
+`DECLARE @x` is run by selecting it, or by running the whole editor.
+
+The confirmation gate keeps reading the `;`-statements inside a body, and reads INTO a statement led
+by a control-flow word (`BEGIN`, `DECLARE`, `IF`, `ELSE`, `ELSIF`, `THEN`, `WHILE`, `LOOP`, `FOR`,
+`EXCEPTION`, `WHEN`) or a `<<label>>`: there it looks for every dangerous keyword anywhere in the
+statement's code, so `BEGIN DELETE FROM emp; END;`, `BEGIN IF c THEN DELETE FROM emp; END IF; END;` and
+T-SQL's `IF @@ROWCOUNT > 0 DELETE FROM t` ask. Dynamic SQL in such a block (`EXECUTE IMMEDIATE`,
+`DBMS_SQL`) asks whatever its text says, because the text is a literal the gate cannot read into, so
+`BEGIN EXECUTE IMMEDIATE 'DROP TABLE t PURGE'; END;` asks. Two shapes that only look like a write are
+skipped: a T-SQL variable (`@alter`, `@delete`) and a cursor's `FOR UPDATE` lock clause. Before
+procedural bodies were read, Oracle refused the
+fragment `BEGIN DELETE FROM emp` and nothing ran; now the whole block runs, so the gate has to read
+into it. What a procedure call does (`EXEC sp_cleanup`, `BEGIN p; END;`) is the server's, and it does
+not ask, as before. MySQL, Db2 and Trino compound statements are not read yet (`docs/BACKLOG.md` S7).
 
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
@@ -570,8 +633,8 @@ ordering notice beside it cannot disagree:
 
 | Condition | Where it comes from | Why |
 |-----------|--------------------|-----|
-| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Eleven providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, Kafka, etcd, Neo4j, Milvus and Qdrant answer it with page one. An absent flag reads as unsupported |
-| `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a full page — see below |
+| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Thirteen providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia answer it with page one. An absent flag reads as unsupported |
+| `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a row past the page — see below |
 | the surface supplies `onLoadMore` | `BottomPanel` | A result hydrated from an agent run has no statement of its own to page |
 
 ### User Flow
@@ -627,18 +690,18 @@ holding rows from two tables while naming one.
   "pagination": {
     "limit": 50,
     "offset": 0,
-    "hasMore": true,        // wasLimited AND a full page came back
+    "hasMore": true,        // wasLimited AND a row past the page came back
     "totalReturned": 50,
-    "wasLimited": true      // our injected bound filled, or the provider cut its result
+    "wasLimited": true      // a row past our injected bound came back (#1440), or the provider cut its result
   }
 }
 ```
 
 The response's `wasLimited` is false for a short result under an injected cap.
-It becomes true when that page fills, even if a later page is empty; the limiter does not fetch an extra row.
+It becomes true when a further page exists: the statement that runs asks for `limit + 1` rows, the extra row is never answered, and its arrival is the proof (#1440). A page that ends exactly full is the last page and reports `hasMore: false`.
 Query and transaction responses follow the same rule.
 
-`hasMore` is `wasLimited && rows.length === limit` with `wasLimited` read from the limiter alone, and the first half is load-bearing.
+`hasMore` is `wasLimited && rows.length > limit` over the probed statement, with `wasLimited` read from the limiter alone, and the first half is load-bearing.
 A provider that bounds its own result reports that bound on the response's `wasLimited` too (#1085, section 5.4), and it never sets `hasMore`.
 We can only
 offer page two of a bound this layer applied, because only then do we know how to advance it. A
@@ -722,13 +785,34 @@ for renders exactly as it did before.
 
 Every SELECT query automatically runs EXPLAIN in the background (parallel execution). This provides instant performance insights without user action.
 
+The background plan is always the **estimate**: it plans the statement and never executes it, because
+the run beside it already is the execution. On PostgreSQL that is `EXPLAIN (FORMAT JSON)`; the
+**Explain** button asks for `analyze` instead and gets `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, which
+runs the statement to report actual rows and timings. Until #1311 the background request built the
+ANALYZE form too, so every SELECT ran twice: measured on PostgreSQL 18.6, one RUN of
+`SELECT nextval('my_seq')` advanced the sequence by two, and on Citus and TimescaleDB
+`create_distributed_table` / `create_hypertable` did their work in the hidden request before the
+user's own call failed as "already distributed". An estimated plan shows the planner's rows
+(`~250.0K rows`) and cost on each node and says "not executed" in the header, instead of zero rows in
+zero time.
+
+The background plan is asked for **one statement only**. A run of several statements (for example
+`SELECT 1 AS a; INSERT ...`) gets no plan, the **Explain** button refuses one with "Only a single
+statement can be explained", and `POST /api/db/query` refuses an explain request of more than one
+statement with a 400: an EXPLAIN prefixes one statement, so the rest of the text would run as
+statements of their own (measured on Materialize, AlloyDB Omni and Cloudberry: the INSERT was applied
+twice).
+
+The plan request carries a `queryId` of its own, and **Cancel** cancels it on the server together
+with the run.
+
 ### Supported Databases
 
-| Database | EXPLAIN Format |
-|----------|---------------|
-| PostgreSQL | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
-| MySQL | `EXPLAIN FORMAT=JSON` |
-| SQLite | `EXPLAIN QUERY PLAN` (tree, no cost/timing metrics) |
+| Database | Background plan (estimate) | Explain button (analyze) |
+|----------|---------------|---------------|
+| PostgreSQL | `EXPLAIN (FORMAT JSON)` | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
+| MySQL | `EXPLAIN FORMAT=JSON` | `EXPLAIN FORMAT=JSON` |
+| SQLite | `EXPLAIN QUERY PLAN` (tree, no cost/timing metrics) | `EXPLAIN QUERY PLAN` |
 
 ### Non-SELECT Statements
 
@@ -738,7 +822,7 @@ be explained" — an explain run never falls back to running the original statem
 because it deliberately bypasses the dangerous-query confirmation dialog.
 
 Because it bypasses that dialog, the classification is the *only* screen on this path, and on
-PostgreSQL the wrapper is `EXPLAIN (ANALYZE, …)` — which **runs** what it explains. So the PostgreSQL
+PostgreSQL the Explain button's wrapper is `EXPLAIN (ANALYZE, …)`, which **runs** what it explains. So the PostgreSQL
 and ClickHouse strategies read the statement under their own dialect's grammar rather than the shared
 default (#300): block comments nest in both, and a flat reading of
 `/* a /* b */ SELECT 1 */ DELETE FROM users` reports `SELECT` as the leading keyword while PostgreSQL
@@ -759,7 +843,7 @@ User executes: SELECT * FROM orders WHERE status = 'pending'
 │                                                              │
 │  ┌──────────────────┐      ┌──────────────────────────────┐ │
 │  │   Main Query     │      │   Background EXPLAIN          │ │
-│  │   (with LIMIT)   │      │   (no LIMIT, ANALYZE)         │ │
+│  │   (with LIMIT)   │      │   (estimate, never executes)  │ │
 │  └────────┬─────────┘      └────────────┬─────────────────┘ │
 │           │                              │                   │
 │           ▼                              ▼                   │

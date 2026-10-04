@@ -5,6 +5,15 @@ import {
   etcdTypedConfirmation,
   readEtcdOperations,
 } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
+import { OXIA_DESTRUCTIVE_OPERATIONS, oxiaRefusal, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { readRedisCommandText, redisRefusal } from "@/lib/db/providers/keyvalue/redis-command-text";
+import {
+  INFLUXQL_DESTRUCTIVE_OPERATIONS,
+  INFLUXQL_MAX_TEXT_BYTES,
+  influxqlRefusal,
+  readInfluxqlOperations,
+} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import {
   MILVUS_DESTRUCTIVE_OPERATIONS,
   milvusRefusal,
@@ -360,33 +369,6 @@ const readMongodbOperations: OperationReader = (query) => {
 };
 
 /**
- * The ONE command a Redis buffer would run, reduced the way `commandBody` reduces it:
- * `#` comment lines dropped, then the first blank-line-delimited block. The
- * schema explorer's "Generate Command" output is a list of alternatives separated by
- * blank lines and only its first block runs, so reading the whole buffer would prompt
- * about commands nobody asked for.
- *
- * The provider also tracks open quotes across lines, so that a line-leading `#`
- * inside a quoted argument stays data. That is deliberately not modelled here,
- * because it cannot change the answer: a quote can only be opened on an earlier line,
- * and the command NAME is on the block's first line, which no quote precedes.
- */
-function redisCommandBody(query: string): string {
-  const block: string[] = [];
-  for (const raw of query.split("\n")) {
-    const line = raw.trim();
-    if (line.startsWith("#")) continue;
-    if (line === "") {
-      // A blank line ends the first block; blank lines before it are padding.
-      if (block.length > 0) break;
-      continue;
-    }
-    block.push(raw);
-  }
-  return block.join("\n").trim();
-}
-
-/**
  * One token as the plain tokenizer would produce it: quote characters are structure
  * to that parser, not part of the argument, and both parsers uppercase the command
  * before calling it - so `del`, `DEL` and `"DEL"` are the same command.
@@ -409,15 +391,24 @@ function redisNames(command: string, next: string | undefined): string[] {
  * MongoDB-shaped generator emits - and the plain form `DEL k`. A body that starts
  * with `{` takes the JSON path in the provider too, so a broken JSON body never
  * falls back to the plain reading; it is unreadable, and unreadable asks.
+ *
+ * The text is read by the provider's own `readRedisCommandText()`, so the command
+ * this names is the one that runs: each line is a command, `#` lines are dropped,
+ * and the first blank line ends the read, which keeps the schema explorer's
+ * cheatsheet of blank-line-separated alternatives from prompting about commands
+ * nobody asked for. A text holding a second command names nothing, the way etcd's
+ * refused text does: the row's `refuse` stops it in the editor before anything is
+ * sent, and the provider refuses it too, so a prompt would ask about a command that
+ * cannot run.
  */
 const readRedisOperations: OperationReader = (query) => {
-  const body = redisCommandBody(query);
-  if (body === "") return [];
+  const read = readRedisCommandText(query);
+  if (read.kind === "empty" || read.kind === "refused") return [];
 
-  if (body.startsWith("{")) {
+  if (read.kind === "json") {
     let parsed: unknown;
     try {
-      parsed = JSON.parse(body);
+      parsed = JSON.parse(read.body);
     } catch {
       return undefined;
     }
@@ -429,8 +420,7 @@ const readRedisOperations: OperationReader = (query) => {
     return redisNames(command, typeof first === "string" ? first : undefined);
   }
 
-  const tokens = body.split(/\s+/);
-  return redisNames(tokens[0], tokens[1]);
+  return redisNames(read.words[0], read.words[1]);
 };
 
 /**
@@ -478,6 +468,19 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
     // A put's value is part of the statement, so no etcd statement is posted for an AI analysis (#1089 E10).
     safetyAnalysis: false,
   },
+  // InfluxDB (InfluxDB spec 5.7): the browser-safe InfluxQL policy the provider runs reads the text, so what asks and
+  // what runs are one reading. An allowed statement only reads, so nothing asks; what the policy refuses (a write,
+  // `INTO`, a second statement, a lexical fault) the editor refuses before anything is sent, and on 1.x and 2.x that
+  // policy is the only boundary before `DROP DATABASE`.
+  influxdb: {
+    operations: INFLUXQL_DESTRUCTIVE_OPERATIONS,
+    read: readInfluxqlOperations,
+    decidesAlone: true,
+    // A statement carries tag values and filters, so no InfluxQL statement is posted for an AI analysis (R21).
+    safetyAnalysis: false,
+    refuse: influxqlRefusal,
+    maxTextBytes: INFLUXQL_MAX_TEXT_BYTES,
+  },
   kafka: { operations: KAFKA_DESTRUCTIVE_OPERATIONS, read: readKafkaOperations, decidesAlone: true },
   // Milvus (vector-family spec 5.7, E10): the provider's own guard.ts reads the text with the parser the provider
   // runs, so what asks and what runs are one parse. A v1 request only reads, so nothing asks; what guard.ts refuses
@@ -495,6 +498,19 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
   // The provider refuses every write before sending it, so a confirmation would ask about a statement that
   // cannot run (Neo4j spec 5.5).
   neo4j: { operations: NEO4J_DESTRUCTIVE_OPERATIONS, read: readNeo4jOperations, decidesAlone: true },
+  // Oxia (O10, C17): the provider's own guard.ts reads the text with the parser the provider runs, so what asks
+  // and what runs are one parse. v1 only reads, so nothing asks; what guard.ts refuses (a write or stream verb,
+  // a key under __oxia/, a refused flag) the editor refuses before anything is sent.
+  oxia: {
+    operations: OXIA_DESTRUCTIVE_OPERATIONS,
+    read: readOxiaOperations,
+    decidesAlone: true,
+    // A command names keys, and an Oxia key path names Pulsar tenants, namespaces and topics (SEC-05), so no
+    // Oxia statement is posted for an AI analysis.
+    safetyAnalysis: false,
+    refuse: oxiaRefusal,
+    maxTextBytes: OXIA_MAX_TEXT_BYTES,
+  },
   prometheus: { operations: PROMETHEUS_DESTRUCTIVE_OPERATIONS, read: readPrometheusOperations, decidesAlone: true },
   // Qdrant (vector-family spec 6.7): the provider's own guard.ts reads the text with the parser the provider
   // runs, so what asks and what runs are one parse. A v1 request only reads, so nothing asks; what guard.ts refuses
@@ -509,7 +525,14 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
     refuse: qdrantRefusal,
     maxTextBytes: QDRANT_CONSOLE.maxTextBytes,
   },
-  redis: { operations: REDIS_DESTRUCTIVE_COMMANDS, read: readRedisOperations, decidesAlone: false },
+  // Redis: each line of the text is one command (docs/providers/redis.md 3.4a), and a second command is refused in
+  // the editor with the provider's own reading, before anything is sent, rather than run as one merged command.
+  redis: {
+    operations: REDIS_DESTRUCTIVE_COMMANDS,
+    read: readRedisOperations,
+    decidesAlone: false,
+    refuse: redisRefusal,
+  },
 };
 
 /**

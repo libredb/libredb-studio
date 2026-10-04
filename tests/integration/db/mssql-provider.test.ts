@@ -2053,6 +2053,40 @@ describe("MSSQLProvider declared column types", () => {
     });
   });
 
+  // #1312: the editor sends a T-SQL batch as one request. A text with several result sets
+  // still answers with its FIRST, as `EXEC sp_help` always did, and carries every set for the
+  // multi-statement route to choose from.
+  test("query() carries every result set of a batch and still answers with the first", async () => {
+    const first = withColumns([{ a: 1 }], { a: { declaration: "int" } });
+    const last = withColumns([{ doubled: 10 }, { doubled: 20 }], { doubled: { declaration: "int" } });
+    const bare = Object.assign([{ z: 1 }], {});
+    const empty = Object.assign([] as Record<string, unknown>[], {});
+    mockQueryFn = async () => ({ recordset: first, recordsets: [first, last, bare, empty], rowsAffected: [1, 2, 1] });
+
+    await provider.connect();
+    const result = await provider.query("SELECT 1 AS a; SELECT d FROM t; SELECT 1 AS z; SELECT * FROM e");
+
+    expect(result.rows).toEqual([{ a: 1 }]);
+    expect(result.rowCount).toBe(1);
+    expect(result.resultSets).toEqual([
+      { rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: "int" } },
+      { rows: [{ doubled: 10 }, { doubled: 20 }], fields: ["doubled"], columnTypes: { doubled: "int" } },
+      { rows: [{ z: 1 }], fields: ["z"] },
+      { rows: [], fields: [] },
+    ]);
+  });
+
+  test("query() carries no result sets for a text that produced one", async () => {
+    const only = withColumns([{ n: 1 }], { n: { declaration: "int" } });
+    mockQueryFn = async () => ({ recordset: only, recordsets: [only], rowsAffected: [7, 1] });
+
+    await provider.connect();
+    const result = await provider.query("UPDATE t SET a = 1; SELECT 1 AS n");
+
+    expect(result.rows).toEqual([{ n: 1 }]);
+    expect(Object.hasOwn(result, "resultSets")).toBe(false);
+  });
+
   test("the key is omitted entirely when the recordset carries no column map", async () => {
     mockQueryFn = async () => ({ recordset: [{ a: 1 }], rowsAffected: [1] });
 

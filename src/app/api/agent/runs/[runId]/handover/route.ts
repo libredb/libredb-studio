@@ -5,6 +5,7 @@ import { accessAgentRun } from "@/lib/api/agent-run-access";
 import { createErrorResponse } from "@/lib/api/errors";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 import { logger } from "@/lib/logger";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 
 /**
@@ -111,7 +112,12 @@ export async function POST(req: Request, context?: HandoverParams) {
     // actually ran rather than its own copy of it. No `pagination`: there is no offset
     // to page with here — the row bound refuses rather than truncates, exactly as the
     // agent's own path does (§2.5), so a result that arrived is a whole result.
-    return NextResponse.json({ runId, sql: answer.sql, result });
+    // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
+    return NextResponse.json({
+      runId,
+      sql: answer.sql,
+      result: { ...result, rows: rowsWithNonFiniteWords(result.rows) },
+    });
   } catch (error) {
     return createErrorResponse(error, { route: ROUTE });
   }

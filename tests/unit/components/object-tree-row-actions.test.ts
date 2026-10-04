@@ -154,6 +154,7 @@ describe("rowActions on an object row", () => {
       { ...postgres, queryDialect: "redis" as const },
       { ...postgres, queryDialect: "libredb" as const },
       { ...postgres, queryLanguage: "promql" as const },
+      { ...postgres, queryLanguage: "influxql" as const },
       // A read request has no count grammar: it reads messages and counts none (#1088).
       { ...postgres, queryDialect: "kafka" as const },
     ]) {
@@ -466,15 +467,15 @@ describe("running an action", () => {
     expect(seen).toEqual([orders]);
   });
 
-  test("creating an object takes no target, because the modal it opens qualifies nothing", () => {
-    let calls = 0;
+  test("creating an object is handed the folder's container, so the table lands there (#1391)", () => {
+    const seen: (readonly string[])[] = [];
     const actions = rowActions({
-      row: folderRow("table"),
+      row: { ...folderRow("table"), path: ["e2e_other"] },
       capabilities: postgres,
-      handlers: { onCreateObject: () => (calls += 1) },
+      handlers: { onCreateObject: (container) => seen.push(container) },
     });
     actions[0].run();
-    expect(calls).toBe(1);
+    expect(seen).toEqual([["e2e_other"]]);
   });
 });
 
@@ -718,6 +719,17 @@ describe("the actions whose destination speaks only some query languages", () =>
   test("a PromQL metric is offered neither Profile nor Generate Code, and keeps Generate Query", () => {
     const promql = capabilitiesOf({ queryLanguage: "promql", objectKinds: [metric] });
     expect(idsFor(metricRow, promql, allHandlers(), up)).toEqual(["generate-select"]);
+  });
+
+  test("an InfluxQL measurement is offered neither Profile nor Generate Code, and keeps Generate Query (InfluxDB spec 6.7)", () => {
+    const measurement = { ...metric, id: "measurement", label: "Measurement", labelPlural: "Measurements" } as const;
+    const cpu: DatabaseObject = { path: ["telegraf", "cpu"], name: "cpu", kind: "measurement" };
+    const row: TreeRowModel = { ...objectRow("measurement"), path: ["telegraf", "cpu"] };
+    const influxql = capabilitiesOf({ queryLanguage: "influxql", objectKinds: [measurement] });
+    expect(idsFor(row, influxql, allHandlers(), cpu)).toEqual(["generate-select"]);
+    // The control: the same declaration in SQL is offered both.
+    const sql = capabilitiesOf({ queryLanguage: "sql", objectKinds: [measurement] });
+    expect(idsFor(row, sql, allHandlers(), cpu)).toEqual(["generate-select", "profile", "generate-code"]);
   });
 
   test("the control: the same declaration in SQL is offered both", () => {

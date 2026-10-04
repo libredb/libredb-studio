@@ -1,10 +1,15 @@
+import { firstResultSet } from "@/lib/api/first-result-set";
+import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
-import type { QueryResult } from "@/lib/db/types";
+import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
+import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import {
   claimTransaction,
   OWNERSHIP_IDLE_MS,
@@ -14,11 +19,88 @@ import {
 } from "@/lib/api/transaction-ownership";
 
 interface TransactionProvider {
-  beginTransaction(): Promise<void>;
+  // `void` from the providers that read no transaction state when they open one.
+  beginTransaction(options?: BeginTransactionOptions): Promise<BeginTransactionResult | void>;
   commitTransaction(): Promise<void>;
   rollbackTransaction(): Promise<void>;
   isInTransaction(): boolean;
   queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult>;
+}
+
+/**
+ * Run a script's statements in order on the transaction's connection, stopping at the first one
+ * that fails (#1390).
+ *
+ * The editor sends a selection to this route whole whenever BEGIN or SANDBOX is on, and a driver
+ * that runs one statement per call answers a syntax error at the second: measured on MySQL 26.7.0,
+ * two UPDATE lines failed "near 'UPDATE ...' at line 2". The answer has the shape
+ * `/api/db/multi-query` gives a script, which the editor already reports (the executed count, the
+ * statement that failed, the last result with rows), plus `inTransaction`.
+ *
+ * A failure is part of the answer, not a thrown error: the statements before it ran inside the
+ * transaction and their work is still there to commit or roll back. Only the last statement is
+ * bounded, as on the script route, and only when it is a single statement and not a batch. A
+ * statement that ends the transaction ends the run as well, because the next one is refused by the
+ * provider ("No active transaction") rather than autocommitted.
+ */
+async function runScriptInTransaction(
+  provider: TransactionProvider & Pick<DatabaseProvider, "prepareQuery">,
+  units: ExecutionUnit[],
+  options: Record<string, unknown>,
+) {
+  const statements: {
+    index: number;
+    sql: string;
+    startLine: number;
+    status: "success" | "error";
+    rows?: Record<string, unknown>[];
+    fields?: string[];
+    rowCount?: number;
+    executionTime: number;
+    error?: string;
+  }[] = [];
+  let totalExecutionTime = 0;
+  for (const [index, unit] of units.entries()) {
+    const isLast = index === units.length - 1;
+    const sql = isLast && unit.statements.length === 1 ? provider.prepareQuery(unit.sql, options).query : unit.sql;
+    const startTime = performance.now();
+    const identity = { index, sql: unit.sql, startLine: unit.startLine };
+    try {
+      const result = await provider.queryInTransaction(sql);
+      const executionTime = Math.round(performance.now() - startTime);
+      totalExecutionTime += executionTime;
+      statements.push({
+        ...identity,
+        status: "success",
+        rows: rowsWithNonFiniteWords(result.rows),
+        fields: result.fields,
+        rowCount: result.rowCount,
+        executionTime,
+      });
+    } catch (error) {
+      const executionTime = Math.round(performance.now() - startTime);
+      totalExecutionTime += executionTime;
+      statements.push({
+        ...identity,
+        status: "error",
+        executionTime,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      break;
+    }
+  }
+  const shown = [...statements].reverse().find((r) => r.status === "success" && r.rows && r.rows.length > 0);
+  return {
+    rows: shown?.rows ?? [],
+    fields: shown?.fields ?? [],
+    rowCount: shown?.rowCount ?? 0,
+    executionTime: totalExecutionTime,
+    multiStatement: true,
+    statementCount: units.length,
+    executedCount: statements.length,
+    hasError: statements.some((r) => r.status === "error"),
+    statements,
+  };
 }
 
 function isTransactionProvider(provider: unknown): provider is TransactionProvider {
@@ -88,10 +170,18 @@ export async function POST(req: NextRequest) {
 
     switch (action) {
       case "begin": {
-        await provider.beginTransaction();
+        // SANDBOX sends `requireReportedState: true`: it is about to promise a rollback, so a
+        // server that never says whether a transaction is open is refused rather than trusted.
+        const opened = await provider.beginTransaction({ requireReportedState: body.requireReportedState === true });
         // After the provider, never before: a begin that throws must leave no owner behind.
         claimTransaction(connection.id, guard.session.username);
-        return NextResponse.json({ status: "active", message: "Transaction started" });
+        // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
+        // is a provider that does not say, which is not a claim either way.
+        return NextResponse.json({
+          status: "active",
+          message: "Transaction started",
+          stateReported: opened ? opened.stateReported : null,
+        });
       }
 
       case "commit": {
@@ -124,11 +214,44 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: bound.message }, { status: 400 });
         }
 
-        // Apply limit for SELECT queries within transaction
-        const prepared = provider.prepareQuery(sql, options);
-        const result = await provider.queryInTransaction(prepared.query, bound.params);
+        const optionError = pageOptionError(options);
+        if (optionError !== null) {
+          return NextResponse.json({ error: optionError }, { status: 400 });
+        }
 
-        touchTransaction(connection.id);
+        // Several statements run one by one (#1390). Comment-only fragments are dropped first, so
+        // a statement with a trailing `-- note` stays one statement on the path below. Never with
+        // bound values: they belong to one statement's placeholders. One statement is sent as the
+        // splitter read it, as `/api/db/multi-query` sends it: without the comment-only fragment
+        // after it and without a script separator line (Oracle's `/`), which the engine refuses.
+        let statementSql: string = sql;
+        if (bound.params === undefined) {
+          const grammar = resolveSqlGrammar(connection.type);
+          const units = splitExecutionUnits(sql, grammar).filter((unit) => countCodeStatements(unit.sql, grammar) > 0);
+          if (units.length > 1) {
+            const script = await runScriptInTransaction(provider, units, options);
+            const stillOpen = provider.isInTransaction();
+            if (stillOpen) touchTransaction(connection.id);
+            else releaseTransaction(connection.id);
+            return NextResponse.json({ ...script, inTransaction: stillOpen });
+          }
+          if (units.length === 1) statementSql = units[0].sql;
+        }
+
+        // Apply limit for SELECT queries within transaction
+        const prepared = provider.prepareQuery(statementSql, options);
+        // One row past the page, so a full last page is not taken for a full page (#1440).
+        const probe = probePastPage(provider, statementSql, options, prepared);
+        const result = await provider.queryInTransaction(probe.query, bound.params);
+
+        // The provider ends its session when the SERVER says the statement ended the
+        // transaction: a typed COMMIT or ROLLBACK, or a statement the engine commits implicitly (MySQL
+        // DDL). Reported rather than hidden, because the caller is about to ask for a
+        // ROLLBACK that would answer success and undo nothing (SANDBOX said "Changes
+        // auto-rolled back" over a committed CREATE TABLE). The record goes with it.
+        const stillInTransaction = provider.isInTransaction();
+        if (stillInTransaction) touchTransaction(connection.id);
+        else releaseTransaction(connection.id);
 
         // THE SAME CONJUNCT AS `/api/db/query` (#816), for the same reason and on purpose.
         //
@@ -142,16 +265,19 @@ export async function POST(req: NextRequest) {
         // `pagination.hasMore` has one meaning wherever it is produced, and it is read
         // outside the grid as well — `lib/export/scope.ts` swings the export dialog's
         // copy on it.
-        const hasMore = prepared.wasLimited && result.rows.length === prepared.limit;
+        const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
 
         return NextResponse.json({
-          ...result,
-          inTransaction: true,
+          ...firstResultSet(result),
+          ...(hasMore && { rowCount: pageRows.length }),
+          // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
+          rows: rowsWithNonFiniteWords(pageRows),
+          inTransaction: stillInTransaction,
           pagination: {
             limit: prepared.limit,
             offset: prepared.offset,
             hasMore,
-            totalReturned: result.rows.length,
+            totalReturned: pageRows.length,
             wasLimited: hasMore || result.pagination?.wasLimited === true,
           },
         });

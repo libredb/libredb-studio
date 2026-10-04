@@ -84,5 +84,11 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   milvus: unconnected("milvus"),
   // No field beyond UNCONNECTED (vector-family spec 6.2): the constructor validates nothing and opens nothing; a user is refused at connect, which no census reaches.
   qdrant: unconnected("qdrant"),
+  // No field beyond UNCONNECTED (InfluxDB spec 3.3): both constructors validate nothing and open nothing; the
+  // connection's rules, influxdb3's refusal of a user among them, run in connect(), which no census reaches.
+  influxdb: unconnected("influxdb"),
+  influxdb3: unconnected("influxdb3"),
+  // No field beyond UNCONNECTED (SB3-1.3): the constructor validates nothing and opens nothing; the fields are read at connect, which no census reaches.
+  oxia: unconnected("oxia"),
   libredb: unconnected("libredb"),
 });

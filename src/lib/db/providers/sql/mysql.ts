@@ -3,7 +3,14 @@
  * Full MySQL support with connection pooling using mysql2
  */
 
-import mysql, { type Pool, type PoolConnection, type RowDataPacket, type FieldPacket } from "mysql2/promise";
+import { randomUUID } from "node:crypto";
+import mysql, {
+  type Pool,
+  type PoolConnection,
+  type RowDataPacket,
+  type FieldPacket,
+  type ResultSetHeader,
+} from "mysql2/promise";
 import { SQLBaseProvider } from "./sql-base";
 import { mysqlColumnTypes } from "./column-types";
 import {
@@ -16,6 +23,7 @@ import {
   type IndexSchema,
   type KindCount,
   type ObjectDetail,
+  type DescribeObjectsOptions,
   type ObjectDetailBatch,
   type ObjectKindSpec,
   type ObjectSourceDocument,
@@ -24,8 +32,12 @@ import {
   type ObjectSourcePart,
   type QueryResult,
   type HealthInfo,
+  type MaintenanceDeclaration,
+  type MaintenanceOperation,
   type MaintenanceType,
   type MaintenanceResult,
+  type MeasuredMaintenancePlacements,
+  narrowMaintenance,
   type ProviderOptions,
   type ProviderCapabilities,
   type ExplainFormat,
@@ -39,8 +51,18 @@ import {
   type TableStats,
   type IndexStats,
   type StorageStats,
+  type BeginTransactionOptions,
+  type BeginTransactionResult,
 } from "../../types";
-import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  QueryError,
+  mapDatabaseError,
+  NO_TRANSACTION_OPENED,
+  TRANSACTION_STATE_UNREPORTED,
+  MYSQL_ACCOUNT_LIMIT_ERRNOS,
+} from "../../errors";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -58,6 +80,7 @@ import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { unquoteLiteral } from "@/lib/sql/values";
+import { portableDefaultSql, showCreateColumnDefaults } from "./mysql-show-create";
 
 /**
  * MySQL's identity for the shared container-path renderer.
@@ -144,10 +167,196 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   queryable: MySQLQueryable,
   sql: string,
   params?: unknown[],
-): Promise<[T, FieldPacket[]]> =>
-  params === undefined || params.length === 0
+): Promise<[T, FieldPacket[]]> => {
+  const core = (queryable as { connection?: object }).connection;
+  if (core !== undefined && UTF8_UNDER_UTF8MB3.has(core)) {
+    return runReadingUtf8mb3AsUtf8<T>(core as CoreConnection, sql, params);
+  }
+  return params === undefined || params.length === 0
     ? queryable.query<T>(sql)
     : queryable.execute<T>(sql, asExecuteParams(params));
+};
+
+/**
+ * The core (callback) connections of a pool whose server sends UTF-8 under a utf8mb3
+ * label, see `probeUtf8UnderUtf8mb3()`. Filled from that pool's `acquire` event, so
+ * membership is per connection of the one pool that was measured, and nothing else in
+ * the process (another provider's pool, a host application's own mysql2) is touched.
+ */
+const UTF8_UNDER_UTF8MB3 = new WeakSet<object>();
+
+/** The slice of mysql2's callback API that `runReadingUtf8mb3AsUtf8` drives. */
+type CoreCallback = (error: Error | null, rows: unknown, fields: FieldPacket[]) => void;
+interface CoreCommand {
+  on(event: "fields", listener: (fields?: FieldPacket[]) => void): unknown;
+}
+interface CoreConnection {
+  query(sql: string, callback: CoreCallback): CoreCommand;
+  execute(sql: string, values: unknown[], callback: CoreCallback): CoreCommand;
+}
+
+/**
+ * Decode this statement's utf8mb3 columns as UTF-8.
+ *
+ * mysql2 picks a column's decoder from its collation id and ships the whole utf8mb3
+ * family (33, 76, 83, 192-215, 223 and MariaDB's utf8mb3 ids) as `cesu8`, which has no
+ * 4-byte form. The command emits `fields` once the column definitions are read and
+ * before the row parser is built, and both parsers read `field.encoding` when a row
+ * arrives, so relabelling the definitions here changes how THIS statement's values
+ * decode and nothing else: mysql2's shared `CharsetToEncoding` table is not touched.
+ *
+ * A `typeCast` cannot do this: mysql2 3.24 hands it the type and column name but not
+ * the collation, so it cannot tell a utf8mb3 VARCHAR from a latin1 one or a VARBINARY.
+ * A column NAME is decoded while its definition is parsed, before `fields` fires, so an
+ * alias outside the BMP still reads as U+FFFD on these servers.
+ */
+const readUtf8mb3AsUtf8 = (fields?: FieldPacket[]): void => {
+  // A statement that answers an OK packet (INSERT, UPDATE, DDL, SET, ...) emits `fields`
+  // with nothing. A throw here would be fatal to the connection, after the server had
+  // already run the statement.
+  if (fields === undefined) return;
+  for (const field of fields) {
+    if (field.encoding === "cesu8") field.encoding = "utf8";
+  }
+};
+
+/**
+ * `runStatement` over the core connection, with `readUtf8mb3AsUtf8` on the command. The
+ * protocol choice is the same as `runStatement`'s; the promise wrapper hides the
+ * command object, which is the only thing the `fields` event is on.
+ */
+function runReadingUtf8mb3AsUtf8<T extends RowDataPacket[]>(
+  core: CoreConnection,
+  sql: string,
+  params?: unknown[],
+): Promise<[T, FieldPacket[]]> {
+  return new Promise((resolve, reject) => {
+    const done: CoreCallback = (error, rows, fields) => (error ? reject(error) : resolve([rows as T, fields]));
+    const command =
+      params === undefined || params.length === 0 ? core.query(sql, done) : core.execute(sql, params, done);
+    command.on("fields", readUtf8mb3AsUtf8);
+  });
+}
+
+/**
+ * The leading keywords of the statements MySQL commits implicitly inside a transaction,
+ * from the manual's "Statements That Cause an Implicit Commit" (13.3.3). `SET` is left
+ * out on purpose: only `SET autocommit = 1` and `SET PASSWORD` commit, and refusing every
+ * `SET` would refuse session variables a SANDBOX run needs. Those two are caught after
+ * the fact instead, by the `SERVER_STATUS_IN_TRANS` read in `queryInTransaction()`.
+ * `LOAD` is left out for the same reason: `LOAD DATA` commits only on NDB tables.
+ */
+const MYSQL_IMPLICIT_COMMIT_STATEMENTS: readonly string[] = [
+  "ALTER",
+  "ANALYZE",
+  "BEGIN",
+  "CACHE",
+  "CHANGE",
+  "CHECK",
+  "CREATE",
+  "DROP",
+  "FLUSH",
+  "GRANT",
+  "INSTALL",
+  "LOCK",
+  "OPTIMIZE",
+  "RENAME",
+  "REPAIR",
+  "RESET",
+  "REVOKE",
+  "START",
+  "STOP",
+  "TRUNCATE",
+  "UNINSTALL",
+  "UNLOCK",
+];
+
+/**
+ * What the list above would match and does not commit. `CREATE TEMPORARY TABLE` and `DROP
+ * TEMPORARY TABLE` are named by the manual as the exceptions to its own CREATE/DROP rule (a
+ * temporary table SANDBOX creates stays on the pooled connection after the rollback, which is
+ * session state, not data). `ANALYZE SELECT` and `ANALYZE FORMAT` are MariaDB's statement
+ * analyser, a read that shares its first word with `ANALYZE TABLE`.
+ */
+const MYSQL_IMPLICIT_COMMIT_EXCEPTIONS: readonly string[] = [
+  "CREATE TEMPORARY",
+  "DROP TEMPORARY",
+  "ANALYZE SELECT",
+  "ANALYZE FORMAT",
+];
+
+/** `SERVER_STATUS_IN_TRANS`, bit 0 of the status flags every OK packet carries. */
+const SERVER_STATUS_IN_TRANS = 1;
+
+/**
+ * `SERVER_STATUS_AUTOCOMMIT`, bit 1. MySQL sets one of the two bits on every OK packet: bit 0
+ * inside a transaction, bit 1 outside one while autocommit is on.
+ */
+const SERVER_STATUS_AUTOCOMMIT = 2;
+
+/**
+ * The status flags of the OK packet that answered `result`, or `undefined` when the answer
+ * carries none to read.
+ *
+ * `mysql2` keeps no transaction flag on a connection; it surfaces the status flags only
+ * as `ResultSetHeader.serverStatus`. A statement that returns rows answers an array with
+ * no header, so a read is not something this can judge, and a read never ends a
+ * transaction. A `CALL` that returns result sets answers an array of them whose LAST
+ * element is the header of the call itself, which is the state after everything the
+ * procedure ran. The two arrays are told apart by their first element, a row set (an
+ * array) for the `CALL` and a row (an object) for a read, so a column that happens to be
+ * named `serverStatus` is never read as the flags.
+ */
+function statusFlagsOf(result: unknown): number | undefined {
+  const header = Array.isArray(result) ? (Array.isArray(result[0]) ? result[result.length - 1] : undefined) : result;
+  if (typeof header !== "object" || header === null || Array.isArray(header)) return undefined;
+  const status = (header as { serverStatus?: unknown }).serverStatus;
+  return typeof status === "number" ? status : undefined;
+}
+
+/**
+ * Whether the server says a transaction is open after the statement that answered
+ * `result`, or `undefined` when the answer carries no OK packet to read.
+ */
+function serverReportsOpenTransaction(result: unknown): boolean | undefined {
+  const status = statusFlagsOf(result);
+  return status === undefined ? undefined : (status & SERVER_STATUS_IN_TRANS) !== 0;
+}
+
+/**
+ * Open a transaction on `conn` and answer what the server said to it.
+ *
+ * `BEGIN` first, because it is the one form every MySQL-wire server measured opens a
+ * transaction with. On 2026-10-04 Databend 1.2.881 and Apache Doris 4.1.3 accepted
+ * `START TRANSACTION` and opened nothing (a second session saw the INSERT at once and it
+ * survived the ROLLBACK), while `BEGIN` opened a real one there and on StarRocks 4.1.6; MySQL
+ * documents `BEGIN` as an alias of `START TRANSACTION`, and MySQL 26.7.0 and MariaDB 13.0.2
+ * answer the two with the same status. `START TRANSACTION` is
+ * the fallback for a server that refuses a bare `BEGIN`: MariaDB under `sql_mode=ORACLE`
+ * reads it as the start of a block and answers 1064.
+ *
+ * The fallback keys on that errno, unlike `probeExplainFormat()`, which reads only success
+ * or failure. Here a wrong fallback is harmful: on Databend and Doris `START TRANSACTION`
+ * opens nothing, so a BEGIN that failed for any other reason (a lost connection, a
+ * permission, a transaction already open) would turn into a session that only looks open.
+ * So only a parse error (1064, `ER_PARSE_ERROR`) on a live connection falls back, and if
+ * the fallback fails too, the BEGIN's own error is the one raised.
+ */
+async function openTransaction(conn: PoolConnection): Promise<unknown> {
+  try {
+    const [answer] = await conn.query("BEGIN");
+    return answer;
+  } catch (error) {
+    const { errno, fatal } = error as { errno?: unknown; fatal?: unknown };
+    if (errno !== 1064 || fatal === true) throw error;
+    try {
+      const [answer] = await conn.query("START TRANSACTION");
+      return answer;
+    } catch {
+      throw error;
+    }
+  }
+}
 
 /**
  * The EXPLAIN grammars this provider can ask for, most specific first, each paired
@@ -207,6 +416,171 @@ const probeExplainFormat = async (queryable: MySQLQueryable): Promise<ExplainFor
 };
 
 /**
+ * MySQL's maintenance, as MySQL itself runs it.
+ *
+ * MySQL has no VACUUM, and every statement it does have names tables: `ANALYZE/OPTIMIZE/CHECK
+ * TABLE <t>` with a target, the same verb over every table in the database without one
+ * (`getAllTablesForMaintenance`). `kill` takes a connection id from the Sessions panel. This is the
+ * declaration before a server is measured; what a connected server keeps of it is
+ * `probeMaintenance`'s answer (#1387).
+ */
+const MYSQL_MAINTENANCE: Required<MaintenanceDeclaration> = {
+  maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+  maintenanceOperationSpecs: {
+    analyze: { label: "Analyze Table", perEntity: true, global: true },
+    optimize: { label: "Optimize Table", perEntity: true, global: true },
+    check: { label: "Check Table", perEntity: true, global: true },
+    kill: { label: "Kill Connection", perEntity: false, global: false },
+  },
+};
+
+/** The verbs `probeMaintenance` asks about; `kill` takes a connection id, not a table. */
+const PROBED_MAINTENANCE = ["analyze", "optimize", "check"] as const;
+
+/**
+ * The name every probe table starts with. Each probe adds a random suffix (`probeTableName`), so a
+ * table a user happens to own can never be the one the verbs reach: with a fixed name, a table of
+ * that name would really be analyzed, optimized and checked on every connect.
+ */
+const MAINTENANCE_PROBE_TABLE_PREFIX = "libredb_maintenance_probe_";
+
+/** A fresh probe table name: the prefix and a dashless UUID, 58 characters, inside MySQL's 64. */
+const probeTableName = (): string => `${MAINTENANCE_PROBE_TABLE_PREFIX}${randomUUID().replace(/-/g, "")}`;
+
+/**
+ * Answers to the control statement, `SELECT 1 FROM` the missing probe table, that mean "the table is
+ * not there" (or "you may not read it"): `1146` no such table, `1049` unknown database, `1051` and
+ * `1109` unknown table, `1142` and `1044` the refusals a least-privilege account gets, and `1105`,
+ * the generic code Apache Doris answers a missing table with. Any other answer, or a control that
+ * resolves, is not a baseline the verbs can be read against, and the declaration stands.
+ */
+const MAINTENANCE_PROBE_CONTROL_ERRNOS = new Set([1146, 1049, 1051, 1109, 1142, 1044, 1105]);
+
+/**
+ * Answers to a verb that mean the server parsed it and went on to the table or to the caller's
+ * rights, whatever the control answered: `1146`, `1049`, `1051` and `1109` for the missing table or
+ * database, and `1142`, `1044` and `1227` for a least-privilege account. Measured 2026-10-04 on
+ * mysql:latest and mariadb:latest with an account granted `ALL ON app.*`: MySQL 26.7.0's `OPTIMIZE`
+ * asks it for `OPTIMIZE_LOCAL_TABLE` with `1227`. The verb exists there, and the run's own refusal
+ * is the engine's answer, a 400 with its sentence.
+ */
+const MAINTENANCE_PROBE_ACCEPTED_ERRNOS = new Set([1146, 1049, 1051, 1109, 1142, 1044, 1227]);
+
+/**
+ * Answers that mean the server does not have the verb, when they differ from the control's answer:
+ * `1064` a parse error (TiDB's `CHECK TABLE`), `1105` the generic error vtgate answers a parse error
+ * with, `8200` TiDB's `OPTIMIZE TABLE is not supported` and `1235` not supported yet, plus any
+ * other answer in SQLSTATE class `42` or `0A`.
+ */
+const MAINTENANCE_PROBE_REFUSED_ERRNOS = new Set([1064, 1105, 8200, 1235]);
+
+/** `ER_PARSE_ERROR`, the one answer on which the probe retries without `NO_WRITE_TO_BINLOG`. */
+const PARSE_ERROR_ERRNO = 1064;
+
+/** A backtick-quoted identifier, the backtick doubled, as `SQLBaseProvider.escapeIdentifier` quotes one. */
+const escapeMySQLIdentifier = (name: string): string => `\`${name.replace(/`/g, "``")}\``;
+
+/** The database this session selected, or undefined when it selected none or the server would not say. */
+const selectedDatabase = async (queryable: MySQLQueryable): Promise<string | undefined> => {
+  try {
+    const [rows] = await runStatement(queryable, "SELECT DATABASE() AS name");
+    const name = rows[0]?.name;
+    return typeof name === "string" && name !== "" ? name : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** What one statement answered: `"resolved"`, or the error's `errno` and `sqlState`. */
+type ProbeAnswer = "resolved" | { readonly errno: unknown; readonly sqlState: unknown };
+
+const probeAnswer = async (queryable: MySQLQueryable, sql: string): Promise<ProbeAnswer> => {
+  try {
+    await runStatement(queryable, sql);
+    return "resolved";
+  } catch (error) {
+    const { errno, sqlState } = error as { errno?: unknown; sqlState?: unknown };
+    return { errno, sqlState };
+  }
+};
+
+type ProbeVerdict = "accepted" | "refused" | "unknown";
+
+/**
+ * One verb's answer read against the control's `errno`, never the message. The same answer the
+ * control got is the verb reaching the same missing table, which is how an engine whose codes are
+ * generic (Doris answers both a missing table and much else with `1105`) is read correctly.
+ */
+const verbVerdict = (answer: ProbeAnswer, controlErrno: number): ProbeVerdict => {
+  if (answer === "resolved") return "accepted";
+  const { errno, sqlState } = answer;
+  if (typeof errno !== "number" || MYSQL_ACCOUNT_LIMIT_ERRNOS.has(errno)) return "unknown";
+  if (errno === controlErrno || MAINTENANCE_PROBE_ACCEPTED_ERRNOS.has(errno)) return "accepted";
+  if (MAINTENANCE_PROBE_REFUSED_ERRNOS.has(errno)) return "refused";
+  return typeof sqlState === "string" && /^(42|0A)/.test(sqlState) ? "refused" : "unknown";
+};
+
+/**
+ * Which of ANALYZE, OPTIMIZE and CHECK TABLE this server's grammar has (#1387), asked once per
+ * `connect()` on the connection the pool check already holds.
+ *
+ * The MySQL type id serves wire-compatible engines that refuse part of MySQL's maintenance.
+ * Measured 2026-10-04 against a missing table in the connection's own database: MySQL 26.7.0 and
+ * MariaDB answer all three with a result set whose row says the table does not exist; TiDB v8.5.8
+ * answers ANALYZE with `1146`, OPTIMIZE with `8200 OPTIMIZE TABLE is not supported` and CHECK with
+ * `1064`; Vitess 24.0.4 answers ANALYZE and OPTIMIZE and refuses CHECK with `1105 syntax error at
+ * position 6 near 'CHECK'`. The table is in the connection's OWN database because an account
+ * granted only that database is refused (`1142`) for a table anywhere else, and its name carries a
+ * random suffix so no real table is ever reached.
+ *
+ * A control statement goes first: `SELECT 1 FROM` the same missing table. Its answer is what "the
+ * table is not there" sounds like on this server, so a verb that answers the same way reached the
+ * table and has the verb, and one that answers differently with a refusal code does not. A control
+ * that resolves, or fails some other way, leaves the declaration as it is.
+ *
+ * ANALYZE and OPTIMIZE carry `NO_WRITE_TO_BINLOG`. Without it MySQL writes both to the binary log
+ * even for a table that does not exist, so every connect added two GTID transactions to a primary
+ * and to every replica downstream; with it `gtid_executed` stayed unchanged on MySQL 26.7.0, as did
+ * MariaDB's `gtid_binlog_pos` and Vitess's `gtid_executed` (measured). All four engines parse the
+ * modifier; a server that answers it with a parse error the control did not get is asked once more
+ * without it. CHECK TABLE is never written to the binary log and takes no modifier.
+ *
+ * Both placements follow the verb: the whole-database form is the same statement over every table.
+ * Nothing here rejects, and only a server's refusal narrows anything: an answer that is neither an
+ * acceptance nor a refusal (a reset connection, an account limit, an unknown code) leaves the
+ * result undefined, and the declaration stands.
+ */
+const probeMaintenance = async (
+  queryable: MySQLQueryable,
+  database: string | undefined,
+): Promise<Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined> => {
+  // A connection string carries its database in the URL rather than in `config.database`, so the
+  // server is asked which one the session selected. A session that selected none names a database
+  // that does not exist, qualified because a bare name answers `1046 No database selected` before
+  // the verb is read (measured on MySQL 26.7.0 and TiDB v8.5.8).
+  const selected = database || (await selectedDatabase(queryable)) || probeTableName();
+  const table = `${escapeMySQLIdentifier(selected)}.${escapeMySQLIdentifier(probeTableName())}`;
+  const control = await probeAnswer(queryable, `SELECT 1 FROM ${table}`);
+  if (control === "resolved" || typeof control.errno !== "number") return undefined;
+  const controlErrno = control.errno;
+  if (!MAINTENANCE_PROBE_CONTROL_ERRNOS.has(controlErrno)) return undefined;
+  const measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> = {};
+  for (const verb of PROBED_MAINTENANCE) {
+    const plain = `${verb.toUpperCase()} TABLE ${table}`;
+    const quiet = verb === "check" ? plain : `${verb.toUpperCase()} NO_WRITE_TO_BINLOG TABLE ${table}`;
+    let answer = await probeAnswer(queryable, quiet);
+    const parseError =
+      answer !== "resolved" && answer.errno === PARSE_ERROR_ERRNO && controlErrno !== PARSE_ERROR_ERRNO;
+    if (parseError && quiet !== plain) answer = await probeAnswer(queryable, plain);
+    const verdict = verbVerdict(answer, controlErrno);
+    if (verdict === "unknown") return undefined;
+    const accepted = verdict === "accepted";
+    measured[verb] = { perEntity: accepted, global: accepted };
+  }
+  return measured;
+};
+
+/**
  * One row of MySQL's answer to `ANALYZE`/`OPTIMIZE`/`CHECK TABLE`. These statements
  * return a RESULT SET, not a header: the outcome is data, and reading it is the only
  * way to know what happened.
@@ -243,23 +617,42 @@ interface MaintenanceReportRow extends RowDataPacket {
  * run quotes the messages alone and deduplicates them: over forty tables the OK and
  * InnoDB's "doing recreate + analyze instead" note repeat once per table and say the
  * same thing forty times.
+ *
+ * Not every MySQL-wire server sends the report. Measured 2026-10-04 through mysql2
+ * 3.24.2, TiDB v8.5.8 and Databend v1.2.925 answer `ANALYZE TABLE` with an OK packet,
+ * and OceanBase CE 4.4.2.1 answers both `ANALYZE TABLE` and `OPTIMIZE TABLE` that way,
+ * so mysql2 hands back a `ResultSetHeader` object instead of rows, and calling `.filter`
+ * on it failed the action with "rows.filter is not a function". Each of them refuses a
+ * missing table by throwing, so a header carries no failure to read: the statement ran,
+ * and the honest message is that the server said nothing more than that. What the
+ * header does carry is a warning count (TiDB's is 1, a sample-rate Note), and the
+ * message names it so the user knows where the server's words went.
  */
 function readMaintenanceReport(
   type: MaintenanceType,
-  rows: MaintenanceReportRow[],
+  answer: MaintenanceReportRow[] | ResultSetHeader,
 ): { success: boolean; message: string } {
+  const noReport = `${type.toUpperCase()} completed; the server returned no report`;
+  if (!Array.isArray(answer)) {
+    const warnings = answer.warningStatus;
+    return {
+      success: true,
+      message:
+        warnings > 0 ? `${noReport} (${warnings} warning${warnings === 1 ? "" : "s"}, see SHOW WARNINGS)` : noReport,
+    };
+  }
+  // A result set with no row leaves nothing to quote either.
+  if (answer.length === 0) {
+    return { success: true, message: noReport };
+  }
+
+  const rows = answer;
   const failures = rows.filter((row) => String(row.Msg_type).toLowerCase() === "error");
   if (failures.length > 0) {
     return {
       success: false,
       message: `${type.toUpperCase()} failed: ${unique(failures.map((row) => `${row.Table}: ${row.Msg_text}`)).join("; ")}`,
     };
-  }
-
-  // A statement that answers no row at all leaves nothing to quote; the generic
-  // sentence is then all there is to say.
-  if (rows.length === 0) {
-    return { success: true, message: `${type.toUpperCase()} completed successfully` };
   }
 
   return { success: true, message: `${type.toUpperCase()}: ${unique(rows.map((row) => row.Msg_text)).join("; ")}` };
@@ -639,8 +1032,13 @@ const STORAGE_STATS_SQL = `
  */
 const SYSTEM_SCHEMAS = ["information_schema", "mysql", "performance_schema", "sys"] as const;
 
-/** Rendered once. Interpolated into the `NOT IN (...)` clause below. */
-const SYSTEM_SCHEMA_LIST = SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(", ");
+/**
+ * Looked up by EXACT name, which is the comparison the former `NOT IN (...)` over
+ * `SCHEMATA` made on MySQL (`utf8mb3_bin`) and TiDB (`utf8mb4_bin`), so the tree on both is
+ * what it was. TiDB's upper-case `INFORMATION_SCHEMA` was never hidden by that clause and is
+ * not hidden by this one.
+ */
+const SYSTEM_SCHEMA_SET: ReadonlySet<string> = new Set(SYSTEM_SCHEMAS);
 
 /**
  * The containers this connection has, which on MySQL is one level: databases.
@@ -652,16 +1050,47 @@ const SYSTEM_SCHEMA_LIST = SYSTEM_SCHEMAS.map((schema) => `'${schema}'`).join(",
  * is pinned to one database and a second would need a second connection - so every database
  * the server holds is genuinely browsable from this session.
  *
- * `SCHEMA_NAME = DATABASE()` is the SERVER's own answer for which container the session is
- * in, rather than `config.database`, for the reason Oracle reads `SYS_CONTEXT` instead of
- * `connection.user`: the configured value is what a person typed into a form. It is NULL
- * rather than 0 when no database was selected, which `listContainers` reads as false.
+ * `SHOW DATABASES` and not `information_schema.SCHEMATA`, because the two disagree on Vitess
+ * and only this one names something a statement can address. Measured 2026-10-04 through
+ * vtgate on Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`, keyspace `e2e`): SCHEMATA
+ * answers `_vt` and `vt_e2e_0`, the sidecar and the physical shard database, and never the
+ * keyspace, while `SHOW DATABASES` answers `e2e`. vtgate refuses the shard name everywhere
+ * else (`VT05003: unknown database 'vt_e2e_0' in vschema`), so a tree built from SCHEMATA
+ * could open nothing. Off Vitess, measured the same day, `SHOW DATABASES` answers the same
+ * set as SCHEMATA on MySQL 26.7.0, MariaDB 13.0.2, Percona Server 8.4.11-11, TiDB 8.5.8,
+ * Apache Doris 4.1.3, StarRocks and Databend 1.2.925; OceanBase was not measured. The
+ * provider doc's section 7.1 has the table.
+ *
+ * The reserved schemas are dropped by `listContainers` rather than by a WHERE clause,
+ * because vtgate ignores a WHERE on `SHOW DATABASES` and answers all five rows anyway. The
+ * name is read from the FIRST column by position, not by the label `Database`, because the
+ * label is not shared: Databend 1.2.925 calls it `databases_in_default`.
  */
-const CONTAINERS_SQL = `
-        SELECT SCHEMA_NAME AS name, SCHEMA_NAME = DATABASE() AS is_session_default
-        FROM information_schema.SCHEMATA
-        WHERE SCHEMA_NAME NOT IN (${SYSTEM_SCHEMA_LIST})
-        ORDER BY SCHEMA_NAME ASC`;
+const CONTAINERS_SQL = "SHOW DATABASES";
+
+/**
+ * The same question asked of the catalog, for a caller `SHOW DATABASES` refuses.
+ *
+ * A server started with `--skip-show-database` answers `SHOW DATABASES` only to a holder of
+ * the global `SHOW DATABASES` privilege; anyone else gets errno 1227
+ * (`ER_SPECIFIC_ACCESS_DENIED_ERROR`), while `information_schema.SCHEMATA` still lists the
+ * databases that caller holds a grant on. Measured 2026-10-04 on MySQL 26.7.0 and MariaDB
+ * 13.0.2, both started with `--skip-show-database`, as a user granted only `e2e.*`: the
+ * statement above is refused and this one answers `e2e`. So on that refusal, and only on it,
+ * `listContainers` falls back to the read this provider made before Vitess forced the change.
+ */
+const CONTAINERS_FALLBACK_SQL = "SELECT SCHEMA_NAME AS name FROM information_schema.SCHEMATA";
+
+/** `ER_SPECIFIC_ACCESS_DENIED_ERROR`: what `SHOW DATABASES` answers under `--skip-show-database`. */
+const SHOW_DATABASES_DENIED_ERRNO = 1227;
+
+/**
+ * Which database the session is in, by the SERVER's own answer rather than
+ * `config.database`, for the reason Oracle reads `SYS_CONTEXT` instead of
+ * `connection.user`: the configured value is what a person typed into a form. NULL when no
+ * database was selected, which matches no container.
+ */
+const SESSION_DATABASE_SQL = "SELECT DATABASE() AS name";
 
 /**
  * The catalog and EVERY spelling each declared kind is addressed by, written once.
@@ -781,17 +1210,25 @@ function kindCase(catalog: "tables" | "routines", column: string): string {
  * `SEQUENCE` row and no `PACKAGE` row, so those CASE arms simply never fire there. The data
  * decides, which is one fewer place the two branches can disagree.
  *
- * `kind IS NULL` drops what the CASE has no name for rather than counting it under a folder
- * that does not exist: `SYSTEM VIEW` on both servers, plus `PACKAGE BODY` and `TEMPORARY` on
- * MariaDB. All three are deliberate and `MYSQL_OBJECT_TYPES` says why each one is. The
- * package body is not a second package - measured, `CREATE PACKAGE BODY` with no
+ * A NULL kind is what the CASE has no name for, and it is dropped rather than counted under
+ * a folder that does not exist: `SYSTEM VIEW` on both servers, plus `PACKAGE BODY` and
+ * `TEMPORARY` on MariaDB. All three are deliberate and `MYSQL_OBJECT_TYPES` says why each
+ * one is. The package body is not a second package - measured, `CREATE PACKAGE BODY` with no
  * specification answers ER_SP_DOES_NOT_EXIST - so counting it would double the Packages
  * badge exactly as it would on Oracle.
  *
- * Anything NOT on that list reaching `kind IS NULL` is a defect and not a design: an object
+ * Anything NOT on that list reaching a NULL kind is a defect and not a design: an object
  * dropped here is dropped from the listing too, so the count and the listing agree while the
  * object is invisible in the tree. That is why `MYSQL_OBJECT_TYPES` enumerates the engine
  * rather than a fixture.
+ *
+ * The NULL group is dropped AFTER the read, by `applyKindCounts`, and not by an outer
+ * `WHERE kind IS NOT NULL`, because vtgate cannot plan that filter. Measured 2026-10-04 on
+ * Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`): with the outer WHERE this statement
+ * is `VT13001: [BUG] could not find the column 'TABLE_TYPE' on the UNION`, which put that
+ * sentence on every folder of the tree, and without it vtgate answers the same counts MySQL
+ * does. It is the filter pushed through three or more arms: the same WHERE over two arms is
+ * answered. One extra GROUP BY row is the whole cost.
  *
  * The schema is bound four times rather than once because a prepared statement takes
  * positional parameters and each arm needs its own.
@@ -808,7 +1245,6 @@ const COUNTS_SQL = `
           UNION ALL
           SELECT 'event' FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ?
         ) s
-        WHERE kind IS NOT NULL
         GROUP BY kind`;
 
 /**
@@ -1237,19 +1673,58 @@ const probeServerVersion = async (queryable: MySQLQueryable): Promise<string | u
   }
 };
 
+/** U+1F600, which only a 4-byte UTF-8 sequence (or a 6-byte CESU-8 pair) can carry. */
+const UTF8MB3_LABEL_PROBE = "SELECT '\u{1F600}' AS probe";
+
+/**
+ * Whether this server sends 4-byte UTF-8 in a column it labels utf8mb3.
+ *
+ * mysql2 asks for a utf8mb4 session, and a MySQL-family server then converts every text
+ * result to utf8mb4 and labels it so. Databend, StarRocks and Apache Doris label EVERY
+ * text column 33 (utf8mb3_general_ci) whatever the session asked for, while the bytes are
+ * plain UTF-8. Measured 2026-10-04 on Databend 1.2.881, StarRocks 4.1.6 and Doris 4.1.3:
+ * this literal came back labelled 33 and, through mysql2's `cesu8` decoder, as four
+ * U+FFFD; `hex()` of a stored value held `f09f9880`. Neither `charset:
+ * 'UTF8MB4_UNICODE_CI'` (mysql2's default), `UTF8MB4_GENERAL_CI`, `UTF8MB4_0900_AI_CI` nor
+ * `SET NAMES utf8mb4` changed the label.
+ *
+ * Measured, not derived from the type id: the same probe on MySQL 26.7.0, MariaDB 13.0.2
+ * and TiDB v7.5.1 answers a utf8mb4 label and the character itself, so those connections
+ * decode exactly as mysql2 decides. A refusal reads as "no", the decoding mysql2 already
+ * does.
+ */
+const probeUtf8UnderUtf8mb3 = async (queryable: MySQLQueryable): Promise<boolean> => {
+  try {
+    const [rows, fields] = await runStatement(queryable, UTF8MB3_LABEL_PROBE);
+    return fields[0]?.encoding === "cesu8" && String(rows[0]?.probe).includes("\uFFFD");
+  } catch {
+    return false;
+  }
+};
+
 // ----------------------------------------------------------------------------
 // Object surface shapes and derivations
 // ----------------------------------------------------------------------------
 
-/** One row of `CONTAINERS_SQL`. `is_session_default` is 1, 0 or NULL. */
-interface ContainerRow extends RowDataPacket {
-  name: string;
-  is_session_default: number | null;
+/**
+ * One row of `CONTAINERS_SQL` or `CONTAINERS_FALLBACK_SQL`. One column whose LABEL differs by
+ * engine (`Database`, Databend's `databases_in_default`, the fallback's `name`), so it is read
+ * by position.
+ */
+type ContainerRow = RowDataPacket;
+
+/** One row of `SESSION_DATABASE_SQL`. NULL when the session selected no database. */
+interface SessionDatabaseRow extends RowDataPacket {
+  name: string | null;
 }
 
-/** One row of `COUNTS_SQL`: a kind id and how many of it the database holds. */
+/**
+ * One row of `COUNTS_SQL`: a kind id and how many of it the database holds. The kind is NULL
+ * for the group of catalog spellings the CASE arms do not name, which `applyKindCounts`
+ * skips because no declared kind is called that.
+ */
 interface KindCountRow extends RowDataPacket {
-  kind: string;
+  kind: string | null;
   n: number;
 }
 
@@ -1362,7 +1837,7 @@ function seedZeroCounts(kinds: readonly ObjectKindSpec[]): Record<string, KindCo
  */
 function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindCountRow[]): void {
   for (const row of rows) {
-    if (Object.hasOwn(counts, row.kind)) counts[row.kind] = { count: Number(row.n) };
+    if (row.kind !== null && Object.hasOwn(counts, row.kind)) counts[row.kind] = { count: Number(row.n) };
   }
 }
 
@@ -1623,6 +2098,25 @@ function sourceErrno(error: unknown): number | undefined {
 }
 
 /**
+ * The database a monitoring row names: the server's own spelling when it is the database the
+ * read was filtered on, and the filter otherwise.
+ *
+ * The echo is kept when it matches without regard to case, because on a server with
+ * `lower_case_table_names=1` a connection configured as `App` reads rows whose `TABLE_SCHEMA`
+ * is `app`, and `app` is the spelling the tree's containers carry, which the Operations tab
+ * matches a row against. The echo is REPLACED when it names something else, which is Vitess:
+ * there it is the physical shard (`vt_e2e_0` for the keyspace `e2e`, measured 2026-10-04 on
+ * 24.0.4), this field is the container `runMaintenance` qualifies with, and vtgate refuses the
+ * shard name (`VT05003: unknown database 'vt_e2e_0' in vschema`).
+ */
+function reportedSchema(echoed: unknown, filter: string | undefined): string {
+  if (typeof echoed === "string" && filter !== undefined && echoed.toLowerCase() === filter.toLowerCase()) {
+    return echoed;
+  }
+  return filter ?? "";
+}
+
+/**
  * What one source read produced: a text, the server's refusal, or a legal absence.
  *
  * Three arms and never a shape with an optional `text`, for the reason `ObjectSourcePart` is a
@@ -1772,11 +2266,16 @@ interface CatalogDefaultReading {
   readonly absence: "sql-null" | "null-keyword";
   /** Whether a string default arrives evaluated, or as the SQL literal as written. */
   readonly literal: "evaluated" | "as-written";
+  /**
+   * Where a default's SQL text comes from: the catalog row itself, or - on the flavour whose
+   * catalog carries none - `SHOW CREATE TABLE`, read only for a caller that asks (#1031).
+   */
+  readonly defaultSql: "catalog" | "show-create";
 }
 
 const CATALOG_DEFAULT_READING: Record<MySQLFlavour, CatalogDefaultReading> = {
-  mysql: { absence: "sql-null", literal: "evaluated" },
-  mariadb: { absence: "null-keyword", literal: "as-written" },
+  mysql: { absence: "sql-null", literal: "evaluated", defaultSql: "show-create" },
+  mariadb: { absence: "null-keyword", literal: "as-written", defaultSql: "catalog" },
 };
 
 /**
@@ -1828,9 +2327,10 @@ function catalogDefault(
   }
   // MySQL reports the VALUE, and no column of the row says whether that text is also SQL:
   // `abc` is a value and is not valid after DEFAULT, while `b'1'` and `0x616263` ARE SQL,
-  // and all three arrive with an EMPTY `EXTRA`. So this flavour declares no SQL text at all
-  // rather than a guessed one. Do not "complete" this arm without a measurement that tells
-  // the two apart.
+  // and all three arrive with an EMPTY `EXTRA`. So the CATALOG row declares no SQL text
+  // rather than a guessed one. The text comes from the engine instead, `SHOW CREATE TABLE`,
+  // for a caller that asks for it (`defaultSql: "show-create"`, #1031), and is filled in by
+  // `objectDetailFromRows`. Do not guess it here from the value or the type.
   return { defaultValue: raw };
 }
 
@@ -1858,15 +2358,23 @@ function objectDetailFromRows(
   schema: string,
   rows: DetailRows,
   reading: CatalogDefaultReading,
+  ddlDefaults?: ReadonlyMap<string, string>,
 ): ObjectDetail {
-  const columns: ColumnSchema[] = rows.columns.map((row) => ({
-    name: row.column_name,
-    type: row.column_type,
-    ...(row.column_type === row.data_type ? {} : { baseType: row.data_type }),
-    nullable: row.is_nullable === "YES",
-    isPrimary: row.column_key === "PRI",
-    ...catalogDefault(row.column_default, row.extra, reading),
-  }));
+  const columns: ColumnSchema[] = rows.columns.map((row) => {
+    const catalog = catalogDefault(row.column_default, row.extra, reading);
+    // Only for a column the catalog says HAS a default: the DDL says `DEFAULT NULL` for a
+    // nullable column with none, and that is not a default the column was given (#1031).
+    const ddl = catalog.defaultValue === undefined ? undefined : ddlDefaults?.get(row.column_name);
+    return {
+      name: row.column_name,
+      type: row.column_type,
+      ...(row.column_type === row.data_type ? {} : { baseType: row.data_type }),
+      nullable: row.is_nullable === "YES",
+      isPrimary: row.column_key === "PRI",
+      ...catalog,
+      ...(ddl === undefined ? {} : { defaultExpression: portableDefaultSql(ddl, row.data_type) }),
+    };
+  });
 
   const byIndex = new Map<string, IndexSchema>();
   for (const row of rows.indexes) {
@@ -1940,9 +2448,18 @@ export class MySQLProvider extends SQLBaseProvider {
    */
   private measuredFlavour: MySQLFlavour = "mysql";
 
+  /**
+   * Which maintenance verbs this server's grammar has, measured by `probeMaintenance()` at connect
+   * (#1387). Undefined is "not measured", and answers the whole MySQL set, for the same reason
+   * `measuredExplainFormat` starts at MySQL's grammar.
+   */
+  private measuredMaintenance: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
+
   // Transaction support: dedicated connection held outside pool
   private txConn: PoolConnection | null = null;
   private txActive = false;
+  /** Whether the server reported the state of the held transaction when it opened (`beginTransaction()`). */
+  private txStateReported = false;
   private txTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -1969,19 +2486,16 @@ export class MySQLProvider extends SQLBaseProvider {
       supportsInlineRowEdit: true,
       // `LIMIT n OFFSET m`, applied by the shared limiter in `SQLBaseProvider.prepareQuery`.
       supportsResultPagination: true,
-      // The driver's own connection.beginTransaction() over one held connection.
+      // BEGIN over one held connection (`beginTransaction()` below).
       supportsTransactions: true,
-      maintenanceOperations: ["analyze", "optimize", "check", "kill"],
-      // MySQL has no VACUUM, and every statement it does have names tables:
-      // `ANALYZE/OPTIMIZE/CHECK TABLE <t>` with a target, the same verb over every
-      // table in the database without one (`getAllTablesForMaintenance`). `kill`
-      // takes a connection id from the Sessions panel.
-      maintenanceOperationSpecs: {
-        analyze: { label: "Analyze Table", perEntity: true, global: true },
-        optimize: { label: "Optimize Table", perEntity: true, global: true },
-        check: { label: "Check Table", perEntity: true, global: true },
-        kill: { label: "Kill Connection", perEntity: false, global: false },
-      },
+      // DDL, account and table-administration statements commit the open transaction
+      // (the MySQL manual's "Statements That Cause an Implicit Commit"), so SANDBOX
+      // refuses them instead of reporting a rollback that undid nothing.
+      implicitCommitStatements: MYSQL_IMPLICIT_COMMIT_STATEMENTS,
+      implicitCommitExceptions: MYSQL_IMPLICIT_COMMIT_EXCEPTIONS,
+      // MySQL's own set, narrowed to what the connected server accepted (#1387): see
+      // `probeMaintenance`. Unconnected, it is the whole set.
+      ...narrowMaintenance(MYSQL_MAINTENANCE, this.measuredMaintenance),
       // One level, and on MySQL the level IS a database: a schema is not a thing created
       // beside a database, the two words name the same object. `catalog` is not a second
       // level here - MySQL has exactly one and `information_schema.SCHEMATA` is what a
@@ -2077,6 +2591,13 @@ export class MySQLProvider extends SQLBaseProvider {
       // Measured rather than derived from the type id, because there is no `mariadb` type
       // id to derive from.
       this.measuredFlavour = flavourFor(await probeServerVersion(conn));
+      // Which of ANALYZE, OPTIMIZE and CHECK TABLE this server has (#1387). Never rejects.
+      this.measuredMaintenance = await probeMaintenance(conn, this.config.database);
+      // Every later acquisition, this probe connection's included, then reads utf8mb3
+      // columns as UTF-8 through `runStatement`. Only this pool's connections are marked.
+      if (await probeUtf8UnderUtf8mb3(conn)) {
+        this.pool.on("acquire", (core: object) => UTF8_UNDER_UTF8MB3.add(core));
+      }
       conn.release();
 
       this.setConnected(true);
@@ -2313,45 +2834,103 @@ export class MySQLProvider extends SQLBaseProvider {
     }
   }
 
-  public async beginTransaction(): Promise<void> {
+  public async beginTransaction(options: BeginTransactionOptions = {}): Promise<BeginTransactionResult> {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mysql");
-    this.txConn = await this.pool!.getConnection();
-    await this.txConn.beginTransaction();
+    const conn = await this.pool!.getConnection();
+    this.txConn = conn;
+    // Sent directly rather than through the driver's own `beginTransaction()`, because that
+    // method resolves to nothing and the OK packet is the evidence: a server of the MySQL wire
+    // family that accepts the statement without opening a transaction answers it with
+    // `SERVER_STATUS_IN_TRANS` cleared, and everything run "inside" it would autocommit while
+    // SANDBOX reported a rollback.
+    let status: number | undefined;
+    try {
+      status = statusFlagsOf(await openTransaction(conn));
+    } catch (error) {
+      conn.release();
+      this.txConn = null;
+      throw error;
+    }
+    // Neither bit set (or no header) is a server that reports no transaction state at all,
+    // which is a different answer from bit 1 alone, "autocommit, and no transaction open".
+    const stateReported = status !== undefined && (status & (SERVER_STATUS_IN_TRANS | SERVER_STATUS_AUTOCOMMIT)) !== 0;
+    if (stateReported && (status! & SERVER_STATUS_IN_TRANS) === 0) {
+      conn.release();
+      this.txConn = null;
+      throw new QueryError(NO_TRANSACTION_OPENED, "mysql");
+    }
+    if (!stateReported && options.requireReportedState) {
+      // The BEGIN may well have opened one (it does on Databend, StarRocks and Doris), so it is
+      // rolled back before the connection goes back to the pool.
+      await this.endHeldTransaction(conn);
+      throw new QueryError(TRANSACTION_STATE_UNREPORTED, "mysql");
+    }
     this.txActive = true;
+    this.txStateReported = stateReported;
 
     // Auto-rollback after timeout to prevent leaked locks
     this.txTimeout = setTimeout(() => {
       void this.expireTransaction();
     }, MySQLProvider.TX_TIMEOUT_MS);
+    return { stateReported };
   }
 
   public async commitTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
     this.clearTxTimeout();
+    const conn = this.txConn;
     try {
-      await this.txConn.commit();
+      await conn.commit();
     } finally {
-      this.txConn.release();
-      this.txConn = null;
-      this.txActive = false;
+      this.releaseHeldConnection(conn);
     }
   }
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
     this.clearTxTimeout();
+    const conn = this.txConn;
     try {
-      await this.txConn.rollback();
+      await conn.rollback();
     } finally {
-      this.txConn.release();
-      this.txConn = null;
-      this.txActive = false;
+      this.releaseHeldConnection(conn);
     }
   }
 
   public isInTransaction(): boolean {
     return this.txActive;
+  }
+
+  /**
+   * Hand `conn` back and forget the session, but only while it is still THE session's
+   * connection. A COMMIT or ROLLBACK queued behind an in-flight `queryInTransaction()` can
+   * find that statement's `endHeldTransaction()` already released it, and releasing it
+   * twice (or `null`) is a crash rather than a no-op.
+   */
+  private releaseHeldConnection(conn: PoolConnection): void {
+    if (this.txConn !== conn) return;
+    conn.release();
+    this.txConn = null;
+    this.txActive = false;
+  }
+
+  /**
+   * Let go of a session the SERVER already ended. A ROLLBACK is still sent first, best effort:
+   * the status flag is the evidence the transaction is gone, and it was measured on a few
+   * MySQL-wire servers, not on all of them (`docs/providers/mysql.md` section 6.0). If one
+   * ever clears the flag with a transaction still open, the connection must not go back to
+   * the pool holding it; where the transaction really is gone, MySQL answers the ROLLBACK
+   * with an OK and nothing else.
+   */
+  private async endHeldTransaction(conn: PoolConnection): Promise<void> {
+    this.clearTxTimeout();
+    try {
+      await conn.query("ROLLBACK");
+    } catch {
+      /* a no-op that failed is still a no-op; the release below is what matters */
+    }
+    this.releaseHeldConnection(conn);
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
@@ -2361,6 +2940,16 @@ export class MySQLProvider extends SQLBaseProvider {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
           const [rows, fields] = await runStatement(this.txConn!, sql, params);
+          // The server's own word on whether the transaction survived the statement. A
+          // statement that commits implicitly (DDL, `SET autocommit = 1`, a typed
+          // `COMMIT`) ends it, and from then on the held connection autocommits: a
+          // ROLLBACK would answer success and undo nothing. So the session is ended here
+          // and the route reports `inTransaction: false` instead of a rollback. Only on a
+          // server that reported the state at BEGIN: StarRocks and Doris answer an INSERT
+          // inside a transaction with status 0, which says nothing, not "closed".
+          if (this.txStateReported && serverReportsOpenTransaction(rows) === false) {
+            await this.endHeldTransaction(this.txConn!);
+          }
           return { rows, fields };
         } catch (error) {
           throw mapDatabaseError(error, "mysql", sql);
@@ -2395,14 +2984,22 @@ export class MySQLProvider extends SQLBaseProvider {
 
     const conn = await this.pool!.getConnection();
     try {
-      const [rows] = await runStatement<ContainerRow[]>(conn, CONTAINERS_SQL);
-      return rows.map((row) => ({
-        path: [row.name],
-        name: row.name,
-        level: 0,
-        // 1, 0 or NULL, and only 1 is the session's own database.
-        isSessionDefault: Number(row.is_session_default) === 1,
-      }));
+      let rows: ContainerRow[];
+      try {
+        [rows] = await runStatement<ContainerRow[]>(conn, CONTAINERS_SQL);
+      } catch (error) {
+        if (sourceErrno(error) !== SHOW_DATABASES_DENIED_ERRNO) throw error;
+        [rows] = await runStatement<ContainerRow[]>(conn, CONTAINERS_FALLBACK_SQL);
+      }
+      const [[session]] = await runStatement<SessionDatabaseRow[]>(conn, SESSION_DATABASE_SQL);
+      return (
+        rows
+          .map((row) => String(Object.values(row)[0]))
+          .filter((name) => !SYSTEM_SCHEMA_SET.has(name))
+          .map((name) => ({ path: [name], name, level: 0, isSessionDefault: name === session?.name }))
+          // By path, the rule `listObjects` orders by: vtgate answers SHOW DATABASES unsorted.
+          .sort((left, right) => comparePaths(left.path, right.path))
+      );
     } finally {
       conn.release();
     }
@@ -2611,8 +3208,20 @@ export class MySQLProvider extends SQLBaseProvider {
    * on path. The three detail reads may carry rows for the extra `limit + 1` object; they
    * are dropped here rather than by a fourth bound, since the target list is what says which
    * objects the answer is about.
+   *
+   * `defaultSql` adds ONE `SHOW CREATE TABLE` per described table that has a default, on the
+   * flavour whose catalog spells no default as SQL (#1031, `readDefaultSql`). It is the one
+   * read here that grows with the folder, which is why only a caller that asks pays it, and
+   * the caller's `limit` bounds it, since only described objects are read. Tables only: a
+   * view's columns report the defaults of the columns they select, and the statement answers
+   * no column list for a view, so reading one costs a round trip and always falls back.
    */
-  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+  public async describeObjects(
+    container: readonly string[],
+    kind: string,
+    limit?: number,
+    options?: DescribeObjectsOptions,
+  ): Promise<ObjectDetailBatch> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     // Two questions, asked in order, and only the DECLARATION answers the first, for the
@@ -2660,6 +3269,12 @@ export class MySQLProvider extends SQLBaseProvider {
       );
       const indexes = byObjectName(await this.runObjectQuery<DetailIndexRow[]>(conn, statements.indexes, detailParams));
 
+      const reading = CATALOG_DEFAULT_READING[this.measuredFlavour];
+      const ddlDefaults =
+        options?.defaultSql === true && reading.defaultSql === "show-create" && kind === "table"
+          ? await this.readDefaultSql(conn, schema, described, columns, reading)
+          : undefined;
+
       const details = described
         .map((row) =>
           objectDetailFromRows(
@@ -2670,7 +3285,8 @@ export class MySQLProvider extends SQLBaseProvider {
               foreignKeys: foreignKeys.get(row.name) ?? [],
               indexes: indexes.get(row.name) ?? [],
             },
-            CATALOG_DEFAULT_READING[this.measuredFlavour],
+            reading,
+            ddlDefaults?.get(row.name),
           ),
         )
         .sort((left, right) => comparePaths(left.path, right.path));
@@ -2678,6 +3294,49 @@ export class MySQLProvider extends SQLBaseProvider {
     } finally {
       conn.release();
     }
+  }
+
+  /**
+   * Each described table's default SQL, read from `SHOW CREATE TABLE` (#1031), keyed by table
+   * then column. A table is absent from the answer whenever its text cannot be trusted, and
+   * an absent table keeps today's catalog reading - no `defaultExpression` - rather than
+   * failing a read that was going to succeed:
+   *
+   * - A table with no catalog default is never read: its DDL has nothing to add.
+   * - A refusal or an absence is `readSourcePart`'s own classification, so this read and the
+   *   Source tab agree about what a refusal is. Measured: a column-level `GRANT SELECT (cols)`
+   *   reads the catalog and is refused `SHOW CREATE TABLE` with 1142, and a table dropped
+   *   between the catalog read and this one answers 1146. Anything else still raises.
+   * - Text `showCreateColumnDefaults` cannot read to the end, or that lacks a DEFAULT for a
+   *   column the catalog says has one, leaves the WHOLE table on the catalog: half a table
+   *   on each reading would put both readings into one diff.
+   *
+   * ONE ROUND TRIP PER TABLE, sequential on the connection the three catalog reads used. That
+   * is the N+1 shape this method's caller exists to avoid, taken on deliberately and only when
+   * asked: see `DescribeObjectsOptions`.
+   */
+  private async readDefaultSql(
+    conn: PoolConnection,
+    schema: string,
+    described: readonly ObjectRow[],
+    columns: ReadonlyMap<string, readonly DetailColumnRow[]>,
+    reading: CatalogDefaultReading,
+  ): Promise<Map<string, ReadonlyMap<string, string>>> {
+    const plan = MYSQL_SOURCE_PART_PLANS.table[0];
+    const answer = new Map<string, ReadonlyMap<string, string>>();
+    for (const row of described) {
+      const withDefault = (columns.get(row.name) ?? []).filter(
+        (column) => catalogDefault(column.column_default, column.extra, reading).defaultValue !== undefined,
+      );
+      if (withDefault.length === 0) continue;
+      const address = `${this.escapeIdentifier(schema)}.${this.escapeIdentifier(row.name)}`;
+      const read = await this.readSourcePart(conn, plan, address);
+      if (read.outcome !== "text") continue;
+      const defaults = showCreateColumnDefaults(read.text);
+      if (defaults === undefined || withDefault.some((column) => !defaults.has(column.column_name))) continue;
+      answer.set(row.name, defaults);
+    }
+    return answer;
   }
 
   /**
@@ -2962,7 +3621,8 @@ export class MySQLProvider extends SQLBaseProvider {
         switch (type) {
           // The three table verbs share one shape: `<VERB> TABLE <list>`, where the
           // list is the one table the caller named or every table in the database, and
-          // the answer is a RESULT SET carrying the verdict (`readMaintenanceReport`).
+          // the answer is a RESULT SET carrying the verdict on MySQL and an OK packet on
+          // TiDB, OceanBase and Databend (`readMaintenanceReport` reads both).
           case "analyze":
           case "optimize":
           case "check": {
@@ -2980,8 +3640,11 @@ export class MySQLProvider extends SQLBaseProvider {
                 message: `${type.toUpperCase()}: no tables in ${this.config.database ?? "this database"} to run it on.`,
               };
             }
-            const [rows] = await runStatement<MaintenanceReportRow[]>(conn, `${type.toUpperCase()} TABLE ${tables}`);
-            return readMaintenanceReport(type, rows);
+            // `runStatement` types its answer as rows; on an OK-packet server it is a header.
+            const answer: MaintenanceReportRow[] | ResultSetHeader = (
+              await runStatement<MaintenanceReportRow[]>(conn, `${type.toUpperCase()} TABLE ${tables}`)
+            )[0];
+            return readMaintenanceReport(type, answer);
           }
           case "kill":
             if (!target) {
@@ -3227,7 +3890,7 @@ export class MySQLProvider extends SQLBaseProvider {
         const bloatRatio = totalSizeBytes > 0 ? (freeSpaceBytes / totalSizeBytes) * 100 : 0;
 
         return {
-          schemaName: r.schema_name || schema || "",
+          schemaName: reportedSchema(r.schema_name, schema),
           tableName: r.table_name || "",
           rowCount: parseInt(r.row_count || "0"),
           tableSize: formatBytes(tableSizeBytes),
@@ -3278,7 +3941,8 @@ export class MySQLProvider extends SQLBaseProvider {
         const indexSizeBytes = indexSizes[`${r.schema_name}/${r.table_name}/${r.index_name}`];
 
         return {
-          schemaName: r.schema_name || schema || "",
+          // As in `getTableStats`; the shard name is only a size key here.
+          schemaName: reportedSchema(r.schema_name, schema),
           tableName: r.table_name || "",
           indexName: r.index_name || "",
           indexType: r.index_type || "BTREE",

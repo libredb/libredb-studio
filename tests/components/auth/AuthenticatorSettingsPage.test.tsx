@@ -78,8 +78,14 @@ describe("/settings/authenticator", () => {
       "/api/auth/totp": { status: 401, json: { error: "Authentication required" } },
       "/api/auth/passkey": { status: 401, json: { error: "Authentication required" } },
     });
-    render(<AuthenticatorSettingsPage />);
-    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/login"));
+    window.history.replaceState(null, "", "/settings/authenticator");
+    try {
+      render(<AuthenticatorSettingsPage />);
+      // Back to this page after signing in again (#1420).
+      await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/login?next=%2Fsettings%2Fauthenticator"));
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
   });
 
   test("a live session stays on the page", async () => {

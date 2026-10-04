@@ -353,9 +353,12 @@ cancel, abort or kill method (checked against its API surface: `connect`, `execu
 `stream`, `batch`, `getReplicas`, `getState`, `log`, `shutdown`).
 
 `cancelQuery()` is therefore **not implemented**. Both routes detect support by the method's presence
-(`"cancelQuery" in provider`), so its absence is what makes `/api/db/cancel` answer *"Query
-cancellation is not supported for this database type"* — which is true — instead of reporting a
-cancellation that silently failed. `search/index.ts` declined the same method for the same reason.
+(`supportsQueryCancel` in [`query-cancel.ts`](../../src/lib/db/query-cancel.ts)), so its absence is
+what makes `/api/db/cancel` answer *"Query cancellation is not supported for this database type"*,
+which is true, instead of reporting a cancellation that silently failed. Since #1364
+`/api/db/provider-meta` reports the same check as `supportsQueryCancel: false`, and the editor shows
+its Cancel control as "Stop waiting": it ends the editor's wait and says the statement keeps
+running on the cluster. `search/index.ts` declined the same method for the same reason.
 
 The only bound on a running statement is the client-side `readTimeout` (default 12000 ms, set from
 the provider's query timeout). After it expires this client stops **waiting**; the coordinator carries
@@ -417,8 +420,13 @@ name carrying `--` or a newline cannot break out of it.
 
 The other three rows keep their normalization, and each reason was re-measured rather than assumed:
 `Vector` stringifies to `{"0":1.5,"1":2.5,"2":3.5}`, a numeric-keyed object no reader and no module
-reconstructs; `Duration` to `{"months":1,"days":2,"nanoseconds":"10800000000000"}`, where `String()`
-gives the CQL literal `1mo2d3h`. `Long`, `BigDecimal` and `Integer` are the one partial case worth
+reconstructs; `Duration` to `{"months":1,"days":2,"nanoseconds":"10800000000000"}`, so it is
+spelled as its CQL literal, `1mo2d3h`, by `durationText()` in
+[`driver-transport.ts`](../../src/lib/db/providers/sql/cassandra/driver-transport.ts) rather than by the
+driver's `String()`. That one divides the months into years with `toFixed(0)` and so rounds them:
+measured on 2026-10-04, 18 months printed `2y6mo`, which is 30 months, on the grid, in the CSV and in
+the SQL export. `durationText()` writes whole years (`1y6mo`), and `0s` for a zero duration, which the
+driver prints as the empty string. `Long`, `BigDecimal` and `Integer` are the one partial case worth
 naming: each defines `toJSON`, so `JSON.stringify` alone already answers `"9223372036854775807"` —
 the HTTP path would survive without this line. The in-process path would not: the embeddable
 workspace and the agent's tools read a provider's rows directly, and there the live class instance
@@ -589,6 +597,8 @@ whatever the protocol declared rather than the DDL word. The schema tree reads
 | `CREATE MATERIALIZED VIEW …` | `Materialized views are disabled. Enable in cassandra.yaml to use.` |
 | `LIMIT 0` | `LIMIT must be strictly positive` |
 | `SELECT 1; SELECT 2;` | `mismatched input 'SELECT' expecting EOF` — one statement per request |
+| `SELECT … WHERE 1=1 LIMIT 100;` | `line 24:6 no viable alternative at input '1'`: a predicate names a column |
+| `INSERT INTO t (id, v) VALUES (10, 'a'), (11, 'b');` | `line 3:17 mismatched input ',' expecting EOF`: an INSERT carries one row |
 
 The four grammar facts in `src/lib/sql/grammar.ts` were all probed on this engine rather than read
 off a neighbour:
@@ -628,6 +638,16 @@ falls back to PostgreSQL's identity clause, which CQL does not have either), its
 (syntax errors — CQL types carry no length) and `INTEGER` and `JSONB` (`Unknown type`), and its NOT
 NULL, UNIQUE and DEFAULT options are each `no viable alternative at input`. DDL typed into the editor
 works normally.
+
+The last two rows of the [§5.4](#54-dialect-traps-a-user-will-hit) table are shapes the shared
+generators used to write here (#1410), and the provider now declares both away.
+`supportsConstantPredicate: false` makes **Generate Query** (on a table or a materialized view) write
+`SELECT <columns> FROM <keyspace>.<table> LIMIT 100;` with no `WHERE 1=1`, and
+`supportsMultiRowInsert: false` makes the **CSV/JSON import** into an existing table, and the
+**Test Data Generator**, write one `INSERT` per row, which the editor sends through `/api/db/multi-query` one statement at a time.
+Measured on 5.0.9 on 2026-10-04 through the provider and the multi-query splitter: the generated
+select on a table runs, and a two-row import inserts both rows. ScyllaDB shares the provider and
+the declaration, and was not re-measured. An import into a **new** table stays withheld by `supportsCreateTable: false`.
 
 The **schema-diff migration generator refuses a Cassandra `CREATE TABLE` too**, for a second and
 independent reason. A CQL primary key is two things — the partition key, which places a row, and the
@@ -677,6 +697,18 @@ plan of a pending one, and calling it a plan would be a claim the engine does no
 deliberately left out of this provider; if it is ever exposed it must not be called EXPLAIN.
 
 ---
+
+### 5.7 What the SQL INSERT and DDL exports write
+
+CQL reads none of the generic forms for its non-text types: a collection, a UDT, a tuple, a `bigint`, a `varint` or a `decimal` written as quoted JSON or quoted text is `Invalid STRING constant`.
+The SQL INSERT export reads the declared type (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)) and writes `[1, 2]` for a `list` or a `vector`, `{'a', 'b'}` for a `set`, `{1: {'x'}}` for a `map`, `(7, 'x')` for a `tuple`, `{"street": 'Main', "zip": 1}` for a UDT, and the numbers, uuids, timeuuids and durations bare.
+A `float` or `double` NaN or infinity, at the top level or inside a collection, is written as CQL's bare `NaN`, `Infinity` or `-Infinity`.
+A UDT is declared by its bare name, so its field types are unknown and each field value goes through the generic writer: a UDT with a `bigint`, `varint`, `decimal`, `uuid` or collection field is written with that field quoted and still stops the replay with `Invalid STRING constant`.
+A collection or tuple that does not have its declared shape is skipped with a `-- Row N skipped` comment naming the column.
+
+The driver reports a nested collection without its `frozen<...>` (`list<frozen<list<int>>>` is declared `list<list<int>>`), which CQL refuses as `Non-frozen collections are not allowed inside collections`, so the DDL writes every collection, tuple or UDT nested inside a collection as `frozen<...>`.
+
+Measured 2026-10-04 on Cassandra 5.0.9: a table of every scalar type, `list<int>`, `set<text>`, `map<text, int>`, `map<int, frozen<set<text>>>`, `list<frozen<list<int>>>`, `tuple<int, text>`, a `frozen<address>` UDT whose fields are `text` and `int`, and a `duration` was exported through the provider and replayed with `cqlsh` into a copy created with the source's own definition and into the exported DDL's own table, and `cqlsh` printed the same rows for both. So did a second table of `duration` (`1y6mo`, `0s`, `-1mo2d3h4m5s6ms7us8ns`), `double` and `float` NaN and infinities, and a `list<double>` holding them.
 
 ## 6. Schema introspection
 
@@ -1171,6 +1203,8 @@ because there are no table statistics to list at all.)
   maintenanceOperations: [],
   supportsConnectionString: false,   // no URI carries localDataCenter (§4.2)
   defaultPort: 9042,
+  supportsConstantPredicate: false,  // `WHERE 1=1` is not CQL, so Generate Query writes no WHERE (§5.5, #1410)
+  supportsMultiRowInsert: false,     // an INSERT carries one row, so an import or generated test data writes one per row (§5.5, #1410)
   schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\b",
   containerLevels: [{ id: "schema", label: "Keyspace", labelPlural: "Keyspaces" }], // one level: CQL has none above a keyspace and none below it (§6.4)
   containerPathShapes: "exact",      // only [keyspace] addresses a container; any other path is refused (§6.4, #1147)

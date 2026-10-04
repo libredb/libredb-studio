@@ -34,7 +34,7 @@ export function registerLibreDBLanguage(monaco: typeof Monaco): void {
         // matching the provider's parser — `#` inside a key/value stays data.
         [/^\s*#.*$/, "comment"],
         // Both quote rules are single-line on purpose. The Redis tokenizer carries
-        // a string state across the line break (U10) because its `commandBody()`
+        // a string state across the line break (U10) because its `readRedisCommandText()`
         // treats a newline inside an open quoted argument as data; this provider is
         // line-based — `firstCommandLine()` takes the first non-comment LINE and
         // `tokenize()` rejects an unmatched quote (docs/providers/libredb.md §5.1)

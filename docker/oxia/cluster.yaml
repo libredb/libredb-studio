@@ -1,0 +1,13 @@
+# The oxia-cluster profile: one namespace over three data servers. A cluster advertises its configured public
+# address to clients, so each public port is the published host port and the container port.
+namespaces:
+  - name: default
+    initialShardCount: 3
+    replicationFactor: 1
+servers:
+  - public: 127.0.0.1:6671
+    internal: oxia-cluster-1:6649
+  - public: 127.0.0.1:6672
+    internal: oxia-cluster-2:6649
+  - public: 127.0.0.1:6673
+    internal: oxia-cluster-3:6649

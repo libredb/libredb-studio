@@ -66,6 +66,7 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
+import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 
 /**
  * SQLite's identity for the shared container-path renderer.
@@ -873,38 +874,9 @@ function objectDetailFromRows(path: readonly string[], rows: ObjectDetailRows): 
 }
 
 // ============================================================================
-// A database file this process cannot write
+// A database file this process cannot write (the test itself, shared with DuckDB, is
+// `isUnwritableExistingFile` in db/utils/unwritable-file.ts)
 // ============================================================================
-
-/**
- * The `access()` refusals that mean "this process may not write here": no permission
- * (`EACCES`, `EPERM`) or a read-only filesystem (`EROFS`, a `:ro` Docker mount). Any
- * other answer is a real failure and is raised as one.
- */
-const NOT_WRITABLE_CODES: ReadonlySet<string> = new Set(["EACCES", "EPERM", "EROFS"]);
-
-/**
- * True when `dbPath` names an existing file that this process cannot write, or whose
- * directory it cannot write. The directory counts because the WAL journal the editor
- * turns on keeps its `-wal` and `-shm` files beside the database. A missing file answers
- * false: the editor creates it, exactly as before.
- */
-function isUnwritableExistingFile(dbPath: string): boolean {
-  if (dbPath === ":memory:" || !fs.existsSync(dbPath)) {
-    return false;
-  }
-  for (const target of [dbPath, path.dirname(dbPath)]) {
-    try {
-      fs.accessSync(target, fs.constants.W_OK);
-    } catch (error) {
-      if (NOT_WRITABLE_CODES.has((error as NodeJS.ErrnoException).code ?? "")) {
-        return true;
-      }
-      throw error;
-    }
-  }
-  return false;
-}
 
 /** SQLite's SQLITE_READONLY refusal, in the words both drivers raise it with. */
 function isReadOnlyWriteError(error: unknown): boolean {
@@ -1100,6 +1072,8 @@ export class SQLiteProvider extends SQLBaseProvider {
       // SQLite HAS transactions; this provider holds no session for one, so
       // POST /api/db/transaction refuses the call and the controls stay hidden.
       supportsTransactions: false,
+      // Both drivers run the statement synchronously on the server's one thread (#1364).
+      blocksServerWhileRunning: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
       // `VACUUM` rewrites the whole database file and takes no object at all, and
       // `PRAGMA integrity_check` reads the whole file the same way - `runMaintenance`
@@ -1355,10 +1329,12 @@ export class SQLiteProvider extends SQLBaseProvider {
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          const isSelect = this.isReadOnlyQuery(sql);
+          const stmt = this.db!.prepare(sql);
 
-          if (isSelect) {
-            const stmt = this.db!.prepare(sql);
+          // Routed on what SQLite compiled, not on the leading keyword: a statement with
+          // result columns is read with `all()`, whatever it starts with. A keyword set
+          // missed WITH, VALUES and every `... RETURNING`, and `run()` dropped their rows.
+          if (stmt.returnsRows()) {
             const rows = params ? stmt.all(...params) : stmt.all();
             const fields = rows.length > 0 ? Object.keys(rows[0] as object) : [];
             return {
@@ -1374,7 +1350,6 @@ export class SQLiteProvider extends SQLBaseProvider {
               declared: declaredColumnTypes(stmt.declaredColumns()),
             };
           } else {
-            const stmt = this.db!.prepare(sql);
             const info = params ? stmt.run(...params) : stmt.run();
             return {
               rows: [],

@@ -9,6 +9,8 @@ import { QuerySafetyDialog, isDangerousQuery } from "@/components/QuerySafetyDia
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
+import { statementRefusal } from "@/lib/db/destructive-commands";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import { schemaContextOf } from "@/lib/db/detailed-object";
@@ -1384,6 +1386,63 @@ describe("QuerySafetyDialog", () => {
 });
 
 describe("isDangerousQuery", () => {
+  // A procedural body is one statement to the runner since #1312, and its own keyword is
+  // BEGIN or CREATE. The writes inside it still ask, as they did when the splitter cut them.
+  test("a write inside a procedural body still asks", () => {
+    expect(isDangerousQuery("BEGIN x := 1; DELETE FROM emp; END;", "oracle")).toBe(true);
+    expect(isDangerousQuery("CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; DELETE FROM b; END", "sqlite")).toBe(
+      true,
+    );
+    expect(isDangerousQuery("BEGIN x := 1; SELECT 1 INTO y FROM dual; END;", "oracle")).toBe(false);
+  });
+
+  // The block's FIRST statement is the write, so the fragment the gate reads starts with
+  // the block's own word. Before #1312 Oracle refused that fragment; now the block runs.
+  test.each([
+    ["oracle", "BEGIN DELETE FROM emp; END;"],
+    ["oracle", "BEGIN IF 1=1 THEN DELETE FROM emp; END IF; END;"],
+    ["oracle", "DECLARE v NUMBER; BEGIN DELETE FROM emp; END;"],
+    ["oracle", "BEGIN NULL; EXCEPTION WHEN OTHERS THEN DROP TABLE t; END;"],
+    ["oracle", "<<outer>> BEGIN TRUNCATE TABLE t; END outer;"],
+    ["mssql", "IF @@ROWCOUNT > 0 DELETE FROM t"],
+    ["mssql", "DECLARE @n INT = 1; WHILE @n > 0 BEGIN DELETE TOP (1) FROM t; SET @n = 0; END"],
+  ] as const)("a write that opens a block asks on %s: %s", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(true);
+  });
+
+  test.each([
+    "BEGIN EXECUTE IMMEDIATE 'DROP TABLE t PURGE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;",
+    "BEGIN EXECUTE IMMEDIATE 'TRUNCATE TABLE t'; END;",
+    "DECLARE c INTEGER := DBMS_SQL.OPEN_CURSOR; BEGIN DBMS_SQL.PARSE(c, 'DROP TABLE t', DBMS_SQL.NATIVE); END;",
+  ])("dynamic SQL in a block asks, its text being a literal the gate cannot read: %s", (sql) => {
+    expect(isDangerousQuery(sql, "oracle")).toBe(true);
+  });
+
+  test("a variable or a FOR UPDATE lock clause named like a write does not ask", () => {
+    expect(isDangerousQuery("DECLARE @alter INT = 1; SELECT @alter", "mssql")).toBe(false);
+    expect(isDangerousQuery("DECLARE @drop INT = 1, @update INT = 2, @delete INT = 3; SELECT @drop", "mssql")).toBe(
+      false,
+    );
+    expect(
+      isDangerousQuery("DECLARE CURSOR c IS SELECT id FROM emp FOR UPDATE; BEGIN OPEN c; CLOSE c; END;", "oracle"),
+    ).toBe(false);
+    // The exception names only those two shapes: a real write after them still asks.
+    expect(isDangerousQuery("DECLARE @alter INT = 1; IF @alter = 1 DELETE FROM t", "mssql")).toBe(true);
+    expect(isDangerousQuery("BEGIN SELECT 1 INTO x FROM t FOR UPDATE; UPDATE t SET a = 1; END;", "oracle")).toBe(true);
+  });
+
+  test("a block that only reads, or a word inside a literal, does not ask", () => {
+    expect(isDangerousQuery("BEGIN SELECT 'delete' INTO x FROM dual; END;", "oracle")).toBe(false);
+    expect(isDangerousQuery("IF @x > 0 SELECT 1", "mssql")).toBe(false);
+    // A procedure call cannot be read into: what it does is the server's, as before.
+    expect(isDangerousQuery("EXEC sp_cleanup", "mssql")).toBe(false);
+  });
+
+  test("a write after a separator line asks", () => {
+    expect(isDangerousQuery("SELECT 1\nGO\nDROP TABLE t", "mssql")).toBe(true);
+    expect(isDangerousQuery("SELECT 1 FROM dual\n/\nDROP TABLE t", "oracle")).toBe(true);
+  });
+
   test("detects dangerous DML and DDL statements", () => {
     expect(isDangerousQuery("DELETE FROM users")).toBe(true);
     expect(isDangerousQuery("DROP TABLE users")).toBe(true);
@@ -1726,6 +1785,51 @@ describe("isDangerousQuery", () => {
   // MongoDB row above pins for MongoDB.
   test("still prompts for a destructive keyword under redis", () => {
     expect(isDangerousQuery("DROP TABLE users", "redis")).toBe(true);
+  });
+
+  // ── InfluxQL is read by its own lexer, and what it refuses never runs (InfluxDB spec 5.7, A.11) ──
+  //
+  // The `influxdb` row decides alone: the browser-safe InfluxQL policy the provider runs reads the text, so a
+  // regex holding `\/` and a backslash escape inside a string or an identifier, which a SQL span reader reads
+  // as an unterminated quote, close where the server closes them and ask nothing. What the policy refuses is
+  // refused by the row's `refuse` before the run, so the dialog is never shown for it; on 1.x and 2.x that
+  // policy is the only boundary before `DROP DATABASE`.
+
+  test.each<[string, string, boolean]>([
+    ["a regex holding an escaped slash", String.raw`SELECT * FROM cpu WHERE host =~ /a\/b/`, false],
+    ["a regex holding a quote", String.raw`SELECT * FROM cpu WHERE host =~ /it's/`, true],
+    ["a backslash escape in a string", String.raw`SELECT * FROM cpu WHERE host = 'it\'s'`, true],
+    ["a backslash escape in an identifier", String.raw`SELECT * FROM "we\"ird" WHERE time > now() - 1h`, true],
+  ])("does not prompt for %s on influxdb, and the policy allows it", (_label, query, sqlAsks) => {
+    // The premise: the SQL reading of the same text, where it differs, asks.
+    expect(isDangerousQuery(query)).toBe(sqlAsks);
+    expect(isDangerousQuery(query, "influxdb")).toBe(false);
+    expect(statementRefusal(query, "influxdb")).toBeUndefined();
+  });
+
+  test("DROP DATABASE on influxdb is refused by the row's refuse before the run, alone or after a read", () => {
+    expect(statementRefusal("DROP DATABASE x", "influxdb")).toBe(INFLUXQL_POLICY_SENTENCES.notARead("DROP"));
+    expect(statementRefusal("SHOW DATABASES; DROP DATABASE x", "influxdb")).toBe(
+      INFLUXQL_POLICY_SENTENCES.multipleStatements(1, 15),
+    );
+    // A `\r` ends a `--` comment and a line, so the `;` below is a separator the server reads, at line 2 column 1.
+    expect(statementRefusal("SHOW DATABASES -- c\r; DROP DATABASE x", "influxdb")).toBe(
+      INFLUXQL_POLICY_SENTENCES.multipleStatements(2, 1),
+    );
+  });
+
+  test("65,537 bytes of text is refused on influxdb before the run, and 65,536 bytes is not", () => {
+    const head = "SELECT * FROM cpu -- ";
+    const over = head + "x".repeat(65_537 - head.length);
+    // Three-byte characters, so the bound is counted in UTF-8 bytes and not in characters.
+    const atBound = `${head} ${"\u20ac".repeat((65_536 - head.length - 1) / 3)}`;
+    expect(new TextEncoder().encode(over).length).toBe(65_537);
+    expect(new TextEncoder().encode(atBound).length).toBe(65_536);
+
+    expect(statementRefusal(over, "influxdb")).toBe(
+      "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
+    );
+    expect(statementRefusal(atBound, "influxdb")).toBeUndefined();
   });
 
   // ── A Kafka read request only reads (#1088, section 2) ───────────────────

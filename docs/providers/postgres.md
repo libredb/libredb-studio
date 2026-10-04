@@ -16,7 +16,7 @@
 | **Connection pooling** | Yes — `pg.Pool` (min 2 / max 10 by default) |
 | **Connection string** | Supported (`postgres://` / `postgresql://`) |
 | **Transactions** | Yes — explicit `BEGIN`/`COMMIT`/`ROLLBACK` with auto-rollback timeout |
-| **Query cancellation** | Yes — PID tracking + `pg_cancel_backend` |
+| **Query cancellation** | Yes: PID tracking + `pg_cancel_backend`, then the wire-protocol CancelRequest where that is refused ([§5.3](#53-query-cancellation)) |
 | **Agent read-only profile** | Yes — `BEGIN READ ONLY` + extended-protocol single statement (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/postgres.ts`](../../src/lib/db/providers/sql/postgres.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
@@ -365,13 +365,30 @@ target that fails on most views in most schemas. `kindAcceptsRowWrites()`
 to be written for that to hold.
 
 **`prokind` costs the routine folders, never the container.** `pg_proc.prokind` arrived in
-PostgreSQL 11, and the wire-compatible forks do not all have it; a server without it answers
-`42703` for the routine arm of the counting statement. `countObjects()` re-runs the statement with
-that arm removed, so the relations and the triggers still carry their counts and only `function`
-and `procedure` carry `{ unavailable }` with the server's own sentence. Losing two folders to a
-missing column is the right cost; losing the whole schema to it is not. The retry is keyed on the
-column name as well as the code, because `42703` is "undefined column" generally and re-running
-without the routine arm repairs nothing when the missing column was in an arm that survives.
+PostgreSQL 11, and the wire-compatible forks do not all have it. When the counting statement is
+refused with a sentence that names `prokind`, `countObjects()` re-runs it with the routine arm
+removed, so the relations and the triggers still carry their counts and only `function` and
+`procedure` carry `{ unavailable }` with the server's own sentence. Losing two folders to a missing
+column is the right cost; losing the whole schema to it is not.
+
+The retry is keyed on the column name, under ANY SQLSTATE, the way every other fallback in
+[postgres.ts](../../src/lib/db/providers/sql/postgres.ts) is keyed on the identifier it repairs.
+Only the routine arm names `prokind`, so a refusal that names it is a refusal of that arm. Any
+other refusal (a missing column in an arm the retry keeps, a statement timeout, a cancel, a
+serialization failure, a lost connection) is not retried: every folder carries that sentence from
+the first read, so a timeout is not waited out twice and is never filed under the routine pair. If
+the retry is refused too, the routine pair keeps the first sentence and the rest carry the retry's.
+
+The retry used to be keyed on `42703` as well, and that lost the whole tree on Materialize.
+Measured on Materialize v26.44.1 on 2026-10-04 with `\set VERBOSITY verbose`: the routine arm
+answers `ERROR: XX000: column "p.prokind" does not exist`, so the retry never ran and all seven
+folders, in every schema, showed that sentence and could not be opened. `XX000` is Materialize's
+generic internal error, so keying on it instead would read every internal failure as a missing
+column. On the same server the routine-free statement answers the tables, views and materialized
+views, so those three folders count and list, and only Functions and Procedures stay closed:
+`listObjects()` for them runs the same `prokind` filter and is refused the same way. PostgreSQL 18.6, which has the column, and RisingWave 3.1.0, whose `pg_proc`
+has it too, answer the full statement on the first read and draw all seven folders, measured the
+same day.
 
 **Three facts, not two.** `KindCount` is `{ count }` or `{ unavailable }`, and every declared kind
 is seeded at `{ count: 0 }` before the read. So a folder the engine has and this schema holds none
@@ -1250,7 +1267,7 @@ The statement timeout is **separate** from pool config: `ProviderOptions.queryTi
 `DEFAULT_QUERY_TIMEOUT` = 60000 ms) is applied as the pool's `statement_timeout`.
 
 `connect()` is idempotent (a second call while a pool exists is a no-op). `getPoolStats()` exposes
-live `{ total, idle, active, waiting }` counts. Every query acquires a client from the pool and
+live `{ total, max, idle, active, waiting }` counts: `total` is the clients open right now and `max` is the configured pool ceiling, which the Monitoring > Pool tab shows as its own number and uses as the utilization denominator. Every query acquires a client from the pool and
 releases it in a `finally` block.
 
 #### Idle-client failures are handled, not fatal
@@ -1303,8 +1320,49 @@ acquires a pooled client, optionally records its backend PID for cancellation, r
 (optionally parameterized — `$1`, `$2`, …) statement, and returns the standard envelope:
 
 ```ts
-{ rows, fields: string[], rowCount, executionTime, columnTypes? }
+{ rows, fields: string[], rowCount, executionTime, columnTypes?, warnings? }
 ```
+
+#### Server notices (#1401)
+
+The NOTICE and WARNING messages the server sends while a statement that SUCCEEDS runs come back in
+`warnings`, one entry per notice: `message` is the server's primary message line, `code` its
+SQLSTATE and `severity` its level as the server spells it (`NOTICE`, `WARNING`, `INFO`), which may
+be localized by the server's `lc_messages`. A notice's DETAIL and HINT fields are not carried. The
+results panel shows them beside the result, `NOTICE: ...` the way `psql` prints it; a statement the
+server sent none for has no `warnings` key at all. `queryInTransaction()` reports them the same way.
+
+A statement that FAILS reports only its error: notices it raised before the error are dropped.
+
+At most 100 notices are kept per statement. A `RAISE NOTICE` in a loop can send millions, and each
+kept one is held in memory and drawn as a line of the results panel, so the rest are only counted and
+the list ends with one entry saying how many were not shown (`5 more notices not shown`).
+
+`pg` only emits a notice as an event on the client that received it, so the pool builds its clients
+from a subclass that keeps each client's notices, and a statement takes what arrived on its own
+client between its start and its answer. What a client held before the statement (its startup
+greeting, the cancel-PID read) is dropped first, and a client returned to the pool drops what it
+held, so one statement's notice never surfaces on another's result.
+
+On the PostgreSQL-wire relatives these are often the only sign a statement did not do what it
+looks like. Measured on 2026-10-04:
+
+| Engine | Statement | Notice |
+| --- | --- | --- |
+| PostgreSQL 18 | `DO $$BEGIN RAISE NOTICE 'n'; RAISE WARNING 'w'; END$$` | `NOTICE 00000 n`, `WARNING 01000 w` |
+| PostgreSQL 18 | `DROP TABLE IF EXISTS nope` | `NOTICE 00000 table "nope" does not exist, skipping` |
+| Apache Cloudberry 2.1.0 | `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY ...` | `WARNING referential integrity (FOREIGN KEY) constraints are not supported in Apache Cloudberry, will not be enforced` |
+| RisingWave | `BEGIN` (typed in the editor) | `NOTICE 00000 ... no transaction is actually started` |
+
+Notices the server sends while a connection OPENS are read once, by `connect()`, and returned by
+`connectWarnings()`; Test Connection shows them as a caution instead of "Connected successfully",
+and the first save asks for a second click, as a degraded connection does. Materialize is the case:
+it opens a session on a database that does not exist and reports only `NOTICE MZ004 session
+database "nosuchdb" does not exist`. Startup notices of SQLSTATE class `00` (successful completion)
+are left out, because Materialize greets every session with one (`connected to Materialize ...`).
+
+The agent's read-only path (`queryReadOnly()`, section 12) and the internal catalog and monitoring
+reads do not report notices.
 
 Native `pg` errors are normalised through `mapDatabaseError()` into the shared
 [`errors.ts`](../../src/lib/db/errors.ts) classes (syntax → `QueryError`, auth → `AuthenticationError`,
@@ -1405,10 +1463,43 @@ comment-led final `SELECT`; it now reads `isSelectQuery()` from the same classif
 
 ### 5.3 Query cancellation
 
-A query issued with a `queryId` records its backend PID in a `Map`. `cancelQuery(queryId)`
-([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the PID up and calls
-`pg_cancel_backend(pid)` on a fresh pooled client, returning whether the cancel signalled. Exposed
-via `POST /api/db/cancel`.
+A query issued with a `queryId` records its backend PID and its pooled client in a `Map`.
+`cancelQuery(queryId)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the run up
+and calls `pg_cancel_backend(pid)` on a fresh pooled client, returning true when the cancel
+signalled. Exposed via `POST /api/db/cancel`.
+
+Three engines this provider connects to do not honour `pg_cancel_backend`, measured on 2026-10-03
+and 2026-10-04: CockroachDB v26.3.2 answers `unknown function: pg_cancel_backend()`, Materialize
+26.44.1 refuses it with a bound parameter (`pg_cancel_backend in this position not yet supported`),
+and RisingWave 3.1.0 answers `f`. Each kept running the statement, and before #1364 that was the end
+of the cancel. Where `pg_cancel_backend` is refused or answers false, `cancelQuery` now sends the
+wire protocol's own CancelRequest for the run's session
+([`pg-wire-cancel.ts`](../../src/lib/db/providers/sql/pg-wire-cancel.ts)): a fresh connection to the
+address the client connected to (a tunnel's local end when there is one), carrying the process id and
+secret key the server handed that session at startup. CockroachDB v26.3.2 ended `SELECT
+pg_sleep(20)` on it within a second, and RisingWave's wire-protocol cancel was seen to work in the
+same test pass; Materialize was not measured with it.
+
+The server never answers a CancelRequest, so `cancelQuery` answers true only once the run has ended,
+within 3 s of sending it; a run still going after that is false, and the editor says the cancel was
+not confirmed.
+
+**Encrypted wherever the session is.** When the connection uses TLS (any SSL mode but `disable`), the
+cancel connection sends an SSLRequest first, upgrades with the same TLS options and server name the
+session itself used, and only then sends the CancelRequest, as `pg`'s own cancel and libpq since
+PostgreSQL 17 do. A server that answers the SSLRequest with `N` gets nothing, since the session was
+configured to require TLS, and a certificate the session's settings do not trust gets nothing either;
+both are reported as not confirmed. A connection without TLS sends the request in plaintext, as the
+session itself goes. Behind an SNI-routing proxy (a managed service that routes on the TLS server
+name), only the encrypted request can reach the session at all, which is one more reason it is not
+sent in clear. Measured 2026-10-04: over TLS the request stopped `SELECT pg_sleep(20)` about 1.5 s
+into the run on PostgreSQL 18.6 (`ssl=on`) and on CockroachDB v26.3.2 in secure mode alike.
+
+**A window of one round trip remains.** The request is sent only while the run still holds its
+session, checked once the cancel socket is open, because a released session can already be running
+another request's statement. The check narrows the race to the request's own flight time and cannot
+close it: a statement that ends while the 16 bytes travel leaves the key on a session the pool may
+have handed on. That window is inherent to the protocol's cancel, the same one `psql`'s Ctrl+C has.
 
 ### 5.4 Declared column types
 
@@ -1466,6 +1557,7 @@ reconstructing. `columnTypes` is consumed by the results grid's column labels, b
 The pool carries its own type parsers (`ZONELESS_AS_TEXT` in [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)), passed as the `types` option in `buildPoolConfig()`, so the structured form and a pasted connection string both get them.
 `date`, `date[]`, `timestamp` (without time zone) and `timestamp[]` arrive as the engine's own text, `'2026-09-01'` and `'2026-09-01 10:30:00'`, whatever the TZ of the Node process.
 `timestamptz` and `timestamptz[]` still arrive as a JavaScript `Date`, which is an instant, so the JSON the routes answer with carries its ISO UTC form, `'2026-09-01T10:30:00.000Z'`, in every TZ.
+Their two infinities are the exception and arrive as the engine's text, `'infinity'` and `'-infinity'`, alone and as array elements: `pg-types` reads them as the number `Infinity`, which no `Date` holds and `JSON.stringify` writes as `null`, so measured 2026-10-04 on PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
 `time` and `timetz` were already the engine's text and are unchanged.
 Every other type is what `pg-types` makes of it.
 
@@ -1489,6 +1581,32 @@ The parsers are per pool on purpose: `pg.types.setTypeParser` is process-wide, a
 Only the text format is intercepted, since the binary one has no text to return.
 An in-process consumer of the library surface now receives strings, not `Date` objects, for these four types.
 Every relative that goes through `PostgresProvider` (the `via: "postgres"` entries in [`compatibility.ts`](../../src/lib/db/compatibility.ts)) shares the change.
+
+### 5.6 NaN and the float infinities
+
+`real` and `double precision` (and their arrays) are still whatever `pg-types` makes of them, a JavaScript number, so `'NaN'`, `'Infinity'` and `'-Infinity'` arrive as `NaN`, `Infinity` and `-Infinity`.
+JSON has no form for those three, and the routes, the agent's row rendering, the MCP serializer and the exports write each as the string `"NaN"`, `"Infinity"` or `"-Infinity"` rather than the `null` `JSON.stringify` would make of it ([`src/lib/non-finite.ts`](../../src/lib/non-finite.ts), [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
+`numeric` was already the engine's text, `'NaN'` and `'Infinity'` included.
+
+Measured 2026-10-04 on PostgreSQL 18.6, `SELECT 'NaN'::float8, 'Infinity'::real, '-Infinity'::float8` answered `null` in all three cells of `POST /api/db/query` before and `"NaN"`, `"Infinity"`, `"-Infinity"` after, while psql shows `NaN | Infinity | -Infinity`.
+The SQL INSERT export writes them as quoted literals, `'NaN'`, which PostgreSQL reads back into a `real`, `double precision` or `timestamptz` column, so a replayed file stores the same values where it used to store NULL.
+
+### 5.7 What the SQL INSERT and DDL exports write
+
+The result export reads each cell's declared type ([§5.4](#54-declared-column-types)) for the values whose generic form PostgreSQL refuses (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)):
+
+| Declared | Arrives as | Written as |
+|---|---|---|
+| any `…[]` | a JS array, nested per dimension | `'{"1","2",NULL}'`, every element double-quoted and backslash-escaped; a `json`/`jsonb` element is written as JSON, so an array stays one document and a string keeps its quotes (`pg` `JSON.parse`s each element, so the document `"hello"` arrives as `hello`) |
+| `interval` | `{days: 1, hours: 2}` (`postgres-interval`, zero parts dropped) | `'1 days 2 hours'`; `{}` is `'0 seconds'` |
+| `point` / `circle` | `{x, y}` / `{x, y, radius}` | `'(1,2)'` / `'<(1,2),3>'` |
+
+An array or an object in a `json`/`jsonb` column, or in a result with no declared type, is still the quoted JSON text.
+The DDL keeps an array type (`integer[]`) instead of writing `TEXT`, and writes a bare `bit` as `bit varying` (and `bit[]` as `bit varying[]`), because `pg` returns a bit string such as `1010` that `bit(1)` refuses.
+
+Measured 2026-10-04 on PostgreSQL 18.6: a `SELECT *` over a table with `integer[]`, two-dimensional `integer[]`, `text[]` holding quotes, commas, braces, backslashes and the word `NULL`, `boolean[]`, `jsonb[]`, `timestamptz[]`, `interval`, `point`, `bit(4)`, `varbit`, `money`, `inet`, `int4range` and the scalar types was exported and replayed with `psql`, once into a `CREATE TABLE … (LIKE src)` copy and once into the exported DDL's own table, and `SELECT s::text FROM src s EXCEPT SELECT c::text FROM copy c` answered one row.
+That row differs in one cell that never reaches the export as itself: the JSON document `null` in a `json` column, which JSON cannot tell from SQL NULL.
+Before this, the same file stopped at its first row with `ERROR: malformed array literal: "[1,2,3]"`.
 
 ---
 
@@ -1539,6 +1657,16 @@ base) fans these out in parallel.
 `getTableStats()` / `getIndexStats()` accept an optional `{ schema }` filter; with none they cover
 all user schemas.
 
+**Every catalog name list is read as `text[]` (#1394).** node-postgres parses no array of
+`information_schema.sql_identifier` or of `name`, so `array_agg(kcu.column_name)` and
+`array_agg(a.attname)` reached the provider as the text `{id}`. On the key read that turned
+`includes()` into a substring test: measured on PostgreSQL 18.6, a table keyed on `id` showed its
+columns `i` and `d` as keys too in the tree, the ERD and Docs. On the index statistics read the
+array guard turned every index's column list into `[]`. Both aggregates now cast each name to
+`text`, the key list in `ordinal_position` order, and a key list that still arrives as anything
+but an array marks no column. The index lists inside the `jsonb` object reads were never
+affected: `jsonb_build_object` serialises the array itself.
+
 **Database size is absent, never zeroed, when it is not measured.** `getOverview()` sizes the
 database with `pg_database_size($1)` and reads the byte figure only, the shape `mssql.ts` uses:
 `databaseSize` is `formatBytes()` over that number, so no `pg_size_pretty()` column is selected. A
@@ -1568,7 +1696,7 @@ has nothing to divide:
 
 In both cases **`getHealth().cacheHitRatio` is `"N/A"` and `getPerformanceMetrics().cacheHitRatio`
 is absent from the object**, and the Overview and Performance tabs render "Not measured" rather
-than a figure. A ratio that *is* measured as `0` is kept and shown as `0.0%`: a cold cache is a real
+than a figure. When a ratio is measured, `getPerformanceMetrics().cacheHitAdvice` carries the PostgreSQL-specific tip ("Increase shared_buffers") that the Performance tab shows under a ratio below 90%; engines that declare none get a generic line naming no setting. The advice appears only where the PostgreSQL heap counters move: engines that speak the PostgreSQL wire protocol with their own storage report no ratio ("Not measured") and so get no tip. A ratio that *is* measured as `0` is kept and shown as `0.0%`: a cold cache is a real
 reading, and the one the panel most needs to show.
 
 Both SQL statements used to wrap the `NULL` in `COALESCE(..., 100)`, so an unmeasured database
@@ -1591,8 +1719,8 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active. |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. |
+| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
 | `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active. |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
 | `isInTransaction()` | Current state. |
@@ -1605,6 +1733,41 @@ offer BEGIN/COMMIT/ROLLBACK and the auto-rolled-back SANDBOX toggle at all. It i
 than inferred because the route's own gate is `isTransactionProvider(provider)`, a runtime shape
 check no client can read, so before #464 those controls rendered on every
 connection — including the ten providers that answer HTTP 400.
+
+### 8.0 A `BEGIN` that opens nothing, and a statement that ends the transaction
+
+Both are read off the server's own ReadyForQuery status byte (`getTransactionStatus()`, the same
+reading §8.1 uses), never off the statement text and never off the connection's type id.
+
+- **`beginTransaction()` refuses a `BEGIN` the server answered with status `I`.** Measured
+  2026-10-04 on RisingWave 3.1.0: `BEGIN` succeeds with the NOTICE "Read-write transaction is not
+  supported yet. Please specify `READ ONLY` to start a read-only transaction. For compatibility,
+  this statement will still succeed but no transaction is actually started." and the byte stays
+  `I`. Before this check, SANDBOX ran an `INSERT` and a `DELETE` there with no transaction under
+  them, its `ROLLBACK` answered "there is no transaction in progress" as a NOTICE, and the UI said
+  "Changes auto-rolled back. No data was modified." while both changes stayed. The client goes
+  back to the pool and the error is `NO_TRANSACTION_OPENED` ([`errors.ts`](../../src/lib/db/errors.ts)),
+  a `QueryError`, so `POST /api/db/transaction` answers 400 with that sentence and the editor runs
+  nothing. The same byte reads `T` after `BEGIN` on PostgreSQL 18, so nothing changes there.
+- **`queryInTransaction()` ends the session when the byte reads `I` after the statement.**
+  PostgreSQL's DDL is transactional, so this is not about DDL: it is a text that ends the
+  transaction itself: a typed `COMMIT`, `END`, `ROLLBACK` or `ABORT` in a manual transaction, or
+  DDL on a relative that commits it (CockroachDB 25.1 and later commit before DDL by default,
+  `autocommit_before_ddl`). The byte cannot say WHICH of those happened, so the editor claims no
+  outcome: the route answers `inTransaction: false`, and the editor shows "Not Rolled Back"
+  (SANDBOX) or "Transaction Ended", each asking the user to check what was kept. A best-effort
+  `ROLLBACK` goes out before the client is released (a no-op answered with a WARNING where the
+  transaction really is gone), so a relative that ever reported `I` with a transaction still open
+  could not hand that transaction to the pool. A failed statement leaves the byte at `E`, so the
+  session stays for the `ROLLBACK` it needs. Measured 2026-10-04 on PostgreSQL 18.6 and
+  Materialize 26.44.1: `T` after `BEGIN` and after a read inside it, `I` after `COMMIT`.
+
+The declared half of the same guard, `implicitCommitStatements`, holds `END` and `PREPARE
+TRANSACTION`. PostgreSQL's DDL rolls back, so no DDL is in it; those two end the transaction
+anyway (`END` is the COMMIT synonym, `PREPARE TRANSACTION` detaches it from the session), and
+SANDBOX refuses them before sending, together with the `COMMIT`, `ROLLBACK` and `ABORT` it
+refuses on every engine ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)). A
+`PREPARE name AS ...` statement is not matched: the sequence is two words.
 
 ### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
 
@@ -1658,8 +1821,93 @@ with targets quoted via [§3.6](#36-safe-maintenance-targets):
 | `reindex` | `REINDEX TABLE <target>` | `REINDEX DATABASE <db>` |
 | `kill` | `pg_terminate_backend(<pid>)` | throws (PID required) |
 
-`getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'reindex', 'kill']`. `kill`
-validates that the target parses as an integer PID.
+`getCapabilities().maintenanceOperations` is `['vacuum', 'analyze', 'reindex', 'kill']` before
+connect and on PostgreSQL itself; a connected relative keeps only what its server accepts
+([§9.1](#91-what-the-connected-server-accepts-measured-at-connect)). `kill` validates that the
+target parses as an integer PID.
+
+A statement that succeeds can still have done nothing, and the server says so in a notice:
+PostgreSQL skips a table the role does not own with the `WARNING` `permission denied to vacuum "t",
+skipping it`, and YugabyteDB 2026.1.2.0 answers every `VACUUM` with the `NOTICE` *VACUUM is a no-op
+statement since YugabyteDB performs garbage collection of dead tuples automatically* (measured
+2026-10-04). `runMaintenance` listens for the server's notices while its statement runs, and when a
+`NOTICE` or `WARNING` arrived the result reads `VACUUM completed, and the server said: <first
+three>; ... (and N more)` instead of `VACUUM completed successfully` (#1387). `INFO`, `LOG` and
+`DEBUG` are not quoted.
+
+A statement the server refuses is thrown as the driver raised it, and `POST /api/db/maintenance`
+types it through `mapDatabaseError`: a SQLSTATE of class `42`, `0A`, `22`, `23`, `21` or `44` is the
+statement's own fault and answers `400 QUERY_ERROR` with the server's sentence; anything else keeps a
+5xx (#1387, #1427).
+
+### 9.1 What the connected server accepts, measured at connect
+
+The `postgres` type id reaches wire-compatible engines that refuse part of PostgreSQL's
+maintenance, and each refuses it in its own words, so the set is measured per server the way the
+EXPLAIN grammar is ([§10.1](#101-the-explain-grammar-is-measured-at-connect-597)): `probeMaintenance()`
+asks once per `connect()`, on the client connect already borrowed, about five of the six statements
+the table above sends (the per-row ones carry the table name `libredb_maintenance_probe`, the global
+ones are the exact whole-database statements). Skipped under the agent's read-only profile, which
+keeps the declaration.
+
+**The bare `ANALYZE` is never sent.** It is the one whole-database statement a transaction block
+does not stop (`VACUUM` and `REINDEX DATABASE` refuse inside one with `25001`, `ANALYZE` runs
+there), so behind a statement-routing proxy such as Pgpool-II with load balancing, where the
+probe's block cannot be shown to reach the backend the next statement reaches, it could really run
+over a whole database. Its placement is inferred instead: offered where `ANALYZE <table>` and the
+bare `VACUUM ANALYZE` both parse. That is the measured answer on every server below; CockroachDB
+has the first and not the second, and refuses the bare `ANALYZE` too.
+
+**Nothing is run.** The probe opens a block, aborts it with `SELECT 1/0`, and sends each statement
+inside it. PostgreSQL parses a simple query before it checks the block, so a statement in its
+grammar answers `25P02` without parse analysis, planning or execution, and one it does not have
+answers its own grammar or feature error. The verdict is the SQLSTATE, never the message: `25P02`
+keeps the placement, anything else drops it. The block is rolled back before the client goes back
+to the pool.
+
+**A server whose `BEGIN` opens nothing is not asked**, because there the statements would run. The
+probe sends `SELECT 1` after the poison and stops unless it answers `25P02`; such a server is
+offered none of `vacuum`, `analyze` and `reindex`. The status `getTransactionStatus()` reports is
+not used for this: a rejected query settles before `pg` reads the ReadyForQuery that follows the
+error, and under bun 1.4.2 it still read `T` there on PostgreSQL 18.6 while node read `E`.
+
+**Only the server's answer narrows anything.** `25P02` keeps a placement and `42601` or `0A000`
+drops it. Any other code is followed by `SELECT 1` again: if the block still answers `25P02`,
+nothing ran and the statement counts as refused (an engine that reports a grammar refusal as
+`XX000`); if it does not, or if a statement RESOLVED, the probe stops at once and the declared set
+stands, because the next statement could run. A failure that is not an answer at all (a reset
+connection, a pooler in statement mode that refuses `BEGIN`) also leaves the declared set, so a
+cached provider never loses its maintenance to a transient fault. Only the measured "`BEGIN`
+opened nothing" offers none of the three. The probe never fails the connection, and a `ROLLBACK`
+that fails releases the connect client with that error, so `pg` destroys it instead of pooling a
+client still inside the probe's block.
+
+`REINDEX DATABASE` names the configured database, or for a connection string that names none,
+the one `SELECT current_database()` reports (asked only for that statement), so the probe and the
+run never send `REINDEX DATABASE ""`.
+
+Measured 2026-10-04 through `pg`:
+
+| Server | `VACUUM ANALYZE <t>` / bare | `ANALYZE <t>` / bare | `REINDEX TABLE <t>` / `DATABASE` | Offered |
+|--------|-----------------------------|----------------------|----------------------------------|---------|
+| PostgreSQL 18.6 (`postgres:latest`) | `25P02` / `25P02` | `25P02` / inferred | `25P02` / `25P02` | everything |
+| CockroachDB v26.3.2 (`cockroachdb/cockroach:latest`) | `42601` / `42601` | `25P02` / inferred (`42601` when sent by hand) | `42601` (`unimplemented: this syntax`) / `42601` | per-row Analyze only |
+| RisingWave 3.1.0 (`risingwavelabs/risingwave:latest`) | not asked | not asked | not asked | none: `BEGIN` opens nothing (ReadyForQuery `I`) |
+| YugabyteDB 2026.1.2.0 (`yugabytedb/yugabyte:latest`) | `25P02` / `25P02` | `25P02` / inferred | `0A000 REINDEX not supported yet` / `0A000 REINDEX SCHEMA/DATABASE/SYSTEM not supported yet` | Vacuum and Analyze |
+
+YugabyteDB raises its `REINDEX` refusals in its grammar, so they reach the probe as `0A000` and drop
+both placements. Its `VACUUM` is in the grammar and stays offered, and the run then quotes the
+server's no-op `NOTICE` as described above.
+
+The two maintenance surfaces read capabilities from `POST /api/db/provider-meta`, which never
+connects (#457) and so can only answer this declaration. `POST /api/db/monitoring` connects, and
+its payload carries the connected provider's `maintenanceOperations` and `maintenanceOperationSpecs`
+as `maintenance`; the admin Operations tab and the monitoring Tables tab lay that over the declared
+capabilities (`withConnectedMaintenance` in `src/lib/db/types.ts`), so a refused operation has no
+control there. The route refuses it too, from the same connected provider, with its existing 400.
+
+Every whole-database card on the admin Operations tab asks before it sends (#1438): a dialog names
+the run, the connection and its database, and nothing is sent until it is confirmed.
 
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
@@ -1685,7 +1933,9 @@ placements or neither.
 
 PostgreSQL is the engine both surfaces were already right about - every statement here has
 a one-table form and a whole-database form - so these declarations record the baseline the
-other providers are measured against rather than a change in behaviour. `vacuumAction`
+other providers are measured against rather than a change in behaviour. On a connected relative
+they are what [§9.1](#91-what-the-connected-server-accepts-measured-at-connect) narrows: a
+placement the server refused is `false` there, and an operation with neither is left out. `vacuumAction`
 really means `vacuum` here, so `vacuumActionOperation` stays absent.
 
 ---
@@ -1705,10 +1955,11 @@ Overrides the SQL base defaults:
 | `supportsCreateTable` | `true` |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
-| `supportsTransactions` | `true` — `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#464) |
+| `supportsTransactions` | `true`: `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#464). A relative whose `BEGIN` opens nothing (RisingWave) is refused at `beginTransaction()` rather than declared per type id ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
+| `implicitCommitStatements` | `END`, `PREPARE TRANSACTION`: the two statements besides COMMIT and ROLLBACK that end the transaction. No DDL is listed, because PostgreSQL's DDL is transactional; a relative that commits DDL anyway (CockroachDB's `autocommit_before_ddl`) is caught after the statement instead ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; an empty `foreignKeys` list is then a fact about the schema or the reading role, never about the engine |
 | `supportsMaintenance` | `true` |
-| `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
+| `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` before connect; after it, the operations the server accepted plus `kill`: **measured, not declared** (see [§9.1](#91-what-the-connected-server-accepts-measured-at-connect)) |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
 | `containerLevels` | one level, `schema`: the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |
@@ -1731,7 +1982,18 @@ turn and keeps the first that is accepted:
 | `EXPLAIN SELECT 1` | `postgres-text` | Materialize v26.40.0 |
 
 Each probe is the statement its strategy really sends, so a grammar that answers here is one the
-panel can use. The probe reads success or failure and never the message: the family shares no code or
+panel can use.
+
+**Only the Explain button executes.** The probe's `postgres-json` statement is the `analyze` form,
+the one the Explain button sends. The background plan the editor requests beside every run of a
+SELECT is the `estimate`, and for `postgres-json` that is `EXPLAIN (FORMAT JSON)`, which plans without
+running anything. A server that accepts the parenthesised ANALYZE form accepts that one too. Until
+#1311 the strategy ignored the mode and built the ANALYZE form for the estimate as well, so every
+SELECT ran twice: on PostgreSQL 18.6 one RUN of `SELECT nextval('my_seq')` advanced the sequence by
+two, on YugabyteDB 2026.1.2.0 the first `nextval` answered 101 (the plan's backend took the first
+cached block), and on Citus 14.2.0 and TimescaleDB 2.30.2 `create_distributed_table` and
+`create_hypertable` did their work in the hidden request first. `postgres-text-analyze` (CockroachDB)
+already honoured the mode, and `postgres-text` (Materialize) has no executing form. The probe reads success or failure and never the message: the family shares no code or
 wording for a grammar refusal, and keying on one would have to enumerate engines. A server that
 refuses all three declares `supportsExplain: false` and no format, and the connection still succeeds
 — a missing grammar is a fact about the Explain panel, not about the connection.

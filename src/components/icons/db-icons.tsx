@@ -583,6 +583,30 @@ export const QdrantIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
+ * InfluxDB: a mark drawn for Studio, never InfluxData's logo or any vendor asset (InfluxDB spec E19), shared by the
+ * InfluxQL and the SQL connection type.
+ *
+ * Three stacked rising strokes, the series over time a time-series database stores, at the house weight with no
+ * fill, which is what stays identifiable at the 14px the connection list draws.
+ */
+export const InfluxDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M3 8 8 6l4 1.5L21 3" />
+    <path d="m3 14 5-2 4 1.5L21 9" />
+    <path d="m3 20 5-2 4 1.5 9-4.5" />
+  </svg>
+);
+
+/**
  * Milvus: a mark drawn for Studio, never the project's logo or any vendor or Attu asset (vector-family spec 10.3).
  *
  * A query point and its three nearest neighbours, the search a vector database answers, as strokes at the house
@@ -608,5 +632,32 @@ export const MilvusIcon: React.FC<IconProps> = ({ className, ...props }) => (
     <path d="m11.15 14.1-1.45 3.75" />
     <path d="M3 21h3" />
     <path d="M18 21h3" />
+  </svg>
+);
+
+/**
+ * Oxia: a mark drawn for Studio, never the project's logo (DECISIONS O16).
+ *
+ * A ring cut into three equal arcs, each ending in a short key-shaped notch pointing outward, around a small dot:
+ * the shards of one hash ring, the keys routed into them, and the namespace they share.
+ */
+export const OxiaIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M13.22 5.11 A7 7 0 0 1 18.58 14.39 L21.4 15.42" />
+    <path d="M20.22 14.99 L20.7 12.91" />
+    <path d="M17.36 16.5 A7 7 0 0 1 6.64 16.5 L4.34 18.43" />
+    <path d="M5.3 17.62 L6.86 19.08" />
+    <path d="M5.42 14.39 A7 7 0 0 1 10.78 5.11 L10.26 2.15" />
+    <path d="M10.48 3.38 L8.44 4.01" />
+    <circle cx="12" cy="12" r="1.25" />
   </svg>
 );

@@ -15,6 +15,7 @@ ExecStart=/usr/bin/docker run \
   -p 3000:3000 \
   --env-file /etc/libredb-studio.env \
   -v /app/data:/app/data \
+  -v /etc/libredb-studio/seed:/app/seed:ro \
   ghcr.io/libredb/libredb-studio:PINNED_VERSION
 ExecStop=/usr/bin/docker stop libredb-studio
 ExecStopPost=-/usr/bin/docker rm -f libredb-studio

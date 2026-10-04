@@ -8,6 +8,8 @@ import { cleanup, render, within, fireEvent, act, waitFor } from "@testing-libra
 import { DataImportModal } from "@/components/DataImportModal";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { pathKey } from "@/lib/db/object-path";
+import { INFLUXQL_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
+import { INFLUXDB3_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/sql-objects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
@@ -128,6 +130,114 @@ describe("DataImportModal", () => {
     expect(input.accept).toContain(".json");
   });
 
+  // ── A failed import keeps the dialog (#1396) ───────────────────────────────
+
+  /**
+   * The dialog used to close 200ms after Execute Import whatever happened, so a statement the
+   * engine refused took the file and the mapping with it. It now closes only on success.
+   */
+  describe("the outcome of Execute Import (#1396)", () => {
+    function toReview(onImport: (sql: string, onFailure: (message: string) => void) => unknown, onClose = noop) {
+      const { baseElement } = render(
+        <DataImportModal
+          isOpen
+          onClose={onClose}
+          onImport={onImport as (sql: string, onFailure: (message: string) => void) => Promise<boolean>}
+          tables={[]}
+        />,
+      );
+      act(() => simulateFileUpload(baseElement, "id,when\n1,today", "data.csv"));
+      const body = within(baseElement);
+      fireEvent.click(body.getByText("Configure Import"));
+      fireEvent.click(body.getByText("New Table"));
+      fireEvent.change(body.getByLabelText("Target column for when"), { target: { value: "happened_at" } });
+      fireEvent.click(body.getByText("Review SQL"));
+      return body;
+    }
+
+    test("a failed import stays open with the engine's message and the mapping", async () => {
+      const onClose = mock(() => {});
+      const onImport = mock(async (_sql: string, onFailure: (message: string) => void) => {
+        onFailure('Statement 1 of 2 failed: syntax error at or near "when"');
+        return false;
+      });
+      const body = toReview(onImport, onClose);
+
+      await act(async () => {
+        fireEvent.click(body.getByText("Execute Import"));
+      });
+
+      expect(onClose).not.toHaveBeenCalled();
+      expect(body.getByRole("alert").textContent).toContain('syntax error at or near "when"');
+      expect(body.getByText("Execute Import")).toBeDefined();
+      // Back on the mapping, the column the user typed is still there.
+      fireEvent.click(body.getByText("Back"));
+      expect((body.getByLabelText("Target column for when") as HTMLInputElement).value).toBe("happened_at");
+    });
+
+    /**
+     * `false` with no message is a run the safety dialog took over (a PostgreSQL value ending in a
+     * backslash reads as an unterminated span there) or one that was cancelled. The safety dialog
+     * runs it on Proceed, so the import dialog closes as it always did: kept open, a second click
+     * imported the rows twice.
+     */
+    test("a run handed to the safety dialog closes the dialog", async () => {
+      const onClose = mock(() => {});
+      const body = toReview(
+        mock(async () => false),
+        onClose,
+      );
+      await act(async () => {
+        fireEvent.click(body.getByText("Execute Import"));
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(body.queryByRole("alert")).toBeNull();
+    });
+
+    test("an outcome that arrives after the dialog was closed is dropped", async () => {
+      let settle: (ran: boolean) => void = () => {};
+      const onImport = mock(
+        (_sql: string, onFailure: (message: string) => void) =>
+          new Promise<boolean>((resolve) => {
+            settle = (ran) => {
+              if (!ran) onFailure("late failure");
+              resolve(ran);
+            };
+          }),
+      );
+      const onClose = mock(() => {});
+      const body = toReview(onImport, onClose);
+      act(() => {
+        fireEvent.click(body.getByText("Execute Import"));
+      });
+      // Closed while the run is still out: the dialog is back at its first step.
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      expect(onClose).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        settle(false);
+      });
+      // The next import starts clean: no stale error, and its button is not stuck on "Importing".
+      act(() => simulateFileUpload(document.body, "id,when\n1,today", "data.csv"));
+      fireEvent.click(body.getByText("Configure Import"));
+      fireEvent.click(body.getByText("New Table"));
+      fireEvent.click(body.getByText("Review SQL"));
+      expect(body.queryByText("late failure")).toBeNull();
+      expect(body.getByText("Execute Import")).toBeDefined();
+    });
+
+    test("an import that landed closes the dialog", async () => {
+      const onClose = mock(() => {});
+      const body = toReview(
+        mock(async () => true),
+        onClose,
+      );
+      await act(async () => {
+        fireEvent.click(body.getByText("Execute Import"));
+      });
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // ── CSV file upload → Preview step ─────────────────────────────────────────
 
   test.each([";", "\t"])("delimiter picker reparses preview and keeps headerless import (%s)", (delimiter) => {
@@ -189,7 +299,7 @@ describe("DataImportModal", () => {
   });
 
   test("headerless CSV preserves the first row through preview, mapping, and SQL import", () => {
-    const onImport = mock((sql: string) => sql);
+    const onImport = mock((_sql: string) => {});
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={onImport} tables={sampleTables} />);
     act(() => simulateFileUpload(baseElement, "Alice,30\nBob,25", "headerless.csv"));
 
@@ -245,7 +355,7 @@ describe("DataImportModal", () => {
     ["column_1", "column_2"],
     ["name", "column_2"],
   ])("preserves target column mappings through header toggles for %s,%s", (firstHeader, secondHeader) => {
-    const onImport = mock((sql: string) => sql);
+    const onImport = mock((_sql: string) => {});
     const { baseElement } = render(<DataImportModal isOpen onClose={noop} onImport={onImport} tables={[]} />);
     act(() => simulateFileUpload(baseElement, `${firstHeader},${secondHeader}\nAlice,30`, "mapped.csv"));
     const body = within(baseElement);
@@ -1135,6 +1245,58 @@ describe("DataImportModal on a PromQL connection (#1085)", () => {
       objectKinds: [{ ...metricKind, acceptsRowWrites: true }],
     } as unknown as ProviderCapabilities;
     expect(metricTargetNames(writable)).toEqual(["http_requests_total", "up"]);
+  });
+});
+
+// =============================================================================
+// An InfluxDB measurement or table is never an import target (InfluxDB spec I1)
+// =============================================================================
+
+/**
+ * Both InfluxDB types are read-only in v1: neither the `measurement` kind of `influxdb` nor the `table` kind of
+ * `influxdb3` declares `acceptsRowWrites`, so the dialog offers no object of either as an import target, and the
+ * InfluxQL quoting is never asked of an import. The kinds below are the providers' own declarations, so this pins
+ * the real ones, beside the control where the same objects take row writes.
+ */
+describe("DataImportModal on an InfluxDB connection (InfluxDB spec I1)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const objects: DetailedObject[] = [
+    { name: "cpu", kind: "measurement", path: ["telegraf", "cpu"], columns: [], indexes: [] },
+    { name: "home", kind: "table", path: ["home"], columns: [], indexes: [] },
+  ];
+
+  function targetNamesOver(capabilities: ProviderCapabilities): string[] {
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={noop} onImport={noop} tables={objects} capabilities={capabilities} />,
+    );
+    act(() => {
+      simulateFileUpload(baseElement, "room,temp\nkitchen,21", "data.csv");
+    });
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    return Array.from(select.options)
+      .map((option) => option.textContent ?? "")
+      .filter((text) => text !== "-- Select a table --");
+  }
+
+  test.each([
+    ["influxdb", "influxql", INFLUXQL_OBJECT_KINDS],
+    ["influxdb3", "sql", INFLUXDB3_OBJECT_KINDS],
+  ] as const)("no %s object is offered as an import target", (_type, queryLanguage, objectKinds) => {
+    const capabilities = { queryLanguage, supportsCreateTable: true, objectKinds } as unknown as ProviderCapabilities;
+    expect(targetNamesOver(capabilities)).toEqual([]);
+    // The control: the same objects under kinds that take row writes are offered.
+    cleanup();
+    const writable = {
+      ...capabilities,
+      objectKinds: objectKinds.map((kind) => ({ ...kind, acceptsRowWrites: true })),
+    } as unknown as ProviderCapabilities;
+    expect(targetNamesOver(writable).length).toBeGreaterThan(0);
   });
 });
 

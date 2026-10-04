@@ -1,0 +1,19 @@
+{
+  "versions": [
+    {
+      "version": "1.13.1",
+      "image": "influxdb:1.13.1@sha256:3e3913d3b7512d1749922c8183bbf2a76973dd9f98e1a1e3249c652ec1576fc0",
+      "capturedAt": "2026-10-04"
+    },
+    {
+      "version": "2.9.1",
+      "image": "influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e",
+      "capturedAt": "2026-10-04"
+    },
+    {
+      "version": "3.12.0-core",
+      "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+      "capturedAt": "2026-10-04"
+    }
+  ]
+}

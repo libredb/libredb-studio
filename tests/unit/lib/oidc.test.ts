@@ -1,5 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { AuthConfigError } from "@/lib/auth-errors";
+import { SignJWT, decodeProtectedHeader, decodeJwt, jwtVerify } from "jose";
+import { derivedSigningKey, getJwtSecret } from "@/lib/config/auth-env";
 
 // ─── Mock openid-client before importing oidc.ts ────────────────────────────
 
@@ -230,6 +232,14 @@ describe("encryptState / decryptState", () => {
     expect(decrypted.nonce).toBe(testState.nonce);
   });
 
+  test("carries the return path when there is one, and adds none when there is not (#1420)", async () => {
+    expect(await decryptState(await encryptState({ ...testState, return_to: "/admin" }))).toEqual({
+      ...testState,
+      return_to: "/admin",
+    });
+    expect(await decryptState(await encryptState(testState))).toEqual(testState);
+  });
+
   test("fails to decrypt tampered token", async () => {
     const encrypted = await encryptState(testState);
     const tampered = encrypted.slice(0, -5) + "XXXXX";
@@ -243,6 +253,52 @@ describe("encryptState / decryptState", () => {
     } finally {
       process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-32ch";
     }
+  });
+
+  test("decryptState throws when JWT_SECRET is not set", async () => {
+    const encrypted = await encryptState(testState);
+    delete process.env.JWT_SECRET;
+    try {
+      await expect(decryptState(encrypted)).rejects.toThrow("JWT_SECRET is required");
+    } finally {
+      process.env.JWT_SECRET = "test-jwt-secret-for-unit-tests-32ch";
+    }
+  });
+
+  // The state token follows the purpose-derived key convention of the other non-session tokens.
+  const STATE_KEY_LABEL = "libredb.oidc.state.v1";
+  const STATE_TOKEN_TYPE = "libredb-oidc-state+jwt";
+
+  function stateJwt(typ?: string) {
+    return new SignJWT({ ...testState })
+      .setProtectedHeader(typ ? { alg: "HS256", typ } : { alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("5m");
+  }
+
+  test("the state token pins its own typ and lives five minutes", async () => {
+    const encrypted = await encryptState(testState);
+    expect(decodeProtectedHeader(encrypted)).toEqual({ alg: "HS256", typ: STATE_TOKEN_TYPE });
+    const { iat, exp } = decodeJwt(encrypted);
+    expect((exp as number) - (iat as number)).toBe(300);
+  });
+
+  test("the state token is signed with a key derived for its purpose, not the session key", async () => {
+    const encrypted = await encryptState(testState);
+    await expect(jwtVerify(encrypted, getJwtSecret())).rejects.toThrow();
+    const { payload } = await jwtVerify(encrypted, await derivedSigningKey(STATE_KEY_LABEL));
+    expect(payload.state).toBe(testState.state);
+  });
+
+  test("decryptState refuses a state token signed with the session key", async () => {
+    const token = await stateJwt(STATE_TOKEN_TYPE).sign(getJwtSecret());
+    await expect(decryptState(token)).rejects.toThrow();
+  });
+
+  test("decryptState refuses a state token without the pinned typ", async () => {
+    const key = await derivedSigningKey(STATE_KEY_LABEL);
+    await expect(decryptState(await stateJwt().sign(key))).rejects.toThrow();
+    await expect(decryptState(await stateJwt("JWT").sign(key))).rejects.toThrow();
   });
 });
 

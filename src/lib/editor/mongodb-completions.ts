@@ -215,7 +215,8 @@ export function registerMongoDBCompletionProvider(
             kind: monaco.languages.CompletionItemKind.Class,
             insertText: table.label,
             range,
-            detail: `Collection (${table.rowCount} docs)`,
+            // Only a measured count: an absent one read "(undefined docs)" (#1397).
+            detail: table.rowCount === undefined ? "Collection" : `Collection (${table.rowCount} docs)`,
             sortText: "0" + table.label,
           });
         });

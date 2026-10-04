@@ -7,6 +7,73 @@ import { cn } from "@/lib/utils";
 import { FlaskConical, Pencil, Play, Save, Square, Terminal, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+/**
+ * What the editor's Cancel control can do on a connection (#1364).
+ *
+ * - `cancel`: the provider can ask the engine to stop the statement (`cancelQuery`).
+ * - `stop-waiting`: it cannot (`supportsQueryCancel: false`). The control still ends the
+ *   editor's wait, so it reads "STOP WAITING", and the toast says the statement keeps running
+ *   on the server. It used to read CANCEL and report "Query Cancelled" while the engine kept
+ *   going (measured on ClickHouse before it could cancel, and on libSQL).
+ * - `unavailable`: the engine also blocks the server while it runs
+ *   (`blocksServerWhileRunning`, SQLite). Nothing the user did next would be answered before
+ *   the statement ends, so the control is disabled with the reason.
+ *
+ * Read on `=== false` / `=== true` only: an embedded host declares its own capabilities, and
+ * one that says nothing keeps the Cancel it always had.
+ */
+export type CancelControlMode = "cancel" | "stop-waiting" | "unavailable";
+
+export function cancelControlMode(metadata: ProviderMetadata | null): CancelControlMode {
+  if (metadata?.capabilities.blocksServerWhileRunning === true) return "unavailable";
+  if (metadata?.capabilities.supportsQueryCancel === false) return "stop-waiting";
+  return "cancel";
+}
+
+/** Why the control is disabled in `unavailable` mode. */
+export const CANCEL_UNAVAILABLE_REASON =
+  "This database runs a statement on the Studio server's own thread and cannot cancel it, so the statement runs until it ends.";
+
+/** What "STOP WAITING" does, on hover. */
+export const STOP_WAITING_HINT =
+  "This database cannot cancel a running statement. Stop waiting ends the editor's wait; the statement keeps running on the server.";
+
+/**
+ * The Cancel control of both editor shells' toolbars, in the mode `cancelControlMode` gives.
+ *
+ * The disabled reason sits on a wrapper, not on the button: a disabled `Button` takes no
+ * pointer events (`disabled:pointer-events-none`), so a title on the button never shows.
+ */
+export function CancelQueryButton({
+  mode,
+  onCancel,
+  className,
+}: {
+  mode: CancelControlMode;
+  onCancel: () => void;
+  className?: string;
+}) {
+  const button = (
+    <Button
+      size="sm"
+      className={cn("bg-danger-solid hover:bg-danger-solid-hover text-white font-medium text-xs h-7 px-4", className)}
+      onClick={onCancel}
+      disabled={mode === "unavailable"}
+      title={mode === "stop-waiting" ? STOP_WAITING_HINT : undefined}
+    >
+      <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
+      {mode === "stop-waiting" ? "STOP WAITING" : "CANCEL"}
+    </Button>
+  );
+  return mode === "unavailable" ? (
+    <span title={CANCEL_UNAVAILABLE_REASON} className="inline-flex">
+      {button}
+    </span>
+  ) : (
+    button
+  );
+}
+
 interface QueryToolbarProps {
   activeConnection: DatabaseConnection | null;
   metadata: ProviderMetadata | null;
@@ -96,14 +163,7 @@ export const QueryToolbar = React.memo(function QueryToolbar({
           )}
         </div>
         {isExecuting ? (
-          <Button
-            size="sm"
-            className="bg-danger-solid hover:bg-danger-solid-hover text-white font-medium text-xs h-7 px-4 gap-2"
-            onClick={onCancelQuery}
-          >
-            <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
-            CANCEL
-          </Button>
+          <CancelQueryButton mode={cancelControlMode(metadata)} onCancel={onCancelQuery} className="gap-2" />
         ) : (
           <Button
             size="sm"

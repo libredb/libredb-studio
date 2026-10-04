@@ -433,6 +433,14 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   milvus: "default",
   // A Qdrant console request, not SQL (vector-family spec 6.4): no SQL grammar is established for it, and none is read.
   qdrant: "default",
+  // InfluxQL, not SQL: the provider's own lexer reads it, so no SQL grammar is established for it, and none is read.
+  influxdb: "default",
+  // Five facts probed on InfluxDB 3.12.0 Core through `POST /api/v3/query_sql`, the route the provider
+  // sends on; see the influxdb3 block below and DATAFUSION_GRAMMAR in `grammar.ts` for the statement
+  // behind each one.
+  influxdb3: "established",
+  // One `oxia client` read command, not SQL (SB2-4.3): no SQL grammar is established for it, and none is read.
+  oxia: "default",
 };
 
 /**
@@ -467,6 +475,76 @@ describe("db2", () => {
     // writes an array element as `a[1]` and no subscript reading was established for plain SQL.
     expect(grammar.bracket).toBe(DEFAULT_SQL_GRAMMAR.bracket);
   });
+});
+
+/**
+ * Apache DataFusion as InfluxDB 3.12.0 Core parses it, every fact probed through
+ * `POST /api/v3/query_sql` with `{"db":"home","q":<text>,"format":"jsonl"}`, the body the provider
+ * sends, and re-run 2026-10-04. Each statement below answered as quoted.
+ */
+describe("influxdb3", () => {
+  const grammar = resolveSqlGrammar("influxdb3");
+
+  test("`#` is code: the rest of the line is not hidden", () => {
+    // `SELECT 1 AS x # c` is HTTP 400, `ParserError("Expected: end of statement, found: # at Line: 1,
+    // Column: 15")`.
+    expect(grammar.hash).toBe("code");
+  });
+
+  test("`[…]` is a subscript and an array literal, never a name quote", () => {
+    // `SELECT [1,2][1] AS x` answers `{"x":1}`; `SELECT [[1,2],[3,4]][2][1] AS x` answers `{"x":3}`,
+    // so the run nests; `SELECT ['a]b'][1] AS x` answers `{"x":"a]b"}`, so a literal inside it is a
+    // literal; `SELECT [room] FROM home` answers an array column named `make_array(home.room)`, so
+    // the brackets were read through to an expression.
+    expect(grammar.bracket).toBe("subscript");
+  });
+
+  test("block comments nest", () => {
+    // `SELECT 1 /* a /* b */ c */ AS x` answers `{"x":1}`: the inner `*/` did not close the run.
+    expect(grammar.blockComment).toBe("nesting");
+  });
+
+  test("`q'…'` is not in the grammar", () => {
+    // `SELECT q'[x]' AS x` is HTTP 400, `ParserError("Expected: end of statement, found: AS at Line: 1,
+    // Column: 15")`.
+    expect(grammar.alternateQuoting).toBe(false);
+  });
+
+  test("`//` is not a comment", () => {
+    // `SELECT 1 AS x // c` is HTTP 400, `ParserError("Expected: end of statement, found: // at Line: 1,
+    // Column: 15")`.
+    expect(grammar.doubleSlashComment).toBe(false);
+  });
+});
+
+/**
+ * How a script is cut (#1312). Each non-default row was measured in the end-to-end pass of
+ * 2026-10-03/04 before the fact existed, the cost quoted beside it.
+ */
+describe("script", () => {
+  test("Oracle reads PL/SQL units and SQL*Plus's `/` line, one statement per request", () => {
+    // A procedure cut at its inner `;` was stored INVALID (PLS-00103) on 26ai Free 23.26.3.
+    expect(resolveSqlGrammar("oracle").script).toEqual({ blocks: "pl-sql", separatorLine: "/", unit: "statement" });
+  });
+
+  test("SQL Server sends the batch between GO lines as one request", () => {
+    // `DECLARE @x INT = 5; SELECT @x * 2` as two requests was `Must declare the scalar
+    // variable "@x"` on 2025 RTM-CU9.
+    expect(resolveSqlGrammar("mssql").script).toEqual({ blocks: "none", separatorLine: "GO", unit: "batch" });
+  });
+
+  test.each<DatabaseType>(["sqlite", "libsql"])("%s reads a trigger body", (type) => {
+    // A trigger cut at its inner `;` was "incomplete input" on SQLite 3.50.4 and "unexpected
+    // end of input" on sqld 0.24.33.
+    expect(resolveSqlGrammar(type).script).toEqual({ blocks: "trigger-body", separatorLine: null, unit: "statement" });
+  });
+
+  test.each<DatabaseType>(["postgres", "mysql", "db2", "duckdb", "clickhouse", "trino", "cassandra", "influxdb3"])(
+    "%s keeps the default: every code `;` ends a statement",
+    (type) => {
+      expect(resolveSqlGrammar(type).script).toBe(DEFAULT_SQL_GRAMMAR.script);
+    },
+  );
 });
 
 describe("every database type has a recorded grammar decision", () => {
@@ -531,6 +609,14 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   // A Qdrant console request is a request line and one JSON body, not SQL text: its strings escape with a
   // backslash and `//` opens a comment, which a SQL span reader cannot follow (vector-family spec 6.4).
   qdrant: false,
+  // An InfluxQL statement is not SQL text: its strings escape with a backslash, `/.../` is a regex where the parser
+  // asks for one, and a `--` comment ends at a lone `\r`, none of which a SQL span reader follows (SPEC 5.7).
+  influxdb: false,
+  // SQL under the DataFusion grammar row: the provider extends SQLBaseProvider, so the SQL gate reads its text.
+  influxdb3: true,
+  // An `oxia client` read command is words split by POSIX shell rules, not SQL text: its quoting is the shell's,
+  // which a SQL span reader would report as unreadable (SB2-4.3).
+  oxia: false,
 };
 
 describe("readsSqlText", () => {

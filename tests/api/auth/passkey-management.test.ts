@@ -146,7 +146,7 @@ describe("the passkey management route", () => {
   test("GET answers 401 without a session", async () => {
     const res = await get();
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: "Authentication required" });
+    expect(await res.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test("GET lists the caller's passkeys, marked no-store", async () => {

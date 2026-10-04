@@ -14,10 +14,17 @@ const WARNING_FALLBACK_LABEL = "Warning";
  * code rather than rendering an empty line, and an entry carrying neither still
  * says that something was reported. `0` is a legal code, so absence is tested as
  * absence rather than as falsiness.
+ *
+ * A reported severity leads the line the way `psql` prints it (`NOTICE: ...`), because a
+ * PostgreSQL-wire server sends notices and warnings through the same channel (#1401).
  */
 export function describeWarning(warning: QueryWarning): string {
-  if (warning.message) return warning.message;
-  return warning.code === undefined ? WARNING_FALLBACK_LABEL : `${WARNING_FALLBACK_LABEL} ${warning.code}`;
+  const text = warning.message
+    ? warning.message
+    : warning.code === undefined
+      ? WARNING_FALLBACK_LABEL
+      : `${WARNING_FALLBACK_LABEL} ${warning.code}`;
+  return warning.severity ? `${warning.severity}: ${text}` : text;
 }
 
 /**
@@ -52,4 +59,20 @@ export function formatCellValue(value: unknown, context?: RenderContext): { disp
 export function formatCellCopy(value: unknown, context?: RenderContext): string {
   const renderer = getRenderer(classifyValue(value, context));
   return renderer.renderCopy?.(value, context) ?? renderer.renderCompact(value, context).display;
+}
+
+/**
+ * Case folding for the column filter (#1409).
+ *
+ * `"İ".toLowerCase()` is "i" plus U+0307 (combining dot above), so the filter `izmir` never found
+ * the dotted capital spelling; and under a Turkish locale `toLocaleLowerCase` turns a plain "I" into the
+ * dotless "ı", which would break the same match the other way. So the combining dot is dropped after
+ * lowercasing and the dotless "ı" is read as "i". Nothing else is normalised: no NFD, which would make
+ * `e` match `é` and a Hangul syllable match its first jamo.
+ */
+export function foldFilterCase(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\u0307/g, "")
+    .replace(/\u0131/g, "i");
 }

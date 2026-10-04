@@ -1752,6 +1752,29 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
+   * The name a run copies into its statement. Shown as `home.home`, a plan on InfluxDB 1.13.1 wrote
+   * `FROM "home"."home"`, which InfluxQL reads as retention policy `home` and refuses; the source InfluxQL
+   * writes for `[database, measurement]` is `"home".."home"`, the database's default retention policy.
+   */
+  test("an InfluxQL measurement is named as an InfluxQL source, with its own name as the label", async () => {
+    const harness = objectHarness({
+      containers: () => [{ path: ["home"], name: "home", level: 0 }],
+      objects: (container, kind) => (kind === "table" ? [{ path: [...container, "home"], name: "home", kind }] : []),
+      counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+    });
+    const snapshot = await inventoryOf({
+      ...harness,
+      context: { ...harness.context, capabilities: { ...harness.context.capabilities, queryLanguage: "influxql" } },
+    });
+
+    expect(snapshot.objects.map((object) => [object.name, object.label])).toEqual([['"home".."home"', "home"]]);
+    // And the context a run is handed spells it the same way, never as the dotted segments.
+    const packed = packContextForTask(snapshot, "home");
+    expect(packed).toContain('"home".."home"');
+    expect(packed).not.toContain("home.home");
+  });
+
+  /**
    * A column a provider only inferred from sampled data is named by the data, so the walk
    * builds no inventory object with it, and neither the snapshot nor the context a model is handed holds it.
    */
@@ -3468,6 +3491,7 @@ describe("the identity a held inventory is filed under", () => {
     // The case B45 describes, and the one an id-keyed hold could not see: same record,
     // same id, different database.
     expect(repointed({ database: "staging" })).not.toBe(connectionIdentity(CONNECTION));
+    expect(repointed({ dataServers: "a.internal:6648" })).not.toBe(connectionIdentity(CONNECTION));
     expect(repointed({ schema: "tiny" })).not.toBe(connectionIdentity(CONNECTION));
   });
 

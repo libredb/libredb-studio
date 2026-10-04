@@ -107,6 +107,7 @@ import {
   PAIR_TRUNCATION_REASON,
 } from "@/lib/db/inventory-bounds";
 import { asBytes, binaryText } from "@/lib/export/binary";
+import { nonFiniteWord } from "@/lib/non-finite";
 import { hasOptimizerHint } from "@/lib/sql/optimizer-hints";
 import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
@@ -1794,6 +1795,8 @@ function renderRows(rows: readonly Record<string, unknown>[]): string {
     .map((row) =>
       JSON.stringify(row, (_key, value) => {
         if (typeof value === "bigint") return value.toString();
+        // NaN and the infinities as words: left to `JSON.stringify` they read as SQL NULL.
+        if (typeof value === "number") return nonFiniteWord(value) ?? value;
         const bytes = asBytes(value);
         return bytes === undefined ? value : binaryText(bytes);
       }),

@@ -821,6 +821,33 @@ describe("ClickHouseProvider query", () => {
     expect(result.columnTypes).toBeUndefined();
   });
 
+  test("keeps a Decimal past double precision exact, as the digits the server printed", async () => {
+    // Measured on 26.9.9.28: without `output_format_json_quote_decimals` a
+    // Decimal(38,10) arrives as the UNQUOTED number below and JSON.parse rounds it
+    // to 12345678901234567000 with no error. The fake answers the way the server
+    // does, quoting only when the request asked it to, so a transport that stopped
+    // asking would put the rounded value back in the grid.
+    const provider = await connectProvider();
+    replyFor = () => {
+      const quoted =
+        new URL(sentUrls[sentUrls.length - 1]).searchParams.get("output_format_json_quote_decimals") === "1";
+      const amount = quoted ? '"12345678901234567890.1234567891"' : "12345678901234567890.1234567891";
+      const small = quoted ? '"12.34"' : "12.34";
+      return {
+        body:
+          '{"meta":[{"name":"id","type":"UInt32"},{"name":"amount","type":"Decimal(38, 10)"},' +
+          '{"name":"small","type":"Decimal(10, 2)"},{"name":"f","type":"Float64"}],' +
+          `"data":[{"id":1,"amount":${amount},"small":${small},"f":1.5}],"rows":1,"statistics":{"elapsed":0.001}}`,
+      };
+    };
+
+    const result = await provider.query("SELECT id, amount, small, f FROM t1");
+
+    // A small Decimal is a string as well, the way the `pg` driver hands over
+    // NUMERIC; UInt32 and Float64 stay numbers.
+    expect(result.rows).toEqual([{ id: 1, amount: "12345678901234567890.1234567891", small: "12.34", f: 1.5 }]);
+  });
+
   test("leaves the type channel absent when the envelope described no columns at all", async () => {
     const provider = await connectProvider();
     replyFor = () => ({ body: JSON.stringify({ meta: [], data: [] }) });
@@ -834,6 +861,117 @@ describe("ClickHouseProvider query", () => {
 // ============================================================================
 // Error mapping
 // ============================================================================
+
+// ============================================================================
+// Cancellation (#1364)
+// ============================================================================
+
+describe("ClickHouseProvider cancelQuery", () => {
+  const LONG = "SELECT count() FROM numbers(200000000000) WHERE sipHash64(number) % 7 = 3";
+
+  /**
+   * Hold the long statement's answer until the test releases it, and answer the KILL
+   * with `kill`. Measured on 26.9.9.28: a KILL that reached the statement answers one
+   * row with `kill_status` `finished`, and one that matched nothing answers 200 with an
+   * empty body.
+   */
+  function holdLongStatement(kill: () => Reply) {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const sql = String(init?.body);
+      sentUrls.push(String(input));
+      sentSql.push(sql);
+      if (sql === LONG) {
+        await held;
+        return toResponse(exceptionReply(394, "QUERY_WAS_CANCELLED", "Query was cancelled", 500));
+      }
+      if (sql.startsWith("KILL QUERY")) {
+        const reply = kill();
+        release();
+        return toResponse(reply);
+      }
+      return toResponse(defaultReply(sql));
+    }) as typeof fetch;
+    return () => release();
+  }
+
+  const KILLED = (killStatus: string) =>
+    jsonReply([{ kill_status: killStatus, query_id: "q-1", user: "default", query: LONG }]);
+
+  // ClickHouse keeps a query id unique per server USER only, so the caller's id (which any
+  // Studio user chooses) must not become it: two users on one ClickHouse account could then
+  // share an id, and one KILL would stop both.
+  test("runs the statement under a query id it generates, never the caller's", async () => {
+    const provider = await connectProvider();
+
+    await provider.query("SELECT count() FROM orders", undefined, "q-1");
+    await provider.query("SELECT 2");
+
+    const serverId = new URL(urlWith("count()")).searchParams.get("query_id");
+    expect(serverId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(serverId).not.toBe("q-1");
+    // Without an id the server picks its own, as before.
+    expect(new URL(urlWith("SELECT 2")).searchParams.has("query_id")).toBe(false);
+  });
+
+  test("kills the running statement by that id and says so once the server stopped it", async () => {
+    holdLongStatement(() => KILLED("finished"));
+    const provider = await connectProvider();
+
+    const running = provider.query(LONG, undefined, "q-1").catch((error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(await provider.cancelQuery("q-1")).toBe(true);
+    // The KILL names the id the statement was sent under, not the caller's.
+    const serverId = new URL(urlWith("sipHash64")).searchParams.get("query_id");
+    expect(sqlWith("KILL QUERY")).toBe(`KILL QUERY WHERE query_id = '${serverId}' SYNC`);
+    expect((await running) as Error).toBeInstanceOf(QueryCancelledError);
+  });
+
+  test("answers false when the KILL reached nothing, or could not stop it", async () => {
+    for (const reply of [() => writeReply("0"), () => KILLED("cant_cancel")]) {
+      const release = holdLongStatement(reply);
+      const provider = await connectProvider();
+      const running = provider.query(LONG, undefined, "q-1").catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(await provider.cancelQuery("q-1")).toBe(false);
+      release();
+      await running;
+    }
+  });
+
+  test("answers false when the KILL itself fails", async () => {
+    const release = holdLongStatement(() => DENIED());
+    const provider = await connectProvider();
+    const running = provider.query(LONG, undefined, "q-1").catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      expect(await provider.cancelQuery("q-1")).toBe(false);
+    } finally {
+      logged.mockRestore();
+      release();
+      await running;
+    }
+  });
+
+  // An id this provider is not running is refused before anything is sent: the KILL
+  // would otherwise reach whichever session on the server runs under that id.
+  test("sends nothing for an id it is not running, including one that has finished", async () => {
+    const provider = await connectProvider();
+    await provider.query("SELECT 1", undefined, "q-done");
+    sentSql = [];
+
+    expect(await provider.cancelQuery("q-done")).toBe(false);
+    expect(await provider.cancelQuery("q-never")).toBe(false);
+    expect(sentSql).toEqual([]);
+  });
+});
 
 describe("ClickHouseProvider error mapping", () => {
   test("a missing grant becomes an AuthenticationError even though its prose says neither denied nor permission", async () => {

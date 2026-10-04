@@ -178,3 +178,41 @@ describe("makeRetryable", () => {
     expect(result).toBe(10);
   });
 });
+
+// A signal the caller already aborted is a decision, not a transient failure: sending the request again,
+// after a backoff, only delays the error the caller is waiting for.
+describe("withRetry with an aborted signal", () => {
+  test("an abort during the backoff ends the wait early, with no further attempt", async () => {
+    const controller = new AbortController();
+    const fn = mock(async () => {
+      setTimeout(() => controller.abort(), 10);
+      throw new LLMRateLimitError("rate limited", "openai");
+    });
+    const started = Date.now();
+    await expect(
+      withRetry(fn, { maxAttempts: 3, initialDelay: 1000, maxDelay: 1000, signal: controller.signal }),
+    ).rejects.toThrow("rate limited");
+    expect(fn).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  test("a signal aborted before the first attempt sends nothing and throws its reason", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("caller left"));
+    const fn = mock(async () => "sent");
+    await expect(withRetry(fn, { signal: controller.signal })).rejects.toThrow("caller left");
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test("a failure raised after the signal aborted ends the retries", async () => {
+    const controller = new AbortController();
+    const fn = mock(async () => {
+      controller.abort();
+      throw new LLMRateLimitError("rate limited", "openai");
+    });
+    await expect(
+      withRetry(fn, { maxAttempts: 3, initialDelay: 1, maxDelay: 5, signal: controller.signal }),
+    ).rejects.toThrow("rate limited");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});

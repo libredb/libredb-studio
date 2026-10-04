@@ -4,15 +4,29 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfig, types } from "pg";
+import {
+  Client,
+  type ClientBase,
+  type ClientConfig,
+  Pool,
+  type PoolClient,
+  type PoolConfig as PgPoolConfig,
+  type QueryConfig,
+  types,
+} from "pg";
 import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
   type OpenQueryTransactionOutcome,
   type QueryResult,
+  type QueryWarning,
   type HealthInfo,
+  type MaintenanceDeclaration,
+  type MaintenanceOperation,
   type MaintenanceType,
   type MaintenanceResult,
+  type MeasuredMaintenancePlacements,
+  narrowMaintenance,
   type ProviderOptions,
   type ExplainFormat,
   type ProviderCapabilities,
@@ -69,9 +83,11 @@ import {
   ExecutionProfileError,
   QueryError,
   mapDatabaseError,
+  NO_TRANSACTION_OPENED,
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
+import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
@@ -100,6 +116,8 @@ const DATE_OID = 1082;
 const TIMESTAMP_OID = 1114;
 const DATE_ARRAY_OID = 1182;
 const TIMESTAMP_ARRAY_OID = 1115;
+const TIMESTAMPTZ_OID = 1184;
+const TIMESTAMPTZ_ARRAY_OID = 1185;
 // Widened to `number`: `pg-types` types the OID as an enum of scalar types, and 1009 is not one.
 const TEXT_ARRAY_OID: number = 1009;
 
@@ -118,6 +136,9 @@ type TypeFormat = Parameters<typeof types.getTypeParser>[1];
  * names an instant, so there is no Date that is right for it, and the text is exact.
  *
  * `timestamptz` does name one, and stays a Date: its ISO UTC string is the same in every TZ.
+ * Its two infinities are the exception, and arrive as the engine's text: `pg-types` reads
+ * `infinity` as the NUMBER Infinity, which `JSON.stringify` writes as null, so measured on
+ * PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
  *
  * Per pool, never `types.setTypeParser`: that registry is process-wide, and a host that embeds
  * `@libredb/studio` has its own `pg` users. Only the text format is intercepted, because the
@@ -129,14 +150,142 @@ const ZONELESS_AS_TEXT: NonNullable<PgPoolConfig["types"]> = {
     if (format === "text") {
       if (oid === DATE_OID || oid === TIMESTAMP_OID) return (value: string) => value;
       if (oid === DATE_ARRAY_OID || oid === TIMESTAMP_ARRAY_OID) return types.getTypeParser(TEXT_ARRAY_OID, "text");
+      if (oid === TIMESTAMPTZ_OID) return instantOrInfinity;
+      if (oid === TIMESTAMPTZ_ARRAY_OID) {
+        return (value: string) => instantsOrInfinities(types.getTypeParser(TEXT_ARRAY_OID, "text")(value));
+      }
     }
     return types.getTypeParser(oid, format);
   },
 };
 
+const INFINITE_INSTANT = /^-?infinity$/;
+
+/** A `timestamptz` as the Date `pg-types` builds, or its text when it is one of the two infinities. */
+function instantOrInfinity(value: string): unknown {
+  return INFINITE_INSTANT.test(value) ? value : types.getTypeParser(TIMESTAMPTZ_OID, "text")(value);
+}
+
+/** A `timestamptz[]` read as `text[]` (nested for more dimensions, NULL kept), each element as above. */
+function instantsOrInfinities(element: unknown): unknown {
+  if (Array.isArray(element)) return element.map(instantsOrInfinities);
+  return typeof element === "string" ? instantOrInfinity(element) : element;
+}
+
+/** The fields of a `NoticeResponse` this provider reads; `pg` hands over the parsed message. */
+interface ServerNotice {
+  severity?: string;
+  code?: string;
+  message?: string;
+}
+
+/**
+ * The notices each pooled client has received and nobody has taken yet (#1401).
+ *
+ * `pg` emits a server's NoticeResponse as a `notice` event on the client and does nothing else
+ * with it, so without a listener every WARNING and NOTICE is thrown away. On the PostgreSQL-wire
+ * relatives that is often the only sign a statement did not do what it looks like: measured
+ * 2026-10-03/04, Apache Cloudberry 2.1.0 accepts a foreign key and WARNs that it will not be
+ * enforced, and Materialize v26.44.1 accepts a session database that does not exist and says so
+ * only in a NOTICE (`MZ004`) sent during the startup handshake, before any statement.
+ *
+ * Kept per client because a notice belongs to the session that raised it, and a pool hands
+ * several sessions out at once. Weak so a client the pool destroys takes its list with it.
+ */
+const pendingNotices = new WeakMap<ClientBase, NoticeBatch>();
+
+/**
+ * How many notices one client keeps before it only counts them. A `RAISE NOTICE` in a loop can
+ * send a million in one statement, and every one kept would be held in memory here and then
+ * drawn as a line of the results panel. The first ones are the ones a reader acts on.
+ */
+const NOTICE_KEEP_LIMIT = 100;
+
+/** What one client received: the first `NOTICE_KEEP_LIMIT` notices, and how many came after them. */
+interface NoticeBatch {
+  kept: ServerNotice[];
+  dropped: number;
+}
+
+/**
+ * The client every pool of this provider builds, so its notices are kept from the first byte.
+ *
+ * A listener attached after `pool.connect()` would be too late for the startup handshake, which
+ * is where Materialize reports a missing session database: the pool resolves the borrow only
+ * after ReadyForQuery, and the NOTICE arrives before it.
+ */
+class NoticeKeepingClient extends Client {
+  constructor(config?: string | ClientConfig) {
+    super(config);
+    const batch: NoticeBatch = { kept: [], dropped: 0 };
+    pendingNotices.set(this, batch);
+    this.on("notice", (notice: ServerNotice) => {
+      if (batch.kept.length < NOTICE_KEEP_LIMIT) batch.kept.push(notice);
+      else batch.dropped++;
+    });
+  }
+}
+
+/** Everything `client` has received and not yet handed out, emptied as it is read. */
+function takeNotices(client: ClientBase): NoticeBatch {
+  const batch = pendingNotices.get(client);
+  if (batch === undefined) return { kept: [], dropped: 0 };
+  const taken = { kept: batch.kept.splice(0), dropped: batch.dropped };
+  batch.dropped = 0;
+  return taken;
+}
+
+/**
+ * A statement's result's `warnings`: absent when the server sent no notice, per the contract on
+ * `QueryResult.warnings`, never an empty array. The severity travels with each one because a
+ * NOTICE (`table "t" does not exist, skipping`) and a WARNING read differently. Only the primary
+ * message line is carried; a notice's DETAIL and HINT fields are not. Notices past the keep limit
+ * are reported as one closing entry that counts them, so the reader knows the list is not whole.
+ */
+function noticesAsWarnings({ kept, dropped }: NoticeBatch): { warnings?: QueryWarning[] } {
+  if (kept.length === 0) return {};
+  const warnings: QueryWarning[] = kept.map((notice) => ({
+    message: notice.message ?? "",
+    code: notice.code,
+    severity: notice.severity,
+  }));
+  if (dropped > 0) warnings.push({ message: `${dropped} more notice${dropped === 1 ? "" : "s"} not shown` });
+  return { warnings };
+}
+
+/**
+ * Whether a notice sent during the startup handshake is worth showing. SQLSTATE class `00` is
+ * successful completion: Materialize greets every session with one (`00000`, "connected to
+ * Materialize v26.44.1" and a block of session facts), which is no caution at all.
+ */
+function isStartupCaution(notice: ServerNotice): boolean {
+  return !notice.code?.startsWith("00");
+}
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
+
+/**
+ * What `pg` keeps on a connected client and does not declare in its types: the BackendKeyData
+ * the server sent at startup, the address the client connected to (a tunnel's local end when
+ * there is one), and its TLS setting. The wire-protocol cancel needs all five, the last so it
+ * is encrypted wherever the session is.
+ */
+interface BackendKey {
+  processID?: unknown;
+  secretKey?: unknown;
+  host: string;
+  port: number;
+  ssl?: PgCancelTarget["ssl"];
+}
+
+/**
+ * How long a wire-protocol cancel may take to show: first for the request itself, then for
+ * the run to end. CockroachDB v26.3.2 ended `pg_sleep(20)` about 0.5 s after the request.
+ */
+const WIRE_CANCEL_CONFIRM_MS = 3000;
+const SETTLE_POLL_MS = 25;
 
 interface PgStatActivityRow {
   datname?: string;
@@ -317,12 +466,17 @@ function schemaExclusion(column: string): string {
   return `${column} NOT IN (${SYSTEM_SCHEMA_LIST}) AND ${column} NOT IN (${EXTENSION_OWNED_SCHEMAS_SQL})`;
 }
 
+// `kcu.column_name` is `information_schema.sql_identifier`, and node-postgres has no array
+// parser for `sql_identifier[]`: uncast, the list reached `objectDetailFromRow` as the text
+// `{id}`, where `includes()` became a substring test that flagged `i` and `d` as keys too,
+// measured on PostgreSQL 18.6 (#1394). The `text` cast makes it a `text[]` the driver
+// parses, and `ordinal_position` hands the key back in its declared order.
 const CTE_PK_INFO = `
         pk_info AS MATERIALIZED (
           SELECT
             tc.table_schema,
             tc.table_name,
-            array_agg(kcu.column_name) as pk_columns
+            array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) as pk_columns
           FROM information_schema.table_constraints tc
           JOIN information_schema.key_column_usage kcu
             ON tc.constraint_name = kcu.constraint_name
@@ -581,7 +735,10 @@ const COUNTS_RELATION_ARM = `
           WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','S')`;
 
 // `prokind` is a PostgreSQL 11 column. Everything that predates it, and the forks that
-// never grew it, answer 42703 here - which is why this arm is separable at all.
+// never grew it, refuse this arm - which is why it is separable at all. They do not agree
+// on HOW: PostgreSQL answers 42703, Materialize v26.44.1 answers XX000 with the same
+// `column "p.prokind" does not exist`, so `isMissingProkindError()` reads the column name
+// and not the code.
 const COUNTS_ROUTINE_ARM = `
           SELECT CASE p.prokind WHEN 'f' THEN 'function' WHEN 'p' THEN 'procedure' END
           FROM pg_catalog.pg_proc p
@@ -615,12 +772,15 @@ const COUNTS_SQL_WITHOUT_ROUTINES = countsSql([COUNTS_RELATION_ARM, COUNTS_TRIGG
 
 // A server that has no `pg_proc.prokind` cannot tell a function from a procedure, so the
 // two routine folders are unknowable there - but the relations and the triggers still
-// are. Keyed on the column name as well as the code because 42703 is "undefined column"
-// generally, and re-running without the routine arm repairs nothing if the missing
-// column was in one of the arms that survive.
+// are. Keyed on the column name and NOT on the SQLSTATE, like every other fallback in
+// this file: PostgreSQL answers 42703, while Materialize v26.44.1 answers XX000 (its
+// generic internal error) with the same `column "p.prokind" does not exist`, so a 42703
+// key cost the whole tree there and an XX000 key would read every internal error as a
+// missing column. Only the routine arm names `prokind`, so a refusal that names it is a
+// refusal of that arm, and re-running without it is a repair rather than a guess.
 function isMissingProkindError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return (error as { code?: string }).code === "42703" && error.message.toLowerCase().includes("prokind");
+  return error.message.toLowerCase().includes("prokind");
 }
 
 // The relkinds behind each relation-shaped kind id, so `listObjects` never interpolates
@@ -1550,7 +1710,9 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
  */
 
 function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): ObjectDetail {
-  const pkColumns: string[] = row.pk_columns || [];
+  // Only an array is a key list: a string here is an unparsed array literal, and a
+  // substring test on it is how a column named `i` became a key of `{id}` (#1394).
+  const pkColumns: string[] = Array.isArray(row.pk_columns) ? row.pk_columns : [];
   return {
     path: [...path],
     columns: (row.columns || []).map((col) => ({
@@ -1831,7 +1993,9 @@ const TABLE_STATS_ORDER_SQL = `
       `;
 
 // getIndexStats: per-index stats. A schema WHERE clause is interpolated
-// between the two fragments at the call site.
+// between the two fragments at the call site. `attname` is cast to `text` because
+// node-postgres parses no `name[]`: uncast, the column list arrived as the text
+// `{id}` and the mapping's array guard turned every index's columns into [] (#1394).
 const INDEX_STATS_SELECT_SQL = `
         SELECT
           s.schemaname as schema_name,
@@ -1845,7 +2009,7 @@ const INDEX_STATS_SELECT_SQL = `
           s.idx_tup_fetch as tuples_fetched,
           ix.indisunique as is_unique,
           ix.indisprimary as is_primary,
-          array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+          array_agg(a.attname::text ORDER BY array_position(ix.indkey, a.attnum)) as columns,
           CASE
             WHEN (SELECT seq_scan + idx_scan FROM pg_stat_user_tables t WHERE t.relid = s.relid) > 0
             THEN ROUND(
@@ -1985,9 +2149,12 @@ function assertAgentRoleIsUnprivileged(rows: unknown[]): void {
  *   MEMORY, found SELECT` for `EXPLAIN ANALYZE`, which is a different statement
  *   there. The plain `EXPLAIN` is the only plan grammar it publishes.
  *
- * Each probe is the statement its strategy really sends, so a grammar that answers
- * here is one the panel can use. `SELECT 1` is what they run: the first two forms
- * execute what they explain, and this one has nothing to execute.
+ * Each probe is the statement its strategy sends for the Explain button (`analyze`),
+ * so a grammar that answers here is one the panel can use. The background plan asks
+ * for the `estimate`, which `postgres-json` builds as `EXPLAIN (FORMAT JSON)` (#1311);
+ * that form is not probed, because a server accepting the parenthesised ANALYZE form
+ * accepts it too. `SELECT 1` is what they run: the first two forms execute what they
+ * explain, and this one has nothing to execute.
  */
 const EXPLAIN_PROBES: readonly (readonly [sql: string, format: ExplainFormat])[] = [
   ["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1", "postgres-json"],
@@ -2020,6 +2187,100 @@ async function probeExplainFormat(client: PoolClient): Promise<ExplainFormat | u
   }
   return undefined;
 }
+
+/**
+ * PostgreSQL's maintenance, as PostgreSQL itself runs it.
+ *
+ * Every statement has both forms - `VACUUM ANALYZE <table>` and bare `VACUUM ANALYZE`, `REINDEX
+ * TABLE <table>` and `REINDEX DATABASE` - so PostgreSQL is the engine whose per-row and global
+ * controls were both already right (#496). `kill` takes a backend PID, which only the Sessions
+ * panel can supply. This is the declaration before a server is measured; what a connected server
+ * keeps of it is `probeMaintenance`'s answer (#1387).
+ */
+const POSTGRES_MAINTENANCE: Required<MaintenanceDeclaration> = {
+  maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+  maintenanceOperationSpecs: {
+    vacuum: { label: "Vacuum Table", perEntity: true, global: true },
+    analyze: { label: "Analyze Table", perEntity: true, global: true },
+    reindex: { label: "Reindex Table", perEntity: true, global: true },
+    kill: { label: "Terminate Backend", perEntity: false, global: false },
+  },
+};
+
+/** The operations `probeMaintenance` asks the server about; `kill` is a function call, not a statement form. */
+const PROBED_MAINTENANCE: readonly MaintenanceType[] = ["vacuum", "analyze", "reindex"];
+
+/**
+ * The table name the per-row probes carry. Never resolved: an aborted block refuses before parse
+ * analysis, so whether a relation of this name exists makes no difference to the answer.
+ */
+const MAINTENANCE_PROBE_TARGET = "libredb_maintenance_probe";
+
+/**
+ * The two SQLSTATEs a grammar refusal arrives as inside the probe's block: `42601` syntax error
+ * (PostgreSQL, CockroachDB) and `0A000` feature not supported (YugabyteDB's `REINDEX`).
+ */
+const GRAMMAR_REFUSAL_SQLSTATES = new Set([SYNTAX_ERROR_SQLSTATE, "0A000"]);
+
+/**
+ * What the server answered one statement sent inside the probe's aborted block (#1387).
+ *
+ * `accepted` is `25P02`: the grammar took it and nothing ran. `refused` is a grammar refusal.
+ * `resolved` is a statement that SUCCEEDED, which no aborted block allows, so the block is not
+ * what the probe thinks it is. `other` is any other failure, which the caller reads only after it
+ * has asked the server again whether the block is still aborted.
+ */
+type AbortedBlockAnswer = "accepted" | "refused" | "resolved" | "other";
+
+async function answerInAbortedBlock(client: PoolClient, sql: string): Promise<AbortedBlockAnswer> {
+  try {
+    await client.query(sql);
+    return "resolved";
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === ABORTED_BLOCK_SQLSTATE) return "accepted";
+    return typeof code === "string" && GRAMMAR_REFUSAL_SQLSTATES.has(code) ? "refused" : "other";
+  }
+}
+
+/** What `probeMaintenance` measured, and the error to release the connect client with, if any. */
+interface MaintenanceProbe {
+  /** Undefined is "not measured": the declaration stands. */
+  readonly measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
+  /** Set when the probe's ROLLBACK failed, so `pg` destroys the client instead of pooling it. */
+  readonly discard?: Error;
+}
+
+/** How many of the server's notices a maintenance result quotes before it counts the rest. */
+const MAINTENANCE_NOTICES_SHOWN = 3;
+
+/**
+ * The notice severities a maintenance result quotes. `INFO`, `LOG` and `DEBUG` are chatter a
+ * `VERBOSE` run or a server setting asks for; these two are the server saying something about
+ * what the statement did.
+ */
+const MAINTENANCE_NOTICE_SEVERITIES = new Set(["NOTICE", "WARNING"]);
+
+/**
+ * The sentence a finished maintenance statement reports: what the server said about it when it
+ * said anything, quoted as it wrote it and bounded, because a whole-database VACUUM by a role that
+ * owns few tables warns once per table it skipped (#1387).
+ */
+function maintenanceMessage(type: MaintenanceType, notices: readonly string[]): string {
+  const verb = type.toUpperCase();
+  if (notices.length === 0) return `${verb} completed successfully`;
+  const shown = notices.slice(0, MAINTENANCE_NOTICES_SHOWN).join("; ");
+  const more = notices.length - MAINTENANCE_NOTICES_SHOWN;
+  return `${verb} completed, and the server said: ${shown}${more > 0 ? ` (and ${more} more)` : ""}`;
+}
+
+/** The statement that tells an aborted block from one the server never opened: `25P02` only in the first. */
+const MAINTENANCE_PROBE_SENTINEL = "SELECT 1";
+
+/** What a server whose `BEGIN` measurably opened nothing is offered: none of the probed operations. */
+const MAINTENANCE_UNMEASURED: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> = Object.fromEntries(
+  PROBED_MAINTENANCE.map((operation) => [operation, { perEntity: false, global: false }]),
+);
 
 // ============================================================================
 // PostgreSQL Provider
@@ -2062,6 +2323,9 @@ export class PostgresProvider extends SQLBaseProvider {
   private txTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+  /** The cautions the server raised while `connect()` opened its first session (#1401). */
+  private startupWarnings: QueryWarning[] = [];
+
   /** True when this instance was opened under the agent read-only profile. */
   private readonly readOnlyProfile: boolean;
 
@@ -2074,6 +2338,13 @@ export class PostgresProvider extends SQLBaseProvider {
    * the behaviour it had.
    */
   private measuredExplainFormat: ExplainFormat | undefined = "postgres-json";
+
+  /**
+   * Which placements of each maintenance statement this server accepts, measured by
+   * `probeMaintenance()` at connect (#1387). Undefined is "not measured", and answers the whole
+   * PostgreSQL set for the same reason `measuredExplainFormat` starts at PostgreSQL's grammar.
+   */
+  private measuredMaintenance: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
@@ -2105,18 +2376,13 @@ export class PostgresProvider extends SQLBaseProvider {
       supportsResultPagination: true,
       // BEGIN / COMMIT / ROLLBACK over one held pool client (`beginTransaction()` below).
       supportsTransactions: true,
-      maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
-      // Every statement below has both forms - `VACUUM ANALYZE <table>` and bare
-      // `VACUUM ANALYZE`, `REINDEX TABLE <table>` and `REINDEX DATABASE` - so
-      // PostgreSQL is the engine whose per-row and global controls were both already
-      // right, and declaring them changes nothing here (#496). `kill` takes a backend
-      // PID, which only the Sessions panel can supply.
-      maintenanceOperationSpecs: {
-        vacuum: { label: "Vacuum Table", perEntity: true, global: true },
-        analyze: { label: "Analyze Table", perEntity: true, global: true },
-        reindex: { label: "Reindex Table", perEntity: true, global: true },
-        kill: { label: "Terminate Backend", perEntity: false, global: false },
-      },
+      // PostgreSQL's DDL rolls back, so nothing here commits implicitly. These two END the
+      // transaction all the same: `END` is PostgreSQL's synonym for COMMIT, and `PREPARE
+      // TRANSACTION` detaches it from the session, so SANDBOX's ROLLBACK would reach nothing.
+      implicitCommitStatements: ["END", "PREPARE TRANSACTION"],
+      // PostgreSQL's own set, narrowed to what the connected server accepted (#1387): see
+      // `probeMaintenance`. Unconnected, and under the read-only profile, it is the whole set.
+      ...narrowMaintenance(POSTGRES_MAINTENANCE, this.measuredMaintenance),
       // One level. `catalog` is not a second one here: a `pg` pool is opened against one
       // database and nothing in the product can switch it on a live connection, so
       // declaring a catalog level would draw a folder with exactly one child forever.
@@ -2266,9 +2532,16 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       const poolConfig = this.buildPoolConfig();
       this.pool = new Pool(poolConfig);
-      this.attachPoolErrorListener(this.pool);
+      this.attachPoolListeners(this.pool);
 
       const client = await this.pool.connect();
+      // Read before the probes below run on the same session, so what is kept is only what
+      // the server said while opening it.
+      const startup = takeNotices(client);
+      this.startupWarnings =
+        noticesAsWarnings({ kept: startup.kept.filter(isStartupCaution), dropped: startup.dropped }).warnings ?? [];
+      // Set only when the maintenance probe could not roll its block back (#1387).
+      let connectClientFault: Error | undefined;
       try {
         // Under the profile, the role itself is part of the boundary — verify it
         // on the same client this connect already borrowed.
@@ -2285,11 +2558,16 @@ export class PostgresProvider extends SQLBaseProvider {
         // (FORMAT JSON)` succeeded, which is the case where the probe would have
         // answered `postgres-json` anyway. So the profile keeps the static default and
         // the envelope keeps its hole-free guarantee.
+        // The maintenance probe is skipped under the profile for the same envelope reason, and
+        // the agent runs no maintenance.
         if (!this.readOnlyProfile) {
           this.measuredExplainFormat = await probeExplainFormat(client);
+          const probe = await this.probeMaintenance(client);
+          this.measuredMaintenance = probe.measured;
+          connectClientFault = probe.discard;
         }
       } finally {
-        client.release();
+        client.release(connectClientFault);
       }
 
       this.setConnected(true);
@@ -2343,10 +2621,23 @@ export class PostgresProvider extends SQLBaseProvider {
    * event non-fatal and visible — not to reconnect. The pool opens a fresh client on the
    * next acquire by itself.
    */
-  private attachPoolErrorListener(pool: Pool): void {
+  private attachPoolListeners(pool: Pool): void {
     pool.on("error", (error) => {
       console.error("[Postgres] Idle pool client error:", error);
     });
+    // Most borrows (the object browser, monitoring) never read their notices, so a client
+    // returned to the pool drops what it holds rather than keeping it for the life of the
+    // process. A statement that reports them took them before its own release.
+    pool.on("release", (_error, client) => takeNotices(client));
+  }
+
+  /**
+   * What the server cautioned while the connection was opened: Materialize's `MZ004 session
+   * database "nosuchdb" does not exist` is the case that motivated it (#1401). The class `00`
+   * greeting a server sends with every session is left out (`isStartupCaution`).
+   */
+  public connectWarnings(): QueryWarning[] {
+    return this.startupWarnings;
   }
 
   private buildPoolConfig(): PgPoolConfig {
@@ -2361,6 +2652,7 @@ export class PostgresProvider extends SQLBaseProvider {
       ssl: sslConfig,
       // In the base so both connection forms below carry it.
       types: ZONELESS_AS_TEXT,
+      Client: NoticeKeepingClient,
     };
 
     if (this.config.connectionString) {
@@ -2417,8 +2709,12 @@ export class PostgresProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
-  // Track running query PIDs for cancellation
-  private runningQueryPids = new Map<string, number>();
+  /**
+   * The statements running under a caller's id, so `cancelQuery` can reach them: the
+   * backend pid for `pg_cancel_backend`, and the client for the wire-protocol cancel, which
+   * names the session by the key the server gave that client (#1364).
+   */
+  private runningQueries = new Map<string, { pid: number; client: PoolClient }>();
 
   public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
@@ -2431,12 +2727,15 @@ export class PostgresProvider extends SQLBaseProvider {
             // Track PID for cancellation support
             if (queryId) {
               const pidRes = await client.query("SELECT pg_backend_pid() as pid");
-              this.runningQueryPids.set(queryId, pidRes.rows[0].pid);
+              this.runningQueries.set(queryId, { pid: pidRes.rows[0].pid, client });
             }
+            // Dropped first: a client fresh from the pool still holds its startup greeting, and
+            // the PID read above is not the user's statement.
+            takeNotices(client);
             const res = await client.query(sql, params);
-            return res;
+            return { res, notices: takeNotices(client) };
           } finally {
-            if (queryId) this.runningQueryPids.delete(queryId);
+            if (queryId) this.runningQueries.delete(queryId);
             // Read while this call still HOLDS the client, and before the release that
             // puts it back within reach of everybody else: after the release the status
             // can be another caller's, and a statement that FAILS inside a transaction —
@@ -2446,25 +2745,54 @@ export class PostgresProvider extends SQLBaseProvider {
             client.release();
           }
         } catch (error) {
-          if (queryId) this.runningQueryPids.delete(queryId);
+          if (queryId) this.runningQueries.delete(queryId);
           throw mapDatabaseError(error, "postgres", sql);
         }
       });
 
       return {
-        rows: result.rows,
-        fields: result.fields?.map((f) => f.name) ?? [],
-        ...postgresColumnTypes(result.fields),
-        rowCount: result.rowCount ?? 0,
+        rows: result.res.rows,
+        fields: result.res.fields?.map((f) => f.name) ?? [],
+        ...postgresColumnTypes(result.res.fields),
+        rowCount: result.res.rowCount ?? 0,
         executionTime,
+        ...noticesAsWarnings(result.notices),
       };
     });
   }
 
+  /**
+   * Stop the statement running under `queryId`, and answer true only when it stopped.
+   *
+   * `pg_cancel_backend` first, which stock PostgreSQL and its forks honour. Where it is
+   * refused or answers false, the wire-protocol CancelRequest for the same session (see
+   * `pg-wire-cancel.ts` for the engines measured), and then true only once the run has
+   * actually ended, within `WIRE_CANCEL_CONFIRM_MS`: the server sends no answer to a
+   * CancelRequest, so the run settling is the only confirmation there is. Before #1364 a
+   * refused `pg_cancel_backend` was the end of it, and the statement kept running.
+   */
   public async cancelQuery(queryId: string): Promise<boolean> {
-    const pid = this.runningQueryPids.get(queryId);
-    if (!pid) return false;
+    const running = this.runningQueries.get(queryId);
+    if (!running) return false;
 
+    if (await this.cancelBackend(running.pid)) return true;
+
+    const { processID, secretKey, host, port, ssl } = running.client as PoolClient & BackendKey;
+    if (typeof processID !== "number" || typeof secretKey !== "number") return false;
+    const sent = await sendPgCancelRequest(
+      { host, port, processID, secretKey, ssl },
+      WIRE_CANCEL_CONFIRM_MS,
+      // Only while this run still holds that session: once it has ended, the pool may have
+      // handed the session to another request, whose statement the request would stop. The
+      // check narrows that to the request's own flight time and cannot close it: a statement
+      // that ends while the 16 bytes travel leaves the key on a session someone else may
+      // already be using, the same window `psql`'s Ctrl+C has, inherent to the protocol.
+      () => this.runningQueries.get(queryId)?.client === running.client,
+    );
+    return sent && (await this.settles(queryId, WIRE_CANCEL_CONFIRM_MS));
+  }
+
+  private async cancelBackend(pid: number): Promise<boolean> {
     try {
       const client = await this.pool!.connect();
       try {
@@ -2477,6 +2805,17 @@ export class PostgresProvider extends SQLBaseProvider {
       console.error("[Postgres] Failed to cancel query:", error);
       return false;
     }
+  }
+
+  /** Whether the run under `queryId` ends within `timeoutMs`. */
+  private async settles(queryId: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.runningQueries.has(queryId)) {
+      if (Date.now() >= deadline) return false;
+      // oxlint-disable-next-line no-await-in-loop -- a poll: each wait must end before the run is looked at again.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+    }
+    return true;
   }
 
   // ============================================================================
@@ -2613,7 +2952,22 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "postgres");
     this.txClient = await this.pool!.connect();
-    await this.txClient.query("BEGIN");
+    try {
+      await this.txClient.query("BEGIN");
+    } catch (error) {
+      this.txClient.release();
+      this.txClient = null;
+      throw error;
+    }
+    // The ReadyForQuery byte after BEGIN is the server saying whether a transaction is open.
+    // A PostgreSQL-wire relative can accept the statement and open none: RisingWave answers
+    // `I` with a NOTICE (see NO_TRANSACTION_OPENED), so every statement run in the "session"
+    // autocommitted and SANDBOX's ROLLBACK undid nothing. Refused here, before anything runs.
+    if (this.txClient.getTransactionStatus() === "I") {
+      this.txClient.release();
+      this.txClient = null;
+      throw new QueryError(NO_TRANSACTION_OPENED, "postgres");
+    }
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks. Single-line callback
@@ -2624,29 +2978,58 @@ export class PostgresProvider extends SQLBaseProvider {
   public async commitTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
+    const client = this.txClient;
     try {
-      await this.txClient.query("COMMIT");
+      await client.query("COMMIT");
     } finally {
-      this.txClient.release();
-      this.txClient = null;
-      this.txActive = false;
+      this.releaseHeldClient(client);
     }
   }
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
+    const client = this.txClient;
     try {
-      await this.txClient.query("ROLLBACK");
+      await client.query("ROLLBACK");
     } finally {
-      this.txClient.release();
-      this.txClient = null;
-      this.txActive = false;
+      this.releaseHeldClient(client);
     }
   }
 
   public isInTransaction(): boolean {
     return this.txActive;
+  }
+
+  /**
+   * Hand `client` back and forget the session, but only while it is still THE session's
+   * client. A COMMIT or ROLLBACK queued behind an in-flight `queryInTransaction()` can find
+   * that statement's `endHeldTransaction()` already released it, and releasing a client twice
+   * (or `null`) is a crash rather than a no-op.
+   */
+  private releaseHeldClient(client: PoolClient): void {
+    if (this.txClient !== client) return;
+    client.release();
+    this.txClient = null;
+    this.txActive = false;
+  }
+
+  /**
+   * Let go of a session the SERVER already ended. A ROLLBACK is still sent first, best effort:
+   * the status byte is the evidence the transaction is gone, and it was measured on
+   * PostgreSQL 18 and RisingWave 3.1.0 but not on every relative this provider serves. If a
+   * relative ever reports `I` with a transaction still open, the client must not go back to
+   * the pool holding it; where the transaction really is gone the ROLLBACK is a no-op that
+   * answers a WARNING.
+   */
+  private async endHeldTransaction(client: PoolClient): Promise<void> {
+    this.clearTxTimeout();
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* a no-op that failed is still a no-op; the release below is what matters */
+    }
+    this.releaseHeldClient(client);
   }
 
   /**
@@ -2803,19 +3186,33 @@ export class PostgresProvider extends SQLBaseProvider {
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
+        const held = this.txClient!;
         try {
-          return await this.txClient!.query(sql, params);
+          // The held client is one session for the whole transaction, so what an earlier
+          // statement left behind is dropped before this one runs.
+          takeNotices(held);
+          const res = await held.query(sql, params);
+          return { res, notices: takeNotices(held) };
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
+        } finally {
+          // PostgreSQL's DDL is transactional, so this is not about DDL: it is a statement
+          // that ENDS the transaction itself, a typed `COMMIT` or `END` in a multi-statement
+          // text. The server reports `I` afterwards and the held client is just a pooled
+          // client again, so a ROLLBACK would undo nothing. The session is ended here and the
+          // route reports `inTransaction: false` instead.
+          const client = this.txClient;
+          if (client?.getTransactionStatus() === "I") await this.endHeldTransaction(client);
         }
       });
 
       return {
-        rows: result.rows,
-        fields: result.fields?.map((f) => f.name) ?? [],
-        ...postgresColumnTypes(result.fields),
-        rowCount: result.rowCount ?? 0,
+        rows: result.res.rows,
+        fields: result.res.fields?.map((f) => f.name) ?? [],
+        ...postgresColumnTypes(result.res.fields),
+        rowCount: result.res.rowCount ?? 0,
         executionTime,
+        ...noticesAsWarnings(result.notices),
       };
     });
   }
@@ -2907,11 +3304,16 @@ export class PostgresProvider extends SQLBaseProvider {
    * the object browser can say why a folder has no number instead of showing a zero
    * nobody measured.
    *
-   * The `prokind` retry is the one partial outcome. That column arrived in PostgreSQL 11
-   * and the wire-compatible forks do not all have it, so a server can answer for its
+   * The routine retry is the one partial outcome. `pg_proc.prokind` arrived in PostgreSQL
+   * 11 and the wire-compatible forks do not all have it, so a server can answer for its
    * relations and its triggers while being unable to tell a function from a procedure.
    * Losing the two routine folders is the right cost there; losing the whole container to
    * one missing column is not.
+   *
+   * The retry is keyed on the refusal naming `prokind` (`isMissingProkindError()`), under
+   * any SQLSTATE, and every other refusal costs every folder on the first read: a statement
+   * timeout or a cancel is not run a second time, and its sentence is never filed under
+   * the routine pair as though it were about routines.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
@@ -4200,29 +4602,151 @@ export class PostgresProvider extends SQLBaseProvider {
     return "public." + this.escapeIdentifier(target);
   }
 
+  /**
+   * The statement one maintenance operation sends, per row with a target and over the whole
+   * database without one, or an empty string for an operation that has no statement form here.
+   * One builder for the run and for `probeMaintenance`, so what the probe asked the server is
+   * exactly what a click sends (#1387). `database` is `maintenanceDatabase()`'s answer.
+   */
+  private maintenanceStatement(type: MaintenanceType, database: string, target?: string, container?: string): string {
+    // Resolve target into a schema-qualified, quoted identifier: the caller's container
+    // when there is one, else "schema.table", else the public schema for bare names.
+    const qualifiedTarget = this.qualifyMaintenanceTarget(target, container);
+    switch (type) {
+      case "vacuum":
+        return target ? `VACUUM ANALYZE ${qualifiedTarget}` : "VACUUM ANALYZE";
+      case "analyze":
+        return target ? `ANALYZE ${qualifiedTarget}` : "ANALYZE";
+      case "reindex":
+        return target ? `REINDEX TABLE ${qualifiedTarget}` : `REINDEX DATABASE ${this.escapeIdentifier(database)}`;
+    }
+    return "";
+  }
+
+  /**
+   * The database `REINDEX DATABASE` names. The configured one when there is one; otherwise the one
+   * the server connected to, which is what a connection string without a database lands on (the
+   * user's name, by libpq's rule) and which `REINDEX DATABASE ""` could never name.
+   */
+  private async maintenanceDatabase(client: PoolClient): Promise<string> {
+    if (this.config.database) return this.config.database;
+    const { rows } = await client.query<{ name: string }>("SELECT current_database() AS name");
+    return rows[0]?.name ?? "";
+  }
+
+  /**
+   * Which placements of each maintenance statement this server accepts (#1387), asked once per
+   * `connect()` on the client connect already borrowed.
+   *
+   * The PostgreSQL type id serves wire-compatible engines that refuse part of PostgreSQL's
+   * maintenance, and they refuse it differently - measured 2026-10-04: CockroachDB v26.3.2 runs
+   * `ANALYZE <table>` and answers `42601` for the bare `ANALYZE`, for `VACUUM` and for both
+   * `REINDEX` forms; YugabyteDB 2026.1.2.0 answers `0A000 REINDEX not supported yet` for both
+   * `REINDEX` forms from its grammar; RisingWave 3.1.0 refuses all six. So the server is asked, the way
+   * `probeExplainFormat` asks about EXPLAIN, and the answer is read from the SQLSTATE alone.
+   *
+   * NOTHING IS RUN. Each statement is sent inside a transaction block the poison statement has
+   * already aborted. PostgreSQL parses a simple query before it checks the block, so a statement
+   * its grammar accepts answers `25P02` without parse analysis, planning or execution, and one it
+   * does not have answers its own syntax or feature error. Measured on PostgreSQL 18.6 and
+   * CockroachDB v26.3.2: all six of PostgreSQL's statements answer `25P02` on the first, and the
+   * five the second refuses answer `42601` while `ANALYZE <table>` answers `25P02`. Five are sent;
+   * the bare `ANALYZE` is inferred, for the reason given where the loop below skips it.
+   *
+   * A server whose block the poison does not abort is not asked at all, because there the
+   * statements WOULD run: `SELECT 1` is sent first, and unless it answers `25P02` the probe ends.
+   * RisingWave 3.1.0 is that server: its `BEGIN` opens nothing (the same ReadyForQuery `I`
+   * `beginTransaction()` refuses on), `SELECT 1` answers a row, and the probe offers none of the
+   * three, which is the measured answer for that engine anyway.
+   *
+   * Nothing here rejects, and nothing it cannot read narrows anything: a failure that is not the
+   * server's answer (a reset connection, a pooler that refuses BEGIN, a statement answered with a
+   * code that is neither `25P02` nor a grammar refusal while the block no longer reads as aborted)
+   * leaves `measured` undefined, and the declaration stands.
+   */
+  private async probeMaintenance(client: PoolClient): Promise<MaintenanceProbe> {
+    let began = false;
+    let discard: Error | undefined;
+    const answer = async (): Promise<MaintenanceProbe["measured"]> => {
+      const database = await this.maintenanceDatabase(client);
+      await client.query("BEGIN");
+      began = true;
+      try {
+        await client.query(STATEMENT_COUNT_POISON_SQL);
+      } catch {
+        // `22012 division_by_zero` is the point: it is what aborts the block.
+      }
+      // Asked of the server rather than read from `getTransactionStatus()`: a rejected query
+      // settles before `pg` has read the ReadyForQuery that follows the error, and under bun 1.4.2
+      // the status still read `T` there on PostgreSQL 18.6 while node read `E`. `SELECT 1` answers
+      // `25P02` only inside a block the poison really aborted, and a row only where BEGIN opened
+      // nothing - the one answer that is a measurement of the server rather than a failure.
+      const sentinel = await answerInAbortedBlock(client, MAINTENANCE_PROBE_SENTINEL);
+      if (sentinel === "resolved") return MAINTENANCE_UNMEASURED;
+      if (sentinel !== "accepted") return undefined;
+      const measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> = {};
+      // Each answer is read, and anything that is neither `25P02` nor a grammar refusal stops the
+      // probe unless the server says, again, that the block is still aborted: a statement that
+      // RESOLVED, or a block that is no longer aborted, means the next statement could run.
+      const placement = async (sql: string): Promise<boolean | undefined> => {
+        const reply = await answerInAbortedBlock(client, sql);
+        if (reply === "accepted") return true;
+        if (reply === "refused") return false;
+        if (reply === "resolved") return undefined;
+        return (await answerInAbortedBlock(client, MAINTENANCE_PROBE_SENTINEL)) === "accepted" ? false : undefined;
+      };
+      for (const operation of PROBED_MAINTENANCE) {
+        const perEntity = await placement(this.maintenanceStatement(operation, database, MAINTENANCE_PROBE_TARGET));
+        if (perEntity === undefined) return undefined;
+        // The bare `ANALYZE` is never sent, because it is the one whole-database statement a
+        // transaction block does not stop: `VACUUM` and `REINDEX DATABASE` refuse inside one with
+        // `25001`, while `ANALYZE` runs there. Behind a statement-routing proxy (Pgpool-II load
+        // balancing) the probe's block cannot be shown to reach the backend the next statement
+        // reaches, and on that backend a bare `ANALYZE` would really run over the whole database.
+        // It is inferred instead: offered where `ANALYZE <table>` and the bare `VACUUM ANALYZE`
+        // both parse, which is the measured answer on every server above (CockroachDB has the
+        // first and not the second, and refuses the bare `ANALYZE` too).
+        const global =
+          operation === "analyze"
+            ? perEntity && measured.vacuum?.global === true
+            : await placement(this.maintenanceStatement(operation, database));
+        if (global === undefined) return undefined;
+        measured[operation] = { perEntity, global };
+      }
+      return measured;
+    };
+    let measured: MaintenanceProbe["measured"];
+    try {
+      measured = await answer();
+    } catch {
+      // A failure that is not the server's answer - a reset connection, a pooler that refuses
+      // BEGIN - says nothing about the grammar, so the declaration stands rather than a cached
+      // provider losing its maintenance for good.
+      measured = undefined;
+    } finally {
+      // The connect client goes back to the pool, so it never goes back inside the probe's block.
+      // Sent whenever BEGIN was, for the reason above: the status is not yet the server's last word.
+      // A ROLLBACK that fails leaves a client nobody can vouch for, and it is destroyed instead.
+      if (began) {
+        await client.query("ROLLBACK").catch((error: unknown) => {
+          discard = error instanceof Error ? error : new Error(String(error));
+        });
+      }
+    }
+    return discard === undefined ? { measured } : { measured, discard };
+  }
+
   public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const client = await this.pool!.connect();
       try {
-        let sql = "";
-        // Resolve target into a schema-qualified, quoted identifier: the caller's container
-        // when there is one, else "schema.table", else the public schema for bare names.
-        const qualifiedTarget = this.qualifyMaintenanceTarget(target, container);
+        // Only the whole-database REINDEX names the database, so only it may cost a round trip.
+        const database = type === "reindex" && !target ? await this.maintenanceDatabase(client) : "";
+        let sql = this.maintenanceStatement(type, database, target, container);
 
         switch (type) {
-          case "vacuum":
-            sql = target ? `VACUUM ANALYZE ${qualifiedTarget}` : "VACUUM ANALYZE";
-            break;
-          case "analyze":
-            sql = target ? `ANALYZE ${qualifiedTarget}` : "ANALYZE";
-            break;
-          case "reindex":
-            sql = target
-              ? `REINDEX TABLE ${qualifiedTarget}`
-              : `REINDEX DATABASE ${this.escapeIdentifier(this.config.database || "")}`;
-            break;
           case "kill":
             if (!target) {
               throw new QueryError("Target PID is required for kill operation", "postgres");
@@ -4241,8 +4765,23 @@ export class PostgresProvider extends SQLBaseProvider {
           throw new QueryError(`Unsupported maintenance type: ${type}`, "postgres");
         }
 
-        await client.query(sql);
-        return { success: true };
+        // The server's own notices are part of its answer (#1387). A statement can succeed and
+        // still have done nothing: YugabyteDB 2026.1.2.0 answers every VACUUM with the NOTICE
+        // "VACUUM is a no-op statement since YugabyteDB performs garbage collection of dead
+        // tuples automatically", and PostgreSQL skips a table the role does not own with the
+        // WARNING `permission denied to vacuum "t", skipping it`. "completed successfully" alone
+        // claims work the server says it did not do.
+        const notices: string[] = [];
+        const onNotice = (notice: { severity?: string; message?: string }) => {
+          if (MAINTENANCE_NOTICE_SEVERITIES.has(notice.severity ?? "") && notice.message) notices.push(notice.message);
+        };
+        client.on("notice", onNotice);
+        try {
+          await client.query(sql);
+        } finally {
+          client.off("notice", onNotice);
+        }
+        return { success: true, notices };
       } finally {
         client.release();
       }
@@ -4251,7 +4790,7 @@ export class PostgresProvider extends SQLBaseProvider {
     return {
       success: result.success,
       executionTime,
-      message: `${type.toUpperCase()} completed successfully`,
+      message: maintenanceMessage(type, result.notices),
     };
   }
 
@@ -4266,6 +4805,8 @@ export class PostgresProvider extends SQLBaseProvider {
 
     return {
       total: this.pool.totalCount,
+      // The configured ceiling, kept apart from `total` (the clients open right now).
+      max: this.poolConfig.max,
       idle: this.pool.idleCount,
       active: this.pool.totalCount - this.pool.idleCount,
       waiting: this.pool.waitingCount,
@@ -4418,7 +4959,7 @@ export class PostgresProvider extends SQLBaseProvider {
         // `|| "100"` was two bugs in one operator: it invented a perfect cache for a
         // NULL, and it also discarded a measured 0 - a cold cache reading 0% is a
         // measurement, and the one the panel most needs to show.
-        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio, cacheHitAdvice: "Increase shared_buffers" }),
         // transactionsPerSecond / queriesPerSecond would need time-based sampling,
         // which this call does not do, so they stay absent.
         //

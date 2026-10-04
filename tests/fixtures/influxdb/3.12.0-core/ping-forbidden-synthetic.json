@@ -1,0 +1,16 @@
+{
+  "version": "3.12.0-core",
+  "name": "ping-forbidden-synthetic",
+  "image": "none: written by hand, never sent to a server",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "GET",
+    "path": "/ping",
+    "query": {},
+    "auth": "bearer"
+  },
+  "status": 403,
+  "contentType": null,
+  "body": "",
+  "synthetic": "SYNTHETIC. https://docs.influxdata.com/influxdb3/enterprise/admin/tokens/resource/create/, section \"Create a system token\", note \"Database tokens can't call /ping or /health\": a database token with the read action (db:DATABASE_NAME:read) gets an HTTP 403 from /ping and /health on InfluxDB 3 Enterprise. The doc names the status only, so the body is empty; the pinned Core image has no database token and cannot answer this (finding F8)."
+}

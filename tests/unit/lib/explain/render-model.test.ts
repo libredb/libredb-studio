@@ -16,10 +16,10 @@ describe("toRenderModel", () => {
     expect(postgresJsonStrategy.toRenderModel([])).toBeNull();
   });
 
-  // B4: deliberate legacy passthrough so MySQL renders exactly as today until PR-4.
-  test("mysql-json passes arrays through as postgres-json kind", () => {
-    const rows: Record<string, unknown>[] = [{ EXPLAIN: '{"query_block":{}}' }];
-    expect(mysqlJsonStrategy.toRenderModel(rows)).toEqual({ kind: "postgres-json", plan: rows });
+  // The B4 passthrough is gone (#1389): a MySQL plan is a tree of its own, never the PostgreSQL model.
+  test("mysql-json draws its plan as a tree", () => {
+    const rows: Record<string, unknown>[] = [{ EXPLAIN: '{"query_block":{"select_id":1}}' }];
+    expect(mysqlJsonStrategy.toRenderModel(rows)?.kind).toBe("tree");
   });
 });
 

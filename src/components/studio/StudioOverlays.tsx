@@ -47,6 +47,8 @@ interface StudioOverlaysProps {
   onCloseConnectionModal: () => void;
   onConnectConnection: (connection: DatabaseConnection) => void;
   createTableModalOpen: boolean;
+  /** Where the table is created: the container path of the folder it was asked for in. */
+  createTableContainer?: readonly string[];
   onCloseCreateTable: () => void;
   onTableCreated: (sql: string) => void;
   pendingDeleteConnectionId: string | null;
@@ -84,6 +86,7 @@ export function StudioOverlays({
   onCloseConnectionModal,
   onConnectConnection,
   createTableModalOpen,
+  createTableContainer,
   onCloseCreateTable,
   onTableCreated,
   pendingDeleteConnectionId,
@@ -134,6 +137,8 @@ export function StudioOverlays({
         onClose={onCloseCreateTable}
         onTableCreated={onTableCreated}
         dbType={databaseType}
+        container={createTableContainer}
+        capabilities={capabilities}
       />
 
       {/* Delete Connection Confirmation */}

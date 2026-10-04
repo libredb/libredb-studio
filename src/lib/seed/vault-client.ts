@@ -102,7 +102,7 @@ async function vaultFetch(url: string, init: RequestInit, deps: Required<VaultDe
 }
 
 async function kubernetesLogin(addr: string, role: string, deps: Required<VaultDeps>): Promise<KubernetesToken> {
-  const tokenPath = process.env.VAULT_K8S_TOKEN_PATH || DEFAULT_K8S_TOKEN_PATH;
+  const tokenPath = process.env.VAULT_K8S_TOKEN_PATH?.trim() || DEFAULT_K8S_TOKEN_PATH;
 
   let jwt: string;
   try {
@@ -114,7 +114,7 @@ async function kubernetesLogin(addr: string, role: string, deps: Required<VaultD
   }
 
   // One Vault serving several clusters mounts each cluster's Kubernetes auth at its own path.
-  const authPath = (process.env.VAULT_K8S_AUTH_PATH ?? "").replace(/^\/+|\/+$/g, "") || DEFAULT_K8S_AUTH_PATH;
+  const authPath = (process.env.VAULT_K8S_AUTH_PATH ?? "").trim().replace(/^\/+|\/+$/g, "") || DEFAULT_K8S_AUTH_PATH;
   const url = `${addr}/v1/auth/${authPath}/login`;
   const res = await vaultFetch(
     url,

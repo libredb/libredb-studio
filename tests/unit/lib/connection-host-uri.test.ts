@@ -34,6 +34,9 @@ const ACCEPTED: [string, HostUriScheme, string, number][] = [
     6333,
   ],
   ["https://xyz-example.cloud.qdrant.io", "https", "xyz-example.cloud.qdrant.io", 443],
+  // An InfluxDB Cloud endpoint as its documentation writes it, which both InfluxDB types take in the Host box (R7).
+  ["https://us-east-1-1.aws.cloud2.influxdata.com:443", "https", "us-east-1-1.aws.cloud2.influxdata.com", 443],
+  ["https://us-east-1-1.aws.cloud2.influxdata.com", "https", "us-east-1-1.aws.cloud2.influxdata.com", 443],
   ["https://h:443", "https", "h", 443],
   ["http://h:80", "http", "h", 80],
   ["http://h", "http", "h", 80],

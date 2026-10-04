@@ -9,6 +9,7 @@ import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 import type { Metadata } from "next";
 import "./globals.css";
+import { SessionEndedRedirect } from "@/components/auth/SessionEndedRedirect";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 
@@ -69,6 +70,7 @@ export default function RootLayout({
       <body suppressHydrationWarning className={`${GeistSans.variable} ${GeistMono.variable} antialiased font-sans`}>
         <ThemeProvider>
           {children}
+          <SessionEndedRedirect />
           {/* No `theme` prop: Toaster reads next-themes itself, so it follows. */}
           <Toaster position="bottom-right" />
         </ThemeProvider>

@@ -90,6 +90,22 @@ describe("TestDataGenerator", () => {
     expect(container.textContent).toBe("");
   });
 
+  test("closed with no object chosen, as StudioModals mounts it, it renders nothing on an InfluxQL connection", () => {
+    // The InfluxQL quoting of the empty path threw during this render and took the whole Studio down
+    // for every influxdb connection, in the standalone app and in the embedded StudioWorkspace.
+    const { container } = render(
+      <TestDataGenerator
+        isOpen={false}
+        onClose={mock(() => {})}
+        tablePath={[]}
+        tableSchema={null}
+        capabilities={capsOf({ queryLanguage: "influxql" })}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    expect(container.textContent).toBe("");
+  });
+
   test("renders header, row controls, and SQL preview", () => {
     const { queryByText, container } = render(
       <TestDataGenerator
@@ -104,6 +120,35 @@ describe("TestDataGenerator", () => {
     expect(queryByText("employees")).not.toBeNull();
     expect(queryByText("10")).not.toBeNull();
     expect(container.textContent).toContain("INSERT INTO employees");
+  });
+
+  // CQL's INSERT takes one row: on Cassandra 5.0.9 a multi-row VALUES list answered "mismatched input ','
+  // expecting EOF" (#1410), so an engine declaring no multi-row insert gets one statement per row.
+  test("writes one INSERT per row where the engine declares no multi-row insert", () => {
+    const renderWith = (capabilities: ProviderCapabilities): string => {
+      const { container } = render(
+        <TestDataGenerator
+          isOpen
+          onClose={mock(() => {})}
+          tablePath={["shop", "employees"]}
+          tableSchema={schema}
+          capabilities={capabilities}
+          onExecuteQuery={mock(() => {})}
+        />,
+      );
+      const text = container.textContent ?? "";
+      cleanup();
+      return text;
+    };
+    const single = renderWith(capsOf({ defaultPort: 9042, supportsMultiRowInsert: false }));
+    const inserts = single.match(/INSERT INTO shop\.employees/g) ?? [];
+    expect(inserts.length).toBeGreaterThan(1);
+    expect(single.match(/VALUES/g)?.length).toBe(inserts.length);
+    expect(single).not.toContain("),");
+
+    const multi = renderWith(postgresCaps);
+    expect(multi.match(/INSERT INTO/g)?.length).toBe(1);
+    expect(multi).toContain("),");
   });
 
   test("quotes COLUMN names the way the connected engine reads an identifier", () => {

@@ -60,6 +60,7 @@ import {
 import { comparePaths } from "@/lib/db/object-path";
 import { DatabaseConfigError, ConnectionError, QueryError, mapDatabaseError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { unionFields } from "../../utils/result-fields";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
 /**
@@ -126,6 +127,208 @@ const SUPPORTED_OPERATIONS: ReadonlySet<MongoQuery["operation"]> = new Set([
   "deleteOne",
   "deleteMany",
 ]);
+
+/**
+ * The query is read as MongoDB Extended JSON, the format mongosh, Compass and
+ * `mongoexport` print, and not as plain JSON. Plain JSON has no ObjectId and no Date, so
+ * a document the grid shows could not be found, updated or deleted by its `_id`:
+ * measured on MongoDB 8.2.12, `{"_id": {"$oid": ...}}` reached the server as an operator
+ * and failed `unknown operator: $oid`, a date range matched nothing, and `{"$date": ...}`
+ * in an insert was stored as a subdocument with a `$date` key.
+ *
+ * WHY NOT `EJSON.parse` OVER THE WHOLE TEXT. The bson parser replaces an object with a
+ * value as soon as ANY of its keys is one it knows, and drops the others in silence:
+ * `{"$regex": "^a", "$nin": ["admin"]}` becomes the bare regular expression, so a
+ * `deleteMany` with that filter deletes `admin` too. So the statement is read with plain
+ * `JSON.parse` and then walked, and an object is handed to the bson parser only when its
+ * keys are EXACTLY one wrapper's (`EJSON_WRAPPERS`). An object that mixes a wrapper key
+ * with anything else is refused, and an object with no wrapper key is left as written,
+ * which keeps every query operator, the legacy `{"$regex", "$options"}` form included,
+ * exactly what the server receives.
+ *
+ * A plain number is never touched, so the driver writes it exactly as it did under
+ * `JSON.parse`: int32 when it fits, a double otherwise, and `options.limit` stays the
+ * number the cursor wants.
+ */
+const EJSON_WRAPPERS: ReadonlySet<string> = new Set([
+  "$oid",
+  "$date",
+  "$numberInt",
+  "$numberLong",
+  "$numberDouble",
+  "$numberDecimal",
+  "$binary",
+  "$uuid",
+  "$regularExpression",
+  "$timestamp",
+  "$minKey",
+  "$maxKey",
+]);
+
+/**
+ * Relaxed for every wrapper but one: relaxed accepts a `$date` as a plain number of
+ * milliseconds, which canonical refuses below 2^31. `useBigInt64` because relaxed reads
+ * `$numberLong` into a JS number, rounding `9007199254740993` to `...992`; a bigint holds
+ * it, and the driver writes a bigint as a 64-bit integer. `$numberDouble` alone is read
+ * canonically, because relaxed answers a JS number and `{"$numberDouble": "5"}` would be
+ * written as int32 rather than the double it names.
+ */
+const EJSON_RELAXED = { relaxed: true, useBigInt64: true } as const;
+const EJSON_CANONICAL = { relaxed: false, useBigInt64: true } as const;
+
+/** The 64-bit range a `$numberLong` must fit. The parser wraps a larger one to a negative in silence. */
+const INT64_MIN = -(BigInt(2) ** BigInt(63));
+const INT64_MAX = BigInt(2) ** BigInt(63) - BigInt(1);
+
+function parseExtendedJson(text: string): Document {
+  return reviveExtendedJson(JSON.parse(text), "") as Document;
+}
+
+function extendedJsonError(path: string, reason: string): QueryError {
+  return new QueryError(`Invalid Extended JSON in the query at "${path}": ${reason}`, "mongodb");
+}
+
+function reviveExtendedJson(value: unknown, path: string): unknown {
+  if (Array.isArray(value)) return value.map((item, index) => reviveExtendedJson(item, joinPath(path, String(index))));
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value);
+  const wrapper = entries.find(([key]) => EJSON_WRAPPERS.has(key))?.[0];
+  if (wrapper === undefined) {
+    return Object.fromEntries(entries.map(([key, child]) => [key, reviveExtendedJson(child, joinPath(path, key))]));
+  }
+  if (entries.length !== 1) {
+    throw extendedJsonError(
+      path,
+      `${wrapper} must be the only key of its object, and this one also has ${entries
+        .map(([key]) => key)
+        .filter((key) => key !== wrapper)
+        .join(", ")}. To compare against it, nest it: {"$lt": {"${wrapper}": ...}}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = mongodbDriver.BSON.EJSON.parse(
+      JSON.stringify(value),
+      wrapper === "$numberDouble" ? EJSON_CANONICAL : EJSON_RELAXED,
+    );
+  } catch (error) {
+    // A wrapper that cannot be read, such as a `$oid` that is not 24 hex digits. The JSON
+    // itself was fine, so the format example `parseQuery` answers with would point at the
+    // wrong thing; the parser's own sentence says what is wrong.
+    throw extendedJsonError(path, (error as Error).message);
+  }
+  // The parser answers `Date.parse("next tuesday")`, which is NaN, with an invalid Date
+  // rather than an error, and the driver serialises an invalid Date as 0: 1970-01-01.
+  if (parsed instanceof Date && Number.isNaN(parsed.getTime())) {
+    throw extendedJsonError(
+      path,
+      'the $date is not a date. Use an ISO-8601 string such as "2025-01-01T00:00:00Z" or milliseconds since the epoch',
+    );
+  }
+  if (wrapper === "$numberLong" && (value as { $numberLong: string }).$numberLong !== String(parsed)) {
+    // Reached only for a value the parser accepted, so it is a decimal string: a
+    // round trip that differs is one `BigInt.asIntN(64, ...)` wrapped.
+    const exact = BigInt((value as { $numberLong: string }).$numberLong);
+    if (exact < INT64_MIN || exact > INT64_MAX) {
+      throw extendedJsonError(path, `$numberLong ${exact} is outside the 64-bit integer range`);
+    }
+  }
+  return parsed;
+}
+
+/**
+ * A bigint as a JSON-safe value: a number while it is exact, its digits past 2^53. The
+ * driver reads no bigint back (it is not asked to), so the only one a result holds is an
+ * echo of a `$numberLong` the statement wrote, `insertedId` above all; `JSON.stringify`
+ * throws on a bigint, which answered the write with an error after it had committed.
+ */
+function serializeBigInt(value: unknown): unknown {
+  if (typeof value !== "bigint") return value;
+  const asNumber = Number(value);
+  return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+}
+
+/**
+ * The BSON class a driver value is an instance of, read from the `_bsontype` every BSON class
+ * carries. Read by NAME and not by `instanceof` for the reason `isMongoServerError` gives: the
+ * integration suite replaces the driver module, so only a name is the same on both sides.
+ */
+function bsonTypeOf(value: object): string | undefined {
+  // A BSON class declares it on its prototype; a document's own field of that name is data.
+  if (Object.hasOwn(value, "_bsontype")) return undefined;
+  const name = (value as { _bsontype?: unknown })._bsontype;
+  return typeof name === "string" ? name : undefined;
+}
+
+/** The Binary subtype of a UUID (BSON spec, subtype 4). */
+const BINARY_SUBTYPE_UUID = 4;
+
+/** A UUID in its dashed hex form, or null for any other value, a subtype-4 Binary of another length included. */
+function uuidText(value: object): string | null {
+  if (bsonTypeOf(value) !== "Binary") return null;
+  const binary = value as InstanceType<typeof mongodbDriver.BSON.Binary>;
+  if (binary.sub_type !== BINARY_SUBTYPE_UUID) return null;
+  const hex = binary.toString("hex");
+  if (hex.length !== 32) return null;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** The type name schema inference gives each BSON class, MongoDB's own `$type` alias where there is one. */
+const BSON_TYPE_NAMES: Readonly<Record<string, string>> = {
+  Long: "long",
+  Timestamp: "timestamp",
+  BSONRegExp: "regex",
+  Int32: "int",
+  Double: "double",
+  Code: "javascript",
+  BSONSymbol: "symbol",
+  MinKey: "minKey",
+  MaxKey: "maxKey",
+  DBRef: "dbRef",
+  ObjectId: "objectId",
+  Decimal128: "decimal",
+  Binary: "binary",
+};
+
+/**
+ * The grid text of a BSON value the classic branches of `serializeDocument` do not know, or
+ * undefined for a value that is not a BSON class (#1423).
+ *
+ * Each of these used to fall through to the subdocument branch, which copies a value's own
+ * enumerable fields: measured on MongoDB 8.2.12, a Long above 2^53 showed as
+ * `{"high":2097152,"low":1,"unsigned":false}`, a Timestamp the same way, a regular expression
+ * as `{}` (its pattern lost) and a UUID as `<Binary: 16 bytes>`. A Long is its decimal digits,
+ * as other providers carry a 64-bit integer; a Timestamp is `Timestamp(t, i)`, the shell's own
+ * spelling; a regular expression is `/pattern/flags`; a UUID is its dashed hex, read before this
+ * by `uuidText`. Every other BSON class (Code, MinKey, MaxKey, DBRef, BSONSymbol) is its relaxed
+ * Extended JSON text.
+ */
+function bsonScalarText(value: object): string | number | undefined {
+  // The driver reads a BSON regular expression back as a native RegExp unless asked otherwise.
+  if (value instanceof RegExp) return String(value);
+  switch (bsonTypeOf(value)) {
+    case undefined:
+      return undefined;
+    case "Long":
+      return String(value);
+    case "Timestamp": {
+      const timestamp = value as InstanceType<typeof mongodbDriver.BSON.Timestamp>;
+      return `Timestamp(${timestamp.t}, ${timestamp.i})`;
+    }
+    case "BSONRegExp": {
+      const regexp = value as InstanceType<typeof mongodbDriver.BSON.BSONRegExp>;
+      return `/${regexp.pattern}/${regexp.options}`;
+    }
+    case "Int32":
+      return Number(value.valueOf());
+    default:
+      return mongodbDriver.BSON.EJSON.stringify(value, { relaxed: true });
+  }
+}
+
+function joinPath(path: string, key: string): string {
+  return path === "" ? key : `${path}.${key}`;
+}
 
 /**
  * How deep `inferSchemaFromDocuments` walks a subdocument, counting the top level as
@@ -340,6 +543,41 @@ const MONGODB_LIST_DATABASES_COMMAND: Document = Object.freeze({
   nameOnly: true,
   authorizedDatabases: true,
 });
+
+/**
+ * The same `listDatabases` command without `authorizedDatabases`, sent only when the server
+ * has refused that one field.
+ *
+ * FerretDB 2.7.0 does not know the flag. Measured: the command above is refused with code 2,
+ * `BadValue`, reading "authorizedDatabases is an unknown field", while this one is accepted
+ * and lists the databases. Without the retry the object tree on FerretDB lists nothing at
+ * all. MongoDB never takes this path, because MongoDB accepts the flag, so a role granted
+ * `read` on one database there still sees exactly its own.
+ */
+const MONGODB_LIST_DATABASES_COMMAND_WITHOUT_AUTHORIZED: Document = Object.freeze({
+  listDatabases: 1,
+  nameOnly: true,
+});
+
+/** The code a server replies with for a command field it does not accept: `BadValue`. */
+const MONGODB_BAD_VALUE_CODE = 2;
+
+/**
+ * Whether a `listDatabases` refusal is the server rejecting `authorizedDatabases` itself,
+ * and nothing else.
+ *
+ * All three must hold: it is the server's own reply (not a transport failure), it carries
+ * `BadValue`, and its sentence names the field as unknown. Any other refusal, such as code 13
+ * `Unauthorized`, is a real answer about this connection and is raised as it is rather than
+ * retried with a command that asks a different question.
+ */
+function isUnknownAuthorizedDatabasesField(error: unknown): boolean {
+  if (!isServerErrorReply(error)) return false;
+  const { code, message } = error as Error & { code?: unknown };
+  return (
+    code === MONGODB_BAD_VALUE_CODE && message.includes("authorizedDatabases") && message.includes("unknown field")
+  );
+}
 
 /**
  * How many documents one object is sampled for.
@@ -1004,7 +1242,9 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
           return {
             rows: serializedRows,
-            fields: serializedRows.length > 0 ? Object.keys(serializedRows[0]) : [],
+            // Documents of one collection need not share keys, so the columns are every
+            // document's keys, not the first one's (see result-fields.ts).
+            fields: unionFields(serializedRows),
             affectedCount,
           };
         } catch (error) {
@@ -1024,8 +1264,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
   private parseQuery(queryStr: string): MongoQuery {
     try {
-      // Try to parse as JSON
-      const parsed = JSON.parse(queryStr.trim());
+      const parsed = parseExtendedJson(queryStr.trim());
 
       if (!parsed.collection) {
         throw new QueryError("Collection name is required in query", "mongodb");
@@ -1051,30 +1290,31 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
   private serializeDocument(doc: Document): Record<string, unknown> {
     const serialized: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(doc)) {
-      if (value === null || value === undefined) {
-        serialized[key] = value;
-      } else if (typeof value === "object") {
-        if (value instanceof ObjectId) {
-          serialized[key] = value.toString();
-        } else if (value instanceof Binary) {
-          serialized[key] = `<Binary: ${value.length()} bytes>`;
-        } else if (value instanceof Decimal128) {
-          serialized[key] = value.toString();
-        } else if (value instanceof Date) {
-          serialized[key] = value.toISOString();
-        } else if (Array.isArray(value)) {
-          serialized[key] = value.map((v) => (typeof v === "object" && v !== null ? this.serializeDocument(v) : v));
-        } else {
-          serialized[key] = this.serializeDocument(value as Document);
-        }
-      } else {
-        serialized[key] = value;
-      }
-    }
-
+    for (const [key, value] of Object.entries(doc)) serialized[key] = this.serializeValue(value);
     return serialized;
+  }
+
+  /**
+   * One value as the grid shows it. An array's entries go through the same rules as a field's
+   * (#1423): an ObjectId, a Date or a Long inside an array used to be copied field by field.
+   */
+  private serializeValue(value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (typeof value !== "object") return serializeBigInt(value);
+    if (value instanceof ObjectId) return value.toString();
+    // Before the Binary branch: a UUID is a subtype-4 Binary, and its hex is what identifies it.
+    const uuid = uuidText(value);
+    if (uuid !== null) return uuid;
+    if (value instanceof Binary) return `<Binary: ${value.length()} bytes>`;
+    if (value instanceof Decimal128) return value.toString();
+    if (value instanceof Date) return value.toISOString();
+    // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
+    // `_id`) is a Double here: the driver promotes every double it reads to a number.
+    if (value instanceof mongodbDriver.BSON.Double) return value.valueOf();
+    if (Array.isArray(value)) return value.map((entry) => this.serializeValue(entry));
+    const scalar = bsonScalarText(value);
+    if (scalar !== undefined) return scalar;
+    return this.serializeDocument(value as Document);
   }
 
   // ============================================================================
@@ -1155,9 +1395,16 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     if (Array.isArray(value)) return "array";
     if (value instanceof Date) return "date";
     if (value instanceof ObjectId) return "objectId";
+    if (typeof value === "object" && uuidText(value) !== null) return "uuid";
     if (value instanceof Binary) return "binary";
     if (value instanceof Decimal128) return "decimal";
-    if (typeof value === "object") return "object";
+    if (value instanceof RegExp) return "regex";
+    // Every BSON class is a scalar, so inference never descends into a Long's `high` and `low`
+    // or a Timestamp's (#1423). An unlisted class keeps its own name, still a scalar.
+    if (typeof value === "object") {
+      const bsonType = bsonTypeOf(value);
+      return bsonType === undefined ? "object" : (BSON_TYPE_NAMES[bsonType] ?? bsonType);
+    }
     return typeof value;
   }
 
@@ -1720,6 +1967,20 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * Sends `listDatabases`, falling back to the form without `authorizedDatabases` only when
+   * the server refuses that field (FerretDB). See `isUnknownAuthorizedDatabasesField`.
+   */
+  private async runListDatabases(): Promise<Document> {
+    const admin = this.db!.admin();
+    try {
+      return await admin.command(MONGODB_LIST_DATABASES_COMMAND);
+    } catch (error) {
+      if (!isUnknownAuthorizedDatabasesField(error)) throw error;
+      return admin.command(MONGODB_LIST_DATABASES_COMMAND_WITHOUT_AUTHORIZED);
+    }
+  }
+
+  /**
    * The databases this connection can see, minus the server's own three.
    *
    * One level, so `parent` can only ever name a database, and nothing nests under one
@@ -1740,7 +2001,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     if (parent !== undefined && parent.length > 0) return [];
 
-    const result = await this.db!.admin().command(MONGODB_LIST_DATABASES_COMMAND);
+    const result = await this.runListDatabases();
     const sessionDatabase = this.getDatabaseName();
     const entries: Document[] = Array.isArray(result.databases) ? result.databases : [];
 

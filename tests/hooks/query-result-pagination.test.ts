@@ -471,17 +471,46 @@ describe.each(SHELLS)("$name: paging a seeded table end to end (#816)", (shell) 
   });
 
   /**
-   * THE LAST PAGE OF A TABLE WHOSE SIZE IS AN EXACT MULTIPLE OF THE PAGE SIZE.
+   * THE LAST PAGE OF A TABLE WHOSE SIZE IS AN EXACT MULTIPLE OF THE PAGE SIZE (#1440).
    *
-   * 100 rows at 50 a page fills the second page exactly, so `hasMore` is true and the
-   * control is offered a third time — and the third page is empty. SQLite answers a
-   * query that matched nothing with `fields: []` (measured: `SELECT * FROM orders ORDER
-   * BY id LIMIT 50 OFFSET 100` returns `rows: 0, fields: []`), and both hooks rebuilt the
-   * tab's result from the NEW page, so the grid kept its hundred rows and lost the
-   * columns they are rendered under: "100 rows / 0 columns", no headers and no cells.
+   * 100 rows at 50 a page fills the second page exactly. The route used to guess "more"
+   * from a full page, so the control and the limited badge stood after the 100th row until
+   * a click fetched nothing. The statement that runs now asks for one row past the page,
+   * and the second page, which has no such row, is the last one: no control, no badge, and
+   * no request left to make.
+   */
+  test("a table that ends exactly on a page boundary offers no page after it", async () => {
+    const EXACT = "SELECT * FROM orders WHERE id <= 100 ORDER BY id";
+    const { tabs, setTabs } = mutableTabs([makeTab({ query: EXACT })]);
+    const hook = shell.mount(tabs, setTabs);
+
+    await hook.run(EXACT, { limit: PAGE_SIZE });
+    await waitFor(() => expect(tabs[0].result?.rows).toHaveLength(PAGE_SIZE));
+    expect(tabs[0].result!.pagination!.hasMore).toBe(true);
+
+    await hook.loadMore();
+    await waitFor(() => expect(tabs[0].result!.rows).toHaveLength(2 * PAGE_SIZE));
+    expect(tabs[0].result!.pagination!.hasMore).toBe(false);
+    expect(tabs[0].result!.pagination!.wasLimited).toBe(false);
+    expect(tabs[0].result!.rowCount).toBe(2 * PAGE_SIZE);
+
+    const before = hook.requests();
+    await hook.loadMore();
+    expect(hook.requests()).toBe(before);
+    expect(tabs[0].result!.rows).toHaveLength(2 * PAGE_SIZE);
+  });
+
+  /**
+   * A PAGE THAT COMES BACK EMPTY, because the table shrank between two clicks.
    *
-   * A page of the same statement cannot legitimately change the shape, so the shape the
-   * rows on screen were rendered under is what survives.
+   * SQLite answers a query that matched nothing with `fields: []` (measured: `SELECT * FROM
+   * orders ORDER BY id LIMIT 50 OFFSET 100` returns `rows: 0, fields: []`), and both hooks
+   * rebuilt the tab's result from the NEW page, so the grid kept its rows and lost the
+   * columns they are rendered under: "50 rows / 0 columns", no headers and no cells.
+   *
+   * A page of the same statement cannot change the shape, so the shape the rows on screen
+   * were rendered under is what survives. Page one still offers a page two, the rows behind
+   * it are moved away, and the click finds nothing.
    */
   test("a page that comes back empty leaves the columns the rows are rendered under", async () => {
     const EXACT = "SELECT * FROM orders WHERE id <= 100 ORDER BY id";
@@ -492,16 +521,17 @@ describe.each(SHELLS)("$name: paging a seeded table end to end (#816)", (shell) 
     await waitFor(() => expect(tabs[0].result?.rows).toHaveLength(PAGE_SIZE));
     const fields = tabs[0].result!.fields;
     expect(fields).toEqual(["id", "label"]);
-
-    await hook.loadMore();
-    await waitFor(() => expect(tabs[0].result!.rows).toHaveLength(2 * PAGE_SIZE));
-    // The trap: the second page filled its bound exactly, so a third page is offered.
     expect(tabs[0].result!.pagination!.hasMore).toBe(true);
 
-    await hook.loadMore();
-    await waitFor(() => expect(tabs[0].result!.pagination!.hasMore).toBe(false));
-    expect(tabs[0].result!.rows).toHaveLength(2 * PAGE_SIZE);
-    expect(tabs[0].result!.rowCount).toBe(2 * PAGE_SIZE);
+    await provider.query("UPDATE orders SET id = id + 1000 WHERE id > 50 AND id <= 100");
+    try {
+      await hook.loadMore();
+      await waitFor(() => expect(tabs[0].result!.pagination!.hasMore).toBe(false));
+    } finally {
+      await provider.query("UPDATE orders SET id = id - 1000 WHERE id > 1050 AND id <= 1100");
+    }
+    expect(tabs[0].result!.rows).toHaveLength(PAGE_SIZE);
+    expect(tabs[0].result!.rowCount).toBe(PAGE_SIZE);
     expect(tabs[0].result!.fields).toEqual(fields);
   });
 

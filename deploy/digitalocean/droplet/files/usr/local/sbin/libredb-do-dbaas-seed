@@ -1,0 +1,187 @@
+#!/bin/bash
+# Turns the credentials file DigitalOcean writes when a customer adds a Managed
+# Database while creating this Droplet into a LibreDB Studio seed file, so the
+# database is already in Studio's sidebar at first login.
+#
+# Usage: libredb-do-dbaas-seed CREDENTIALS SEED_FILE STATUS_FILE
+#
+# Success: writes SEED_FILE (mode 0600; the caller hands it to the container
+# user), writes STATUS_FILE for the MOTD, prints the env-file lines that carry
+# the passwords on stdout and exits 0. The passwords never enter SEED_FILE: it
+# holds ${VAR} references that Studio resolves from its environment.
+#
+# Failure: removes any partial SEED_FILE, writes STATUS_FILE with the reason,
+# prints the reason on stderr and exits 1. An engine this script does not know,
+# or a field with an unexpected shape, is an error and never a guess. No message
+# ever contains a password.
+set -euo pipefail
+
+if [ "$#" -ne 3 ]; then
+  echo "usage: $0 CREDENTIALS SEED_FILE STATUS_FILE" >&2
+  exit 2
+fi
+CREDENTIALS=$1
+SEED_FILE=$2
+STATUS_FILE=$3
+
+fail() {
+  rm -f "$SEED_FILE" "$SEED_FILE.tmp"
+  (
+    umask 022
+    printf 'DBAAS=error\nDBAAS_DETAIL=%s\n' "$1" > "$STATUS_FILE"
+  )
+  echo "libredb-do-dbaas-seed: $1" >&2
+  exit 1
+}
+
+# A status left by an earlier run never describes this one. Any exit other than
+# success or fail() (a write that set -e stops) still leaves an error status, so
+# the MOTD cannot keep printing an old "connected".
+rm -f "$STATUS_FILE"
+on_exit() {
+  local code=$?
+  if [ "$code" -ne 0 ] && [ ! -e "$STATUS_FILE" ]; then
+    rm -f "$SEED_FILE" "$SEED_FILE.tmp"
+    (
+      umask 022
+      printf 'DBAAS=error\nDBAAS_DETAIL=the helper stopped with exit code %s; see the cloud-init log\n' "$code" > "$STATUS_FILE"
+    )
+  fi
+}
+trap on_exit EXIT
+
+# A value from the file, shown in a message: letters, digits, '.', '_' and '-'
+# only, at most 32 characters, so the MOTD can never print a control sequence.
+printable() {
+  printf '%s' "$1" | tr -cd 'A-Za-z0-9._-' | cut -c1-32
+}
+
+# DigitalOcean's own 1-Click scripts read key="value" lines; the partner README
+# shows key=value. Both shapes are read. The file is never sourced: a value is
+# data, not shell.
+field() {
+  local line value
+  line=$(grep -m1 -E "^$1=" "$CREDENTIALS" || true)
+  value=${line#*=}
+  value=${value%$'\r'}
+  case $value in
+    \"*\")
+      value=${value#\"}
+      value=${value%\"}
+      ;;
+  esac
+  printf '%s' "$value"
+}
+
+HOST_RE='^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'
+NAME_RE='^[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}$'
+PORT_RE='^[1-9][0-9]{0,4}$'
+
+require_shape() {
+  [[ $2 =~ $3 ]] || fail "$1 is missing or has an unexpected shape"
+}
+
+require_port() {
+  require_shape "$1" "$2" "$PORT_RE"
+  [ "$2" -le 65535 ] || fail "$1 is out of range"
+}
+
+require_password() {
+  [ -n "$2" ] || fail "$1 is missing"
+  if [[ $2 =~ [[:cntrl:]] ]]; then
+    fail "$1 contains a control character"
+  fi
+}
+
+# One seed entry. Every value printed here has passed a shape check above, so
+# none of them can close a YAML string or start a new key.
+entry() { # id name type host port database user password-variable
+  printf '  - id: "%s"\n' "$1"
+  printf '    name: "%s"\n' "$2"
+  printf '    type: %s\n' "$3"
+  printf '    host: "%s"\n' "$4"
+  printf '    port: %s\n' "$5"
+  if [ -n "$6" ]; then
+    printf '    database: "%s"\n' "$6"
+  fi
+  printf '    user: "%s"\n' "$7"
+  # shellcheck disable=SC2016 # a literal ${VAR} reference, resolved by Studio
+  printf '    password: "${%s}"\n' "$8"
+  printf '    environment: production\n'
+  printf '    group: "DigitalOcean"\n'
+  printf '    roles: ["admin"]\n'
+  printf '    managed: true\n'
+  printf '    ssl:\n'
+  printf '      mode: require\n'
+}
+
+[ -r "$CREDENTIALS" ] || fail "cannot read $CREDENTIALS"
+
+db_protocol=$(field db_protocol)
+keystore_protocol=$(field keystore_protocol)
+if [ -z "$db_protocol" ] && [ -z "$keystore_protocol" ]; then
+  fail "the credentials file names no db_protocol and no keystore_protocol"
+fi
+
+entries=""
+env_lines=""
+status_lines=""
+
+if [ -n "$db_protocol" ]; then
+  case $db_protocol in
+    postgresql) type=postgres label=PostgreSQL id=do-managed-postgres ;;
+    mysql) type=mysql label=MySQL id=do-managed-mysql ;;
+    *) fail "db_protocol \"$(printable "$db_protocol")\" is not an engine this image connects" ;;
+  esac
+  host=$(field db_host)
+  port=$(field db_port)
+  database=$(field db_database)
+  user=$(field db_username)
+  password=$(field db_password)
+  require_shape db_host "$host" "$HOST_RE"
+  require_port db_port "$port"
+  require_shape db_database "$database" "$NAME_RE"
+  require_shape db_username "$user" "$NAME_RE"
+  require_password db_password "$password"
+  entries+=$(entry "$id" "DigitalOcean Managed $label" "$type" "$host" "$port" "$database" "$user" LIBREDB_DO_DB_PASSWORD)$'\n'
+  env_lines+="LIBREDB_DO_DB_PASSWORD=$password"$'\n'
+  status_lines+="DBAAS_CONNECTION=DigitalOcean Managed $label: database $database, user $user"$'\n'
+fi
+
+if [ -n "$keystore_protocol" ]; then
+  case $keystore_protocol in
+    redis | rediss | valkey) ;;
+    *) fail "keystore_protocol \"$(printable "$keystore_protocol")\" is not an engine this image connects" ;;
+  esac
+  host=$(field redis_host)
+  port=$(field redis_port)
+  user=$(field redis_username)
+  password=$(field redis_password)
+  require_shape redis_host "$host" "$HOST_RE"
+  require_port redis_port "$port"
+  require_shape redis_username "$user" "$NAME_RE"
+  require_password redis_password "$password"
+  entries+=$(entry do-managed-valkey "DigitalOcean Managed Valkey" redis "$host" "$port" "" "$user" LIBREDB_DO_KEYSTORE_PASSWORD)$'\n'
+  env_lines+="LIBREDB_DO_KEYSTORE_PASSWORD=$password"$'\n'
+  status_lines+="DBAAS_CONNECTION=DigitalOcean Managed Valkey: user $user"$'\n'
+fi
+
+(
+  umask 077
+  {
+    printf '# Written once at first boot from %s.\n' "$CREDENTIALS"
+    # shellcheck disable=SC2016 # a literal ${VAR}, as above
+    printf '# Passwords are ${VAR} references resolved from /etc/libredb-studio.env.\n'
+    printf 'version: "1"\n'
+    printf 'connections:\n'
+    printf '%s' "$entries"
+  } > "$SEED_FILE.tmp"
+)
+mv "$SEED_FILE.tmp" "$SEED_FILE"
+
+(
+  umask 022
+  printf 'DBAAS=connected\n%s' "$status_lines" > "$STATUS_FILE"
+)
+
+printf '%s' "$env_lines"

@@ -9,6 +9,9 @@ import React from "react";
 // itself is proved in Playwright; this is the pin that the axis options changed.
 const capturedXAxisProps: Record<string, unknown>[] = [];
 const capturedChartProps: Record<string, unknown>[] = [];
+const capturedPieProps: Record<string, unknown>[] = [];
+// The label the Tooltip mock hovers. Recharts hands the tooltip the hovered tick's value.
+let tooltipLabel: unknown = "tooltip_label";
 
 // ── Mock Recharts ───────────────────────────────────────────────────────────
 mock.module("recharts", () => ({
@@ -45,6 +48,7 @@ mock.module("recharts", () => ({
   // an element (`<PieSliceLabel>`) so the label can be a real `<text fill=ink>`
   // rather than a string recharts would paint in the slice's own colour.
   Pie: (props: Record<string, unknown>) => {
+    capturedPieProps.push(props);
     const label = props.label;
     const slices = [{ name: "alpha", percent: 0.25 }, { name: "beta" }];
 
@@ -90,7 +94,7 @@ mock.module("recharts", () => ({
           React.cloneElement(content as React.ReactElement<Record<string, unknown>>, {
             active: true,
             payload: [{ name: "tooltip_series", value: 1234567, color: "#8884d8" }],
-            label: "tooltip_label",
+            label: tooltipLabel,
           }),
           React.cloneElement(content as React.ReactElement<Record<string, unknown>>, {
             active: false,
@@ -210,7 +214,7 @@ mock.module("@/components/ui/select", () => ({
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { DataCharts, PieSliceLabel } from "@/components/DataCharts";
+import { chartNumber, DataCharts, PieSliceLabel } from "@/components/DataCharts";
 import { mockToastError } from "../helpers/mock-sonner";
 import type { QueryResult } from "@/lib/types";
 
@@ -337,6 +341,8 @@ describe("DataCharts", () => {
   beforeEach(() => {
     capturedXAxisProps.length = 0;
     capturedChartProps.length = 0;
+    capturedPieProps.length = 0;
+    tooltipLabel = "tooltip_label";
     // Clear localStorage saved charts
     if (typeof localStorage !== "undefined") {
       try {
@@ -647,6 +653,90 @@ describe("DataCharts", () => {
     expect(await marginAfterClick("Scatter")).toEqual({ top: 20, right: 30, left: 20, bottom: 60 });
   });
 
+  // Recharts builds a category axis from the string and number x values only, then
+  // draws the marks by row index, so a NULL category used to shorten the axis and
+  // slide every later value onto the next row's category, the last one off the end.
+  describe("a NULL in the category column", () => {
+    const nullCategoryResult: QueryResult = {
+      rows: [
+        { city: null, n: 1 },
+        { city: "Ankara", n: 2 },
+        { city: null, n: 3 },
+        { city: "Izmir", n: 4 },
+        { city: null, n: 5 },
+      ],
+      fields: ["city", "n"],
+      rowCount: 5,
+      executionTime: 1,
+    };
+    const aligned = [
+      { city: "NULL", n: 1, __libredb_chart_row: 0 },
+      { city: "Ankara", n: 2, __libredb_chart_row: 1 },
+      { city: "NULL", n: 3, __libredb_chart_row: 2 },
+      { city: "Izmir", n: 4, __libredb_chart_row: 3 },
+      { city: "NULL", n: 5, __libredb_chart_row: 4 },
+    ];
+
+    test("keeps every value on its own row's category in each category chart", async () => {
+      const { queryByText } = render(React.createElement(DataCharts, { result: nullCategoryResult }));
+      for (const label of ["Bar", "Line", "Area", "Stacked", "Stack Area"]) {
+        capturedChartProps.length = 0;
+        fireEvent.click(queryByText(label)!);
+        await waitFor(() => {
+          expect(capturedChartProps.length).toBeGreaterThan(0);
+        });
+        expect(capturedChartProps.at(-1)?.data).toEqual(aligned);
+      }
+    });
+
+    test("names the pie slice NULL rather than leaving it nameless", () => {
+      // Five rows of one categorical and one numeric column: the pie is the suggestion.
+      render(React.createElement(DataCharts, { result: nullCategoryResult }));
+      expect(capturedPieProps.at(-1)?.nameKey).toBe("city");
+      expect(capturedPieProps.at(-1)?.data).toEqual(aligned);
+    });
+
+    test("an aggregation sums the NULL rows into one NULL category", async () => {
+      const { getByTestId, queryByText } = render(React.createElement(DataCharts, { result: nullCategoryResult }));
+      fireEvent.click(queryByText("Bar")!);
+      capturedChartProps.length = 0;
+      fireEvent.click(getByTestId("select-item-sum"));
+      await waitFor(() => {
+        expect(capturedChartProps.length).toBeGreaterThan(0);
+      });
+      expect(capturedChartProps.at(-1)?.data).toEqual([
+        { city: "NULL", n: 9, __libredb_chart_row: 0 },
+        { city: "Ankara", n: 2, __libredb_chart_row: 1 },
+        { city: "Izmir", n: 4, __libredb_chart_row: 2 },
+      ]);
+    });
+
+    // Recharts finds the axis tooltip's row by the hovered category's value, so with
+    // the category as the axis key the third row (the second NULL) showed the first
+    // row's numbers. The axis is keyed by row position and reads the category back.
+    test("keys the axis by row, so a repeated category keeps its own tick and tooltip", async () => {
+      tooltipLabel = 2;
+      const { queryByText, getByTestId } = render(React.createElement(DataCharts, { result: nullCategoryResult }));
+      capturedXAxisProps.length = 0;
+      fireEvent.click(queryByText("Bar")!);
+      await waitFor(() => {
+        expect(capturedXAxisProps.length).toBeGreaterThan(0);
+      });
+      const axis = capturedXAxisProps.at(-1) as { dataKey: string; tickFormatter: (tick: unknown) => string };
+      expect(axis.dataKey).toBe("__libredb_chart_row");
+      expect([0, 1, 2, 3, 4].map((row) => axis.tickFormatter(row))).toEqual([
+        "NULL",
+        "Ankara",
+        "NULL",
+        "Izmir",
+        "NULL",
+      ]);
+      // The tooltip title is the hovered row's category, not its position.
+      expect(getByTestId("mock-tooltip").textContent).toContain("NULL");
+      expect(getByTestId("mock-tooltip").textContent).not.toContain("2tooltip_series");
+    });
+  });
+
   test("suggests pie for few categorical rows", () => {
     const { queryByTestId } = render(React.createElement(DataCharts, { result: fewCategoricalResult }));
     expect(queryByTestId("mock-pie-chart")).not.toBeNull();
@@ -693,6 +783,45 @@ describe("DataCharts", () => {
     await waitFor(() => {
       expect(queryByText("Buckets")).not.toBeNull();
     });
+  });
+
+  // The server writes NaN and the infinities as words, and `Number("Infinity")` passes a
+  // NaN check: in a histogram that made a bin index of NaN, which threw during render.
+  test("draws a histogram over NaN and infinite cells instead of throwing", async () => {
+    const nonFinite: QueryResult = {
+      ...mockNumericResult,
+      rows: mockNumericResult.rows.map((row, i) =>
+        i === 0 ? { ...row, revenue: "Infinity" } : i === 1 ? { ...row, revenue: Number.NEGATIVE_INFINITY } : row,
+      ),
+    };
+    capturedChartProps.length = 0;
+    const { queryByText } = render(React.createElement(DataCharts, { result: nonFinite }));
+    fireEvent.click(queryByText("Histogram")!);
+    await waitFor(() => {
+      expect(queryByText("Buckets")).not.toBeNull();
+    });
+    const bins = capturedChartProps.at(-1)?.data as Array<{ count: number }>;
+    expect(bins.reduce((sum, bin) => sum + bin.count, 0)).toBe(5);
+  });
+
+  test("draws a NaN or infinite bar like a null, at 0", () => {
+    const nonFinite: QueryResult = {
+      ...mockNumericResult,
+      rows: mockNumericResult.rows.map((row, i) => (i === 0 ? { ...row, revenue: Number.POSITIVE_INFINITY } : row)),
+    };
+    capturedChartProps.length = 0;
+    render(React.createElement(DataCharts, { result: nonFinite }));
+    const data = capturedChartProps.at(-1)?.data as Array<Record<string, unknown>>;
+    expect(data.every((point) => Number.isFinite(point.revenue))).toBe(true);
+  });
+
+  test("chartNumber keeps finite numbers and draws everything else at 0", () => {
+    expect(chartNumber(1.5)).toBe(1.5);
+    expect(chartNumber("2.5")).toBe(2.5);
+    expect(chartNumber(null)).toBe(0);
+    for (const nonFinite of [Number.NaN, Number.POSITIVE_INFINITY, "NaN", "Infinity", "-Infinity", "abc"]) {
+      expect(chartNumber(nonFinite)).toBe(0);
+    }
   });
 
   // -----------------------------------------------------------------------

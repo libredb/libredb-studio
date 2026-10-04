@@ -349,6 +349,26 @@ to the newer name would change the wording on the form without changing a single
 { rows: recordset, fields, rowCount: rowsAffected[0] ?? recordset.length, executionTime, columnTypes? }
 ```
 
+A text that returns several result sets still answers with its **first**, as `EXEC sp_help` always
+did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `POST /api/db/transaction` do not send that field; the
+multi-statement route reads it to show a batch's last result with rows.
+
+**The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
+of one request the batch between `GO` lines (`src/lib/sql/grammar.ts`), so `DECLARE @x INT = 5;
+SELECT @x * 2` reaches the server as one request and answers 10, a `#temp` table created in a batch is
+there for the batch's next statement, and `CREATE PROCEDURE … AS BEGIN …; …; END` is created as written.
+A line holding only `GO` (any case, optionally followed by a `--` comment) separates batches and is
+never sent; `GO 5` is not read as a separator and the server refuses it (measured on SQL Server 2025 RTM-CU9: `Incorrect syntax near 'GO'.`). Each batch is
+its own request on a pooled connection, so a `#temp` table created in one batch is visible to the next
+only if it borrows the same connection (`docs/BACKLOG.md` D92). The last batch's last statement is
+bounded with `TOP` when it is a read, unless the batch is a module definition (its first statement
+creates or alters a procedure, function, trigger or view), whose tail is the stored body. "Run the
+statement at the cursor" runs the caret's own statement in a batch that is a run of statements and the
+whole batch only for a module definition (`docs/editor/query-optimization.md`, multi-statement runs).
+Measured before this on SQL
+Server 2025 RTM-CU9: each `;`-fragment was its own request, so the same script answered `Must declare
+the scalar variable "@x"`, `Invalid object name '#t'` and `Incorrect syntax near 'GO'`.
+
 Native `mssql` errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
 ### 5.2 Query cancellation
@@ -404,8 +424,9 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
   is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
   Cassandra stopped spelling their bytes `0x…` in the provider.
-- **Only the first result set is returned.** `query()` reads `result.recordset` (singular), so a
-  multi-statement batch or a stored procedure returning several result sets surfaces just one.
+- **One result set is shown.** `query()` answers with the first result set and carries the others in
+  `resultSets` (§5.1); the single-statement route shows the first and the multi-statement route a
+  batch's last one with rows.
 
 ### 5.4 Declared column types
 
@@ -441,6 +462,15 @@ this existed, the probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exp
 `NVARCHAR(MAX)` and its `DECIMAL(10,2)` as `FLOAT` - which is the same evidence read the right way
 round, a string exporting as text and a number as a float. Both execution paths fill it from the same column map - including
 `queryInTransaction()`, which had the map available all along and simply never read it.
+
+### 5.5 What the SQL INSERT export writes for a BIT
+
+`mssql` returns a BIT as a JS boolean, and T-SQL has no boolean literal: an exported `true` is `Msg 207: Invalid column name 'true'`, and that fails the whole batch.
+The SQL INSERT export writes a boolean as `1` / `0` for this dialect (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+Dates need nothing: the ISO text a `Date` becomes (`2024-12-31T23:59:59.997Z`) replays into `datetime`, `datetime2`, `smalldatetime`, `datetimeoffset` and `date`.
+
+Measured 2026-10-04 on SQL Server 2025 (17.0.5005.3): a table of `bit`, the five date and time types, `uniqueidentifier`, `decimal(38,10)`, `bigint`, `money`, `varbinary(max)`, `nvarchar(max)`, `float`, `real`, `tinyint` and `xml` exported and replayed with `sqlcmd` into both a `SELECT * INTO copy … WHERE 1 = 0` copy and the exported DDL's own table without an error.
+Two cells read back differently, both lost by the driver before the export sees them: a `datetimeoffset` keeps its instant but not its offset or its digits past the millisecond, and a `decimal` past 15 significant digits arrives as a rounded JS number.
 
 ---
 
@@ -1782,8 +1812,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **Binary columns aren't sanitized.** `VARBINARY`/`IMAGE`/`rowversion` come back as Node `Buffer`s
   and cross the wire as `{"type":"Buffer","data":[…]}` (no `0x…` hex conversion like the MySQL
   provider) — see [§5.3](#53-data-type--parameter-handling). The client recovers them: the results
-  grid, the row detail sheet and the CSV export all classify that shape as binary and render `\x…`
-  hex (`src/lib/export/binary.ts`), so what remains is the response size — about four bytes of JSON
+  grid, the row detail sheet, the CSV export and the JSON export (#1381) all classify that shape as
+  binary and write `\x…` hex (`src/lib/export/binary.ts`), so what remains is the response size: about four bytes of JSON
   digits per byte of data.
 - **Numeric precision loss** — `DECIMAL`/`NUMERIC`/`MONEY` are returned as JS `number`s and can lose
   precision; they would need to be fetched as strings to stay exact. `BIGINT` already arrives as one

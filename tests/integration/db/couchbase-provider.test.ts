@@ -175,8 +175,16 @@ let queryHttpCode = 200;
 let deferredIndexRows: Record<string, unknown>[] = [];
 let networkFailure: Error | null = null;
 
+/**
+ * A body sent as these exact bytes rather than through `JSON.stringify`, which
+ * cannot write the unquoted integer past 2^53 a live cluster sends.
+ */
+class RawBody {
+  constructor(readonly text: string) {}
+}
+
 function jsonResponse(payload: unknown, httpCode: number): Response {
-  return new Response(JSON.stringify(payload), {
+  return new Response(payload instanceof RawBody ? payload.text : JSON.stringify(payload), {
     status: httpCode,
     headers: { "content-type": "application/json" },
   });
@@ -460,6 +468,33 @@ describe("CouchbaseProvider query", () => {
     expect(result.executionTime).toBe(1);
   });
 
+  test("keeps an integer past 2^53 exact, as its digits, at any depth", async () => {
+    // Measured on 8.0.2 CE on 2026-10-04: the query service sends a document's
+    // 9007199254740993 as that UNQUOTED number, and a plain JSON.parse showed
+    // 9007199254740992 in the grid, the API and every export. A value in the safe
+    // range, and the metrics the provider reads itself, stay numbers.
+    const provider = await connectProvider();
+    queryHandler = () =>
+      new RawBody(
+        '{"requestID":"req-1","signature":{"big":"number","max":"number","small":"number","d":"object"},' +
+          '"results":[{"big":9007199254740993,"max":9223372036854775807,"small":42,' +
+          '"d":{"big":-9007199254740993,"note":"id 9007199254740993"}}],"status":"success",' +
+          '"metrics":{"elapsedTime":"2.5ms","executionTime":"1.234ms","resultCount":1,"mutationCount":0}}',
+      );
+
+    const result = await provider.query('SELECT d.big FROM `travel`.`inventory`.`hotel` AS d WHERE META(d).id = "h1"');
+
+    expect(result.rows).toEqual([
+      {
+        big: "9007199254740993",
+        max: "9223372036854775807",
+        small: 42,
+        d: { big: "-9007199254740993", note: "id 9007199254740993" },
+      },
+    ]);
+    expect(result.rowCount).toBe(1);
+  });
+
   test("derives fields from the rows when the projection is a wildcard", async () => {
     const provider = await connectProvider();
     queryHandler = () => queryPayload([{ hotel: { city: "Bursa" } }, { hotel: {}, __id: "hotel::2" }]);
@@ -471,7 +506,7 @@ describe("CouchbaseProvider query", () => {
 
   test("wraps SELECT RAW scalars so the grid gets one honest column", async () => {
     // SELECT RAW / SELECT VALUE return bare scalars, not objects. Handing those
-    // through unchanged makes deriveFields call Object.keys on a string, which
+    // through unchanged makes the column union call Object.keys on a string, which
     // yields one column per character index.
     const provider = await connectProvider();
     queryHandler = () => queryPayload(["Grand Plaza", "Seaside Inn"] as unknown as Record<string, unknown>[]);

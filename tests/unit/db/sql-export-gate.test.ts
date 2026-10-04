@@ -56,6 +56,7 @@ describe("offersSqlExport", () => {
     expect(offersSqlExport(makeCaps({ queryLanguage: "sql" }))).toBe(true);
     expect(offersSqlExport(makeCaps({ queryLanguage: "json" }))).toBe(true);
     expect(offersSqlExport(makeCaps({ queryLanguage: "promql" }))).toBe(true);
+    expect(offersSqlExport(makeCaps({ queryLanguage: "influxql" }))).toBe(true);
   });
 
   test("offers them to every shipped dialect whose record leaves the field absent", () => {
@@ -70,6 +71,10 @@ describe("offersSqlExport", () => {
 
   test("withholds them from qdrant, whose record declines them (vector-family spec 3.10)", () => {
     expect(offersSqlExport(makeCaps({ queryDialect: "qdrant" }))).toBe(false);
+  });
+
+  test("withholds them from oxia, whose record declines them (SB2-4.4)", () => {
+    expect(offersSqlExport(makeCaps({ queryDialect: "oxia" }))).toBe(false);
   });
 
   test("offers them to a host's dialect this release has no record for, as the menu always did", () => {

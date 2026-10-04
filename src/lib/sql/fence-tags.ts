@@ -100,6 +100,16 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // is registered below: `json` is a MongoDB document as often, `http` and `rest` name no engine, and
   // `fenceTagEngine` is what decides whether a plan's deliverable was written for THIS connection.
   qdrant: true,
+  // An ```influxdb block holds one InfluxQL statement the editor runs as it is. The `influxql` alias below
+  // spells the language, and it still names this engine: see its entry. No `flux` tag is registered anywhere:
+  // no type-id runs Flux, and an alias would make a Flux block look runnable on `influxdb`.
+  influxdb: true,
+  // An ```influxdb3 block holds one DataFusion SQL statement. No alias is registered below: `sql` names no
+  // engine, and `influxql` and `flux` are not this type-id's language.
+  influxdb3: true,
+  // A ```oxia block holds one `oxia client` read command the editor runs as it is (O14). No alias: `oxia` already
+  // names the engine and its CLI.
+  oxia: true,
 });
 
 /**
@@ -127,6 +137,7 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "cql",
   "promql",
   "cypher",
+  "influxql",
 ]);
 
 /**
@@ -162,6 +173,9 @@ const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   // out of this record, a ```cypher block contradicted no connection and was recorded as a PostgreSQL
   // run's statement. A second graph type-id that runs Cypher is the moment to revisit this entry.
   cypher: "neo4j",
+  // The `promql` rule again: InfluxQL is a language, and `influxdb` is the only type-id that runs it
+  // (`influxdb3` runs SQL). A second InfluxQL type-id is the moment to revisit this entry.
+  influxql: "influxdb",
 });
 
 /**

@@ -20,6 +20,9 @@ const DEFAULT_PORTS: Record<string, string> = {
   etcd: "2379",
   milvus: "19530",
   qdrant: "6333",
+  influxdb: "8086",
+  influxdb3: "8181",
+  oxia: "6648",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -50,6 +53,13 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
   // No User and no Database: Qdrant has neither, and the key or JWT is the password (vector-family spec 6.2).
   qdrant: ["host", "port", "password"],
+  // The consent to a cleartext password or token is both InfluxDB types' too; InfluxDB 3 takes no user name,
+  // its token being the password (InfluxDB spec A.3).
+  influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
+  // No User: Oxia has no user name; the token is the password, the namespace the database, and a cluster's data
+  // servers and the consent to a cleartext token are fields of Oxia's own (SB3-1.5).
+  oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -600,6 +610,165 @@ describe("useConnectionForm", () => {
 
       await expectPlainTarget(result, onConnect);
     });
+  });
+
+  /**
+   * The save path needs a reset of its own (#1155). A host that keeps the dialog open
+   * after a save never runs the close path, so the save itself has to leave the form
+   * the way a close does: every connection-scoped field from
+   * `CONNECTION_FORM_DEFAULTS`, through the same walk. The hand-kept list this
+   * replaced cleared only the credentials, so the host, TLS, SSH tunnel and
+   * environment of the connection just saved stayed in the dialog and reached the
+   * next one's test and save.
+   */
+  test("saving a new connection with the dialog left open resets the form for the next one", async () => {
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    // Connection A carries the fields the old reset missed: a host, a verifying TLS
+    // mode with a CA, a tunnel with a password, and an environment.
+    act(() => {
+      result.current.setName("A");
+      result.current.setHost("db-a");
+      result.current.setSSLMode("verify-full");
+      result.current.setCaCert("-----BEGIN CERTIFICATE-----ca-a");
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion-a");
+      result.current.setSSHPassword("tunnel-secret");
+      result.current.setEnvironment("production");
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    // Not vacuous: A really was saved with all of it, so the reset below has
+    // something to clear.
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    const first = onConnect.mock.calls[0][0];
+    expect(first.name).toBe("A");
+    expect(first.ssl?.mode).toBe("verify-full");
+    expect(first.sshTunnel?.host).toBe("bastion-a");
+    expect(first.environment).toBe("production");
+
+    // The dialog stays open: `isOpen` belongs to the host, and a save is not a close.
+    // Every connection-scoped field must be back at its default, as after a close.
+    for (const [key, value] of Object.entries(CONNECTION_FORM_DEFAULTS)) {
+      expect({ key, value: result.current[key as keyof typeof result.current] }).toEqual({ key, value });
+    }
+
+    // Connection B, typed into the same still-open dialog, must not reach the host
+    // with A's certificates, tunnel or environment.
+    act(() => {
+      result.current.setName("B");
+      result.current.setHost("db-b");
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(2);
+    const second = onConnect.mock.calls[1][0];
+    expect(second.name).toBe("B");
+    expect(second.host).toBe("db-b");
+    expect(second.ssl).toBeUndefined();
+    expect(second.sshTunnel).toBeUndefined();
+    expect(second.environment).toBe("local");
+  });
+
+  /**
+   * Edit mode keeps the target's fields (#1155). The dialog is still bound to the
+   * connection just saved, so a save must not clear them: a half-cleared form would
+   * save a credential-less connection on the next click. The close path leaves an edit
+   * target's state alone for the same reason.
+   */
+  test("saving an edit with the dialog left open keeps that connection's fields", async () => {
+    const editConn: DatabaseConnection = {
+      id: "edit-kept",
+      name: "Kept",
+      type: "postgres",
+      host: "kept.example.com",
+      port: 5432,
+      user: "pgadmin",
+      password: "pgpass",
+      database: "keptdb",
+      createdAt: new Date(),
+      ssl: { mode: "verify-full", caCert: "-----BEGIN CERTIFICATE-----ca" },
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.kept",
+        port: 22,
+        username: "tunnel",
+        authMethod: "password",
+        password: "tunnel-secret",
+      },
+    };
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: editConn,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(result.current.name).toBe("Kept");
+    expect(result.current.host).toBe("kept.example.com");
+    expect(result.current.user).toBe("pgadmin");
+    expect(result.current.sslMode).toBe("verify-full");
+    expect(result.current.caCert).toContain("CERTIFICATE");
+    expect(result.current.sshEnabled).toBe(true);
+    expect(result.current.sshHost).toBe("bastion.kept");
+    expect(result.current.sshPassword).toBe("tunnel-secret");
+  });
+
+  /**
+   * The degraded-save acknowledgement belongs to the connection that was warned, not
+   * to the dialog. A host that keeps the dialog open after A's save must warn about B
+   * on its first click, the way closing the dialog does (#1155).
+   */
+  test("a new connection saved through the degraded offer does not carry the acknowledgement to the next one", async () => {
+    mockGlobalFetch({
+      "/api/db/test-connection": {
+        ok: true,
+        json: {
+          success: true,
+          degraded: true,
+          message: "Connected, but this server answered no health data: Keyspace system_views does not exist",
+        },
+      },
+    });
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+
+    act(() => result.current.setName("A"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.setName("B"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(result.current.testResult?.tone).toBe("warning");
+    expect(result.current.testResult?.message).toContain("again");
   });
 
   /**
@@ -1282,6 +1451,83 @@ describe("useConnectionForm", () => {
     expect(onConnect).toHaveBeenCalledTimes(1);
   });
 
+  describe("a server's own caution at connect (#1401)", () => {
+    // Materialize v26.44.1's startup NOTICE for a session database that does not exist.
+    const caution = { message: 'session database "nosuchdb" does not exist', code: "MZ004", severity: "NOTICE" };
+
+    test("Test Connection shows it in a warning instead of a plain success", async () => {
+      const onTestConnection = mock(async () => ({ success: true, latency: 3, warnings: [caution] }));
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleTestConnection();
+      });
+
+      expect(result.current.testResult!.tone).toBe("warning");
+      expect(result.current.testResult!.message).toBe(
+        'Connected. The server reported: NOTICE: session database "nosuchdb" does not exist',
+      );
+    });
+
+    test("is added to a degraded answer's own sentence rather than replacing it", async () => {
+      const onTestConnection = mock(async () => ({
+        success: true,
+        degraded: true,
+        message: "Connected, but this server answered no health data: nope",
+        warnings: [caution, { message: "second", severity: "WARNING" }],
+      }));
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleTestConnection();
+      });
+
+      expect(result.current.testResult!.message).toBe(
+        'Connected, but this server answered no health data: nope The server reported: NOTICE: session database "nosuchdb" does not exist; WARNING: second',
+      );
+    });
+
+    test("holds the first save back to show it, and the second click saves", async () => {
+      const onTestConnection = mock(async () => ({ success: true, warnings: [caution] }));
+      const onConnect = mock(() => {});
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).not.toHaveBeenCalled();
+      expect(result.current.testResult!.tone).toBe("warning");
+      expect(result.current.testResult!.message).toContain('session database "nosuchdb" does not exist');
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).toHaveBeenCalledTimes(1);
+    });
+
+    test("a different caution on the second click is shown again rather than saved past", async () => {
+      const other = { message: 'session database "otherdb" does not exist', code: "MZ004", severity: "NOTICE" };
+      const answers = [[caution], [other], [other]];
+      const onTestConnection = mock(async () => ({ success: true, warnings: answers.shift() }));
+      const onConnect = mock(() => {});
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).not.toHaveBeenCalled();
+      expect(result.current.testResult!.message).toContain('"otherdb" does not exist');
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // ── handlePasteConnectionString parses and fills form ──────────────────────
 
   test("handlePasteConnectionString parses and fills form fields", () => {
@@ -1639,6 +1885,9 @@ describe("useConnectionForm", () => {
     neo4j: true,
     milvus: true,
     qdrant: true,
+    influxdb: true,
+    influxdb3: true,
+    oxia: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -2678,8 +2927,10 @@ describe("useConnectionForm", () => {
       expect(body.type).toBe("kafka");
       expect("sshTunnel" in body).toBe(false);
     }
-    // The tunnel is still switched on in the dialog's state: only the write is withheld.
-    expect(result.current.sshEnabled).toBe(true);
+    // The save reset (#1155) has cleared the tunnel from the dialog's state as well.
+    // The bodies above were built while it was still switched on: the write gate, not
+    // the reset, is what kept it off them.
+    expect(result.current.sshEnabled).toBe(false);
     expect(onConnect).toHaveBeenCalledTimes(1);
     expect("sshTunnel" in onConnect.mock.calls[0][0]).toBe(false);
   });
@@ -3211,5 +3462,116 @@ describe("offersReadOnlyToggle (#1089)", () => {
   test("never where the engine does not enforce the mode", () => {
     expect(offersReadOnlyToggle(false, null)).toBe(false);
     expect(offersReadOnlyToggle(false, own)).toBe(false);
+  });
+});
+
+describe("the dataServers field", () => {
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    onTestConnection: async () => ({ success: true }),
+    editConnection: null as DatabaseConnection | null,
+  };
+  beforeEach(() => {
+    props.onConnect.mockClear();
+  });
+
+  test("typed text is saved as typed for a type that takes the field", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("  a.internal:6648, b.internal:6648 "));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0].dataServers).toBe("  a.internal:6648, b.internal:6648 ");
+  });
+
+  test.each(["", "   "])("an empty or blank box writes no key (%p)", async (typed) => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers(typed));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("a type that does not take the field drops it", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("a.internal:6648"));
+    act(() => result.current.setType("postgres"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("editing a connection without one shows an empty box", () => {
+    const listed: DatabaseConnection = {
+      id: "c1",
+      name: "Cluster",
+      type: "oxia",
+      host: "a.internal",
+      port: 6648,
+      dataServers: "a.internal:6648",
+      createdAt: new Date(),
+    };
+    const unlisted: DatabaseConnection = {
+      id: "c2",
+      name: "Other cluster",
+      type: "oxia",
+      host: "b.internal",
+      port: 6648,
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, editConnection: listed },
+    });
+    expect(result.current.dataServers).toBe("a.internal:6648");
+
+    rerender({ ...props, editConnection: unlisted });
+    expect(result.current.dataServers).toBe("");
+  });
+
+  test("emptying the box of an edited connection clears the list it had", async () => {
+    // The text box owns the field: a list kept from the stored connection would keep sending the
+    // token to servers the user took off it.
+    const listed: DatabaseConnection = {
+      id: "c1",
+      name: "Cluster",
+      type: "oxia",
+      host: "a.internal",
+      port: 6648,
+      dataServers: "a.internal:6648,b.internal:6648",
+      createdAt: new Date(),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...props, editConnection: listed }));
+    expect(result.current.dataServers).toBe("a.internal:6648,b.internal:6648");
+    act(() => result.current.setDataServers(""));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("closing the dialog resets it", () => {
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, isOpen: true },
+    });
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("a.internal:6648"));
+    expect(result.current.dataServers).toBe("a.internal:6648");
+
+    rerender({ ...props, isOpen: false });
+    rerender({ ...props, isOpen: true, editConnection: null });
+    expect(result.current.dataServers).toBe("");
+    expect(CONNECTION_FORM_DEFAULTS.dataServers).toBe("");
   });
 });

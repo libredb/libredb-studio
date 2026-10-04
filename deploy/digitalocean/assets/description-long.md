@@ -2,11 +2,11 @@
 
 **The open-source SQL IDE built for cloud-native teams.**
 
-LibreDB Studio gives you a full-featured database workspace in your browser: connect to PostgreSQL, MySQL, MongoDB, Redis and nineteen more engines, write and run queries, have the optional AI explain them wherever the engine returns a query plan, and share results with your team.
+LibreDB Studio gives you a full-featured database workspace in your browser: connect to PostgreSQL, MySQL, MongoDB, Redis and twenty-two more engines, write and run queries, have the optional AI explain them wherever the engine returns a query plan, and share results with your team.
 
 ## Features
 
-- **Twenty-three engines, one interface**: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus and Qdrant
+- **Twenty-six engines, one interface**: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia
 - **Read-only AI agent** — state a question and the agent investigates it, and every claim in its report cites the result it came from; it runs SQL on PostgreSQL, SQLite, DuckDB and SQL Server only, in a session the database enforces as read-only, so writes and DDL are refused by the engine rather than by reading the statement. On every other engine it drafts the statement and you run it, and nothing reaches your editor unless you consent to the hand-over when the run opens
 - **AI query explanation** — one click turns an unfamiliar query into plain English, with your own schema as context, on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid and Trino: the write-up is derived from the engine's own `EXPLAIN` plan, so it is offered where an engine returns one (bring your own key: Gemini, OpenAI, Ollama or any OpenAI-compatible endpoint; off unless configured)
 - **Modern editor** — autocomplete, syntax highlighting, query history
@@ -22,6 +22,16 @@ LibreDB Studio gives you a full-featured database workspace in your browser: con
 ## How it works
 
 LibreDB Studio runs as a Docker container managed by systemd (`libredb-studio.service`). Application data persists in `/app/data` and survives restarts and upgrades. A unique JWT secret and admin/user passwords are generated on first boot — no shared default credentials.
+
+## Add a Managed Database (optional)
+
+When you create the Droplet, you can choose **Add a Database** and DigitalOcean creates a Managed PostgreSQL or MySQL cluster together with it. On first boot LibreDB Studio adds that database to its sidebar, so it is there the first time you sign in with an account that has the admin role, with nothing to type.
+
+- The connection signs in as the cluster's administrator (`doadmin`), so only accounts with the admin role see it, and it is locked in the UI: the password stays on the Droplet in `/etc/libredb-studio.env`, readable by root only, and is never sent to the browser.
+- Traffic to the cluster is encrypted, as with the `sslmode=require` connection string DigitalOcean gives you, but the server certificate is not verified. To verify it, add the cluster's CA certificate to `/etc/libredb-studio/seed/connections.yaml` as described in the [DigitalOcean deployment guide](https://github.com/libredb/libredb-studio/blob/main/deploy/digitalocean/README.md#managed-database).
+- A new cluster can take a few minutes to accept connections. If you restrict the cluster's **Trusted Sources**, add this Droplet to them.
+- The welcome message (MOTD) says whether the database was added. If it reports a problem, the credentials are in `/root/.digitalocean_dbaas_credentials` and you can add the connection in Studio yourself.
+- If you reset the cluster's password later, update `LIBREDB_DO_DB_PASSWORD` in `/etc/libredb-studio.env` and run `systemctl restart libredb-studio`.
 
 ## TLS and the session cookie
 

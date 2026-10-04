@@ -1,0 +1,15 @@
+{
+  "version": "2.9.1",
+  "name": "health-auth",
+  "image": "influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "GET",
+    "path": "/health",
+    "query": {},
+    "auth": "token"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "body": "{\"name\":\"influxdb\", \"message\":\"ready for queries and writes\", \"status\":\"pass\", \"checks\":[], \"version\": \"v2.9.1\", \"commit\": \"d4fa1941fd\"}\n"
+}

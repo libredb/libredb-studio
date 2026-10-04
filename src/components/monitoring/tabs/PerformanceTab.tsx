@@ -319,7 +319,9 @@ export function PerformanceTab({ data, loading, history = [] }: PerformanceTabPr
                 />
                 <div>
                   <p className="text-xs sm:text-xs font-medium">Low Cache Hit</p>
-                  <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">Increase shared_buffers</p>
+                  <p className="text-xs sm:text-xs text-muted-foreground hidden sm:block">
+                    {performance?.cacheHitAdvice ?? "The working set does not fit in the engine's cache"}
+                  </p>
                 </div>
               </div>
             )}

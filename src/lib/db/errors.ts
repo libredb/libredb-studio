@@ -126,6 +126,27 @@ export class QueryError extends DatabaseError {
 }
 
 /**
+ * What `beginTransaction()` raises when the server accepted the BEGIN and its own status
+ * says no transaction is open, the providers that can read that status (PostgreSQL's
+ * ReadyForQuery byte, MySQL's `SERVER_STATUS_IN_TRANS`) share it. Measured 2026-10-04 on
+ * RisingWave 3.1.0: `BEGIN` answers success with the NOTICE "no transaction is actually
+ * started" and ReadyForQuery `I`, and an INSERT and a DELETE run after it stayed applied
+ * through the ROLLBACK that SANDBOX reported as "Changes auto-rolled back". Raised as a
+ * `QueryError`, so the route answers 400 with this sentence and the UI shows it as is.
+ */
+export const NO_TRANSACTION_OPENED =
+  "This server accepted BEGIN but did not open a transaction, so nothing run in it could be rolled back. Transactions and SANDBOX are not available on this connection.";
+
+/**
+ * What `beginTransaction({ requireReportedState: true })` raises when the server answered the
+ * BEGIN without reporting any transaction state (see `BeginTransactionResult`). SANDBOX asks
+ * for that, because it tells the user their changes were rolled back, and on such a server
+ * nothing Studio can read would show it. A manual transaction is still opened there.
+ */
+export const TRANSACTION_STATE_UNREPORTED =
+  "This server does not report whether a transaction is open, so Studio cannot prove that SANDBOX rolled anything back. SANDBOX is not available on this connection; BEGIN, COMMIT and ROLLBACK still are.";
+
+/**
  * Timeout error - query or connection timeout
  */
 export class TimeoutError extends DatabaseError {
@@ -377,6 +398,113 @@ export function describeOracleClientLoadFailure(libDir: string, detail: string):
 }
 
 /**
+ * The SQLSTATE classes that name a fault of the statement itself (#1427): `0A` feature not
+ * supported, `21` cardinality violation, `22` data exception, `23` integrity constraint
+ * violation, `42` syntax error or access rule violation and `44` WITH CHECK OPTION violation.
+ * Every other class is the connection's, the transaction's or the server's (`08` connection,
+ * `40` rollback, `53` resources, `57` operator intervention, `XX` internal), and keeps the
+ * class the rest of `mapDatabaseError` gives it.
+ */
+const STATEMENT_SQLSTATE = /^(0A|2[123]|4[24])[0-9A-Z]{3}$/;
+
+/**
+ * MySQL errors that carry SQLSTATE `42000` and are not the statement's fault: `1203`
+ * `max_user_connections` and `1226` a per-account resource limit such as `max_questions`. The
+ * account hit a limit; the same statement runs once it clears, so it keeps its 5xx class.
+ */
+export const MYSQL_ACCOUNT_LIMIT_ERRNOS = new Set([1203, 1226]);
+
+/**
+ * SQL Server error numbers for a statement the server parsed or ran and refused (#1427).
+ * Severity alone would not do: a deadlock victim (1205) is severity 13, a user-correctable
+ * level, and it is the transaction's fault, not the statement's.
+ */
+const MSSQL_STATEMENT_ERRORS = new Set([
+  // Syntax: incorrect syntax near a token, near a keyword, and a missing or misused clause.
+  102, 103, 105, 156, 170, 319,
+  // A name that resolves to nothing: column, object, procedure, function, and an ambiguous column.
+  207, 208, 209, 2812, 4121,
+  // Constraints and values: NOT NULL, a FOREIGN KEY or CHECK conflict, a unique key, a value that
+  // does not convert, an arithmetic overflow, a divide by zero, and a truncated string.
+  515, 547, 2601, 2627, 245, 8114, 8115, 8134, 2628, 8152,
+  // An object that already exists, and a permission the principal lacks on an object.
+  2714, 229, 230, 262,
+]);
+
+/**
+ * Oracle error numbers for a statement the server parsed or ran and refused (#1427): unique
+ * constraint (1), the `ORA-009xx` parse and name-resolution range, NOT NULL (1400, 1407),
+ * insufficient privileges (1031), invalid number (1722), a value larger than its column (1438,
+ * 12899), date format errors (1830 to 1861), check and referential constraints (2290 to 2292)
+ * and a PL/SQL compilation error (6550).
+ */
+function isOracleStatementError(errorNum: number): boolean {
+  return (
+    errorNum === 1 ||
+    (errorNum >= 900 && errorNum <= 999) ||
+    errorNum === 1031 ||
+    errorNum === 1400 ||
+    errorNum === 1407 ||
+    errorNum === 1438 ||
+    errorNum === 1722 ||
+    (errorNum >= 1830 && errorNum <= 1861) ||
+    (errorNum >= 2290 && errorNum <= 2292) ||
+    errorNum === 6550 ||
+    errorNum === 12899
+  );
+}
+
+/**
+ * SQLite primary result codes for a statement the library refused (#1427): `SQLITE_ERROR` (1,
+ * a syntax error or an unknown table or column), `SQLITE_CONSTRAINT` (19), `SQLITE_MISMATCH`
+ * (20) and `SQLITE_RANGE` (25, a bind index out of range). An extended code carries its primary
+ * code in its low byte, which is how `SQLITE_CONSTRAINT_UNIQUE` (2067) reads as 19.
+ */
+const SQLITE_STATEMENT_RESULT_CODES = new Set([1, 19, 20, 25]);
+
+/**
+ * Whether the driver's own code fields say the STATEMENT is at fault (#1427).
+ *
+ * Read from codes and never from the message, so a table named `pool_items` or `timeouts`
+ * cannot decide the class (BACKLOG B4). Each driver publishes its own field, measured on the
+ * installed drivers on 2026-10-04:
+ *
+ * - `pg` puts the SQLSTATE in `code` (`42601`), `mysql2` in `sqlState` (`42000`), `db2-node` in
+ *   `sqlstate`. MySQL-wire relatives answer through `mysql2` too, so TiDB's `ER_PARSE_ERROR`
+ *   reads `42000` like MySQL's.
+ * - `mssql` puts the error number in `number` (`2812` for an unknown procedure).
+ * - `oracledb` puts it in `errorNum` (`900` for `ORA-00900`).
+ * - `bun:sqlite` names the result code in `code` (`SQLITE_CONSTRAINT_PRIMARYKEY`) and
+ *   `node:sqlite` puts the extended code in `errcode` under `code: "ERR_SQLITE_ERROR"`.
+ *
+ * A code this function does not know answers false, and the caller's other branches decide.
+ */
+function isStatementFault(error: Error): boolean {
+  const fields = error as Error & {
+    code?: unknown;
+    sqlState?: unknown;
+    sqlstate?: unknown;
+    number?: unknown;
+    errorNum?: unknown;
+    errcode?: unknown;
+    errno?: unknown;
+  };
+  if (typeof fields.errno === "number" && MYSQL_ACCOUNT_LIMIT_ERRNOS.has(fields.errno)) return false;
+  for (const state of [fields.code, fields.sqlState, fields.sqlstate]) {
+    if (typeof state === "string" && STATEMENT_SQLSTATE.test(state)) return true;
+  }
+  if (typeof fields.number === "number" && MSSQL_STATEMENT_ERRORS.has(fields.number)) return true;
+  if (typeof fields.errorNum === "number" && isOracleStatementError(fields.errorNum)) return true;
+  if (typeof fields.code === "string" && fields.code.startsWith("SQLITE_")) {
+    return /^SQLITE_(ERROR|CONSTRAINT|MISMATCH|RANGE)(_|$)/.test(fields.code);
+  }
+  if (fields.code === "ERR_SQLITE_ERROR" && typeof fields.errcode === "number") {
+    return SQLITE_STATEMENT_RESULT_CODES.has(fields.errcode & 0xff);
+  }
+  return false;
+}
+
+/**
  * Map native database errors to our error types
  */
 export function mapDatabaseError(error: unknown, provider: DatabaseType, query?: string): DatabaseError {
@@ -418,6 +546,15 @@ export function mapDatabaseError(error: unknown, provider: DatabaseType, query?:
     message.includes("permission denied")
   ) {
     return new AuthenticationError(`Authentication failed: ${error.message}`, provider);
+  }
+
+  // The statement's own fault, read from the driver's code fields (#1427). Placed after the
+  // connection and authentication branches so nothing they classify changes class, and before
+  // every later substring branch, so a statement error whose text happens to hold "timeout" or
+  // "pool" is not read as one. The engine's message is kept as it is, unprefixed, because it is
+  // what the reader corrects the statement from.
+  if (isStatementFault(error)) {
+    return new QueryError(error.message, provider, query, (error as { position?: number }).position);
   }
 
   // PostgreSQL preemption vs. operator cancel (#1145). Both a `statement_timeout`

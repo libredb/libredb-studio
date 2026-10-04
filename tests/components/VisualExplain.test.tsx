@@ -216,6 +216,18 @@ describe("VisualExplain", () => {
     expect(queryByText(/No obvious performance issues/)).not.toBeNull();
   });
 
+  /**
+   * A plan with no node in it was read as a verdict (#1389): MySQL's rows cast to this model
+   * showed "Operations 0" under the green card. Nothing parsed is nothing judged.
+   */
+  test('a plan with no node it can read never says "Query looks good"', () => {
+    const { queryByText } = render(
+      <VisualExplain plan={[{ EXPLAIN: '{"query_block":{}}' } as unknown as ExplainPlanResult]} />,
+    );
+    expect(queryByText("Query looks good")).toBeNull();
+    expect(queryByText("Plan could not be read")).not.toBeNull();
+  });
+
   test("shows Expensive Sort warning", () => {
     const { queryByText } = render(<VisualExplain plan={sortPlan} />);
     expect(queryByText("Expensive Sort")).not.toBeNull();
@@ -864,6 +876,63 @@ describe("VisualExplain", () => {
     const chevrons = planNodeContainer!.querySelectorAll("svg.transition-transform");
     // healthyPlan has a single node with no children, so no chevrons at all
     expect(chevrons.length).toBe(0);
+  });
+});
+
+// ============================================================================
+// An estimated PostgreSQL plan (`EXPLAIN (FORMAT JSON)`, nothing executed)
+// ============================================================================
+
+/**
+ * The background plan beside every run is an estimate since #1311: the ANALYZE form
+ * ran the user's statement a second time. Such a plan carries `Plan Rows` and
+ * `Total Cost` and no `Actual *` field at all, so the panel must not read it as a run
+ * that returned zero rows in zero time.
+ */
+describe("VisualExplain with an estimated plan", () => {
+  // The shape `EXPLAIN (FORMAT JSON)` answers on PostgreSQL 18: no Actual fields, no
+  // Execution Time, no buffer counts.
+  const estimatedPlan: ExplainPlanResult[] = [
+    {
+      Plan: {
+        "Node Type": "Seq Scan",
+        "Relation Name": "events",
+        "Plan Rows": 250000,
+        "Total Cost": 4831.5,
+        Plans: [{ "Node Type": "Index Scan", "Relation Name": "users", "Plan Rows": 1, "Total Cost": 8.3 }],
+      },
+    },
+  ];
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("the header says the plan was not executed and shows the planned rows", () => {
+    const { queryByText, queryAllByText } = render(<VisualExplain plan={estimatedPlan} />);
+    expect(queryByText("not executed")).not.toBeNull();
+    expect(queryByText("execution")).toBeNull();
+    expect(queryAllByText("~250.0K").length).toBeGreaterThan(0);
+  });
+
+  test("plan nodes show planned rows and cost, never zero rows in zero time", () => {
+    const { queryByText, queryAllByText } = render(<VisualExplain plan={estimatedPlan} />);
+    fireEvent.click(queryByText("tree")!);
+    expect(queryAllByText("~250.0K rows").length).toBeGreaterThan(0);
+    expect(queryAllByText("cost 4.8K").length).toBeGreaterThan(0);
+    expect(queryAllByText("0 rows")).toHaveLength(0);
+    expect(queryAllByText("0μs")).toHaveLength(0);
+  });
+
+  test("a large planned sequential scan is still flagged, from the planner's row count", () => {
+    const { queryByText } = render(<VisualExplain plan={estimatedPlan} />);
+    expect(queryByText("Sequential Scan")).not.toBeNull();
+    expect(queryByText(/Full table scan on "events" \(250\.0K rows\)/)).not.toBeNull();
+  });
+
+  test("the Execution insight says the plan was not executed", () => {
+    const { queryAllByText } = render(<VisualExplain plan={estimatedPlan} />);
+    expect(queryAllByText("Not executed").length).toBeGreaterThan(0);
   });
 });
 

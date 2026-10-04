@@ -16,6 +16,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import Redis, { type RedisOptions } from "ioredis";
+import { logger } from "@/lib/logger";
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
   applySourceBound,
@@ -31,6 +32,7 @@ import {
 } from "../../object-kinds";
 import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
+import { readRedisCommandText } from "./redis-command-text";
 import { comparePaths } from "../../object-path";
 import {
   type DatabaseConnection,
@@ -72,7 +74,7 @@ import {
   type ObjectSourceDocument,
   type OpenQueryTransactionOutcome,
 } from "../../types";
-import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
+import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "../../errors";
 
 /**
  * Redis's identity for the shared container-path renderer.
@@ -525,6 +527,44 @@ async function readKeyTypes(client: Redis, keys: readonly string[]): Promise<Rec
 }
 
 /**
+ * A count the server answered as an integer reply, or undefined when it answered anything else.
+ *
+ * The connection sets `stringNumbers`, so ioredis hands every integer reply over as its digits
+ * and `DBSIZE` answers `"42"`, not `42`. A count is far inside the safe range, so it is read back
+ * as a number here; a check for `typeof reply === "number"` alone would refuse every one of them.
+ * A number is accepted as well, so a client built without the option reads the same.
+ */
+function integerReply(reply: unknown): number | undefined {
+  if (typeof reply === "number") return Number.isInteger(reply) ? reply : undefined;
+  return typeof reply === "string" && /^-?\d+$/.test(reply) ? Number(reply) : undefined;
+}
+
+/**
+ * One `callBuffer` reply, decoded for display.
+ *
+ * A bulk or status string is decoded from its UTF-8 bytes, which is what `call` does. An integer
+ * reply, which `stringNumbers` hands over as its digits, becomes a number when it is exact as one
+ * and a bigint when it is not, so `INCR` on a 64-bit counter shows the server's own digits.
+ * Reading through `callBuffer` rather than `call` is what keeps the two kinds apart: under
+ * `stringNumbers`, `call` decodes both to the same text, and `(integer)` is the distinction
+ * redis-cli draws between them.
+ */
+function decodeReply(reply: unknown): unknown {
+  if (Buffer.isBuffer(reply)) return reply.toString();
+  if (typeof reply === "string") {
+    const value = Number(reply);
+    return Number.isSafeInteger(value) ? value : BigInt(reply);
+  }
+  if (Array.isArray(reply)) return reply.map(decodeReply);
+  return reply;
+}
+
+/** `JSON.stringify` for a nested reply: a bigint is written as its digits, which it cannot do itself. */
+function stringifyReply(reply: unknown): string {
+  return JSON.stringify(reply, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value));
+}
+
+/**
  * The three columns every row of a key grouping has, DERIVED rather than read from a
  * catalog: Redis publishes no schema for a key, so these are this provider's own statement
  * about the shape a `SCAN` row comes back in. `key` is the real key name and is the primary
@@ -783,6 +823,41 @@ function isServerErrorReply(error: unknown): boolean {
 }
 
 /**
+ * How a server's reply to a refused credential begins.
+ *
+ * Measured 2026-10-04 through ioredis 5.11.1. On redis 8.10.2 and valkey 9.1.2 a wrong password,
+ * or an ACL user that does not exist, is answered "WRONGPASS invalid username-password pair or
+ * user is disabled.", and no password against `requirepass` is "NOAUTH Authentication required."
+ * Redis 5.0.14 has no ACL and answers a wrong `requirepass` password "ERR invalid password", whose
+ * first word is the generic ERR, so the prefix is matched rather than the code. A password sent to
+ * a server that requires none is not refused at all: ioredis warns and the connect succeeds.
+ */
+const REDIS_AUTH_REPLIES: readonly string[] = Object.freeze(["WRONGPASS ", "NOAUTH ", "ERR invalid password"]);
+
+/**
+ * A failed connect, as the typed error that names its reason (#1356).
+ *
+ * `cause` is the first `error` event ioredis emitted while connecting, or the `connect()` rejection
+ * when it emitted none. The event is the one that says WHY: measured on ioredis 5.11.1, a wrong
+ * password, a refused port, an unknown host and a certificate the chain check refuses all reject
+ * `connect()` with the same "Connection is closed.", and the reason ("WRONGPASS ...",
+ * "connect ECONNREFUSED 127.0.0.1:6379", "getaddrinfo ENOTFOUND host",
+ * "self-signed certificate in certificate chain") travels only on the event.
+ *
+ * Only the MESSAGE is carried, never the error object: a `ReplyError` to `AUTH` holds the command
+ * it answered, password included, on its `command` field. None of the measured messages contains
+ * a credential; the host and port in a network one are the ones the user typed.
+ */
+function connectFailure(cause: unknown, host: string | undefined, port: number): DatabaseError {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  const message = `Failed to connect to Redis: ${reason}`;
+  if (isServerErrorReply(cause) && REDIS_AUTH_REPLIES.some((prefix) => reason.startsWith(prefix))) {
+    return new AuthenticationError(message, "redis");
+  }
+  return new ConnectionError(message, "redis", host, port);
+}
+
+/**
  * The exact command the revision token is a digest OF, as a plan reader will see it.
  *
  * `ObjectEditRevision.basis` is "the engine expression the comparison is over", so it carries the
@@ -1038,9 +1113,10 @@ export class RedisProvider extends BaseDatabaseProvider {
       //   1) KEYS session:*
       //   2) GET session:1
       //
-      // `executeRedisCommand` reads the whole body as one command, so the server
-      // answered `ERR unknown command '1)'`. The list numbering and the second
-      // command are what made it unrunnable, so those are what this names. The
+      // `executeRedisCommand` then read the whole body as one command, so the server
+      // answered `ERR unknown command '1)'`; it now refuses the second line as a
+      // second command instead. The list numbering and the second command are what
+      // make it unrunnable either way, so those are what this names. The
       // prefix-group sentence is here for the same reason `tablesAreDerivedGroupings`
       // exists: the inventory's rows are named `session:*`, which reads as something
       // addressable and is not (#427).
@@ -1127,6 +1203,12 @@ export class RedisProvider extends BaseDatabaseProvider {
       password: this.config.password || undefined,
       connectTimeout: this.queryTimeout,
       lazyConnect: true,
+      // An integer reply as its digits rather than a JS number. Measured on redis 8.10.2
+      // through ioredis 5.11.1: `INCR` on 9223372036854775806 was shown as
+      // `(integer) 9223372036854778000` without this, a counter rounded with no error. The
+      // `DBSIZE` counts this provider reads for itself go through `integerReply`, which reads
+      // the digit string back as a number; `SLOWLOG GET` is read through `String()`/`Number()`.
+      stringNumbers: true,
       ...(tls ? { tls } : {}),
     };
   }
@@ -1147,11 +1229,31 @@ export class RedisProvider extends BaseDatabaseProvider {
    * unhandled `error` event, and every later command ran in database 0. A `SELECT` ioredis saw
    * answered is also the one it re-sends after a reconnect, so the connection stays where it was
    * put.
+   *
+   * The `error` listener is attached before `connect()` and stays for the client's life. While
+   * connecting, its first event is the reason a refused connect names (`connectFailure`). After
+   * that it logs the message as a warning, so a dropped socket and the reconnects that follow stay
+   * visible to an operator; without any listener ioredis printed every event as
+   * "[ioredis] Unhandled error event" (#1356). The message only, never the error: a `ReplyError`
+   * carries the command it answered, which for `AUTH` holds the password.
    */
   private async openClient(db: number): Promise<Redis> {
     const client = new Redis(this.redisOptions());
+    let connecting = true;
+    let firstError: Error | undefined;
+    client.on("error", (error: Error) => {
+      if (connecting) firstError ??= error;
+      else logger.warn(`[Redis] ${error.message}`, { provider: "redis" });
+    });
     try {
-      await client.connect();
+      await client
+        .connect()
+        .catch((error: unknown) => {
+          throw connectFailure(firstError ?? error, this.config.host, this.config.port || 6379);
+        })
+        .finally(() => {
+          connecting = false;
+        });
       if (db !== 0) {
         await client.select(db).catch((error: unknown) => {
           throw new QueryError(
@@ -1190,8 +1292,8 @@ export class RedisProvider extends BaseDatabaseProvider {
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
       // A database the config cannot name or the server does not have is a request fault, not an
-      // unreachable host.
-      if (error instanceof QueryError || error instanceof DatabaseConfigError) throw error;
+      // unreachable host, and a refused connect already carries its typed reason.
+      if (error instanceof DatabaseError) throw error;
       throw new ConnectionError(
         `Failed to connect to Redis: ${error instanceof Error ? error.message : String(error)}`,
         "redis",
@@ -1313,109 +1415,35 @@ export class RedisProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * Advance the plain tokenizer's quote state across one line of text, using the
-   * SAME rule `executePlainCommand` uses: outside a quote any `"` or `'` opens
-   * one, inside a quote only the matching character closes it, and there is no
-   * escape handling. Returns the open quote character, or '' when none is open.
-   */
-  private static quoteStateAfter(text: string, quoteChar: string): string {
-    let open = quoteChar;
-    for (const ch of text) {
-      if (open === "") {
-        if (ch === '"' || ch === "'") open = ch;
-      } else if (ch === open) {
-        open = "";
-      }
-    }
-    return open;
-  }
-
-  /**
-   * Reduce a buffer to the ONE command it should run: drop every `#` comment
-   * line, then take the first blank-line-delimited block and join its lines back
-   * with a NEWLINE. A line is a comment only when it *starts* with `#` (after
-   * trimming) AND no quoted argument is open across it, so a `#` inside a key or
-   * value is never mistaken for one. Returns '' when nothing runnable remains
-   * (#427).
+   * Run the ONE command an editor text holds, read by `readRedisCommandText()`, the reading the
+   * confirmation gate and the editor's refusal share (docs/providers/redis.md 3.4a): each
+   * non-empty line is its own command, a line continues only inside an open quoted argument or
+   * an unfinished JSON command, `#` lines are dropped, the first blank line ends the read, and a
+   * second command before it is refused here too, so a caller that skipped the editor (the agent,
+   * the HTTP route) cannot run the text as one command.
    *
-   * Why a block rather than a line: outside quotes the tokenizer treats a
-   * newline as ordinary whitespace, so a single command wrapped across several
-   * lines (`HSET k a 1` / `b 2`) has always run whole, and a pretty-printed JSON
-   * command is legitimately multi-line — picking only line 1 would silently
-   * half-execute both. Why not the whole buffer: the schema-explorer "Generate
-   * Command" cheatsheet is a list of alternatives separated by blank lines, and
-   * running the buffer must run only its first command, not all of them.
-   *
-   * Why the join character is a newline and not a space: the tokenizer's
-   * whitespace branch is guarded by `!inQuote`, so a newline INSIDE a quoted
-   * argument is data. `SET note "line1\nline2"` stores a two-line value, and
-   * joining with a space silently rewrote it to `line1 line2`. A newline join
-   * keeps both behaviours exactly, and lines are appended verbatim so
-   * indentation inside a quoted value survives too.
+   * The form is the first character of the first command line: `{` is the JSON command, the
+   * lossless form the Redis generators fall back to and what `JSON.stringify(cmd, null, 2)`
+   * emits, and anything else is a plain command.
    */
-  /**
-   * What a buffer line is to `commandBody`. Both chrome kinds require that no
-   * quoted argument is open across the line: inside one, a line-leading `#` and
-   * an empty line are data, not structure (#427).
-   */
-  private static lineKind(raw: string, quoteChar: string): "comment" | "blank" | "content" {
-    if (quoteChar !== "") return "content";
-    const line = raw.trim();
-    if (line.startsWith("#")) return "comment";
-    return line === "" ? "blank" : "content";
-  }
-
-  private commandBody(input: string): string {
-    const block: string[] = [];
-    let quoteChar = "";
-    let isJsonBlock = false;
-    for (const raw of input.split("\n")) {
-      const kind = RedisProvider.lineKind(raw, quoteChar);
-      if (kind === "comment") continue;
-      if (kind === "blank") {
-        // A blank line ends the first block; blank lines before it are leading padding.
-        if (block.length > 0) break;
-        continue;
-      }
-      // The block's kind is fixed by its first content line, using the SAME test
-      // `executeRedisCommand` uses to pick a parser. Quote tracking exists only to
-      // protect a `#` inside a quoted argument of a PLAIN command, and its rules
-      // are the plain tokenizer's — no escape handling. Applying them to a JSON
-      // body counted `\"` inside a string as a real quote, so a key named `say"hi`
-      // left a phantom quote open, every later comment line stopped being dropped,
-      // and the buffer reached `JSON.parse` with comments in it (#427). A JSON
-      // body cannot hide a line-leading `#` inside a string — JSON strings carry
-      // no literal newline — so it needs no tracking at all.
-      if (block.length === 0) isJsonBlock = raw.trimStart().startsWith("{");
-      block.push(raw);
-      if (!isJsonBlock) quoteChar = RedisProvider.quoteStateAfter(raw, quoteChar);
-    }
-    return block.join("\n");
-  }
-
   private async executeRedisCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
-    const body = this.commandBody(input);
-    if (body.trim() === "") {
+    const read = readRedisCommandText(input);
+    if (read.kind === "empty") {
       throw new QueryError("No command to run (only comments or blank lines)", "redis");
     }
+    if (read.kind === "refused") throw new QueryError(read.refusal, "redis");
 
-    // Try JSON format first — over the whole block, because `JSON.stringify(cmd,
-    // null, 2)` is what the MongoDB-shaped generator emits and what users paste.
-    // It is also the lossless form the Redis generators fall back to for any
-    // argument the plain tokenizer cannot round-trip. Trailing `#` comment lines
-    // are dropped with every other comment; trailing non-comment text is not —
-    // it joins the block and fails JSON.parse (#427).
-    if (body.trimStart().startsWith("{")) {
+    if (read.kind === "json") {
       try {
-        const parsed = JSON.parse(body);
+        const parsed = JSON.parse(read.body);
         return this.executeJsonCommand(parsed);
       } catch {
         throw new QueryError("Invalid JSON command format", "redis");
       }
     }
 
-    // Plain text command format: COMMAND arg1 arg2 ...
-    return this.executePlainCommand(body);
+    // A plain command line always holds a word: it is not blank, and a quote opens one.
+    return this.runCommand(read.words[0].toUpperCase(), read.words.slice(1));
   }
 
   private async executeJsonCommand(cmd: RedisJsonCommand): Promise<Omit<QueryResult, "executionTime">> {
@@ -1429,48 +1457,13 @@ export class RedisProvider extends BaseDatabaseProvider {
     return this.runCommand(command, args);
   }
 
-  private async executePlainCommand(input: string): Promise<Omit<QueryResult, "executionTime">> {
-    // Parse plain text command, respecting quoted strings
-    const parts: string[] = [];
-    let current = "";
-    let inQuote = false;
-    let quoteChar = "";
-
-    for (let i = 0; i < input.length; i++) {
-      const ch = input[i];
-      if (!inQuote && (ch === '"' || ch === "'")) {
-        inQuote = true;
-        quoteChar = ch;
-      } else if (inQuote && ch === quoteChar) {
-        inQuote = false;
-      } else if (!inQuote && /\s/.test(ch)) {
-        if (current) {
-          parts.push(current);
-          current = "";
-        }
-      } else {
-        current += ch;
-      }
-    }
-    if (current) parts.push(current);
-
-    if (parts.length === 0) {
-      throw new QueryError("Empty command", "redis");
-    }
-
-    const command = parts[0].toUpperCase();
-    const args = parts.slice(1);
-
-    return this.runCommand(command, args);
-  }
-
   private async runCommand(command: string, args: string[]): Promise<Omit<QueryResult, "executionTime">> {
     const refusal = sharedConnectionRefusal(command, args);
     if (refusal !== null) throw new QueryError(refusal, "redis");
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (this.client as any).call(command, ...args);
-      return this.formatResult(command, result);
+      const result = await (this.client as any).callBuffer(command, ...args);
+      return this.formatResult(command, decodeReply(result));
     } catch (error) {
       throw new QueryError(`Redis error: ${error instanceof Error ? error.message : String(error)}`, "redis");
     }
@@ -1500,13 +1493,13 @@ export class RedisProvider extends BaseDatabaseProvider {
       // Regular array result
       const rows = result.map((item, index) => ({
         index: index + 1,
-        value: typeof item === "object" ? JSON.stringify(item) : String(item),
+        value: typeof item === "object" ? stringifyReply(item) : String(item),
       }));
       return { rows, fields: ["index", "value"], rowCount: rows.length };
     }
 
     // Handle integers
-    if (typeof result === "number") {
+    if (typeof result === "number" || typeof result === "bigint") {
       return { rows: [{ result: `(integer) ${result}` }], fields: ["result"], rowCount: 1 };
     }
 
@@ -1705,8 +1698,8 @@ export class RedisProvider extends BaseDatabaseProvider {
       // than papered over: `total` is what a progress bar divides by, and a stand-in number
       // would be one nobody measured.
       const replies = await client.pipeline().dbsize().info("cluster").exec();
-      const total = replies?.[0]?.[1];
-      if (typeof total !== "number") {
+      const total = integerReply(replies?.[0]?.[1]);
+      if (total === undefined) {
         throw replies?.[0]?.[0] ?? new QueryError("Redis answered no key count for this page of the walk", "redis");
       }
       const clustered = parseClusterEnabled(replies?.[1]?.[1]);
@@ -2451,7 +2444,11 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     const info = await this.client!.info();
     const parsed = this.parseRedisInfo(info);
-    const dbsize = await this.client!.dbsize();
+    // A digit string under `stringNumbers`, whatever the method's declared type says. A reply
+    // that is not a count is refused, as `scanKeysPage` refuses it: `tableCount` is required,
+    // so the only alternative would be a stand-in number nobody measured.
+    const dbsize = integerReply(await this.client!.dbsize());
+    if (dbsize === undefined) throw new QueryError("Redis answered no key count for the overview", "redis");
 
     return {
       version: labelServerVersion(parsed),

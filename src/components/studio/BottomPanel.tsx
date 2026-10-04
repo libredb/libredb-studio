@@ -6,7 +6,7 @@ import React, { useMemo } from "react";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import type { MaskingConfig } from "@/lib/data-masking";
+import { detectSensitiveColumnsFromConfig, type MaskingConfig } from "@/lib/data-masking";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
 import type { CellChange } from "@/components/ResultsGrid";
 import { ResultsGrid } from "@/components/ResultsGrid";
@@ -341,10 +341,23 @@ export const BottomPanel = React.memo(function BottomPanel({
   // How much of the result an export would write — the count the button carries and
   // the shortfall the menu states. Derived here so both read the same numbers.
   const exportScope = describeExportScope(displayedResult ?? { rows: [] }, gridPageOffer !== undefined);
+  /**
+   * The columns an export writes masked: the same detection the file builder applies, so the
+   * menu says exactly what the file will hold (#1433). Empty when masking is off or no column
+   * of this result matches a pattern, and then nothing is claimed.
+   */
+  const maskedColumns =
+    maskingEnabled && displayedResult
+      ? [...detectSensitiveColumnsFromConfig(displayedResult.fields, maskingConfig).keys()]
+      : [];
   // One list for both menus, filtered once, so the file items and the clipboard items cannot disagree (#701).
-  const resultFormats = offersSqlExport(metadata?.capabilities)
-    ? RESULT_FORMATS
-    : RESULT_FORMATS.filter((entry) => !SQL_TABLE_FORMATS.has(entry.format));
+  // SQL INSERT is withheld while a column is masked: its mask text would be written as the
+  // column's VALUE, and replaying the file would store it or be refused by a typed column (#1433).
+  const resultFormats = (
+    offersSqlExport(metadata?.capabilities)
+      ? RESULT_FORMATS
+      : RESULT_FORMATS.filter((entry) => !SQL_TABLE_FORMATS.has(entry.format))
+  ).filter((entry) => !(maskedColumns.length > 0 && entry.format === "sql-insert"));
 
   /**
    * Hands one format entry to whichever destination the user chose.
@@ -504,6 +517,14 @@ export const BottomPanel = React.memo(function BottomPanel({
                     own file.
                   </div>
                 )}
+                {maskedColumns.length > 0 && (
+                  // Said once for both destinations: the file and the clipboard write the
+                  // same masked text, and nothing in the file itself says so.
+                  <div data-testid="export-masked" className="px-2 pb-1.5 text-xs text-warning/80 max-w-[15rem]">
+                    Masked columns ({maskedColumns.join(", ")}) are exported and copied masked. SQL INSERT is not
+                    offered, as it would store the mask as data.
+                  </div>
+                )}
                 <DropdownMenuSeparator className="bg-hairline" />
                 {resultFormats.map((entry) => (
                   <DropdownMenuItem
@@ -636,26 +657,54 @@ export const BottomPanel = React.memo(function BottomPanel({
                 }}
               />
             ) : displayedResult ? (
-              <ResultsGrid
-                result={displayedResult}
-                onLoadMore={hydratedHere ? undefined : onLoadMore}
-                isLoadingMore={isLoadingMore}
-                supportsResultPagination={metadata?.capabilities.supportsResultPagination}
-                // The statement these ROWS came from, for the ordering notice. Withheld
-                // for a hydrated result for the same reason `onLoadMore` is: those rows
-                // are an agent run's, and the tab's own statement did not produce them.
-                resultQuery={hydratedHere ? undefined : resultQuery}
-                databaseType={activeConnection?.type}
-                maskingEnabled={maskingEnabled}
-                onToggleMasking={onToggleMasking}
-                userRole={userRole}
-                maskingConfig={maskingConfig}
-                editingEnabled={hydratedHere ? false : editingEnabled}
-                pendingChanges={pendingChanges}
-                onCellChange={onCellChange}
-                onApplyChanges={onApplyChanges}
-                onDiscardChanges={onDiscardChanges}
-              />
+              <div className="h-full flex flex-col">
+                {/*
+                  A result AND a run error on the same tab is a script that stopped on a failing
+                  statement (#1385): the earlier statements' rows stay, the failure stands above
+                  them, and a grid with no rows is left out because its "The operation was
+                  successful" would contradict the banner. A hydrated result is another run's.
+                */}
+                {runError !== undefined && !hydratedHere && (
+                  <div
+                    role="alert"
+                    className="shrink-0 px-3 py-2 border-b border-destructive/30 bg-destructive/10 text-destructive"
+                    data-testid="script-failure"
+                  >
+                    <p className="text-xs font-medium">The script stopped at a failing statement.</p>
+                    <p
+                      className="mt-1 break-words whitespace-pre-wrap font-mono text-xs"
+                      data-testid="script-failure-message"
+                    >
+                      {runError}
+                    </p>
+                  </div>
+                )}
+                {(runError === undefined || hydratedHere || displayedResult.rows.length > 0) && (
+                  <div className="flex-1 min-h-0">
+                    <ResultsGrid
+                      result={displayedResult}
+                      onLoadMore={hydratedHere ? undefined : onLoadMore}
+                      isLoadingMore={isLoadingMore}
+                      supportsResultPagination={metadata?.capabilities.supportsResultPagination}
+                      // The statement these ROWS came from, for the ordering notice. Withheld
+                      // for a hydrated result for the same reason `onLoadMore` is: those rows
+                      // are an agent run's, and the tab's own statement did not produce them.
+                      resultQuery={hydratedHere ? undefined : resultQuery}
+                      databaseType={activeConnection?.type}
+                      maskingEnabled={maskingEnabled}
+                      onToggleMasking={onToggleMasking}
+                      userRole={userRole}
+                      maskingConfig={maskingConfig}
+                      editingEnabled={hydratedHere ? false : editingEnabled}
+                      inlineEditRefusedColumns={metadata?.capabilities.inlineEditRefusedColumns}
+                      pendingChanges={pendingChanges}
+                      onCellChange={onCellChange}
+                      onApplyChanges={onApplyChanges}
+                      onDiscardChanges={onDiscardChanges}
+                    />
+                  </div>
+                )}
+              </div>
             ) : runError !== undefined ? (
               /*
                 The tab's last run failed, and its failure stands where its rows would.

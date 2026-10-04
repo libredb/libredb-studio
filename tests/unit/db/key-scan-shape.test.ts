@@ -40,6 +40,27 @@ describe("keyScanShape()", () => {
     expect(keyScanShape(etcd)).toEqual({ separator: "/", cursor: "opaque", pattern: "prefix", totalScope: "walk" });
   });
 
+  test('reads "none", the scope of an engine that publishes no count', () => {
+    const uncounted: KeyScanCapability = {
+      defaultCount: 500,
+      maxCount: 1000,
+      separator: "/",
+      cursor: "opaque",
+      pattern: "prefix",
+      totalScope: "none",
+    };
+    const shape: KeyScanShape = keyScanShape(uncounted);
+
+    expect(shape).toEqual({ separator: "/", cursor: "opaque", pattern: "prefix", totalScope: "none" });
+    // On its own it moves nothing else, as each other field does.
+    expect(keyScanShape({ defaultCount: 1, maxCount: 1, totalScope: "none" })).toEqual({
+      separator: ":",
+      cursor: "decimal",
+      pattern: "glob",
+      totalScope: "none",
+    });
+  });
+
   test("reads each field on its own, so one declared field moves nothing else", () => {
     const base = { defaultCount: 1, maxCount: 1 };
 

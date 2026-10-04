@@ -15,10 +15,8 @@ import http2 from "node:http2";
 import net, { type AddressInfo } from "node:net";
 import zlib from "node:zlib";
 import {
-  type ChannelCredentials,
   Client,
   credentials,
-  type experimental,
   Metadata,
   Server,
   ServerCredentials,
@@ -34,12 +32,10 @@ import {
   type WireShowCollectionsRequest,
 } from "@/lib/db/providers/vector/milvus/client";
 import type { MilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
-import { toMilvusError, toProviderError } from "@/lib/db/providers/vector/milvus/errors";
+import { MilvusUnsentStatus, toMilvusError, toProviderError } from "@/lib/db/providers/vector/milvus/errors";
 import {
   allowlistedService,
   allowlistFindings,
-  ClosingCredentials,
-  channelOptions,
   createGrpcMilvusClient,
   deadlineMs,
   grpcWireTransport,
@@ -206,11 +202,32 @@ describe("E7: the channel options, exactly", () => {
     "grpc.keepalive_timeout_ms": 6_000,
   };
 
-  test("plaintext: five options copied from etcd and enable_retries 0, and nothing else", () => {
-    expect(channelOptions(PLAINTEXT)).toEqual(base);
-  });
+  /**
+   * The options grpc-js hands the connector of the channel `grpcWireTransport` opens, which are the channel's own:
+   * the credentials grpc-js's `credentials` builds for it are recorded, and one call makes grpc-js dial.
+   */
+  async function channelOptionsOf(tls?: MilvusConnectionOptions["tls"]): Promise<unknown> {
+    const listener = await counting();
+    const inner = tls === undefined ? credentials.createInsecure() : credentials.createSsl();
+    const connectors = spyOn(inner, "_createSecureConnector");
+    const created = spyOn(credentials, tls === undefined ? "createInsecure" : "createSsl").mockReturnValue(inner);
+    try {
+      const channel = grpcWireTransport(at(listener.port, tls === undefined ? {} : { tls }));
+      await failure(channel.unary("GetVersion", {}, wireCall(1000)));
+      channel.close();
+    } finally {
+      created.mockRestore();
+      listener.listener.close();
+    }
+    expect(connectors).toHaveBeenCalled();
+    return connectors.mock.calls[0][1];
+  }
 
-  test("TLS adds the override by the IP rule", () => {
+  test("plaintext: five options copied from etcd and enable_retries 0, and nothing else", async () => {
+    expect(await channelOptionsOf()).toEqual(base);
+  }, 10_000);
+
+  test("TLS adds the override by the IP rule", async () => {
     const tls = {
       mode: "verify-full",
       verify: true,
@@ -218,14 +235,27 @@ describe("E7: the channel options, exactly", () => {
       identityIsIp: true,
       serverNameOverride: "milvus.invalid",
     } as const;
-    expect(channelOptions({ ...PLAINTEXT, tls })).toEqual({
+    expect(await channelOptionsOf(tls)).toEqual({
       ...base,
       "grpc.ssl_target_name_override": "milvus.invalid",
     });
-  });
+  }, 10_000);
 });
 
 describe("over grpc-js: the channel dials only the configured endpoint (E1, E2, E7)", () => {
+  test("a call its own signal ended before grpc-js gave it a transport is MilvusUnsentStatus: nothing was sent", async () => {
+    const listener = await counting();
+    const controller = new AbortController();
+    controller.abort();
+    const channel = grpcWireTransport(at(listener.port));
+    const error = await failure(channel.unary("GetVersion", {}, wireCall(2000, controller.signal)));
+    channel.close();
+    listener.listener.close();
+    // The provider's own class, which toMilvusError reads as a call that never left, so a Load or Release it ends is
+    // never worded "may have been applied".
+    expect(error).toBeInstanceOf(MilvusUnsentStatus);
+  }, 10_000);
+
   test("opening the channel dials nothing: only a call does", async () => {
     const listener = await counting();
     const channel = grpcWireTransport(at(listener.port));
@@ -477,137 +507,6 @@ describe("over grpc-js: deadlines, aborts and the receive cap (E13, E14)", () =>
     expect(toMilvusError(await failure(channel.unary("GetVersion", {}, wireCall()))).category).toBe("transport");
     channel.close();
     hostile.server.close();
-  });
-});
-
-describe("over grpc-js: nothing of a channel outlives close() (E16, copied from etcd's tests)", () => {
-  const TARGET: experimental.GrpcUri = { scheme: "dns", path: "milvus.test:19530" };
-  const CHANNEL_CLOSED = "The channel closed before this connection was established";
-
-  async function silentListener() {
-    const held = new Set<net.Socket>();
-    const spoke = new Set<net.Socket>();
-    const listener = net.createServer((socket) => {
-      held.add(socket);
-      socket.on("close", () => held.delete(socket));
-      socket.on("error", () => undefined);
-      socket.on("data", () => spoke.add(socket));
-    });
-    await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
-    return { listener, held, spoke, port: (listener.address() as AddressInfo).port };
-  }
-
-  const dialled = (port: number) =>
-    new Promise<net.Socket>((resolve, reject) => {
-      const socket = net.connect(port, "127.0.0.1", () => {
-        socket.off("error", reject);
-        resolve(socket);
-      });
-      socket.once("error", reject);
-    });
-
-  function establishing(): ChannelCredentials {
-    const inner = credentials.createInsecure();
-    spyOn(inner, "_createSecureConnector").mockReturnValue({
-      connect: (socket) => Promise.resolve({ socket, secure: false }),
-      waitForReady: () => Promise.resolve(),
-      getCallCredentials: () => credentials.createEmpty(),
-      destroy: () => undefined,
-    });
-    return inner;
-  }
-
-  test("destroy() ends every socket still in its handshake and fails its connect", async () => {
-    const silent = await silentListener();
-    const connector = new ClosingCredentials(credentials.createSsl())._createSecureConnector(TARGET, {});
-    const sockets = await Promise.all([dialled(silent.port), dialled(silent.port)]);
-    const connecting = sockets.map((socket) => failure(connector.connect(socket)));
-    await eventually(() => silent.spoke.size === 2);
-    connector.destroy();
-    expect(await Promise.all(connecting)).toMatchObject([{ message: CHANNEL_CLOSED }, { message: CHANNEL_CLOSED }]);
-    expect(sockets.map((socket) => socket.destroyed)).toEqual([true, true]);
-    await eventually(() => silent.held.size === 0);
-    silent.listener.close();
-    expect(silent.held.size).toBe(0);
-  }, 10_000);
-
-  test("a socket handed over after destroy() is ended before any handshake", async () => {
-    const silent = await silentListener();
-    const connector = new ClosingCredentials(credentials.createSsl())._createSecureConnector(TARGET, {});
-    connector.destroy();
-    const socket = await dialled(silent.port);
-    expect(await failure(connector.connect(socket))).toMatchObject({ message: CHANNEL_CLOSED });
-    expect(socket.destroyed).toBe(true);
-    await eventually(() => silent.held.size === 0);
-    silent.listener.close();
-    expect({ held: silent.held.size, spoke: silent.spoke.size }).toEqual({ held: 0, spoke: 0 });
-  }, 10_000);
-
-  test("everything else is grpc-js's own connector: the answer, the failure, readiness, call credentials, destroy()", async () => {
-    const inner = credentials.createSsl();
-    const handshake = { socket: new net.Socket(), secure: true };
-    const refusal = new Error("the handshake failed");
-    const ready = Promise.resolve();
-    const callCredentials = credentials.createEmpty();
-    const [answered, refused] = [new net.Socket(), new net.Socket()];
-    const destroyed: string[] = [];
-    spyOn(inner, "_createSecureConnector").mockReturnValue({
-      connect: (socket) => (socket === answered ? Promise.resolve(handshake) : Promise.reject(refusal)),
-      waitForReady: () => ready,
-      getCallCredentials: () => callCredentials,
-      destroy: () => {
-        destroyed.push("inner");
-      },
-    });
-    const connector = new ClosingCredentials(inner)._createSecureConnector(TARGET, {}, callCredentials);
-    expect(await connector.connect(answered)).toBe(handshake);
-    expect(await failure(connector.connect(refused))).toBe(refusal);
-    expect(connector.waitForReady()).toBe(ready);
-    expect(connector.getCallCredentials()).toBe(callCredentials);
-    connector.destroy();
-    expect({ destroyed, answered: answered.destroyed, refused: refused.destroyed }).toEqual({
-      destroyed: ["inner"],
-      answered: false,
-      refused: false,
-    });
-    expect(await failure(connector.waitForReady())).toMatchObject({ message: CHANNEL_CLOSED });
-  });
-
-  test("the credentials keep grpc-js's security flag and equal only themselves, so no two clients share a subchannel", () => {
-    const tls = new ClosingCredentials(credentials.createSsl());
-    const plaintext = new ClosingCredentials(credentials.createInsecure());
-    expect({ tls: tls._isSecure(), plaintext: plaintext._isSecure() }).toEqual({ tls: true, plaintext: false });
-    expect({ tls: tls._equals(tls), plaintext: plaintext._equals(plaintext) }).toEqual({ tls: true, plaintext: true });
-    expect(plaintext._equals(new ClosingCredentials(credentials.createInsecure()))).toBe(false);
-    // The control: grpc-js's insecure credentials equal any other.
-    expect(credentials.createInsecure()._equals(credentials.createInsecure())).toBe(true);
-  });
-
-  test("a connector made after the adapter's close refuses readiness and ends a socket handed to it", async () => {
-    const silent = await silentListener();
-    const closing = new ClosingCredentials(establishing());
-    closing.endEverySocket();
-    const late = closing._createSecureConnector(TARGET, {});
-    expect(await failure(late.waitForReady())).toMatchObject({ message: CHANNEL_CLOSED });
-    const socket = await dialled(silent.port);
-    expect(await failure(late.connect(socket))).toMatchObject({ message: CHANNEL_CLOSED });
-    expect(socket.destroyed).toBe(true);
-    silent.listener.close();
-  });
-
-  test("a connector's destroy() alone leaves an established socket open; the adapter's close ends it", async () => {
-    const silent = await silentListener();
-    const closing = new ClosingCredentials(establishing());
-    const connector = closing._createSecureConnector(TARGET, {});
-    const socket = await dialled(silent.port);
-    await connector.connect(socket);
-    connector.destroy();
-    expect(socket.destroyed).toBe(false);
-    closing.endEverySocket();
-    expect(socket.destroyed).toBe(true);
-    await eventually(() => silent.held.size === 0);
-    silent.listener.close();
-    expect(silent.held.size).toBe(0);
   });
 });
 

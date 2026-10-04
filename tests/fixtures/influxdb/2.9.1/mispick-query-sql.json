@@ -1,0 +1,20 @@
+{
+  "version": "2.9.1",
+  "name": "mispick-query-sql",
+  "image": "influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/api/v3/query_sql",
+    "query": {},
+    "body": {
+      "db": "home",
+      "q": "SELECT 1",
+      "format": "jsonl"
+    },
+    "auth": "token"
+  },
+  "status": 200,
+  "contentType": "text/html; charset=utf-8",
+  "body": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta name=\"description\" content=\"InfluxDB is a time series platform, purpose-built by InfluxData for storing metrics and events, provides real-time visibility into stacks, sensors, and systems.\"><title>InfluxDB</title><base href=\"/\"><base href=\"\"><link rel=\"icon\" href=\"/favicon.ico\"></head><body><div id=\"react-root\" data-basepath=\"\"></div><script defer=\"defer\" src=\"/49abc3a946.js\"></script></body></html>"
+}

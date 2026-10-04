@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
-import { splitStatements } from "@/lib/sql/statement-splitter";
+import { splitExecutionUnits, unitIsModuleBody, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
-import type { DatabaseType, QueryWarning } from "@/lib/types";
+import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 
 export interface StatementResult {
   index: number;
@@ -56,9 +57,54 @@ function carriedChannels(source: Pick<StatementResult, "warnings" | "columnTypes
  * error shaping) inside its own control flow and crossed the cognitive-complexity
  * bar (PR #308 review).
  */
+/**
+ * The text the script's LAST unit is sent as: its last statement bounded when that statement
+ * is a read, and everything else as written.
+ *
+ * A unit of several statements is a T-SQL batch sent as one request (#1312). Its last
+ * statement is bounded and spliced back in place, so `SELECT 1; SELECT * FROM big` is as
+ * bounded as it was when the two were separate requests - unless the batch is a module
+ * definition (`CREATE PROCEDURE … AS …`), whose last statement is part of the body the
+ * server stores, where a `TOP` would change the procedure rather than the result.
+ */
+function boundedText(
+  provider: DatabaseProvider,
+  unit: ExecutionUnit,
+  dialect: DatabaseType,
+  options: Record<string, unknown>,
+): string {
+  const tail = unit.statements[unit.statements.length - 1];
+  if (!isSelectQuery(tail.sql, dialect)) return unit.sql;
+  if (unit.statements.length > 1 && unitIsModuleBody(unit, resolveSqlGrammar(dialect))) return unit.sql;
+  const { query } = provider.prepareQuery(tail.sql, options);
+  return unit.sql.slice(0, tail.start - unit.start) + query + unit.sql.slice(tail.end - unit.start);
+}
+
+/**
+ * What a unit's result shows. A batch that produced several result sets shows the last one
+ * with rows (#1312), the rule the response applies across a script's statements below, so a
+ * plain `SELECT * FROM a; SELECT * FROM b` shows what it showed when the two were separate
+ * requests. A unit that produced one set shows it.
+ *
+ * The count is the shown set's own rows in a batch of several statements: the engine's
+ * `rowCount` there is the FIRST statement's (SQL Server's `rowsAffected[0]`), so
+ * `INSERT INTO t VALUES (1),(2); SELECT * FROM t` would report 2 beside five rows. A batch
+ * that returned no set at all keeps the engine's count, the only one it has.
+ */
+function shownSet(result: QueryResult, unit: ExecutionUnit) {
+  const batch = unit.statements.length > 1;
+  const sets = batch ? result.resultSets : undefined;
+  if (sets === undefined) {
+    const rowCount = batch && result.fields.length > 0 ? result.rows.length : result.rowCount;
+    return { rows: result.rows, fields: result.fields, rowCount, columnTypes: result.columnTypes };
+  }
+  const set = [...sets].reverse().find((candidate) => candidate.rows.length > 0) ?? sets[sets.length - 1];
+  return { rows: set.rows, fields: set.fields, rowCount: set.rows.length, columnTypes: set.columnTypes };
+}
+
 async function runStatement(
   provider: DatabaseProvider,
-  stmt: { sql: string; startLine: number },
+  stmt: ExecutionUnit,
   index: number,
   isLast: boolean,
   dialect: DatabaseType,
@@ -78,25 +124,24 @@ async function runStatement(
     // was made comment-tolerant to close (#281, #275). The shared reading also
     // types a `WITH` by the keyword its CTE list operates (#287), so a
     // read-only CTE is bounded here and a data-modifying one is not.
-    const prepared =
-      isLast && isSelectQuery(stmt.sql, dialect)
-        ? provider.prepareQuery(stmt.sql, options)
-        : { query: stmt.sql, wasLimited: false, limit: 0, offset: 0 };
+    const query = isLast ? boundedText(provider, stmt, dialect, options) : stmt.sql;
 
     // Every statement of the script runs under the SAME scope, which is what lets the
     // `finally` below end a transaction any of them left open — including one opened by a
     // statement whose own client is not the last one the script borrowed (D87). No params
     // and no queryId here: this route binds nothing and cancels nothing.
-    const result = await provider.query(prepared.query, undefined, undefined, scope);
+    const result = await provider.query(query, undefined, undefined, scope);
+    const { columnTypes, ...shown } = shownSet(result, stmt);
 
     return {
       ...identity,
       status: "success",
-      rows: result.rows,
-      fields: result.fields,
-      rowCount: result.rowCount,
+      ...shown,
+      // NaN and the infinities as words, which `JSON.stringify` would write as null
+      // (`src/lib/non-finite.ts`). The main result reuses this array, so it carries them too.
+      rows: rowsWithNonFiniteWords(shown.rows),
       executionTime: Math.round(performance.now() - startTime),
-      ...carriedChannels(result),
+      ...carriedChannels({ warnings: result.warnings, columnTypes }),
     };
   } catch (error) {
     return {
@@ -140,7 +185,11 @@ export async function POST(req: NextRequest) {
     // a reading the engine does not share is a statement the operator never wrote.
     // Measured on postgres 18, `/* a /* b *\/ ; DROP TABLE t; -- *\/ SELECT 1` is one
     // read there and the flat reading made its second fragment a bare DROP (S1).
-    const statements = splitStatements(sql, resolveSqlGrammar(connection.type));
+    //
+    // UNITS rather than statements: what one request carries is the dialect's to say, and
+    // for T-SQL it is the whole batch between `GO` lines, so a `DECLARE @x` reaches the
+    // server in the same request as the `SELECT @x` after it (#1312).
+    const statements = splitExecutionUnits(sql, resolveSqlGrammar(connection.type));
 
     if (statements.length === 0) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
