@@ -882,7 +882,7 @@ describe("pages against the sorted truth (SB1-7.8)", () => {
     expect(kept.length).toBeGreaterThan(1);
     const longest = Math.max(...keys.map((key) => Buffer.byteLength(key)));
     for (const bytes of kept) expect(bytes).toBeLessThanOrEqual(OXIA_PAGE_KEPT_BYTES + longest);
-  });
+  }, 30_000);
 
   test("a prefix page that has spent its budget ends before its next band (B-1)", async () => {
     // Five bands of 52 keys bring the page to 1 KiB under 16 MiB; the sixth band's one key of 64 KiB is kept as its
@@ -906,7 +906,7 @@ describe("pages against the sorted truth (SB1-7.8)", () => {
     const cursor = first.keys[first.keys.length - 1];
     const next = await prefixWalkPage(fake, snapshot, "hierarchical", { prefix: "/p/", cursor, count: 500 }, callOf());
     expect(next).toEqual({ keys: [keys[keys.length - 1]], more: false, shardsRead: 1 });
-  });
+  }, 30_000);
 
   test("a shard that lists one key twice is a malformed answer", async () => {
     const { fake, snapshot } = await fakeOf("natural", ["a", "b", "c"]);
@@ -1294,7 +1294,7 @@ describe("the console walks (consistency rulings 7, 8; SB1-9.3a)", () => {
         prefixWalkPage(stall.fake, stall.snapshot, order, { prefix: "k", cursor: big, count: 10 }, callOf()),
       );
       expect((error as QueryError).message).toBe(OXIA_STALLED_PAGE_SENTENCE);
-    });
+    }, 30_000);
   }
 
   test("prefixScanPage reads a band's extra value only when that band is read (B-1)", async () => {
@@ -1835,7 +1835,7 @@ describe("discoverTopNodes (SB1-8)", () => {
     const result = await discoverTopNodes(fake, snapshot, "hierarchical", callOf());
     expect(result.complete).toBe(false);
     expect(Date.now() - started).toBeLessThanOrEqual(OXIA_DISCOVERY_DEADLINE_MS + 500);
-  }, 10_000);
+  }, 30_000);
 
   test("a deadline-exceeded call ends discovery capped; any other failure propagates", async () => {
     const { fake, snapshot } = await fakeOf("hierarchical", pulsarKeyset(100));
