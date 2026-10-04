@@ -442,6 +442,13 @@ describe("parseDiscoveryExport: bounds shared with the exporter", () => {
       (n) => ({ services: Array.from({ length: n }, () => pgService()) }),
       "services",
     ],
+    // The exporter caps excluded at LIMITS.services too: it has no limit of its own.
+    [
+      "the excluded count",
+      LIMITS.services,
+      (n) => ({ excluded: Array.from({ length: n }, (_, i) => `app-${i}`) }),
+      "excluded",
+    ],
     ["a service name", LIMITS.name, (n) => ({ services: [pgService({ name: "n".repeat(n) })] }), "services.0.name"],
     [
       "a service appName",
