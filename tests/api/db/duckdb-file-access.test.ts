@@ -34,6 +34,7 @@ mock.module("@/lib/auth", () => ({
 const { POST: queryPost } = await import("@/app/api/db/query/route");
 const { POST: multiQueryPost } = await import("@/app/api/db/multi-query/route");
 const { POST: testConnectionPost } = await import("@/app/api/db/test-connection/route");
+const { POST: profilePost } = await import("@/app/api/db/profile/route");
 const { clearProviderCache, getProviderCacheStats } = await import("@/lib/db/factory");
 
 const workDir = mkdtempSync(join(tmpdir(), "libredb-duckdb-api-"));
@@ -281,5 +282,36 @@ describe("POST /api/db/test-connection beside a writer of the other posture (B1/
     await clearProviderCache();
     const read = await queryWith({ connection: adminConnection, sql: "SELECT id FROM t ORDER BY id" });
     expect(ids(read.body)).toEqual([1, 2]);
+  });
+});
+
+describe("POST /api/db/profile reads no file for a standard user on DuckDB (K1/B1)", () => {
+  // The route writes its own profiling statements, but the table address is the caller's, and a
+  // quoted path in it is DuckDB's replacement scan: `SELECT COUNT(*) FROM "<file>"` reads the file.
+  async function profile(): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await profilePost(
+      createMockRequest("/api/db/profile", {
+        method: "POST",
+        body: { connection: duckdbBody("").connection, tablePath: [secretFile], columns: ["services"] },
+      }) as never,
+    );
+    return { status: response.status, body: await parseResponseJSON<Record<string, unknown>>(response) };
+  }
+
+  test("a user naming a file as the table to profile is refused, and the file never surfaces", async () => {
+    role = "user";
+    const { status, body } = await profile();
+
+    expect(status).toBe(400);
+    expect(String(body.error)).toContain("file system operations are disabled by configuration");
+    expect(JSON.stringify(body)).not.toContain(SECRET_PLACEHOLDER);
+  });
+
+  test("the same request as an admin profiles the file, which is what the posture takes away", async () => {
+    role = "admin";
+    const { status, body } = await profile();
+
+    expect(status).toBe(200);
+    expect(JSON.stringify(body)).toContain(SECRET_PLACEHOLDER);
   });
 });
