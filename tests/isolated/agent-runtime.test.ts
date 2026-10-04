@@ -66,7 +66,10 @@ mock.module("@/lib/db", () => ({
   createDatabaseProvider: async () => ({ getCapabilities: mockGetCapabilities, getLabels: mockGetLabels }),
 }));
 // The profiled seam itself, so what the run's acquirer hands it can be read back.
-const mockAcquireExecutionProfileProvider = mock(async (..._args: unknown[]) => ({}) as never);
+const mockAcquireExecutionProfileProvider = mock(async (...args: unknown[]) => {
+  void args;
+  return {} as never;
+});
 mock.module("@/lib/db/factory", () => ({
   ...realFactory,
   acquireExecutionProfileProvider: mockAcquireExecutionProfileProvider,
