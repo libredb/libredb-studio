@@ -164,6 +164,29 @@ describe("POST /api/db/multi-query", () => {
     expect(data.fields).toBeDefined();
   });
 
+  // `JSON.stringify` writes NaN and both infinities as `null`; the main result and the
+  // statement it came from both carry them as words.
+  test("answers NaN and the infinities as words on the main result and its statement", async () => {
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+      rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, ok: 1.5, z: null }],
+      fields: ["f", "r", "n", "ok", "z"],
+      rowCount: 1,
+      executionTime: 1,
+    }));
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM floats" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ rows: unknown[]; statements: Array<{ rows: unknown[] }> }>(res);
+
+    const words = [{ f: "NaN", r: "Infinity", n: "-Infinity", ok: 1.5, z: null }];
+    expect(res.status).toBe(200);
+    expect(data.rows).toEqual(words);
+    expect(data.statements[0].rows).toEqual(words);
+  });
+
   // ── Warnings and declared column types travel with their statement (#285) ──
   //
   // #273 gave the shared result both channels and the providers fill them, but

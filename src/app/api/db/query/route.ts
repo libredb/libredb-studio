@@ -15,6 +15,7 @@ import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 
 /**
  * The error an unreadable `explain` field gets. It names the whole allowed shape
@@ -275,6 +276,9 @@ export async function POST(req: NextRequest) {
     const hasMore = prepared.wasLimited && result.rows.length === prepared.limit;
     return NextResponse.json({
       ...firstResultSet(result),
+      // NaN and the infinities as words: `JSON.stringify` would write each as null, which
+      // the grid and every export then show as SQL NULL (`src/lib/non-finite.ts`).
+      rows: rowsWithNonFiniteWords(result.rows),
       ...(explainFormat !== undefined && { explainFormat }),
       // Present only when there was a transaction to end, the way `/api/db/multi-query`
       // reports it, so an always-present "none" would announce something that did not happen.

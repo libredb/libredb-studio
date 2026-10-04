@@ -1516,6 +1516,7 @@ reconstructing. `columnTypes` is consumed by the results grid's column labels, b
 The pool carries its own type parsers (`ZONELESS_AS_TEXT` in [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)), passed as the `types` option in `buildPoolConfig()`, so the structured form and a pasted connection string both get them.
 `date`, `date[]`, `timestamp` (without time zone) and `timestamp[]` arrive as the engine's own text, `'2026-09-01'` and `'2026-09-01 10:30:00'`, whatever the TZ of the Node process.
 `timestamptz` and `timestamptz[]` still arrive as a JavaScript `Date`, which is an instant, so the JSON the routes answer with carries its ISO UTC form, `'2026-09-01T10:30:00.000Z'`, in every TZ.
+Their two infinities are the exception and arrive as the engine's text, `'infinity'` and `'-infinity'`, alone and as array elements: `pg-types` reads them as the number `Infinity`, which no `Date` holds and `JSON.stringify` writes as `null`, so measured 2026-10-04 on PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
 `time` and `timetz` were already the engine's text and are unchanged.
 Every other type is what `pg-types` makes of it.
 
@@ -1539,6 +1540,15 @@ The parsers are per pool on purpose: `pg.types.setTypeParser` is process-wide, a
 Only the text format is intercepted, since the binary one has no text to return.
 An in-process consumer of the library surface now receives strings, not `Date` objects, for these four types.
 Every relative that goes through `PostgresProvider` (the `via: "postgres"` entries in [`compatibility.ts`](../../src/lib/db/compatibility.ts)) shares the change.
+
+### 5.6 NaN and the float infinities
+
+`real` and `double precision` (and their arrays) are still whatever `pg-types` makes of them, a JavaScript number, so `'NaN'`, `'Infinity'` and `'-Infinity'` arrive as `NaN`, `Infinity` and `-Infinity`.
+JSON has no form for those three, and the routes, the agent's row rendering, the MCP serializer and the exports write each as the string `"NaN"`, `"Infinity"` or `"-Infinity"` rather than the `null` `JSON.stringify` would make of it ([`src/lib/non-finite.ts`](../../src/lib/non-finite.ts), [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
+`numeric` was already the engine's text, `'NaN'` and `'Infinity'` included.
+
+Measured 2026-10-04 on PostgreSQL 18.6, `SELECT 'NaN'::float8, 'Infinity'::real, '-Infinity'::float8` answered `null` in all three cells of `POST /api/db/query` before and `"NaN"`, `"Infinity"`, `"-Infinity"` after, while psql shows `NaN | Infinity | -Infinity`.
+The SQL INSERT export writes them as quoted literals, `'NaN'`, which PostgreSQL reads back into a `real`, `double precision` or `timestamptz` column, so a replayed file stores the same values where it used to store NULL.
 
 ---
 

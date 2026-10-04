@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { readAgentArtifact } from "@/lib/agent/runtime";
 import type { AgentRunEvent } from "@/lib/agent/types";
 import { accessAgentRun } from "@/lib/api/agent-run-access";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 
 /**
  * One artifact's rows, for the surfaces that already render rows (#329 T11).
@@ -64,6 +65,8 @@ export async function GET(req: Request, { params }: ArtifactParams) {
     // The rows and nothing beside them: the ledger's `summary` describes the same
     // result the rows already carry, and two statements of one fact are two things
     // a reader could find disagreeing (the rule T2 states for the run record).
-    result: held.value,
+    // NaN and the infinities as words, as on `/api/db/query`: left to `JSON.stringify`
+    // they would read as SQL NULL in the grid while the model's text said NaN.
+    result: { ...held.value, rows: rowsWithNonFiniteWords(held.value.rows) },
   });
 }

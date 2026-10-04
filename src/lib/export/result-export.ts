@@ -4,6 +4,7 @@ import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
 import { jsonText } from "./json";
+import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
 
 /**
  * Turning a result grid into a file the user keeps.
@@ -867,6 +868,42 @@ function oracleTextLiteral(text: string, type: "date" | "timestamp"): string | u
 }
 
 /**
+ * NaN and the infinities as each dialect reads them back into a float column.
+ *
+ * None of them is a number literal anywhere, the bare word `NaN` would read as a column
+ * name, and NULL is a different value, so each spelling here was replayed into the
+ * engine (2026-10-04): PostgreSQL 18.6 and DuckDB read the quoted words into `real`,
+ * `double precision`, `DOUBLE` and `FLOAT` (PostgreSQL also into `timestamptz`, whose
+ * infinities are quoted text anyway); SQLite reads `9e999` and `-9e999` as its
+ * infinities in a `REAL` column, where a quoted `'Infinity'` is stored as TEXT, and has
+ * no NaN at all (it stores one as NULL); Oracle AI Database 23.26.3 reads its own
+ * constants into `BINARY_DOUBLE` and `BINARY_FLOAT`. Every other dialect, which either
+ * cannot store these values or was not replayed, keeps writing NULL.
+ */
+const NON_FINITE_LITERALS: Partial<Record<DatabaseType, Readonly<Record<NonFiniteWord, string>>>> = {
+  postgres: { NaN: "'NaN'", Infinity: "'Infinity'", "-Infinity": "'-Infinity'" },
+  duckdb: { NaN: "'NaN'", Infinity: "'Infinity'", "-Infinity": "'-Infinity'" },
+  sqlite: { NaN: "NULL", Infinity: "9e999", "-Infinity": "-9e999" },
+  oracle: { NaN: "BINARY_DOUBLE_NAN", Infinity: "BINARY_DOUBLE_INFINITY", "-Infinity": "-BINARY_DOUBLE_INFINITY" },
+};
+
+function nonFiniteLiteral(word: NonFiniteWord, dialect: DatabaseType | undefined): string {
+  return (dialect === undefined ? undefined : NON_FINITE_LITERALS[dialect]?.[word]) ?? "NULL";
+}
+
+/**
+ * A declared type that holds a binary float, spelled the way the providers report it:
+ * PostgreSQL's `real` / `double precision`, DuckDB's `FLOAT` / `DOUBLE`, SQLite's
+ * declared `REAL`, Oracle's `BINARY_DOUBLE` / `BINARY_FLOAT`, and `float4`/`float8`.
+ */
+const FLOAT_TYPE = /^(double( precision)?|real|float\d*|binary_(double|float))$/i;
+
+/** `columnTypes` is the host's data until checked, so a declared type is tested only as a string. */
+function isFloatColumn(declared: unknown): boolean {
+  return typeof declared === "string" && FLOAT_TYPE.test(declared.trim());
+}
+
+/**
  * A value as SQL.
  *
  * Everything that is not a number, a bigint or a boolean is quoted through the
@@ -876,12 +913,21 @@ function oracleTextLiteral(text: string, type: "date" | "timestamp"): string | u
  * be stringified to a locale-dependent form no engine parses back, and an object to
  * the literal text `[object Object]`.
  */
-function sqlValue(value: unknown, dialect: DatabaseType | undefined, oracle?: OracleDateColumn): string {
+function sqlValue(
+  value: unknown,
+  dialect: DatabaseType | undefined,
+  oracle?: OracleDateColumn,
+  floatColumn = false,
+): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "bigint") return String(value);
-  // NaN and ±Infinity are not numbers any of these dialects accepts as a literal,
-  // and `String(NaN)` would put the bare word `NaN` where a value belongs.
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
+  if (typeof value === "number") {
+    const word = nonFiniteWord(value);
+    return word === undefined ? String(value) : nonFiniteLiteral(word, dialect);
+  }
+  // A cell that crossed HTTP carries the word as a string, which is only a float when the
+  // column was declared one: a text column may hold the word itself.
+  if (floatColumn && isNonFiniteWord(value)) return nonFiniteLiteral(value, dialect);
   if (typeof value === "boolean") return String(value);
   if (value instanceof Date) {
     if (oracle !== undefined) return oracleDateLiteral(value, oracle.shape);
@@ -936,8 +982,11 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
     // type, which does not change row to row.
     const oracleColumns =
       dialect === "oracle" ? columns.map((column) => oracleDateColumn(declaredTypeOf(source, column))) : undefined;
+    const floatColumns = columns.map((column) => isFloatColumn(declaredTypeOf(source, column)));
     const statements = rows.map((row) => {
-      const values = columns.map((column, index) => sqlValue(cellOf(row, column), dialect, oracleColumns?.[index]));
+      const values = columns.map((column, index) =>
+        sqlValue(cellOf(row, column), dialect, oracleColumns?.[index], floatColumns[index]),
+      );
       return `INSERT INTO ${tableName} (${quotedColumns.join(", ")}) VALUES (${values.join(", ")});`;
     });
     return sql(statements.join("\n"));

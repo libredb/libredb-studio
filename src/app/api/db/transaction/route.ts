@@ -6,6 +6,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import {
   claimTransaction,
   OWNERSHIP_IDLE_MS,
@@ -154,6 +155,8 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({
           ...firstResultSet(result),
+          // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
+          rows: rowsWithNonFiniteWords(result.rows),
           inTransaction: stillInTransaction,
           pagination: {
             limit: prepared.limit,
