@@ -12,13 +12,13 @@ This folder is the **source of truth** for deploying LibreDB Studio on
 | `libredb-studio-autoconnect.yml` | The auto-connect variant: the same Studio app plus a `-discovery` app that reads the Docker socket so Studio connects itself to the databases on the server. |
 | `libredb-studio-autoconnect.png` | The same logo, under the file name upstream requires for the second app. |
 
-Both files are submitted as a PR to
+The first two files are submitted as a PR to
 [`caprover/one-click-apps`](https://github.com/caprover/one-click-apps)
 (`public/v4/apps/libredb-studio.yml` + `public/v4/logos/libredb-studio.png`) —
 the official listing, merged and live.
 
 The auto-connect variant goes upstream the same way, as `public/v4/apps/libredb-studio-autoconnect.yml` and `public/v4/logos/libredb-studio-autoconnect.png`, and only once the Studio release it needs exists (see [Auto-connect variant](#auto-connect-variant)).
-Until it is listed there, install it through the manual template path below, pasting `libredb-studio-autoconnect.yml`.
+Once Studio 0.18.0 is published, and until the variant is listed there, install it through the manual template path below, pasting `libredb-studio-autoconnect.yml`.
 
 ## Install (official one-click apps catalog)
 
