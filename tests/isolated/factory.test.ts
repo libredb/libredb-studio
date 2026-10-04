@@ -1154,6 +1154,50 @@ describe("getOrCreateProvider cache isolation", () => {
     expect(await getOrCreateProvider(record(undefined))).toBe(none);
   });
 
+  test("two connections that differ only in their API key pair are never handed one provider", async () => {
+    // An Elasticsearch connection sends `Authorization: ApiKey` built from the pair in preference to
+    // its user and password, so the pair decides who it authenticates as, and `credentialDigest`
+    // frames both halves. The fields are inert on sqlite, as the mechanism is above: only the cache
+    // key can tell these records apart.
+    const database = join(dir, "api-key-pair.db");
+    const record = (pair: Pick<DatabaseConnection, "apiKeyId" | "apiKeySecret"> = {}) =>
+      makeConnection("sqlite", { id: "seed:search", database, user: "reader", password: "same", ...pair });
+
+    const none = await getOrCreateProvider(record());
+    const paired = await getOrCreateProvider(record({ apiKeyId: "key-one", apiKeySecret: "secret-one" }));
+    const otherId = await getOrCreateProvider(record({ apiKeyId: "key-two", apiKeySecret: "secret-one" }));
+    const otherSecret = await getOrCreateProvider(record({ apiKeyId: "key-one", apiKeySecret: "secret-two" }));
+
+    expect(new Set([none, paired, otherId, otherSecret]).size).toBe(4);
+    // The control that the cache is still a cache: the same record asked for twice is one provider.
+    expect(await getOrCreateProvider(record({ apiKeyId: "key-one", apiKeySecret: "secret-one" }))).toBe(paired);
+    expect(await getOrCreateProvider(record())).toBe(none);
+  });
+
+  test("two connections that differ only in their MongoDB auth database are never handed one provider", async () => {
+    // MongoDB looks the user up in `authSource`, so the same user and password under another auth
+    // database are another principal's record, and `credentialDigest` frames it. Inert on sqlite,
+    // like the two fields above: only the cache key can tell these records apart.
+    const database = join(dir, "auth-source.db");
+    const record = (authSource?: string) =>
+      makeConnection("sqlite", {
+        id: "seed:documents",
+        database,
+        user: "reader",
+        password: "same",
+        ...(authSource === undefined ? {} : { authSource }),
+      });
+
+    const none = await getOrCreateProvider(record());
+    const admin = await getOrCreateProvider(record("admin"));
+    const app = await getOrCreateProvider(record("app"));
+
+    expect(new Set([none, admin, app]).size).toBe(3);
+    // The control that the cache is still a cache: the same record asked for twice is one provider.
+    expect(await getOrCreateProvider(record("app"))).toBe(app);
+    expect(await getOrCreateProvider(record())).toBe(none);
+  });
+
   test("readOnly: false and an absent readOnly are one mode, so they are handed one provider (#1089)", async () => {
     // The fourth part of the cache key is spelled `read-only` for `true` alone, so a record saved before
     // the mode existed and one that says `false` share a pool. The other half, `true` sharing none, is

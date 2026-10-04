@@ -82,8 +82,19 @@ export async function providerCacheKey(connection: DatabaseConnection & WithTunn
  * field ALONE, with the others held equal, makes the connection authenticate as someone else or
  * be trusted differently by the server.
  *
+ * Every field `src/lib/storage/connection-secrets.ts` classifies as `secret` has to move this digest
+ * or the fingerprint, and `tests/unit/lib/db/provider-cache-key.test.ts` walks those maps to hold it,
+ * because this list is hand-kept and the API key pair was once missing from it. The public fields
+ * below (the agent user, what TLS presents and trusts, the mechanism, the auth database, the consent,
+ * the data servers, the tunnel's auth method and host key) are outside that walk, so the same file
+ * holds them in a table of their own, one row per field.
+ *
  * - `password` is the connection's own secret. `connectionString` is NOT here because the
  *   fingerprint already frames it whole, credentials and all.
+ * - `apiKeyId` and `apiKeySecret` are who an Elasticsearch connection authenticates as: its
+ *   transport sends `Authorization: ApiKey` built from the pair in preference to `user` and
+ *   `password` (`src/lib/db/providers/sql/search/http-transport.ts`), so a connection differing
+ *   only in either half must not be handed a provider opened with the other.
  * - `agentUser` and `agentPassword` are the least-privilege identity the execution profiles open
  *   as (#328). They are an identity, so a connection differing only in them must not be handed a
  *   pool opened as the privileged user.
@@ -95,6 +106,10 @@ export async function providerCacheKey(connection: DatabaseConnection & WithTunn
  *   under another mechanism are another principal's secret. Nothing asks for it here: this list is
  *   hand-kept and no compiler walks `DatabaseConnection` for it, and without it two connections
  *   differing only in the mechanism would share one cached provider.
+ * - `authSource` names the database MongoDB looks the user up in (`buildConnectionString` in
+ *   `src/lib/db/providers/document/mongodb.ts`), so the same user and password under another auth
+ *   database are another principal's record. `connectionIdentity` in
+ *   `src/lib/agent/context-snapshot.ts` frames it for the same reason.
  * - `allowInsecureAuth` decides whether a Db2 or InfluxDB provider sends its secret with no TLS (#786,
  *   InfluxDB spec I7), and whether an Oxia provider sends its token without TLS, so a connection whose
  *   consent was taken back must not be handed a provider opened under it.
@@ -109,6 +124,8 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
   const tunnel = connection.sshTunnel;
   const framed = [
     connection.password ?? "",
+    connection.apiKeyId ?? "",
+    connection.apiKeySecret ?? "",
     connection.agentUser ?? "",
     connection.agentPassword ?? "",
     ssl?.mode ?? "",
@@ -117,6 +134,7 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     ssl?.clientKey ?? "",
     ssl === undefined ? "" : String(ssl.rejectUnauthorized ?? ""),
     connection.saslMechanism ?? "",
+    connection.authSource ?? "",
     connection.allowInsecureAuth === true ? "insecure-auth" : "",
     connection.dataServers ?? "",
     tunnel?.authMethod ?? "",

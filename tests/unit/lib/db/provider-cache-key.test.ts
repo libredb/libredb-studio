@@ -2,6 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { providerCacheKey } from "@/lib/db/provider-cache-key";
+import {
+  CONNECTION_FIELDS,
+  type FieldClass,
+  SECRET_FIELD_MAPS,
+  SSH_TUNNEL_FIELDS,
+  SSL_FIELDS,
+} from "@/lib/storage/connection-secrets";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -71,5 +78,125 @@ describe("providerCacheKey frames the data servers a token may be sent to", () =
     expect(listed).not.toBe(await providerCacheKey(base));
     expect(listed).not.toBe(await providerCacheKey({ ...base, dataServers: "b.internal:6648" }));
     expect(await providerCacheKey({ ...base, dataServers: "" })).toBe(await providerCacheKey(base));
+  });
+});
+
+describe("providerCacheKey frames the Elasticsearch API key pair", () => {
+  test("two connections differing only in either half, or in having a pair at all, answer different keys", async () => {
+    const paired = await providerCacheKey({ ...base, apiKeyId: "key-one", apiKeySecret: "secret-one" });
+
+    expect(paired).not.toBe(await providerCacheKey(base));
+    expect(paired).not.toBe(await providerCacheKey({ ...base, apiKeyId: "key-two", apiKeySecret: "secret-one" }));
+    expect(paired).not.toBe(await providerCacheKey({ ...base, apiKeyId: "key-one", apiKeySecret: "secret-two" }));
+    expect(await providerCacheKey({ ...base, apiKeyId: "key-one", apiKeySecret: "secret-one" })).toBe(paired);
+  });
+});
+
+const ssl: NonNullable<DatabaseConnection["ssl"]> = {
+  mode: "verify-full",
+  caCert: "ca",
+  clientCert: "cert",
+  clientKey: "key",
+  rejectUnauthorized: true,
+};
+const tunnel: NonNullable<DatabaseConnection["sshTunnel"]> = {
+  enabled: true,
+  host: "bastion.internal",
+  port: 22,
+  username: "ops",
+  authMethod: "password",
+};
+
+/**
+ * Every field the connection store classifies as `secret` moves the key, so the next field classified
+ * secret cannot be added without the cache key seeing it.
+ *
+ * `credentialDigest` is a hand-kept list, and the API key pair was once left out of it.
+ * The maps in `src/lib/storage/connection-secrets.ts` fail typecheck when a field goes unclassified,
+ * so walking them here turns a forgotten field into a red test. A field may be framed by
+ * `credentialDigest` or by the fingerprint (`connectionString` is); the walk asks the whole key.
+ * A public field that decides identity is outside this walk, so it is added to `credentialDigest` by
+ * hand and gets a row in the table of the next block.
+ */
+describe("providerCacheKey frames every field the connection store classifies as secret", () => {
+  /** Where a field of each map sits on a connection: at its root, in `ssl`, or in `sshTunnel`. */
+  const placements = new Map<Readonly<Record<string, FieldClass>>, (key: string, value: string) => DatabaseConnection>([
+    [CONNECTION_FIELDS, (key, value) => ({ ...base, [key]: value }) as DatabaseConnection],
+    [SSL_FIELDS, (key, value) => ({ ...base, ssl: { ...ssl, [key]: value } })],
+    [SSH_TUNNEL_FIELDS, (key, value) => ({ ...base, sshTunnel: { ...tunnel, [key]: value } })],
+  ]);
+  const placementOf = (map: Readonly<Record<string, FieldClass>>) => {
+    const place = placements.get(map);
+    if (place === undefined) throw new Error("a classification map has no placement in this test");
+    return place;
+  };
+  const secretFields = SECRET_FIELD_MAPS.flatMap((map) =>
+    Object.keys(map)
+      .filter((key) => map[key] === "secret")
+      .map((key) => ({ map, key })),
+  );
+
+  test("every classification map has a placement here", () => {
+    expect(SECRET_FIELD_MAPS.filter((map) => !placements.has(map))).toEqual([]);
+  });
+
+  test("the walk reaches the secrets of all three maps", () => {
+    const keys = secretFields.map(({ key }) => key);
+    for (const known of ["password", "connectionString", "apiKeyId", "apiKeySecret", "clientKey", "privateKey"]) {
+      expect(keys).toContain(known);
+    }
+  });
+
+  test("changing any one of them alone changes the key", async () => {
+    const unframed: string[] = [];
+    for (const { map, key } of secretFields) {
+      const place = placementOf(map);
+      if ((await providerCacheKey(place(key, "one"))) === (await providerCacheKey(place(key, "two")))) {
+        unframed.push(key);
+      }
+    }
+    expect(unframed).toEqual([]);
+  });
+
+  test("the comparison can see two equal keys: a field framed nowhere leaves the key where it was", async () => {
+    const place = placementOf(CONNECTION_FIELDS);
+    expect(await providerCacheKey(place("color", "one"))).toBe(await providerCacheKey(place("color", "two")));
+  });
+});
+
+/**
+ * The public fields `credentialDigest` frames, each moved alone. The walk above reaches only the
+ * fields classified `secret`, so these rows are kept by hand, as the digest's own list is: a field
+ * added to the digest gets a row here, and a row whose field the digest drops turns red.
+ */
+describe("providerCacheKey frames every public field that decides who a connection opens as", () => {
+  const rows: [string, DatabaseConnection, DatabaseConnection][] = [
+    ["agentUser", { ...base, agentUser: "reader" }, { ...base, agentUser: "writer" }],
+    ["ssl.mode", { ...base, ssl: { ...ssl, mode: "require" } }, { ...base, ssl }],
+    ["ssl.caCert", { ...base, ssl: { ...ssl, caCert: "other-ca" } }, { ...base, ssl }],
+    ["ssl.clientCert", { ...base, ssl: { ...ssl, clientCert: "other-cert" } }, { ...base, ssl }],
+    ["ssl.rejectUnauthorized", { ...base, ssl: { ...ssl, rejectUnauthorized: false } }, { ...base, ssl }],
+    ["saslMechanism", { ...base, saslMechanism: "SCRAM-SHA-256" }, { ...base, saslMechanism: "SCRAM-SHA-512" }],
+    ["authSource", { ...base, authSource: "admin" }, { ...base, authSource: "app" }],
+    ["allowInsecureAuth", { ...base, allowInsecureAuth: true }, base],
+    ["dataServers", { ...base, dataServers: "a.internal:6648" }, { ...base, dataServers: "b.internal:6648" }],
+    [
+      "sshTunnel.authMethod",
+      { ...base, sshTunnel: { ...tunnel, authMethod: "privateKey" } },
+      { ...base, sshTunnel: tunnel },
+    ],
+    [
+      "sshTunnel.hostKeyFingerprint",
+      { ...base, sshTunnel: { ...tunnel, hostKeyFingerprint: "SHA256:one" } },
+      { ...base, sshTunnel: { ...tunnel, hostKeyFingerprint: "SHA256:two" } },
+    ],
+  ];
+
+  test.each(rows)("%s", async (_field, one, two) => {
+    expect(await providerCacheKey(one)).not.toBe(await providerCacheKey(two));
+  });
+
+  test("an absent authSource and a named one answer different keys", async () => {
+    expect(await providerCacheKey({ ...base, authSource: "admin" })).not.toBe(await providerCacheKey(base));
   });
 });

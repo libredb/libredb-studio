@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D231, U17 · 142
+- [Drivers and connections](#drivers-and-connections) — D1-D231, U17 · 141
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
@@ -1686,19 +1686,6 @@ Found 2026-09-24 by the review of the fix that withholds a managed seed's secret
 Not fixed there: both digests are compared server-side exactly as they are, so changing what they hash changes every stored plan and every run's recorded identity.
 
 **Done when:** neither digest can be recomputed from what a caller can learn, by keying both with a server secret or by hashing the connection string with its credentials masked, or the fingerprint no longer reaches the client, and a test holds that a digest differs from the plain SHA-256 of its own framing.
-
-### D117. The provider cache key reads neither half of the Elasticsearch API key pair
-
-`credentialDigest` in `src/lib/db/provider-cache-key.ts` frames the password, the agent pair, the TLS material and the tunnel's secrets, and neither `apiKeyId` nor `apiKeySecret`; `connectionFingerprint` frames neither either.
-So two Elasticsearch connections that differ only in the pair share one cache entry, and `getOrCreateProvider` in `src/lib/db/factory.ts` returns the provider built with the first pair.
-A key rotated behind a `${vault:...}` reference, which `docs/SEED_CONNECTIONS.md` says becomes visible within 120 seconds, keeps the old provider until the 30-minute idle sweep, and steady use keeps it from ever idling, so a revoked key answers 401 until the process restarts.
-Measured 2026-09-24: `providerCacheKey` returned the same key for two Elasticsearch connections differing only in the pair, and for one with a pair and one without; changing only the password changed it.
-A caller cannot use it to reach another user's pool: a claimed `seed:` id is re-resolved in `src/lib/seed/resolve-connection.ts`, and a browser connection's id is random.
-
-Found 2026-09-24 by the review of the fix that withholds a managed seed's secrets from the browser.
-Not fixed there: the cache key is shared by every engine.
-
-**Done when:** `credentialDigest` frames the API key pair, and a test holds that two connections differing only in either half get different keys.
 
 ### D118. MongoDB maintenance and monitoring read only the connected database, so a deep link from another one lands on the wrong collection
 
