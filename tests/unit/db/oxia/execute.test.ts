@@ -203,6 +203,7 @@ describe("list", () => {
     expect(dataCalls(fake).some((call) => call.rpc === "RangeScan")).toBe(false);
   });
 
+  // 1.4 s alone with coverage, over the 1 s line of ruling R36, so it carries its own timeout.
   test("--prefix runs under the console's 8 MiB run budget: it stops with N5b, never the Keys panel's sentence", async () => {
     // 200 keys of 64 KiB under /p/ on 3 shards: 12.5 MiB of key bytes, past the run budget.
     const keys = Array.from(
@@ -223,7 +224,7 @@ describe("list", () => {
     expect(oxiaResult(outcome, parsed, OXIA_CELL_LIMIT, 1).warnings?.map((warning) => warning.message)).toContain(
       runBudgetNotice("list", kept.length),
     );
-  });
+  }, 30_000);
 
   test("-p reads the one shard the partition key routes to", async () => {
     const fake = fakeOf([
