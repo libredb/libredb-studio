@@ -1201,6 +1201,8 @@ describe("MongoDBProvider", () => {
           [{ $date: "2020-01-01T00:00:00Z", $lt: 5 }, "$lt"],
           [{ $timestamp: { t: 1, i: 1 }, $gt: 0 }, "$gt"],
           [{ $oid: "650000000000000000000001", note: "x" }, "note"],
+          // The legacy binary form carries `$type` beside `$binary`, so it is refused too.
+          [{ $binary: "AQI=", $type: "00" }, "$type"],
         ] as const) {
           const error = await run({ collection: "users", operation: "deleteMany", filter: { f: bound } }).catch(
             (caught: unknown) => caught,

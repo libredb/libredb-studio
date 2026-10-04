@@ -114,7 +114,8 @@ Before this, plain `JSON.parse` read the statement, and a document the grid show
 
 - **The wrappers recognised**, each alone in its object: `$oid`, `$date`, `$numberInt`, `$numberLong`, `$numberDouble`, `$numberDecimal`, `$binary` (the canonical `{"base64": ..., "subType": ...}` form), `$uuid`, `$regularExpression`, `$timestamp`, `$minKey` and `$maxKey`.
   Both forms are accepted: relaxed (`{"$date": "2025-01-01T00:00:00Z"}`, `{"$date": 1735689600000}`) and canonical (`{"$date": {"$numberLong": "1735689600000"}}`).
-- **Not recognised, kept as literal subdocuments as before:** `$code`/`$scope`, `$symbol`, `$dbPointer`, a DBRef (`{"$ref", "$id", "$db"}`), `$undefined`, and the legacy `{"$binary": "<base64>", "$type": "00"}` form. Use `{"$binary": {"base64": ..., "subType": ...}}` for binary data.
+- **Not recognised, kept as literal subdocuments as before:** `$code`/`$scope`, `$symbol`, `$dbPointer`, a DBRef (`{"$ref", "$id", "$db"}`) and `$undefined`.
+- **The legacy `{"$binary": "<base64>", "$type": "00"}` form is refused**, because `$type` shares the object with `$binary`. Use `{"$binary": {"base64": ..., "subType": ...}}` for binary data.
 - **A wrapper must be alone in its object.** `{"$date": "...", "$lt": 5}` is a `QueryError` naming the path and the extra keys; to compare against a value, nest it: `{"$lt": {"$date": "..."}}`.
   The flip side: a stored subdocument that literally has a key such as `$oid` or `$date` can no longer be matched by equality, because the same object now names a value.
 - **Query operators are untouched**, the legacy `{"$regex": "^a", "$options": "i"}` form included, and `$regex` beside `$nin`/`$ne` keeps every key.
