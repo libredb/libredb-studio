@@ -697,6 +697,55 @@ describe("POST /api/db/maintenance", () => {
     expect(data.error).toContain("Internal maintenance failure");
   });
 
+  // #1387: the engine refusing the statement is the engine's answer, not Studio failing. These are
+  // the driver errors measured on 2026-10-04, raw as the driver raises them, which the route used
+  // to hand to the generic branch as a 500 INTERNAL_ERROR.
+  test.each<[string, Error]>([
+    [
+      "CockroachDB's syntax error for VACUUM",
+      Object.assign(new Error('at or near "vacuum": syntax error'), { code: "42601" }),
+    ],
+    [
+      "TiDB's CHECK TABLE parse error",
+      Object.assign(new Error('You have an error in your SQL syntax; ... near "CHECK TABLE t"'), {
+        errno: 1064,
+        sqlState: "42000",
+      }),
+    ],
+    ["YugabyteDB's REINDEX refusal", Object.assign(new Error("REINDEX not supported yet"), { code: "0A000" })],
+  ])("%s answers 400 QUERY_ERROR with the engine's own message", async (_label, refusal) => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw refusal;
+    });
+
+    const res = await POST(
+      createMockRequest("/api/db/maintenance", {
+        method: "POST",
+        body: { type: "vacuum", connection: validConnection },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ error: string; code: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.code).toBe("QUERY_ERROR");
+    expect(data.error).toBe(refusal.message);
+  });
+
+  test("a thrown error that carries no statement code still answers 500", async () => {
+    (mockProvider.runMaintenance as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new TypeError("rows.filter is not a function");
+    });
+
+    const res = await POST(
+      createMockRequest("/api/db/maintenance", {
+        method: "POST",
+        body: { type: "analyze", connection: validConnection },
+      }) as never,
+    );
+
+    expect(res.status).toBe(500);
+  });
+
   // #1091 review (R04 G8): a runMaintenance that threw left no audit event at all, so the log an
   // operator reconstructs a database's history from had no line for an operation that may have
   // reached the engine before it failed. The row is the success row's shape with a closed reason

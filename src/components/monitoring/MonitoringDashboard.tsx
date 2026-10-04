@@ -30,6 +30,7 @@ import { SessionsTab } from "./tabs/SessionsTab";
 import { TablesTab } from "./tabs/TablesTab";
 import { StorageTab } from "./tabs/StorageTab";
 import { PoolTab } from "./tabs/PoolTab";
+import { withConnectedMaintenance } from "@/lib/db/types";
 
 interface MonitoringDashboardProps {
   isEmbedded?: boolean;
@@ -309,7 +310,9 @@ export function MonitoringDashboard({ isEmbedded = false }: MonitoringDashboardP
                   loading={loading}
                   onRunMaintenance={runMaintenance}
                   onPreviewMaintenance={previewMaintenance}
-                  capabilities={metadata?.capabilities}
+                  // The connected provider's maintenance over the declared capabilities (#1387): see
+                  // `withConnectedMaintenance`.
+                  capabilities={withConnectedMaintenance(metadata?.capabilities, data?.maintenance)}
                   labels={metadata?.labels}
                 />
               </TabsContent>

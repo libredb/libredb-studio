@@ -634,7 +634,7 @@ ordering notice beside it cannot disagree:
 | Condition | Where it comes from | Why |
 |-----------|--------------------|-----|
 | `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Thirteen providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia answer it with page one. An absent flag reads as unsupported |
-| `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a full page — see below |
+| `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a row past the page — see below |
 | the surface supplies `onLoadMore` | `BottomPanel` | A result hydrated from an agent run has no statement of its own to page |
 
 ### User Flow
@@ -690,18 +690,18 @@ holding rows from two tables while naming one.
   "pagination": {
     "limit": 50,
     "offset": 0,
-    "hasMore": true,        // wasLimited AND a full page came back
+    "hasMore": true,        // wasLimited AND a row past the page came back
     "totalReturned": 50,
-    "wasLimited": true      // our injected bound filled, or the provider cut its result
+    "wasLimited": true      // a row past our injected bound came back (#1440), or the provider cut its result
   }
 }
 ```
 
 The response's `wasLimited` is false for a short result under an injected cap.
-It becomes true when that page fills, even if a later page is empty; the limiter does not fetch an extra row.
+It becomes true when a further page exists: the statement that runs asks for `limit + 1` rows, the extra row is never answered, and its arrival is the proof (#1440). A page that ends exactly full is the last page and reports `hasMore: false`.
 Query and transaction responses follow the same rule.
 
-`hasMore` is `wasLimited && rows.length === limit` with `wasLimited` read from the limiter alone, and the first half is load-bearing.
+`hasMore` is `wasLimited && rows.length > limit` over the probed statement, with `wasLimited` read from the limiter alone, and the first half is load-bearing.
 A provider that bounds its own result reports that bound on the response's `wasLimited` too (#1085, section 5.4), and it never sets `hasMore`.
 We can only
 offer page two of a bound this layer applied, because only then do we know how to advance it. A

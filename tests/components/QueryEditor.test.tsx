@@ -766,7 +766,7 @@ describe("QueryEditor", () => {
 
   test("RUN SELECTION button not shown when no selection", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -1107,14 +1107,14 @@ describe("QueryEditor", () => {
   test("selection change shows RUN SELECTION button", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
 
     mockSelectionReturn = { isEmpty: () => false };
     act(() => {
       capturedSelectionCb?.();
     });
 
-    expect(queryByText("Run Sel")).not.toBeNull();
+    expect(queryByText("Run Selected")).not.toBeNull();
   });
 
   test("RUN SELECTION button does not use ghost variant hover styles", () => {
@@ -1125,7 +1125,7 @@ describe("QueryEditor", () => {
       capturedSelectionCb?.();
     });
 
-    const runSelectionButton = queryByText("Run Sel")?.closest("button");
+    const runSelectionButton = queryByText("Run Selected")?.closest("button");
     expect(runSelectionButton).not.toBeNull();
     expect(runSelectionButton?.className).not.toContain("hover:bg-accent");
     expect(runSelectionButton?.className).not.toContain("hover:text-accent-foreground");
@@ -1151,13 +1151,13 @@ describe("QueryEditor", () => {
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).not.toBeNull();
+    expect(queryByText("Run Selected")).not.toBeNull();
 
     mockSelectionReturn = { isEmpty: () => true };
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -2881,14 +2881,14 @@ describe("QueryEditor", () => {
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).not.toBeNull();
+    expect(queryByText("Run Selected")).not.toBeNull();
 
     // Now set null selection
     mockSelectionReturn = null;
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
   });
 
   // -----------------------------------------------------------------------

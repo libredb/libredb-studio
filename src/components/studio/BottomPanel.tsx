@@ -6,7 +6,7 @@ import React, { useMemo } from "react";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
-import type { MaskingConfig } from "@/lib/data-masking";
+import { detectSensitiveColumnsFromConfig, type MaskingConfig } from "@/lib/data-masking";
 import type { AgentArtifactHydration } from "@/components/agent/hydration";
 import type { CellChange } from "@/components/ResultsGrid";
 import { ResultsGrid } from "@/components/ResultsGrid";
@@ -341,10 +341,23 @@ export const BottomPanel = React.memo(function BottomPanel({
   // How much of the result an export would write — the count the button carries and
   // the shortfall the menu states. Derived here so both read the same numbers.
   const exportScope = describeExportScope(displayedResult ?? { rows: [] }, gridPageOffer !== undefined);
+  /**
+   * The columns an export writes masked: the same detection the file builder applies, so the
+   * menu says exactly what the file will hold (#1433). Empty when masking is off or no column
+   * of this result matches a pattern, and then nothing is claimed.
+   */
+  const maskedColumns =
+    maskingEnabled && displayedResult
+      ? [...detectSensitiveColumnsFromConfig(displayedResult.fields, maskingConfig).keys()]
+      : [];
   // One list for both menus, filtered once, so the file items and the clipboard items cannot disagree (#701).
-  const resultFormats = offersSqlExport(metadata?.capabilities)
-    ? RESULT_FORMATS
-    : RESULT_FORMATS.filter((entry) => !SQL_TABLE_FORMATS.has(entry.format));
+  // SQL INSERT is withheld while a column is masked: its mask text would be written as the
+  // column's VALUE, and replaying the file would store it or be refused by a typed column (#1433).
+  const resultFormats = (
+    offersSqlExport(metadata?.capabilities)
+      ? RESULT_FORMATS
+      : RESULT_FORMATS.filter((entry) => !SQL_TABLE_FORMATS.has(entry.format))
+  ).filter((entry) => !(maskedColumns.length > 0 && entry.format === "sql-insert"));
 
   /**
    * Hands one format entry to whichever destination the user chose.
@@ -502,6 +515,14 @@ export const BottomPanel = React.memo(function BottomPanel({
                   <div data-testid="export-provenance" className="px-2 pb-1.5 text-xs text-hue-blue-alt/90">
                     Saved as agent run <span className="font-mono text-[0.625rem]">{exportArtifact.runId}</span>&apos;s
                     own file.
+                  </div>
+                )}
+                {maskedColumns.length > 0 && (
+                  // Said once for both destinations: the file and the clipboard write the
+                  // same masked text, and nothing in the file itself says so.
+                  <div data-testid="export-masked" className="px-2 pb-1.5 text-xs text-warning/80 max-w-[15rem]">
+                    Masked columns ({maskedColumns.join(", ")}) are exported and copied masked. SQL INSERT is not
+                    offered, as it would store the mask as data.
                   </div>
                 )}
                 <DropdownMenuSeparator className="bg-hairline" />

@@ -593,6 +593,11 @@ export interface QueryResult {
   rowCount: number;
   executionTime: number;
   explainPlan?: unknown;
+  /**
+   * Set by the client, only when SANDBOX ran this statement and the server CONFIRMED the
+   * rollback. The write's affected-row count is then said to be rolled back (#1425).
+   */
+  rolledBack?: boolean;
   pagination?: QueryPagination;
   /**
    * Notices the engine attached to this run. **Absent** when it reported none -
@@ -796,6 +801,13 @@ export interface QueryHistoryItem {
   executionTime: number;
   status: "success" | "error";
   executedAt: Date;
+  /**
+   * Absent for an ordinary run. `"explain"` marks a run that asked for the statement's PLAN:
+   * `query` is still the statement itself, and `rowCount` is omitted because the rows of a plan
+   * are not the statement's rows (#1447). Entries stored before this field existed read as
+   * ordinary runs.
+   */
+  kind?: "explain";
   rowCount?: number;
   errorMessage?: string;
 }

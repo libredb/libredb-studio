@@ -1811,8 +1811,85 @@ with targets quoted via [§3.6](#36-safe-maintenance-targets):
 | `reindex` | `REINDEX TABLE <target>` | `REINDEX DATABASE <db>` |
 | `kill` | `pg_terminate_backend(<pid>)` | throws (PID required) |
 
-`getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'reindex', 'kill']`. `kill`
-validates that the target parses as an integer PID.
+`getCapabilities().maintenanceOperations` is `['vacuum', 'analyze', 'reindex', 'kill']` before
+connect and on PostgreSQL itself; a connected relative keeps only what its server accepts
+([§9.1](#91-what-the-connected-server-accepts-measured-at-connect)). `kill` validates that the
+target parses as an integer PID.
+
+A statement that succeeds can still have done nothing, and the server says so in a notice:
+PostgreSQL skips a table the role does not own with the `WARNING` `permission denied to vacuum "t",
+skipping it`, and YugabyteDB 2026.1.2.0 answers every `VACUUM` with the `NOTICE` *VACUUM is a no-op
+statement since YugabyteDB performs garbage collection of dead tuples automatically* (measured
+2026-10-04). `runMaintenance` listens for the server's notices while its statement runs, and when a
+`NOTICE` or `WARNING` arrived the result reads `VACUUM completed, and the server said: <first
+three>; ... (and N more)` instead of `VACUUM completed successfully` (#1387). `INFO`, `LOG` and
+`DEBUG` are not quoted.
+
+A statement the server refuses is thrown as the driver raised it, and `POST /api/db/maintenance`
+types it through `mapDatabaseError`: a SQLSTATE of class `42`, `0A`, `22`, `23`, `21` or `44` is the
+statement's own fault and answers `400 QUERY_ERROR` with the server's sentence; anything else keeps a
+5xx (#1387, #1427).
+
+### 9.1 What the connected server accepts, measured at connect
+
+The `postgres` type id reaches wire-compatible engines that refuse part of PostgreSQL's
+maintenance, and each refuses it in its own words, so the set is measured per server the way the
+EXPLAIN grammar is ([§10.1](#101-the-explain-grammar-is-measured-at-connect-597)): `probeMaintenance()`
+asks once per `connect()`, on the client connect already borrowed, about the six statements the
+table above sends (the per-row ones carry the table name `libredb_maintenance_probe`, the global
+ones are the exact whole-database statements). Skipped under the agent's read-only profile, which
+keeps the declaration.
+
+**Nothing is run.** The probe opens a block, aborts it with `SELECT 1/0`, and sends each statement
+inside it. PostgreSQL parses a simple query before it checks the block, so a statement in its
+grammar answers `25P02` without parse analysis, planning or execution, and one it does not have
+answers its own grammar or feature error. The verdict is the SQLSTATE, never the message: `25P02`
+keeps the placement, anything else drops it. The block is rolled back before the client goes back
+to the pool.
+
+**A server whose `BEGIN` opens nothing is not asked**, because there the statements would run. The
+probe sends `SELECT 1` after the poison and stops unless it answers `25P02`; such a server is
+offered none of `vacuum`, `analyze` and `reindex`. The status `getTransactionStatus()` reports is
+not used for this: a rejected query settles before `pg` reads the ReadyForQuery that follows the
+error, and under bun 1.4.2 it still read `T` there on PostgreSQL 18.6 while node read `E`.
+
+**Only the server's answer narrows anything.** `25P02` keeps a placement and `42601` or `0A000`
+drops it. Any other code is followed by `SELECT 1` again: if the block still answers `25P02`,
+nothing ran and the statement counts as refused (an engine that reports a grammar refusal as
+`XX000`); if it does not, or if a statement RESOLVED, the probe stops at once and the declared set
+stands, because the next statement could run. A failure that is not an answer at all (a reset
+connection, a pooler in statement mode that refuses `BEGIN`) also leaves the declared set, so a
+cached provider never loses its maintenance to a transient fault. Only the measured "`BEGIN`
+opened nothing" offers none of the three. The probe never fails the connection, and a `ROLLBACK`
+that fails releases the connect client with that error, so `pg` destroys it instead of pooling a
+client still inside the probe's block.
+
+`REINDEX DATABASE` names the configured database, or for a connection string that names none,
+the one `SELECT current_database()` reports (asked only for that statement), so the probe and the
+run never send `REINDEX DATABASE ""`.
+
+Measured 2026-10-04 through `pg`:
+
+| Server | `VACUUM ANALYZE <t>` / bare | `ANALYZE <t>` / bare | `REINDEX TABLE <t>` / `DATABASE` | Offered |
+|--------|-----------------------------|----------------------|----------------------------------|---------|
+| PostgreSQL 18.6 (`postgres:latest`) | `25P02` / `25P02` | `25P02` / `25P02` | `25P02` / `25P02` | everything |
+| CockroachDB v26.3.2 (`cockroachdb/cockroach:latest`) | `42601` / `42601` | `25P02` / `42601` | `42601` (`unimplemented: this syntax`) / `42601` | per-row Analyze only |
+| RisingWave 3.1.0 (`risingwavelabs/risingwave:latest`) | not asked | not asked | not asked | none: `BEGIN` opens nothing (ReadyForQuery `I`) |
+| YugabyteDB 2026.1.2.0 (`yugabytedb/yugabyte:latest`) | `25P02` / `25P02` | `25P02` / `25P02` | `0A000 REINDEX not supported yet` / `0A000 REINDEX SCHEMA/DATABASE/SYSTEM not supported yet` | Vacuum and Analyze |
+
+YugabyteDB raises its `REINDEX` refusals in its grammar, so they reach the probe as `0A000` and drop
+both placements. Its `VACUUM` is in the grammar and stays offered, and the run then quotes the
+server's no-op `NOTICE` as described above.
+
+The two maintenance surfaces read capabilities from `POST /api/db/provider-meta`, which never
+connects (#457) and so can only answer this declaration. `POST /api/db/monitoring` connects, and
+its payload carries the connected provider's `maintenanceOperations` and `maintenanceOperationSpecs`
+as `maintenance`; the admin Operations tab and the monitoring Tables tab lay that over the declared
+capabilities (`withConnectedMaintenance` in `src/lib/db/types.ts`), so a refused operation has no
+control there. The route refuses it too, from the same connected provider, with its existing 400.
+
+Every whole-database card on the admin Operations tab asks before it sends (#1438): a dialog names
+the run, the connection and its database, and nothing is sent until it is confirmed.
 
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
@@ -1838,7 +1915,9 @@ placements or neither.
 
 PostgreSQL is the engine both surfaces were already right about - every statement here has
 a one-table form and a whole-database form - so these declarations record the baseline the
-other providers are measured against rather than a change in behaviour. `vacuumAction`
+other providers are measured against rather than a change in behaviour. On a connected relative
+they are what [§9.1](#91-what-the-connected-server-accepts-measured-at-connect) narrows: a
+placement the server refused is `false` there, and an operation with neither is left out. `vacuumAction`
 really means `vacuum` here, so `vacuumActionOperation` stays absent.
 
 ---
@@ -1862,7 +1941,7 @@ Overrides the SQL base defaults:
 | `implicitCommitStatements` | `END`, `PREPARE TRANSACTION`: the two statements besides COMMIT and ROLLBACK that end the transaction. No DDL is listed, because PostgreSQL's DDL is transactional; a relative that commits DDL anyway (CockroachDB's `autocommit_before_ddl`) is caught after the statement instead ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; an empty `foreignKeys` list is then a fact about the schema or the reading role, never about the engine |
 | `supportsMaintenance` | `true` |
-| `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
+| `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` before connect; after it, the operations the server accepted plus `kill`: **measured, not declared** (see [§9.1](#91-what-the-connected-server-accepts-measured-at-connect)) |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
 | `containerLevels` | one level, `schema`: the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |

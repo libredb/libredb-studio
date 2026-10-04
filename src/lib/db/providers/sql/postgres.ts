@@ -21,8 +21,12 @@ import {
   type QueryResult,
   type QueryWarning,
   type HealthInfo,
+  type MaintenanceDeclaration,
+  type MaintenanceOperation,
   type MaintenanceType,
   type MaintenanceResult,
+  type MeasuredMaintenancePlacements,
+  narrowMaintenance,
   type ProviderOptions,
   type ExplainFormat,
   type ProviderCapabilities,
@@ -2175,6 +2179,100 @@ async function probeExplainFormat(client: PoolClient): Promise<ExplainFormat | u
   return undefined;
 }
 
+/**
+ * PostgreSQL's maintenance, as PostgreSQL itself runs it.
+ *
+ * Every statement has both forms - `VACUUM ANALYZE <table>` and bare `VACUUM ANALYZE`, `REINDEX
+ * TABLE <table>` and `REINDEX DATABASE` - so PostgreSQL is the engine whose per-row and global
+ * controls were both already right (#496). `kill` takes a backend PID, which only the Sessions
+ * panel can supply. This is the declaration before a server is measured; what a connected server
+ * keeps of it is `probeMaintenance`'s answer (#1387).
+ */
+const POSTGRES_MAINTENANCE: Required<MaintenanceDeclaration> = {
+  maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
+  maintenanceOperationSpecs: {
+    vacuum: { label: "Vacuum Table", perEntity: true, global: true },
+    analyze: { label: "Analyze Table", perEntity: true, global: true },
+    reindex: { label: "Reindex Table", perEntity: true, global: true },
+    kill: { label: "Terminate Backend", perEntity: false, global: false },
+  },
+};
+
+/** The operations `probeMaintenance` asks the server about; `kill` is a function call, not a statement form. */
+const PROBED_MAINTENANCE: readonly MaintenanceType[] = ["vacuum", "analyze", "reindex"];
+
+/**
+ * The table name the per-row probes carry. Never resolved: an aborted block refuses before parse
+ * analysis, so whether a relation of this name exists makes no difference to the answer.
+ */
+const MAINTENANCE_PROBE_TARGET = "libredb_maintenance_probe";
+
+/**
+ * The two SQLSTATEs a grammar refusal arrives as inside the probe's block: `42601` syntax error
+ * (PostgreSQL, CockroachDB) and `0A000` feature not supported (YugabyteDB's `REINDEX`).
+ */
+const GRAMMAR_REFUSAL_SQLSTATES = new Set([SYNTAX_ERROR_SQLSTATE, "0A000"]);
+
+/**
+ * What the server answered one statement sent inside the probe's aborted block (#1387).
+ *
+ * `accepted` is `25P02`: the grammar took it and nothing ran. `refused` is a grammar refusal.
+ * `resolved` is a statement that SUCCEEDED, which no aborted block allows, so the block is not
+ * what the probe thinks it is. `other` is any other failure, which the caller reads only after it
+ * has asked the server again whether the block is still aborted.
+ */
+type AbortedBlockAnswer = "accepted" | "refused" | "resolved" | "other";
+
+async function answerInAbortedBlock(client: PoolClient, sql: string): Promise<AbortedBlockAnswer> {
+  try {
+    await client.query(sql);
+    return "resolved";
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === ABORTED_BLOCK_SQLSTATE) return "accepted";
+    return typeof code === "string" && GRAMMAR_REFUSAL_SQLSTATES.has(code) ? "refused" : "other";
+  }
+}
+
+/** What `probeMaintenance` measured, and the error to release the connect client with, if any. */
+interface MaintenanceProbe {
+  /** Undefined is "not measured": the declaration stands. */
+  readonly measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
+  /** Set when the probe's ROLLBACK failed, so `pg` destroys the client instead of pooling it. */
+  readonly discard?: Error;
+}
+
+/** How many of the server's notices a maintenance result quotes before it counts the rest. */
+const MAINTENANCE_NOTICES_SHOWN = 3;
+
+/**
+ * The notice severities a maintenance result quotes. `INFO`, `LOG` and `DEBUG` are chatter a
+ * `VERBOSE` run or a server setting asks for; these two are the server saying something about
+ * what the statement did.
+ */
+const MAINTENANCE_NOTICE_SEVERITIES = new Set(["NOTICE", "WARNING"]);
+
+/**
+ * The sentence a finished maintenance statement reports: what the server said about it when it
+ * said anything, quoted as it wrote it and bounded, because a whole-database VACUUM by a role that
+ * owns few tables warns once per table it skipped (#1387).
+ */
+function maintenanceMessage(type: MaintenanceType, notices: readonly string[]): string {
+  const verb = type.toUpperCase();
+  if (notices.length === 0) return `${verb} completed successfully`;
+  const shown = notices.slice(0, MAINTENANCE_NOTICES_SHOWN).join("; ");
+  const more = notices.length - MAINTENANCE_NOTICES_SHOWN;
+  return `${verb} completed, and the server said: ${shown}${more > 0 ? ` (and ${more} more)` : ""}`;
+}
+
+/** The statement that tells an aborted block from one the server never opened: `25P02` only in the first. */
+const MAINTENANCE_PROBE_SENTINEL = "SELECT 1";
+
+/** What a server whose `BEGIN` measurably opened nothing is offered: none of the probed operations. */
+const MAINTENANCE_UNMEASURED: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> = Object.fromEntries(
+  PROBED_MAINTENANCE.map((operation) => [operation, { perEntity: false, global: false }]),
+);
+
 // ============================================================================
 // PostgreSQL Provider
 // ============================================================================
@@ -2232,6 +2330,13 @@ export class PostgresProvider extends SQLBaseProvider {
    */
   private measuredExplainFormat: ExplainFormat | undefined = "postgres-json";
 
+  /**
+   * Which placements of each maintenance statement this server accepts, measured by
+   * `probeMaintenance()` at connect (#1387). Undefined is "not measured", and answers the whole
+   * PostgreSQL set for the same reason `measuredExplainFormat` starts at PostgreSQL's grammar.
+   */
+  private measuredMaintenance: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     // Server-injected only (see ProviderExecutionContext): the editor path
@@ -2266,18 +2371,9 @@ export class PostgresProvider extends SQLBaseProvider {
       // transaction all the same: `END` is PostgreSQL's synonym for COMMIT, and `PREPARE
       // TRANSACTION` detaches it from the session, so SANDBOX's ROLLBACK would reach nothing.
       implicitCommitStatements: ["END", "PREPARE TRANSACTION"],
-      maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
-      // Every statement below has both forms - `VACUUM ANALYZE <table>` and bare
-      // `VACUUM ANALYZE`, `REINDEX TABLE <table>` and `REINDEX DATABASE` - so
-      // PostgreSQL is the engine whose per-row and global controls were both already
-      // right, and declaring them changes nothing here (#496). `kill` takes a backend
-      // PID, which only the Sessions panel can supply.
-      maintenanceOperationSpecs: {
-        vacuum: { label: "Vacuum Table", perEntity: true, global: true },
-        analyze: { label: "Analyze Table", perEntity: true, global: true },
-        reindex: { label: "Reindex Table", perEntity: true, global: true },
-        kill: { label: "Terminate Backend", perEntity: false, global: false },
-      },
+      // PostgreSQL's own set, narrowed to what the connected server accepted (#1387): see
+      // `probeMaintenance`. Unconnected, and under the read-only profile, it is the whole set.
+      ...narrowMaintenance(POSTGRES_MAINTENANCE, this.measuredMaintenance),
       // One level. `catalog` is not a second one here: a `pg` pool is opened against one
       // database and nothing in the product can switch it on a live connection, so
       // declaring a catalog level would draw a folder with exactly one child forever.
@@ -2435,6 +2531,8 @@ export class PostgresProvider extends SQLBaseProvider {
       const startup = takeNotices(client);
       this.startupWarnings =
         noticesAsWarnings({ kept: startup.kept.filter(isStartupCaution), dropped: startup.dropped }).warnings ?? [];
+      // Set only when the maintenance probe could not roll its block back (#1387).
+      let connectClientFault: Error | undefined;
       try {
         // Under the profile, the role itself is part of the boundary — verify it
         // on the same client this connect already borrowed.
@@ -2451,11 +2549,16 @@ export class PostgresProvider extends SQLBaseProvider {
         // (FORMAT JSON)` succeeded, which is the case where the probe would have
         // answered `postgres-json` anyway. So the profile keeps the static default and
         // the envelope keeps its hole-free guarantee.
+        // The maintenance probe is skipped under the profile for the same envelope reason, and
+        // the agent runs no maintenance.
         if (!this.readOnlyProfile) {
           this.measuredExplainFormat = await probeExplainFormat(client);
+          const probe = await this.probeMaintenance(client);
+          this.measuredMaintenance = probe.measured;
+          connectClientFault = probe.discard;
         }
       } finally {
-        client.release();
+        client.release(connectClientFault);
       }
 
       this.setConnected(true);
@@ -4490,29 +4593,139 @@ export class PostgresProvider extends SQLBaseProvider {
     return "public." + this.escapeIdentifier(target);
   }
 
+  /**
+   * The statement one maintenance operation sends, per row with a target and over the whole
+   * database without one, or an empty string for an operation that has no statement form here.
+   * One builder for the run and for `probeMaintenance`, so what the probe asked the server is
+   * exactly what a click sends (#1387). `database` is `maintenanceDatabase()`'s answer.
+   */
+  private maintenanceStatement(type: MaintenanceType, database: string, target?: string, container?: string): string {
+    // Resolve target into a schema-qualified, quoted identifier: the caller's container
+    // when there is one, else "schema.table", else the public schema for bare names.
+    const qualifiedTarget = this.qualifyMaintenanceTarget(target, container);
+    switch (type) {
+      case "vacuum":
+        return target ? `VACUUM ANALYZE ${qualifiedTarget}` : "VACUUM ANALYZE";
+      case "analyze":
+        return target ? `ANALYZE ${qualifiedTarget}` : "ANALYZE";
+      case "reindex":
+        return target ? `REINDEX TABLE ${qualifiedTarget}` : `REINDEX DATABASE ${this.escapeIdentifier(database)}`;
+    }
+    return "";
+  }
+
+  /**
+   * The database `REINDEX DATABASE` names. The configured one when there is one; otherwise the one
+   * the server connected to, which is what a connection string without a database lands on (the
+   * user's name, by libpq's rule) and which `REINDEX DATABASE ""` could never name.
+   */
+  private async maintenanceDatabase(client: PoolClient): Promise<string> {
+    if (this.config.database) return this.config.database;
+    const { rows } = await client.query<{ name: string }>("SELECT current_database() AS name");
+    return rows[0]?.name ?? "";
+  }
+
+  /**
+   * Which placements of each maintenance statement this server accepts (#1387), asked once per
+   * `connect()` on the client connect already borrowed.
+   *
+   * The PostgreSQL type id serves wire-compatible engines that refuse part of PostgreSQL's
+   * maintenance, and they refuse it differently - measured 2026-10-04: CockroachDB v26.3.2 runs
+   * `ANALYZE <table>` and answers `42601` for the bare `ANALYZE`, for `VACUUM` and for both
+   * `REINDEX` forms; YugabyteDB 2026.1.2.0 answers `0A000 REINDEX not supported yet` for both
+   * `REINDEX` forms from its grammar; RisingWave 3.1.0 refuses all six. So the server is asked, the way
+   * `probeExplainFormat` asks about EXPLAIN, and the answer is read from the SQLSTATE alone.
+   *
+   * NOTHING IS RUN. Each statement is sent inside a transaction block the poison statement has
+   * already aborted. PostgreSQL parses a simple query before it checks the block, so a statement
+   * its grammar accepts answers `25P02` without parse analysis, planning or execution, and one it
+   * does not have answers its own syntax or feature error. Measured on PostgreSQL 18.6 and
+   * CockroachDB v26.3.2: all six of PostgreSQL's statements answer `25P02` on the first, and the
+   * five the second refuses answer `42601` while `ANALYZE <table>` answers `25P02`.
+   *
+   * A server whose block the poison does not abort is not asked at all, because there the
+   * statements WOULD run: `SELECT 1` is sent first, and unless it answers `25P02` the probe ends.
+   * RisingWave 3.1.0 is that server: its `BEGIN` opens nothing (the same ReadyForQuery `I`
+   * `beginTransaction()` refuses on), `SELECT 1` answers a row, and the probe offers none of the
+   * three, which is the measured answer for that engine anyway.
+   *
+   * Nothing here rejects, and nothing it cannot read narrows anything: a failure that is not the
+   * server's answer (a reset connection, a pooler that refuses BEGIN, a statement answered with a
+   * code that is neither `25P02` nor a grammar refusal while the block no longer reads as aborted)
+   * leaves `measured` undefined, and the declaration stands.
+   */
+  private async probeMaintenance(client: PoolClient): Promise<MaintenanceProbe> {
+    let began = false;
+    let discard: Error | undefined;
+    const answer = async (): Promise<MaintenanceProbe["measured"]> => {
+      const database = await this.maintenanceDatabase(client);
+      await client.query("BEGIN");
+      began = true;
+      try {
+        await client.query(STATEMENT_COUNT_POISON_SQL);
+      } catch {
+        // `22012 division_by_zero` is the point: it is what aborts the block.
+      }
+      // Asked of the server rather than read from `getTransactionStatus()`: a rejected query
+      // settles before `pg` has read the ReadyForQuery that follows the error, and under bun 1.4.2
+      // the status still read `T` there on PostgreSQL 18.6 while node read `E`. `SELECT 1` answers
+      // `25P02` only inside a block the poison really aborted, and a row only where BEGIN opened
+      // nothing - the one answer that is a measurement of the server rather than a failure.
+      const sentinel = await answerInAbortedBlock(client, MAINTENANCE_PROBE_SENTINEL);
+      if (sentinel === "resolved") return MAINTENANCE_UNMEASURED;
+      if (sentinel !== "accepted") return undefined;
+      const measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> = {};
+      // Each answer is read, and anything that is neither `25P02` nor a grammar refusal stops the
+      // probe unless the server says, again, that the block is still aborted: a statement that
+      // RESOLVED, or a block that is no longer aborted, means the next statement could run.
+      const placement = async (sql: string): Promise<boolean | undefined> => {
+        const reply = await answerInAbortedBlock(client, sql);
+        if (reply === "accepted") return true;
+        if (reply === "refused") return false;
+        if (reply === "resolved") return undefined;
+        return (await answerInAbortedBlock(client, MAINTENANCE_PROBE_SENTINEL)) === "accepted" ? false : undefined;
+      };
+      for (const operation of PROBED_MAINTENANCE) {
+        const perEntity = await placement(this.maintenanceStatement(operation, database, MAINTENANCE_PROBE_TARGET));
+        if (perEntity === undefined) return undefined;
+        const global = await placement(this.maintenanceStatement(operation, database));
+        if (global === undefined) return undefined;
+        measured[operation] = { perEntity, global };
+      }
+      return measured;
+    };
+    let measured: MaintenanceProbe["measured"];
+    try {
+      measured = await answer();
+    } catch {
+      // A failure that is not the server's answer - a reset connection, a pooler that refuses
+      // BEGIN - says nothing about the grammar, so the declaration stands rather than a cached
+      // provider losing its maintenance for good.
+      measured = undefined;
+    } finally {
+      // The connect client goes back to the pool, so it never goes back inside the probe's block.
+      // Sent whenever BEGIN was, for the reason above: the status is not yet the server's last word.
+      // A ROLLBACK that fails leaves a client nobody can vouch for, and it is destroyed instead.
+      if (began) {
+        await client.query("ROLLBACK").catch((error: unknown) => {
+          discard = error instanceof Error ? error : new Error(String(error));
+        });
+      }
+    }
+    return discard === undefined ? { measured } : { measured, discard };
+  }
+
   public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const client = await this.pool!.connect();
       try {
-        let sql = "";
-        // Resolve target into a schema-qualified, quoted identifier: the caller's container
-        // when there is one, else "schema.table", else the public schema for bare names.
-        const qualifiedTarget = this.qualifyMaintenanceTarget(target, container);
+        // Only the whole-database REINDEX names the database, so only it may cost a round trip.
+        const database = type === "reindex" && !target ? await this.maintenanceDatabase(client) : "";
+        let sql = this.maintenanceStatement(type, database, target, container);
 
         switch (type) {
-          case "vacuum":
-            sql = target ? `VACUUM ANALYZE ${qualifiedTarget}` : "VACUUM ANALYZE";
-            break;
-          case "analyze":
-            sql = target ? `ANALYZE ${qualifiedTarget}` : "ANALYZE";
-            break;
-          case "reindex":
-            sql = target
-              ? `REINDEX TABLE ${qualifiedTarget}`
-              : `REINDEX DATABASE ${this.escapeIdentifier(this.config.database || "")}`;
-            break;
           case "kill":
             if (!target) {
               throw new QueryError("Target PID is required for kill operation", "postgres");
@@ -4531,8 +4744,23 @@ export class PostgresProvider extends SQLBaseProvider {
           throw new QueryError(`Unsupported maintenance type: ${type}`, "postgres");
         }
 
-        await client.query(sql);
-        return { success: true };
+        // The server's own notices are part of its answer (#1387). A statement can succeed and
+        // still have done nothing: YugabyteDB 2026.1.2.0 answers every VACUUM with the NOTICE
+        // "VACUUM is a no-op statement since YugabyteDB performs garbage collection of dead
+        // tuples automatically", and PostgreSQL skips a table the role does not own with the
+        // WARNING `permission denied to vacuum "t", skipping it`. "completed successfully" alone
+        // claims work the server says it did not do.
+        const notices: string[] = [];
+        const onNotice = (notice: { severity?: string; message?: string }) => {
+          if (MAINTENANCE_NOTICE_SEVERITIES.has(notice.severity ?? "") && notice.message) notices.push(notice.message);
+        };
+        client.on("notice", onNotice);
+        try {
+          await client.query(sql);
+        } finally {
+          client.off("notice", onNotice);
+        }
+        return { success: true, notices };
       } finally {
         client.release();
       }
@@ -4541,7 +4769,7 @@ export class PostgresProvider extends SQLBaseProvider {
     return {
       success: result.success,
       executionTime,
-      message: `${type.toUpperCase()} completed successfully`,
+      message: maintenanceMessage(type, result.notices),
     };
   }
 

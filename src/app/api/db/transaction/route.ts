@@ -1,4 +1,5 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
+import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
 import type { BeginTransactionOptions, BeginTransactionResult, QueryResult } from "@/lib/db/types";
@@ -135,9 +136,16 @@ export async function POST(req: NextRequest) {
           return NextResponse.json({ error: bound.message }, { status: 400 });
         }
 
+        const optionError = pageOptionError(options);
+        if (optionError !== null) {
+          return NextResponse.json({ error: optionError }, { status: 400 });
+        }
+
         // Apply limit for SELECT queries within transaction
         const prepared = provider.prepareQuery(sql, options);
-        const result = await provider.queryInTransaction(prepared.query, bound.params);
+        // One row past the page, so a full last page is not taken for a full page (#1440).
+        const probe = probePastPage(provider, sql, options, prepared);
+        const result = await provider.queryInTransaction(probe.query, bound.params);
 
         // The provider ends its session when the SERVER says the statement ended the
         // transaction: a typed COMMIT or ROLLBACK, or a statement the engine commits implicitly (MySQL
@@ -160,18 +168,19 @@ export async function POST(req: NextRequest) {
         // `pagination.hasMore` has one meaning wherever it is produced, and it is read
         // outside the grid as well — `lib/export/scope.ts` swings the export dialog's
         // copy on it.
-        const hasMore = prepared.wasLimited && result.rows.length === prepared.limit;
+        const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
 
         return NextResponse.json({
           ...firstResultSet(result),
+          ...(hasMore && { rowCount: pageRows.length }),
           // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
-          rows: rowsWithNonFiniteWords(result.rows),
+          rows: rowsWithNonFiniteWords(pageRows),
           inTransaction: stillInTransaction,
           pagination: {
             limit: prepared.limit,
             offset: prepared.offset,
             hasMore,
-            totalReturned: result.rows.length,
+            totalReturned: pageRows.length,
             wasLimited: hasMore || result.pagination?.wasLimited === true,
           },
         });

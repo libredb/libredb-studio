@@ -142,6 +142,19 @@ describe("QueryHistory", () => {
     expect(onSelectQuery).toHaveBeenCalledWith("SELECT * FROM users");
   });
 
+  // ── A plan run is marked (#1447) ──────────────────────────────────────────
+
+  test("an Explain entry shows a Plan badge and no row count; others show neither", () => {
+    const { rowCount: _planRows, ...planEntry } = mockHistory[0];
+    mockGetHistory.mockImplementation(() => [{ ...planEntry, kind: "explain" as const } as never, mockHistory[1]]);
+    const { container } = render(<QueryHistory {...createDefaultProps()} />);
+    const view = within(container);
+
+    expect(view.getAllByText("Plan")).toHaveLength(1);
+    expect(view.getAllByTitle("Restore Query (it was run as a plan)")).toHaveLength(1);
+    expect(view.getAllByTitle("Restore Query")).toHaveLength(1);
+  });
+
   // ── Clear history ─────────────────────────────────────────────────────────
 
   test("clear history clears state after confirm", () => {

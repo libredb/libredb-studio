@@ -182,6 +182,13 @@ const QUERY_ERROR_PREFIXES = [
 /** DuckDB's own word for a statement `interrupt()` stopped. */
 const INTERRUPT_PREFIX = "INTERRUPT Error";
 
+/**
+ * DuckDB's own words for a write on a database attached read-only. Measured on v1.5.5:
+ * `Invalid Input Error: Cannot execute statement of type "INSERT" on database "<name>"
+ * which is attached in read-only mode!`.
+ */
+const READ_ONLY_REFUSAL_MARKER = "which is attached in read-only mode";
+
 /** The lock message; shared with `client.ts`'s open-time diagnosis. */
 const LOCK_CONFLICT_MARKER = "conflicting lock is held";
 
@@ -351,6 +358,8 @@ export function assertReadOnlyStatementIsBounded(sql: string): void {
 
 export class DuckDBProvider extends SQLBaseProvider {
   private client: DuckDBClient | null = null;
+  /** The editor's file, when it was opened read-only because this process cannot write it (#1405). */
+  private unwritableFilePath: string | null = null;
 
   /** True when this instance was opened under the agent read-only profile. */
   private readonly readOnlyProfile: boolean;
@@ -606,6 +615,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       this.client = await openDuckDBClient(dbPath, { readOnly: false, unwritableFile });
       // Logged once the open succeeded, so a file refused at open is not announced as opened.
       if (unwritableFile) {
+        this.unwritableFilePath = dbPath;
         logger.info(`[DuckDB] Opened ${dbPath} read-only: this process cannot write the file or its directory`, {
           provider: "duckdb",
         });
@@ -646,6 +656,7 @@ export class DuckDBProvider extends SQLBaseProvider {
     if (this.client) {
       this.client.close();
       this.client = null;
+      this.unwritableFilePath = null;
       this.runningQueryIds.clear();
       this.setConnected(false);
     }
@@ -674,7 +685,17 @@ export class DuckDBProvider extends SQLBaseProvider {
           try {
             return await this.client!.run(sql, params);
           } catch (error) {
-            throw mapDuckDBError(error, sql);
+            const mapped = mapDuckDBError(error, sql);
+            // The engine's refusal names the read-only mode but not why the editor is in
+            // it, so the reason is put in front of it (#1405), as the SQLite provider does.
+            if (this.unwritableFilePath !== null && mapped.message.includes(READ_ONLY_REFUSAL_MARKER)) {
+              throw new QueryError(
+                `DuckDB database ${this.unwritableFilePath} is open read-only because this process cannot write the file or its directory: ${mapped.message}`,
+                "duckdb",
+                sql,
+              );
+            }
+            throw mapped;
           }
         });
 

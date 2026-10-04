@@ -423,14 +423,15 @@ A value the engine itself sends as `null` stays `null`: ClickHouse's JSON format
 
 The `pagination` object reports the auto-limiting applied by the server.
 `limit` is `options.limit` when the caller sent one and 500 otherwise; the app's own tree click sends 50.
-`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify and the returned page filled that limit, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4), and the etcd provider does so whenever its row limit or its result byte budget stopped a `get` before the end of its range, or ended a watch before its window, and whenever its row limit held a list etcd answers whole (`lease list`, `lease timetolive --keys`, `user list`, `role list`, `user get --detail` and `role get`) to its row limit, and names the stop, or how many entries etcd answered, in a `warnings` entry (#1089, section 5.4).
+`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify and a row past that limit came back, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4), and the etcd provider does so whenever its row limit or its result byte budget stopped a `get` before the end of its range, or ended a watch before its window, and whenever its row limit held a list etcd answers whole (`lease list`, `lease timetolive --keys`, `user list`, `role list`, `user get --detail` and `role get`) to its row limit, and names the stop, or how many entries etcd answered, in a `warnings` entry (#1089, section 5.4).
 A value the etcd provider's cell bound cut sets no `wasLimited`: its encoding gains `, cut`, and one `warnings` entry counts the cut values.
 
 A shorter result under an injected cap has `wasLimited: false`.
-Under that cap, a result of exactly `limit` rows still has `wasLimited: true` and `hasMore: true` even when the next page comes back empty, because the limiter asks for `limit` rows and not one more.
-`POST /api/db/transaction` answers a query inside a transaction by the same rule.
+Under that cap, a result of exactly `limit` rows has `wasLimited: false` and `hasMore: false`: the statement that runs asks for `limit + 1` rows, the extra row is never answered, and only its arrival makes `hasMore` and `wasLimited` true (#1440).
+`POST /api/db/transaction` answers a query inside a transaction by the same rule. Because the statement that runs asks for one row more, a `SELECT ... FOR UPDATE` without its own `LIMIT` in a held transaction now locks `limit + 1` rows.
+`options.limit` and `options.offset` must be non-negative integers when sent; anything else is answered `400` before a provider is reached.
 
-`hasMore` is `wasLimited && rows.length === limit` with `wasLimited` read from the server's own limiter alone, and both halves matter.
+`hasMore` is `wasLimited && rows.length > limit` over the probed statement, with `wasLimited` read from the server's own limiter alone, and both halves matter.
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
@@ -1009,6 +1010,10 @@ is not refused: its target is a session or query id that neither half describes 
 A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
 
 A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
+
+On a `postgres` or `mysql` connection the supported set and its placements are the CONNECTED server's, measured when the provider connects, and not the type id's (#1387): CockroachDB keeps only a targeted `analyze`, RisingWave keeps only `kill`, YugabyteDB loses `reindex`, TiDB keeps `analyze` and Vitess loses `check`. A request for an operation the server refused gets the same `400` as any other unsupported operation, before anything is sent. The per-engine measurements are in `docs/providers/postgres.md` section 9.1 and `docs/providers/mysql.md` section 9.1.
+
+When the engine itself refuses the statement, the reply is the engine's answer, not a server fault (#1387): the thrown driver error is typed by `mapDatabaseError`, and one whose driver code says the statement is at fault answers `400` with `code: "QUERY_ERROR"` and the engine's own sentence, for example `{ "error": "at or near \"vacuum\": syntax error", "code": "QUERY_ERROR", "statusCode": 400 }`. Any other thrown error keeps a `5xx`.
 
 #### POST /api/db/maintenance/preview
 
@@ -2062,6 +2067,7 @@ interface QueryResult {
   rowCount: number;        // Number of rows returned
   executionTime: number;   // Execution time in ms
   explainPlan?: any;       // Query execution plan (if requested)
+  rolledBack?: boolean;    // Set by the client when SANDBOX ran the statement and the server confirmed the rollback; never sent by a route
   pagination?: QueryPagination;          // Auto-limiting the route attaches to every response
   warnings?: QueryWarning[];             // Notices the engine attached; ABSENT when it reported none
   columnTypes?: Record<string, string>;  // Declared type per column, keyed by its name in `fields`
@@ -2176,6 +2182,8 @@ interface ActiveSession {
 ```
 
 ### Error Codes
+
+An engine error is `QUERY_ERROR` when the driver's own code says the statement is at fault, read from the code and never the message (#1427): a SQLSTATE of class `0A`, `21`, `22`, `23`, `42` or `44` (PostgreSQL-wire, MySQL-wire and Db2 drivers), a SQL Server error number for a syntax, name, constraint, conversion or object-permission error (`102`, `156`, `208`, `2627`, `2812` and their neighbours), an Oracle statement error (`ORA-00001`, `ORA-00900` to `ORA-00999`, `ORA-01400`, `ORA-01722`, `ORA-02290` to `ORA-02292` and their neighbours) or a SQLite `SQLITE_ERROR`, `SQLITE_CONSTRAINT`, `SQLITE_MISMATCH` or `SQLITE_RANGE`. So `SELEC 1`, an unknown table and a duplicate key answer `400` on MySQL as on PostgreSQL. Connection, authentication, timeout and cancellation errors keep their own codes, MySQL's account limits `1203` (`max_user_connections`) and `1226` (`max_questions` and the like) stay `DATABASE_ERROR` although their SQLSTATE is `42000`, and an engine error with no recognised code is still `DATABASE_ERROR`.
 
 These are the values of the `code` field emitted by `createErrorResponse` (`src/lib/api/error-codes.ts`):
 

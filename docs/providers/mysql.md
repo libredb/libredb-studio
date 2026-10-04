@@ -1778,8 +1778,70 @@ per-index size lookup reads (section 8), because that is how InnoDB names the ta
 | `check` | `CHECK TABLE <t>` | `CHECK TABLE <all base tables, ≤50>` |
 | `kill` | `KILL <connection-id>` | throws (id required) |
 
-`getCapabilities().maintenanceOperations = ['analyze', 'optimize', 'check', 'kill']`. `kill`
-validates that the target parses as an integer connection id.
+`getCapabilities().maintenanceOperations` is `['analyze', 'optimize', 'check', 'kill']` before
+connect and on MySQL itself; a connected relative keeps only the verbs its server has
+([§9.1](#91-which-verbs-the-connected-server-has-measured-at-connect)). `kill` validates that the
+target parses as an integer connection id.
+
+A statement the server refuses is thrown as mysql2 raised it, and `POST /api/db/maintenance` types it
+through `mapDatabaseError`: a `sqlState` of class `42`, `0A`, `22`, `23`, `21` or `44` (TiDB's
+`1064 ER_PARSE_ERROR` is `42000`) is the statement's own fault and answers `400 QUERY_ERROR` with the
+server's sentence; anything else, such as TiDB's `8200 OPTIMIZE TABLE is not supported` (`HY000`),
+keeps a 5xx (#1387, #1427).
+
+### 9.1 Which verbs the connected server has, measured at connect
+
+The `mysql` type id reaches wire-compatible engines that do not all have MySQL's three table verbs,
+so `probeMaintenance()` asks each server once per `connect()`, on the connection the pool check
+already holds, the way the EXPLAIN grammar is asked (#1387). It sends `ANALYZE NO_WRITE_TO_BINLOG
+TABLE`, `OPTIMIZE NO_WRITE_TO_BINLOG TABLE` and `CHECK TABLE` against
+`` <database>.`libredb_maintenance_probe` ``, a table that does not exist in the connection's own
+database, so nothing is touched. A connection string that names its database in the URL is asked
+`SELECT DATABASE()`; a session that selected none uses `` `libredb_maintenance_probe` `` as the
+database too, qualified because a bare name answers `1046 No database selected` before the verb
+is read.
+
+**The connection's own database, not an invented one.** An account granted only `ALL ON app.*` is
+refused `1142 command denied` for a table in any other database, for every verb, so a probe that
+named a missing database read every verb as refused and the account lost all its maintenance
+(measured on mysql:latest and mariadb:latest).
+
+**`NO_WRITE_TO_BINLOG`.** Without it MySQL writes `ANALYZE` and `OPTIMIZE` to the binary log even
+for a table that does not exist, so every connect added two GTID transactions to a primary and to
+every replica behind it. With it `gtid_executed` did not move on MySQL 26.7.0, nor did MariaDB's
+`gtid_binlog_pos` or Vitess's `gtid_executed` (measured 2026-10-04). All four engines below parse
+the modifier; a server that answers it with `1064` is asked once more without it. `CHECK TABLE` is
+never binlogged and takes no modifier.
+
+**How an answer is read**, from `errno` and `sqlState`, never the message:
+
+- kept: a result set, or `1146` no such table, `1049` unknown database, and the privilege refusals
+  `1142`, `1044` and `1227` (MySQL 26.7.0's `OPTIMIZE` asks a least-privilege account for
+  `OPTIMIZE_LOCAL_TABLE`). The verb exists there, and the run's own refusal is a 400 with the
+  engine's sentence;
+- dropped: `1064` parse error, `1105` (vtgate's parse error), `8200` (TiDB), `1235` not supported
+  yet, or any other SQLSTATE of class `42` or `0A`;
+- anything else (a reset connection, an error with no `errno`, any other code) is not a
+  measurement: the probe stops and the declared set stands.
+
+Both placements follow the verb, because the whole-database form is the same statement over every
+table.
+
+Measured 2026-10-04 through mysql2:
+
+| Server | `ANALYZE TABLE` | `OPTIMIZE TABLE` | `CHECK TABLE` | Offered |
+|--------|-----------------|------------------|---------------|---------|
+| MySQL 26.7.0 (`mysql:latest`) | result set, `doesn't exist` | result set, `doesn't exist` | result set, `doesn't exist` | all three |
+| MySQL 26.7.0, account granted `ALL ON app.*` | result set, `doesn't exist` | `1227` needs `OPTIMIZE_LOCAL_TABLE` | result set, `doesn't exist` | all three |
+| MariaDB (`mariadb:latest`), root and the same account | result set, `doesn't exist` | result set, `doesn't exist` | result set, `doesn't exist` | all three |
+| TiDB v8.5.8 (`pingcap/tidb:v8.5.8`) | `1146 ER_NO_SUCH_TABLE` | `8200 OPTIMIZE TABLE is not supported` | `1064 ER_PARSE_ERROR` | Analyze only |
+| Vitess 24.0.4 (`vitess/vttestserver:v24.0.4-mysql84`) | result set, `doesn't exist` | result set | `1105 syntax error at position 6 near 'CHECK'` | Analyze and Optimize |
+
+The admin Operations tab and the monitoring Tables tab take the connected provider's declaration
+from the `maintenance` field of the `POST /api/db/monitoring` payload, because
+`POST /api/db/provider-meta` never connects and can only answer the type id's set; see
+[postgres.md §9.1](./postgres.md#91-what-the-connected-server-accepts-measured-at-connect) for the
+shared mechanism and the whole-database confirmation (#1438).
 
 ### The verdict is in the result set, not in the absence of an exception
 
@@ -1886,7 +1948,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `implicitCommitExceptions` | `CREATE TEMPORARY`, `DROP TEMPORARY`, `ANALYZE SELECT`, `ANALYZE FORMAT`: matched by the list above and committing nothing ([§6.0](#60-what-the-server-says-about-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; InnoDB declares them, so an empty list means this schema (or this role) has none, not the engine |
 | `supportsMaintenance` | `true` |
-| `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` |
+| `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` before connect; after it, the verbs the server has plus `kill`: **measured, not declared** (see [§9.1](#91-which-verbs-the-connected-server-has-measured-at-connect)) |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `3306` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |

@@ -3478,15 +3478,15 @@ Not fixed in #1085: the spec and the rail predate it.
 
 **Done when:** the spec's locator names the editor's RUN button alone (`exact: true`, or a test id of its own), and the spec passes with an LLM configured.
 
-### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Sel" run nothing, and the toolbar Run sends the whole buffer
+### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Selected" run nothing, and the toolbar Run sends the whole buffer
 
-`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Sel" button all end there.
+`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Selected" button all end there.
 The only listener is in `src/hooks/use-query-execution.ts`, which only the standalone `src/components/Studio.tsx` uses.
 The embedded `StudioWorkspace` (`src/workspace/StudioWorkspace.tsx`, the npm package's shell) runs queries through `useQueryAdapter`, which registers none, so in the published shell those three controls never reach the host's `onQueryExecute`.
 The one control that runs there is the toolbar Run, and `executeQuery` in `src/workspace/hooks/use-query-adapter.ts` sends `overrideQuery || tabToExec.query`, the whole buffer: it never asks the editor for `getEffectiveQuery`, as `use-query-execution.ts` does, so neither a selection nor the statement at the caret can be run in that shell.
 On a PromQL tab that is a refusal: a buffer holding `up` and `rate(prometheus_http_requests_total[5m])` on two lines is sent whole, and the server answers `bad_data` with `2:1: parse error: unexpected identifier "rate"`, while `up` alone answers.
 The editor shows its Cmd/Ctrl+Enter hint in both shells, and the shortcut list in `docs/FEATURES.md`, generated from `src/lib/keyboard-shortcuts.ts`, offers it without naming a shell.
-Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Sel" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
+Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Selected" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
 `git log -S'execute-query' -- src/workspace` is empty, so the embedded shell never listened, and `tests/components/StudioWorkspace.test.tsx` mocks `QueryEditor`, so no test reaches the embedded run shortcut.
 
 Found 2026-09-23 by the #1085 review.
@@ -4883,23 +4883,26 @@ not compile until it does.
 
 `mapDatabaseError` classifies on **substring** matching of the engine's message, so an identifier can
 decide the class, and the agent's repairable-versus-environment split inherits the misdiagnosis.
-Verified against the live mapper:
 
-- `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
-  relation is treated as an environment fault and ends the run.
-- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
-  to a model as a statement it could rewrite (bounded at three attempts).
+#1427 settled the half that driver codes can reach: a statement's own fault is now read from the
+driver's code fields (`isStatementFault` in `src/lib/db/errors.ts`: SQLSTATE classes `0A`, `21`, `22`,
+`23`, `42`, `44` from `pg`, `mysql2` and `db2-node`, SQL Server error numbers, Oracle `errorNum`,
+SQLite result codes) before the `timeout`, `cancel`, `pool` and `relation` substring branches, so
+`no such table: pooled_items` is a `QueryError` now, not a `PoolExhaustedError`. What is left runs
+BEFORE that check, on purpose, so that nothing it classified changed class in that PR:
+
 - `relation "user_passwords" does not exist` matches `password` → `AuthenticationError`. Harmless on the
   agent path today only because a query-phase `AuthenticationError` is repairable there, which is a
   coincidence rather than a design.
+- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
+  to a model as a statement it could rewrite (bounded at three attempts).
+- An error with no code field at all (RisingWave answers its parser errors as `XX000`, HTTP drivers
+  carry none) still reaches the substring branches.
 
-Neither direction is a boundary failure: nothing runs that policy did not allow, and the statement and
-repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong before any
-consumer sees the error, so no consumer can correct it.
-
-**Done when:** classification no longer depends on a substring a table or column name can satisfy.
-Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
-each provider already has access to its own.
+**Done when:** the connection and authentication branches read the driver's code first too (SQLSTATE
+class `28` and `08`, MySQL `1045`, SQL Server `18456`, Oracle `1017`), so an identifier can no longer
+decide any class a code could, and the `permission denied` reading (`42501`, now an
+`AuthenticationError` and answered 401) is decided on purpose rather than inherited.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 

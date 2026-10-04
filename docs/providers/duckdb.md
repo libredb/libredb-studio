@@ -530,9 +530,12 @@ Permission denied`, so nothing in it can even be read. The editor now asks first
 process can write the file and its directory (`isUnwritableExistingFile`, shared with the SQLite
 provider), and when it cannot, opens with `access_mode: 'READ_ONLY'`, logs
 `[DuckDB] Opened <path> read-only: this process cannot write the file or its directory`, and reads
-normally. A write is then refused by the engine:
-`Invalid Input Error: Cannot execute statement of type "INSERT" on database "<name>" which is attached
-in read-only mode!`.
+normally. A write is then refused by the engine, and the editor puts the reason in front of the
+engine's sentence (#1405), as the SQLite provider does:
+`DuckDB database <path> is open read-only because this process cannot write the file or its
+directory: Invalid Input Error: Cannot execute statement of type "INSERT" on database "<name>" which is
+attached in read-only mode!`. A file this process cannot even read still fails to open, with the
+engine's `Permission denied` in the ordinary `Failed to open DuckDB database <path>: ...` sentence.
 
 Only `access_mode` is added. This is still the editor, so `enable_external_access` stays on: the
 agent profile's sandbox (§3.10) is a different boundary for a different caller. The directory counts
@@ -1193,6 +1196,7 @@ message do not accidentally select an unrelated shared classification.
 |---|---|---|
 | `INTERRUPT Error` | `QueryCancelledError` | `Query was cancelled` |
 | Conflicting file lock | `ConnectionError` | `DuckDB file <path> is locked by <process>. DuckDB admits one operating-system process per database file, in read-only mode too, so the other process has to release it first. Engine message: <engine message>` |
+| A write in the editor on a file opened read-only because this process cannot write it (§3.15) | `QueryError` | `DuckDB database <path> is open read-only because this process cannot write the file or its directory: <engine message>` |
 | `Parser Error`, `Binder Error`, `Catalog Error`, `Conversion Error`, `Invalid Input Error`, `Constraint Error`, `Out of Range Error`, `Not implemented Error`, `Permission Error`, `Serialization Error`, `TransactionContext Error` | `QueryError` | The engine message, with the query attached when one is available |
 | Anything else | shared database error | `mapDatabaseError()` classifies the error using the common provider rules |
 

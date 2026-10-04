@@ -403,7 +403,7 @@ PromQL has no statement that writes, and editor text only ever reaches `POST /ap
 The gate's SQL keyword test, which still reads a MongoDB or Redis buffer first, never reads PromQL: a metric may legally be named `update`, `delete` or `drop`, and read as SQL its bare selector is a write.
 On a PromQL tab there is no formatter: no Format button, no Format SQL entry in the editor's menu, and the format shortcut does nothing.
 In the standalone app the run shortcut on a PromQL tab sends the selection when there is one and otherwise the whole buffer, never cut at a `;`.
-In the embedded `StudioWorkspace` the run shortcut, the Run Query menu entry and Run Sel reach no listener, so only the toolbar Run sends, and it sends the whole buffer (`docs/BACKLOG.md` U47).
+In the embedded `StudioWorkspace` the run shortcut, the Run Query menu entry and Run Selected reach no listener, so only the toolbar Run sends, and it sends the whole buffer (`docs/BACKLOG.md` U47).
 Both shells type a Prometheus connection's tabs from its declared `queryLanguage`, the embedded `StudioWorkspace` as the standalone app does, and the editor reads its shortcuts' handlers when one is invoked, so a tab mounted before the connection's capabilities arrived behaves as a PromQL tab once it is one.
 The editor's tokenizer (`src/lib/editor/promql-language.ts`) colours a `#` comment wherever the lexer starts one: at the top level, inside `{}` and inside a range's `[]`; inside a raw string, between backticks, a `#` is text.
 
