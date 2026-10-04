@@ -178,6 +178,10 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // Account administration (`/api/admin/accounts`) and TOTP enrolment (`/api/auth/totp`) share
   // this bucket: both read and write the storage database.
   //
+  // The discovery status (`/api/admin/discovery`) reaches no database or LLM provider: it is an
+  // admin-only status read that may open TCP reachability probes, so it shares the bucket the other
+  // metered admin routes use.
+  //
   // The storage family joined when AU1 moved it onto the shared 401 (2026-08-22), and that gave it
   // a limiter it never had. It belongs here rather than in a bucket of its own: under
   // STORAGE_PROVIDER=sqlite or postgres these routes read and write a real database, which is what

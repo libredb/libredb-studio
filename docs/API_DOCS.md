@@ -1956,7 +1956,7 @@ It goes through the shared route guard: `401` with no session, `403` for a non-a
 With `SEED_DISCOVERY_PATH` unset it answers `{ "discovery": null }`.
 Otherwise it answers `{ "discovery": { "platform": "caprover", "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "name", "type" }], "skipped": [{ "appName", "reason" }] }, "transport": { "plainHttp", "cookieSecureOff" } }`, where `state` is `ok`, `waiting`, `stale` or `error`.
 It names apps and engine types only, never a host name or an environment value.
-`plainHttp` is true when the request arrived over http on a host that is not loopback; `X-Forwarded-Proto` and `X-Forwarded-Host` are read only while `TRUST_PROXY_HEADERS` is not `false`.
+`plainHttp` is true when the request arrived over http on a host that is not loopback; `X-Forwarded-Proto` and `X-Forwarded-Host` are read unless `TRUST_PROXY_HEADERS` is `false`, `off` or `0`, in any letter case.
 `cookieSecureOff` is true when `AUTH_COOKIE_SECURE` is set to `false`.
 Both flags drive a display warning and never a security decision.
 
