@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, mock } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
@@ -18,9 +18,11 @@ mock.module("@/lib/auth", () => ({
 
 import { GET } from "@/app/api/connections/managed/route";
 import { resetCache } from "@/lib/seed/config-loader";
+import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { getSession } from "@/lib/auth";
 import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
+import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 
 describe("GET /api/connections/managed", () => {
   beforeEach(() => {
@@ -315,5 +317,70 @@ describe("GET /api/connections/managed", () => {
     const body = (await res.json()) as { error: string; reason?: string };
     expect(body.error).toBe("Failed to load managed connections");
     expect(body.reason).toBeUndefined();
+  });
+
+  // Discovered connections (CapRover auto-connect spec 9.5 and 10): every role can read this route, so the
+  // discovered list reaches admins only, without a password, and the server-side literal marker never leaves.
+  describe("with discovered connections", () => {
+    const CANARY = "CANARY-DISCOVERED-PASSWORD";
+    let discovery: DiscoveryExportFixture;
+
+    beforeEach(() => {
+      discovery = writeDiscoveryExport([postgresService("pg", CANARY)]);
+      process.env.SEED_DISCOVERY_PATH = discovery.path;
+      resetCache();
+      resetDiscoveryCache();
+    });
+
+    afterEach(() => {
+      delete process.env.SEED_DISCOVERY_PATH;
+      resetCache();
+      resetDiscoveryCache();
+      discovery.remove();
+    });
+
+    it("hands an admin the discovered connection without its password and without the literal marker", async () => {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      const entry = data.connections.find((c: { seedId: string }) => c.seedId === "caprover-pg");
+
+      expect(entry).toMatchObject({
+        id: "seed:caprover-pg",
+        type: "postgres",
+        host: "srv-captain--pg",
+        port: 5432,
+        user: "postgres",
+        database: "appdb",
+        group: "CapRover",
+        managed: true,
+        roles: ["admin"],
+      });
+      expect("password" in entry).toBe(false);
+      expect("literal" in entry).toBe(false);
+      expect(data.connections.filter((c: object) => "literal" in c)).toEqual([]);
+      expect(JSON.stringify(data)).not.toContain(CANARY);
+    });
+
+    it("hands a standard user none of the discovered connections", async () => {
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      const ids: string[] = data.connections.map((c: { seedId: string }) => c.seedId);
+
+      expect(ids).toContain("everyone");
+      expect(ids.filter((id) => id.startsWith("caprover-"))).toEqual([]);
+      expect(JSON.stringify(data)).not.toContain(CANARY);
+    });
+
+    it("keeps the response shape: connections, cacheHint and pendingSeeds, nothing else", async () => {
+      const res = await GET();
+      const data = await res.json();
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(data.cacheHint).toBe(60000);
+      expect(data.pendingSeeds).toEqual([]);
+    });
   });
 });

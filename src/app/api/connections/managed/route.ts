@@ -1,12 +1,22 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
-import { getManagedConnections, getPendingSeeds } from "@/lib/seed";
+import { getManagedConnections, getPendingSeeds, type ManagedConnection } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 import { withoutSecretFields } from "@/lib/storage/connection-secrets";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * The literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values and is not part
+ * of this response's shape, so it is removed before anything reaches the browser.
+ */
+function withoutLiteralMarker(conn: ManagedConnection): ManagedConnection {
+  const copy = { ...conn };
+  delete copy.literal;
+  return copy;
+}
 
 export async function GET() {
   try {
@@ -37,7 +47,9 @@ export async function GET() {
     // browser needs none of its credentials: every field the storage layer classifies as secret
     // stays here, the API key pair and the TLS client key as well as the password. An editable
     // one is copied into the browser to be edited, so it keeps them.
-    const sanitized = connections.map((conn) => (conn.managed ? withoutSecretFields(conn) : conn));
+    const sanitized = connections
+      .map(withoutLiteralMarker)
+      .map((conn) => (conn.managed ? withoutSecretFields(conn) : conn));
 
     const rawTTL = Number(process.env.SEED_CACHE_TTL_MS);
     const cacheTTL = Number.isFinite(rawTTL) ? rawTTL : 60_000;
