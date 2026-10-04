@@ -1,5 +1,13 @@
 import { describe, it, expect } from "bun:test";
-import { ENV_ALLOW_LIST, LIMITS } from "../../../docker/discover.mjs";
+import {
+  buildExport,
+  classifyDockerError,
+  ENV_ALLOW_LIST,
+  LIMITS,
+  scanOnce,
+  selectServices,
+  serializeExport,
+} from "../../../docker/discover.mjs";
 import {
   DISCOVERY_FILE_MAX_BYTES,
   type DiscoveredService,
@@ -480,5 +488,128 @@ describe("parseDiscoveryExport: bounds shared with the exporter", () => {
     expect(reasonOf(parse(validExport(build(limit + 1))))).toStartWith(
       `the file does not match the export schema at ${path} (`,
     );
+  });
+});
+
+/**
+ * What the exporter writes, read back with the parser Studio reads it with. Every status the exporter can
+ * report goes through its own buildExport and serializeExport, once before the first good scan and once
+ * after one, so a status code, a field name or a nullability changed on one side alone fails here instead
+ * of Studio refusing the file and withdrawing every discovered connection.
+ */
+describe("parseDiscoveryExport: what the exporter writes", () => {
+  const NOW = Date.parse("2026-10-04T12:00:00.000Z");
+  const network = { id: "jolhlap6b0rctoqh21rk8sidt", name: "captain-overlay-network" };
+  const dockerService = (id: string, name: string, image: string, env: string[]) => ({
+    ID: id,
+    Spec: {
+      Name: name,
+      TaskTemplate: {
+        ContainerSpec: { Image: image, Env: env },
+        Networks: [{ Target: network.id, Aliases: [`srv-captain--${name}`] }],
+      },
+    },
+    ServiceStatus: { RunningTasks: 1, DesiredTasks: 1 },
+  });
+  const goodScan = selectServices(
+    [
+      dockerService("s-pg", "pgtest", "postgres:16", ["POSTGRES_USER=postgres", `POSTGRES_PASSWORD=${PG_SECRET}`]),
+      dockerService("s-cache", "cache", "redis:7", []),
+    ],
+    network,
+    new Set(["cache"]),
+  );
+
+  // One row per branch of classifyDockerError.
+  const failures: Array<[string, unknown]> = [
+    ["HTTP 503", Object.assign(new Error("This node is not a swarm manager."), { statusCode: 503 })],
+    ["HTTP 400", Object.assign(new Error("client version 1.44 is too old"), { statusCode: 400 })],
+    ["HTTP 500", Object.assign(new Error(""), { statusCode: 500 })],
+    ...["ENOENT", "EACCES", "ECONNREFUSED", "ETIMEDOUT", "ERESPONSETOOLARGE", "EBADJSON"].map(
+      (code): [string, unknown] => [code, Object.assign(new Error(`connect ${code} /var/run/docker.sock`), { code })],
+    ),
+    ["an unknown error", undefined],
+    ["a message over the cap", Object.assign(new Error("m".repeat(2000)), { statusCode: 503 })],
+  ];
+
+  function readBack(data: unknown) {
+    const result = parseDiscoveryExport(serializeExport(data));
+    if (!result.ok) throw new Error(result.reason);
+    return result.value;
+  }
+
+  it("accepts a good scan, with its services and the apps it left out", () => {
+    const value = readBack(
+      buildExport({ now: NOW, network, ...goodScan, status: { ok: true }, generatedAt: new Date(NOW).toISOString() }),
+    );
+    expect(value.services.map((service) => service.appName)).toEqual(["pgtest"]);
+    expect(value.excluded).toEqual(["cache"]);
+  });
+
+  it.each(failures)("accepts the status for %s before the first good scan", (_label, error) => {
+    const status = classifyDockerError(error);
+    const value = readBack(
+      buildExport({ now: NOW, network: null, services: [], excluded: [], status, generatedAt: null }),
+    );
+    expect(value.status).toEqual(status as ExporterStatus);
+    expect(value.services).toEqual([]);
+  });
+
+  it.each(failures)("accepts the status for %s after a good scan, which it keeps", (_label, error) => {
+    const status = classifyDockerError(error);
+    const value = readBack(
+      buildExport({ now: NOW, network, ...goodScan, status, generatedAt: new Date(NOW - 10_000).toISOString() }),
+    );
+    expect(value.status).toEqual(status as ExporterStatus);
+    expect(value.services.map((service) => service.appName)).toEqual(["pgtest"]);
+    expect(value.excluded).toEqual(["cache"]);
+  });
+
+  it.each([
+    ["no network of that name", async () => []],
+    [
+      "a services answer that is not a list",
+      async (path: string) =>
+        path.includes("/networks") ? [{ Name: network.name, Id: network.id, Scope: "swarm" }] : {},
+    ],
+  ])("accepts the status scanOnce reports for %s", async (_label, get) => {
+    const result = await scanOnce({ client: { get }, config: { network: network.name, exclude: new Set() } });
+    expect(result.ok).toBe(false);
+    const value = readBack(
+      buildExport({
+        now: NOW,
+        network: null,
+        ...goodScan,
+        status: result.status,
+        generatedAt: new Date(NOW - 10_000).toISOString(),
+      }),
+    );
+    expect(value.status).toEqual(result.status as ExporterStatus);
+  });
+
+  it("accepts an export trimmed to the 2 MiB bound", () => {
+    const bulky = Array.from({ length: LIMITS.services }, (_, index) => ({
+      id: `id-${index}`,
+      name: `app-${String(index).padStart(3, "0")}`,
+      appName: `app-${String(index).padStart(3, "0")}`,
+      host: `srv-captain--app-${index}`,
+      image: "postgres:16",
+      env: Object.fromEntries(ENV_ALLOW_LIST.map((key: string) => [key, "v".repeat(LIMITS.envValueBytes)])),
+      requirepassEnv: null,
+      tasks: { running: 1, desired: 1 },
+    }));
+    const value = readBack(
+      buildExport({
+        now: NOW,
+        network,
+        services: bulky,
+        excluded: [],
+        status: { ok: true },
+        generatedAt: new Date(NOW).toISOString(),
+      }),
+    );
+    expect(value.status).toMatchObject({ ok: false, code: "limit_exceeded" });
+    expect(value.services.length).toBeGreaterThan(0);
+    expect(value.services.length).toBeLessThan(LIMITS.services);
   });
 });
