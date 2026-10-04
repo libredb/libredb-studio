@@ -163,8 +163,10 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
 export function quoteObjectPath(path: readonly string[], capabilities: ProviderCapabilities): string {
   if (capabilities.queryLanguage === "json") return path.join(".");
   // An InfluxQL measurement is `[database, measurement]`, written `"db".."m"`: the database's default retention
-  // policy (InfluxDB spec 6.7).
+  // policy (InfluxDB spec 6.7). No object is the empty string, as on every other dialect: a modal mounted before an
+  // object is chosen renders with the empty path.
   if (capabilities.queryLanguage === "influxql") {
+    if (path.length === 0) return "";
     if (path.length !== 2) {
       throw new RangeError(`An InfluxQL source path is [database, measurement]; received ${path.length} segment(s)`);
     }

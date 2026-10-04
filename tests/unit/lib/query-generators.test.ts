@@ -2299,6 +2299,13 @@ describe("the influxql arms", () => {
     expect(() => quoteObjectPath(["home", "rp", "m"], influxCaps)).toThrow(RangeError);
   });
 
+  test("quoteObjectPath writes no object as the empty string, as every other dialect does", () => {
+    // A modal that is mounted before an object is chosen renders with the empty path (StudioModals);
+    // a throw there took the whole Studio down for every influxdb connection.
+    expect(quoteObjectPath([], influxCaps)).toBe("");
+    expect(quoteObjectPath([], makeCaps())).toBe("");
+  });
+
   test("a tree click writes the windowed preview of the InfluxQL generator, which the read policy allows", () => {
     const text = generateTableQuery(path, influxCaps, columns);
     expect(text).toBe(influxqlTableQuery(path));
