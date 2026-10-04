@@ -4,6 +4,7 @@ import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
 import { jsonText } from "./json";
+import { nonFiniteWord } from "@/lib/non-finite";
 
 /**
  * Turning a result grid into a file the user keeps.
@@ -879,9 +880,14 @@ function oracleTextLiteral(text: string, type: "date" | "timestamp"): string | u
 function sqlValue(value: unknown, dialect: DatabaseType | undefined, oracle?: OracleDateColumn): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "bigint") return String(value);
-  // NaN and ±Infinity are not numbers any of these dialects accepts as a literal,
-  // and `String(NaN)` would put the bare word `NaN` where a value belongs.
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "NULL";
+  // NaN and the infinities are not number literals in any of these dialects, and the
+  // bare word `NaN` would read as a column name; NULL is a different value. So the word
+  // is quoted, which is the same text a cell that came over HTTP carries (the server
+  // writes these as words), and PostgreSQL reads it back into a float or timestamp.
+  if (typeof value === "number") {
+    const word = nonFiniteWord(value);
+    return word === undefined ? String(value) : quoteLiteral(word, dialect);
+  }
   if (typeof value === "boolean") return String(value);
   if (value instanceof Date) {
     if (oracle !== undefined) return oracleDateLiteral(value, oracle.shape);

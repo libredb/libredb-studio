@@ -3,6 +3,8 @@
  * Prevents runtime crashes caused by native database types (BigInt, Buffers, Dates, circular refs).
  */
 
+import { nonFiniteWord } from "@/lib/non-finite";
+
 function serializeValue(value: unknown, seen = new WeakSet<object>()): unknown {
   if (value === null || value === undefined) {
     return value;
@@ -13,12 +15,10 @@ function serializeValue(value: unknown, seen = new WeakSet<object>()): unknown {
     return value.toString();
   }
 
-  // Handle non-finite numbers
+  // Non-finite numbers as their words: a stored NaN is a value, and the `null` that
+  // `JSON.stringify` makes of it reads as SQL NULL.
   if (typeof value === "number") {
-    if (Number.isNaN(value) || !Number.isFinite(value)) {
-      return null;
-    }
-    return value;
+    return nonFiniteWord(value) ?? value;
   }
 
   if (typeof value === "string" || typeof value === "boolean") {

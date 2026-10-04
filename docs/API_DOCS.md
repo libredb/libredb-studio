@@ -410,6 +410,10 @@ Execute SQL query on connected database.
 }
 ```
 
+A cell holding NaN, Infinity or -Infinity as a number is answered as the string `"NaN"`, `"Infinity"` or `"-Infinity"`, at any depth inside an array or object cell, because JSON has no form for the three and `JSON.stringify` would write each as `null`, which reads as SQL NULL ([`src/lib/non-finite.ts`](../src/lib/non-finite.ts)).
+`POST /api/db/multi-query`, `POST /api/db/transaction`, the agent's row rendering and the MCP serializer write them the same way, and so do the JSON, CSV and SQL INSERT exports (the SQL form as a quoted literal, `'NaN'`).
+A value the engine itself sends as `null` stays `null`: ClickHouse's JSON format does that for `nan` and `inf` unless `output_format_json_quote_denormals` is set, and SQLite stores a NaN as NULL.
+
 The `pagination` object reports the auto-limiting applied by the server.
 `limit` is `options.limit` when the caller sent one and 500 otherwise; the app's own tree click sends 50.
 `wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify and the returned page filled that limit, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4), and the etcd provider does so whenever its row limit or its result byte budget stopped a `get` before the end of its range, or ended a watch before its window, and whenever its row limit held a list etcd answers whole (`lease list`, `lease timetolive --keys`, `user list`, `role list`, `user get --detail` and `role get`) to its row limit, and names the stop, or how many entries etcd answered, in a `warnings` entry (#1089, section 5.4).

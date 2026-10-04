@@ -956,6 +956,26 @@ describe("PostgresProvider", () => {
       ]);
     });
 
+    // `pg-types` reads an infinite timestamptz as the NUMBER Infinity, which no Date holds and
+    // JSON writes as null: measured on PostgreSQL 18.6, `'-infinity'::timestamptz` reached the
+    // grid as NULL. The two words arrive as written, like an infinite date; a finite instant
+    // stays a Date (the control below).
+    test("an infinite timestamptz arrives as the engine's text, alone and in an array", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1184, "text")("infinity")).toBe("infinity");
+      expect(getTypeParser(1184, "text")("-infinity")).toBe("-infinity");
+      expect(getTypeParser(1185, "text")('{infinity,"2026-09-01 10:30:00+00",NULL,-infinity}')).toEqual([
+        "infinity",
+        new Date("2026-09-01T10:30:00.000Z"),
+        null,
+        "-infinity",
+      ]);
+      expect(getTypeParser(1185, "text")('{{infinity},{"2026-09-01 10:30:00+00"}}')).toEqual([
+        ["infinity"],
+        [new Date("2026-09-01T10:30:00.000Z")],
+      ]);
+    });
+
     // Controls: without these, a parser that answered every OID with the raw text would pass
     // the two tests above.
     test("every other type is delegated to pg-types unchanged", async () => {

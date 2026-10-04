@@ -10,6 +10,7 @@ import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 
 export interface StatementResult {
   index: number;
@@ -136,6 +137,9 @@ async function runStatement(
       ...identity,
       status: "success",
       ...shown,
+      // NaN and the infinities as words, which `JSON.stringify` would write as null
+      // (`src/lib/non-finite.ts`). The main result reuses this array, so it carries them too.
+      rows: rowsWithNonFiniteWords(shown.rows),
       executionTime: Math.round(performance.now() - startTime),
       ...carriedChannels({ warnings: result.warnings, columnTypes }),
     };

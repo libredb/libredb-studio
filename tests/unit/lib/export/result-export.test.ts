@@ -111,10 +111,28 @@ describe("buildResultExport — sql-insert", () => {
     expect(file.content).toContain("VALUES (1.5, 9007199254740993, true);");
   });
 
-  test("writes a non-finite number as NULL, because NaN is not a SQL number", () => {
-    const file = buildResultExport("sql-insert", source({ rows: [{ a: NaN, b: Infinity }], fields: ["a", "b"] }));
+  // NaN is not a SQL number literal, and NULL is a different value. The quoted word is
+  // what PostgreSQL reads back into a float column, and it is the same text the cell
+  // carries when it arrived over HTTP, where the server already wrote it as a word.
+  test("writes a non-finite number as its quoted word, not as NULL", () => {
+    const file = buildResultExport(
+      "sql-insert",
+      source({ rows: [{ a: NaN, b: Infinity, c: -Infinity }], fields: ["a", "b", "c"] }),
+    );
 
-    expect(file.content).toContain("VALUES (NULL, NULL);");
+    expect(file.content).toContain("VALUES ('NaN', 'Infinity', '-Infinity');");
+  });
+
+  test("writes a non-finite number as JSON and CSV words too", () => {
+    const rows = [{ a: NaN, b: Infinity, c: -Infinity }];
+    const fields = ["a", "b", "c"];
+
+    expect(JSON.parse(buildResultExport("json", source({ rows, fields })).content)).toEqual([
+      { a: "NaN", b: "Infinity", c: "-Infinity" },
+    ]);
+    // `-Infinity` opens with a formula lead and is not a plain number, so the CSV formula
+    // guard prefixes it the way it does PostgreSQL's `numeric` text `-Infinity`.
+    expect(buildResultExport("csv", source({ rows, fields })).content).toBe('a,b,c\nNaN,Infinity,"\'-Infinity"');
   });
 
   test("writes a date as an ISO literal rather than as a locale string", () => {
