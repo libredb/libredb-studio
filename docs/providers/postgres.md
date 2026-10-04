@@ -249,6 +249,18 @@ a rejected read leaves its panel absent and records the engine's own sentence un
 `errors`, while an empty array claims the engine answered "nothing" — a measurement it
 never made, and one that throws away the sentence saying why.
 
+A refused **size builtin** is not one of those cases, and since #1436 does not reject.
+`pg_table_size()`, `pg_indexes_size()` and `pg_total_relation_size()` are three columns of a
+read whose other columns the engine answers, so each is dropped on its own
+(`queryTableStats()`) and the rows arrive with that size absent — never as a `0`, which
+would be a measurement nobody made ([D105](../BACKLOG.md)). Measured on RisingWave 3.1.0,
+which binds neither `pg_size_pretty()` nor `pg_total_relation_size()` but answers
+`pg_table_size(relid)` and `pg_indexes_size(relid)`: the panel now lists the tables with
+their table and index sizes and the total as `N/A`, where the whole read used to fail.
+Materialize's outcome is unchanged, because its refusal is not the size call alone: it has
+no `pg_stat_user_tables` either, so the statement still has nothing to read FROM and the
+panel still carries that sentence.
+
 The distinction a reader needs is then drawn where the sentence is rendered.
 `describesAbsentObject()` ([monitoring-absence.ts](../../src/lib/monitoring-absence.ts))
 asks whether the message names a `pg_`-prefixed object that is not there, and
@@ -1734,7 +1746,7 @@ base) fans these out in parallel.
 | `getPerformanceMetrics()` | `pg_statio_user_tables`, `pg_stat_database`, `pg_stat_checkpointer` (17+) or `pg_stat_bgwriter` | cache-hit % (omitted when unmeasurable), deadlocks, checkpoint write time (`N/A` when unreadable); **no buffer-pool %** — see [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `pg_stat_statements` → fallback `pg_stat_activity` | detailed per-statement stats; fallback shows live active queries |
 | `getActiveSessions()` | `pg_stat_activity` | pid, user, state, query, wait events, duration; excludes own backend |
-| `getTableStats()` | `pg_stat_user_tables` + size functions | live/dead tuples, sizes, last (auto)vacuum/analyze, bloat ratio |
+| `getTableStats()` | `pg_stat_user_tables` + `pg_table_size`/`pg_indexes_size`/`pg_total_relation_size`, each on `relid` | live/dead tuples, sizes (absent per function the engine refuses, [§3.1.2](#312-two-kinds-of-absence-and-why-neither-is-an-empty-array)), last (auto)vacuum/analyze, bloat ratio |
 | `getIndexStats()` | `pg_stat_user_indexes`, `pg_index`, `pg_am` | type, columns, unique/primary, size, scan count, usage ratio |
 | `getStorageStats()` | `pg_tablespace`, WAL functions | per-tablespace size; WAL size (superuser-gated, swallowed if denied) |
 | `getPgStatActivity()` | `pg_stat_activity` | raw passthrough for advanced views |
@@ -1761,6 +1773,14 @@ zero and is still published as `0`/`"0 B"`, which is the shared helper's contrac
 state this engine produces: `pg_database_size()` is a function, not an aggregate, and measured on
 PostgreSQL 18 a freshly created database answers 7774735 bytes, never `NULL` and never zero. MySQL's
 `SUM()` over an empty schema is where that null row is real.
+
+**The table sizes are read the same way (#1436).** `getTableStats()` selects the three byte figures
+only and spells each with `formatBytes()`, so it selects no `pg_size_pretty()` column either — the
+shape `getOverview()` above and the object surface already use. That makes one spelling of a byte
+count across the provider instead of two, and it is visible: a 16384-byte table reads `16 KB` where
+`pg_size_pretty()` wrote `16 kB`. The bytes are unchanged, and it removes a builtin RisingWave does
+not bind. Each size is absent, never `0`, where its builtin is refused or answers `NULL` — which is
+what CockroachDB v26.3.2 does for a table it has.
 
 ### 7.1 When the cache hit ratio is not measurable
 

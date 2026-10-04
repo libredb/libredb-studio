@@ -2082,21 +2082,45 @@ const ACTIVE_SESSIONS_SQL = `
         LIMIT $2
       `;
 
-// getTableStats: per-table stats. A schema WHERE clause is interpolated
-// between the two fragments at the call site.
-const TABLE_STATS_SELECT_SQL = `
+// The three size builtins the table statistics read, each taking `relid` - the table's own
+// oid, which pg_stat_user_tables already carries.
+//
+// They used to take `quote_ident(schemaname) || '.' || quote_ident(relname)`. Stock
+// PostgreSQL casts that text to `regclass` implicitly; CockroachDB v26.3.2 answers
+// `unknown signature: pg_table_size(string)` and RisingWave 3.1.0 fails to bind it, so the
+// whole read died on both and took Monitoring > Tables, Storage and the Admin > Operations
+// table list - and every per-table maintenance action with it (#1436). An oid needs no cast
+// and no name re-parsing, so an identifier holding a dot or a quote cannot be mis-resolved
+// either. Measured 2026-10-04: on PostgreSQL 18.6 both forms answer the same bytes.
+//
+// Each is INDEPENDENTLY absent on some relative, which is why they are a list rather than one
+// clause: measured on RisingWave 3.1.0, pg_table_size(relid) and pg_indexes_size(relid)
+// answer (44 and 0 on a seeded table) while pg_total_relation_size does not bind at all.
+const TABLE_SIZE_FNS = ["pg_table_size", "pg_indexes_size", "pg_total_relation_size"] as const;
+
+// getTableStats: per-table stats, with the caller's schema WHERE clause.
+//
+// No `pg_size_pretty()`: RisingWave does not bind that one either, and `formatBytes()`
+// already spells every other size this provider reports - the database size here, and the
+// object surface's relation sizes. Asking the server to format what this process formats
+// everywhere else was one more builtin to depend on and a second spelling of a byte count.
+//
+// The ORDER BY names the OUTPUT ALIAS rather than repeating the size expression, so dropping
+// a refused builtin below repairs the sort with it instead of leaving a call behind in a
+// clause the SELECT no longer has. `NULLS LAST` keeps an unmeasured table from heading the
+// list, and the schema and table names are the tie-breaker that makes the order total:
+// without one, every row of an engine that publishes no size at all sorts equal.
+function tableStatsSql(whereClause: string): string {
+  return `
         SELECT
           schemaname as schema_name,
           relname as table_name,
           n_live_tup as live_row_count,
           n_dead_tup as dead_row_count,
           n_live_tup + n_dead_tup as row_count,
-          pg_size_pretty(pg_table_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as table_size,
-          pg_table_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as table_size_bytes,
-          pg_size_pretty(pg_indexes_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as index_size,
-          pg_indexes_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as index_size_bytes,
-          pg_size_pretty(pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname))) as total_size,
-          pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) as total_size_bytes,
+          pg_table_size(relid) as table_size_bytes,
+          pg_indexes_size(relid) as index_size_bytes,
+          pg_total_relation_size(relid) as total_size_bytes,
           last_vacuum,
           last_autovacuum,
           last_analyze,
@@ -2107,11 +2131,39 @@ const TABLE_STATS_SELECT_SQL = `
             ELSE 0
           END as bloat_ratio
         FROM pg_stat_user_tables
-        `;
-
-const TABLE_STATS_ORDER_SQL = `
-        ORDER BY pg_total_relation_size(quote_ident(schemaname) || '.' || quote_ident(relname)) DESC
+        ${whereClause}
+        ORDER BY total_size_bytes DESC NULLS LAST, schema_name, table_name
       `;
+}
+
+// One refused size builtin, replaced by a typed NULL so the column keeps its place and the
+// row survives. `NULL::bigint` rather than a bare NULL because the value is read as a byte
+// count and the ORDER BY sorts on it; measured to bind on PostgreSQL 18.6, CockroachDB
+// v26.3.2 and RisingWave 3.1.0 alike.
+//
+// NOT a 0: a 0 is a measurement, and nobody measured this one. The Storage tab's
+// `tableSizeKnown` gate and the Tables tab both read the absence and draw "N/A", which is
+// the rule BACKLOG D105 states and the reason `tableSizeBytes` is optional at all.
+function withoutSizeFn(fn: string): (sql: string) => string {
+  return (sql) => sql.replaceAll(`${fn}(relid)`, "NULL::bigint");
+}
+
+function isMissingSizeFnError(fn: string): (error: unknown) => boolean {
+  return (error) => error instanceof Error && error.message.toLowerCase().includes(fn);
+}
+
+/**
+ * One size column as the bytes it measured, or `undefined` where the engine published none.
+ *
+ * `pg` hands a bigint back as a string, so the conversion is not optional. A NULL is an
+ * absence, and so is anything that is not a finite number: the value is drawn as a size and
+ * summed into the Storage tab's shares, and a NaN there would spread through both.
+ */
+function sizeBytesOf(raw: unknown): number | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  const bytes = Number(raw);
+  return Number.isFinite(bytes) ? bytes : undefined;
+}
 
 // getIndexStats: per-index stats. A schema WHERE clause is interpolated
 // between the two fragments at the call site. `attname` is cast to `text` because
@@ -5247,6 +5299,40 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
+   * The table statistics, retried without whichever size builtin the engine refuses (#1436).
+   *
+   * One repair per builtin, each applied to whatever statement is current, so an engine that
+   * refuses two of the three still answers: RisingWave 3.1.0 publishes pg_table_size and
+   * pg_indexes_size and not pg_total_relation_size, and nothing here assumes the three stand
+   * or fall together.
+   *
+   * A refusal that is NOT one of them is rethrown, which is the distinction `MonitoringData`
+   * draws: an absent panel carries the engine's sentence and means "could not answer", while
+   * rows with an absent size mean "answered, and published no size". A missing
+   * `pg_stat_user_tables` or a planner restriction leaves nothing to answer with and still
+   * reaches the panel as itself.
+   */
+  private async queryTableStats(client: PoolClient, whereClause: string, params: unknown[]) {
+    const remainingFallbacks = TABLE_SIZE_FNS.map((fn) => ({
+      matches: isMissingSizeFnError(fn),
+      apply: withoutSizeFn(fn),
+    }));
+    let currentSql = tableStatsSql(whereClause);
+    for (;;) {
+      try {
+        return await client.query(currentSql, params);
+      } catch (error) {
+        const index = remainingFallbacks.findIndex((fallback) => fallback.matches(error));
+        // currentSql, not the original: after a repair the server received the rewritten
+        // statement, and quoting the first one would point a reader at text it never saw.
+        if (index === -1) throw mapDatabaseError(error, "postgres", currentSql);
+        currentSql = remainingFallbacks[index].apply(currentSql);
+        remainingFallbacks.splice(index, 1);
+      }
+    }
+  }
+
+  /**
    * Get table statistics
    */
   public async getTableStats(options?: { schema?: string }): Promise<TableStats[]> {
@@ -5259,24 +5345,36 @@ export class PostgresProvider extends SQLBaseProvider {
       const whereClause = schema ? `WHERE schemaname = $1` : `WHERE ${schemaExclusion("schemaname")}`;
       const params = schema ? [schema] : [];
 
-      const res = await client.query(`${TABLE_STATS_SELECT_SQL}${whereClause}${TABLE_STATS_ORDER_SQL}`, params);
+      const res = await this.queryTableStats(client, whereClause, params);
 
-      return res.rows.map((r) => ({
-        schemaName: r.schema_name,
-        tableName: r.table_name,
-        rowCount: parseInt(r.row_count || "0"),
-        liveRowCount: parseInt(r.live_row_count || "0"),
-        deadRowCount: parseInt(r.dead_row_count || "0"),
-        tableSize: r.table_size || "0 bytes",
-        tableSizeBytes: parseInt(r.table_size_bytes || "0"),
-        indexSize: r.index_size || "0 bytes",
-        indexSizeBytes: parseInt(r.index_size_bytes || "0"),
-        totalSize: r.total_size || "0 bytes",
-        totalSizeBytes: parseInt(r.total_size_bytes || "0"),
-        lastVacuum: r.last_vacuum || r.last_autovacuum ? new Date(r.last_vacuum || r.last_autovacuum) : undefined,
-        lastAnalyze: r.last_analyze || r.last_autoanalyze ? new Date(r.last_analyze || r.last_autoanalyze) : undefined,
-        bloatRatio: parseFloat(r.bloat_ratio || "0"),
-      }));
+      return res.rows.map((r) => {
+        // Each size is kept only where the engine published it. A refused builtin arrives as
+        // the typed NULL `withoutSizeFn()` left behind, and CockroachDB v26.3.2 answers
+        // `pg_table_size(<oid>)` with NULL for a table it has, so absence reaches here as a
+        // value and not only as a repair.
+        const tableBytes = sizeBytesOf(r.table_size_bytes);
+        const indexBytes = sizeBytesOf(r.index_size_bytes);
+        const totalBytes = sizeBytesOf(r.total_size_bytes);
+        return {
+          schemaName: r.schema_name,
+          tableName: r.table_name,
+          rowCount: parseInt(r.row_count || "0"),
+          liveRowCount: parseInt(r.live_row_count || "0"),
+          deadRowCount: parseInt(r.dead_row_count || "0"),
+          ...(tableBytes === undefined ? {} : { tableSize: formatBytes(tableBytes), tableSizeBytes: tableBytes }),
+          ...(indexBytes === undefined ? {} : { indexSize: formatBytes(indexBytes), indexSizeBytes: indexBytes }),
+          // `totalSize` and `totalSizeBytes` are the two the type still demands, so an
+          // unmeasured total is spelled the way the other providers spell it, "N/A" beside a 0
+          // (`sqlite.ts`, `libsql/introspect.ts`). That residual 0 is D105's to remove, for
+          // every provider at once, and not this read's to invent a shape for.
+          totalSize: totalBytes === undefined ? "N/A" : formatBytes(totalBytes),
+          totalSizeBytes: totalBytes ?? 0,
+          lastVacuum: r.last_vacuum || r.last_autovacuum ? new Date(r.last_vacuum || r.last_autovacuum) : undefined,
+          lastAnalyze:
+            r.last_analyze || r.last_autoanalyze ? new Date(r.last_analyze || r.last_autoanalyze) : undefined,
+          bloatRatio: parseFloat(r.bloat_ratio || "0"),
+        };
+      });
     } finally {
       client.release();
     }

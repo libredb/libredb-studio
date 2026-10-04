@@ -729,6 +729,11 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
 
   // getTableStats: pg_stat_user_tables
   if (normalized.includes("pg_stat_user_tables") && normalized.includes("n_live_tup")) {
+    // A size column the statement no longer asks the engine for answers NULL, the way the
+    // server answers the `NULL::bigint` a refused builtin is rewritten to (#1436). Without
+    // this the mock would hand back bytes for a column the statement does not select, and a
+    // test of the repair would pass on rows no engine could have produced.
+    const sized = (fn: string, bytes: string): string | null => (normalized.includes(`${fn}(relid)`) ? bytes : null);
     return Promise.resolve({
       rows: [
         {
@@ -737,12 +742,9 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
           live_row_count: "1000",
           dead_row_count: "50",
           row_count: "1050",
-          table_size: "64 kB",
-          table_size_bytes: "65536",
-          index_size: "32 kB",
-          index_size_bytes: "32768",
-          total_size: "96 kB",
-          total_size_bytes: "98304",
+          table_size_bytes: sized("pg_table_size", "65536"),
+          index_size_bytes: sized("pg_indexes_size", "32768"),
+          total_size_bytes: sized("pg_total_relation_size", "98304"),
           last_vacuum: null,
           last_autovacuum: new Date().toISOString(),
           last_analyze: null,
@@ -755,12 +757,9 @@ function defaultMockQuery(sql: string): Promise<{ rows: unknown[]; fields?: { na
           live_row_count: "5000",
           dead_row_count: "200",
           row_count: "5200",
-          table_size: "256 kB",
-          table_size_bytes: "262144",
-          index_size: "128 kB",
-          index_size_bytes: "131072",
-          total_size: "384 kB",
-          total_size_bytes: "393216",
+          table_size_bytes: sized("pg_table_size", "262144"),
+          index_size_bytes: sized("pg_indexes_size", "131072"),
+          total_size_bytes: sized("pg_total_relation_size", "393216"),
           last_vacuum: new Date().toISOString(),
           last_autovacuum: null,
           last_analyze: new Date().toISOString(),
@@ -2423,7 +2422,11 @@ describe("PostgresProvider", () => {
     // PanelUnavailable then reads that sentence to decide whether the absence is an
     // engine limit or a refused statement (see monitoring-absence.ts).
 
-    test("getTableStats() surfaces the engine's sentence instead of an empty result", async () => {
+    // A refused SIZE is no longer a refused PANEL (#1436): the sizes are three columns of a
+    // read whose other columns the engine answers, so each is dropped on its own and the rows
+    // arrive with that size absent. What still rejects is a refusal that leaves NOTHING to
+    // answer with - the catalog itself, or a planner restriction, both below.
+    test("getTableStats() answers the rows when only the size builtin is refused", async () => {
       mockQueryFn = (sql: string) => {
         if (sql.includes("pg_table_size")) {
           return Promise.reject(new Error('function "pg_table_size" does not exist'));
@@ -2433,7 +2436,9 @@ describe("PostgresProvider", () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
 
-      await expect(provider.getTableStats()).rejects.toThrow(/pg_table_size/);
+      const stats = await provider.getTableStats();
+      expect(stats.length).toBe(2);
+      expect(stats[0].tableSizeBytes).toBeUndefined();
     });
 
     test("getIndexStats() surfaces the engine's sentence instead of an empty result", async () => {
@@ -3280,7 +3285,13 @@ describe("PostgresProvider", () => {
       expect(Array.isArray(stats)).toBe(true);
     });
 
-    test("quotes identifiers in the stats query for mixed-case safety", async () => {
+    // The size builtins used to take `quote_ident(schemaname) || '.' || quote_ident(relname)`.
+    // Stock PostgreSQL casts that text to regclass; CockroachDB v26.3.2 answers `unknown
+    // signature: pg_table_size(string)` and RisingWave 3.1.0 fails to bind it, which killed the
+    // whole read on both (#1436). `relid` is the table's oid, already in pg_stat_user_tables, so
+    // it needs no cast and no name re-parsing. No `pg_size_pretty()` either: RisingWave does not
+    // bind that one, and `formatBytes()` already spells every other size this provider reports.
+    test("the size builtins take relid, never a concatenated name", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
       let capturedSql = "";
@@ -3289,8 +3300,71 @@ describe("PostgresProvider", () => {
         return defaultMockQuery(sql);
       };
       await provider.getTableStats();
-      expect(capturedSql).toContain("quote_ident(schemaname)");
-      expect(capturedSql).toContain("quote_ident(relname)");
+      expect(capturedSql).toContain("pg_table_size(relid)");
+      expect(capturedSql).toContain("pg_indexes_size(relid)");
+      expect(capturedSql).toContain("pg_total_relation_size(relid)");
+      expect(capturedSql).not.toContain("quote_ident");
+      expect(capturedSql).not.toContain("pg_size_pretty");
+    });
+
+    test("formats the sizes itself, from the bytes the engine answered", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const stats = await provider.getTableStats();
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBe(65536);
+      expect(users.tableSize).toBe("64 KB");
+      expect(users.indexSize).toBe("32 KB");
+      expect(users.totalSize).toBe("96 KB");
+    });
+
+    // RisingWave 3.1.0's measured shape: pg_table_size and pg_indexes_size answer, and
+    // pg_total_relation_size does not bind. The rows and the two sizes that ARE published
+    // survive, and the third is absent rather than a 0 nobody measured (BACKLOG D105).
+    test("a size builtin the engine refuses leaves that size unmeasured, keeping the rows", async () => {
+      let attempts = 0;
+      mockQueryFn = (sql: string) => {
+        if (sql.includes("pg_total_relation_size")) {
+          attempts++;
+          return Promise.reject(new Error("Failed to bind expression: pg_total_relation_size"));
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      expect(attempts).toBe(1);
+      expect(stats.length).toBe(2);
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBe(65536);
+      expect(users.indexSizeBytes).toBe(32768);
+      expect(users.totalSize).toBe("N/A");
+    });
+
+    test("each size builtin is dropped on its own, so one absence does not cost the others", async () => {
+      const refused: string[] = [];
+      mockQueryFn = (sql: string) => {
+        for (const fn of ["pg_table_size", "pg_indexes_size", "pg_total_relation_size"]) {
+          if (sql.includes(`${fn}(relid)`) && !refused.includes(fn)) {
+            refused.push(fn);
+            return Promise.reject(new Error(`function "${fn}" does not exist`));
+          }
+        }
+        return defaultMockQuery(sql);
+      };
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+
+      const stats = await provider.getTableStats();
+      expect(refused.length).toBe(3);
+      expect(stats.length).toBe(2);
+      const users = stats.find((s) => s.tableName === "users")!;
+      expect(users.tableSizeBytes).toBeUndefined();
+      expect(users.indexSizeBytes).toBeUndefined();
+      expect(users.totalSize).toBe("N/A");
+      // The rows are still the point: the row counts a user came to the panel for survive.
+      expect(users.liveRowCount).toBe(1000);
     });
   });
 

@@ -339,6 +339,7 @@ const NAMED_CITATIONS = [
       "getPerformanceMetrics",
       "getSlowQueries",
       "getActiveSessions",
+      "queryTableStats",
       "getTableStats",
       "getIndexStats",
       "getStorageStats",
