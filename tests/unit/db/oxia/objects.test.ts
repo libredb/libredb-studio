@@ -259,7 +259,7 @@ describe("a key's Source (SB2-7.5)", () => {
       id: "value",
       label: "Value",
       unavailable:
-        "The value is larger than 16 MiB, the most Studio receives in one message, so it is withheld. Its version is below.",
+        "The value is larger than 16 MiB, the most Studio receives in one message, so it is withheld. Its version is under Metadata.",
     });
     expect(JSON.parse(textOf(metadata))).toMatchObject({ key: "/big", value_encoding: "withheld", value_bytes: null });
   });

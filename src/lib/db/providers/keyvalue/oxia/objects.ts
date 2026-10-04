@@ -45,7 +45,7 @@ export const OXIA_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
 export const OXIA_KEYS_LISTED_ELSEWHERE = "Keys are listed in the Keys panel and with list in the console.";
 
 const RECEIVE_CAP_MIB = OXIA_RECEIVE_CAP_BYTES / (1024 * 1024);
-const WITHHELD_SOURCE = `The value is larger than ${RECEIVE_CAP_MIB} MiB, the most Studio receives in one message, so it is withheld. Its version is below.`;
+const WITHHELD_SOURCE = `The value is larger than ${RECEIVE_CAP_MIB} MiB, the most Studio receives in one message, so it is withheld. Its version is under Metadata.`;
 const EMPTY_SOURCE =
   "The value is empty (0 bytes). Pulsar and other ZooKeeper-style clients write parent paths this way.";
 
