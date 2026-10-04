@@ -292,6 +292,23 @@ describe("the drafted statement is read out of the closing prose", () => {
   });
 
   /*
+    InfluxDB spec 6.5. `influxql` is a language tag that names one engine, `influxdb` (the `promql` rule): its
+    block is the deliverable of an InfluxDB run and of no other engine's, and an InfluxDB 3 run, whose language
+    is DataFusion SQL, is another engine.
+  */
+  test("an InfluxQL block is the deliverable of an InfluxDB run, and of no other engine's", () => {
+    const statement = 'SELECT * FROM "home".."cpu" WHERE time > now() - 1h';
+    const influxql = ["```influxql", statement, "```"].join("\n");
+    const influxdb = ["```influxdb", statement, "```"].join("\n");
+
+    expect(readPlanStatement(influxql, "postgres")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(influxql, "influxdb3")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(influxql, "influxdb")).toEqual({ kind: "statement", sql: statement, tag: "influxql" });
+    expect(readPlanStatement(influxdb, "influxdb")).toEqual({ kind: "statement", sql: statement, tag: "influxdb" });
+    expect(readPlanStatement(influxdb, "influxdb3")).toEqual({ kind: "absent" });
+  });
+
+  /*
     #1088. The planning contract asks for a block tagged with the connection's type-id, so a Kafka
     run fences its read request as ```kafka, and that block is its deliverable. It names one engine
     like any type-id, so on another connection it is the `mysql` case above.
@@ -646,6 +663,19 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
       identifiers: { kind: "not-applicable" },
     });
     expect(validatePlanStatement(CYPHER, null, "cypher").identifiers).toEqual({ kind: "not-applicable" });
+  });
+
+  test("an InfluxQL draft is declined the same way: the reader speaks SQL and nothing else (InfluxDB spec 6.5)", () => {
+    // Correct as a fall-through (`plan-statement.ts`, `language !== "sql"`): the draft meets the InfluxQL read
+    // policy when the user runs it. A regex holding `\/` is the text the SQL guard would misread.
+    const INFLUXQL = 'SELECT mean("temp") FROM "home".."cpu" WHERE "room" =~ /kitchen\\/a/ AND time > now() - 1h';
+
+    expect(validatePlanStatement(INFLUXQL, INVENTORY, "influxql")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(INFLUXQL, null, "influxql").identifiers).toEqual({ kind: "not-applicable" });
   });
 
   test("a Kafka read request is declined the same way: it is JSON, and the reader speaks SQL (#1088)", () => {

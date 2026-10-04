@@ -114,7 +114,10 @@ async function exportMenuItems(capabilities: ProviderCapabilities | null): Promi
     .map((item) => item.textContent ?? "");
 }
 
-/** The seven engines R46 C4 probed, each by the language and dialect its provider declares. */
+/**
+ * The seven engines R46 C4 probed, each by the language and dialect its provider declares, and InfluxDB
+ * (InfluxQL), whose language is neither SQL nor JSON and declares no dialect (InfluxDB spec A.11).
+ */
 const PROBED: readonly (readonly [string, Partial<ProviderCapabilities>])[] = [
   ["postgres", { queryLanguage: "sql" }],
   ["mongodb", { queryLanguage: "json" }],
@@ -123,6 +126,7 @@ const PROBED: readonly (readonly [string, Partial<ProviderCapabilities>])[] = [
   ["kafka", { queryLanguage: "json", queryDialect: "kafka" }],
   ["etcd", { queryLanguage: "json", queryDialect: "etcd" }],
   ["prometheus", { queryLanguage: "promql" }],
+  ["influxdb", { queryLanguage: "influxql" }],
 ];
 
 afterEach(() => cleanup());

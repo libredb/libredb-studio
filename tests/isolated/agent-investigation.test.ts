@@ -30,6 +30,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { KEY_PATTERN_LABELS, SEARCH_INDEX_LABELS, TABLE_LABELS } from "../fixtures/provider-labels";
 import { LLMAuthError, LLMStreamError } from "@/lib/llm/types";
@@ -1419,6 +1420,7 @@ describe("planning mode runs no statement of the user's", () => {
       const planOnProvider = async (
         language: ProviderCapabilities["queryLanguage"],
         labels?: ProviderLabels,
+        type: DatabaseType = "mongodb",
       ): Promise<{ readonly rules: string; readonly transcript: string }> => {
         const b = boot(freshDataDir(), { describesSchema: async () => PROVIDER_INVENTORY });
         const run = await startRun(b, "planning");
@@ -1429,7 +1431,7 @@ describe("planning mode runs no statement of the user's", () => {
           model: await modelOver(script.fetch),
           resources: {
             ...b.resources,
-            connection: { ...CONNECTION, type: "mongodb" },
+            connection: { ...CONNECTION, type },
             capabilities: { ...OBJECT_CAPABILITIES, queryLanguage: language, declaresForeignKeys: false },
             ...(labels === undefined ? {} : { labels }),
           },
@@ -1533,6 +1535,54 @@ describe("planning mode runs no statement of the user's", () => {
         // The SQL arm's opening and its SQL-only name rule, neither of which may also be present.
         expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
         expect(rules).not.toContain("and no column name that is not in that inventory");
+      });
+
+      /*
+        InfluxDB spec 6.5 and A.11: `influxdb` declares `"influxql"`, which is not `"sql"`, so it takes the
+        neutral arm with its fence tag `influxdb` and its `statementLanguage` label after the opening. The
+        labels are the ones the provider ships, and the connection is an `influxdb` one, because the tag
+        the block must carry is the type-id.
+      */
+      test("an InfluxQL engine takes the neutral contract, its own language sentence and the influxdb tag", async () => {
+        const labels = new InfluxDBProvider({
+          id: "influxdb-plan",
+          name: "InfluxDB",
+          type: "influxdb",
+          host: "127.0.0.1",
+          port: 8086,
+          createdAt: new Date(0),
+        }).getLabels();
+        const { rules } = await planOnProvider("influxql", labels, "influxdb");
+
+        expect(rules).toContain("written in this influxdb database's own query language");
+        expect(rules).toContain("This engine speaks no SQL");
+        expect(rules).toContain(`Write it in ${labels.statementLanguage}.`);
+        expect(rules).toContain("Put it in a single fenced block tagged `influxdb`");
+        expect(rules.indexOf("own query language")).toBeLessThan(rules.indexOf("Write it in InfluxQL"));
+        expect(rules).not.toContain("Produce ONE runnable statement: the statement that answers the question.");
+        expect(rules).not.toContain("and no column name that is not in that inventory");
+      });
+
+      /*
+        InfluxDB spec I13: `influxdb3` declares `"sql"`, so it takes the SQL contract, and its
+        `statementLanguage` sentence says which SQL: DataFusion as InfluxDB 3 runs it, not InfluxQL.
+      */
+      test("an InfluxDB 3 engine takes the SQL contract plus its DataFusion sentence and the influxdb3 tag", async () => {
+        const labels = new InfluxDB3Provider({
+          id: "influxdb3-plan",
+          name: "InfluxDB 3",
+          type: "influxdb3",
+          host: "127.0.0.1",
+          port: 8181,
+          createdAt: new Date(0),
+        }).getLabels();
+        const { rules } = await planOnProvider("sql", labels, "influxdb3");
+
+        expect(rules).toContain("Produce ONE runnable statement: the statement that answers the question.");
+        expect(rules).toContain(`Write it in ${labels.statementLanguage}.`);
+        expect(rules).toContain("Apache DataFusion SQL as InfluxDB 3 runs it, not InfluxQL and not Flux");
+        expect(rules).toContain("Put it in a single fenced block tagged `influxdb3`");
+        expect(rules).not.toContain("This engine speaks no SQL");
       });
 
       /*
@@ -2796,6 +2846,34 @@ describe("planning mode runs no statement of the user's", () => {
         readOnly: true,
       });
     });
+
+    /*
+      InfluxDB spec 6.5: `influxql` is a language tag that names the `influxdb` type-id (the `promql`
+      rule), so on this suite's PostgreSQL connection an InfluxQL block is written for another engine.
+    */
+    test("an InfluxQL block is not recorded as a PostgreSQL run's statement, and the run is asked for one", async () => {
+      const events = await planWith(fenced("SELECT mean(temp) FROM home WHERE time > now() - 1h", "influxql"));
+
+      expect(draftedIn(events)).toBeUndefined();
+      expect(events.filter((event) => event.kind === "guidance-issued").map((event) => event.notice)).toContain(
+        "plan-statement",
+      );
+    });
+
+    test.each(["influxdb", "influxql"])(
+      "an InfluxQL block on an InfluxDB run is recorded as unjudged, under its tag %s",
+      async (tag) => {
+        const statement = "SELECT mean(temp) FROM home WHERE time > now() - 1h GROUP BY time(5m)";
+        const drafted = draftedIn(await planWith(fenced(statement, tag), { type: "influxdb", language: "influxql" }));
+        expect(drafted).toMatchObject({
+          dialect: "influxdb",
+          sql: statement,
+          guardApplicable: false,
+          readOnly: false,
+          identifiers: { kind: "not-applicable" },
+        });
+      },
+    );
 
     test("an explicit refusal drafts no statement, and is not recorded as one", async () => {
       const events = await planWith("NO STATEMENT: nothing in the inventory records payments.");

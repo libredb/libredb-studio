@@ -1265,6 +1265,18 @@ describe("StudioWorkspace", () => {
       expect(capturedQueryEditorProps.language).toBe("promql");
     });
 
+    test("Query 1 of a host declaring InfluxQL reaches the editor as an InfluxQL tab (InfluxDB spec 6.7)", () => {
+      // The embedded-surface rule: the standalone shell and this one retype Query 1 through the same
+      // `resolveTabType`, and only this test sees the embedded shell do it.
+      tabManagerHoldsState = true;
+      connAdapterOverride = {
+        activeConnection: { ...dbConn, type: "influxdb" as const },
+        metadata: { capabilities: { queryLanguage: "influxql" } } as unknown as ProviderMetadata,
+      };
+      renderWorkspace();
+      expect(capturedQueryEditorProps.language).toBe("influxql");
+    });
+
     test("every open tab takes the type, and a list that already carries it is handed back as it is", () => {
       connAdapterOverride = { activeConnection: promqlConnection, metadata: promqlMetadata };
       renderWorkspace();

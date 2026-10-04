@@ -59,6 +59,7 @@ describe("a host declaring a dialect this release has no record for", () => {
       const caps = makeCaps({ queryDialect: dialect as ProviderCapabilities["queryDialect"] });
       expect(gates(caps)).toEqual({ profile: false, code: true, count: false });
       expect(gates({ ...caps, queryLanguage: "promql" })).toEqual({ profile: false, code: false, count: false });
+      expect(gates({ ...caps, queryLanguage: "influxql" })).toEqual({ profile: false, code: false, count: false });
     }
   });
 });

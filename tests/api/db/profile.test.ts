@@ -58,6 +58,11 @@ mock.module("@/lib/db/factory", () => ({
 const { POST } = await import("@/app/api/db/profile/route");
 const { KafkaProvider } = await import("@/lib/db/providers/stream/kafka/index");
 const { EtcdProvider } = await import("@/lib/db/providers/keyvalue/etcd/index");
+const { InfluxDB3Provider, InfluxDBProvider } = await import("@/lib/db/providers/timeseries/influxdb/index");
+const { createInfluxClient } = await import("@/lib/db/providers/timeseries/influxdb/client");
+const { INFLUX_ERROR_SENTENCES } = await import("@/lib/db/providers/timeseries/influxdb/errors");
+const { loadInfluxCapture } = await import("../../helpers/influxdb-fixtures");
+const { recordingInfluxTransport } = await import("../../helpers/influxdb-transport");
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -91,6 +96,65 @@ const etcdConnection = {
   host: "localhost",
   port: 2379,
 };
+
+const influxdbConnection = {
+  id: "test-influxdb",
+  name: "Test InfluxDB",
+  type: "influxdb" as const,
+  host: "127.0.0.1",
+  port: 8086,
+  database: "home",
+};
+
+const influxdb3Connection = {
+  id: "test-influxdb3",
+  name: "Test InfluxDB 3",
+  type: "influxdb3" as const,
+  host: "127.0.0.1",
+  port: 8181,
+  password: "token-secret",
+  database: "home",
+};
+
+type InfluxCaptureT = import("../../helpers/influxdb-fixtures").InfluxCapture;
+type RecordedInfluxRequestT = import("../../helpers/influxdb-transport").RecordedInfluxRequest;
+
+/** A jsonl answer of these rows, in the shape the 3.12.0-core captures show. */
+function jsonlAnswer(rows: readonly Record<string, unknown>[]): InfluxCaptureT {
+  return {
+    version: "3.12.0-core",
+    name: "built",
+    image: "built",
+    capturedAt: "built",
+    request: { method: "POST", path: "/api/v3/query_sql", query: {}, auth: "bearer" },
+    status: 200,
+    contentType: "application/jsonl",
+    body: rows.map((row) => `${JSON.stringify(row)}\n`).join(""),
+  };
+}
+
+/**
+ * The real InfluxDB 3 provider over the real client and a recording transport, connected to the seeded 3.12.0-core
+ * server with Database `home` (`/ping` and the database listing are its captures); `rest` answers what the route
+ * sends after the connect.
+ */
+async function connectedInfluxdb3(
+  rest: readonly (InfluxCaptureT | ((request: RecordedInfluxRequestT) => InfluxCaptureT))[],
+) {
+  const wire = recordingInfluxTransport([
+    loadInfluxCapture("3.12.0-core", "ping-auth"),
+    loadInfluxCapture("3.12.0-core", "sql-databases"),
+    ...rest,
+  ]);
+  const provider = new InfluxDB3Provider({ ...influxdb3Connection, createdAt: new Date(0) }, {}, (options, routes) =>
+    createInfluxClient(options, routes, wire.factory),
+  );
+  await provider.connect();
+  return { provider, requests: wire.requests };
+}
+
+/** The statement and database of a recorded `/api/v3/query_sql` request. */
+const sqlOf = (request: RecordedInfluxRequestT): { db: string; q: string } => JSON.parse(request.body as string);
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/profile", () => {
@@ -624,5 +688,83 @@ describe("POST /api/db/profile", () => {
     expect(data.code).toBe("CONFIG_ERROR");
     expect(data.error).toContain('"cypher"');
     expect(cypherProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("refuses an InfluxQL connection with a 400 that names the language, and sends nothing (InfluxDB spec 6.7)", async () => {
+    // Correct as a fall-through: `offersColumnProfiling` names the two languages the route writes. The provider's own
+    // declaration, so the refusal is the one a measurement's profile request meets.
+    const influxql = new InfluxDBProvider({ ...influxdbConnection, createdAt: new Date(0) }).getCapabilities();
+    const influxqlProvider = createMockProvider({ capabilities: influxql });
+    mockGetOrCreateProvider.mockResolvedValueOnce(influxqlProvider);
+    const body = {
+      connection: influxdbConnection,
+      tablePath: ["home", "refusal_probe_measurement"],
+      columns: ["refusal_probe_field"],
+    };
+
+    const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string; code: string }>(refused);
+
+    expect(refused.status).toBe(400);
+    expect(data.code).toBe("CONFIG_ERROR");
+    expect(data.error).toContain('"influxql"');
+    expect(data.error).not.toContain("refusal_probe");
+    expect(influxqlProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("profiles an InfluxDB 3 table with the route's SQL, on the session database, unqualified (R25, K19)", async () => {
+    const { provider, requests } = await connectedInfluxdb3([
+      () => jsonlAnswer([{ total: 3 }]),
+      () =>
+        jsonlAnswer([
+          {
+            column_name: "temp",
+            total_count: 3,
+            non_null_count: 2,
+            null_count: 1,
+            distinct_count: 2,
+            min_value: "21",
+            max_value: "22.5",
+          },
+        ]),
+      () => jsonlAnswer([{ temp: 21 }, { temp: 22.5 }]),
+    ]);
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const body = { connection: influxdb3Connection, tablePath: ["home"], columns: ["temp"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{
+      tableName: string;
+      totalRows: number;
+      columns: { name: string; nullCount: number; distinctCount: number; sampleValues?: string[] }[];
+    }>(res);
+    await provider.disconnect();
+
+    expect(res.status).toBe(200);
+    expect(data).toMatchObject({ tableName: "home", totalRows: 3 });
+    expect(data.columns).toEqual([
+      expect.objectContaining({ name: "temp", nullCount: 1, distinctCount: 2, sampleValues: ["21", "22.5"] }),
+    ]);
+    // The three statements after the connect, each on the session database and naming the table unqualified.
+    const sent = requests.slice(2).map(sqlOf);
+    expect(sent.map((statement) => statement.db)).toEqual(["home", "home", "home"]);
+    expect(sent[0].q).toBe('SELECT COUNT(*) as total FROM "home"');
+    expect(sent[1].q).toContain('COUNT(DISTINCT "temp") as distinct_count');
+    expect(sent[2].q).toBe('SELECT "temp" FROM "home" LIMIT 5');
+  });
+
+  test("an InfluxDB 3 profile past the Core file limit fails with the file-limit sentence (R25)", async () => {
+    const { provider, requests } = await connectedInfluxdb3([loadInfluxCapture("3.12.0-core", "filelimit-sql")]);
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const body = { connection: influxdb3Connection, tablePath: ["home"], columns: ["temp"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+    await provider.disconnect();
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe(INFLUX_ERROR_SENTENCES.fileLimit as string);
+    // The first COUNT(*) failed the request: nothing was sent after it.
+    expect(requests.slice(2).map((request) => sqlOf(request).q)).toEqual(['SELECT COUNT(*) as total FROM "home"']);
   });
 });

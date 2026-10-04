@@ -38,6 +38,7 @@ describe("a host declaring a dialect this release has no record for", () => {
       const caps = makeCaps({ queryDialect: dialect as ProviderCapabilities["queryDialect"] });
       expect(resolveTabType(caps)).toBe("mongodb");
       expect(resolveTabType({ ...caps, queryLanguage: "promql" })).toBe("promql");
+      expect(resolveTabType({ ...caps, queryLanguage: "influxql" })).toBe("influxql");
       expect(resolveTabType({ ...caps, queryLanguage: "sql" })).toBe("sql");
     }
   });

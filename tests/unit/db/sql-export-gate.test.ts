@@ -56,6 +56,7 @@ describe("offersSqlExport", () => {
     expect(offersSqlExport(makeCaps({ queryLanguage: "sql" }))).toBe(true);
     expect(offersSqlExport(makeCaps({ queryLanguage: "json" }))).toBe(true);
     expect(offersSqlExport(makeCaps({ queryLanguage: "promql" }))).toBe(true);
+    expect(offersSqlExport(makeCaps({ queryLanguage: "influxql" }))).toBe(true);
   });
 
   test("offers them to every shipped dialect whose record leaves the field absent", () => {

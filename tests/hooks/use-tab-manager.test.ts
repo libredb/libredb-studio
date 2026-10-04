@@ -13,6 +13,8 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
+import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
 // Helper to create a minimal connection
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
@@ -1399,6 +1401,137 @@ describe("useTabManager on a PromQL connection (#1085)", () => {
     expect(newTab.type).toBe("promql");
     expect(newTab.query.split("\n").at(-1)).toBe("http_requests_total");
     expect(newTab.query).not.toContain("SELECT");
+  });
+});
+
+// ============================================================================
+// InfluxDB: a measurement opens an influxql tab, an InfluxDB 3 table an sql tab, both time-windowed (InfluxDB spec 6.6)
+// ============================================================================
+
+describe("useTabManager on the two InfluxDB types (InfluxDB spec 6.6, 6.7)", () => {
+  // The real providers' declarations; nothing is connected, and neither constructor opens anything.
+  const influxqlProvider = new InfluxDBProvider(makeConnection({ type: "influxdb", port: 8086, database: "home" }));
+  const influxqlMetadata: ProviderMetadata = {
+    capabilities: influxqlProvider.getCapabilities(),
+    labels: influxqlProvider.getLabels(),
+  };
+  const sqlProvider = new InfluxDB3Provider(makeConnection({ type: "influxdb3", port: 8181, database: "home" }));
+  const sqlMetadata: ProviderMetadata = {
+    capabilities: sqlProvider.getCapabilities(),
+    labels: sqlProvider.getLabels(),
+  };
+
+  // A hostile measurement name, as the tree lists it under its database.
+  const hostile = 'we"ird name;x';
+  const measurementSchema: DetailedObject[] = [
+    {
+      name: hostile,
+      kind: "measurement",
+      path: ["home", hostile],
+      columns: [
+        { name: "room", type: "tag", nullable: true, isPrimary: false },
+        { name: "temp", type: "float", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+  const tableSchema: DetailedObject[] = [
+    {
+      name: "cpu",
+      kind: "table",
+      path: ["cpu"],
+      columns: [
+        { name: "time", type: "timestamp", nullable: false, isPrimary: false },
+        { name: "usage", type: "float", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("a new tab on an InfluxDB (InfluxQL) connection is an influxql tab, and on InfluxDB 3 an sql tab", () => {
+    const influxql = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: influxqlMetadata, schema: measurementSchema }),
+    );
+    act(() => influxql.result.current.addTab());
+    expect(influxql.result.current.tabs[1].type).toBe("influxql");
+
+    localStorage.clear();
+    const sql = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: sqlMetadata, schema: tableSchema }),
+    );
+    act(() => sql.result.current.addTab());
+    expect(sql.result.current.tabs[1].type).toBe("sql");
+  });
+
+  test("a tree click on a hostile measurement opens an influxql tab whose text the read policy allows", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: influxqlMetadata, schema: measurementSchema }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["home", hostile], executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.name).toBe(hostile);
+    expect(newTab.type).toBe("influxql");
+    expect(newTab.query).toContain(
+      'SELECT * FROM "home".."we\\"ird name;x" WHERE time > now() - 1h ORDER BY time DESC',
+    );
+    expect(evaluateInfluxql(newTab.query)).toMatchObject({ allowed: true });
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(executeFn).toHaveBeenCalledWith(newTab.query, newTab.id, false, { limit: PREVIEW_PAGE_SIZE });
+        resolve();
+      }, 150);
+    });
+  });
+
+  test("Generate Query on a measurement opens an influxql tab with its example lines as comments", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: influxqlMetadata, schema: measurementSchema }),
+    );
+
+    act(() => {
+      result.current.handleGenerateSelect(["home", hostile]);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe("influxql");
+    expect(newTab.query).toContain('mean("temp")');
+    expect(newTab.query).not.toContain("LIMIT 100");
+    expect(evaluateInfluxql(newTab.query)).toMatchObject({ allowed: true });
+  });
+
+  test("a tree click on an InfluxDB 3 table opens an sql tab on the newest hour, newest first, unqualified", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: sqlMetadata, schema: tableSchema }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["cpu"], executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe("sql");
+    expect(newTab.query).toContain(
+      'SELECT * FROM "cpu" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC',
+    );
+    expect(newTab.query).not.toContain("home");
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(executeFn).toHaveBeenCalledWith(newTab.query, newTab.id, false, { limit: PREVIEW_PAGE_SIZE });
+        resolve();
+      }, 150);
+    });
   });
 });
 
