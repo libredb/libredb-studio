@@ -236,6 +236,14 @@ health and overview readings, where a number would otherwise be invented — **n
 `getHealth().activeConnections` and `getOverview().activeConnections` are both omitted rather than
 reported as `0` ([§7.2](#72-when-the-connection-count-is-not-measurable)).
 
+The guard covers the `V$` reads, the ones a privilege decides. `getTableStats()` and
+`getIndexStats()` read only the `USER_*` / `ALL_*` dictionary views, which every user can read, so
+they are **not** guarded: a failure there is a defect or a dead connection, never a missing grant,
+and it rejects with the engine's sentence. The inherited `getMonitoringData()` records it under
+`errors.tables` / `errors.indexes`, and the Tables, Storage and admin Operations tabs show that
+refusal instead of "No table statistics available". An empty `catch` used to turn exactly such a
+failure into an empty list ([§7.4](#74-what-a-tables-size-counts)).
+
 ---
 
 ## 4. Connection
@@ -1798,7 +1806,8 @@ No kind here declares `acceptsSourceEdits`, and `tests/isolated/object-edit-decl
 ## 8. Monitoring & health
 
 All from `V$`/`USER_*` views; `getMonitoringData()` (inherited) fans them out in parallel. Each
-sub-query is independently privilege-guarded ([§3.7](#37-privilege-resilient-monitoring)).
+`V$` sub-query is independently privilege-guarded; the dictionary-only table and index statistics
+are not ([§3.7](#37-privilege-resilient-monitoring)).
 
 | Method | Primary source | Notes / degradation |
 |--------|----------------|---------------------|
@@ -1807,8 +1816,8 @@ sub-query is independently privilege-guarded ([§3.7](#37-privilege-resilient-mo
 | `getPerformanceMetrics()` | `V$SYSSTAT` | **only** `cacheHitRatio`, and it is **omitted** when `V$SYSSTAT` cannot be read (no QPS/deadlocks/buffer-pool) — [§7.1](#71-when-the-cache-hit-ratio-is-not-measurable) |
 | `getSlowQueries()` | `V$SQL` (top-N by `ELAPSED_TIME`) | `sharedBlksHit`=`BUFFER_GETS`, `sharedBlksRead`=`DISK_READS`; `[]` on failure |
 | `getActiveSessions()` | `V$SESSION` ⋈ `V$SQL` | `pid` = `"SID,SERIAL#"`; wait class/event; `[]` on failure |
-| `getTableStats()` | `ALL_TABLES` + `USER_SEGMENTS` | sizes + `lastAnalyze`; no live/dead tuples, no bloat; `[]` on failure |
-| `getIndexStats()` | `ALL_INDEXES` + `USER_SEGMENTS` + `ALL_IND_COLUMNS` | **`scans` always `0`** (no usage counter exposed); `isPrimary` always `false`; `[]` on failure |
+| `getTableStats()` | `USER_TABLES` + `USER_LOBS` + `USER_INDEXES` + `USER_SEGMENTS` | one row per table the connected user owns; sizes + `lastAnalyze` ([§7.4](#74-what-a-tables-size-counts)); no live/dead tuples, no bloat; **rejects** with the engine's sentence on failure ([§3.7](#37-privilege-resilient-monitoring)) |
+| `getIndexStats()` | `ALL_INDEXES` + `USER_SEGMENTS` + `ALL_IND_COLUMNS` | size summed over every segment of the index, partitions included; **`scans` always `0`** (no usage counter exposed); `isPrimary` always `false`; **rejects** on failure |
 | `getStorageStats()` | `DBA_DATA_FILES` → fallback `USER_SEGMENTS` | per-tablespace size; DBA view falls back to user segments without privilege |
 
 ### 7.1 When the cache hit ratio is not measurable
@@ -1953,6 +1962,40 @@ which the provider maps to `0`; the tab then formats the `0 B` it was given. If 
 row, no expected column, or a non-finite value, the measurement is absent and the string stays `N/A`.
 The shared `measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))
 boundary preserves those states without a falsy test that would erase a genuine zero.
+
+### 7.4 What a table's size counts
+
+`USER_SEGMENTS` names each segment for its own object (`SEGMENT_NAME`, with `SEGMENT_TYPE` saying
+what kind) and has **no `TABLE_NAME` column**. From the provider's first version through 0.17.0 the
+table-stats statement selected one from it anyway, so on every Oracle connection the read answered
+`ORA-00904: "TABLE_NAME": invalid identifier`, the empty `catch` returned `[]`, and Monitoring >
+Tables, the Storage tab's table figures and the admin per-table maintenance list all read "no tables"
+(measured on Oracle AI Database 26ai Free 23.26.3.0.0, 2026-10-04). Which table owns an index or a
+LOB is a fact of `USER_INDEXES` and `USER_LOBS`, so the statement now lists every segment a table
+owns through those two and joins `USER_SEGMENTS` by name and kind:
+
+| Counted toward | Segments |
+|----------------|----------|
+| `tableSize` | the table's own (`TABLE`, `TABLE PARTITION`, `TABLE SUBPARTITION`); its LOB segments (`LOBSEGMENT`, `LOB PARTITION`, ...); its LOB indexes (`LOBINDEX`); an index-organized table's top index, where that table's rows live |
+| `indexSize` | every other index on the table, one segment per partition summed |
+
+Everything that stores the rows is the table, the way PostgreSQL's table size includes TOAST. The
+join matches a segment's kind as well as its name because indexes have their own namespace and may
+share a table's name. Measured on the same server with a seeded schema:
+
+| Table | Shape | `tableSize` | `indexSize` |
+|-------|-------|-------------|-------------|
+| `PART_T` | two range partitions, one LOCAL index | 16 MB (2 x 8 MB partitions) | 128 KB (2 x 64 KB) |
+| `DOCS` | CLOB + BLOB, primary key | 7.69 MB (64 KB table + 7.25 MB and 256 KB LOB segments + 2 x 64 KB LOB indexes) | 64 KB |
+| `EMP` | heap, primary key + one index, analyzed | 64 KB, 2000 rows, `lastAnalyze` set | 256 KB |
+| `IOT_T` | index-organized | 64 KB (the top index) | 0 B |
+| `HEAPY` | no row ever inserted (deferred segment creation) | 0 B | 0 B |
+
+A table never analyzed reads `rowCount` 0 and no `lastAnalyze`: both are the optimizer statistics,
+filled by Gather Statistics. `DROPPED = 'NO'` keeps a recycle-bin `BIN$` table out of the list
+wherever the dictionary shows one. The views answer for the connected user, so `schemaName` is that
+user, which is the owner the per-row Gather Statistics and Rebuild Indexes then act on
+([§9](#9-maintenance)).
 
 ---
 
@@ -2144,6 +2187,14 @@ the mock and the provider reading the same declaration. That declaration is hand
 **`oracledb` publishes none** (verified on 6.10.0: no `types`/`typings` field, no `.d.ts` in the
 package, and no `@types/oracledb` dependency here), so a driver upgrade that changes a shape is
 caught by a live probe, not by `tsc`.
+
+**The mock refuses a `USER_SEGMENTS` column the view does not have.** It answered every statement
+it was sent, so `SELECT TABLE_NAME ... FROM USER_SEGMENTS` passed the suite for as long as it shipped
+while the engine refused it with ORA-00904 ([§7.4](#74-what-a-tables-size-counts)). Worse, the
+table-stats statement fell through to the mock's database-size answer, and the old test asserted only
+the field types of that wrong row. The default handler now answers ORA-00904 for any column outside
+the 27 the view has on 23.26.3.0.0, a test pins that the guard refuses the 0.17.0 statement, and the
+table and index statistics are matched before the `USER_SEGMENTS` answers and asserted value by value.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide; files mocking different drivers
 > would cross-contaminate if they shared one. They never do: `bun run test` gives every test file its

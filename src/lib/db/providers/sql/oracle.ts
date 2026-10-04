@@ -175,27 +175,70 @@ const ACTIVE_SESSIONS_BODY_SQL = `SELECT * FROM (
           ORDER BY CASE s.STATUS WHEN 'ACTIVE' THEN 0 ELSE 1 END, s.LOGON_TIME DESC
         )`;
 
+/**
+ * One row per table the connected user owns, with its rows, its storage and its indexes.
+ *
+ * `USER_SEGMENTS` names a segment for its object (`SEGMENT_NAME`) and has no `TABLE_NAME`
+ * column: which table an index or a LOB belongs to is a fact of `USER_INDEXES` and
+ * `USER_LOBS`. The statement this replaced selected `TABLE_NAME` from it, the engine
+ * answered `ORA-00904: "TABLE_NAME": invalid identifier` (measured on Oracle AI Database
+ * 26ai Free 23.26.3.0.0, 2026-10-04), and the Tables panel and every per-table
+ * maintenance control read "no tables" on every Oracle connection.
+ *
+ * So `o` lists every segment a table owns, and which half it counts toward:
+ *  - TABLE: the table's own segments, one per partition or subpartition; its LOB
+ *    segments; its LOB indexes; and an index-organized table's top index, which is
+ *    where that table's rows are stored. Table size is everything holding the rows.
+ *  - INDEX: every other index built on the table.
+ * Each join keeps a segment to its own kind (`INSTR(SEGMENT_TYPE, KIND)`: `TABLE` matches
+ * TABLE / TABLE PARTITION / TABLE SUBPARTITION, `LOB` the LOB segment kinds, `INDEX` the
+ * index kinds and LOBINDEX), because an index lives in a different namespace from a
+ * table and may carry the same name as one.
+ *
+ * `DROPPED = 'NO'` leaves out a recycle-bin table wherever the dictionary lists one: a
+ * `BIN$` name is no target for a maintenance operation. `NUM_ROWS` and `LAST_ANALYZED` are the optimizer statistics,
+ * so a table never analyzed reads 0 rows and no last analyze until Gather Statistics runs.
+ */
 const TABLE_STATS_SQL = `SELECT t.TABLE_NAME,
                 NVL(t.NUM_ROWS, 0) AS ROW_COUNT,
-                NVL(s.BYTES, 0) AS TABLE_SIZE_BYTES,
-                NVL(idx_size.BYTES, 0) AS INDEX_SIZE_BYTES,
+                NVL(sz.TABLE_BYTES, 0) AS TABLE_SIZE_BYTES,
+                NVL(sz.INDEX_BYTES, 0) AS INDEX_SIZE_BYTES,
                 t.LAST_ANALYZED
-         FROM ALL_TABLES t
-         LEFT JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = t.TABLE_NAME AND s.SEGMENT_TYPE = 'TABLE'
+         FROM USER_TABLES t
          LEFT JOIN (
-           SELECT TABLE_NAME, SUM(BYTES) AS BYTES
-           FROM USER_SEGMENTS
-           WHERE SEGMENT_TYPE = 'INDEX'
-           GROUP BY TABLE_NAME
-         ) idx_size ON idx_size.TABLE_NAME = t.TABLE_NAME
-         WHERE t.OWNER = :1
-         ORDER BY NVL(s.BYTES, 0) DESC`;
+           SELECT o.TABLE_NAME,
+                  SUM(CASE WHEN o.PART = 'TABLE' THEN s.BYTES END) AS TABLE_BYTES,
+                  SUM(CASE WHEN o.PART = 'INDEX' THEN s.BYTES END) AS INDEX_BYTES
+           FROM (
+             SELECT TABLE_NAME, TABLE_NAME AS SEGMENT_NAME, 'TABLE' AS KIND, 'TABLE' AS PART FROM USER_TABLES
+             UNION ALL
+             SELECT TABLE_NAME, SEGMENT_NAME, 'LOB', 'TABLE' FROM USER_LOBS
+             UNION ALL
+             SELECT TABLE_NAME, INDEX_NAME, 'INDEX',
+                    CASE WHEN INDEX_TYPE IN ('LOB', 'IOT - TOP') THEN 'TABLE' ELSE 'INDEX' END
+             FROM USER_INDEXES
+           ) o
+           JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = o.SEGMENT_NAME AND INSTR(s.SEGMENT_TYPE, o.KIND) > 0
+           GROUP BY o.TABLE_NAME
+         ) sz ON sz.TABLE_NAME = t.TABLE_NAME
+         WHERE t.DROPPED = 'NO'
+         ORDER BY NVL(sz.TABLE_BYTES, 0) + NVL(sz.INDEX_BYTES, 0) DESC, t.TABLE_NAME`;
 
+/**
+ * Each index with its size. A partitioned index is one segment per partition, typed
+ * INDEX PARTITION, so the segments are summed per index name: a join on
+ * `SEGMENT_TYPE = 'INDEX'` alone sized every partitioned index 0 B.
+ */
 const INDEX_STATS_SQL = `SELECT ai.TABLE_NAME, ai.INDEX_NAME, ai.INDEX_TYPE, ai.UNIQUENESS,
                 NVL(us.BYTES, 0) AS INDEX_SIZE_BYTES,
                 ai.LEAF_BLOCKS, ai.DISTINCT_KEYS
          FROM ALL_INDEXES ai
-         LEFT JOIN USER_SEGMENTS us ON us.SEGMENT_NAME = ai.INDEX_NAME AND us.SEGMENT_TYPE = 'INDEX'
+         LEFT JOIN (
+           SELECT SEGMENT_NAME, SUM(BYTES) AS BYTES
+           FROM USER_SEGMENTS
+           WHERE INSTR(SEGMENT_TYPE, 'INDEX') > 0
+           GROUP BY SEGMENT_NAME
+         ) us ON us.SEGMENT_NAME = ai.INDEX_NAME
          WHERE ai.OWNER = :1
          ORDER BY NVL(us.BYTES, 0) DESC`;
 
@@ -3102,7 +3145,9 @@ export class OracleProvider extends SQLBaseProvider {
       conn = await this.pool!.getConnection();
       const owner = this.config.user?.toUpperCase() || "";
 
-      const res = await conn.execute(TABLE_STATS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+      // The `USER_*` views answer for the connected user and take no owner bind: binding
+      // one the statement has no placeholder for is NJS-098.
+      const res = await conn.execute(TABLE_STATS_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
       return ((res.rows || []) as Record<string, unknown>[]).map((r) => {
         const tableSizeBytes = Number(r.TABLE_SIZE_BYTES || 0);
@@ -3120,8 +3165,6 @@ export class OracleProvider extends SQLBaseProvider {
           lastAnalyze: r.LAST_ANALYZED ? new Date(String(r.LAST_ANALYZED)) : undefined,
         };
       });
-    } catch {
-      return [];
     } finally {
       if (conn) await conn.close();
     }
@@ -3163,8 +3206,6 @@ export class OracleProvider extends SQLBaseProvider {
           scans: 0,
         };
       });
-    } catch {
-      return [];
     } finally {
       if (conn) await conn.close();
     }

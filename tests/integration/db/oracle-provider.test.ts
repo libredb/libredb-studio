@@ -172,8 +172,144 @@ const DATE_ROW = {
   CHAR_USED: null,
 };
 
+/**
+ * The columns `USER_SEGMENTS` has, as `ALL_TAB_COLUMNS` lists them for `SYS.USER_SEGMENTS` on
+ * Oracle AI Database 26ai Free 23.26.3.0.0 (measured 2026-10-04). There is no `TABLE_NAME`
+ * among them: a segment is named for its object (`SEGMENT_NAME`), and which table owns an
+ * index or LOB segment is a fact of `USER_INDEXES` / `USER_LOBS`, not of this view.
+ */
+const USER_SEGMENTS_COLUMNS = new Set([
+  "SEGMENT_NAME",
+  "PARTITION_NAME",
+  "SEGMENT_TYPE",
+  "SEGMENT_SUBTYPE",
+  "TABLESPACE_NAME",
+  "BYTES",
+  "BLOCKS",
+  "EXTENTS",
+  "INITIAL_EXTENT",
+  "NEXT_EXTENT",
+  "MIN_EXTENTS",
+  "MAX_EXTENTS",
+  "MAX_SIZE",
+  "RETENTION",
+  "MINRETENTION",
+  "PCT_INCREASE",
+  "FREELISTS",
+  "FREELIST_GROUPS",
+  "BUFFER_POOL",
+  "FLASH_CACHE",
+  "CELL_FLASH_CACHE",
+  "INMEMORY",
+  "INMEMORY_PRIORITY",
+  "INMEMORY_DISTRIBUTE",
+  "INMEMORY_DUPLICATE",
+  "INMEMORY_COMPRESSION",
+  "CELLMEMORY",
+]);
+
+const SQL_WORDS = new Set([
+  "AS",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "DISTINCT",
+  "NULL",
+  "AND",
+  "OR",
+  "WHERE",
+  "GROUP",
+  "ORDER",
+  "ON",
+  "UNION",
+  "JOIN",
+  "LEFT",
+]);
+
+/**
+ * The column a statement reads from `USER_SEGMENTS` that the view does not have, or
+ * `undefined`. It reads the two shapes the provider writes: an aliased join
+ * (`USER_SEGMENTS s` then `s.<col>`) and an unaliased select list (`SELECT <cols> FROM
+ * USER_SEGMENTS`). This is what the mock below answers ORA-00904 for, the way the engine
+ * does: before it, the mock answered whatever it was sent, which is how
+ * `SELECT TABLE_NAME ... FROM USER_SEGMENTS` shipped and emptied the Tables panel.
+ */
+function userSegmentsUnknownColumn(sql: string): string | undefined {
+  const upper = sql.toUpperCase();
+  for (const match of upper.matchAll(/USER_SEGMENTS\s+([A-Z_][A-Z0-9_]*)/g)) {
+    const alias = match[1];
+    if (SQL_WORDS.has(alias)) continue;
+    for (const ref of upper.matchAll(new RegExp(`\\b${alias}\\.([A-Z_][A-Z0-9_$#]*)`, "g"))) {
+      if (!USER_SEGMENTS_COLUMNS.has(ref[1])) return ref[1];
+    }
+  }
+  for (const match of upper.matchAll(/SELECT\s+((?:(?!SELECT)[\s\S])*?)\s+FROM\s+USER_SEGMENTS\b/g)) {
+    const list = match[1].replace(/\bAS\s+"?[A-Z_][A-Z0-9_]*"?/g, " ");
+    for (const ident of list.matchAll(/\b([A-Z_][A-Z0-9_$#]*)\b(?!\s*\()/g)) {
+      if (!SQL_WORDS.has(ident[1]) && !USER_SEGMENTS_COLUMNS.has(ident[1])) return ident[1];
+    }
+  }
+  return undefined;
+}
+
 function defaultExecute(sql: string) {
   const upper = sql.toUpperCase();
+
+  const unknownColumn = userSegmentsUnknownColumn(sql);
+  if (unknownColumn !== undefined) throw new Error(`ORA-00904: "${unknownColumn}": invalid identifier`);
+
+  // Table stats (for getTableStats). Matched before the USER_SEGMENTS answers below, which
+  // used to catch this statement first and hand it a database-size row instead.
+  if (upper.includes("USER_TABLES") && upper.includes("TABLE_SIZE_BYTES") && upper.includes("INDEX_SIZE_BYTES")) {
+    return {
+      rows: [
+        {
+          TABLE_NAME: "USERS",
+          ROW_COUNT: 100,
+          TABLE_SIZE_BYTES: 65536,
+          INDEX_SIZE_BYTES: 16384,
+          LAST_ANALYZED: "2026-02-14T00:00:00Z",
+        },
+        {
+          TABLE_NAME: "ORDERS",
+          ROW_COUNT: 500,
+          TABLE_SIZE_BYTES: 131072,
+          INDEX_SIZE_BYTES: 32768,
+          LAST_ANALYZED: "2026-02-14T00:00:00Z",
+        },
+      ],
+      metaData: [{ name: "TABLE_NAME" }, { name: "ROW_COUNT" }],
+    };
+  }
+
+  // Index stats (for getIndexStats, has INDEX_SIZE_BYTES). Also ahead of the USER_SEGMENTS answers.
+  if (upper.includes("ALL_INDEXES") && upper.includes("INDEX_SIZE_BYTES")) {
+    return {
+      rows: [
+        {
+          TABLE_NAME: "USERS",
+          INDEX_NAME: "IDX_USERS_PK",
+          INDEX_TYPE: "NORMAL",
+          UNIQUENESS: "UNIQUE",
+          INDEX_SIZE_BYTES: 16384,
+          LEAF_BLOCKS: 10,
+          DISTINCT_KEYS: 100,
+        },
+        {
+          TABLE_NAME: "USERS",
+          INDEX_NAME: "IDX_USERS_NAME",
+          INDEX_TYPE: "NORMAL",
+          UNIQUENESS: "NONUNIQUE",
+          INDEX_SIZE_BYTES: 8192,
+          LEAF_BLOCKS: 5,
+          DISTINCT_KEYS: 95,
+        },
+      ],
+      metaData: [{ name: "TABLE_NAME" }, { name: "INDEX_NAME" }],
+    };
+  }
 
   // V$VERSION (for getOverview version)
   if (upper.includes("V$VERSION") && upper.includes("BANNER")) {
@@ -327,29 +463,6 @@ function defaultExecute(sql: string) {
     };
   }
 
-  // ALL_TABLES with table stats (for getTableStats — has USER_SEGMENTS join)
-  if (upper.includes("ALL_TABLES") && upper.includes("TABLE_SIZE_BYTES") && upper.includes("INDEX_SIZE_BYTES")) {
-    return {
-      rows: [
-        {
-          TABLE_NAME: "USERS",
-          ROW_COUNT: 100,
-          TABLE_SIZE_BYTES: 65536,
-          INDEX_SIZE_BYTES: 16384,
-          LAST_ANALYZED: "2026-02-14T00:00:00Z",
-        },
-        {
-          TABLE_NAME: "ORDERS",
-          ROW_COUNT: 500,
-          TABLE_SIZE_BYTES: 131072,
-          INDEX_SIZE_BYTES: 32768,
-          LAST_ANALYZED: "2026-02-14T00:00:00Z",
-        },
-      ],
-      metaData: [{ name: "TABLE_NAME" }, { name: "ROW_COUNT" }],
-    };
-  }
-
   if (upper.includes("ALL_TABLES")) {
     return {
       rows: [
@@ -403,33 +516,6 @@ function defaultExecute(sql: string) {
     return {
       rows: [{ TABLE_NAME: "ORDERS", COLUMN_NAME: "USER_ID", REF_TABLE: "USERS", REF_COLUMN: "ID" }],
       metaData: [{ name: "TABLE_NAME" }, { name: "COLUMN_NAME" }, { name: "REF_TABLE" }, { name: "REF_COLUMN" }],
-    };
-  }
-
-  // Index stats (for getIndexStats — has INDEX_SIZE_BYTES)
-  if (upper.includes("ALL_INDEXES") && upper.includes("INDEX_SIZE_BYTES")) {
-    return {
-      rows: [
-        {
-          TABLE_NAME: "USERS",
-          INDEX_NAME: "IDX_USERS_PK",
-          INDEX_TYPE: "NORMAL",
-          UNIQUENESS: "UNIQUE",
-          INDEX_SIZE_BYTES: 16384,
-          LEAF_BLOCKS: 10,
-          DISTINCT_KEYS: 100,
-        },
-        {
-          TABLE_NAME: "USERS",
-          INDEX_NAME: "IDX_USERS_NAME",
-          INDEX_TYPE: "NORMAL",
-          UNIQUENESS: "NONUNIQUE",
-          INDEX_SIZE_BYTES: 8192,
-          LEAF_BLOCKS: 5,
-          DISTINCT_KEYS: 95,
-        },
-      ],
-      metaData: [{ name: "TABLE_NAME" }, { name: "INDEX_NAME" }],
     };
   }
 
@@ -2693,36 +2779,110 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("getTableStats()", () => {
-    test("returns table stats from ALL_TABLES/DBA_SEGMENTS", async () => {
+    test("maps one row per table the schema owns, sizes and last analyze included", async () => {
       await provider.connect();
       const stats = await provider.getTableStats();
 
-      expect(Array.isArray(stats)).toBe(true);
-      expect(stats.length).toBeGreaterThan(0);
-
-      const first = stats[0];
-      expect(typeof first.schemaName).toBe("string");
-      expect(typeof first.tableName).toBe("string");
-      expect(typeof first.rowCount).toBe("number");
-      expect(typeof first.tableSize).toBe("string");
-      expect(typeof first.tableSizeBytes).toBe("number");
-      expect(typeof first.indexSize).toBe("string");
-      expect(typeof first.totalSize).toBe("string");
-      expect(typeof first.totalSizeBytes).toBe("number");
+      expect(stats.map((t) => t.tableName)).toEqual(["USERS", "ORDERS"]);
+      expect(stats[0]).toEqual({
+        schemaName: "TEST_USER",
+        tableName: "USERS",
+        rowCount: 100,
+        tableSize: "64 KB",
+        tableSizeBytes: 65536,
+        indexSize: "16 KB",
+        indexSizeBytes: 16384,
+        totalSize: "80 KB",
+        totalSizeBytes: 81920,
+        lastAnalyze: new Date("2026-02-14T00:00:00Z"),
+      });
     });
 
-    test("returns empty array when the stats query fails", async () => {
+    // The defect this guards: the statement selected TABLE_NAME from USER_SEGMENTS, the
+    // engine answered ORA-00904, and an empty catch turned that into "no tables".
+    test("reads no column USER_SEGMENTS does not have", async () => {
+      const captured: string[] = [];
       mockExecuteFn = async (sql: string) => {
-        if (sql.toUpperCase().includes("ALL_TABLES")) {
-          throw new Error("ORA-00942: table or view does not exist");
+        captured.push(sql);
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.getTableStats();
+      await provider.getIndexStats();
+
+      const statsSql = captured.filter((sql) => sql.toUpperCase().includes("USER_SEGMENTS"));
+      expect(statsSql).toHaveLength(2);
+      for (const sql of statsSql) expect(userSegmentsUnknownColumn(sql)).toBeUndefined();
+    });
+
+    test("the column guard refuses the statement that shipped in 0.17.0", () => {
+      const shipped = `SELECT t.TABLE_NAME, NVL(s.BYTES, 0) AS TABLE_SIZE_BYTES
+         FROM ALL_TABLES t
+         LEFT JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = t.TABLE_NAME AND s.SEGMENT_TYPE = 'TABLE'
+         LEFT JOIN (
+           SELECT TABLE_NAME, SUM(BYTES) AS BYTES
+           FROM USER_SEGMENTS
+           WHERE SEGMENT_TYPE = 'INDEX'
+           GROUP BY TABLE_NAME
+         ) idx_size ON idx_size.TABLE_NAME = t.TABLE_NAME`;
+      expect(userSegmentsUnknownColumn(shipped)).toBe("TABLE_NAME");
+      expect(userSegmentsUnknownColumn("SELECT s.TABLE_NAME FROM USER_SEGMENTS s")).toBe("TABLE_NAME");
+      expect(userSegmentsUnknownColumn("SELECT SUM(BYTES) AS TOTAL FROM USER_SEGMENTS")).toBeUndefined();
+    });
+
+    // Table size is everything that stores the table's rows: its own segments (one per
+    // partition), its LOB segments and their LOB indexes, and an index-organized table's
+    // top index. Index size is the indexes built on it. Every join keeps a segment to its
+    // own kind, because an index may share its name with a table.
+    test("sizes a table from its partitions, LOBs and index-organized storage", async () => {
+      let captured = "";
+      let binds: unknown[] | undefined;
+      mockExecuteFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("TABLE_SIZE_BYTES")) {
+          captured = sql;
+          binds = params;
         }
         return defaultExecute(sql);
       };
 
       await provider.connect();
-      const stats = await provider.getTableStats();
+      await provider.getTableStats();
 
-      expect(stats).toEqual([]);
+      // No placeholder, so no bind: oracledb refuses a surplus bind value (NJS-098).
+      expect(captured).not.toContain(":1");
+      expect(binds).toEqual([]);
+
+      expect(captured).toContain("FROM USER_TABLES t");
+      expect(captured).toContain("FROM USER_LOBS");
+      expect(captured).toContain("FROM USER_INDEXES");
+      expect(captured).toContain("INDEX_TYPE IN ('LOB', 'IOT - TOP')");
+      expect(captured).toContain("INSTR(s.SEGMENT_TYPE, o.KIND) > 0");
+      expect(captured).toContain("t.DROPPED = 'NO'");
+    });
+
+    test("rejects with the engine's sentence when the stats read fails", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.includes("TABLE_SIZE_BYTES")) throw new Error('ORA-00904: "TABLE_NAME": invalid identifier');
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await expect(provider.getTableStats()).rejects.toThrow("ORA-00904");
+    });
+
+    test("a refused stats read reaches the monitoring payload as a refusal, not as no tables", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.includes("TABLE_SIZE_BYTES")) throw new Error('ORA-00904: "TABLE_NAME": invalid identifier');
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const data = await provider.getMonitoringData();
+
+      expect(data.tables).toBeUndefined();
+      expect(data.errors?.tables).toBe('ORA-00904: "TABLE_NAME": invalid identifier');
+      expect(data.overview).toBeDefined();
     });
   });
 
@@ -2731,27 +2891,43 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("getIndexStats()", () => {
-    test("returns index stats", async () => {
+    test("maps each index with its columns and size", async () => {
       await provider.connect();
       const stats = await provider.getIndexStats();
 
-      expect(Array.isArray(stats)).toBe(true);
-      expect(stats.length).toBeGreaterThan(0);
-
-      const first = stats[0];
-      expect(typeof first.schemaName).toBe("string");
-      expect(typeof first.tableName).toBe("string");
-      expect(typeof first.indexName).toBe("string");
-      expect(typeof first.indexType).toBe("string");
-      expect(Array.isArray(first.columns)).toBe(true);
-      expect(typeof first.isUnique).toBe("boolean");
-      expect(typeof first.isPrimary).toBe("boolean");
-      expect(typeof first.indexSize).toBe("string");
-      expect(typeof first.indexSizeBytes).toBe("number");
-      expect(typeof first.scans).toBe("number");
+      expect(stats).toHaveLength(2);
+      expect(stats[0]).toEqual({
+        schemaName: "TEST_USER",
+        tableName: "USERS",
+        indexName: "IDX_USERS_PK",
+        indexType: "NORMAL",
+        columns: ["ID"],
+        isUnique: true,
+        isPrimary: false,
+        indexSize: "16 KB",
+        indexSizeBytes: 16384,
+        scans: 0,
+      });
+      expect(stats[1].isUnique).toBe(false);
     });
 
-    test("returns empty array when the index query fails", async () => {
+    // A partitioned index is one segment per partition, typed INDEX PARTITION, so a join
+    // on SEGMENT_TYPE = 'INDEX' sized it 0 B. The segments are summed per index.
+    test("sums every segment of an index, partitions included", async () => {
+      let captured = "";
+      mockExecuteFn = async (sql: string) => {
+        if (sql.includes("INDEX_SIZE_BYTES")) captured = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.getIndexStats();
+
+      expect(captured).toContain("INSTR(SEGMENT_TYPE, 'INDEX') > 0");
+      expect(captured).toContain("GROUP BY SEGMENT_NAME");
+    });
+
+    test("rejects with the engine's sentence when the index read fails", async () => {
       mockExecuteFn = async (sql: string) => {
         if (sql.toUpperCase().includes("ALL_INDEXES")) {
           throw new Error("ORA-00942: table or view does not exist");
@@ -2760,9 +2936,7 @@ describe("OracleProvider", () => {
       };
 
       await provider.connect();
-      const stats = await provider.getIndexStats();
-
-      expect(stats).toEqual([]);
+      await expect(provider.getIndexStats()).rejects.toThrow("ORA-00942");
     });
   });
 
