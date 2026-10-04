@@ -590,6 +590,11 @@ For MongoDB connections, the `sql` field should contain a JSON query:
   `options.projection` is not an alias for it:
   `{"collection":"products","operation":"distinct","field":"category","filter":{"active":true}}`
 
+The query is read as MongoDB Extended JSON, relaxed or canonical, so `filter`, `pipeline`, `update`
+and `documents` can name an ObjectId or a Date: `{"_id":{"$oid":"650000000000000000000001"}}`,
+`{"created":{"$gte":{"$date":"2020-01-01T00:00:00Z"}}}`. A wrapper must be the only key of its object, and a malformed one is a `QUERY_ERROR`
+carrying the reason. Details: [MongoDB provider](providers/mongodb.md#extended-json-in-the-query).
+
 ##### Couchbase Query Format
 
 Couchbase speaks **SQL++**, a SQL dialect, so the `sql` field carries an ordinary statement — there

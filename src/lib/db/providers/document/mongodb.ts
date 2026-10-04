@@ -128,6 +128,130 @@ const SUPPORTED_OPERATIONS: ReadonlySet<MongoQuery["operation"]> = new Set([
 ]);
 
 /**
+ * The query is read as MongoDB Extended JSON, the format mongosh, Compass and
+ * `mongoexport` print, and not as plain JSON. Plain JSON has no ObjectId and no Date, so
+ * a document the grid shows could not be found, updated or deleted by its `_id`:
+ * measured on MongoDB 8.2.12, `{"_id": {"$oid": ...}}` reached the server as an operator
+ * and failed `unknown operator: $oid`, a date range matched nothing, and `{"$date": ...}`
+ * in an insert was stored as a subdocument with a `$date` key.
+ *
+ * WHY NOT `EJSON.parse` OVER THE WHOLE TEXT. The bson parser replaces an object with a
+ * value as soon as ANY of its keys is one it knows, and drops the others in silence:
+ * `{"$regex": "^a", "$nin": ["admin"]}` becomes the bare regular expression, so a
+ * `deleteMany` with that filter deletes `admin` too. So the statement is read with plain
+ * `JSON.parse` and then walked, and an object is handed to the bson parser only when its
+ * keys are EXACTLY one wrapper's (`EJSON_WRAPPERS`). An object that mixes a wrapper key
+ * with anything else is refused, and an object with no wrapper key is left as written,
+ * which keeps every query operator, the legacy `{"$regex", "$options"}` form included,
+ * exactly what the server receives.
+ *
+ * A plain number is never touched, so the driver writes it exactly as it did under
+ * `JSON.parse`: int32 when it fits, a double otherwise, and `options.limit` stays the
+ * number the cursor wants.
+ */
+const EJSON_WRAPPERS: ReadonlySet<string> = new Set([
+  "$oid",
+  "$date",
+  "$numberInt",
+  "$numberLong",
+  "$numberDouble",
+  "$numberDecimal",
+  "$binary",
+  "$uuid",
+  "$regularExpression",
+  "$timestamp",
+  "$minKey",
+  "$maxKey",
+]);
+
+/**
+ * Relaxed for every wrapper but one: relaxed accepts a `$date` as a plain number of
+ * milliseconds, which canonical refuses below 2^31. `useBigInt64` because relaxed reads
+ * `$numberLong` into a JS number, rounding `9007199254740993` to `...992`; a bigint holds
+ * it, and the driver writes a bigint as a 64-bit integer. `$numberDouble` alone is read
+ * canonically, because relaxed answers a JS number and `{"$numberDouble": "5"}` would be
+ * written as int32 rather than the double it names.
+ */
+const EJSON_RELAXED = { relaxed: true, useBigInt64: true } as const;
+const EJSON_CANONICAL = { relaxed: false, useBigInt64: true } as const;
+
+/** The 64-bit range a `$numberLong` must fit. The parser wraps a larger one to a negative in silence. */
+const INT64_MIN = -(BigInt(2) ** BigInt(63));
+const INT64_MAX = BigInt(2) ** BigInt(63) - BigInt(1);
+
+function parseExtendedJson(text: string): Document {
+  return reviveExtendedJson(JSON.parse(text), "") as Document;
+}
+
+function extendedJsonError(path: string, reason: string): QueryError {
+  return new QueryError(`Invalid Extended JSON in the query at "${path}": ${reason}`, "mongodb");
+}
+
+function reviveExtendedJson(value: unknown, path: string): unknown {
+  if (Array.isArray(value)) return value.map((item, index) => reviveExtendedJson(item, joinPath(path, String(index))));
+  if (typeof value !== "object" || value === null) return value;
+  const entries = Object.entries(value);
+  const wrapper = entries.find(([key]) => EJSON_WRAPPERS.has(key))?.[0];
+  if (wrapper === undefined) {
+    return Object.fromEntries(entries.map(([key, child]) => [key, reviveExtendedJson(child, joinPath(path, key))]));
+  }
+  if (entries.length !== 1) {
+    throw extendedJsonError(
+      path,
+      `${wrapper} must be the only key of its object, and this one also has ${entries
+        .map(([key]) => key)
+        .filter((key) => key !== wrapper)
+        .join(", ")}. To compare against it, nest it: {"$lt": {"${wrapper}": ...}}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = mongodbDriver.BSON.EJSON.parse(
+      JSON.stringify(value),
+      wrapper === "$numberDouble" ? EJSON_CANONICAL : EJSON_RELAXED,
+    );
+  } catch (error) {
+    // A wrapper that cannot be read, such as a `$oid` that is not 24 hex digits. The JSON
+    // itself was fine, so the format example `parseQuery` answers with would point at the
+    // wrong thing; the parser's own sentence says what is wrong.
+    throw extendedJsonError(path, (error as Error).message);
+  }
+  // The parser answers `Date.parse("next tuesday")`, which is NaN, with an invalid Date
+  // rather than an error, and the driver serialises an invalid Date as 0: 1970-01-01.
+  if (parsed instanceof Date && Number.isNaN(parsed.getTime())) {
+    throw extendedJsonError(
+      path,
+      'the $date is not a date. Use an ISO-8601 string such as "2025-01-01T00:00:00Z" or milliseconds since the epoch',
+    );
+  }
+  if (wrapper === "$numberLong" && (value as { $numberLong: string }).$numberLong !== String(parsed)) {
+    // Reached only for a value the parser accepted, so it is a decimal string: a
+    // round trip that differs is one `BigInt.asIntN(64, ...)` wrapped.
+    const exact = BigInt((value as { $numberLong: string }).$numberLong);
+    if (exact < INT64_MIN || exact > INT64_MAX) {
+      throw extendedJsonError(path, `$numberLong ${exact} is outside the 64-bit integer range`);
+    }
+  }
+  return parsed;
+}
+
+/**
+ * A bigint as a JSON-safe value: a number while it is exact, its digits past 2^53. The
+ * driver reads no bigint back (it is not asked to), so the only one a result holds is an
+ * echo of a `$numberLong` the statement wrote, `insertedId` above all; `JSON.stringify`
+ * throws on a bigint, which answered the write with an error after it had committed.
+ */
+function serializeBigInt(value: unknown): unknown {
+  if (typeof value !== "bigint") return value;
+  const asNumber = Number(value);
+  return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
+}
+
+function joinPath(path: string, key: string): string {
+  return path === "" ? key : `${path}.${key}`;
+}
+
+/**
  * How deep `inferSchemaFromDocuments` walks a subdocument, counting the top level as
  * 1 — so `shipping.geo.lat` is named and `shipping.geo.deep.tooFar` is not. Three
  * levels is where the dotted paths a query actually groups or filters on live; past
@@ -1024,8 +1148,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
   private parseQuery(queryStr: string): MongoQuery {
     try {
-      // Try to parse as JSON
-      const parsed = JSON.parse(queryStr.trim());
+      const parsed = parseExtendedJson(queryStr.trim());
 
       if (!parsed.collection) {
         throw new QueryError("Collection name is required in query", "mongodb");
@@ -1064,13 +1187,19 @@ export class MongoDBProvider extends BaseDatabaseProvider {
           serialized[key] = value.toString();
         } else if (value instanceof Date) {
           serialized[key] = value.toISOString();
+        } else if (value instanceof mongodbDriver.BSON.Double) {
+          // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
+          // `_id`) is a Double here: the driver promotes every double it reads to a number.
+          serialized[key] = value.valueOf();
         } else if (Array.isArray(value)) {
-          serialized[key] = value.map((v) => (typeof v === "object" && v !== null ? this.serializeDocument(v) : v));
+          serialized[key] = value.map((v) =>
+            typeof v === "object" && v !== null ? this.serializeDocument(v) : serializeBigInt(v),
+          );
         } else {
           serialized[key] = this.serializeDocument(value as Document);
         }
       } else {
-        serialized[key] = value;
+        serialized[key] = serializeBigInt(value);
       }
     }
 

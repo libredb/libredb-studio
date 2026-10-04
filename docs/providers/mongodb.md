@@ -96,6 +96,36 @@ Every statement the product writes for a collection carries the key: the tree cl
 All five read it through `jsonCommandAddress()` in [`query-generators.ts`](../../src/lib/query-generators.ts), which takes the segment the declaration assigns to the `schema` level rather than `path[0]` (standing ruling 5g) and refuses a path that does not match the declared levels.
 Before #843 every one of them named the collection alone, so a collection outside the connected database read, profiled and was written as the connected database's same-named collection.
 
+#### Extended JSON in the query
+
+The statement is read as [MongoDB Extended JSON](https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/), not as plain JSON, so `filter`, `pipeline`, `update` and `documents` can carry the values plain JSON has no syntax for, in every operation alike:
+
+```json
+{ "collection": "users", "operation": "find", "filter": {"_id": {"$oid": "650000000000000000000001"}} }
+{ "collection": "events", "operation": "find", "filter": {"created": {"$gte": {"$date": "2020-01-01T00:00:00Z"}}} }
+{ "collection": "events", "operation": "insertOne", "documents": [{"when": {"$date": "2025-01-01T00:00:00Z"}}] }
+{ "collection": "users", "operation": "updateOne", "filter": {"_id": {"$oid": "650000000000000000000001"}}, "update": {"$set": {"seen": {"$date": 1735689600000}}} }
+```
+
+Before this, plain `JSON.parse` read the statement, and a document the grid shows could not be addressed by its `_id`: measured on MongoDB 8.2.12 (2026-10-03), the string `_id` matched 0 documents, `{"$oid": ...}` failed `unknown operator: $oid`, a `$date` range matched nothing, and an insert stored `when: { '$date': '2025-01-01T00:00:00Z' }` as a subdocument.
+
+**How it is read.** `parseExtendedJson()` reads the text with plain `JSON.parse` and walks it. An object whose ONLY key is one of the wrappers below is handed to the driver's own `BSON.EJSON.parse` (no extra dependency) and replaced with the value it names; every other object is kept as written.
+`EJSON.parse` is not run over the whole text because it replaces an object with a value as soon as any of its keys is one it knows, and drops the rest in silence: `{"name": {"$regex": "^a", "$nin": ["admin"]}}` would reach the server as `{"name": /^a/}`, so a `deleteMany` with it would delete `admin` too.
+
+- **The wrappers recognised**, each alone in its object: `$oid`, `$date`, `$numberInt`, `$numberLong`, `$numberDouble`, `$numberDecimal`, `$binary` (the canonical `{"base64": ..., "subType": ...}` form), `$uuid`, `$regularExpression`, `$timestamp`, `$minKey` and `$maxKey`.
+  Both forms are accepted: relaxed (`{"$date": "2025-01-01T00:00:00Z"}`, `{"$date": 1735689600000}`) and canonical (`{"$date": {"$numberLong": "1735689600000"}}`).
+- **Not recognised, kept as literal subdocuments as before:** `$code`/`$scope`, `$symbol`, `$dbPointer`, a DBRef (`{"$ref", "$id", "$db"}`), `$undefined`, and the legacy `{"$binary": "<base64>", "$type": "00"}` form. Use `{"$binary": {"base64": ..., "subType": ...}}` for binary data.
+- **A wrapper must be alone in its object.** `{"$date": "...", "$lt": 5}` is a `QueryError` naming the path and the extra keys; to compare against a value, nest it: `{"$lt": {"$date": "..."}}`.
+  The flip side: a stored subdocument that literally has a key such as `$oid` or `$date` can no longer be matched by equality, because the same object now names a value.
+- **Query operators are untouched**, the legacy `{"$regex": "^a", "$options": "i"}` form included, and `$regex` beside `$nin`/`$ne` keeps every key.
+- **A plain number is unchanged.** A number outside a wrapper stays the number `JSON.parse` read, so the driver writes it as before (int32 when it fits, a double otherwise) and `options.limit` stays a number.
+- **`$numberLong` is exact within the 64-bit range.** It becomes a bigint, written as a 64-bit integer, so `{"$numberLong": "9007199254740993"}` is not rounded to `...992`. A value outside the range (`"9223372036854775808"`) is a `QueryError`; the parser would otherwise wrap it to a negative number.
+- **`$numberDouble` stays a double**, `{"$numberDouble": "5"}` included: it alone is read in canonical mode.
+- **A malformed wrapper is a `QueryError` carrying its path and the parser's reason** (`Invalid Extended JSON in the query at "filter._id": input must be a 24 character hex string, ...`), and a `$date` that names no instant (`{"$date": "next tuesday"}`) is refused the same way, because the driver would otherwise write it as 1970-01-01 in silence.
+- **Results are unchanged** except for an echo of a typed `_id`: what comes back still passes through `serializeDocument()` ([§3.2](#32-bson-serialization-for-the-grid)), which now also renders a bigint as a number when it is exact and as its digits past 2^53, and a `Double` as a number. Only a write's `insertedId`/`insertedIds` can hold either, since the driver reads neither back; a bigint used to make the response fail after the write had committed.
+
+FerretDB serves this same provider and parses the same way; the BSON values reach it over the same wire protocol.
+
 `distinct` is the one operation with a key of its own: `field`, the driver's own parameter name, and
 it is **required**. The example above answers one row per category, shaped `{ "category": <value> }`.
 A missing or non-string `field` is a `QueryError` naming the key it wanted — it used to read the
@@ -122,7 +152,9 @@ normalises BSON types so documents render in the JSON grid: `ObjectId` → strin
 string, `Date` → ISO-8601, `Binary` → `<Binary: N bytes>` (placeholder, not the raw bytes), and
 nested objects/arrays are walked recursively. **Only these types are special-cased** — other BSON
 types (`Long`, `Timestamp`, `UUID`, `RegExp`, `Code`, `DBRef`) fall through as generic objects and
-may render poorly ([Known limitations](#13-known-limitations--future-work)).
+may render poorly ([Known limitations](#13-known-limitations--future-work)). A bigint or a `Double`
+is reached only by a write echoing a typed `_id` the statement sent, and renders as a number (a
+bigint past 2^53 as its digits) ([§3.1](#extended-json-in-the-query)).
 
 ### 3.3 Sampling-based schema inference, nested to three levels
 
@@ -1019,6 +1051,7 @@ MongoDB-specific branches:
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
 | Missing `collection`/`operation`, or invalid JSON | `QueryError` (with a format example) |
+| A malformed Extended JSON wrapper (`$oid` not 24 hex digits, a `$date` that names no instant, a `$numberLong` outside 64 bits) or a wrapper sharing its object with another key | `QueryError` carrying the path and the reason ([§3.1](#extended-json-in-the-query)) |
 | Missing `documents`/`update` for a write op | `QueryError` |
 | Authentication failure (message contains *authentication*) | `AuthenticationError` |
 | Other driver errors | generic `QueryError` / `DatabaseError` with the original message |
@@ -1043,7 +1076,8 @@ serialization, schema inference, monitoring, and maintenance.
 Validation, connect/disconnect, capabilities, labels, `prepareQuery`, every `query` operation
 (find/aggregate/count/distinct/insert/update/delete), column inference, health, maintenance,
 overview, performance, slow queries, active sessions, table/index/storage stats, **BSON
-serialization** (ObjectId/Binary/Decimal128/Date/nested), `getMonitoringData`, and **every `ssl.mode`
+serialization** (ObjectId/Binary/Decimal128/Date/nested), **Extended JSON input** (the BSON values
+every operation hands the driver, asserted on the arguments the mocked collection receives), `getMonitoringData`, and **every `ssl.mode`
 branch** asserted against the options object the `MongoClient` constructor received.
 
 ### The object-surface fixture
