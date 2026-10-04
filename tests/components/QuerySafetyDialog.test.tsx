@@ -9,6 +9,8 @@ import { QuerySafetyDialog, isDangerousQuery } from "@/components/QuerySafetyDia
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
+import { statementRefusal } from "@/lib/db/destructive-commands";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import { schemaContextOf } from "@/lib/db/detailed-object";
@@ -1726,6 +1728,51 @@ describe("isDangerousQuery", () => {
   // MongoDB row above pins for MongoDB.
   test("still prompts for a destructive keyword under redis", () => {
     expect(isDangerousQuery("DROP TABLE users", "redis")).toBe(true);
+  });
+
+  // ── InfluxQL is read by its own lexer, and what it refuses never runs (InfluxDB spec 5.7, A.11) ──
+  //
+  // The `influxdb` row decides alone: the browser-safe InfluxQL policy the provider runs reads the text, so a
+  // regex holding `\/` and a backslash escape inside a string or an identifier, which a SQL span reader reads
+  // as an unterminated quote, close where the server closes them and ask nothing. What the policy refuses is
+  // refused by the row's `refuse` before the run, so the dialog is never shown for it; on 1.x and 2.x that
+  // policy is the only boundary before `DROP DATABASE`.
+
+  test.each<[string, string, boolean]>([
+    ["a regex holding an escaped slash", String.raw`SELECT * FROM cpu WHERE host =~ /a\/b/`, false],
+    ["a regex holding a quote", String.raw`SELECT * FROM cpu WHERE host =~ /it's/`, true],
+    ["a backslash escape in a string", String.raw`SELECT * FROM cpu WHERE host = 'it\'s'`, true],
+    ["a backslash escape in an identifier", String.raw`SELECT * FROM "we\"ird" WHERE time > now() - 1h`, true],
+  ])("does not prompt for %s on influxdb, and the policy allows it", (_label, query, sqlAsks) => {
+    // The premise: the SQL reading of the same text, where it differs, asks.
+    expect(isDangerousQuery(query)).toBe(sqlAsks);
+    expect(isDangerousQuery(query, "influxdb")).toBe(false);
+    expect(statementRefusal(query, "influxdb")).toBeUndefined();
+  });
+
+  test("DROP DATABASE on influxdb is refused by the row's refuse before the run, alone or after a read", () => {
+    expect(statementRefusal("DROP DATABASE x", "influxdb")).toBe(INFLUXQL_POLICY_SENTENCES.notARead("DROP"));
+    expect(statementRefusal("SHOW DATABASES; DROP DATABASE x", "influxdb")).toBe(
+      INFLUXQL_POLICY_SENTENCES.multipleStatements(1, 15),
+    );
+    // A `\r` ends a `--` comment and a line, so the `;` below is a separator the server reads, at line 2 column 1.
+    expect(statementRefusal("SHOW DATABASES -- c\r; DROP DATABASE x", "influxdb")).toBe(
+      INFLUXQL_POLICY_SENTENCES.multipleStatements(2, 1),
+    );
+  });
+
+  test("65,537 bytes of text is refused on influxdb before the run, and 65,536 bytes is not", () => {
+    const head = "SELECT * FROM cpu -- ";
+    const over = head + "x".repeat(65_537 - head.length);
+    // Three-byte characters, so the bound is counted in UTF-8 bytes and not in characters.
+    const atBound = `${head} ${"\u20ac".repeat((65_536 - head.length - 1) / 3)}`;
+    expect(new TextEncoder().encode(over).length).toBe(65_537);
+    expect(new TextEncoder().encode(atBound).length).toBe(65_536);
+
+    expect(statementRefusal(over, "influxdb")).toBe(
+      "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
+    );
+    expect(statementRefusal(atBound, "influxdb")).toBeUndefined();
   });
 
   // ── A Kafka read request only reads (#1088, section 2) ───────────────────

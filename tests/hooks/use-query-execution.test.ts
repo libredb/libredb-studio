@@ -24,8 +24,10 @@ mock.module("@/components/QuerySafetyDialog", () => ({
 }));
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
+import { oxiaRefusal } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
+import { statementRefusal } from "@/lib/db/destructive-commands";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
@@ -4388,6 +4390,64 @@ describe("the real qdrant row", () => {
 });
 
 // =============================================================================
+// The real oxia row (SB2-4.2)
+// =============================================================================
+//
+// A write is refused by guard.ts, which the real vocabulary row applies in the browser: nothing is posted to any
+// route and no history is written. A read asks nothing and runs.
+describe("the real oxia row", () => {
+  const oxiaConnection: DatabaseConnection = { ...mockConnection, id: "qe-oxia", name: "Metadata", type: "oxia" };
+  let history: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    history = spyOn(storage, "addToHistory").mockImplementation(() => {});
+    isDangerousQueryMock.mockClear();
+  });
+
+  afterEach(() => {
+    history.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  function mount(route: MockFetchResponse) {
+    const tabs = [createTab({ result: { ...mockQueryResult } })];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    const fetchMock = mockGlobalFetch({ "/api/": route });
+    const params = createDefaultParams({ activeConnection: oxiaConnection, tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+    return { result, tabs, fetchMock };
+  }
+
+  test("put /a b is refused in the browser with guard.ts's sentence, before any request", async () => {
+    const sentence = oxiaRefusal("put /a b");
+    expect(sentence).toBeDefined();
+    const { result, tabs, fetchMock } = mount({ json: mockQueryResult });
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery("put /a b");
+    });
+    expect(returned).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+    expect(isDangerousQueryMock).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+  });
+
+  test("get /a runs with no prompt", async () => {
+    const { result, fetchMock } = mount({ json: mockQueryResult });
+    await act(async () => {
+      await result.current.executeQuery("get /a");
+    });
+    expect(result.current.safetyCheckQuery).toBeNull();
+    expect(fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://localhost:3000").pathname)).toEqual([
+      "/api/db/query",
+    ]);
+  });
+});
+
+// =============================================================================
 // The real milvus row (vector-family E10, E34, VF9)
 // =============================================================================
 //
@@ -4488,5 +4548,160 @@ describe("the real milvus row", () => {
     ]);
     expect(history).toHaveBeenCalledTimes(1);
     expect(history.mock.calls[0][0]).toMatchObject({ status: "error", errorMessage: SENTENCE, query: text });
+  });
+});
+
+// =============================================================================
+// The real influxdb row and the influxdb3 split (InfluxDB spec E2, A.11)
+// =============================================================================
+//
+// What the InfluxQL read policy refuses, the editor refuses before anything is sent: no route is posted, the
+// confirmation gate is never asked, and no history is written (E2). An allowed InfluxQL text is one statement and goes
+// to /api/db/query whole, because the type's vocabulary row declares a text bound, which keeps the SQL splitter off even
+// while metadata is loading. An InfluxDB 3 text is SQL, split by the SQL splitter under the DataFusion grammar row.
+describe("the real influxdb row and the influxdb3 split", () => {
+  const influxdbConnection: DatabaseConnection = {
+    ...mockConnection,
+    id: "qe-influxdb",
+    name: "Telegraf",
+    type: "influxdb",
+    port: 8086,
+  };
+  const influxdb3Connection: DatabaseConnection = {
+    ...mockConnection,
+    id: "qe-influxdb3",
+    name: "Edge",
+    type: "influxdb3",
+    port: 8181,
+  };
+  // No background plan request: neither type declares an explain format, so every request below is the run's own.
+  const influxqlMetadata: ProviderMetadata = {
+    ...mockMetadata,
+    capabilities: {
+      ...mockMetadata.capabilities,
+      queryLanguage: "influxql",
+      supportsExplain: false,
+      explainFormat: undefined,
+    },
+  };
+  const influxdb3Metadata: ProviderMetadata = {
+    ...mockMetadata,
+    capabilities: {
+      ...mockMetadata.capabilities,
+      queryLanguage: "sql",
+      supportsExplain: false,
+      explainFormat: undefined,
+    },
+  };
+  let history: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    history = spyOn(storage, "addToHistory").mockImplementation(() => {});
+    isDangerousQueryMock.mockClear();
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    history.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  function mount(connection: DatabaseConnection, metadata: ProviderMetadata | null) {
+    const tabs = [createTab({ result: { ...mockQueryResult } })];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": { ok: true, json: mockQueryResult },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+    const params = createDefaultParams({ activeConnection: connection, metadata, tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+    return { result, tabs, fetchMock };
+  }
+
+  test.each([
+    ["a write", "DROP DATABASE telegraf"],
+    ["a second statement after a semicolon", "SHOW DATABASES; DROP DATABASE telegraf"],
+    ["a second statement after a carriage return ends a comment", "SHOW DATABASES -- c\r; DROP DATABASE telegraf"],
+    ["INTO", "SELECT temp INTO other..x FROM home"],
+    ["a control character", "SELECT * FROM cpu WHERE host = 'a\u0001'"],
+    ["an unterminated regex", "SELECT * FROM cpu WHERE host =~ /web"],
+    ["Flux", 'from(bucket: "telegraf") |> range(start: -1h)'],
+    ["65,537 bytes of text", `SELECT * FROM cpu -- ${"x".repeat(65_537 - 21)}`],
+  ])("refuses %s in the browser, with zero fetch and zero history entries", async (_label, text) => {
+    const sentence = statementRefusal(text, "influxdb");
+    expect(sentence).toBeDefined();
+    const { result, tabs, fetchMock } = mount(influxdbConnection, influxqlMetadata);
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery(text);
+    });
+    expect(returned).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+    expect(isDangerousQueryMock).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+    expect(mockToastError).toHaveBeenCalledWith("Statement Refused", { description: sentence });
+  });
+
+  test("Proceed and an explain run refuse it the same way, with zero fetch and zero history entries", async () => {
+    const { result, fetchMock } = mount(influxdbConnection, influxqlMetadata);
+    await act(async () => {
+      result.current.forceExecuteQuery("DROP DATABASE telegraf");
+    });
+    await act(async () => {
+      await result.current.executeQuery("DROP DATABASE telegraf", undefined, true);
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ["declared", influxqlMetadata],
+    ["still loading", null],
+  ] as const)(
+    "an allowed InfluxQL text goes to /api/db/query whole with metadata %s, and is written to history once",
+    async (_label, metadata) => {
+      // A `;` inside a regex: the lexer reads one statement, and the SQL splitter would cut it in two.
+      const buffer = "SELECT * FROM cpu WHERE host =~ /a;b/";
+      expect(statementRefusal(buffer, "influxdb")).toBeUndefined();
+      expect(isMultiStatement(buffer, resolveSqlGrammar("postgres"))).toBe(true);
+      const { result, fetchMock } = mount(influxdbConnection, metadata);
+      let returned: boolean | undefined;
+      await act(async () => {
+        returned = await result.current.executeQuery(buffer);
+      });
+      expect(returned).toBe(true);
+      const paths = fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://localhost:3000").pathname);
+      expect(paths).toEqual(["/api/db/query"]);
+      expect(JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string).sql).toBe(
+        buffer,
+      );
+      expect(history).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  test("an InfluxDB 3 text is split by the SQL splitter under the DataFusion row and goes to /api/db/multi-query", async () => {
+    const buffer = "SELECT * FROM cpu LIMIT 1;\nSELECT * FROM mem LIMIT 1";
+    expect(statementRefusal(buffer, "influxdb3")).toBeUndefined();
+    expect(isMultiStatement(buffer, resolveSqlGrammar("influxdb3"))).toBe(true);
+    const { result, fetchMock } = mount(influxdb3Connection, influxdb3Metadata);
+    await act(async () => {
+      await result.current.executeQuery(buffer);
+    });
+    const paths = fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://localhost:3000").pathname);
+    expect(paths).toEqual(["/api/db/multi-query"]);
+  });
+
+  test("an InfluxDB 3 text with a semicolon only inside a comment stays one statement on /api/db/query", async () => {
+    const buffer = "-- newest; then oldest\nSELECT * FROM cpu LIMIT 1";
+    expect(isMultiStatement(buffer, resolveSqlGrammar("influxdb3"))).toBe(false);
+    const { result, fetchMock } = mount(influxdb3Connection, influxdb3Metadata);
+    await act(async () => {
+      await result.current.executeQuery(buffer);
+    });
+    const paths = fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://localhost:3000").pathname);
+    expect(paths).toEqual(["/api/db/query"]);
   });
 });

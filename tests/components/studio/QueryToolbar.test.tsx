@@ -447,6 +447,22 @@ describe("QueryToolbar", () => {
     expect(queryByText("RUN")).not.toBeNull();
   });
 
+  test("No transaction, sandbox, edit or import controls for an InfluxQL connection (InfluxDB spec 6.7)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone (`QueryToolbar.tsx:120`), and an
+    // InfluxDB (InfluxQL) connection is read-only, with no transaction to open and no row to write.
+    const influxqlMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "influxql" },
+      labels: { ...sqlLabels, entityName: "measurement", entityNamePlural: "measurements" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: influxqlMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    expect(queryByText("RUN")).not.toBeNull();
+  });
+
   test("No transaction, sandbox, edit or import controls for a Kafka connection (#1088)", () => {
     // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and a Kafka read request
     // is JSON in a dialect of its own, which no transaction, sandbox or import could reach.

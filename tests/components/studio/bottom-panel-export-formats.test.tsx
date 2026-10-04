@@ -114,7 +114,10 @@ async function exportMenuItems(capabilities: ProviderCapabilities | null): Promi
     .map((item) => item.textContent ?? "");
 }
 
-/** The seven engines R46 C4 probed, each by the language and dialect its provider declares. */
+/**
+ * The seven engines R46 C4 probed, each by the language and dialect its provider declares, and InfluxDB
+ * (InfluxQL), whose language is neither SQL nor JSON and declares no dialect (InfluxDB spec A.11).
+ */
 const PROBED: readonly (readonly [string, Partial<ProviderCapabilities>])[] = [
   ["postgres", { queryLanguage: "sql" }],
   ["mongodb", { queryLanguage: "json" }],
@@ -123,6 +126,7 @@ const PROBED: readonly (readonly [string, Partial<ProviderCapabilities>])[] = [
   ["kafka", { queryLanguage: "json", queryDialect: "kafka" }],
   ["etcd", { queryLanguage: "json", queryDialect: "etcd" }],
   ["prometheus", { queryLanguage: "promql" }],
+  ["influxdb", { queryLanguage: "influxql" }],
 ];
 
 afterEach(() => cleanup());
@@ -144,6 +148,10 @@ describe("the result export menu offers the SQL formats where the dialect says t
 
   test("qdrant, whose record declines them, loses both from the Export and the Copy items (vector-family spec 3.10)", async () => {
     expect(await exportMenuItems(capabilitiesOf({ queryDialect: "qdrant" }))).toEqual(WITHOUT_SQL);
+  });
+
+  test("oxia, whose record declines them, loses both from the Export and the Copy items (SB2-4.4)", async () => {
+    expect(await exportMenuItems(capabilitiesOf({ queryDialect: "oxia" }))).toEqual(WITHOUT_SQL);
   });
 
   test("a dialect whose record declines them loses both, from the Export and the Copy items alike", async () => {

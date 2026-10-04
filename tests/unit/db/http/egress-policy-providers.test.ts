@@ -10,6 +10,7 @@ import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
 import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transport";
 import { CouchbaseProvider } from "@/lib/db/providers/document/couchbase";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus";
+import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import type { DatabaseConnection } from "@/lib/db/types";
 
 const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
@@ -29,7 +30,14 @@ const providers = [
   ["libSQL", "libsql", LibSQLProvider],
   ["Couchbase", "couchbase", CouchbaseProvider],
   ["Prometheus", "prometheus", PrometheusProvider],
+  // No user (InfluxDB spec 3.3): InfluxDB 3 refuses one, and InfluxDB refuses a user without a password, each before
+  // the guard is reached; with neither, the guard's DatabaseConfigError passes through toInfluxError unchanged.
+  ["InfluxDB", "influxdb", InfluxDBProvider],
+  ["InfluxDB 3", "influxdb3", InfluxDB3Provider],
 ] as const;
+
+/** A user only where the provider takes one with no password: the two InfluxDB types refuse that before any guard. */
+const USERLESS: ReadonlySet<string> = new Set(["influxdb", "influxdb3"]);
 
 for (const [name, type, Provider] of providers) {
   for (const secure of [false, true]) {
@@ -49,7 +57,7 @@ for (const [name, type, Provider] of providers) {
           type,
           host: "localhost",
           port: (server.address() as AddressInfo).port,
-          user: "tester",
+          ...(USERLESS.has(type) ? {} : { user: "tester" }),
           database: "test",
           createdAt: new Date(),
           ...(secure ? { ssl: { mode: "require" as const } } : {}),

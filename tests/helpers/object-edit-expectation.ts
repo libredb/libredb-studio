@@ -41,6 +41,10 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "druid",
   "duckdb",
   "elasticsearch",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 is read-only (InfluxDB spec I1), which docs/providers/influxdb.md names.
+  "influxdb",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 is read-only (InfluxDB spec I1), which docs/providers/influxdb3.md names.
+  "influxdb3",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: Kafka has writes, and this product
   // declines them in v1 by decision (#1088 sections 2 and 4.6), which docs/providers/kafka.md names.
   "kafka",
@@ -56,6 +60,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "neo4j",
   "opensearch",
   "oracle",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 reads only, whatever `readOnly` says
+  // (DECISIONS O1), which docs/providers/oxia.md names.
+  "oxia",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: the product offers no write
   // path to Prometheus at all (#1085 sections 2 and 4.5), which docs/providers/prometheus.md names.
   "prometheus",

@@ -73,6 +73,21 @@ async function main(): Promise<void> {
   const del = await provider.query("DELETE FROM users WHERE id = ?", [2]);
   report.deleteRowCount = del.rowCount;
 
+  // Statements that return rows without starting with SELECT. The provider routes on the
+  // driver's own column count, so this is node:sqlite's answer on the Node runtime the
+  // npx / brew / deb installs run, beside the in-process run of both drivers.
+  const rowsOf = async (sql: string) => {
+    const result = await provider.query(sql);
+    return { rows: result.rows, rowCount: result.rowCount };
+  };
+  report.rowReturning = {
+    cte: await rowsOf("WITH x AS (SELECT 1 AS a UNION ALL SELECT 2) SELECT a FROM x"),
+    values: await rowsOf("VALUES (1, 'a'), (2, 'b')"),
+    insertReturning: await rowsOf("INSERT INTO users (id, name) VALUES (3, 'Cy') RETURNING id, name"),
+    updateReturning: await rowsOf("UPDATE users SET name = 'Cyd' WHERE id = 3 RETURNING name"),
+    deleteReturning: await rowsOf("DELETE FROM users WHERE id = 3 RETURNING id"),
+  };
+
   // 64-bit ids. With node:sqlite's defaults this read threw ERR_OUT_OF_RANGE
   // outright, where bun:sqlite silently answered the NEIGHBOURING row's id; both
   // drivers now read them as BigInt and the driver seam converts them back the same

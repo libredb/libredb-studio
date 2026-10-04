@@ -420,12 +420,12 @@ describe("wire-compatibility registry", () => {
     expect(compatibleEnginesFor("qdrant")).toEqual([]);
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
     expect(MCP_EXPOSABLE.qdrant).toBe(true);
-    // The counts of vector-family spec 10.2, from the sets they count, with Milvus shipped too: each vector engine
-    // adds one external engine and no relative.
+    // The counts of vector-family spec 10.2, from the sets they count, with Milvus, both InfluxDB types and Oxia
+    // shipped too: each adds one external engine and no relative.
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      24, 23, 28,
+      27, 26, 28,
     ]);
-    expect(connectableProductCount()).toBe(51);
+    expect(connectableProductCount()).toBe(54);
   });
 
   test("milvus ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 5.7, 10.2)", () => {
@@ -437,9 +437,39 @@ describe("wire-compatibility registry", () => {
     expect(READ_ONLY_ENFORCED.milvus).toBe(true);
     expect(MCP_EXPOSABLE.milvus).toBe(true);
     expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
-      24, 23, 28,
+      27, 26, 28,
     ]);
-    expect(connectableProductCount()).toBe(51);
+    expect(connectableProductCount()).toBe(54);
+  });
+
+  test("influxdb and influxdb3 ship as external engines that keep the read-only mode and are offered to MCP (InfluxDB spec I2, I8, I13)", () => {
+    // Two servers the user already runs, one per query language, served from one provider directory. No relative is
+    // recorded: InfluxDB Cloud, Clustered and Enterprise 1.x are claimed nowhere until a gate-4 probe measures one.
+    for (const type of ["influxdb", "influxdb3"] as const) {
+      expect(SHIPPED_DATABASE_TYPES).toContain(type);
+      expect(isExternalDatabaseType(type)).toBe(true);
+      expect(compatibleEnginesFor(type)).toEqual([]);
+      expect(READ_ONLY_ENFORCED[type]).toBe(true);
+      expect(MCP_EXPOSABLE[type]).toBe(true);
+    }
+    // The union's 24 members plus the two and Oxia, less libredb; the relatives are unchanged.
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      27, 26, 28,
+    ]);
+    expect(connectableProductCount()).toBe(54);
+  });
+
+  test("oxia ships as an external engine that keeps the read-only mode and is not offered to MCP (SB3-1.2)", () => {
+    // A server or cluster the user already runs, reached over Oxia's gRPC client API; no relative is recorded.
+    expect(SHIPPED_DATABASE_TYPES).toContain("oxia");
+    expect(isExternalDatabaseType("oxia")).toBe(true);
+    expect(compatibleEnginesFor("oxia")).toEqual([]);
+    expect(READ_ONLY_ENFORCED.oxia).toBe(true);
+    expect(MCP_EXPOSABLE.oxia).toBe(false);
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      27, 26, 28,
+    ]);
+    expect(connectableProductCount()).toBe(54);
   });
 
   test("duckdb ships as a driver and is a relative of nothing", () => {
@@ -553,8 +583,8 @@ describe("MCP_EXPOSABLE (#1089)", () => {
     expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
   });
 
-  test("offers MCP for every shipped engine but etcd (#1089 E12)", () => {
+  test("offers MCP for every shipped engine but etcd and oxia (#1089 E12, SB3-1.2 R10)", () => {
     // An engine MCP is not offered for answers false with its registration, and is named here then.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual(["etcd"]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual(["etcd", "oxia"]);
   });
 });

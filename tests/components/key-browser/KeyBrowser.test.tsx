@@ -1534,6 +1534,48 @@ describe("a panel in a declared shape", () => {
     );
   });
 
+  const UNCOUNTED_SCAN: KeyScanCapability = { ...ETCD_SCAN, totalScope: "none" };
+  const NO_TOTAL = "keys read so far: this engine publishes no key count, so no total is shown";
+
+  test("says Scanned with no total, and why, on an engine that publishes no key count", async () => {
+    // The provider answers 0 under "none", and the panel does not read it.
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a", "/app/b", "/cfg/x"], { total: 0 }).handler });
+    const { rerender } = render(<KeyBrowser connection={CONNECTION} capability={UNCOUNTED_SCAN} />);
+    await waitFor(() => {
+      expect(progress()).toBe("Scanned 3");
+    });
+    expect(progress()).not.toContain("/");
+    expect(progress()).not.toContain(" of ");
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(NO_TOTAL);
+
+    // A prefix keeps the word and still draws no denominator.
+    rerender(<KeyBrowser connection={CONNECTION} capability={UNCOUNTED_SCAN} request={{ pattern: "/app/" }} />);
+    await waitFor(() => {
+      expect(progress()).toBe("Scanned 2");
+    });
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(NO_TOTAL);
+  });
+
+  test("draws no count on the database row of an engine that publishes none", async () => {
+    // No shipped engine declares both a database level and "none"; the row's cell is still held to the scope.
+    mockGlobalFetch({
+      "/api/db/keys/scan": { json: { keys: ["app:env"], cursor: "0", total: 0, types: {} } },
+      "/api/db/objects/containers": { json: DATABASES },
+    });
+    render(
+      <KeyBrowser
+        connection={CONNECTION}
+        capability={{ defaultCount: 500, maxCount: 1000, totalScope: "none" }}
+        databaseLevel={LEVEL}
+      />,
+    );
+    await waitFor(() => {
+      expect(rows()).toEqual(["0@0", "app:*@1"]);
+    });
+    expect(screen.getByTestId("key-browser-database-total").textContent).toBe("");
+    expect(progress()).toBe("Scanned 1");
+  });
+
   test("words the box, its hint and the filter in the declared shape", async () => {
     mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a"]).handler });
     renderBrowser(ETCD_SCAN);

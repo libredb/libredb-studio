@@ -1,0 +1,17 @@
+{
+  "version": "3.12.0-core",
+  "name": "sql-databases",
+  "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "GET",
+    "path": "/api/v3/configure/database",
+    "query": {
+      "format": "json"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "[{\"iox::database\":\"_internal\"},{\"iox::database\":\"bench\"},{\"iox::database\":\"edge\"},{\"iox::database\":\"home\"}]"
+}

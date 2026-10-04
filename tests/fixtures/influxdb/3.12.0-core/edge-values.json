@@ -1,0 +1,21 @@
+{
+  "version": "3.12.0-core",
+  "name": "edge-values",
+  "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "db": "home",
+      "q": "SELECT * FROM \"home\"..\"edge\"",
+      "chunked": "true",
+      "chunk_size": "1000"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"edge\",\"columns\":[\"time\",\"b\",\"kind\",\"s\",\"u\",\"v\"],\"values\":[[\"2022-01-01T08:00:00.000000001Z\",null,\"int64-max\",null,null,9223372036854775807],[\"2022-01-01T08:00:00.000000002Z\",null,\"int64-min\",null,null,-9223372036854775808],[\"2022-01-01T08:00:00.000000003Z\",null,\"above-2-53\",null,null,9007199254740993],[\"2022-01-01T08:00:00.000000004Z\",null,\"uint64-max\",null,18446744073709551615,null],[\"2022-01-01T08:00:00.000000005Z\",null,\"string\",\"say \\\"hi\\\", it's a back\\\\slash\",null,null],[\"2022-01-01T08:00:00.000000006Z\",true,\"boolean\",null,null,null],[\"2022-01-01T08:00:00.123456789Z\",null,\"nanoseconds\",null,null,1],[\"2022-01-01T08:00:00.123456790Z\",null,\"nanoseconds\",null,null,2]]}]}]}"
+}

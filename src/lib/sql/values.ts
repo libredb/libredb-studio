@@ -82,6 +82,14 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // PromQL, not SQL (#1085): the same reading as the seven above. A PromQL string
   // escapes with a backslash, but that is not a SQL literal and nothing here builds one.
   prometheus: "standard",
+  // Measured on InfluxDB 3.12.0: `SELECT 'it''s'` answers `it's`, and `SELECT 'a\b' AS a,
+  // length('a\b') AS n` answers `a\b` and 3, so a backslash is data. DataFusion also has
+  // PostgreSQL-style `E'...'` strings (measured: `SELECT E'a\nb'` decodes the escape), which
+  // `quoteLiteral` never emits.
+  influxdb3: "standard",
+  // No generator calls `quoteLiteral` for Oxia: the command table's own quoting writes every word (O10); the row
+  // is the inert answer etcd's is.
+  oxia: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the
   // doubled backslash as two characters, which is why binding the value beats
   // quoting it wherever a bind form exists.
@@ -106,6 +114,12 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // not one of them: it closes one string and opens the next. The graph lexer
   // (`src/lib/db/graph/cypher/lexer.ts`) decodes the same set, so the two read a literal alike.
   neo4j: "backslash",
+  // Measured on InfluxDB 1.13.1: `... WHERE room = 'it\'s'` parses and `... WHERE room = 'it''s'`
+  // is `error parsing query: found s, expected ;`; the scanner's string escapes are exactly `\n`,
+  // `\\`, `\"` and `\'`. No generator calls `quoteLiteral` for InfluxQL: the provider's
+  // `influxql-quote.ts` builds every literal and refuses a newline, which a backslash form cannot
+  // carry. The row is the true answer for any future caller.
+  influxdb: "backslash",
 };
 
 /**
@@ -251,6 +265,13 @@ export function unquoteLiteral(text: string, dialect: DatabaseType | undefined):
  * the provider's seam carries the statement alone, so its `query()` refuses
  * positional parameters outright. Emitting `?` here would produce a statement whose
  * placeholder the provider then declines to fill.
+ *
+ * `influxdb3` falls to the same `null` on the search pair's reason. The engine has
+ * placeholders (measured on 3.12.0: `SELECT $1 AS x` and `SELECT ? AS x` both answer
+ * `Error during planning: No value found for placeholder ...`), but the route body is
+ * exactly `db`, `q` and `format`, so the provider's `query()` refuses a non-empty params
+ * array, and emitting a placeholder would build a statement nothing fills. `influxdb`
+ * writes InfluxQL, which is not SQL, and nothing binds there.
  */
 export function positionalPlaceholder(dialect: DatabaseType, position: number): string | null {
   switch (dialect) {

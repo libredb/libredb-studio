@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import {
   connectionFieldHint,
   connectionFieldLabel,
+  connectionFieldPlaceholder,
   getDBConfig,
   isFileBased,
   offersSshTunnel,
@@ -194,6 +195,8 @@ export function ConnectionModal({
     setReadOnly,
     allowInsecureAuth,
     setAllowInsecureAuth,
+    dataServers,
+    setDataServers,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -791,7 +794,7 @@ export function ConnectionModal({
                         id="database"
                         value={database}
                         onChange={(e) => setDatabase(e.target.value)}
-                        placeholder={databaseFieldPlaceholder}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "database", databaseFieldPlaceholder)}
                         aria-describedby={describedByHint(uiConfig, "database")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
@@ -807,6 +810,32 @@ export function ConnectionModal({
                           keyspace in full.
                         </p>
                       )}
+                    </div>
+                  )}
+
+                  {/*
+                    A cluster's data-server addresses, drawn where the engine takes the field: the same list
+                    `buildConnection` writes from. Its label and hint are the engine's own declaration; the
+                    provider parses and refuses the text.
+                  */}
+                  {takesConnectionField(type, "dataServers") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="dataServers" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "dataServers", "Data servers")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="dataServers"
+                        value={dataServers}
+                        onChange={(e) => setDataServers(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-describedby={describedByHint(uiConfig, "dataServers")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="dataServers" />
                     </div>
                   )}
 
@@ -1122,8 +1151,10 @@ export function ConnectionModal({
 
               {/*
                 The consent to a cleartext password (#786), outside the accordion so it is seen while
-                SSL Mode is disable: the Db2 provider refuses such a connection without it, and the
-                refusal names this box.
+                SSL Mode is disable: the provider of a type that takes it refuses such a connection
+                without it, and the refusal names this box. The sentence under it is the type's own
+                declared hint (InfluxDB spec R4), never a fallback; tests/unit/lib/db-ui-config.test.ts
+                holds every type that takes the field to declaring one.
               */}
               {takesConnectionField(type, "allowInsecureAuth") && sslMode === "disable" && (
                 <div className="space-y-1 p-3 rounded-lg border border-warning-tint/10 bg-warning-tint/5">
@@ -1133,15 +1164,12 @@ export function ConnectionModal({
                       type="checkbox"
                       checked={allowInsecureAuth}
                       onChange={(e) => setAllowInsecureAuth(e.target.checked)}
-                      aria-describedby="allowInsecureAuth-hint"
+                      aria-describedby={describedByHint(uiConfig, "allowInsecureAuth")}
                       className="rounded border-edge bg-panel"
                     />
                     <span className="text-xs font-medium text-warning">Send the password without TLS</span>
                   </label>
-                  <p id="allowInsecureAuth-hint" className="text-xs text-fg-muted">
-                    With no SSL mode this driver sends the password in cleartext, so the connection is refused unless
-                    this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.
-                  </p>
+                  <DeclaredFieldHint config={uiConfig} field="allowInsecureAuth" />
                 </div>
               )}
 

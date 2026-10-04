@@ -919,6 +919,90 @@ describe("assertObjectSurface and the bulk column read", () => {
 });
 
 /**
+ * A provider none of whose kinds carries columns (R26). Oxia is the one engine this is true of:
+ * its only listed kind, `shard`, declares no `hasColumns` and its bulk read answers `{ details: [] }`.
+ * The vacuity guard above refuses that for every provider, so the expectation states it with
+ * `noColumnKinds`, and the bulk read then holds every listed kind to an empty answer instead.
+ */
+describe("assertObjectSurface and a provider with no column-bearing kind", () => {
+  const shards = [
+    { path: ["0"], name: "0", kind: "shard" },
+    { path: ["1"], name: "1", kind: "shard" },
+  ];
+
+  function shardProvider(hasColumns: boolean, overrides: Record<string, unknown> = {}) {
+    return fakeProvider({
+      type: "oxia",
+      getCapabilities: () => ({
+        queryLanguage: "oxia",
+        containerLevels: [],
+        objectKinds: [
+          { id: "shard", role: "config", label: "Shard", labelPlural: "Shards", ...(hasColumns ? { hasColumns } : {}) },
+        ],
+      }),
+      listContainers: async () => [],
+      countObjects: async () => ({ shard: { count: 2 } }),
+      listObjects: async () => shards,
+      describeObject: async (path: readonly string[]) => ({ path, columns: [], indexes: [], foreignKeys: [] }),
+      describeObjects: async () => ({ details: [] }),
+      ...overrides,
+    });
+  }
+
+  const expectation = { containers: [], kinds: { shard: 2 }, sampleObject: { path: ["0"], kind: "shard" } };
+
+  test("passes with noColumnKinds a provider whose every listed kind answers no column set", async () => {
+    await expect(
+      assertObjectSurface(shardProvider(false) as never, { ...expectation, noColumnKinds: true }),
+    ).resolves.toBeUndefined();
+  });
+
+  test("without noColumnKinds the same provider still meets the vacuity guard", async () => {
+    await expect(assertObjectSurface(shardProvider(false) as never, expectation)).rejects.toThrow(
+      /describeObjects answered no column set for any listed kind, so every check of it is vacuous/,
+    );
+  });
+
+  test("noColumnKinds is refused by name on a provider with a kind that declares hasColumns", async () => {
+    await expect(
+      assertObjectSurface(shardProvider(true) as never, { ...expectation, noColumnKinds: true }),
+    ).rejects.toThrow(/sets noColumnKinds and the kind\(s\) shard declare hasColumns/);
+  });
+
+  test("under noColumnKinds an unbounded read that answers a column set is refused", async () => {
+    const provider = shardProvider(false, {
+      describeObjects: async () => ({ details: [{ path: ["0"], columns: [], indexes: [], foreignKeys: [] }] }),
+    });
+    await expect(assertObjectSurface(provider as never, { ...expectation, noColumnKinds: true })).rejects.toThrow(
+      /describeObjects\("shard"\) answered 1 column set\(s\) under noColumnKinds/,
+    );
+  });
+
+  test("under noColumnKinds a read bounded at 1 that answers a column set is refused", async () => {
+    const provider = shardProvider(false, {
+      describeObjects: async (_c: readonly string[], _k: string, limit?: number) => ({
+        details: limit === 1 ? [{ path: ["0"], columns: [], indexes: [], foreignKeys: [] }] : [],
+      }),
+    });
+    await expect(assertObjectSurface(provider as never, { ...expectation, noColumnKinds: true })).rejects.toThrow(
+      /describeObjects\("shard", limit 1\) answered 1 column set\(s\) under noColumnKinds/,
+    );
+  });
+
+  test("under noColumnKinds an empty read that reports a truncation is refused", async () => {
+    const provider = shardProvider(false, {
+      describeObjects: async (_c: readonly string[], _k: string, limit?: number) =>
+        limit === 1
+          ? { details: [], truncated: { limit: 1, reason: callerBoundTruncationReason(1) } }
+          : { details: [] },
+    });
+    await expect(assertObjectSurface(provider as never, { ...expectation, noColumnKinds: true })).rejects.toThrow(
+      /describeObjects\("shard", limit 1\) reported a truncation under noColumnKinds/,
+    );
+  });
+});
+
+/**
  * The source half (#789 Phase 2).
  *
  * Every test here drives a deliberately WRONG provider double and asserts the helper

@@ -154,7 +154,8 @@ function isServiceErrorWithoutCode(error: unknown): error is Error {
 
 /**
  * grpc-js's failure of a call that its own signal ended before grpc-js gave it a transport, so its request never
- * left; the transport raises this in place of grpc-js's "Cancelled on client" (grpc-client.ts `callFailure`).
+ * left; the transport raises this in place of grpc-js's "Cancelled on client" (src/lib/db/grpc/channel.ts
+ * `callFailure`).
  */
 export class MilvusUnsentStatus extends Error {
   declare readonly code: number;

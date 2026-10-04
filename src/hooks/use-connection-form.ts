@@ -76,6 +76,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   // The checkbox owns it, so unticking it has to CLEAR it (#786): `preserved` would keep a Db2
   // connection sending its password without TLS after the user took the consent back.
   allowInsecureAuth: "edited",
+  // The text box owns it, so emptying it has to CLEAR it: `preserved` would keep sending the token to servers the
+  // user took off the list.
+  dataServers: "edited",
   group: "preserved",
   managed: "preserved",
   seedId: "preserved",
@@ -179,6 +182,8 @@ export const CONNECTION_FORM_DEFAULTS = {
   // A leftover consent would send the next Db2 connection's password without TLS, a risk nobody
   // accepted for it (#786).
   allowInsecureAuth: false,
+  // A leftover list would let the next connection's token follow the previous cluster's addresses.
+  dataServers: "",
   // SSH tunnel. A leftover tunnel sends the next connection through the previous one's
   // bastion, with that bastion's password or private key.
   showSSH: false,
@@ -340,6 +345,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
    * connection with no TLS unless this is set.
    */
   const [allowInsecureAuth, setAllowInsecureAuth] = useState(D.allowInsecureAuth);
+  /**
+   * A cluster's data-server addresses, as typed. Drawn only for an engine that takes the field; stored as typed,
+   * because the provider trims, parses and refuses it entry by entry.
+   */
+  const [dataServers, setDataServers] = useState(D.dataServers);
 
   // SSH Tunnel
   const [showSSH, setShowSSH] = useState(D.showSSH);
@@ -384,6 +394,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     skipObjectScan: setSkipObjectScan,
     readOnly: setReadOnly,
     allowInsecureAuth: setAllowInsecureAuth,
+    dataServers: setDataServers,
     showSSH: setShowSSH,
     sshEnabled: setSSHEnabled,
     sshHost: setSSHHost,
@@ -488,6 +499,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // Overwritten for the same reason: a connection that never accepted a cleartext password must
       // show an unticked box, or the last one edited is saved onto it.
       setAllowInsecureAuth(editConnection.allowInsecureAuth === true);
+      // Overwritten for the same reason: a connection that lists no data servers must show an empty box, or the last
+      // one edited is saved onto it.
+      setDataServers(editConnection.dataServers ?? "");
       // SSL
       if (editConnection.ssl) {
         setSSLMode(editConnection.ssl.mode);
@@ -707,6 +721,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       ...(allowInsecureAuth && addressedFields.has("allowInsecureAuth") && sslMode === "disable"
         ? { allowInsecureAuth: true }
         : {}),
+      // Only for an engine that takes it, and only when something is typed: a list left over from a type switch is
+      // not sent, and an empty box writes no key. Stored as typed; the provider trims and parses.
+      ...(addressedFields.has("dataServers") && dataServers.trim() !== "" ? { dataServers } : {}),
     };
   }, [
     sslMode,
@@ -744,6 +761,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     skipObjectScan,
     readOnly,
     allowInsecureAuth,
+    dataServers,
   ]);
 
   /**
@@ -1031,6 +1049,9 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "neo4j",
     "milvus",
     "qdrant",
+    "influxdb",
+    "influxdb3",
+    "oxia",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);
@@ -1121,6 +1142,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setReadOnly,
     allowInsecureAuth,
     setAllowInsecureAuth,
+    dataServers,
+    setDataServers,
 
     // SSH Tunnel
     showSSH,

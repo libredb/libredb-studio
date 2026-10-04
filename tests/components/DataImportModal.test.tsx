@@ -8,6 +8,8 @@ import { cleanup, render, within, fireEvent, act, waitFor } from "@testing-libra
 import { DataImportModal } from "@/components/DataImportModal";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { pathKey } from "@/lib/db/object-path";
+import { INFLUXQL_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
+import { INFLUXDB3_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/sql-objects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
@@ -1135,6 +1137,58 @@ describe("DataImportModal on a PromQL connection (#1085)", () => {
       objectKinds: [{ ...metricKind, acceptsRowWrites: true }],
     } as unknown as ProviderCapabilities;
     expect(metricTargetNames(writable)).toEqual(["http_requests_total", "up"]);
+  });
+});
+
+// =============================================================================
+// An InfluxDB measurement or table is never an import target (InfluxDB spec I1)
+// =============================================================================
+
+/**
+ * Both InfluxDB types are read-only in v1: neither the `measurement` kind of `influxdb` nor the `table` kind of
+ * `influxdb3` declares `acceptsRowWrites`, so the dialog offers no object of either as an import target, and the
+ * InfluxQL quoting is never asked of an import. The kinds below are the providers' own declarations, so this pins
+ * the real ones, beside the control where the same objects take row writes.
+ */
+describe("DataImportModal on an InfluxDB connection (InfluxDB spec I1)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const objects: DetailedObject[] = [
+    { name: "cpu", kind: "measurement", path: ["telegraf", "cpu"], columns: [], indexes: [] },
+    { name: "home", kind: "table", path: ["home"], columns: [], indexes: [] },
+  ];
+
+  function targetNamesOver(capabilities: ProviderCapabilities): string[] {
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={noop} onImport={noop} tables={objects} capabilities={capabilities} />,
+    );
+    act(() => {
+      simulateFileUpload(baseElement, "room,temp\nkitchen,21", "data.csv");
+    });
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    return Array.from(select.options)
+      .map((option) => option.textContent ?? "")
+      .filter((text) => text !== "-- Select a table --");
+  }
+
+  test.each([
+    ["influxdb", "influxql", INFLUXQL_OBJECT_KINDS],
+    ["influxdb3", "sql", INFLUXDB3_OBJECT_KINDS],
+  ] as const)("no %s object is offered as an import target", (_type, queryLanguage, objectKinds) => {
+    const capabilities = { queryLanguage, supportsCreateTable: true, objectKinds } as unknown as ProviderCapabilities;
+    expect(targetNamesOver(capabilities)).toEqual([]);
+    // The control: the same objects under kinds that take row writes are offered.
+    cleanup();
+    const writable = {
+      ...capabilities,
+      objectKinds: objectKinds.map((kind) => ({ ...kind, acceptsRowWrites: true })),
+    } as unknown as ProviderCapabilities;
+    expect(targetNamesOver(writable).length).toBeGreaterThan(0);
   });
 });
 

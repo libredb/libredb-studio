@@ -784,4 +784,33 @@ describe("POST /api/db/multi-query: a type that declares a console text bound", 
     expect(res.status).toBe(200);
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
   });
+
+  test("the real influxdb row declares a bound, so an InfluxQL text is refused the same way (InfluxDB spec A.11)", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { id: "influxdb-1", name: "Telegraf", type: "influxdb", host: "127.0.0.1", port: 8086 },
+          sql: "SHOW DATABASES; SHOW MEASUREMENTS",
+        },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(REFUSAL);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("influxdb3 declares no bound: its SQL is split under the DataFusion row and run as before", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { id: "influxdb3-1", name: "Edge", type: "influxdb3", host: "127.0.0.1", port: 8181 },
+          sql: "SELECT 1; SELECT 2",
+        },
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+  });
 });

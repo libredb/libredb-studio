@@ -1186,6 +1186,13 @@ describe("offersColumnProfiling", () => {
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "sql" }))).toBe(true);
   });
 
+  test("InfluxQL is not profiled, because the route writes no InfluxQL (InfluxDB spec 6.7)", () => {
+    // Correct as a fall-through: the gate names the two languages the route writes. InfluxDB 3 declares SQL and
+    // keeps Profile, which runs the route's SQL on its session database (InfluxDB spec R25).
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "influxql" }))).toBe(false);
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+  });
+
   test("undefined capabilities are a denial, not a permission", () => {
     // /api/db/provider-meta answers with nothing both while it is in flight and when it
     // failed, which is the rule maintenanceControl already keeps.
@@ -1232,6 +1239,11 @@ describe("offersCodeGeneration", () => {
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
   });
 
+  test("InfluxQL is not offered it: a measurement's columns are the tag and field keys its points carried (InfluxDB spec 6.7)", () => {
+    // Correct as a fall-through, as for Cypher: the gate names SQL and JSON.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "influxql" }))).toBe(false);
+  });
+
   test("undefined capabilities are a denial, not a permission", () => {
     expect(offersCodeGeneration(undefined)).toBe(false);
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
@@ -1241,6 +1253,10 @@ describe("offersCodeGeneration", () => {
 describe("offersSchemaDiagram", () => {
   test("Cypher is not offered the diagram: a relationship type is no table and no column names an edge (SR20)", () => {
     expect(offersSchemaDiagram(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
+  });
+
+  test("InfluxQL is not offered the diagram: a measurement declares no schema and no relation (InfluxDB spec 6.3)", () => {
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "influxql" }))).toBe(false);
   });
 
   test("every other language keeps it, and so does a connection whose capabilities have not answered yet", () => {

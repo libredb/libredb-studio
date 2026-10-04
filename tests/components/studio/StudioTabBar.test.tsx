@@ -113,6 +113,24 @@ describe("StudioTabBar", () => {
     expect(icons).toEqual(["lucide-hash", "lucide-file-braces", "lucide-file-braces"]);
   });
 
+  test("an InfluxQL tab takes the icon every non-SQL query tab takes, with no change to the ladder (InfluxDB spec A.11)", () => {
+    // Correct as is: the ladder draws `Hash` for SQL and the document braces for every other query
+    // language. An InfluxDB 3 tab is an SQL tab and keeps the SQL icon, which the first tab stands for.
+    const props = createDefaultProps({
+      tabs: [
+        createTab({ id: "tab-1", name: "cpu", type: "sql" }),
+        createTab({ id: "tab-2", name: "cpu", type: "influxql" }),
+        createTab({ id: "tab-3", name: "up", type: "promql" }),
+      ],
+    });
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+
+    const icons = getAllByRole("tab").map(
+      (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
+    );
+    expect(icons).toEqual(["lucide-hash", "lucide-file-braces", "lucide-file-braces"]);
+  });
+
   test("a Kafka tab takes the icon every non-SQL query tab takes, the same as a MongoDB tab (#1088)", () => {
     // Correct as is: a read request is JSON, so the tab draws the document braces a MongoDB tab
     // draws. The SQL tab is the control that the arm is not every tab's.

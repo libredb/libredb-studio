@@ -19,12 +19,17 @@
  * - `currentSchema`: honoured since 1.0.24, and still not needed: every catalog statement binds
  *   its schema (M4), and a session schema would only change how the user's own SQL resolves.
  *
- * `securityMechanism` is named with exactly one value. db2-node 1.0.24 refuses to fall back to
- * the plaintext mechanism a stock `AUTHENTICATION=SERVER` server answers with, unless the
+ * `securityMechanism` is named with exactly one value. db2-node 1.0.24 and later refuse to fall
+ * back to the plaintext mechanism a stock `AUTHENTICATION=SERVER` server answers with, unless the
  * connection asks for it by name, so the insecure opt-in asks for `userPassword`.
+ *
+ * `query` takes one option, `rowMode: "array"`, and the provider's own `query()` is its one
+ * caller: an object row keys by column name and keeps only the last of two columns named alike
+ * (K15), an array row keeps both. The catalog reads stay on object rows, keyed by the names
+ * their own statements give.
  */
 
-import { ConnectionError } from "../../../errors";
+import { ConnectionError, DatabaseError, QueryError, mapDatabaseError } from "../../../errors";
 
 /** One result column as db2-node describes it. */
 export interface Db2ColumnMeta {
@@ -44,6 +49,16 @@ export interface Db2QueryResult {
   rowCount: number;
   columns: Db2ColumnMeta[];
   diagnostics: string[];
+}
+
+/** One statement's outcome under `rowMode: "array"`: each row holds its values in column order. */
+export interface Db2ArrayQueryResult extends Omit<Db2QueryResult, "rows"> {
+  rows: unknown[][];
+}
+
+/** The only query option this provider passes. */
+export interface Db2ArrayRows {
+  rowMode: "array";
 }
 
 /** The connection options this provider passes, and nothing it must not pass. */
@@ -69,6 +84,7 @@ export interface Db2ClientOptions {
 export interface Db2Client {
   connect(): Promise<void>;
   query(sql: string, params?: unknown[]): Promise<Db2QueryResult>;
+  query(sql: string, params: unknown[] | undefined, options: Db2ArrayRows): Promise<Db2ArrayQueryResult>;
   close(): Promise<void>;
 }
 
@@ -99,6 +115,36 @@ export function describeDriverAbsence(error: unknown): ConnectionError | null {
   if (!unresolved || !error.message.includes(DRIVER_PACKAGE)) return null;
 
   return new ConnectionError(DRIVER_ABSENT_MESSAGE, "db2");
+}
+
+/**
+ * The `driverCode`s db2-node 1.0.25 puts on a failure it raises itself, about the statement's
+ * parameters: their number, or a value that does not fit its target (K17, fixed).
+ */
+const PARAMETER_DRIVER_CODES = new Set(["DB2_PARAMETER_COUNT", "DB2_PARAMETER_TYPE"]);
+
+/** The `driverCode`s of a failure that is the driver's own, not the statement's (K17, fixed). */
+const DRIVER_FAULT_CODES = new Set(["DB2_PROTOCOL", "DB2_INVALID_OPTION"]);
+
+/**
+ * A driver failure as the product's error, classified by the `driverCode` db2-node 1.0.25 adds
+ * to a failure no server answered (K17), and by the shared mapping otherwise.
+ *
+ * Such a failure carries no SQLSTATE, so before 1.0.25 only its words could classify it, and the
+ * shared mapping's keywords read them wrongly: a parameter refusal was a generic error, and a
+ * protocol message that happened to hold "column" or "timeout" would read as a query error or a
+ * timeout. A parameter refusal is the statement's, a `QueryError`; a protocol or option failure
+ * is the driver's, a plain `DatabaseError`; the message is passed on as the driver wrote it. A
+ * server error has no `driverCode` and keeps the shared mapping, as does a code this list does
+ * not know.
+ */
+export function mapDb2Error(error: unknown, sql?: string): DatabaseError {
+  const driverCode = error instanceof Error ? (error as Error & { driverCode?: unknown }).driverCode : undefined;
+  if (typeof driverCode === "string" && error instanceof Error) {
+    if (PARAMETER_DRIVER_CODES.has(driverCode)) return new QueryError(error.message, "db2", sql);
+    if (DRIVER_FAULT_CODES.has(driverCode)) return new DatabaseError(error.message, "db2", undefined, sql);
+  }
+  return mapDatabaseError(error, "db2", sql);
 }
 
 /**

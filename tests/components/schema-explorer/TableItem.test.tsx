@@ -355,22 +355,26 @@ describe("TableItem", () => {
     },
   );
 
-  test.each([undefined, redisCaps, libredbCaps, caps({ queryLanguage: "promql" }), kafkaCaps])(
-    "withholds count for unresolved or unsupported capabilities (%#)",
-    (capabilities) => {
-      const { queryAllByText } = render(
-        <TableItem
-          table={largeTable}
-          isExpanded={false}
-          onToggle={mock(() => {})}
-          isAdmin={false}
-          capabilities={capabilities}
-          onGenerateCount={mock(() => {})}
-        />,
-      );
-      expect(queryAllByText("Generate Count Query")).toHaveLength(0);
-    },
-  );
+  test.each([
+    undefined,
+    redisCaps,
+    libredbCaps,
+    caps({ queryLanguage: "promql" }),
+    caps({ queryLanguage: "influxql" }),
+    kafkaCaps,
+  ])("withholds count for unresolved or unsupported capabilities (%#)", (capabilities) => {
+    const { queryAllByText } = render(
+      <TableItem
+        table={largeTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin={false}
+        capabilities={capabilities}
+        onGenerateCount={mock(() => {})}
+      />,
+    );
+    expect(queryAllByText("Generate Count Query")).toHaveLength(0);
+  });
 
   test("renders raw row count for < 1000", () => {
     const { queryByText } = render(
@@ -1159,6 +1163,34 @@ describe("TableItem", () => {
       const sqlMenu = menuOf(metricObject, { ...promqlCaps, queryLanguage: "sql" });
       expect(offered(sqlMenu)).toEqual(["Profile Table", "Generate Code"]);
       expect(sqlMenu.querySelectorAll("hr")).toHaveLength(1);
+    });
+
+    test("an InfluxQL measurement is offered none of the three, and no rule is drawn for them (InfluxDB spec 6.7)", () => {
+      const measurementCaps = caps({
+        queryLanguage: "influxql",
+        objectKinds: [
+          { id: "measurement", role: "relation", label: "Measurement", labelPlural: "Measurements", hasColumns: true },
+        ],
+        supportsInlineRowEdit: false,
+        supportsMaintenance: false,
+        maintenanceOperations: [],
+      });
+      const cpu: DetailedObject = {
+        name: "cpu",
+        kind: "measurement",
+        path: ["telegraf", "cpu"],
+        columns: [],
+        indexes: [],
+      };
+      const menu = menuOf(cpu, measurementCaps);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      expect(within(menu).queryByText("Copy Name")).not.toBeNull();
+      // The control: the same measurement in SQL is offered the two actions that ask the language.
+      expect(offered(menuOf(cpu, { ...measurementCaps, queryLanguage: "sql" }))).toEqual([
+        "Profile Table",
+        "Generate Code",
+      ]);
     });
 
     test("a Kafka topic is offered none of the three, and no rule is drawn for them (#1088)", () => {

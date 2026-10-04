@@ -4,7 +4,7 @@
  * The provider reaches etcd through one narrow seam, and this file keeps the seam where it is. It parses source
  * files from disk and fails the build when an ordinary edit crosses a line spec E11 draws:
  *
- * - who imports @grpc/grpc-js (the adapter, the gate-4 evidence harness and the adapter's two transport tests),
+ * - who imports @grpc/grpc-js (the gate-4 evidence harness and the adapter's two transport tests),
  *   who imports the generated descriptor, who names its file to read it, who imports @grpc/proto-loader, and who
  *   imports the descriptor's generator, each list held exactly, so a named file that stops importing fails too;
  * - what each module of spec 3.1's pure set imports (other members, the shared types, the repository's error
@@ -51,6 +51,7 @@ import { ETCD_REFUSED_COMMANDS, parseEtcdCommand } from "@/lib/db/providers/keyv
 import { assessCommand, type CommandAssessment } from "@/lib/db/providers/keyvalue/etcd/guard";
 import { ETCD_MAINTENANCE_SPECS } from "@/lib/db/providers/keyvalue/etcd/maintenance";
 import { refuseBeforeSend, refuseReadOnly } from "@/lib/db/providers/keyvalue/etcd/write-policy";
+import { heldByAnotherGuard } from "../../../helpers/grpc-seam-holdings";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const ETCD_PATH = "src/lib/db/providers/keyvalue/etcd";
@@ -67,21 +68,6 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 
 const GRPC_JS = "@grpc/grpc-js";
 const PROTO_LOADER = "@grpc/proto-loader";
-
-/**
- * The files another provider's seam guard holds. The Milvus provider copies etcd's gRPC transport under the
- * isolation rule (vector-family spec 5.1, decision Q1a), and tests/unit/db/milvus/seam-guard.test.ts holds who among
- * these imports @grpc/grpc-js, @grpc/proto-loader, the Milvus descriptor and its generator. This guard's lists stay
- * etcd's own, and a stray anywhere else still fails here.
- */
-const HELD_BY_THE_MILVUS_GUARD: readonly RegExp[] = [
-  /^src\/lib\/db\/providers\/vector\/milvus\//,
-  /^scripts\/generate-milvus-descriptor\.mjs$/,
-  /^tests\/unit\/db\/milvus\//,
-  /^tests\/helpers\/milvus-/,
-  /^tests\/live\/milvus-/,
-];
-const heldByTheMilvusGuard = (path: string) => HELD_BY_THE_MILVUS_GUARD.some((pattern) => pattern.test(path));
 
 // -- reading files ------------------------------------------------------------------------------------------------
 
@@ -311,7 +297,7 @@ const IMPORT_RULES: readonly ImportRule[] = [
     name: "@grpc/grpc-js importers",
     what: GRPC_JS,
     verb: "imports",
-    named: [ADAPTER, HARNESS, ADAPTER_TEST, TLS_TEST],
+    named: [HARNESS, ADAPTER_TEST, TLS_TEST],
     holds: importsPackage(GRPC_JS),
   },
   {
@@ -349,7 +335,7 @@ const IMPORT_RULES: readonly ImportRule[] = [
 function importRuleFindings(rule: ImportRule, root: string, env?: NodeJS.ProcessEnv): string[] {
   const files = filesOf(root, env);
   const found = new Set(
-    files.filter((file) => !heldByTheMilvusGuard(file.path) && rule.holds(file, root)).map((file) => file.path),
+    files.filter((file) => !heldByAnotherGuard(file.path) && rule.holds(file, root)).map((file) => file.path),
   );
   const listed = new Set(files.map((file) => file.path));
   return [
@@ -930,7 +916,7 @@ describe("spec E11: who may import the client packages, the descriptor and its g
   test("the detector reads real code: each named file holds its rule, and the lists overlap as E11 says", () => {
     const files = filesOf(ROOT);
     const holding = (rule: ImportRule) =>
-      files.filter((file) => !heldByTheMilvusGuard(file.path) && rule.holds(file, ROOT)).map((file) => file.path);
+      files.filter((file) => !heldByAnotherGuard(file.path) && rule.holds(file, ROOT)).map((file) => file.path);
     expect(holding(IMPORT_RULES[0])).toEqual([...IMPORT_RULES[0].named].sort());
     expect(files.length).toBeGreaterThan(1000);
     // The evidence harness builds its definition from the generator, never from an import of the descriptor.
@@ -1090,7 +1076,7 @@ function inPlantedRepository<T>(
 /** Each import rule's named files, each holding the rule, as a planted repository starts. */
 const HOLDING: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "@grpc/grpc-js importers": Object.fromEntries(
-    [ADAPTER, HARNESS, ADAPTER_TEST, TLS_TEST].map((path) => [path, `import * as grpc from "${GRPC_JS}";\n`]),
+    [HARNESS, ADAPTER_TEST, TLS_TEST].map((path) => [path, `import * as grpc from "${GRPC_JS}";\n`]),
   ),
   "descriptor importers": {
     [DESCRIPTOR]: "export const ETCD_DESCRIPTOR = {};\n",
@@ -1258,6 +1244,24 @@ describe("planted violations: spec E11's import lists fail by name", () => {
       `@grpc/grpc-js importers: ${stray} imports @grpc/grpc-js, and spec E11 does not name it`,
     ]);
   });
+
+  test("the shared transport's files are the transport guard's", () => {
+    const findings = (name: string, planted: Readonly<Record<string, string>>) =>
+      inPlantedRepository({ ...HOLDING[name], ...planted }, (root, env) =>
+        importRuleFindings(ruleNamed(name), root, env),
+      );
+    expect(
+      findings("@grpc/grpc-js importers", {
+        "src/lib/db/grpc/channel.ts": `import * as grpc from "${GRPC_JS}";\n`,
+        "tests/unit/db/grpc/channel.test.ts": `import * as grpc from "${GRPC_JS}";\n`,
+      }),
+    ).toEqual([]);
+    expect(
+      findings("@grpc/proto-loader importers", {
+        "src/lib/db/grpc/channel.ts": `import type { PackageDefinition } from "${PROTO_LOADER}";\n`,
+      }),
+    ).toEqual([]);
+  });
 });
 
 describe("planted violations: the text rules fail by name", () => {
@@ -1359,14 +1363,15 @@ describe("planted violations: the text rules fail by name", () => {
       `RPC names: grpc-client.ts:${lines - 2} names the Lock or Election service, which spec E11 forbids`,
       `RPC names: grpc-client.ts:${lines - 1} writes a method path by hand, where the adapter takes each from the descriptor`,
     ]);
-    const streamed = plantedIn(adapter, "client.makeBidiStreamRequest(", "client.makeServerStreamRequest(");
+    const streamed = plantedIn(adapter, "channel.bidiStream(", "channel.makeServerStreamRequest(");
     expect(rpcNameFindings(streamed)).toEqual([
-      `RPC names: grpc-client.ts:${lineOf(streamed, "client.makeServerStreamRequest(")} names makeServerStreamRequest, which spec E11 forbids`,
+      `RPC names: grpc-client.ts:${lineOf(streamed, "channel.makeServerStreamRequest(")} names makeServerStreamRequest, which spec E11 forbids`,
     ]);
     // A service client answers every RPC under a lower-camel-case name too, so no client may be built from the definition.
-    const constructed = plantedIn(adapter, "  credentials,\n", "  credentials,\n  loadPackageDefinition,\n");
+    const loader = 'import { fromJSON, type MethodDefinition, type ServiceDefinition } from "@grpc/proto-loader";\n';
+    const constructed = plantedIn(adapter, loader, `${loader}import { loadPackageDefinition } from "@grpc/grpc-js";\n`);
     expect(rpcNameFindings(constructed)).toEqual([
-      `RPC names: grpc-client.ts:${lineOf(constructed, "  loadPackageDefinition,")} names loadPackageDefinition, which spec E11 forbids`,
+      `RPC names: grpc-client.ts:${lineOf(constructed, "import { loadPackageDefinition }")} names loadPackageDefinition, which spec E11 forbids`,
     ]);
   });
 

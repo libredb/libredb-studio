@@ -9,7 +9,10 @@
  * definition longer than one chunk reads whole and one over the bound reads as partial, that a
  * JS bigint of 2^63 - 1 is bound exactly while an array parameter is refused before db2-node can
  * read it as bytes, that an inline row edit and a data import write non-ASCII text and a DECIMAL
- * that read back byte for byte, and that `verify-ca` connects with a PEM held as text.
+ * that read back byte for byte, that a BOOLEAN edit bound as text is stored, that `SELECT *` over
+ * a table with LOB and XML columns answers what each column read alone answers, that a duplicated
+ * column keeps both values, that a parameter the driver refuses is a QueryError, and that
+ * `verify-ca` connects with a PEM held as text.
  *
  * Unlike the known-issue report, this one FAILS: every check prints PASS or FAIL with the
  * verbatim error, and the process exits non-zero when any check failed.
@@ -21,7 +24,9 @@
  * DB2_PASSWORD default to the compose service, which loads `docker/db2-init/`. The TLS check
  * runs only when DB2_CA_FILE names the server's CA certificate (PEM); it connects with
  * `verify-ca` to DB2_TLS_HOST (172.17.0.2) on DB2_TLS_PORT (50001), and prints SKIP otherwise,
- * because the compose service has no TLS listener. It is NOT in `bun run test`: the runner
+ * because the compose service has no TLS listener. The password check runs only when
+ * DB2_K23_USER and DB2_K23_PASSWORD name a user whose password holds ! ^ [ ] and |, and
+ * prints SKIP otherwise. It is NOT in `bun run test`: the runner
  * excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  */
 import { randomBytes } from "node:crypto";
@@ -257,15 +262,53 @@ async function main(): Promise<void> {
     expect(result.rowCount === 0, `rowCount ${result.rowCount}`);
   });
 
+  await check("SELECT * over APP.ALLTYPES answers what each column read alone answers (K4)", async () => {
+    const all = await provider.query("SELECT * FROM APP.ALLTYPES ORDER BY ID");
+    expect(all.rows.length === 3, `${all.rows.length} rows`);
+    expect(all.fields.length === 25, `${all.fields.length} columns: ${all.fields.join(", ")}`);
+    const text = (value: unknown) =>
+      value instanceof Uint8Array ? Buffer.from(value).toString("hex") : JSON.stringify(value);
+    for (const field of all.fields) {
+      const alone = await provider.query(`SELECT "${field}" FROM APP.ALLTYPES ORDER BY ID`);
+      alone.rows.forEach((row, index) => {
+        const mixed = all.rows[index]?.[field];
+        expect(
+          text(row[field]) === text(mixed),
+          `${field} row ${index + 1}: ${text(mixed)} beside, ${text(row[field])} alone`,
+        );
+      });
+    }
+    expect(
+      all.warnings?.some((warning) => warning.message.includes("(K24)")) === true,
+      `no K24 warning: ${JSON.stringify(all.warnings)}`,
+    );
+  });
+
+  await check("a duplicated column name keeps both values (K15)", async () => {
+    const result = await provider.query("SELECT 1 AS A, 2 AS A FROM SYSIBM.SYSDUMMY1");
+    expect(JSON.stringify(result.fields) === '["A","A (2)"]', `fields ${JSON.stringify(result.fields)}`);
+    expect(JSON.stringify(result.rows) === '[{"A":1,"A (2)":2}]', `rows ${JSON.stringify(result.rows)}`);
+  });
+
+  await check("a parameter the driver refuses is a QueryError, classified by its driverCode (K17)", async () => {
+    let refused: unknown;
+    try {
+      await provider.query("VALUES CAST(? AS INTEGER)", [1, 2]);
+    } catch (error) {
+      refused = error;
+    }
+    expect(refused instanceof QueryError, `got ${refused === undefined ? "a result" : errorText(refused)}`);
+  });
+
   // The inline editor's own statement shape (`src/hooks/use-inline-editing.ts`): every value
   // bound as text, the key bound as a number, one UPDATE per row.
   const text = "Grüße, 世界 𝄞 çğış";
   const hexOf = (value: string) => Buffer.from(value, "utf8").toString("hex").toUpperCase();
   await check("setup: a scratch table for the write round trip", async () => {
     await provider.query(
-      `CREATE TABLE ${SCRATCH}.EDITS (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(100), AMT DECIMAL(7,2))`,
+      `CREATE TABLE ${SCRATCH}.EDITS (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(100), AMT DECIMAL(7,2), FLAG BOOLEAN)`,
     );
-    await provider.query(`INSERT INTO ${SCRATCH}.EDITS VALUES (1, 'a', 1.00)`);
+    await provider.query(`INSERT INTO ${SCRATCH}.EDITS VALUES (1, 'a', 1.00, TRUE)`);
   });
 
   await check("an inline edit writes non-ASCII text and a DECIMAL that read back byte for byte", async () => {
@@ -279,6 +322,18 @@ async function main(): Promise<void> {
     expect(row?.H === hexOf(text), `HEX ${String(row?.H)} for ${hexOf(text)}`);
     expect(row?.A === "12345.67", `AMT ${String(row?.A)}`);
     expect(row?.NAME === text, `NAME read back as ${String(row?.NAME)}`);
+  });
+
+  await check("an inline edit of a BOOLEAN, bound as the text the grid sends, is stored (K16)", async () => {
+    for (const [word, expected] of [
+      ["false", false],
+      ["true", true],
+    ] as const) {
+      const update = await provider.query(`UPDATE "${SCRATCH}"."EDITS" SET "FLAG" = ? WHERE "ID" = ?`, [word, 1]);
+      expect(update.rowCount === 1, `rowCount ${update.rowCount}`);
+      const [row] = (await provider.query(`SELECT FLAG FROM ${SCRATCH}.EDITS WHERE ID = 1`)).rows;
+      expect(row?.FLAG === expected, `FLAG ${String(row?.FLAG)} after "${word}"`);
+    }
   });
 
   await check("a DECIMAL that does not fit its column is refused and the stored value is kept", async () => {
@@ -339,6 +394,28 @@ async function main(): Promise<void> {
         expect(result.rows.length === 1, `VALUES 1 gave ${JSON.stringify(result.rows)}`);
       } finally {
         await tls.disconnect();
+      }
+    });
+  }
+
+  const k23User = process.env.DB2_K23_USER;
+  const k23Password = process.env.DB2_K23_PASSWORD;
+  if (k23User === undefined || k23Password === undefined) {
+    console.log("SKIP a password holding ! ^ [ ] and | connects: DB2_K23_USER is not set");
+  } else {
+    await check("a password holding ! ^ [ ] and | connects (K23)", async () => {
+      const held = ["!", "^", "[", "]", "|"].filter((character) => k23Password.includes(character));
+      expect(held.length === 5, `DB2_K23_PASSWORD holds only ${held.join(" ")}`);
+      const punctuated = new Db2Provider({ ...CONNECTION, id: "live-db2-k23", user: k23User, password: k23Password });
+      await punctuated.connect();
+      try {
+        const [row] = (await punctuated.query("VALUES CURRENT USER")).rows;
+        expect(
+          String(Object.values(row ?? {})[0]).trim() === k23User.toUpperCase(),
+          `CURRENT USER ${JSON.stringify(row)}`,
+        );
+      } finally {
+        await punctuated.disconnect();
       }
     });
   }

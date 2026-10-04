@@ -90,6 +90,22 @@ describe("TestDataGenerator", () => {
     expect(container.textContent).toBe("");
   });
 
+  test("closed with no object chosen, as StudioModals mounts it, it renders nothing on an InfluxQL connection", () => {
+    // The InfluxQL quoting of the empty path threw during this render and took the whole Studio down
+    // for every influxdb connection, in the standalone app and in the embedded StudioWorkspace.
+    const { container } = render(
+      <TestDataGenerator
+        isOpen={false}
+        onClose={mock(() => {})}
+        tablePath={[]}
+        tableSchema={null}
+        capabilities={capsOf({ queryLanguage: "influxql" })}
+        onExecuteQuery={mock(() => {})}
+      />,
+    );
+    expect(container.textContent).toBe("");
+  });
+
   test("renders header, row controls, and SQL preview", () => {
     const { queryByText, container } = render(
       <TestDataGenerator

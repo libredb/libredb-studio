@@ -13,7 +13,9 @@ export type EditorLanguage =
   | "etcd"
   | "graph-cypher"
   | "milvus"
-  | "qdrant";
+  | "qdrant"
+  | "influxql"
+  | "oxia";
 
 /**
  * The tab type a connection's tabs take.
@@ -40,6 +42,11 @@ export type EditorLanguage =
  * and is not JSON, so without the rung a Neo4j tab would be typed `sql`. It renders in the
  * `graph-cypher` language `cypher-language.ts` registers over the graph layer's own lexer; the id is not
  * `cypher`, which Monaco's own bundle registers.
+ *
+ * `"influxql"` (InfluxDB spec 6.7) has a rung of its own for PromQL's reason: InfluxQL declares no dialect
+ * and is not JSON, so without the rung an InfluxDB (InfluxQL) tab would be typed `sql`, and its `/.../`
+ * regexes and backslash escapes highlighted and completed as SQL. It renders in the `influxql` language
+ * `influxql-language.ts` registers over the provider's own lexer.
  */
 export function resolveTabType(capabilities?: ProviderCapabilities | null): QueryTab["type"] {
   const dialect = dialectSpec(capabilities ?? undefined);
@@ -47,6 +54,7 @@ export function resolveTabType(capabilities?: ProviderCapabilities | null): Quer
   if (capabilities?.queryLanguage === "json") return "mongodb";
   if (capabilities?.queryLanguage === "promql") return "promql";
   if (capabilities?.queryLanguage === "cypher") return "cypher";
+  if (capabilities?.queryLanguage === "influxql") return "influxql";
   return "sql";
 }
 

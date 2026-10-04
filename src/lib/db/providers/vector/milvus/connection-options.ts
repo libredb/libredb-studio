@@ -12,11 +12,11 @@
  * text before the first colon as a resolver name, so a host named `unix` would otherwise dial a Unix socket. The TLS
  * identity is the tunnel's far end when a tunnel carries the connection, else the host, always set as
  * `grpc.ssl_target_name_override`; an IP identity is overridden with MILVUS_IP_SERVER_NAME, because Node 25 and later
- * and Bun refuse an IP as a TLS server name, and the adapter verifies the certificate against the IP itself (E6).
+ * and Bun refuse an IP as a TLS server name, and `grpcChannelCredentials` (src/lib/db/grpc/credentials.ts) verifies the
+ * certificate against the IP itself (E6).
  *
- * The endpoint, TLS and credential rules are the etcd provider's (src/lib/db/providers/keyvalue/etcd/connection-options.ts),
- * written again under the isolation rule (decision Q1a); the credential rules are Milvus's own: a password alone is a
- * token, and a user and a password are a pair (5.2).
+ * The endpoint host rule and the TLS panel are the shared gRPC transport's (src/lib/db/grpc/tls.ts); the credential
+ * rules are Milvus's own: a password alone is a token, and a user and a password are a pair (5.2).
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern, and this file reads `config.user`, `config.password` and
@@ -24,20 +24,25 @@
  */
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { plaintextSecretRefusal, validateHost, validatePort } from "@/lib/db/http/endpoint";
+import {
+  type GrpcConfigWords,
+  type GrpcTlsOptions,
+  grpcEndpointHost,
+  grpcTarget,
+  grpcTlsIdentity,
+  readGrpcTlsPanel,
+} from "@/lib/db/grpc/tls";
+import { plaintextSecretRefusal, validatePort } from "@/lib/db/http/endpoint";
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
   type DatabaseConnection,
   type DatabaseType,
   type SSHTunnelConfig,
-  type SSLConfig,
-  type SSLMode,
   TUNNEL_FAR_END,
   type TunnelFarEnd,
   type WithTunnelFarEnd,
 } from "@/lib/types";
-import { createPrivateKey, type KeyObject, X509Certificate } from "node:crypto";
-import { isIP, isIPv6 } from "node:net";
+import type { X509Certificate } from "node:crypto";
 import type { MilvusErrorConnection } from "./errors";
 
 export type MilvusAuth =
@@ -49,23 +54,12 @@ export type MilvusAuth =
 /** Where a read-only mode was set; part C's write-policy.ts words its refusal by it. */
 export type MilvusReadOnlySource = "connection" | "seed" | "execution-profile";
 
-export interface MilvusTlsOptions {
-  readonly mode: "require" | "verify-system" | "verify-ca" | "verify-full";
-  readonly ca?: string;
-  readonly clientCertificate?: { readonly cert: string; readonly key: string };
-  /** False only for `require`, or an explicit `rejectUnauthorized: false`. */
-  readonly verify: boolean;
-  readonly identity: string;
-  readonly identityIsIp: boolean;
-  readonly serverNameOverride: string;
-}
-
 export interface MilvusConnectionOptions {
   /** `dns:<host>:<port>` from the validated parts; the local forward under a tunnel. */
   readonly target: string;
   /** The endpoint as configured (the far end under a tunnel), bare host; what sentences name. */
   readonly endpoint: { readonly host: string; readonly port: number };
-  readonly tls?: MilvusTlsOptions;
+  readonly tls?: GrpcTlsOptions;
   readonly auth: MilvusAuth;
   /** Sent on every call as `db_name` (5.2, E16). */
   readonly database: string;
@@ -89,15 +83,8 @@ export const MILVUS_RECEIVE_CAP_BYTES = 16 * 1024 * 1024;
 
 const PROVIDER: DatabaseType = "milvus";
 
-const TLS_MODES: Readonly<
-  Record<SSLMode, { readonly mode: MilvusTlsOptions["mode"]; readonly verify: boolean } | null>
-> = Object.freeze({
-  disable: null,
-  require: { mode: "require", verify: false },
-  "verify-system": { mode: "verify-system", verify: true },
-  "verify-ca": { mode: "verify-ca", verify: true },
-  "verify-full": { mode: "verify-full", verify: true },
-});
+/** What the shared TLS panel reader words its refusals with: Milvus's name, its own errors and E6's client-certificate preflight. */
+const WORDS: GrpcConfigWords = { engine: "Milvus", refuse: configError, wrongType, clientCertificateRefusal };
 
 const FORBIDDEN_IN_CREDENTIAL = /[\r\n\0]/;
 /** Milvus's user name rule: at most 32 characters, a letter first (R04 F23, `internal/proxy/util.go` near 1256-1296). */
@@ -106,36 +93,15 @@ const MILVUS_USER_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,31}$/;
 const MILVUS_DATABASE_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,254}$/;
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-const HOST_TAKES_NAME_ONLY = "Host takes a name or address only; put the port in Port and choose TLS under SSL / TLS.";
 const USER_NAME_RULE =
   "The Milvus user name must start with a letter, hold only letters, digits, _, . and -, and be at most 32 characters.";
 const DATABASE_NAME_RULE =
   "The Milvus database name must start with a letter or _, hold only letters, digits and _, and be at most 255 characters.";
-const CLIENT_PAIR =
-  "The Client Certificate and the Client Private Key under SSL / TLS go together: add the missing one, or clear both.";
-const PEM_BEGIN_INSIDE_A_LINE = /[^\n]-----BEGIN/;
-const PEM_TRUSTED_CERTIFICATE = /-----BEGIN TRUSTED CERTIFICATE-----/;
-const PEM_CERTIFICATE_BLOCK = /-----BEGIN (?:X509 )?CERTIFICATE-----[\s\S]*?(?:\n-----END [^\n]*|$)/g;
-const ENCRYPTED_PEM_KEY = /-----BEGIN ENCRYPTED PRIVATE KEY-----|^Proc-Type: 4,ENCRYPTED/m;
 /** The extended key usage OIDs a client certificate may carry: clientAuth, or any usage. */
 const CLIENT_AUTH = "1.3.6.1.5.5.7.3.2";
 const ANY_EXTENDED_KEY_USAGE = "2.5.29.37.0";
-const CA_NOT_PEM =
-  "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued Milvus's server certificate there.";
-const CA_BEGIN_INSIDE_A_LINE =
-  "The CA Certificate under SSL / TLS has a -----BEGIN marker that does not start its line: put each -----BEGIN marker at the start of a line there, with nothing before it, not even a space or a byte order mark.";
-const CA_TRUSTED_FORM =
-  "The CA Certificate under SSL / TLS holds a TRUSTED CERTIFICATE block, OpenSSL's form with trust settings, which not every runtime reads: paste the certificate in its plain PEM form there, as openssl x509 -in <file> prints it.";
-const CLIENT_CERTIFICATE_NOT_PEM =
-  "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.";
 const NOT_FOR_CLIENT_AUTH =
   "The client certificate is not issued for client authentication: its extended key usage lacks clientAuth, so Milvus would refuse it. Paste a certificate issued for client use under SSL / TLS.";
-const CLIENT_KEY_NOT_PEM =
-  "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.";
-const CLIENT_KEY_ENCRYPTED =
-  "The Client Private Key under SSL / TLS is encrypted, and SSL / TLS has no passphrase field: paste the key unencrypted there.";
-const CLIENT_KEY_MISMATCH =
-  "The Client Private Key under SSL / TLS is not the key of the Client Certificate: paste the private key issued with that certificate there.";
 const TUNNEL_NOT_OPENED =
   "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Milvus was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const SEED_REFUSED =
@@ -149,14 +115,15 @@ export function buildMilvusConnectionOptions(
   context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
 ): MilvusConnectionOptions {
   const farEnd = tunnelFarEnd(config);
-  const targetHost = endpointHost(config.host);
+  const targetHost = grpcEndpointHost(config.host, WORDS);
   const targetPort = shared(() => validatePort(config.port ?? MILVUS_DEFAULT_PORT));
   const endpoint =
     farEnd === undefined
-      ? { host: unbracketed(targetHost), port: targetPort }
-      : { host: unbracketed(endpointHost(farEnd.host)), port: shared(() => validatePort(farEnd.port)) };
+      ? { host: targetHost, port: targetPort }
+      : { host: grpcEndpointHost(farEnd.host, WORDS), port: shared(() => validatePort(farEnd.port)) };
   const credential = credentials(config);
-  const tls = tlsOptions(config, endpoint.host);
+  const material = readGrpcTlsPanel(config.ssl, WORDS);
+  const tls = material === undefined ? undefined : grpcTlsIdentity(material, endpoint.host, MILVUS_IP_SERVER_NAME);
   const plaintext = plaintextSecretRefusal({
     host: endpoint.host,
     tunnelled: farEnd !== undefined,
@@ -167,7 +134,7 @@ export function buildMilvusConnectionOptions(
   const readOnly = readOnlySource(config, context.executionReadOnly);
   if (readOnly === "seed") seedStage(credential.raw);
   return {
-    target: `dns:${targetHost}:${targetPort}`,
+    target: grpcTarget(targetHost, targetPort),
     endpoint,
     ...(tls === undefined ? {} : { tls }),
     auth: credential.auth,
@@ -203,18 +170,6 @@ function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarE
   return farEnd;
 }
 
-/** A validated host; one carrying a colon that is not an IPv6 literal's is a pasted URL or `host:port` (E1). */
-function endpointHost(host: unknown): string {
-  if (typeof host === "string" && host.includes(":") && !isIPv6(unbracketed(host))) {
-    throw configError(HOST_TAKES_NAME_ONLY);
-  }
-  return shared(() => validateHost(host));
-}
-
-function unbracketed(host: string): string {
-  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-}
-
 /** The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as Milvus's. */
 function shared<T>(validate: () => T): T {
   try {
@@ -222,35 +177,6 @@ function shared<T>(validate: () => T): T {
   } catch (error) {
     throw configError((error as Error).message);
   }
-}
-
-function tlsOptions(config: DatabaseConnection, identity: string): MilvusTlsOptions | undefined {
-  const panel = optionalObject<keyof SSLConfig>(config.ssl, "ssl");
-  if (panel === undefined) return undefined;
-  const mode = panel.mode ?? "verify-full";
-  if (typeof mode !== "string" || !Object.hasOwn(TLS_MODES, mode)) {
-    throw wrongType("ssl.mode", "disable, require, verify-system, verify-ca or verify-full");
-  }
-  const ca = optionalText(panel.caCert, "ssl.caCert");
-  const cert = optionalText(panel.clientCert, "ssl.clientCert");
-  const key = optionalText(panel.clientKey, "ssl.clientKey");
-  const rejectUnauthorized = optionalBoolean(panel.rejectUnauthorized, "ssl.rejectUnauthorized");
-  const row = TLS_MODES[mode as SSLMode];
-  if (row === null) return undefined;
-  if ((cert === undefined) !== (key === undefined)) throw configError(CLIENT_PAIR);
-  // In every TLS mode, since grpc-js reads all three whatever it verifies (E6).
-  if (ca !== undefined) checkCa(ca);
-  if (cert !== undefined && key !== undefined) checkClientPair(cert, key);
-  const identityIsIp = isIP(identity) !== 0;
-  return {
-    mode: row.mode,
-    ...(ca === undefined ? {} : { ca }),
-    ...(cert === undefined || key === undefined ? {} : { clientCertificate: { cert, key } }),
-    verify: rejectUnauthorized ?? row.verify,
-    identity,
-    identityIsIp,
-    serverNameOverride: identityIsIp ? MILVUS_IP_SERVER_NAME : identity,
-  };
 }
 
 interface Credential {
@@ -355,26 +281,6 @@ function configError(message: string): DatabaseConfigError {
   return new DatabaseConfigError(message, PROVIDER);
 }
 
-/** A CA read as both runtimes' PEM readers read it (the etcd provider's rule, copied under the isolation rule). */
-function checkCa(pem: string): void {
-  if (PEM_BEGIN_INSIDE_A_LINE.test(pem)) throw configError(CA_BEGIN_INSIDE_A_LINE);
-  if (PEM_TRUSTED_CERTIFICATE.test(pem)) throw configError(CA_TRUSTED_FORM);
-  const blocks = pem.match(PEM_CERTIFICATE_BLOCK) ?? [];
-  if (blocks.length === 0) throw configError(CA_NOT_PEM);
-  for (const block of blocks) certificate(block, CA_NOT_PEM);
-}
-
-/**
- * E6's local preflight: the usage and the expiry R42 M12 measured X509Certificate naming on all three runtimes, then
- * that the key is the certificate's own, so a refusal names the cause where a handshake under Bun names none.
- */
-function checkClientPair(cert: string, key: string): void {
-  const x509 = certificate(cert, CLIENT_CERTIFICATE_NOT_PEM);
-  const refusal = clientCertificateRefusal(x509, Date.now());
-  if (refusal !== undefined) throw configError(refusal);
-  if (!x509.checkPrivateKey(privateKey(key))) throw configError(CLIENT_KEY_MISMATCH);
-}
-
 /**
  * Why Milvus would refuse this client certificate, or undefined: an extended key usage that exists and lacks
  * clientAuth, or a validity that has ended. A certificate with no extended key usage extension is accepted, as the
@@ -389,21 +295,4 @@ export function clientCertificateRefusal(x509: X509Certificate, now: number): st
     return `The client certificate expired on ${x509.validTo}, so Milvus would refuse it: paste a current one under SSL / TLS.`;
   }
   return undefined;
-}
-
-function certificate(pem: string, refusal: string): X509Certificate {
-  try {
-    return new X509Certificate(pem);
-  } catch {
-    throw configError(refusal);
-  }
-}
-
-function privateKey(pem: string): KeyObject {
-  try {
-    return createPrivateKey(pem);
-  } catch {
-    // The runtimes disagree on the code, so the PEM decides.
-    throw configError(ENCRYPTED_PEM_KEY.test(pem) ? CLIENT_KEY_ENCRYPTED : CLIENT_KEY_NOT_PEM);
-  }
 }

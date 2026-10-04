@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   connectionFieldHint,
   connectionFieldLabel,
+  connectionFieldPlaceholder,
   DB_UI_CONFIG,
   getDBConfig,
   getDBIcon,
@@ -18,8 +19,10 @@ import {
 } from "@/lib/db-ui-config";
 import { SHOWCASE_DATABASE_ORDER, SHOWCASE_RANK, listShowcaseDatabases } from "@/lib/db-showcase";
 import type { DatabaseType } from "@/lib/types";
+import { InfluxDBIcon } from "@/components/icons/db-icons";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { declareHostUri } from "../../helpers/synthetic-host-uri";
+import { providerDirectoryFiles } from "../../helpers/provider-directory-map";
 import {
   declareCredentialWarnings,
   SYNTHETIC_NO_SECRET,
@@ -53,6 +56,9 @@ const ALL_TYPES: DatabaseType[] = [
   "neo4j",
   "milvus",
   "qdrant",
+  "influxdb",
+  "influxdb3",
+  "oxia",
 ];
 
 describe("db-ui-config", () => {
@@ -343,6 +349,8 @@ describe("db-ui-config", () => {
       expect(isFileBased("prometheus")).toBe(false);
       // Not file-based, so the dialog keeps its TLS panel: only the SSH half is withheld.
       expect(isFileBased("kafka")).toBe(false);
+      expect(isFileBased("influxdb")).toBe(false);
+      expect(isFileBased("influxdb3")).toBe(false);
     });
   });
 
@@ -390,11 +398,14 @@ describe("db-ui-config", () => {
 
     const providerSource = (type: DatabaseType): string => {
       const base = path.join(ROOT, "src/lib/db/providers", moduleForType(type));
+      // A directory that serves two type-ids declares which of its files each one reads
+      // (tests/helpers/provider-directory-map.ts); any other directory is read whole.
       const files = existsSync(`${base}.ts`)
         ? [`${base}.ts`]
-        : readdirSync(base, { recursive: true, encoding: "utf8" })
+        : (providerDirectoryFiles(base, type) ??
+          readdirSync(base, { recursive: true, encoding: "utf8" })
             .map((entry) => path.join(base, entry))
-            .filter((entry) => entry.endsWith(".ts"));
+            .filter((entry) => entry.endsWith(".ts")));
       // A provider on the shared graph layer reads the connection in the base class it extends
       // (`src/lib/db/graph/graph-base-provider.ts`), outside its own directory, so every graph-layer
       // module the provider imports is read with it; without this, Neo4j would be seen reading nothing.
@@ -414,10 +425,13 @@ describe("db-ui-config", () => {
     /**
      * A field a provider reads only to refuse it, which the dialog therefore must not offer: Qdrant has no user
      * name, and its provider refuses a non-empty `config.user` naming the field before any socket (vector-family
-     * spec 4.4), pinned in tests/unit/db/qdrant/credential-record.test.ts. Listed by name, so the read stays visible.
+     * spec 4.4), pinned in tests/unit/db/qdrant/credential-record.test.ts. InfluxDB 3 has no user name either: its
+     * token is the password, and the connection layer it shares with the InfluxQL type refuses a user on it (InfluxDB
+     * spec A.3). Oxia has no user name either, and its provider refuses a non-empty `config.user` with "Oxia has no
+     * user name: clear User. A bearer token goes under Token." (SB1-4.3) Listed by name, so the read stays visible.
      */
     const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
-      user: ["qdrant"],
+      user: ["qdrant", "influxdb3", "oxia"],
       database: [],
     };
 
@@ -496,7 +510,7 @@ describe("db-ui-config", () => {
     });
   });
 
-  test("db2 declares its label, DRDA port and fields, and no password hint (#786)", () => {
+  test("db2 declares its label, DRDA port and fields, the consent box's hint and no password hint (#786)", () => {
     const db2 = getDBConfig("db2");
     expect(db2).toMatchObject({
       label: "Db2 LUW",
@@ -511,9 +525,12 @@ describe("db-ui-config", () => {
     expect(takesConnectionField("db2", "allowInsecureAuth")).toBe(true);
     expect(takesConnectionField("postgres", "allowInsecureAuth")).toBe(false);
     // No password hint: a declared hint is drawn whatever SSL Mode says, so a cleartext warning there
-    // stood under a verify-ca connection on the TLS port too. The warning lives in the consent box
-    // above, which is drawn only while SSL Mode is disable.
-    expect(db2.fieldHints).toBeUndefined();
+    // stood under a verify-ca connection on the TLS port too (#1303). The warning is the consent box's,
+    // drawn only while SSL Mode is disable, with the sentence each type declares (InfluxDB spec R4).
+    expect(db2.fieldHints).toEqual({
+      allowInsecureAuth:
+        "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    });
     expect(db2.fieldLabels).toBeUndefined();
   });
 
@@ -584,6 +601,7 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   apiKeySecret: true,
   saslMechanism: true,
   allowInsecureAuth: true,
+  dataServers: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 
@@ -642,6 +660,44 @@ describe("declared connection-field copy (#1085)", () => {
     expect(qdrant.credentialWarnings).toBe(CREDENTIAL_WARNINGS.qdrant);
   });
 
+  test("oxia declares its label, port, fields, labels, the five hints and the read-only hint (SB3-1.5)", () => {
+    const oxia = getDBConfig("oxia");
+    expect(oxia.label).toBe("Oxia");
+    expect(oxia.color).toBe("text-hue-orange-alt");
+    expect(oxia.defaultPort).toBe("6648");
+    expect(oxia.showConnectionStringToggle).toBe(false);
+    expect(oxia.connectionFields).toEqual(["host", "port", "password", "database", "dataServers", "allowInsecureAuth"]);
+    expect(oxia.fieldLabels).toEqual({ password: "Token", database: "Namespace", dataServers: "Data servers" });
+    expect(oxia.fieldHints).toEqual({
+      host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration.",
+      dataServers:
+        "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
+      allowInsecureAuth:
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    });
+    expect(oxia.readOnlyHint).toBe(
+      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
+    );
+    // The Namespace box shows the namespace an empty one means, not the dialog's "db" (ruling R34).
+    expect(oxia.fieldPlaceholders).toEqual({ database: "default" });
+    expect(connectionFieldPlaceholder(oxia, "database", "db")).toBe("default");
+    expect(connectionFieldPlaceholder(oxia, "host", "localhost")).toBe("localhost");
+    expect(connectionFieldPlaceholder(getDBConfig("postgres"), "database", "db")).toBe("db");
+    expect(readOnlyHint(oxia)).toBe(oxia.readOnlyHint ?? "");
+    // No User box, no Host address, no option list and the default SSH tunnel (SB3-1.5).
+    expect(takesConnectionField("oxia", "user")).toBe(false);
+    expect(oxia.hostAcceptsUri).toBeUndefined();
+    expect(oxia.fieldOptions).toBeUndefined();
+    expect(oxia.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("oxia")).toBe(true);
+    expect(hostUriSchemes("oxia")).toEqual([]);
+    expect(oxia.credentialWarnings).toBe(CREDENTIAL_WARNINGS.oxia);
+  });
+
   test("milvus declares its port, the Database box, Password or token, the field hints and the Host box addresses (vector-family spec 5.2)", () => {
     const milvus = getDBConfig("milvus");
     expect(milvus).toMatchObject({
@@ -666,11 +722,95 @@ describe("declared connection-field copy (#1085)", () => {
     expect(milvus.credentialWarnings).toBe(CREDENTIAL_WARNINGS.milvus);
   });
 
-  test("only prometheus, kafka, etcd, neo4j, milvus and qdrant declare field copy, so every other engine draws every label and hint it drew before", () => {
+  /** The sentences both InfluxDB types share (InfluxDB spec A.3). */
+  const INFLUX_HOST_HINT =
+    "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.";
+  const INFLUX_CONSENT_HINT =
+    "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.";
+  const INFLUX_READ_ONLY_HINT =
+    "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.";
+
+  test("influxdb declares its label, port, fields, Password or token, the hints, the consent hint and the Host box addresses (InfluxDB spec A.3)", () => {
+    const influxdb = getDBConfig("influxdb");
+    expect(influxdb).toMatchObject({
+      label: "InfluxDB (InfluxQL)",
+      color: "text-hue-purple-alt",
+      defaultPort: "8086",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    });
+    expect(influxdb.icon).toBe(InfluxDBIcon);
+    // The SSL panel and the SSH tunnel are both offered.
+    expect(influxdb.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("influxdb")).toBe(true);
+    expect(influxdb.fieldLabels).toEqual({ password: "Password or token" });
+    expect(influxdb.fieldHints).toEqual({
+      host: INFLUX_HOST_HINT,
+      password: "1.x: the user's password. 2.x and InfluxDB 3: an API token, with User empty.",
+      database:
+        'A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as "db".."measurement".',
+      allowInsecureAuth: INFLUX_CONSENT_HINT,
+    });
+    expect(readOnlyHint(influxdb)).toBe(INFLUX_READ_ONLY_HINT);
+    expect(hostUriSchemes("influxdb")).toEqual(["http", "https"]);
+    expect(influxdb.credentialWarnings).toBe(CREDENTIAL_WARNINGS.influxdb);
+  });
+
+  test("influxdb3 declares its label, port, no User field, Token, the hints, the consent hint and the Host box addresses (InfluxDB spec A.3)", () => {
+    const influxdb3 = getDBConfig("influxdb3");
+    expect(influxdb3).toMatchObject({
+      label: "InfluxDB 3 (SQL)",
+      color: "text-hue-violet-alt",
+      defaultPort: "8181",
+      showConnectionStringToggle: false,
+      connectionFields: ["host", "port", "password", "database", "allowInsecureAuth"],
+    });
+    // The same generic mark as the InfluxQL type: one product, two query languages.
+    expect(influxdb3.icon).toBe(InfluxDBIcon);
+    expect(influxdb3.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("influxdb3")).toBe(true);
+    expect(takesConnectionField("influxdb3", "user")).toBe(false);
+    expect(influxdb3.fieldLabels).toEqual({ password: "Token" });
+    expect(influxdb3.fieldHints).toEqual({
+      host: INFLUX_HOST_HINT,
+      password:
+        "Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token.",
+      database:
+        "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here.",
+      allowInsecureAuth: INFLUX_CONSENT_HINT,
+    });
+    expect(readOnlyHint(influxdb3)).toBe(INFLUX_READ_ONLY_HINT);
+    expect(hostUriSchemes("influxdb3")).toEqual(["http", "https"]);
+    expect(influxdb3.credentialWarnings).toBe(CREDENTIAL_WARNINGS.influxdb3);
+  });
+
+  test("every type that takes allowInsecureAuth declares its hint", () => {
+    // The consent box draws the type's own sentence, with no fallback, so a type that takes the field and declares no
+    // hint would draw an empty paragraph under the box (InfluxDB spec R4).
+    const taking = ALL_TYPES.filter((type) => takesConnectionField(type, "allowInsecureAuth"));
+    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia"]);
+    for (const type of taking) {
+      const hint = connectionFieldHint(getDBConfig(type), "allowInsecureAuth");
+      expect({ type, hint: typeof hint, empty: hint?.length === 0 }).toEqual({ type, hint: "string", empty: false });
+    }
+  });
+
+  test("only db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types and oxia declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["prometheus", "kafka", "etcd", "neo4j", "milvus", "qdrant"]);
+    expect(declared).toEqual([
+      "db2",
+      "prometheus",
+      "kafka",
+      "etcd",
+      "neo4j",
+      "milvus",
+      "qdrant",
+      "influxdb",
+      "influxdb3",
+      "oxia",
+    ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
@@ -759,7 +899,11 @@ describe("db-showcase", () => {
         // Behind Trino and ahead of libSQL (#1085): a name every cloud-native evaluator knows,
         // met as the metrics store beside their databases rather than as one of them.
         "prometheus",
-        // Behind Prometheus and ahead of libSQL (#1088), for the same reason: the message log
+        // Directly after Prometheus (InfluxDB spec R28): the two time-series stores read together, one InfluxDB
+        // connection type per query language.
+        "influxdb",
+        "influxdb3",
+        // Behind the time-series stores and ahead of libSQL (#1088), for the same reason: the message log
         // those teams run beside their databases, met beside them rather than as one of them.
         "kafka",
         // Behind Kafka and ahead of libSQL (#1089), for the reason the two before it sit where they do: the store
@@ -770,6 +914,9 @@ describe("db-showcase", () => {
         // the one of the two an evaluator is more likely to have met.
         "milvus",
         "qdrant",
+        // Behind Qdrant and ahead of libSQL (SB3-1.2 R19): the store an Apache Pulsar cluster keeps its metadata
+        // in, met beside the databases rather than as one of them.
+        "oxia",
         "libsql",
         "libredb",
       ]);
@@ -796,8 +943,13 @@ describe("db-showcase", () => {
 });
 
 describe("Host box addresses and credential warnings", () => {
-  test("only milvus and qdrant declare hostAcceptsUri, so every other Host box takes a host alone", () => {
-    expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual(["milvus", "qdrant"]);
+  test("only milvus, qdrant and the two InfluxDB types declare hostAcceptsUri, so every other Host box takes a host alone", () => {
+    expect(ALL_TYPES.filter((type) => hostUriSchemes(type).length > 0)).toEqual([
+      "milvus",
+      "qdrant",
+      "influxdb",
+      "influxdb3",
+    ]);
   });
 
   test("hostUriSchemes reads an entry's declaration, and only that entry's", () => {

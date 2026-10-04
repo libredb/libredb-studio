@@ -19,7 +19,7 @@ Three decisions. The first is the consequential one, which is why it is first.
 
 1. **Does it need a driver at all?** Score the engine against the rubric below. A database with a
    first-class HTTP API can be supported with no dependency at all, and that is worth real effort to
-   establish before you start. Nine shipped type-ids need no driver: SQLite uses the built-in
+   establish before you start. Twelve shipped type-ids need no driver: SQLite uses the built-in
    `bun:sqlite`/`node:sqlite` via `sqlite-driver.ts`, and the rest reach the engine over HTTP with
    nothing but `fetch`/`node:https`. Couchbase goes over the documented REST endpoints
    ([couchbase.md](./providers/couchbase.md)), ClickHouse over its HTTP interface
@@ -27,10 +27,12 @@ Three decisions. The first is the consequential one, which is why it is first.
    ([druid.md](./providers/druid.md)), Elasticsearch and OpenSearch over their SQL endpoints
    ([elasticsearch.md](./providers/elasticsearch.md) · [opensearch.md](./providers/opensearch.md)),
    Trino over its own client protocol ([trino.md](./providers/trino.md)), libSQL over the
-   Hrana protocol, `POST /v2/pipeline` ([libsql.md](./providers/libsql.md)), and Prometheus over its
-   HTTP API, `/api/v1/*` ([prometheus.md](./providers/prometheus.md)). If it does need one, it
-   will be something like `pg`,
-   `mysql2`, `mongodb`, `ioredis`, `oracledb`, `mssql` or `db2-node`.
+   Hrana protocol, `POST /v2/pipeline` ([libsql.md](./providers/libsql.md)), Prometheus over its
+   HTTP API, `/api/v1/*` ([prometheus.md](./providers/prometheus.md)), Qdrant over its REST API
+   ([qdrant.md](./providers/qdrant.md)), and InfluxDB and InfluxDB 3 over the v1 `/query` API and
+   `/api/v3/query_sql` ([influxdb.md](./providers/influxdb.md) · [influxdb3.md](./providers/influxdb3.md)).
+   If it does need one, it will be something like `pg`, `mysql2`, `mongodb`, `ioredis`, `oracledb`,
+   `mssql` or `db2-node`.
 
 2. **Which base class?**
    - **SQL databases → extend `SQLBaseProvider`.**
@@ -128,6 +130,10 @@ It maps the SSL / TLS panel through `nodeTlsMaterial`, the one TLS mapping a new
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
 The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.
 
+**Send gRPC calls through the shared gRPC transport.**
+A new provider that speaks gRPC opens its channel with `openGrpcChannel` in [`channel.ts`](../src/lib/db/grpc/channel.ts) and reads its SSL / TLS panel with `readGrpcTlsPanel` and `grpcTlsIdentity` in [`tls.ts`](../src/lib/db/grpc/tls.ts), so its adapter holds only its RPC table, descriptor, metadata and error mapping.
+It imports neither `@grpc/grpc-js` nor a TLS mapping of its own, and it adds its row to `tests/helpers/grpc-seam-holdings.ts`, which `tests/unit/db/grpc/seam-guard.test.ts` reads.
+
 **Make the result type neutral, not the wire envelope.** An interface shaped like the HTTP response
 (`{ results, signature, status, metrics, errors }`) would force any future driver adapter to
 fabricate fields that only the REST API produces naturally. Define the shape both sources could
@@ -221,10 +227,10 @@ The Memgraph provider is filed as `docs/BACKLOG.md` D141.
 
 ```typescript
 // Before:
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia';
 
 // After (example: adding CockroachDB):
-export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'cockroachdb';
+export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia' | 'cockroachdb';
 ```
 
 A type-id may contain a digit: `db2` does.
@@ -239,7 +245,7 @@ If your database uses a new editor mode (not `'sql'` or `'mongodb'`), add it:
 ```typescript
 export interface QueryTab {
   // ...
-  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd' | 'cypher';  // Add your type here if needed
+  type: 'sql' | 'mongodb' | 'redis' | 'libredb' | 'promql' | 'kafka' | 'etcd' | 'cypher' | 'milvus' | 'qdrant' | 'influxql' | 'oxia';  // Add your type here if needed
 }
 ```
 
@@ -248,7 +254,7 @@ For most SQL databases, the existing `'sql'` type is sufficient. You only need a
 A new tab type is reached one of two ways, and both are wired in `src/lib/editor/tab-language.ts` and its neighbours.
 A language that is a kind of JSON declares a `queryDialect` on the provider and gets a record in `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), whose `tabType` `resolveTabType()` reads **before** the `queryLanguage === 'json'` rung; skipping the dialect leaves the tab typed `mongodb`, which is exactly what #427 fixed.
 A language that is neither SQL nor JSON widens `ProviderCapabilities.queryLanguage` instead, as PromQL did (#1085), and every reader of that union then needs an explicit arm or a test pinning that its branch is right, because a reader written `=== 'json'` sends the new member into its SQL branch and one written `!== 'sql'` into its JSON branch.
-Either way the type gets a record in `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`), its Monaco language for `editorLanguageForTabType()` and its formatter, if any, for `QueryEditor`'s Format button, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage`, `registerPromqlLanguage`, `registerEtcdLanguage` and `registerCypherLanguage`.
+Either way the type gets a record in `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`), its Monaco language for `editorLanguageForTabType()` and its formatter, if any, for `QueryEditor`'s Format button, and that language module is registered in `QueryEditor`'s `handleBeforeMount` alongside `registerLibreDBLanguage`, `registerRedisLanguage`, `registerPromqlLanguage`, `registerEtcdLanguage`, `registerOxiaLanguage` and `registerCypherLanguage`.
 A JSON kind may instead render in Monaco's built-in `json` mode and register no module, as Kafka's read request does (#1088).
 Then the MongoDB completion provider `QueryEditor` registers for `json` must stay off it: it registers only where the declared capabilities name no JSON dialect, so its MongoDB snippets and column completions never reach a tab whose parser refuses them.
 
@@ -297,12 +303,13 @@ never off the kind id.
 **It is OPTIONAL, and omitting it entirely is the right answer for an engine that publishes no
 definition text.** `readObjectSource?` is declared optional on `DatabaseProvider` in
 `src/lib/db/types.ts` for that reason: a provider with no source-bearing kind can never reach the
-method, so requiring it would put an unreachable throw in each. Three shipped providers are exactly
-that case and say so in their own docs, `druid`, `libredb` and `neo4j`. If yours is a fourth, declare
-`hasSource` on no kind, write no method, and add your type-id to the committed ABSTAINER list in
-`tests/isolated/object-source-declarations.test.ts` beside those three. Do NOT write the method
-answering an empty document, an empty string or any other neutral value: the pairing fails by name
-on a method with no source-bearing kind, and an empty text is a RAISE everywhere in the table below.
+method, so requiring it would put an unreachable throw in each. Five shipped providers are exactly
+that case and say so in their own docs, `druid`, `influxdb`, `influxdb3`, `libredb` and `neo4j`. If
+yours is a sixth, declare `hasSource` on no kind, write no method, and add your type-id to the
+committed ABSTAINER list in `tests/isolated/object-source-declarations.test.ts` beside those five.
+Do NOT write the method answering an empty document, an empty string or any other neutral value: the
+pairing fails by name on a method with no source-bearing kind, and an empty text is a RAISE
+everywhere in the table below.
 
 - **`hasSource: true`** on each kind whose definition text your engine really publishes. A kind
   whose text the engine does not hold simply does not set it, and the row then offers no View
@@ -566,7 +573,9 @@ the load-bearing part; a naive digit-run rewrite corrupts `"id: 9007199254740993
 Either way the number reaches the UI as an exact string, which is what the `pg` driver already does
 for `int8`. The generalisable lesson: check the widest integer type your engine supports against
 `Number.MAX_SAFE_INTEGER` before trusting `JSON.parse`, and expect to write the fix yourself when the
-server offers no switch.
+server offers no switch. Check the exact decimal type too: ClickHouse's 64-bit setting does not cover
+`Decimal`, which needs `output_format_json_quote_decimals=1` as well, and a fraction cannot be rescued
+from the text afterwards, because nothing in it tells a lossy decimal from a float printed in full.
 
 **The response envelope does not always describe the rows.** Couchbase's `signature` is `"*"` for
 `SELECT *`, and `{ id, "*" }` for a wildcard mixed with named projections. Taking those keys
@@ -769,13 +778,14 @@ Every field and what it controls:
 
 | Field | Type | Controls |
 |-------|------|----------|
-| `queryLanguage` | `'sql' \| 'json' \| 'promql' \| 'cypher'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
-| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| 'milvus' \| 'qdrant' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
+| `queryLanguage` | `'sql' \| 'json' \| 'promql' \| 'cypher' \| 'influxql'` | Monaco editor language mode, AI prompt style, query template format. A closed union: a new member needs an arm, or a test pinning its branch, in every reader (#1085) |
+| `queryDialect` | `'libredb' \| 'redis' \| 'kafka' \| 'etcd' \| 'milvus' \| 'qdrant' \| 'oxia' \| undefined` | Optional. Names the dialect's records in three registries, which the tab type, the Monaco language, the formatter, the generated statements and the Generate Code and Generate Count Query gates consult **before** `queryLanguage` (only Profile answers an SQL language first, `offersColumnProfiling` in `src/lib/db/types.ts`): `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`, the tab type and the row-menu gates), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`, the Monaco language and the formatter) and `DIALECT_GENERATORS` (`query-generators.ts`, what a tree click and Generate Query write). A new dialect adds its three records, not a check in each reader: `queryLanguage: 'json'` alone means MongoDB, which is how Redis silently got MongoDB documents until #427. Left undefined by SQL and MongoDB |
 | `supportsExplain` | `boolean` | EXPLAIN button visibility in QueryEditor toolbar |
 | `explainFormat` | `ExplainFormat \| undefined` | **Required whenever `supportsExplain` is true.** Selects the strategy in `src/lib/explain/index.ts`. Setting the flag without the format leaves the control visible and dead — the UI resets out of explain mode when metadata lacks it |
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
+| `inlineEditRefusedColumns` | `{ type: string; reason: string }?` | The result columns the inline editor must not write where the engine takes its `UPDATE` for other columns. `type` is a regular expression source matched against the type the result declares for the column (`QueryResult.columnTypes`); each matching cell opens no editor and shows `reason`. Db2 sets it for CLOB, DBCLOB and BLOB, which db2-node does not write when bound (K24). Absent refuses no column |
 | `supportsResultPagination` | `boolean?` | Whether your `prepareQuery` really applies a positive `offset`. `false` hides the results grid's Load More control. Not the same question as `supportsExternalQueryLimiting`; measure it, do not infer it. Optional and gated on `=== true` for the same published-interface reason as the flag above |
 | `supportsTransactions` | `boolean?` | Whether THIS PROVIDER implements the interactive transaction session `POST /api/db/transaction` drives (`beginTransaction`/`commitTransaction`/`rollbackTransaction` over one held connection). `false` withholds the editor toolbar's BEGIN/COMMIT/ROLLBACK trio **and** the SANDBOX toggle, which auto-rolls-back through the same route. It is about the provider's surface, not the engine: SQLite has `BEGIN` and still declares `false`. Optional for the published-interface reason above; the UI gates on `=== true`, so an absent flag and an unresolved metadata fetch both read as no transactions (#464) |
 | `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty foreign-key list means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |
@@ -847,7 +857,7 @@ For the authoritative, code-verified reference for each shipped provider (extend
 driver, pooling, capabilities, labels, `prepareQuery` behaviour, and limitations), see the prime
 docs — they are the single source of truth and are kept in sync with the code:
 
-**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · kafka · etcd · neo4j · libredb
+**[docs/providers/](./providers/README.md)** → postgres · mysql · oracle · db2 · mssql · sqlite · libsql · duckdb · redis · mongodb · couchbase · clickhouse · druid · elasticsearch · opensearch · trino · cassandra · prometheus · influxdb · influxdb3 · kafka · etcd · neo4j · milvus · qdrant · oxia · libredb
 
 When implementing a new provider, the closest existing analogue is the best template: a pooled SQL
 provider (postgres/mysql), an embedded SQL provider (sqlite), a non-SQL provider (mongodb/redis), a
@@ -968,8 +978,8 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      eight shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
-      `libsql` and `prometheus`
+      eleven shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
+      `libsql`, `prometheus`, `qdrant`, `influxdb` and `influxdb3`
       each add nothing here
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
@@ -1114,8 +1124,8 @@ Run them before the first edit and again before the commit, and re-derive each h
 
 ```bash
 OUT=(docs CLAUDE.md CONTRIBUTING.md 'README*.md' DOCKERHUB.md snap packaging desktop deploy charts/libredb-studio operator/config e2e ':!docs/BACKLOG.md' ':!docs/llms')
-git grep -n -I -i -E '\b(eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty[- ](one|two|three|four|six|seven|eight|nine)|forty[- ](four|five|six|seven|eight|nine)|fifty|fifty[- ]one)\b|\b(1[0-9]|2[0-9]|4[0-9]|5[01]) (database backends|database engines|engines|type-ids|providers|drivers)\b|十[七八九]|二十[一二三四七八]?|四十[四五六七八九]|五十一?|Diecisiete|Dieciocho|Diecinueve|Veinte|veinte|veintiuno|veintidós|veintitrés|veintisiete|veintiocho|1[789]の|2[0-3]の|सत्रह|अठारह|उन्नीस|बीस|इक्कीस|बाईस|तेईस|سترہ|اٹھارہ|انیس|بیس|اکیس|بائیس|تئیس|Dezoito|Dezenove|Vinte|vinte e (um|dois|três)|Восемнадцат|Девятнадцат|Двадцат' -- "${OUT[@]}"   # G1
-git grep -n -I -E 'Milvus|milvus' -- "${OUT[@]}"   # G2, the closest earlier engine (Milvus, for the next provider)
+git grep -n -I -i -E '\b(eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|twenty[- ](one|two|three|four|five|six|seven|eight|nine)|forty[- ](four|five|six|seven|eight|nine)|fifty|fifty[- ](one|two|three|four))\b|\b(1[0-9]|2[0-9]|4[0-9]|5[0-4]) (database backends|database engines|engines|type-ids|providers|drivers)\b|十[七八九]|二十[一二三四五六七八]?|四十[四五六七八九]|五十[一二三四]?|Diecisiete|Dieciocho|Diecinueve|Veinte|veinte|veintiuno|veintidós|veintitrés|veinticinco|veintiséis|veintisiete|veintiocho|cincuenta y (tres|cuatro)|1[789]の|2[0-7]の|सत्रह|अठारह|उन्नीस|बीस|इक्कीस|बाईस|तेईस|पच्चीस|छब्बीस|सत्ताईस|سترہ|اٹھارہ|انیس|بیس|اکیس|بائیس|تئیس|پچیس|چھبیس|ستائیس|Dezoito|Dezenove|Vinte|vinte e (um|dois|três|cinco|seis|sete)|cinquenta e (três|quatro)|Восемнадцат|Девятнадцат|Двадцат|пятьдесят (три|четыре)' -- "${OUT[@]}"   # G1
+git grep -n -I -E 'Oxia|oxia' -- "${OUT[@]}"   # G2, the closest earlier engine (Oxia, for the next provider)
 git grep -n -I -i -E 'redis and libredb|redis, libredb|libredb and redis|mongodb and redis|mongodb, redis|redis and mongodb|dialect of (its|their) own|queryDialect' -- "${OUT[@]}"   # G3
 git grep -n -I -E 'Redpanda|redpanda' -- "${OUT[@]}"   # G4, the latest relative
 ```

@@ -26,10 +26,44 @@ const MANAGE_NO_EXP_URL_SAFE = "e30.eyJhY2Nlc3MiOiJtIiwic3ViIjoieHg_Pz8_Pz4-In0.
 type Credential = { user?: string; password?: string };
 
 describe("CREDENTIAL_WARNINGS", () => {
-  test("milvus and qdrant are the shipped types that declare credential warnings (vector-family spec 3.12)", () => {
-    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual(["milvus", "qdrant"]);
+  test("milvus, qdrant, influxdb, influxdb3 and oxia are the shipped types that declare credential warnings (vector-family spec 3.12, InfluxDB spec E12, SB3-1.5)", () => {
+    expect(Object.keys(CREDENTIAL_WARNINGS)).toEqual(["milvus", "qdrant", "influxdb", "influxdb3", "oxia"]);
     expect(CREDENTIAL_WARNINGS.milvus?.map((entry) => entry.kind)).toEqual(["pair", "no-secret"]);
     expect(CREDENTIAL_WARNINGS.qdrant?.map((entry) => entry.kind)).toEqual(["jwt", "no-secret"]);
+    expect(CREDENTIAL_WARNINGS.oxia?.map((entry) => entry.kind)).toEqual(["jwt"]);
+  });
+});
+
+/**
+ * Oxia's row (SB3-1.5, DECISIONS O7): Oxia has no authorization, so a token's claims never narrow what it reaches,
+ * and only a token without `exp` warns; no `no-secret` row, so a read-only seed without a token is not refused.
+ */
+describe("the oxia row", () => {
+  const OXIA_SENTENCE =
+    "Credential warning: This token declares no expiry, so it stays valid until the identity provider's signing key changes, and Oxia has no authorization, so it reads and writes every namespace. Prefer a token with an expiry.";
+
+  test("a token without exp warns with the framed sentence", () => {
+    expect(credentialWarningFor("oxia", { password: jwt({ sub: "svc" }) })).toBe(OXIA_SENTENCE);
+  });
+
+  test("a token with exp does not warn, whatever its claims", () => {
+    expect(credentialWarningFor("oxia", { password: jwt({ sub: "svc", exp: EXP }) })).toBeUndefined();
+    expect(credentialWarningFor("oxia", { password: jwt({ access: "m", exp: EXP }) })).toBeUndefined();
+  });
+
+  test("an opaque token does not warn", () => {
+    expect(credentialWarningFor("oxia", { password: "opaque-token" })).toBeUndefined();
+  });
+
+  test("a read-only seed without a token is not refused", () => {
+    expect(readOnlySeedRefusal("oxia", { password: "" })).toBeUndefined();
+    expect(readOnlySeedRefusal("oxia", {})).toBeUndefined();
+  });
+
+  test("influxdb and influxdb3 each declare one no-secret entry (InfluxDB spec E12)", () => {
+    const record: Readonly<Record<string, readonly { readonly kind: string }[] | undefined>> = CREDENTIAL_WARNINGS;
+    expect(record.influxdb?.map((entry) => entry.kind)).toEqual(["no-secret"]);
+    expect(record.influxdb3?.map((entry) => entry.kind)).toEqual(["no-secret"]);
   });
 });
 

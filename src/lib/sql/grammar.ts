@@ -371,6 +371,41 @@ const TRINO_GRAMMAR: SqlGrammar = {
 };
 
 /**
+ * Apache DataFusion as InfluxDB 3.12.0 Core parses it. Established the same way as the Trino row and
+ * for the same reason: the engine IS an HTTP endpoint, so every fact below is a statement the server
+ * answered through `POST /api/v3/query_sql` with `{"db":"home","q":<text>,"format":"jsonl"}`, the
+ * body the `influxdb3` provider sends, and none is read off a neighbouring dialect. Re-run 2026-10-04.
+ *
+ * Three more measured facts about this dialect are not fields of this record and are carried where
+ * the repository keeps them: a string doubles its quote (`''`) and gives a backslash no meaning (the
+ * standard literal rule in `values.ts`), a name is quoted with `"` and doubles it (`""`), and an
+ * unquoted name folds to lower case (the default branch of `quoteIdentifier`).
+ */
+const DATAFUSION_GRAMMAR: SqlGrammar = {
+  // `#` opens NOTHING: `SELECT 1 AS x # c` is HTTP 400, `ParserError("Expected: end of statement,
+  // found: # at Line: 1, Column: 15")`. So the rest of the line is not hidden, and a `;` written after
+  // it is a statement boundary.
+  hash: "code",
+  // A SUBSCRIPT and an array literal, never a name quote. `SELECT [1,2] AS a` answers `[1,2]` and
+  // `SELECT [1,2][1] AS x` answers 1. It NESTS: `SELECT [[1,2],[3,4]][2][1] AS x` answers 3. A literal
+  // inside it is a literal: `SELECT ['a]b'][1] AS x` answers `a]b`. And `SELECT [room] FROM home`
+  // answers an array column named `make_array(home.room)`, so the brackets were read THROUGH to an
+  // expression, which the identifier reading could never do.
+  bracket: "subscript",
+  // NESTING: `SELECT 1 /* a /* b */ c */ AS x` answers `{"x":1}`, so the inner `*/` did not close the
+  // run. A flat reader would have taken `c */ AS x` for code.
+  blockComment: "nesting",
+  // `SELECT q'[x]' AS x` is HTTP 400, `ParserError("Expected: end of statement, found: AS at Line: 1,
+  // Column: 15")`: the form does not exist here, so those characters are a name followed by an
+  // ordinary string.
+  alternateQuoting: false,
+  // CODE: `SELECT 1 AS x // c` is HTTP 400, `ParserError("Expected: end of statement, found: // at
+  // Line: 1, Column: 15")`, so the slashes are refused where they stand rather than hiding what
+  // follows.
+  doubleSlashComment: false,
+};
+
+/**
  * Established the same way as the three rows above and for the same reason - the
  * server IS the source - and probed BEFORE any Cassandra provider code existed
  * (2026-08-20, Apache Cassandra 5.0.9, `system.local.release_version`, over the
@@ -603,6 +638,7 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   opensearch: OPENSEARCH_GRAMMAR,
   trino: TRINO_GRAMMAR,
   cassandra: CASSANDRA_GRAMMAR,
+  influxdb3: DATAFUSION_GRAMMAR,
 };
 
 /**
@@ -654,6 +690,13 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * which is not SQL text either: its strings escape with a backslash and `//` opens a comment outside a string.
  * Its provider extends `BaseDatabaseProvider` and parses the text with the shared console parser.
  *
+ * `influxdb` takes one InfluxQL statement (InfluxDB spec 5.7), which is not SQL text either: InfluxQL strings
+ * escape with a backslash, `/.../` is a regex where the parser asks for one, and a `--` comment ends at a lone
+ * `\r`, so a SQL span reader misreads where a literal ends. The provider reads the text with its own lexer
+ * (`src/lib/db/providers/timeseries/influxdb/influxql-lexer.ts`) and refuses every write before sending it.
+ * `oxia` takes one `oxia client` read command, words split by POSIX shell rules, which is not SQL text: a SQL span
+ * reader would report its quoting as unreadable and prompt on every run.
+ *
  * `trino` is deliberately absent for the same reason as the two search ids: the editor
  * text is the exact bytes `POST /v1/statement` receives, and the provider extends
  * `SQLBaseProvider`.
@@ -677,6 +720,9 @@ export function resolveSqlGrammar(type?: DatabaseType): SqlGrammar {
  * hiding behind a comment. The other direction is the one #297 measured - reading
  * non-SQL as SQL prompted on ordinary reads - so a wrong answer here costs either a
  * gate that never asks or a gate an operator learns to click through.
+ *
+ * `influxdb3` is absent for the search pair's reason: its text is SQL and its provider extends `SQLBaseProvider`,
+ * so the SQL gate reads it and will prompt on a `DELETE` or `DROP` the provider then refuses, a documented cost.
  */
 const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "mongodb",
@@ -687,6 +733,8 @@ const NON_SQL_DIALECTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "neo4j",
   "milvus",
   "qdrant",
+  "influxdb",
+  "oxia",
 ]);
 
 /**

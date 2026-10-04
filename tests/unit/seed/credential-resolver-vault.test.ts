@@ -163,6 +163,24 @@ describe("credential-resolver vault scheme", () => {
     expect(resolved.apiKeySecret).toBe("vault-key-secret");
   });
 
+  it("resolves a ${vault:...} reference in dataServers", async () => {
+    process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+    process.env.VAULT_TOKEN = "root";
+
+    const resolved = await resolveVaultCredentials(
+      { ...baseConn, dataServers: "${vault:secret/data/oxia#servers}" },
+      {
+        fetch: (async () =>
+          new Response(JSON.stringify({ data: { data: { servers: "a.internal:6648,b.internal:6648" } } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })) as unknown as typeof fetch,
+      },
+    );
+
+    expect(resolved.dataServers).toBe("a.internal:6648,b.internal:6648");
+  });
+
   it("raises on a ${vault:...} reference with no #key", async () => {
     process.env.VAULT_ADDR = "http://127.0.0.1:8200";
     process.env.VAULT_TOKEN = "root";

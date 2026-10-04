@@ -1951,6 +1951,16 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("promql");
   });
 
+  test("registers the oxia language before the editor mounts, beside etcd (SB2-4.6)", () => {
+    render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "oxia", value: "get /admin/policies/public" })),
+    );
+
+    // etcd's registration is the control: it reaches the same capture, so a missing "oxia" is the component.
+    expect(capturedLanguageRegistrations).toContain("etcd");
+    expect(capturedLanguageRegistrations).toContain("oxia");
+  });
+
   test("registers the etcd language before the editor mounts, beside LibreDB, Redis and PromQL (#1089)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "etcd", value: "get /app/ --prefix" })));
 
@@ -1985,7 +1995,9 @@ describe("QueryEditor", () => {
       "redis",
       "promql",
       "etcd",
+      "oxia",
       "graph-cypher",
+      "influxql",
       "milvus",
       "qdrant",
     ]);
@@ -2056,6 +2068,91 @@ describe("QueryEditor", () => {
       cypherRegistrations = [];
       render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", databaseType: "neo4j" })));
       expect(cypherRegistrations).toEqual([]);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // InfluxQL (InfluxDB spec 6.7)
+  // -----------------------------------------------------------------------
+
+  test("registers the influxql language before the editor mounts, beside the other custom languages", () => {
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ language: "influxql", value: 'SELECT * FROM "home".."home"' }),
+      ),
+    );
+    // The languages registered before it are the control: a missing "influxql" is the component.
+    expect(capturedLanguageRegistrations).toContain("graph-cypher");
+    expect(capturedLanguageRegistrations).toContain("influxql");
+  });
+
+  describe("the InfluxQL completion provider registers for an influxql editor only", () => {
+    type Provider = {
+      triggerCharacters?: string[];
+      provideCompletionItems: (
+        model: unknown,
+        position: unknown,
+      ) => { suggestions: Array<{ label: string; insertText: string }> };
+    };
+    let influxqlRegistrations: Array<{ languageId: string; provider: Provider; dispose: Mock<() => void> }> = [];
+    const measurementSchema = JSON.stringify([
+      {
+        name: "home",
+        kind: "measurement",
+        path: ["home", "home"],
+        columns: [
+          { name: "time", type: "time" },
+          { name: "room", type: "tag" },
+          { name: "temp", type: "float" },
+        ],
+      },
+    ]);
+    const modelOf = (text: string) => ({ getValue: () => text, getOffsetAt: () => text.length });
+
+    beforeEach(() => {
+      influxqlRegistrations = [];
+      mockRegisterSQLCompletionProvider.mockClear();
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockUseMonacoReturn = {
+        Range: class {},
+        languages: {
+          CompletionItemKind: { Keyword: 17, Class: 5, Field: 3, Property: 9 },
+          registerCompletionItemProvider: (languageId: string, provider: Provider) => {
+            const dispose = mock(() => {});
+            influxqlRegistrations.push({ languageId, provider, dispose });
+            return { dispose };
+          },
+        },
+      };
+    });
+
+    test("an influxql editor completes sources and keys from the schema it holds, and nothing else registers", () => {
+      const { unmount } = render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "influxql", databaseType: "influxdb", schemaContext: measurementSchema }),
+        ),
+      );
+      expect(influxqlRegistrations.map((entry) => entry.languageId)).toEqual(["influxql"]);
+      expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+      const provider = influxqlRegistrations[0]!.provider;
+      const inserts = (text: string) =>
+        provider
+          .provideCompletionItems(modelOf(text), { lineNumber: 1, column: text.length + 1 })
+          .suggestions.map((item) => item.insertText);
+      expect(inserts("SELECT * FROM ")).toEqual(['"home".."home"']);
+      expect(inserts('SELECT * FROM "home".."home" WHERE ')).toContain('"room"');
+      unmount();
+      expect(influxqlRegistrations[0]!.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    test("a sql editor registers no InfluxQL completion", () => {
+      render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "sql", schemaContext: measurementSchema })),
+      );
+      expect(influxqlRegistrations).toEqual([]);
     });
   });
 
@@ -2259,7 +2356,9 @@ describe("QueryEditor", () => {
       ["redis", false],
       ["libredb", false],
       ["etcd", false],
+      ["oxia", false],
       ["graph-cypher", false],
+      ["influxql", false],
       ["sql", true],
     ] as const;
     for (const [language, offered] of steps) {

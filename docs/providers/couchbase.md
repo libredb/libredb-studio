@@ -556,11 +556,25 @@ operator — and a statement ending in a `#` run is returned unbounded rather th
 
 | Source field | `QueryResult` field | Notes |
 |--------------|---------------------|-------|
-| result rows | `rows` | JSON objects exactly as the cluster returned them |
+| result rows | `rows` | JSON objects exactly as the cluster returned them, except that an integer past 2^53 arrives as its exact digits (see below) |
 | signature | `fields` | `null` for a wildcard signature, in which case columns are the union of the keys the rows carry, first seen first |
 | — | `rowCount` | `rows.length`, or the mutation count when a statement returned no rows |
 | metrics `executionTime` | `executionTime` | The cluster's own time (excludes network latency); falls back to the measured wall clock when the cluster reported none |
 | `warnings` | `warnings` | The notices the cluster attached to a statement it completed, each carrying its message and the cluster's own code **when it reported one** — an entry with no code arrives without one rather than with a substituted `0`, which is itself a legal code. **Absent** when the cluster reported no warnings at all — never an empty array, so the result UI decides from the field's presence alone (issue #273) |
+
+**An integer past 2^53 is handed over as its digits.** The query service sends a document's number
+as the **unquoted** literal it was stored as, and `JSON.parse` rounds one past 2^53 with no error:
+measured on 8.0.2 CE on 2026-10-04, a document `{"big":9007199254740993}` read through
+`SELECT d.big ... WHERE META(d).id = "h1"` was shown as `9007199254740992` in the grid, the API and
+every export. Every body the transport reads therefore goes through
+[`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) before it is parsed
+(`parseJsonBody` in
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)), so such a
+value reaches the grid as a string holding its exact digits, at any depth of the document, the way
+Druid's transport hands one over. An integer inside the safe range, and every float, stays a number,
+and the pass is string-aware, so digits inside a string value are never touched. The counts and
+sizes this provider reads from the REST API all sit far inside the safe range, so none of them
+changed type.
 
 ### 5.3 `USE KEYS` reads a document with no index at all
 

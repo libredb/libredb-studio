@@ -139,5 +139,18 @@ describe("the statement a plan run drafted", () => {
       dialect: "etcd",
       language: "promql",
     });
+
+    // And with InfluxQL declared (InfluxDB spec 6.7): the record follows its own rung of `resolveTabType`.
+    const influxql = await planDrive(
+      connection,
+      { ...etcd, capabilities: { ...etcd.capabilities, queryDialect: undefined, queryLanguage: "influxql" } },
+      statement,
+    );
+
+    expect(influxql.find((event) => event.kind === "plan-statement-drafted")).toMatchObject({
+      sql: statement,
+      dialect: "etcd",
+      language: "influxql",
+    });
   });
 });

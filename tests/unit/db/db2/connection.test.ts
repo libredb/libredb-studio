@@ -15,7 +15,6 @@ import {
   type CaFileSystem,
   DB2_DEFAULT_PORT,
   NODE_CA_FILE_SYSTEM,
-  assertPasswordSendable,
   assertTransport,
   clientOptions,
   openClient,
@@ -112,7 +111,7 @@ describe("resolveTarget", () => {
       { mode: "verify-full" as SSLMode, clientKey: PEM },
     ]) {
       expect(() => resolveTarget(connection({ ssl }))).toThrow(
-        "db2-node 1.0.24 has no client-certificate authentication; remove the client certificate and key from this Db2 connection.",
+        "db2-node 1.0.25 has no client-certificate authentication; remove the client certificate and key from this Db2 connection.",
       );
     }
   });
@@ -201,45 +200,6 @@ describe("resolveTarget", () => {
   });
 });
 
-describe("assertPasswordSendable (K23)", () => {
-  // Measured on Db2 12.1.0.0 with db2-node 1.0.22 and again with 1.0.24, with and without TLS and
-  // under both security mechanisms: the server rejects each of these five as a wrong password, while
-  // the IBM CLP signs in with the same password.
-  test.each(["!", "[", "]", "^", "|"])("a password holding %s is refused, naming the character", (character) => {
-    const config = connection({ password: `Pass${character}word1` });
-    const error = refusal(() => assertPasswordSendable(resolveTarget(config)));
-    expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect(error.message).toContain(`contains ${character}`);
-    expect(error.message).toContain("db2-node 1.0.24");
-    expect(error.message).toContain("Change the password");
-  });
-
-  test("several such characters are each named once, in the order they appear", () => {
-    const error = refusal(() => assertPasswordSendable(resolveTarget(connection({ password: "a|b!c|d" }))));
-    expect(error.message).toContain("contains | and !");
-  });
-
-  test("a password from the connection string is checked too", () => {
-    const config = connection({ connectionString: "db2://db2inst1:Pass%21word@db2.example.com:50001/TESTDB" });
-    expect(() => assertPasswordSendable(resolveTarget(config))).toThrow("contains !");
-  });
-
-  test("an empty password is sent", () => {
-    expect(() => assertPasswordSendable(resolveTarget(connection({ password: "" })))).not.toThrow();
-  });
-
-  // The other printable ASCII characters the measurement tried, each accepted by the server.
-  test.each(["@", "#", "$", "%", "&", "*", "?", "~", "{", "\\"])("a password holding %s is sent", (character) => {
-    const config = connection({ password: `x${character}y` });
-    expect(() => assertPasswordSendable(resolveTarget(config))).not.toThrow();
-  });
-
-  test("the refusal never quotes the password itself", () => {
-    const error = refusal(() => assertPasswordSendable(resolveTarget(connection({ password: "opaque!value" }))));
-    expect(error.message).not.toContain("opaque");
-  });
-});
-
 describe("assertTransport (fail closed)", () => {
   test("no TLS is refused, naming the cleartext password and the opt-in", () => {
     for (const ssl of [undefined, { mode: "disable" as SSLMode }]) {
@@ -281,7 +241,7 @@ describe("assertTransport (fail closed)", () => {
         [TUNNEL_FAR_END]: { host: "db2.remote.example", port: 50001 },
       });
       expect(() => assertTransport(config, resolveTarget(config))).toThrow(
-        `TLS mode "${mode}" checks the server's name, and through an SSH tunnel db2-node 1.0.24 can only check the tunnel's local address rather than db2.remote.example.`,
+        `TLS mode "${mode}" checks the server's name, and through an SSH tunnel db2-node 1.0.25 can only check the tunnel's local address rather than db2.remote.example.`,
       );
     }
   });
@@ -334,7 +294,7 @@ describe("clientOptions (M4, M6)", () => {
     }
   });
 
-  // db2-node 1.0.24 refuses the plaintext mechanism unless it is asked for by name, so the
+  // db2-node 1.0.24 and later refuse the plaintext mechanism unless it is asked for by name, so the
   // insecure opt-in has to say it; over TLS the driver's default encrypted mechanism is kept.
   test("the plaintext mechanism is named only without TLS, and never over TLS", () => {
     for (const mode of ["require", "verify-system", "verify-ca", "verify-full"] as const) {
@@ -452,6 +412,19 @@ describe("openClient", () => {
     await openClient(connection({ ssl: undefined, allowInsecureAuth: true }), async () => driver, memoryFs().fs);
 
     expect(built[0]).toMatchObject({ ssl: false, securityMechanism: "userPassword" });
+  });
+
+  // K23, fixed in 1.0.25: measured on 12.1.0.0 and 11.5.9.0, a user whose password holds each of
+  // ! ^ [ ] and | signs in over TLS and without it, under either mechanism, where 1.0.24 was
+  // answered "user id or password invalid". So the password reaches the driver as typed.
+  test.each([
+    ["over TLS", { ssl: { mode: "verify-ca" as SSLMode, caCert: PEM } }],
+    ["without TLS behind the insecure opt-in", { ssl: undefined, allowInsecureAuth: true }],
+  ])("a password holding ! ^ [ ] and | reaches the driver as typed, %s", async (_, overrides) => {
+    const { driver, built } = fakeDriver();
+    await openClient(connection({ ...overrides, password: "Pw!a^b[c]d|9" }), async () => driver, memoryFs().fs);
+
+    expect(built[0].password).toBe("Pw!a^b[c]d|9");
   });
 
   test("with no CA there is no file and no directory", async () => {

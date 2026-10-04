@@ -1229,6 +1229,30 @@ describe("a walk in a declared shape", () => {
     expect(result.current.exhausted).toBe(true);
   });
 
+  test('a page that answers total 0 under "none" keeps the walk going to cursor "0"', async () => {
+    const uncounted = { ...ETCD_SCAN, totalScope: "none" } as const;
+    const next = "k:L2FwcC9i:h";
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) =>
+        (await cursorOf(req)) === "0" ? page(["/app/a"], next, 0) : page(["/app/b"], "0", 0),
+    });
+    const { result } = renderHook(() => useKeyScan({ connection: CONNECTION, capability: uncounted, pattern: "" }));
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    // A total of 0 is not the end of anything: only the cursor ends a walk.
+    expect(result.current.exhausted).toBe(false);
+    expect(result.current.total).toBe(0);
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(bodiesOf(fetchMock).map((body) => body.cursor)).toEqual(["0", next]);
+    expect(result.current.keys).toEqual(["/app/a", "/app/b"]);
+    expect(result.current.exhausted).toBe(true);
+  });
+
   test("passes a page's skipped keys through and adds them up across the walk's pages", async () => {
     mockGlobalFetch({
       "/api/db/keys/scan": async (req) =>

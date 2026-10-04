@@ -161,6 +161,15 @@ describe("ClickHouseHttpTransport request", () => {
     expect(lastParam("output_format_json_quote_64bit_integers")).toBe("1");
   });
 
+  // The 64-bit setting does not cover Decimal: measured on 26.9.9.28, a
+  // Decimal(38,10) holding 12345678901234567890.1234567891 arrives as that
+  // unquoted number under it, and JSON.parse turns it into 12345678901234567000.
+  test("always quotes decimals so JSON.parse cannot round them", async () => {
+    await makeTransport().query("SELECT toDecimal128('12345678901234567890.1234567891', 10)");
+
+    expect(lastParam("output_format_json_quote_decimals")).toBe("1");
+  });
+
   test("sends the connection's database as a URL parameter", async () => {
     await makeTransport().query("SELECT 1");
 
@@ -237,11 +246,17 @@ describe("ClickHouseHttpTransport request", () => {
   // the format through settings would silently turn every result into raw text.
   test("does not let a setting hijack the response format", async () => {
     await makeTransport().query("SELECT 1", {
-      settings: { default_format: "TSV", output_format_json_quote_64bit_integers: 0, database: "other" },
+      settings: {
+        default_format: "TSV",
+        output_format_json_quote_64bit_integers: 0,
+        output_format_json_quote_decimals: 0,
+        database: "other",
+      },
     });
 
     expect(lastParam("default_format")).toBe("JSON");
     expect(lastParam("output_format_json_quote_64bit_integers")).toBe("1");
+    expect(lastParam("output_format_json_quote_decimals")).toBe("1");
     expect(lastParam("database")).toBe("demo");
   });
 

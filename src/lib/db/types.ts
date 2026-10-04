@@ -238,6 +238,28 @@ export interface PreviewProjection {
   readonly unprojectedNote: string;
 }
 
+/**
+ * A preview that reads a recent window, newest first (see `ProviderCapabilities.previewTimeWindow`):
+ * `SELECT * FROM <table> WHERE <column> >= <since> ORDER BY <column> DESC`, under `note`.
+ */
+export interface PreviewTimeWindow {
+  /** The time column, written through `quoteIdentifier`. */
+  readonly column: string;
+  /** The window's lower bound as the engine's own expression, InfluxDB 3's `now() - INTERVAL '1 hour'`. */
+  readonly since: string;
+  /**
+   * The preview's first comment line, written without its `-- `: why an empty preview is empty.
+   * Nothing reads it back, and no provider recognises its own generated text.
+   */
+  readonly note: string;
+  /**
+   * The commented lines Generate Query writes below its statement, each without its `-- `.
+   * `{table}` is filled with the quoted table and `{column}` with the first `float` or
+   * `integer` column of the described columns, quoted, else `"value"`.
+   */
+  readonly examples: readonly string[];
+}
+
 /** Where a surface wants to put a control: on one row, or on a whole-database card. */
 export type MaintenancePlacement = "perEntity" | "global";
 
@@ -472,6 +494,10 @@ export function offersSqlExport(capabilities: ProviderCapabilities | undefined):
  * known not to fit it.
  */
 export function offersSchemaDiagram(capabilities: ProviderCapabilities | undefined): boolean {
+  // InfluxDB spec 6.3: a measurement's columns are the union of the tag and field keys its points happened to carry,
+  // read with two SHOW statements per measurement, so a diagram would cost two requests per box to draw a schema the
+  // engine never declares, with no relation between boxes.
+  if (capabilities?.queryLanguage === "influxql") return false;
   return capabilities?.queryLanguage !== "cypher";
 }
 
@@ -568,9 +594,10 @@ export interface KeyScanCapability {
   readonly pattern?: "glob" | "prefix";
   /**
    * What `KeyScanPage.total` counts. Absent reads `"database"`, the engine's own count of the database
-   * walked; `"walk"` is the exact count of the keys this walk covers at its pinned revision.
+   * walked; `"walk"` is the exact count of the keys this walk covers at its pinned revision. `"none"` is
+   * an engine that publishes no count and pins no revision: `total` is not read, and a provider answers 0.
    */
-  readonly totalScope?: "database" | "walk";
+  readonly totalScope?: "database" | "walk" | "none";
 }
 
 /**
@@ -584,7 +611,7 @@ export interface KeyScanShape {
   readonly separator: string;
   readonly cursor: "decimal" | "opaque";
   readonly pattern: "glob" | "prefix";
-  readonly totalScope: "database" | "walk";
+  readonly totalScope: "database" | "walk" | "none";
 }
 
 /**
@@ -658,6 +685,9 @@ export interface KeyScanPage {
    * pinned to: the pattern's prefix range, or the whole key space, and for a caller whose grants are
    * narrower, the keys of the ranges it may read (spec 4.7). Every page answers it, and a panel replaces
    * its total with each page's.
+   *
+   * UNDER `"none"` IT IS NOT READ. `"none"` is an engine that publishes no count and pins no revision:
+   * `total` is not read, and a provider answers 0.
    */
   readonly total: number;
   /**
@@ -694,16 +724,20 @@ export interface ProviderCapabilities {
    * same reason: Cypher is neither JSON nor SQL. Its tabs render in the `graph-cypher` language, a
    * tree click writes a bounded Cypher read, and the count, profiling and code-generation gates
    * below refuse it by naming the languages they serve.
+   * `"influxql"` is the InfluxDB provider's (InfluxDB spec I12), declared with no `queryDialect`
+   * because InfluxQL is neither JSON nor SQL. Its tabs render in the `influxql` language over the
+   * provider's own lexer, a tree click writes a time-windowed newest-first read, and the count,
+   * profiling and code-generation gates refuse it by naming the languages they serve.
    *
    * Published through `src/exports/types.ts`, so widening it breaks a consumer's exhaustive
    * switch over it; that ships with a release note, not a compatibility layer.
    */
-  queryLanguage: "sql" | "json" | "promql" | "cypher";
+  queryLanguage: "sql" | "json" | "promql" | "cypher" | "influxql";
   /**
    * Optional client-side query dialect, declared only beside `queryLanguage: "json"`, where it
    * names the grammar the editor text really is: JSON of this product's own schema (Kafka) or a
    * command line (Redis, LibreDB, etcd), for which `"json"` means only "not SQL". `queryLanguage`
-   * says SQL, JSON, PromQL or Cypher; for a `"json"` provider the query generators otherwise
+   * says SQL, JSON, PromQL, Cypher or InfluxQL; for a `"json"` provider the query generators otherwise
    * assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
    * generator (see `query-generators.ts`), and it is checked BEFORE
@@ -731,12 +765,14 @@ export interface ProviderCapabilities {
    * line and one JSON body, the closed console the provider re-serialises from its own parse. It landed through
    * one record in each registry and no arm anywhere else.
    *
+   * `"oxia"` is the Oxia provider's: one `oxia client` read command per run (O10).
+   *
    * Those arms are now records: a member added here does not compile until it has one in each of
    * `QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`), `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`)
    * and `DIALECT_GENERATORS` (`src/lib/query-generators.ts`), and every other reader of this field and of
    * `queryLanguage` is held to a closed list by `tests/unit/lib/dialect-reader-allowlist.test.ts`.
    */
-  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant";
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia";
   supportsExplain: boolean;
   /**
    * Present iff supportsExplain is true (enforced by provider tests).
@@ -761,6 +797,24 @@ export interface ProviderCapabilities {
    * permissive default.
    */
   supportsInlineRowEdit?: boolean;
+  /**
+   * The result columns the inline editor must not write, where the engine accepts the editor's
+   * `UPDATE` for other columns but not for these.
+   *
+   * `type` is a regular expression source matched against the type the result itself declares for
+   * the column (`QueryResult.columnTypes`), because that is the only per-column fact a grid holds;
+   * a column that declares no type is never matched. `reason` is shown on each such cell, which
+   * opens no editor. A string pattern rather than a `RegExp` because capabilities travel to the
+   * client as JSON.
+   *
+   * Db2 is the case: db2-node writes nothing, and reports no error, for a value bound to a CLOB,
+   * DBCLOB or BLOB column declared 32768 bytes or longer (K24 in `docs/providers/db2.md`), and a
+   * result declares those columns without their length.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent refuses no
+   * column.
+   */
+  inlineEditRefusedColumns?: { readonly type: string; readonly reason: string };
   /**
    * Whether this provider can be asked for the page AFTER the first one — whether
    * `prepareQuery(sql, { limit, offset })` with a positive `offset` really applies it.
@@ -947,8 +1001,13 @@ export interface ProviderCapabilities {
    * and nothing about the old behaviour moves. A provider sets this when the port
    * is not a faithful proxy for its dialect - which is any engine that shares a
    * default port with a differently-quoting one.
+   *
+   * `"double"` and `"backtick"` quote only a name that would not round-trip bare;
+   * `"double-always"` quotes every name. InfluxDB 3 declares it: its read policy
+   * refuses a bare `$`, which the `"double"` rule lets through, so a generated Count
+   * of a table named `a$b` was refused by Studio itself.
    */
-  identifierQuoting?: "double" | "backtick";
+  identifierQuoting?: "double" | "backtick" | "double-always";
   /**
    * Whether a statement this product runs may end with `;`.
    *
@@ -989,6 +1048,18 @@ export interface ProviderCapabilities {
    * `unprojectedNote` comment, because no list exists to project.
    */
   previewProjection?: PreviewProjection;
+  /**
+   * A preview that reads a recent window, newest first (InfluxDB spec 6.6, I20), for an engine
+   * where an unwindowed `SELECT *` reads the oldest rows first or past a file limit.
+   *
+   * Absent means a preview is the engine's usual `SELECT *`. Present, the SQL arms of the
+   * generators write `WHERE <column> >= <since> ORDER BY <column> DESC` under the `note`
+   * comment, with no `LIMIT` in the text: the preview cap travels as the `limit` execution
+   * option, so the limiter appends it and Load More pages. Generate Query adds the `examples`
+   * as comment lines. Count and Profile stay unwindowed. Read by the generators, never by a
+   * type-id.
+   */
+  previewTimeWindow?: PreviewTimeWindow;
   /**
    * The container levels this engine nests its objects in, outermost first (#789).
    *

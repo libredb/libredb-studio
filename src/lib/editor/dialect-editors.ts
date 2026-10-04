@@ -12,7 +12,7 @@ import type { QueryTab } from "@/lib/types";
  *
  * Keyed by tab type rather than by dialect, because the tab type is the value a tab persists: a restored tab
  * resolves its language from this record without the connection's capabilities. It therefore holds the tab types
- * no dialect declares too (`sql`, `mongodb`, `promql`), beside the six dialects' (`src/lib/db/query-dialects.ts`).
+ * no dialect declares too (`sql`, `mongodb`, `promql`), beside the seven dialects' (`src/lib/db/query-dialects.ts`).
  */
 export interface DialectEditor {
   /** The Monaco language id a tab of this type renders in. */
@@ -58,7 +58,8 @@ const QDRANT_CONSOLE_LANGUAGE: ConsoleLanguage = Object.freeze({ spec: QDRANT_CO
  * Monaco's built-in `json` mode and registers no language of its own (#1088); PromQL, Redis, LibreDB and etcd have
  * no formatter, because the SQL formatter rewrites their text (`up == 0` became `up = = 0`, #1085). Milvus and
  * Qdrant each render in their own console language and format through the console formatter (vector-family spec
- * 3.4, 5.7, 6.7).
+ * 3.4, 5.7, 6.7). InfluxQL renders in its own language over the provider's lexer and has no formatter (InfluxDB spec
+ * I12).
  */
 export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> = Object.freeze({
   sql: Object.freeze({ monacoId: "sql", format: formatSql }),
@@ -85,6 +86,12 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
     format: (text: string) => formatConsole(QDRANT_CONSOLE, text),
     console: QDRANT_CONSOLE_LANGUAGE,
   }),
+  // InfluxQL declares a language and no dialect, as PromQL and Cypher do, and has no formatter: no Format for an
+  // InfluxQL tab (InfluxDB spec I12).
+  influxql: Object.freeze({ monacoId: "influxql" }),
+  // An Oxia command line renders in the language `oxia-language.ts` registers over the provider's own lexer, and has
+  // no formatter: the SQL formatter rewrites a command line, and the console formatter is the HTTP grammar's (SB2-4.5).
+  oxia: Object.freeze({ monacoId: "oxia" }),
 });
 
 /**

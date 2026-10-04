@@ -275,6 +275,42 @@
   "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.",
   "countQuery": null
  },
+ "influxdb": {
+  "queryLanguage": "influxql",
+  "queryDialect": null,
+  "tabType": "influxql",
+  "monacoLanguage": "influxql",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "-- Newest points of the last hour, LIMIT 50 per series. No row means no point is newer: widen 1h below.\nSELECT * FROM \"c0\"..\"Order\\\"Items\" WHERE time > now() - 1h ORDER BY time DESC LIMIT 50",
+  "selectQuery": "-- Newest points of the last hour, LIMIT 50 per series. No row means no point is newer: widen 1h below.\nSELECT * FROM \"c0\"..\"Order\\\"Items\" WHERE time > now() - 1h ORDER BY time DESC LIMIT 50\n-- A wider window: WHERE time > now() - 1d\n-- One point per minute: SELECT mean(\"value\") FROM \"c0\"..\"Order\\\"Items\" WHERE time > now() - 1h GROUP BY time(1m)\n-- Another retention policy: SELECT * FROM \"c0\".\"<rp>\".\"Order\\\"Items\" (SHOW RETENTION POLICIES ON \"c0\" lists them)\n-- Tag values: SHOW TAG VALUES ON \"c0\" FROM \"Order\\\"Items\" WITH KEY = \"tag\" (on InfluxDB 3 add WHERE time > 0)\n-- For the Charts tab: ORDER BY time ASC, and choose time as the x axis.",
+  "countQuery": null
+ },
+ "influxdb3": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "-- Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.\nSELECT * FROM \"c0\".\"Order\"\"Items\" WHERE \"time\" >= now() - INTERVAL '1 hour' ORDER BY \"time\" DESC",
+  "selectQuery": "-- Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.\nSELECT * FROM \"c0\".\"Order\"\"Items\" WHERE \"time\" >= now() - INTERVAL '1 hour' ORDER BY \"time\" DESC\n-- A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'\n-- One row per minute: SELECT date_bin(INTERVAL '1 minute', \"time\") AS minute, avg(\"value\") FROM \"c0\".\"Order\"\"Items\" WHERE \"time\" >= now() - INTERVAL '1 hour' GROUP BY 1 ORDER BY 1\n-- Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\""
+ },
+ "oxia": {
+  "queryLanguage": "json",
+  "queryDialect": "oxia",
+  "tabType": "oxia",
+  "monacoLanguage": "oxia",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "get 'Order\"Items'",
+  "selectQuery": "get 'Order\"Items'\n# list --prefix 'Order\"Items/'\n# range-scan --prefix 'Order\"Items/' --limit 50",
+  "countQuery": null
+ },
  "libredb": {
   "queryLanguage": "json",
   "queryDialect": "libredb",

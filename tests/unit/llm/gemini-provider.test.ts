@@ -16,6 +16,7 @@ import {
 let mockGenerateContentStream: (prompt: string) => Promise<unknown>;
 let capturedModelParams: Record<string, unknown> | undefined;
 let capturedRequestOptions: Record<string, unknown> | undefined;
+let capturedStreamRequestOptions: { signal?: AbortSignal } | undefined;
 
 // ============================================================================
 // Module Mocks (must be before await import)
@@ -28,7 +29,10 @@ mock.module("@google/generative-ai", () => ({
         capturedModelParams = modelParams;
         capturedRequestOptions = requestOptions;
         return {
-          generateContentStream: async (prompt: string) => mockGenerateContentStream(prompt),
+          generateContentStream: async (prompt: string, streamRequestOptions?: { signal?: AbortSignal }) => {
+            capturedStreamRequestOptions = streamRequestOptions;
+            return mockGenerateContentStream(prompt);
+          },
         };
       },
     };
@@ -247,5 +251,52 @@ describe("GeminiProvider", () => {
       const provider = new GeminiProvider(makeConfig());
       await expect(provider.stream(makeStreamOptions())).rejects.toBeInstanceOf(LLMStreamError);
     });
+  });
+});
+
+// The SDK takes the signal per request, beside the prompt: a signal left out of that call bounds nothing,
+// and the query safety route relies on it to stop a model that does not answer.
+describe("GeminiProvider abort signal", () => {
+  beforeEach(() => {
+    capturedStreamRequestOptions = undefined;
+    mockGenerateContentStream = async () => ({ stream: mockStreamChunks(["Hi"]) });
+  });
+
+  test("hands the caller's signal to the SDK request", async () => {
+    const controller = new AbortController();
+    await new GeminiProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal }));
+    expect(capturedStreamRequestOptions?.signal).toBe(controller.signal);
+  });
+
+  // The real SDK (0.24.1) only listens for the abort event, so a signal that already aborted does not stop
+  // its request. This stand-in behaves the same: it ignores the signal and answers.
+  test("a request whose signal already aborted is never sent, though the SDK would send it", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+    mockGenerateContentStream = async () => {
+      calls += 1;
+      return { stream: mockStreamChunks(["sent anyway"]) };
+    };
+    await expect(
+      new GeminiProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal })),
+    ).rejects.toThrow();
+    expect(calls).toBe(0);
+  });
+
+  test("an abort during the retry backoff sends no second request", async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    mockGenerateContentStream = async () => {
+      calls += 1;
+      setTimeout(() => controller.abort(), 10);
+      throw new Error("upstream connection reset");
+    };
+    const started = Date.now();
+    await expect(
+      new GeminiProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal })),
+    ).rejects.toThrow();
+    expect(calls).toBe(1);
+    expect(Date.now() - started).toBeLessThan(900);
   });
 });

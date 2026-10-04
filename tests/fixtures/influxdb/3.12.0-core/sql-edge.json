@@ -1,0 +1,20 @@
+{
+  "version": "3.12.0-core",
+  "name": "sql-edge",
+  "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/api/v3/query_sql",
+    "query": {},
+    "body": {
+      "db": "home",
+      "q": "SELECT * FROM \"edge\"",
+      "format": "jsonl"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/jsonl",
+  "body": "{\"kind\":\"above-2-53\",\"time\":\"2022-01-01T08:00:00.000000003\",\"v\":9007199254740993}\n{\"b\":true,\"kind\":\"boolean\",\"time\":\"2022-01-01T08:00:00.000000006\"}\n{\"kind\":\"int64-max\",\"time\":\"2022-01-01T08:00:00.000000001\",\"v\":9223372036854775807}\n{\"kind\":\"int64-min\",\"time\":\"2022-01-01T08:00:00.000000002\",\"v\":-9223372036854775808}\n{\"kind\":\"nanoseconds\",\"time\":\"2022-01-01T08:00:00.123456789\",\"v\":1}\n{\"kind\":\"nanoseconds\",\"time\":\"2022-01-01T08:00:00.123456790\",\"v\":2}\n{\"kind\":\"string\",\"s\":\"say \\\"hi\\\", it's a back\\\\slash\",\"time\":\"2022-01-01T08:00:00.000000005\"}\n{\"kind\":\"uint64-max\",\"time\":\"2022-01-01T08:00:00.000000004\",\"u\":18446744073709551615}\n"
+}

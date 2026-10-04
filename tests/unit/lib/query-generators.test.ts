@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { beforeAll, describe, test, expect } from "bun:test";
 import {
   generateTableQuery,
   generateSelectQuery,
@@ -30,9 +30,15 @@ import { toJsonText } from "@/lib/db/console/tagged-json";
 import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
+import { parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
+import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
+import { InfluxqlQuoteError } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
+import { offersSchemaDiagram } from "@/lib/db/types";
 
 // ============================================================================
 // Helpers
@@ -648,6 +654,140 @@ describe("Trino (declared capabilities, port 8080) generation", () => {
     // port would produce a statement no Trino coordinator can parse.
     expect(quoteIdentifier("Weird", trinoCaps)).not.toContain("`");
     expect(generateSelectQuery(["nation"], sampleColumns, trinoCaps)).not.toContain("`");
+  });
+});
+
+// ============================================================================
+// The "double-always" declaration, which InfluxDB 3 makes: the "double" arm above
+// leaves a plain lowercase name bare and lets a `$` through bare, and the InfluxDB 3
+// read policy refuses a bare `$`, so a generated Count of a table named `a$b` was
+// refused by Studio itself. This arm quotes every name.
+// ============================================================================
+
+describe('identifierQuoting "double-always"', () => {
+  const alwaysCaps = makeCaps({ defaultPort: 8181, identifierQuoting: "double-always", statementTerminator: "none" });
+
+  test("quoteIdentifier quotes every name, the plain lowercase ones the double arm leaves bare included", () => {
+    expect(quoteIdentifier("home", alwaysCaps)).toBe('"home"');
+    expect(quoteIdentifier("time", alwaysCaps)).toBe('"time"');
+    expect(quoteIdentifier("a$b", alwaysCaps)).toBe('"a$b"');
+    expect(quoteIdentifier("Home", alwaysCaps)).toBe('"Home"');
+  });
+
+  test("quoteIdentifier doubles an embedded double quote so it cannot terminate its quoting", () => {
+    expect(quoteIdentifier('a"b', alwaysCaps)).toBe('"a""b"');
+  });
+
+  test("the object path and the Count text name each segment quoted", () => {
+    expect(quoteObjectPath(["home"], alwaysCaps)).toBe('"home"');
+    expect(generators.generateCountQuery(["a$b"], alwaysCaps)).toBe('SELECT COUNT(*) AS row_count\nFROM "a$b"');
+  });
+});
+
+// ============================================================================
+// previewTimeWindow (InfluxDB spec 6.6, I20): a preview that reads a recent window,
+// newest first, driven by the capability and never by the type-id. The window here
+// is the one InfluxDB 3 declares, written out so the generator's rule is pinned on
+// its own; `sql-provider.test.ts` pins the provider's declaration against the same text.
+// ============================================================================
+
+describe("previewTimeWindow", () => {
+  const windowed = makeCaps({
+    defaultPort: 8181,
+    identifierQuoting: "double-always",
+    statementTerminator: "none",
+    previewTimeWindow: {
+      column: "time",
+      since: "now() - INTERVAL '1 hour'",
+      note: "Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.",
+      examples: [
+        "A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'",
+        "One row per minute: SELECT date_bin(INTERVAL '1 minute', \"time\") AS minute, avg({column}) FROM {table} WHERE \"time\" >= now() - INTERVAL '1 hour' GROUP BY 1 ORDER BY 1",
+        "Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
+      ],
+    },
+  });
+  const homeColumns: ColumnSchema[] = [
+    { name: "time", type: "time", nullable: false, isPrimary: false },
+    { name: "room", type: "tag", nullable: true, isPrimary: false },
+    { name: "co", type: "integer", nullable: true, isPrimary: false },
+    { name: "temp", type: "float", nullable: true, isPrimary: false },
+  ];
+  const PREVIEW =
+    "-- Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.\n" +
+    'SELECT * FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC';
+
+  test("the table query is the spec 6.6 preview, with no LIMIT in the text", () => {
+    expect(generateTableQuery(["home"], windowed)).toBe(PREVIEW);
+    expect(generateTableQuery(["home"], windowed, homeColumns)).toBe(PREVIEW);
+    expect(generateTableQuery(["home"], windowed)).not.toContain("LIMIT");
+  });
+
+  test("the select query adds the example lines, naming the first float or integer column", () => {
+    const temp: ColumnSchema[] = [homeColumns[0], homeColumns[1], homeColumns[3], homeColumns[2]];
+    expect(generateSelectQuery(["home"], temp, windowed)).toBe(
+      `${PREVIEW}\n` +
+        "-- A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'\n" +
+        '-- One row per minute: SELECT date_bin(INTERVAL \'1 minute\', "time") AS minute, avg("temp") FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' GROUP BY 1 ORDER BY 1\n' +
+        "-- Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
+    );
+    expect(generateSelectQuery(["home"], homeColumns, windowed)).toContain('avg("co")');
+    expect(generateSelectQuery(["home"], homeColumns, windowed)).not.toContain("LIMIT");
+  });
+
+  test('with no numeric column the example names "value"', () => {
+    expect(generateSelectQuery(["home"], [homeColumns[0], homeColumns[1]], windowed)).toContain('avg("value")');
+    expect(generateSelectQuery(["home"], [], windowed)).toContain('avg("value")');
+  });
+
+  test("a table name that needs quotes is quoted with its quote doubled, in the statement and the example", () => {
+    const text = generateSelectQuery(['we"ird name;x'], [], windowed);
+    expect(text.split("\n")[1]).toBe(
+      'SELECT * FROM "we""ird name;x" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC',
+    );
+    expect(text).toContain('FROM "we""ird name;x" WHERE');
+  });
+
+  test("a name holding a line break cannot end an example's comment line early", () => {
+    const text = generateSelectQuery(
+      ["a\nb"],
+      [{ name: "x\ry", type: "float", nullable: true, isPrimary: false }],
+      windowed,
+    );
+    const lines = text.split("\n");
+    // The statement keeps the name as written, inside its quotes; every example line stays one comment line.
+    expect(lines[1]).toBe('SELECT * FROM "a');
+    expect(lines.slice(3).every((line) => line.startsWith("-- "))).toBe(true);
+    expect(lines.slice(3)).toHaveLength(3);
+    expect(text).toContain('avg("x y") FROM "a b"');
+  });
+
+  test("a replacement pattern in a name is the name, never the matched placeholder", () => {
+    const text = generateSelectQuery(
+      ["a$&b"],
+      [{ name: "$'", type: "integer", nullable: true, isPrimary: false }],
+      windowed,
+    );
+    expect(text).toContain('avg("$\'") FROM "a$&b" WHERE');
+  });
+
+  test("the window column goes through quoteIdentifier", () => {
+    const declared = makeCaps({
+      identifierQuoting: "double-always",
+      statementTerminator: "none",
+      previewTimeWindow: { column: "ts", since: "now() - INTERVAL '1 hour'", note: "n", examples: [] },
+    });
+    expect(generateTableQuery(["t"], declared)).toBe(
+      '-- n\nSELECT * FROM "t" WHERE "ts" >= now() - INTERVAL \'1 hour\' ORDER BY "ts" DESC',
+    );
+    expect(generateSelectQuery(["t"], [], declared)).toBe(generateTableQuery(["t"], declared));
+  });
+
+  test("a capability set without previewTimeWindow is unchanged", () => {
+    expect(generateTableQuery(["users"], makeCaps())).toBe("SELECT * FROM users;");
+    expect(generateSelectQuery(["users"], sampleColumns, makeCaps())).toBe(
+      "SELECT\n  id,\n  name\nFROM users\nWHERE 1=1\nLIMIT 100;",
+    );
   });
 });
 
@@ -2126,5 +2266,106 @@ describe("generateTableQuery and generateSelectQuery: Qdrant", () => {
     expect(request.route.template).toBe("collections/{collection_name}/points/query");
     const body = JSON.parse(toJsonText(request.body)) as Record<string, unknown>;
     expect([(body.query as number[]).length, body.limit, body.using]).toEqual([4, 10, undefined]);
+  });
+});
+
+// InfluxQL (InfluxDB spec 6.6, 6.7): the arms read the browser-safe InfluxQL generators and quoter, so a tree click
+// and Generate Query write the text the provider's read policy allows, the measurement source `"db".."m"`.
+describe("the influxql arms", () => {
+  const path = ["home", "home"];
+  const columns: ColumnSchema[] = [
+    { name: "time", type: "time", nullable: false, isPrimary: false },
+    { name: "room", type: "tag", nullable: true, isPrimary: false },
+    { name: "temp", type: "float", nullable: true, isPrimary: false },
+  ];
+  let influxCaps: ProviderCapabilities;
+
+  beforeAll(async () => {
+    influxCaps = (await createDatabaseProvider(CENSUS_CONNECTION.influxdb)).getCapabilities();
+  });
+
+  test("the InfluxDB (InfluxQL) provider declares the influxql language these arms read", () => {
+    expect(influxCaps.queryLanguage).toBe("influxql");
+  });
+
+  test("quoteIdentifier always double-quotes, with the InfluxQL escapes", () => {
+    expect(quoteIdentifier("temp", influxCaps)).toBe('"temp"');
+    expect(quoteIdentifier('we"ird name;x', influxCaps)).toBe('"we\\"ird name;x"');
+    expect(() => quoteIdentifier("bad\u0001name", influxCaps)).toThrow(InfluxqlQuoteError);
+  });
+
+  test('quoteObjectPath writes a [database, measurement] path as the source "db".."m"', () => {
+    expect(quoteObjectPath(path, influxCaps)).toBe('"home".."home"');
+    expect(quoteObjectPath(["home", 'we"ird name;x'], influxCaps)).toBe('"home".."we\\"ird name;x"');
+    expect(() => quoteObjectPath(["home"], influxCaps)).toThrow(RangeError);
+    expect(() => quoteObjectPath(["home", "rp", "m"], influxCaps)).toThrow(RangeError);
+  });
+
+  test("quoteObjectPath writes no object as the empty string, as every other dialect does", () => {
+    // A modal that is mounted before an object is chosen renders with the empty path (StudioModals);
+    // a throw there took the whole Studio down for every influxdb connection.
+    expect(quoteObjectPath([], influxCaps)).toBe("");
+    expect(quoteObjectPath([], makeCaps())).toBe("");
+  });
+
+  test("a tree click writes the windowed preview of the InfluxQL generator, which the read policy allows", () => {
+    const text = generateTableQuery(path, influxCaps, columns);
+    expect(text).toBe(influxqlTableQuery(path));
+    expect(text).toBe(
+      "-- Newest points of the last hour, LIMIT 50 per series. No row means no point is newer: widen 1h below.\n" +
+        'SELECT * FROM "home".."home" WHERE time > now() - 1h ORDER BY time DESC LIMIT 50',
+    );
+    expect(evaluateInfluxql(text).allowed).toBe(true);
+  });
+
+  test("Generate Query writes the preview with its example lines, from the described columns", () => {
+    const text = generateSelectQuery(path, columns, influxCaps);
+    expect(text).toBe(influxqlSelectQuery(path, columns));
+    expect(text).toContain('SELECT mean("temp") FROM "home".."home"');
+    expect(text).toContain('WITH KEY = "room"');
+    expect(evaluateInfluxql(text).allowed).toBe(true);
+  });
+
+  test("a path that is not [database, measurement] is refused, never spelled", () => {
+    expect(() => generateTableQuery(["home"], influxCaps)).toThrow(RangeError);
+    expect(() => generateSelectQuery(["a", "b", "c"], columns, influxCaps)).toThrow(RangeError);
+  });
+
+  test("Count stays gated, and the schema diagram is not offered for influxql", () => {
+    expect(generators.generateCountQuery(path, influxCaps)).toBeNull();
+    expect(offersSchemaDiagram(influxCaps)).toBe(false);
+    // The control: the language the diagram line above it reads, and SQL, keep their answers.
+    expect(offersSchemaDiagram(makeCaps({ queryLanguage: "cypher" }))).toBe(false);
+    expect(offersSchemaDiagram(makeCaps())).toBe(true);
+  });
+});
+
+// Oxia (SB2-4.5): both generators read the DIALECT_GENERATORS record, which writes the provider's own browser-safe
+// text, every output a command the provider's parser accepts, and no count statement.
+describe("generateTableQuery and generateSelectQuery: Oxia", () => {
+  const oxiaCaps = makeCaps({ queryLanguage: "json", queryDialect: "oxia", supportsExplain: false });
+  const path = ["/admin/policies"];
+
+  test("the click on an Oxia key writes get, never a MongoDB find", () => {
+    const text = generateTableQuery(path, oxiaCaps, []);
+    expect(text).toBe(oxiaTableQuery(path));
+    expect(text).toBe("get /admin/policies");
+    const parsed = parseOxiaCommand(text, {});
+    expect(parsed.ok && parsed.parsed.command).toEqual({
+      kind: "get",
+      key: "/admin/policies",
+      comparison: "equal",
+      hex: false,
+    });
+  });
+
+  test("Generate Command writes the get, with the prefix forms as comments", () => {
+    const text = generateSelectQuery(path, [], oxiaCaps);
+    expect(text).toBe(oxiaSelectQuery(path));
+    expect(parseOxiaCommand(text, {}).ok).toBe(true);
+  });
+
+  test("offers no count statement", () => {
+    expect(generators.generateCountQuery(path, oxiaCaps)).toBeNull();
   });
 });

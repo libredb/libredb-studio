@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, Apache Kafka, etcd, Neo4j, Milvus and Qdrant** from your browser, with AI-powered query assistance, RBAC and OIDC SSO.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia** from your browser, with AI query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -63,7 +63,7 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 
 ### Reaching your databases from inside the container
 
-**`localhost` in the connection dialog means *this container*, not your machine.** A database on the host, or in another container, is not there — so a connection that works from a terminal fails here, and it fails as a timeout rather than as anything that mentions the host. This is the first thing to check when a container-run Studio cannot connect to a database you know is up.
+**`localhost` in the connection dialog means *this container*, not your machine.** A database on the host, or in another container, is not there, so a connection that works from a terminal fails here, and it fails as a timeout rather than as anything that mentions the host.
 
 Pick whichever fits how the database runs:
 
@@ -102,15 +102,15 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 `-alpine` is the same product as the default image. `-alpine-slim` is the only variant that trades features for size: opening a DuckDB connection on it answers with a message naming the tags that do ship that driver. Oracle Thick mode needs Oracle Instant Client, which has no musl build, so it stays on the default tag. None of the three carries the application source.
 
-- **Architectures:** `linux/amd64` and `linux/arm64` as a multi-arch manifest for `latest`, `X.Y.Z`, `main` and their `sha-` tags. Preview builds from `feat/**` / `fix/**` branches (`dev` and their `sha-` tags) are `linux/amd64` only, because CI has no native arm64 runner for this job.
-- **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry). It is canonical because that is where CI publishes and where the build provenance lives, not because of pull limits: the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, so `docker pull libredb/libredb-studio` is rate-limit-free and needs no account either. This Docker Hub repository is a convenience mirror; both registries serve the identical multi-arch image.
+- **Architectures:** `linux/amd64` and `linux/arm64` as a multi-arch manifest for `latest`, `X.Y.Z`, `main` and their `sha-` tags. Preview builds from `feat/**` / `fix/**` branches (`dev` and their `sha-` tags) are `linux/amd64` only: CI has no native arm64 runner for this job.
+- **Primary registry:** `ghcr.io/libredb/libredb-studio` (GitHub Container Registry), where CI publishes with build provenance. This Docker Hub repository is a mirror of the identical multi-arch image; the `libredb` namespace is in the [Docker-Sponsored Open Source](https://www.docker.com/community/open-source/) programme, so `docker pull libredb/libredb-studio` is rate-limit-free and needs no account.
 
 ---
 
 ## Supported databases
 
-Twenty-three external engines share one interface.
-The twenty-fourth row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
+Twenty-six external engines share one interface.
+The twenty-seventh row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -137,14 +137,17 @@ The twenty-fourth row is the embedded LibreDB store: it ships inside the image, 
 | **Neo4j** | `neo4j-driver-lite` | Read-only Cypher editor, label and relationship-type browser |
 | **Milvus** | `@grpc/grpc-js` | Read-only REST v2 request editor, vector search, admin Load and Release |
 | **Qdrant** | none, HTTP | Read-only REST request editor, vector search, collection browser |
+| **InfluxDB (InfluxQL)** | none, HTTP | Read-only InfluxQL editor, 1.x to 3 |
+| **InfluxDB 3 (SQL)** | none, HTTP | Read-only SQL editor |
+| **Oxia** | `@grpc/grpc-js` | Read-only oxia client commands, shard map, key browser |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
-Prometheus and Apache Kafka are read-only too: Studio calls only their read APIs.
+Prometheus, InfluxDB, Apache Kafka and Oxia are read-only too: Studio calls only read APIs.
 
 ### Engines with no provider of their own
 
-Twenty-eight further engines speak the wire protocol of one of the twenty-three drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much of the product worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the twenty-six drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

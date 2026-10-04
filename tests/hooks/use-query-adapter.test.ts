@@ -5,6 +5,7 @@ import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
 import qdrantDocs from "../fixtures/vector/corpus/qdrant-docs.json";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
+import { influxqlRefusal } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { renderHook, act } from "@testing-library/react";
 
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
@@ -1763,6 +1764,77 @@ describe("the real qdrant row in the embedded workspace", () => {
         result: {
           rows: [{ id: 1 }],
           fields: ["id"],
+          rowCount: 1,
+          executionTime: 1,
+          pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true },
+        },
+        currentOffset: 50,
+      }),
+    );
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+    expect(onQueryExecute).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+  });
+});
+
+// =============================================================================
+// The real influxdb row in the embedded workspace (InfluxDB spec E2)
+// =============================================================================
+//
+// The InfluxQL policy is the influxdb row's `refuse`, so the embedded surface must stop a refused statement before
+// the host's fetch on the same four paths as the qdrant row above; influxdb3 is SQL and its provider refuses it.
+describe("the real influxdb row in the embedded workspace", () => {
+  const REFUSED = 'SHOW DATABASES DROP MEASUREMENT "home"';
+  const sentence = influxqlRefusal(REFUSED);
+
+  function mount(tab: QueryTab = makeTab({ query: REFUSED, type: "influxql" })) {
+    const onQueryExecute = mock(() => Promise.resolve(makeQueryResult()));
+    const { tabs, setTabs } = createMutableTabs([tab]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: "influxdb" }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+    return { result, tabs, onQueryExecute };
+  }
+
+  test.each(["executeQuery", "forceExecuteQuery", "unlimited"] as const)(
+    "%s hands the host nothing and writes Studio's sentence to the tab",
+    async (run) => {
+      expect(sentence).toBeDefined();
+      const { result, tabs, onQueryExecute } = mount();
+      await act(async () => {
+        if (run === "executeQuery") await result.current.executeQuery(REFUSED);
+        else if (run === "forceExecuteQuery") result.current.forceExecuteQuery(REFUSED);
+        else {
+          result.current.setUnlimitedWarningOpen(true);
+          result.current.setPendingUnlimitedQuery({ query: REFUSED, tabId: "tab-1" });
+        }
+      });
+      if (run === "unlimited") {
+        await act(async () => {
+          result.current.handleUnlimitedQuery();
+        });
+      }
+      expect(onQueryExecute).not.toHaveBeenCalled();
+      expect(tabs[0].runError).toBe(sentence);
+    },
+  );
+
+  test("Load More refuses the statement it pages", async () => {
+    const { result, tabs, onQueryExecute } = mount(
+      makeTab({
+        query: "SHOW DATABASES",
+        resultQuery: REFUSED,
+        type: "influxql",
+        result: {
+          rows: [{ name: "home" }],
+          fields: ["name"],
           rowCount: 1,
           executionTime: 1,
           pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true },

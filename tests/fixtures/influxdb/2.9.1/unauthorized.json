@@ -1,0 +1,20 @@
+{
+  "version": "2.9.1",
+  "name": "unauthorized",
+  "image": "influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "q": "SHOW DATABASES",
+      "chunked": "true",
+      "chunk_size": "1000"
+    },
+    "auth": "none"
+  },
+  "status": 401,
+  "contentType": "application/json; charset=utf-8",
+  "body": "{\"code\":\"unauthorized\",\"message\":\"unauthorized access\"}"
+}
