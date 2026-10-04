@@ -1,12 +1,162 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db/factory";
-import { DatabaseConfigError } from "@/lib/db/errors";
-import { offersColumnProfiling } from "@/lib/db/types";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  PoolExhaustedError,
+  QueryCancelledError,
+  TimeoutError,
+} from "@/lib/db/errors";
+import { type DatabaseProvider, offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { jsonCommandAddress, objectSegment, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
-import { quoteLiteral } from "@/lib/sql/values";
+import type { ColumnProfile } from "@/lib/export/data-profile";
+import { renderValue } from "@/lib/export/csv";
+
+/** The most columns one profile reads: each one costs the engine a scan of the table. */
+const PROFILED_COLUMN_LIMIT = 20;
+
+/**
+ * `row[name]`, or the field whose name differs from it only in case.
+ *
+ * An unquoted alias is folded by the engine, and not always to lower case: Oracle answers
+ * `TOTAL` for `total`, which made every Oracle profile report 0 rows. The exact name is
+ * tried first, so a result holding both `id` and `ID` still reads the one asked for.
+ */
+function field(row: Record<string, unknown> | undefined, name: string): unknown {
+  if (row === undefined) return undefined;
+  if (Object.hasOwn(row, name)) return row[name];
+  const folded = Object.keys(row).find((key) => key.toLowerCase() === name.toLowerCase());
+  return folded === undefined ? undefined : row[folded];
+}
+
+/** A MIN or MAX as the text the profiler shows, through the export's own spelling of a value. */
+function valueText(value: unknown): string | undefined {
+  return value === null || value === undefined ? undefined : renderValue(value);
+}
+
+/**
+ * Why a statement failed, as the user may read it: an engine's own message, which is what the
+ * editor shows for the same statement, and nothing from an error this server raised itself.
+ */
+function reasonOf(error: unknown): string {
+  return error instanceof DatabaseError ? error.message : "Could not profile this column";
+}
+
+/**
+ * The failures that say nothing about the column: the connection, the session or the request
+ * itself is gone or out of time. Asking the next measure would only meet them again, and on a
+ * table big enough to reach a statement timeout every retry is another full scan, so they end
+ * the whole profile and reach `createErrorResponse`, which answers each with its own status.
+ */
+const ENDS_PROFILE = [
+  ConnectionError,
+  AuthenticationError,
+  PoolExhaustedError,
+  TimeoutError,
+  QueryCancelledError,
+  DatabaseConfigError,
+];
+
+/**
+ * `error` as one measure's refusal, the engine's reason for it, or thrown on when it ends the
+ * profile. Anything else is read as a refusal, the shape in which a type that does not take an
+ * aggregate fails, whichever class its provider raised it as.
+ */
+function refusalOf(error: unknown): string {
+  if (ENDS_PROFILE.some((kind) => error instanceof kind)) throw error;
+  return reasonOf(error);
+}
+
+/**
+ * One column's statistics, in as few statements as the engine allows.
+ *
+ * Every statement is plain SQL every SQL engine here reads: no cast and no arithmetic,
+ * because a cast is dialect syntax (`::text` is PostgreSQL's, and the one statement this
+ * route used to send failed on every other engine), and MIN and MAX are read on the
+ * column's own type so a number is ordered as a number (ids 1..200 answered `max 99`
+ * through the text cast). The null count is worked out here rather than in SQL for the
+ * same reason, since CQL has no arithmetic on aggregates.
+ *
+ * Not every type takes every aggregate: SQL Server refuses COUNT(DISTINCT) on `text`,
+ * PostgreSQL has no MIN(boolean), CQL has no COUNT(DISTINCT) at all. So when the one
+ * statement fails, each measure is asked on its own and a refused one is reported with
+ * the engine's reason, instead of the whole column reading as 0 % null and 0 distinct.
+ */
+async function profileSqlColumn(
+  provider: DatabaseProvider,
+  table: string,
+  name: string,
+  column: string,
+  totalRows: number,
+): Promise<ColumnProfile> {
+  const counts = `COUNT(*) AS total_count, COUNT(${column}) AS non_null_count`;
+  const distinct = `COUNT(DISTINCT ${column}) AS distinct_count`;
+  const range = `MIN(${column}) AS min_value, MAX(${column}) AS max_value`;
+  const read = async (projection: string) => (await provider.query(`SELECT ${projection} FROM ${table}`)).rows[0] ?? {};
+
+  let row: Record<string, unknown>;
+  const warnings: string[] = [];
+  try {
+    row = await read(`${counts}, ${distinct}, ${range}`);
+  } catch (error) {
+    refusalOf(error);
+    try {
+      row = { ...(await read(counts)) };
+    } catch (countError) {
+      const countRefusal = refusalOf(countError);
+      // A large-object type takes no aggregate at all (SQL Server `text`: "Operand data type
+      // text is invalid for count operator"; Oracle CLOB: ORA-22849), but IS NULL still
+      // reads it, so its nulls are counted in a filter against the table's own total. The
+      // other two measures are aggregates too, so they are reported refused for that same
+      // reason rather than sent to be refused again.
+      let nulls: Record<string, unknown> | undefined;
+      try {
+        nulls = (await provider.query(`SELECT COUNT(*) AS null_count FROM ${table} WHERE ${column} IS NULL`)).rows[0];
+      } catch (nullError) {
+        return { name, totalRows, error: refusalOf(nullError) };
+      }
+      const nullCount = field(nulls, "null_count");
+      if (nullCount === undefined) return { name, totalRows, error: countRefusal };
+      return {
+        ...columnFigures(name, { total_count: totalRows, non_null_count: totalRows - Number(nullCount) }),
+        warnings: [`Distinct count and min/max: ${countRefusal}`],
+      };
+    }
+    for (const [label, projection] of [
+      ["Distinct count", distinct],
+      ["Min/max", range],
+    ]) {
+      try {
+        Object.assign(row, await read(projection));
+      } catch (measureError) {
+        warnings.push(`${label}: ${refusalOf(measureError)}`);
+      }
+    }
+  }
+
+  return { ...columnFigures(name, row), warnings: warnings.length > 0 ? warnings : undefined };
+}
+
+/** The figures a profile reports from one result row, whatever case its aliases came back in. */
+function columnFigures(name: string, row: Record<string, unknown>): ColumnProfile {
+  const total = Number(field(row, "total_count") ?? 0);
+  const nullCount = total - Number(field(row, "non_null_count") ?? 0);
+  const distinctCount = field(row, "distinct_count");
+  return {
+    name,
+    totalRows: total,
+    nullCount,
+    nullPercent: total > 0 ? Math.round((nullCount / total) * 100) : 0,
+    distinctCount: distinctCount === undefined ? undefined : Number(distinctCount),
+    minValue: valueText(field(row, "min_value")),
+    maxValue: valueText(field(row, "max_value")),
+  };
+}
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -30,6 +180,11 @@ export async function POST(req: NextRequest) {
         { error: "tablePath is required: the object address, one segment per element" },
         { status: 400 },
       );
+    }
+    // Each column name is quoted into the statement as an identifier, which a non-string
+    // cannot be: refused here rather than turned into `"undefined"` or a crash mid-profile.
+    if (columns !== undefined && (!Array.isArray(columns) || columns.some((c) => typeof c !== "string"))) {
+      return NextResponse.json({ error: "columns must be a list of column names" }, { status: 400 });
     }
     const path = tablePath as string[];
     // The LABEL, for the response alone: the profiler names its export after it.
@@ -113,87 +268,46 @@ export async function POST(req: NextRequest) {
       // string: two containers may hold one label, and a name may itself contain a dot.
       const safeTable = quoteObjectPath(path, capabilities);
 
-      // Get total row count
-      const countResult = await provider.query(`SELECT COUNT(*) as total FROM ${safeTable}`);
-      const totalRows = Number(countResult.rows[0]?.total || 0);
+      const countResult = await provider.query(`SELECT COUNT(*) AS total FROM ${safeTable}`);
+      const totalRows = Number(field(countResult.rows[0], "total") ?? 0);
 
-      // Build profiling query for each column
-      const profileParts = colList.slice(0, 20).map((col) => {
-        const safeCol = quoteIdentifier(col, capabilities);
-        // The name is also carried as a LABEL, which makes it a value in a string
-        // literal. It arrives in the request, so it is quoted the way the connected
-        // engine reads a literal rather than by doubling the quote alone (#290).
-        return `
-          SELECT
-            ${quoteLiteral(col, connection.type)} as column_name,
-            COUNT(*) as total_count,
-            COUNT(${safeCol}) as non_null_count,
-            COUNT(*) - COUNT(${safeCol}) as null_count,
-            COUNT(DISTINCT ${safeCol}) as distinct_count,
-            MIN(${safeCol}::text) as min_value,
-            MAX(${safeCol}::text) as max_value
-          FROM ${safeTable}
-        `;
-      });
-
-      const columnProfiles: {
-        name: string;
-        totalRows: number;
-        nullCount: number;
-        nullPercent: number;
-        distinctCount: number;
-        minValue?: unknown;
-        maxValue?: unknown;
-        error?: string;
-        sampleValues?: string[];
-      }[] = [];
-
-      for (const sql of profileParts) {
-        try {
-          const result = await provider.query(sql);
-          const row = result.rows[0];
-          if (row) {
-            const nullCount = Number(row.null_count || 0);
-            const total = Number(row.total_count || 0);
-
-            columnProfiles.push({
-              name: String(row.column_name),
-              totalRows: total,
-              nullCount,
-              nullPercent: total > 0 ? Math.round((nullCount / total) * 100) : 0,
-              distinctCount: Number(row.distinct_count || 0),
-              minValue: row.min_value,
-              maxValue: row.max_value,
-            });
-          }
-        } catch {
-          // Skip columns that can't be profiled (e.g., binary)
-          columnProfiles.push({
-            name: colList[columnProfiles.length],
-            totalRows,
-            nullCount: 0,
-            nullPercent: 0,
-            distinctCount: 0,
-            error: "Could not profile this column",
-          });
-        }
+      const profiled = colList.slice(0, PROFILED_COLUMN_LIMIT);
+      const columnProfiles: ColumnProfile[] = [];
+      // One column at a time, on purpose: each statement scans the table, and twenty of them
+      // at once would be twenty concurrent scans of the user's database.
+      for (const col of profiled) {
+        columnProfiles.push(
+          await profileSqlColumn(provider, safeTable, col, quoteIdentifier(col, capabilities), totalRows),
+        );
       }
 
-      // Get sample values for top 5 columns
-      const topCols = colList.slice(0, 5);
+      // Sample values for the first five columns. The bound is the provider's own spelling,
+      // through the same limiter the editor's statements go through: `LIMIT 5` written here
+      // was a syntax error on Oracle, SQL Server and Db2.
+      const topCols = profiled.slice(0, 5);
       const safeCols = topCols.map((c) => quoteIdentifier(c, capabilities)).join(", ");
       try {
-        const sampleResult = await provider.query(`SELECT ${safeCols} FROM ${safeTable} LIMIT 5`);
+        const sample = provider.prepareQuery(`SELECT ${safeCols} FROM ${safeTable}`, { limit: 5 });
+        const sampleResult = await provider.query(sample.query);
         for (const profile of columnProfiles) {
           if (topCols.includes(profile.name)) {
-            profile.sampleValues = sampleResult.rows.map((r) => String(r[profile.name] ?? "NULL")).slice(0, 5);
+            profile.sampleValues = sampleResult.rows
+              .map((r) => field(r, profile.name))
+              .map((v) => (v === null || v === undefined ? "NULL" : renderValue(v)))
+              .slice(0, 5);
           }
         }
       } catch {
         /* skip sample values on error */
       }
 
-      return NextResponse.json({ tableName, totalRows, columns: columnProfiles });
+      const omittedColumns = colList.slice(PROFILED_COLUMN_LIMIT);
+      return NextResponse.json({
+        tableName,
+        totalRows,
+        columns: columnProfiles,
+        ...(omittedColumns.length > 0 ? { omittedColumns } : {}),
+      });
     }
   } catch (error) {
     return createErrorResponse(error, { route: "api/db/profile" });

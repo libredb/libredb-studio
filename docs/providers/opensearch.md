@@ -1643,6 +1643,9 @@ because the provider exposes no `cancelQuery`
 - **An index whose mapping has `nested` fields reports more documents than a `SELECT` returns.**
   Measured here: `probe_shapes` is 2 documents in `_cat/indices` and 1 row to `SELECT COUNT(*)`
   ([§7](#7-monitoring--health)).
+- **`COUNT(DISTINCT ...)` is approximate**, and so is the Data Profiler's distinct count, which is that
+  aggregate. Measured on 3.9.0: 50,000 documents with 50,000 distinct `long` ids answer
+  `COUNT(DISTINCT id)` = 50,106. The null counts, MIN and MAX beside it are exact.
 - **`totalHits` is reported by this product and deliberately dropped**, so no surface behaves
   differently between the two type-ids — the upstream product sends no count at all
   ([§5.2](#52-result-shaping)).

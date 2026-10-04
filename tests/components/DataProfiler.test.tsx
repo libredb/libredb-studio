@@ -668,6 +668,82 @@ describe("DataProfiler", () => {
     expect(columnsCard!.textContent).toContain("3");
   });
 
+  // ── Figures the engine could not produce (E2E-007) ───────────────────────
+
+  /** A profile whose columns hold every partial outcome the route can answer. */
+  const partialProfile = {
+    tableName: "notes",
+    totalRows: 4,
+    columns: [
+      { name: "id", totalRows: 4, nullCount: 0, nullPercent: 0, distinctCount: 4, minValue: "1", maxValue: "4" },
+      {
+        name: "body",
+        totalRows: 4,
+        nullCount: 2,
+        nullPercent: 50,
+        warnings: ["Distinct count: The text data type cannot be selected as DISTINCT"],
+      },
+      { name: "geom", totalRows: 4, error: "ORA-22849: type SDO_GEOMETRY is not supported" },
+    ],
+    omittedColumns: ["c21", "c22"],
+  };
+
+  function renderPartial(profile: unknown = partialProfile, extra: Partial<Parameters<typeof DataProfiler>[0]> = {}) {
+    restoreGlobalFetch();
+    mockGlobalFetch({
+      "/api/db/profile": { ok: true, json: profile },
+      "/api/ai/describe-schema": { ok: false, status: 500, json: { error: "AI not configured" } },
+    });
+    return render(<DataProfiler {...createDefaultProps(extra)} />);
+  }
+
+  test("the average null share counts only the columns whose nulls were counted", async () => {
+    const { container } = renderPartial();
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("Avg Null %")).not.toBeNull());
+
+    // (0 + 50) / 2, and not (0 + 50 + 0) / 3: the failed column has no null figure.
+    expect(view.queryByText("25%")).not.toBeNull();
+  });
+
+  test("the average null share says n/a when no column could be counted", async () => {
+    const { container } = renderPartial({ ...partialProfile, columns: [partialProfile.columns[2]] });
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("Avg Null %")).not.toBeNull());
+
+    expect(view.queryByText("n/a")).not.toBeNull();
+  });
+
+  test("a refused measure shows the engine's reason, and an unknown distinct count is not 0", async () => {
+    const { container } = renderPartial();
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("ORA-22849: type SDO_GEOMETRY is not supported")).not.toBeNull());
+
+    expect(view.queryByText("Distinct count: The text data type cannot be selected as DISTINCT")).not.toBeNull();
+    expect(view.queryAllByText("distinct unknown")).toHaveLength(2);
+    expect(view.queryByText("0 distinct")).toBeNull();
+  });
+
+  test("columns past the cap are counted and named, not silently dropped", async () => {
+    const { container } = renderPartial();
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("Columns")).not.toBeNull());
+
+    expect(view.queryByText("3 of 5")).not.toBeNull();
+    expect(view.queryByText("Not profiled, past the first 3 columns: c21, c22")).not.toBeNull();
+  });
+
+  test("the AI summary says which columns could not be profiled rather than writing undefined", async () => {
+    const onDescribeSchema = mock(async () => "summary");
+    renderPartial(partialProfile, { onDescribeSchema });
+    await waitFor(() => expect(onDescribeSchema).toHaveBeenCalled());
+
+    const sent = (onDescribeSchema.mock.calls[0] as unknown as [{ schemaContext: string }])[0].schemaContext;
+    expect(sent).toContain("body: 50% null, distinct unknown, min=N/A, max=N/A");
+    expect(sent).toContain("geom: could not be profiled");
+    expect(sent).not.toContain("undefined");
+  });
+
   // ── State reset on close/reopen ──────────────────────────────────────────
 
   test("resets state when closed and reopened", async () => {

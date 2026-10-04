@@ -1665,6 +1665,9 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
 - **An index whose mapping has `nested` fields reports more documents than a `SELECT` returns**,
   because every nested element is stored as its own document ([§7](#7-monitoring--health)). The
   monitoring panel reports the cluster's count; the editor reports the query's.
+- **`COUNT(DISTINCT ...)` is approximate**, and so is the Data Profiler's distinct count, which is that
+  aggregate. Measured on 9.5.3: 50,000 documents with 50,000 distinct `long` ids answer
+  `COUNT(DISTINCT id)` = 50,106. The null counts, MIN and MAX beside it are exact.
 - **`totalHits` is unavailable on this product.** Nothing in a successful answer carries a
   matching-document count, so the seam's field is `null` here and a caller must read it as "unknown"
   ([§3.4](#34-the-success-envelope-positional-rows-and-a-duplicate-name-that-must-not-vanish)). It is
