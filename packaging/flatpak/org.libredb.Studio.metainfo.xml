@@ -49,6 +49,8 @@
       <li>Trino</li>
       <li>Apache Cassandra and ScyllaDB</li>
       <li>Prometheus (read-only)</li>
+      <li>InfluxDB (InfluxQL, read-only)</li>
+      <li>InfluxDB 3 (SQL, read-only)</li>
       <li>Apache Kafka (read-only)</li>
       <li>etcd</li>
       <li>Neo4j (read-only)</li>
