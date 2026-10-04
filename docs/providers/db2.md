@@ -217,7 +217,7 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | Statement terminator | Not declared | A generated statement ends with `;`, the default when none is declared; a trailing `;` is accepted |
 | Container levels | Schema | |
 | Container path shapes | Exact | Like Oracle |
-| Preview projection | Yes | `previewProjection` is `DB2_PREVIEW_PROJECTION`: the object browser's preview names each column and leaves CLOB, DBCLOB, BLOB and XML columns out, named in a comment above the statement, so K4 does not reach it; a preview whose column list is not loaded yet still reads `SELECT *`, under a comment that says so |
+| Preview projection | Yes | `previewProjection` is `DB2_PREVIEW_PROJECTION`: the object browser's preview names each column and leaves CLOB, DBCLOB and BLOB columns out, named in a comment above the statement, because the grid does not edit them (K24); XML is read; a preview whose column list is not loaded yet still reads `SELECT *`, under a comment that says so |
 
 The application's query timeout is not forwarded to Db2: on 1.0.22 the driver's own timeout left the statement running on the server (K14), and on 1.0.24 it cancels it through a second session that needs privileges this version does not ask a user to hold.
 
