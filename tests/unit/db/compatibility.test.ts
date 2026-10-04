@@ -274,25 +274,25 @@ describe("wire-compatibility registry", () => {
     expect(parade?.caveats.some((caveat) => caveat.includes("pg_indexes_size"))).toBe(false);
   });
 
-  test("Databend is query-editor-only because our own reads cannot run there", () => {
-    // Probed 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11`. SQL runs: a
-    // 2000-row `count(*)` and a plain `EXPLAIN` both answer, and the catalogs THEMSELVES
-    // answer when asked with literal SQL - `information_schema.tables` reported the true
-    // 3 and 2000 rows with sizes.
+  test("Databend is partial: the object browser answers and the monitoring panels have no source", () => {
+    // Probed 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11` and registered
+    // query-only, for a reason that was ours: Databend implements no prepared statement
+    // (`Prepare is not support in Databend.`), and every parameterised read went through
+    // mysql2's prepared protocol, so the table list, the schema and the statistics failed
+    // over catalogs that answered literal SQL in full.
     //
-    // The object browser still gets nothing, and the reason is ours: every parameterised
-    // read goes through mysql2's prepared protocol and Databend replies
-    // `Prepare is not support in Databend`. D8 moved the PARAMETERLESS statements to the
-    // text protocol; the ones carrying placeholders - the table list, the schema, sessions,
-    // table/index/storage stats - still prepare. So this row is `query-only` for what a
-    // user gets today, with the cause recorded as a backlog item rather than as the
-    // engine's fault.
+    // Re-measured 2026-10-04 on that image, on v1.2.925-patch-13 and on 1.2.881, through the
+    // provider and in a browser: the provider binds client-side on a server that refuses to
+    // prepare, and the tree, columns, table and storage stats and inline edit work. What is
+    // left is Databend's own - no SHOW STATUS, no process list, no ROUTINES/TRIGGERS/EVENTS
+    // views - which is `partial` by this registry's definition.
     const databend = compatibleEnginesFor("mysql").find((engine) => engine.name === "Databend");
-    expect(databend?.tier).toBe("query-only");
+    expect(databend?.tier).toBe("partial");
     expect(databend?.probedVersion).toBe("Databend v1.2.925-patch-11 (advertises MySQL 8.0.90)");
     const caveats = databend?.caveats.join(" ") ?? "";
     expect(caveats).toContain("Prepare is not support in Databend");
-    expect(caveats).toContain("information_schema.tables");
+    expect(caveats).toContain("SHOW STATUS");
+    expect(caveats).not.toContain("Nothing else does");
   });
 
   test("VictoriaMetrics is a Prometheus relative, recorded at the tier its gate-4 probe measured", () => {

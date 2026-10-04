@@ -582,14 +582,16 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
   {
     name: "Databend",
     via: "mysql",
-    tier: "query-only",
+    tier: "partial",
     probedVersion: "Databend v1.2.925-patch-11 (advertises MySQL 8.0.90)",
     caveats: [
-      "The SQL editor works and the Explain panel renders Databend's own text plan through a plain EXPLAIN (browser, 2026-09-06). Nothing else does: the object browser, every statistics panel and the monitoring dashboard are unavailable.",
-      "The cause is ours rather than Databend's, which is why the catalogs are worth naming: asked with literal SQL, information_schema.tables answers the true 3 and 2000 rows with sizes. Every parameterised read fails instead with Prepare is not support in Databend, because those still go through mysql2's prepared protocol.",
-      "Databend has no SHOW STATUS statement at all and no information_schema.processlist, so the overview, health and session panels have no source even once the protocol question is settled.",
+      "The object browser, column metadata, table and storage statistics and inline edit work since 2026-10-04 (browser, on v1.2.925-patch-11, patch-13 and 1.2.881). Databend implements no prepared statement and answers every one with Prepare is not support in Databend, so the provider measures that at connect and binds a parameterised read's values into the statement text there instead.",
+      "Databend has no SHOW STATUS statement at all, no information_schema.processlist and no performance_schema, so the overview, health, session and slow-query panels have no source, and Establish Connection asks for a second click to save the connection.",
+      "The Stored Procedures, Functions, Triggers and Events folders show Databend's own UnknownTable error: it has no information_schema.ROUTINES, TRIGGERS or EVENTS view. Tables and Views count and list normally.",
+      "No index and no foreign key is ever reported: information_schema.statistics and key_column_usage are empty, and the index statistics read is a parse error there (GROUP_CONCAT with ORDER BY is not in its grammar).",
+      "BEGIN opens no transaction, so transactions and SANDBOX are refused with that reason rather than run without one.",
       "Strings must be single-quoted: Databend follows the SQL standard and reads a double-quoted value as an identifier, so a double-quoted literal is an unknown-column error.",
-      "EXPLAIN FORMAT='json' does not parse, so the provider sends a plain EXPLAIN there instead (browser, 2026-09-06), and neither Optimize nor Check exists. Analyze runs but the provider mis-reads its reply.",
+      "EXPLAIN FORMAT='json' does not parse, so the provider sends a plain EXPLAIN there instead (browser, 2026-09-06), and neither Optimize nor Check exists. Analyze runs and reports completion with no report, because Databend answers it with an OK packet rather than MySQL's report rows.",
     ],
   },
   {

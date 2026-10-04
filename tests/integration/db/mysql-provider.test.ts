@@ -5009,6 +5009,87 @@ describe("MySQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  // Only a statement the server REFUSED is asked again catalog by catalog. A connection that
+  // failed, or a statement that was stopped, would only fail four more times as slowly, and its
+  // own error is the one every folder should carry.
+  test.each([
+    [
+      "a fatal network error",
+      Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT", errno: -110, fatal: true }),
+    ],
+    [
+      "MySQL's max_execution_time",
+      Object.assign(new Error("Query execution was interrupted, maximum statement execution time exceeded"), {
+        errno: 3024,
+      }),
+    ],
+    ["an error that never reached the server", new Error("Pool is closed.")],
+  ])("%s is reported against every folder after one statement", async (_label, failure) => {
+    const provider = await connectedTo(false);
+    const counted: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("COUNT(*) AS n")) return [[], []];
+      counted.push(sql);
+      throw failure;
+    };
+
+    const counts = await provider.countObjects(["app"]);
+
+    expect(counted).toHaveLength(1);
+    for (const kind of provider.getCapabilities().objectKinds ?? []) {
+      expect(counts[kind.id]).toEqual({ unavailable: failure.message });
+    }
+    await provider.disconnect();
+  });
+
+  test("a catalog the server does not have costs only the folders it counts", async () => {
+    // Databend 1.2.881, measured 2026-10-04: `information_schema.tables` answers and
+    // `ROUTINES`, `TRIGGERS` and `EVENTS` are each `UnknownTable` (errno 1105). The union
+    // over all four failed as one statement, and its sentence was put on every folder,
+    // Tables and Views included.
+    const provider = await connectedTo(false);
+    const unknownTable = (view: string) =>
+      Object.assign(new Error(`Unknown table "app"."information_schema".${view} (unquoted).`), { errno: 1105 });
+    const counted: string[] = [];
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (!sql.includes("COUNT(*) AS n")) return [[], []];
+      counted.push(sql);
+      for (const view of ["ROUTINES", "TRIGGERS", "EVENTS"]) {
+        if (sql.includes(`information_schema.${view}`)) throw unknownTable(view);
+      }
+      expect(params).toEqual(["app"]);
+      return [
+        [
+          { kind: "table", n: 3 },
+          { kind: "view", n: 1 },
+          { kind: null, n: 9 },
+        ],
+        [],
+      ];
+    };
+
+    const counts = await provider.countObjects(["app"]);
+
+    expect(counts).toEqual({
+      table: { count: 3 },
+      view: { count: 1 },
+      procedure: { unavailable: 'Unknown table "app"."information_schema".ROUTINES (unquoted).' },
+      function: { unavailable: 'Unknown table "app"."information_schema".ROUTINES (unquoted).' },
+      trigger: { unavailable: 'Unknown table "app"."information_schema".TRIGGERS (unquoted).' },
+      event: { unavailable: 'Unknown table "app"."information_schema".EVENTS (unquoted).' },
+    });
+    // The one statement first, then one per catalog: nothing is re-asked on a server that
+    // answers the union, which every MySQL and MariaDB does.
+    expect(counted).toHaveLength(5);
+    expect(counted.slice(1).map((sql) => (sql.match(/information_schema\.[A-Z]+/g) ?? []).join())).toEqual([
+      "information_schema.TABLES",
+      "information_schema.ROUTINES",
+      "information_schema.TRIGGERS",
+      "information_schema.EVENTS",
+    ]);
+    await provider.disconnect();
+  });
+
   test("a trigger nests under the table it fires on, and a parentless row falls back to the database", async () => {
     mockExecuteFn = async (sql: string) => {
       if (sql.toLowerCase().includes("version()")) return [[{ version: MYSQL_VERSION_STRING }], []];

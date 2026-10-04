@@ -2668,9 +2668,9 @@ services:
   # Databend serves a MySQL wire handler on 3307 (not 3306) beside its own HTTP API on 8000.
   # Connect as `mysql` on the published 13308.
   #
-  # It earns a `query-only` row and the reason is ours: every parameterised read answers
-  # `Prepare is not support in Databend`. So this service exists to reproduce that, and to
-  # re-measure it when the prepared-protocol question is settled.
+  # It implements no prepared statement (`Prepare is not support in Databend`), so the provider
+  # binds parameterised reads client-side there, and that is what this service reproduces. Its
+  # row is `partial`: the overview, health and session panels have no source on the engine.
   #
   # PINNED to a patch release rather than `nightly`, which is what the tag list mostly holds.
   databend:

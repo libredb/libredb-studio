@@ -151,6 +151,10 @@ type MySQLQueryable = Pick<PoolConnection, "query" | "execute">;
  * the same types - and a non-result-set statement answers the same
  * `ResultSetHeader`, which is what `buildQueryResult` reads. See
  * `docs/providers/mysql.md` section 3.4.
+ *
+ * The one exception is a server that refuses COM_STMT_PREPARE itself, which
+ * `probeClientSideBinding()` measures at connect: there a parameterised statement is
+ * written out by `bindClientSide()` and goes over the text protocol like any other.
  */
 const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   queryable: MySQLQueryable,
@@ -158,12 +162,147 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
   params?: unknown[],
 ): Promise<[T, FieldPacket[]]> => {
   const core = (queryable as { connection?: object }).connection;
+  if (core !== undefined && BINDS_CLIENT_SIDE.has(core) && params !== undefined && params.length > 0) {
+    return runStatement<T>(queryable, bindClientSide(core as CoreConnection, sql, params));
+  }
   if (core !== undefined && UTF8_UNDER_UTF8MB3.has(core)) {
     return runReadingUtf8mb3AsUtf8<T>(core as CoreConnection, sql, params);
   }
   return params === undefined || params.length === 0
     ? queryable.query<T>(sql)
     : queryable.execute<T>(sql, asExecuteParams(params));
+};
+
+/**
+ * The core (callback) connections of a pool whose server refuses COM_STMT_PREPARE, see
+ * `probeClientSideBinding()`. Filled from that pool's `acquire` event, the same way and for
+ * the same reason as `UTF8_UNDER_UTF8MB3`: only the pool that was measured is touched.
+ */
+const BINDS_CLIENT_SIDE = new WeakSet<object>();
+
+/**
+ * A string as a single-quoted literal with ONLY the backslash and the quote escaped, every
+ * other character written as itself.
+ *
+ * Not mysql2's own escaper, which also writes `\0`, `\b`, `\n`, `\r`, `\t`, `\Z` and `\"`, and
+ * that is a measured choice. On Databend 1.2.881 and 1.2.925-patch-11 (2026-10-04), across a
+ * SELECT, an INSERT, a WHERE match and an UPDATE, the escaper's literal came back changed for
+ * three characters: `\Z` (0x1a) reads as a backslash and a `Z` everywhere, and `\b` and `\"`
+ * read the same way in an INSERT, so an inline edit of a value holding a double quote would
+ * have stored a backslash in front of it. This literal round-tripped all nine of those
+ * characters byte for byte in all four statements.
+ *
+ * Only `\` and `'` can end or bend a single-quoted literal on a server that reads backslash
+ * escapes, and `probeClientSideBinding()` sends this exact literal and requires it back
+ * unchanged before any pool binds this way.
+ */
+function stringLiteral(value: string): string {
+  return `'${value.replace(/[\\']/g, (ch) => `\\${ch}`)}'`;
+}
+
+/**
+ * One bound value as what replaces its placeholder, or a refusal.
+ *
+ * The values a statement can carry here are the JSON scalars `readBoundParams` admits at the
+ * API boundary plus the strings and numbers this provider binds itself. Anything else (an
+ * object, a Buffer, a Date, `undefined`, a number that is not finite) has no literal this
+ * provider has measured, so it is refused rather than handed to a formatter that would expand
+ * an object into `key = value` pairs or write `NaN` as an identifier.
+ */
+function clientSideValue(value: unknown): unknown {
+  if (typeof value === "string") return { toSqlString: () => stringLiteral(value) };
+  if (value === null || typeof value === "boolean" || typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  throw new QueryError(
+    `This server cannot prepare statements, so values are written into the statement text, and a ${typeof value} value has no literal form here.`,
+    "mysql",
+  );
+}
+
+/** What the formatter writes for each placeholder while they are counted. */
+const PLACEHOLDER_MARK = "\u0001";
+const PLACEHOLDER_MARKER = { toSqlString: () => PLACEHOLDER_MARK };
+
+/**
+ * The statement with its values written in, for a pool whose server refuses to prepare.
+ *
+ * mysql2's formatter finds the placeholders, skipping single-quoted strings, backtick
+ * identifiers and `--` and block comments. It does NOT skip a double-quoted string or a `#`
+ * comment, where a server preparing the statement would not see a placeholder, so
+ * `SELECT "a?", ?` would put the value inside the double-quoted text. The count is therefore
+ * checked first: the formatter is asked to fill one more placeholder than there are values,
+ * and a statement where it finds a different number is refused with a sentence naming the
+ * cause, instead of being sent with a value in the wrong place.
+ */
+function bindClientSide(core: CoreConnection, sql: string, params: unknown[]): string {
+  const markers = Array.from({ length: params.length + 1 }, () => PLACEHOLDER_MARKER);
+  const found = core.format(sql, markers).split(PLACEHOLDER_MARK).length - sql.split(PLACEHOLDER_MARK).length;
+  if (found !== params.length) {
+    throw new QueryError(
+      `This server cannot prepare statements, so values are written into the statement text, and ${found} placeholders were found for ${params.length} values. A ? inside a double-quoted string or after # counts as a placeholder there; write the statement without one.`,
+      "mysql",
+    );
+  }
+  return core.format(sql, params.map(clientSideValue));
+}
+
+/**
+ * The value the binding probe sends: the nine characters mysql2's escaper writes a backslash
+ * in front of (NUL, backspace, tab, newline, carriage return, 0x1a, the double quote, the
+ * quote and the backslash), so a server that reads it back unchanged reads `stringLiteral()`
+ * the way it is written.
+ */
+const BINDING_PROBE_VALUE = "\0\b\t\n\r\x1a\"'\\ probe";
+
+/**
+ * Whether this server refuses COM_STMT_PREPARE and reads `stringLiteral()` back exactly, in
+ * which case a parameterised statement is sent as text with its values written in. Run once
+ * per `connect()`, on the connection the pool check already holds.
+ *
+ * Databend's MySQL handler implements no prepared statement at all: measured 2026-10-04 on
+ * `datafuselabs/databend:latest` (1.2.881) through mysql2 3.24.4, `execute("SELECT ? AS x", [1])`,
+ * `prepare()` and even a parameterless `execute` all answer errno 1105 `Prepare is not support in
+ * Databend.`, while the same values written into the text answer intact. So every read here that
+ * carries a placeholder - the whole object browser and every statistics panel - failed there,
+ * and the catalogs they read were there all along.
+ *
+ * Two questions, and both must answer:
+ *
+ * 1. Does the server prepare? A server that does keeps the prepared path, whatever the second
+ *    answer would have been, because binding on the server is what keeps a value out of the SQL
+ *    text. MySQL 26.7.0 and StarRocks 4.1.6 prepare `SELECT ?` (measured the same day), and so
+ *    does every relative whose parameterised reads already answered, because those reads prepare.
+ * 2. Does the written literal come back unchanged? `\'` is safe only on a server that reads a
+ *    backslash as an escape. A MySQL server under `NO_BACKSLASH_ESCAPES` reads it as a character
+ *    and the quote then ENDS the literal, so a server that answers anything but the value it was
+ *    sent keeps the prepared path and its refusal.
+ *
+ * The first question reads success or failure and never the errno, for the reason
+ * `probeExplainFormat` does not: the family does not share one. So ANY failure of the prepared
+ * probe counts as a refusal, a MySQL server out of prepared-statement slots
+ * (`max_prepared_stmt_count`, errno 1461) included; the second question still has to answer
+ * before anything changes, and the refusal that switched a pool over is logged with its errno.
+ * Nothing here rejects.
+ */
+const probeClientSideBinding = async (queryable: MySQLQueryable): Promise<boolean> => {
+  let refusal: unknown;
+  try {
+    await queryable.execute("SELECT ? AS bound", [1]);
+    return false;
+  } catch (error) {
+    refusal = error;
+  }
+  try {
+    const [rows] = await queryable.query<RowDataPacket[]>(`SELECT ${stringLiteral(BINDING_PROBE_VALUE)} AS bound`);
+    if (rows[0]?.bound !== BINDING_PROBE_VALUE) return false;
+  } catch {
+    return false;
+  }
+  const { errno, message } = refusal as { errno?: unknown; message?: unknown };
+  console.info(
+    `[MySQL] The server refused to prepare a statement (errno ${String(errno)}: ${String(message)}); this pool writes parameter values into the statement text.`,
+  );
+  return true;
 };
 
 /**
@@ -182,6 +321,7 @@ interface CoreCommand {
 interface CoreConnection {
   query(sql: string, callback: CoreCallback): CoreCommand;
   execute(sql: string, values: unknown[], callback: CoreCallback): CoreCommand;
+  format(sql: string, values: unknown[]): string;
 }
 
 /**
@@ -920,6 +1060,11 @@ const MYSQL_OBJECT_TYPES: Record<
   package: { catalog: "routines", types: ["PACKAGE"] },
 };
 
+/** Every kind one catalog answers for, derived so it cannot drift from the table above. */
+function catalogKinds(catalog: "tables" | "routines"): readonly string[] {
+  return Object.keys(MYSQL_OBJECT_TYPES).filter((kind) => MYSQL_OBJECT_TYPES[kind].catalog === catalog);
+}
+
 /** Every spelling one catalog answers for, derived so it cannot drift from the table above. */
 function modelledTypes(catalog: "tables" | "routines"): readonly string[] {
   return Object.values(MYSQL_OBJECT_TYPES)
@@ -1020,6 +1165,45 @@ const COUNTS_SQL = `
           SELECT 'event' FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ?
         ) s
         GROUP BY kind`;
+
+/**
+ * `COUNTS_SQL` one catalog at a time, each with the kinds its catalog answers for. Sent only
+ * when the one-statement count is refused, so a server missing one of the four views loses
+ * the folders that view counts and keeps the rest.
+ *
+ * Databend 1.2.881 has `information_schema.tables` and no `ROUTINES`, `TRIGGERS` or `EVENTS`
+ * (measured 2026-10-04: each is `UnknownTable`, errno 1105), so the union failed as a whole
+ * and its sentence was put on every folder of the tree, Tables and Views included, over a
+ * catalog that answers them.
+ */
+const COUNTS_BY_CATALOG: readonly { readonly kinds: readonly string[]; readonly sql: string }[] = [
+  {
+    kinds: catalogKinds("tables"),
+    sql: `
+        SELECT kind, COUNT(*) AS n FROM (
+          SELECT ${kindCase("tables", "TABLE_TYPE")} AS kind
+          FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?
+        ) s
+        GROUP BY kind`,
+  },
+  {
+    kinds: catalogKinds("routines"),
+    sql: `
+        SELECT kind, COUNT(*) AS n FROM (
+          SELECT ${kindCase("routines", "ROUTINE_TYPE")} AS kind
+          FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ?
+        ) s
+        GROUP BY kind`,
+  },
+  {
+    kinds: ["trigger"],
+    sql: "SELECT 'trigger' AS kind, COUNT(*) AS n FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ?",
+  },
+  {
+    kinds: ["event"],
+    sql: "SELECT 'event' AS kind, COUNT(*) AS n FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ?",
+  },
+];
 
 /**
  * One kind's listing, with an `IN` list sized to however many spellings that kind has.
@@ -1627,6 +1811,53 @@ function applyKindCounts(counts: Record<string, KindCount>, rows: readonly KindC
 function unavailableCounts(ids: readonly string[], error: unknown): Record<string, KindCount> {
   const reason = error instanceof Error ? error.message : String(error);
   return Object.fromEntries(ids.map((id) => [id, { unavailable: reason } as KindCount]));
+}
+
+/**
+ * Errnos for a statement the server STOPPED rather than refused: `ER_QUERY_INTERRUPTED` (1317,
+ * a `KILL QUERY`), MySQL's `max_execution_time` (3024, `ER_QUERY_TIMEOUT`) and MariaDB's
+ * `max_statement_time` (1969, `ER_STATEMENT_TIMEOUT`). The statement was fine; asking its
+ * parts one at a time would only be stopped again.
+ */
+const STOPPED_STATEMENT_ERRNOS: ReadonlySet<number> = new Set([1317, 3024, 1969]);
+
+/**
+ * Whether an error is the server refusing the statement, which is the only case a smaller
+ * statement can answer: a positive server errno, on a connection mysql2 did not mark `fatal`,
+ * for a statement that was not stopped. A network error carries a negative `errno` and
+ * `fatal: true`, and an error with no errno never reached the server at all.
+ */
+function isStatementRefusal(error: unknown): boolean {
+  const { errno, fatal } = (error ?? {}) as { errno?: unknown; fatal?: unknown };
+  return typeof errno === "number" && errno > 0 && fatal !== true && !STOPPED_STATEMENT_ERRNOS.has(errno);
+}
+
+/**
+ * The counts read one catalog at a time, after the one-statement count was refused. Each
+ * catalog that refuses marks only the declared kinds it counts, with its own sentence, and a
+ * server that refuses all four ends where the one statement did: every folder unavailable.
+ */
+async function countByCatalog(
+  conn: PoolConnection,
+  schema: string,
+  counts: Record<string, KindCount>,
+): Promise<Record<string, KindCount>> {
+  for (const { kinds, sql } of COUNTS_BY_CATALOG) {
+    try {
+      // oxlint-disable-next-line no-await-in-loop -- one pooled connection runs one statement at a time.
+      const [rows] = await runStatement<KindCountRow[]>(conn, sql, [schema]);
+      applyKindCounts(counts, rows);
+    } catch (error) {
+      Object.assign(
+        counts,
+        unavailableCounts(
+          kinds.filter((kind) => Object.hasOwn(counts, kind)),
+          error,
+        ),
+      );
+    }
+  }
+  return counts;
 }
 
 /**
@@ -2343,7 +2574,7 @@ export class MySQLProvider extends SQLBaseProvider {
       this.pool = mysql.createPool(this.buildPoolConfig());
 
       const conn = await this.pool.getConnection();
-      // The pool check already holds a connection, so the two probes cost no extra
+      // The pool check already holds a connection, so the probes cost no extra
       // acquisition. Neither rejects, so the release below is never skipped.
       this.measuredExplainFormat = await probeExplainFormat(conn);
       // Which server this is, which is what decides the object-kind declaration (#789).
@@ -2354,6 +2585,11 @@ export class MySQLProvider extends SQLBaseProvider {
       // columns as UTF-8 through `runStatement`. Only this pool's connections are marked.
       if (await probeUtf8UnderUtf8mb3(conn)) {
         this.pool.on("acquire", (core: object) => UTF8_UNDER_UTF8MB3.add(core));
+      }
+      // The same per-pool marking for a server that will not prepare a statement, so its
+      // parameterised reads bind their values client-side instead of failing.
+      if (await probeClientSideBinding(conn)) {
+        this.pool.on("acquire", (core: object) => BINDS_CLIENT_SIDE.add(core));
       }
       conn.release();
 
@@ -2756,10 +2992,17 @@ export class MySQLProvider extends SQLBaseProvider {
    * object browser can say why a folder has no number instead of showing a zero nobody
    * measured.
    *
-   * There is no partial outcome to report and no retry that could produce one. The four
-   * `information_schema` views are one statement, so the server answers it whole or not at
-   * all; a caller who can see only part of a database gets a real count of the part they can
-   * see, because `information_schema` FILTERS by privilege rather than refusing.
+   * The four `information_schema` views are one statement, so the server answers it whole or
+   * not at all; a caller who can see only part of a database gets a real count of the part
+   * they can see, because `information_schema` FILTERS by privilege rather than refusing.
+   *
+   * There is one partial outcome. When the server refuses the statement itself (an errno, on a
+   * connection that survived it, and not a statement that was stopped), the views are asked
+   * one at a time by `countByCatalog`, and a view the server lacks marks only the kinds it
+   * counts: Databend has `TABLES` and none of the other three. Anything else - a connection
+   * that failed, a statement killed or timed out - is reported against every kind with the
+   * error the union got, because four more statements would only take as long and fail the
+   * same way.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
@@ -2774,6 +3017,7 @@ export class MySQLProvider extends SQLBaseProvider {
       applyKindCounts(counts, rows);
       return counts;
     } catch (error) {
+      if (isStatementRefusal(error)) return await countByCatalog(conn, schema, counts);
       return unavailableCounts(
         declared.map((kind) => kind.id),
         error,
