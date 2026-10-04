@@ -635,7 +635,7 @@ describe("-a and -n", () => {
     expect(refusal(`get -a ${value} /a`, SERVER)).toEqual({
       code: "connection-flag",
       message:
-        "-a names another address than this connection's server0.example.com:6648: Host and Port on the connection decide where Studio connects.",
+        "-a names an address other than this connection's server0.example.com:6648: Host and Port on the connection decide where Studio connects.",
       line: 1,
       column: 4,
     });

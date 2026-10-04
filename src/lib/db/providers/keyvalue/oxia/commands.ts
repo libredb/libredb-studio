@@ -407,7 +407,7 @@ function checkGlobal(
     if (typedEndpoint(value) !== context.endpoint)
       return refusal(
         "connection-flag",
-        `-a names another address than this connection's ${context.endpoint}: Host and Port on the connection decide where Studio connects.`,
+        `-a names an address other than this connection's ${context.endpoint}: Host and Port on the connection decide where Studio connects.`,
         word,
       );
     state.matched.push("service-address");

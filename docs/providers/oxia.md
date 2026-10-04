@@ -362,7 +362,7 @@ A write verb names the read-only mode while it holds (section 3.5).
 A key, a bound or a prefix under `__oxia/` is refused with the sentence of section 3.4.
 A `-a` or `-n` that does not name the connection's own endpoint or namespace is refused with a sentence that names the connection's value and never the typed one: Host, Port and Namespace on the connection decide where a command runs.
 
-> -a names another address than this connection's \<host\>:\<port\>: Host and Port on the connection decide where Studio connects.
+> -a names an address other than this connection's \<host\>:\<port\>: Host and Port on the connection decide where Studio connects.
 
 > -n names a namespace other than this connection's \<namespace\>: Namespace is set on the connection, and empty means default.
 

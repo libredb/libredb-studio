@@ -410,7 +410,7 @@ describe("query (SB2-5.2, SB2-5.3)", () => {
     const endpoint = oxiaEndpointText(resolved());
 
     await expect(provider.query("-a elsewhere:1 get /a")).rejects.toThrow(
-      `-a names another address than this connection's ${endpoint}: Host and Port on the connection decide where Studio connects.`,
+      `-a names an address other than this connection's ${endpoint}: Host and Port on the connection decide where Studio connects.`,
     );
     await expect(provider.query("-n other get /a")).rejects.toThrow(
       "-n names a namespace other than this connection's default: Namespace is set on the connection, and empty means default.",
