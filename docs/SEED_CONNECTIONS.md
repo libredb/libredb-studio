@@ -970,8 +970,9 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
    The card's badge reads Running for `ok`, Waiting for `waiting`, Stale for `stale` and Failed for `error`, and the steps below use the state names.
 3. `waiting`: the export file does not exist yet.
    Check that the `-discovery` app is running, and on a cluster that it runs on the same node as Studio.
+   If the exporter's log says `refusing to start: /app/discovery is owned by uid 0, not by this process (uid 1001)`, it was started through the image entrypoint, which a Compose `command:` alone does: set `entrypoint:` as in the fragment under [The exporter](#the-exporter).
 4. `error` with `socket_unavailable`: the exporter cannot open the Docker socket.
-   It must run as root with `/var/run/docker.sock` mounted; a Compose `command:` alone goes through the image entrypoint, which drops it to uid 1001.
+   It must run as root with `/var/run/docker.sock` mounted.
 5. `error` with `swarm_unavailable`: the exporter runs on a worker node.
    Pin the `-discovery` app to the manager.
 6. `error` with `network_not_found`: no Docker network has exactly the name `DISCOVERY_NETWORK` gives, or the exporter runs where that network does not exist, for example outside a swarm.
