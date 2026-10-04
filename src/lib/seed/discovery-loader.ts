@@ -142,15 +142,17 @@ async function current(deps: DiscoveryDeps): Promise<Evaluation | null> {
 }
 
 function snapshotFor(path: string, at: number, deps: DiscoveryDeps): Promise<Snapshot> {
-  if (cache !== null && at - cache.readAt < cacheTtlMs()) return Promise.resolve(cache);
+  // readAt comes from this same clock, so a negative age can only mean the clock stepped back: the cache has expired.
+  if (cache !== null && at >= cache.readAt && at - cache.readAt < cacheTtlMs()) return Promise.resolve(cache);
   if (inflight !== null) return inflight;
   const previous = cache;
   const pending: Promise<Snapshot> = recompute(path, at, previous, deps).then((next) => {
     // A resetDiscoveryCache() while this ran began a new generation, so this result is not cached.
     if (inflight === pending) {
-      reportChanges(previous, next, path);
+      // The cache is complete before anything is logged, so a logger that throws fails this call only.
       cache = next;
       inflight = null;
+      reportChanges(previous, next, path);
     }
     return next;
   });

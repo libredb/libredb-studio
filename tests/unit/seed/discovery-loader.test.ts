@@ -486,6 +486,18 @@ describe("discovery-loader", () => {
       expect(reads).toEqual([file, file]);
     });
 
+    it("re-reads the file when Studio's clock steps back past the cached read", async () => {
+      process.env.SEED_CACHE_TTL_MS = "1000";
+      write(exportFile());
+      const { reads, readFile: read } = countingRead();
+
+      expect(await getDiscoveredConnections(deps({ readFile: read }))).toHaveLength(1);
+      write(exportFile({ services: [] }));
+      clock = T0 - 1_001;
+      expect(await getDiscoveredConnections(deps({ readFile: read }))).toEqual([]);
+      expect(reads).toEqual([file, file]);
+    });
+
     it("resetDiscoveryCache forces the next call to re-read", async () => {
       write(exportFile());
       const { reads, readFile: read } = countingRead();
@@ -816,6 +828,31 @@ describe("discovery-loader", () => {
       clock = T0 + 60_000;
       write(exportFile({ services: [MARIADB] }));
       expect((await getDiscoveredConnections(deps())).map((c) => c.id)).toEqual(["caprover-maria"]);
+    });
+
+    it("keeps the cache it stored when the logger throws, so only that call fails", async () => {
+      write("not json");
+      const { reads, readFile: read } = countingRead();
+      warn.mockImplementationOnce(() => {
+        throw new Error("logger exploded");
+      });
+      try {
+        // Raised by the call that logged, never swallowed.
+        await expect(getDiscoveryStatus(deps({ readFile: read }))).rejects.toThrow("logger exploded");
+
+        const cached = await statusNow({ readFile: read });
+        expect(cached.state).toBe("error");
+        expect(cached.error?.code).toBe("invalid_export");
+        expect(reads).toHaveLength(1);
+
+        clock = T0 + 60_000;
+        write(exportFile());
+        expect((await statusNow({ readFile: read })).state).toBe("ok");
+        expect(reads).toHaveLength(2);
+      } finally {
+        // beforeEach's mockClear keeps a queued implementation, so a failure above must not leave this one behind.
+        warn.mockReset();
+      }
     });
   });
 
