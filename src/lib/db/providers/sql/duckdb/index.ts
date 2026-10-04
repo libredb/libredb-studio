@@ -87,7 +87,7 @@ import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { findCodeWord } from "@/lib/sql/words";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
-import { type DuckDBClient, describeOpenFailure, openDuckDBClient } from "./client";
+import { type DuckDBClient, MEMORY_TARGET, describeOpenFailure, openDuckDBClient } from "./client";
 import {
   readActiveSessions,
   readHealth,
@@ -138,15 +138,14 @@ import {
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
+import { isUnwritableExistingFile } from "../../../utils/unwritable-file";
+import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-/** DuckDB's in-memory target. Accepted wherever a path is, and never touched on disk. */
-const MEMORY_TARGET = ":memory:";
 
 /** DuckDB's default schema; a maintenance target with no schema is resolved into it. */
 const DEFAULT_SCHEMA = "main";
@@ -599,7 +598,16 @@ export class DuckDBProvider extends SQLBaseProvider {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       }
 
-      this.client = await openDuckDBClient(dbPath, { readOnly: false });
+      // A file this process cannot write is opened read-only rather than refused (#1404):
+      // a read-write open of one answers "Permission denied" and reads nothing at all.
+      const unwritableFile = isUnwritableExistingFile(dbPath);
+      if (unwritableFile) {
+        logger.info(`[DuckDB] Opening ${dbPath} read-only: this process cannot write the file or its directory`, {
+          provider: "duckdb",
+        });
+      }
+
+      this.client = await openDuckDBClient(dbPath, { readOnly: false, unwritableFile });
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));

@@ -29,9 +29,14 @@
  *   `read_text('/etc/hostname')` and `glob('/etc/*')` all succeeded on a handle whose
  *   `INSERT` was refused in the same session. `enable_external_access: 'false'` is what
  *   closes that, and it is passed alongside - see `openDuckDBClient`.
+ * - With `autoinstall_known_extensions` and `autoload_known_extensions` at their defaults,
+ *   opening a SQLite file made the engine fetch the ~34 MB `sqlite_scanner` extension from
+ *   extensions.duckdb.org, attach the file and checkpoint its WAL (#1404). Both are off on
+ *   every handle, and a file without DuckDB's header is refused before the engine sees it.
  */
 
 import type { DuckDBConnection, DuckDBInstance } from "@duckdb/node-api";
+import * as fs from "fs";
 import { ConnectionError } from "../../../errors";
 
 // ============================================================================
@@ -89,7 +94,15 @@ export interface DuckDBClient {
 }
 
 export interface DuckDBOpenOptions {
+  /** The agent read-only profile: `READ_ONLY` and external access disabled. */
   readOnly: boolean;
+  /**
+   * The editor on an existing file this process cannot write (a `:ro` mount, a file mode
+   * 0444, a file of another user). Opened `READ_ONLY` and nothing else: a read-write open
+   * of such a file answers "Permission denied" and cannot read it at all (measured on
+   * v1.5.5), while this is still the editor, so the filesystem around it stays reachable.
+   */
+  unwritableFile?: boolean;
 }
 
 // ============================================================================
@@ -223,15 +236,101 @@ export function describeOpenFailure(error: unknown, path: string, readOnly: bool
 }
 
 // ============================================================================
+// The file must be a DuckDB database
+// ============================================================================
+
+/** DuckDB's in-memory target. Accepted wherever a path is, and never touched on disk. */
+export const MEMORY_TARGET = ":memory:";
+
+/** Where every DuckDB database file, an encrypted one included, carries `DUCK` (measured on v1.5.5). */
+const DUCKDB_MAGIC_OFFSET = 8;
+const DUCKDB_MAGIC = "DUCK";
+
+/** The 16 bytes every SQLite database file starts with (https://www.sqlite.org/fileformat2.html). */
+const SQLITE_HEADER = "SQLite format 3\0";
+
+/** The first bytes of the file at `path`, or null when it cannot be read here. */
+function readHeader(path: string): Buffer | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(path, "r");
+  } catch {
+    return null;
+  }
+  try {
+    const header = Buffer.alloc(SQLITE_HEADER.length);
+    return header.subarray(0, fs.readSync(fd, header, 0, header.length, 0));
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Refuse an existing file that is not a DuckDB database, before the engine opens it (#1404).
+ *
+ * The engine does not refuse one: it recognises a SQLite file and attaches it through the
+ * `sqlite_scanner` extension, installing that from the network when it is missing and
+ * checkpointing the SQLite WAL into the file, and the connection then reports success on
+ * a database that is not DuckDB's. Reading the header first leaves the file untouched.
+ *
+ * A path that cannot be read here (missing, unreadable, a directory) is left to the
+ * engine, which creates the missing file or names the failure in its own words.
+ */
+function assertDuckDBFile(path: string): void {
+  if (path === MEMORY_TARGET) return;
+  const header = readHeader(path);
+  if (header === null) return;
+
+  const magic = header.subarray(DUCKDB_MAGIC_OFFSET, DUCKDB_MAGIC_OFFSET + DUCKDB_MAGIC.length);
+  if (magic.toString("latin1") === DUCKDB_MAGIC) return;
+
+  if (header.toString("latin1") === SQLITE_HEADER) {
+    throw new ConnectionError(
+      `${path} is a SQLite database file, not a DuckDB database file. Open it with a SQLite connection. DuckDB did not open it, so it is unchanged.`,
+      "duckdb",
+    );
+  }
+  throw new ConnectionError(
+    `${path} is not a DuckDB database file: a DuckDB file carries "${DUCKDB_MAGIC}" at byte ${DUCKDB_MAGIC_OFFSET}, and this one does not. DuckDB did not open it, so it is unchanged.`,
+    "duckdb",
+  );
+}
+
+// ============================================================================
 // Open
 // ============================================================================
+
+/** Off on every handle: no extension is fetched or loaded behind the user's back (#1404). */
+const NO_IMPLICIT_EXTENSIONS = { autoinstall_known_extensions: "false", autoload_known_extensions: "false" };
+
+/** The engine options for one open; `openDuckDBClient` says why each is there. */
+function openConfig(options: DuckDBOpenOptions): Record<string, string> {
+  if (options.readOnly) {
+    return { ...NO_IMPLICIT_EXTENSIONS, access_mode: "READ_ONLY", enable_external_access: "false" };
+  }
+  if (options.unwritableFile) {
+    return { ...NO_IMPLICIT_EXTENSIONS, access_mode: "READ_ONLY" };
+  }
+  return { ...NO_IMPLICIT_EXTENSIONS };
+}
 
 /**
  * Open one DuckDB database and hand back the neutral handle.
  *
- * TWO options are passed, and only for the read-only profile. Everything else DuckDB
- * can be configured with is left at its default on purpose: a setting this provider
- * chose would have to be defended per deployment.
+ * Two options are passed on EVERY handle, and two more on the read-only profile.
+ * Everything else DuckDB can be configured with is left at its default on purpose: a
+ * setting this provider chose would have to be defended per deployment.
+ *
+ * - `autoinstall_known_extensions: 'false'` and `autoload_known_extensions: 'false'` - no
+ *   extension is fetched from the network or loaded because a statement or a file
+ *   happened to need one (#1404). An explicit `INSTALL` and `LOAD` still work, and a
+ *   session can `SET` either back on; the engine's own refusal names both routes.
+ *   Neither stops an extension ALREADY installed on the host from being loaded to attach
+ *   a file it recognises (measured), which is why `assertDuckDBFile` runs first.
+ *
+ * And on the read-only profile:
  *
  * - `access_mode: 'READ_ONLY'` - no write reaches the attached database.
  * - `enable_external_access: 'false'` - no statement reaches the filesystem AROUND it.
@@ -250,22 +349,22 @@ export function describeOpenFailure(error: unknown, path: string, readOnly: bool
  * property that lets the profile rely on them - `SET memory_limit` IS allowed on a
  * read-only handle, so "the engine refuses to be reconfigured" is not a given.
  *
- * The WRITABLE handle passes neither. It is the ordinary editor connection, where
- * `COPY ... TO` and `read_csv_auto('...')` are features rather than escapes; measured
- * unaffected by this change.
+ * The WRITABLE handle passes neither of those two. It is the ordinary editor connection,
+ * where `COPY ... TO` and `read_csv_auto('...')` are features rather than escapes;
+ * measured unaffected by this change. On a file it cannot write it adds `access_mode`
+ * alone (`DuckDBOpenOptions.unwritableFile`).
  */
 export async function openDuckDBClient(path: string, options: DuckDBOpenOptions): Promise<DuckDBClient> {
   // Inside the function, never at module scope - see the file header. Through
   // loadDuckDBDriver so that a deployment without the driver says so (#840).
   const { DuckDBInstance: Instance } = await loadDuckDBDriver();
 
+  assertDuckDBFile(path);
+
   let instance: DuckDBInstance;
   let connection: DuckDBConnection;
   try {
-    instance = await Instance.create(
-      path,
-      options.readOnly ? { access_mode: "READ_ONLY", enable_external_access: "false" } : {},
-    );
+    instance = await Instance.create(path, openConfig(options));
     connection = await instance.connect();
   } catch (error) {
     throw describeOpenFailure(error, path, options.readOnly);
