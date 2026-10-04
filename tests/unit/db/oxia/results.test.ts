@@ -229,7 +229,7 @@ describe("the notices of SB2-5.4, word for word", () => {
   });
 
   test("N2: an equal get missed, by key and by index", () => {
-    expect(messages(getResult("get /no", undefined))).toEqual(["Oxia holds no key /no in namespace `default`."]);
+    expect(messages(getResult("get /no", undefined))).toEqual(["Oxia holds no key /no in namespace default."]);
     expect(messages(getResult("get --index by-email a@x", undefined, NATURAL))).toEqual([
       "Index by-email holds no secondary key a@x.",
     ]);
@@ -278,7 +278,7 @@ describe("the notices of SB2-5.4, word for word", () => {
 
   test("N6: -s P/ -e P// under natural order, on an empty result as on a full one", () => {
     const notice =
-      "This namespace sorts keys naturally, so `/xyz//` does not bound /xyz's children; `--prefix /xyz/` lists everything under /xyz/.";
+      "This namespace sorts keys naturally, so /xyz// does not bound /xyz's children; --prefix /xyz/ lists everything under /xyz/.";
     expect(messages(listResult("list -s /xyz/ -e /xyz//", {}, NATURAL))).toEqual([notice]);
     expect(messages(scanResult("range-scan /xyz/ /xyz//", { records: [record("/xyz/a", "1")] }, NATURAL))).toEqual([
       notice,
@@ -291,7 +291,7 @@ describe("the notices of SB2-5.4, word for word", () => {
 
   test("N7: MIN ending in // and MAX = MIN + / under hierarchical order", () => {
     expect(messages(listResult("list /xyz// /xyz///", {}, HIERARCHICAL))).toEqual([
-      "A key ending in / sorts one level up under hierarchical order, so this range does not hold its children; `--prefix /xyz//` lists everything under it.",
+      "A key ending in / sorts one level up under hierarchical order, so this range does not hold its children; --prefix /xyz// lists everything under it.",
     ]);
     // MAX other than MIN + "/" is not the idiom.
     expect(messages(listResult("list /xyz// /xyz//z", { keys: ["/xyz//a"] }, HIERARCHICAL))).toEqual([]);
@@ -363,15 +363,15 @@ describe("the notices of SB2-5.4, word for word", () => {
       namespace: NS,
     } as OxiaOutcome;
     expect(messages(oxiaResult(outcome, parsed, OXIA_CELL_LIMIT, 1))).toEqual([
-      "Oxia holds no key /no in namespace `default`.",
+      "Oxia holds no key /no in namespace default.",
       "-a names this connection's own endpoint, so it changes nothing: Host and Port on the connection decide where Studio connects.",
       "-n names this connection's own namespace, so it changes nothing: Namespace is set on the connection.",
     ]);
   });
 
   test("N13: a whole-namespace read that answered nothing", () => {
-    expect(messages(listResult("list", {}))).toEqual(["The namespace `default` holds no keys."]);
-    expect(messages(scanResult("range-scan", {}))).toEqual(["The namespace `default` holds no keys."]);
+    expect(messages(listResult("list", {}))).toEqual(["The namespace default holds no keys."]);
+    expect(messages(scanResult("range-scan", {}))).toEqual(["The namespace default holds no keys."]);
     // Bounds, a prefix or a partition key say nothing about the namespace.
     expect(messages(listResult("list a", {}))).toEqual([]);
     expect(messages(listResult("list --prefix /a/", {}))).toEqual([]);
@@ -398,11 +398,28 @@ describe("the notices of SB2-5.4, word for word", () => {
     expect(getResult("get /a", record("/a", "x")).warnings).toBeUndefined();
   });
 
+  test("a namespace in N2 and N13 is written as quoteShellWord writes it, with no Markdown backticks (ruling R37)", () => {
+    const missed = parse("get /no");
+    const get = { kind: "get", command: missed.command, answer: undefined, namespace: "my ns" } as OxiaOutcome;
+    expect(messages(oxiaResult(get, missed, OXIA_CELL_LIMIT, 1))).toEqual([
+      "Oxia holds no key /no in namespace 'my ns'.",
+    ]);
+    const whole = parse("list");
+    const list = {
+      kind: "list",
+      command: whole.command,
+      answer: { keys: [], more: false, shardsRead: 3 },
+      namespace: "it's",
+      verdict: HIERARCHICAL,
+    } as OxiaOutcome;
+    expect(messages(oxiaResult(list, whole, OXIA_CELL_LIMIT, 1))).toEqual(["The namespace 'it'\\''s' holds no keys."]);
+  });
+
   test("keys in notices are spelled by shownKey: quoted, JSON for a CR, cut at 120 characters", () => {
-    expect(messages(getResult("get 'a b'", undefined))).toEqual(["Oxia holds no key 'a b' in namespace `default`."]);
+    expect(messages(getResult("get 'a b'", undefined))).toEqual(["Oxia holds no key 'a b' in namespace default."]);
     const long = `/${"k".repeat(130)}`;
     expect(messages(getResult(`get ${long}`, undefined))[0]).toBe(
-      `Oxia holds no key ${long.slice(0, 120)}... in namespace \`default\`.`,
+      `Oxia holds no key ${long.slice(0, 120)}... in namespace default.`,
     );
     expect(messages(getResult("get -t floor /b", record("a\rb", "x"), HIERARCHICAL))).toEqual([
       'get -t floor asked for /b; the key found is "a\\rb".',

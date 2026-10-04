@@ -9,6 +9,7 @@
  * or a hex dump, and its version as metadata whose label carries the ephemeral badge (SB2-12 D8). No part offers an
  * edit: v1 only reads (O1).
  */
+import { quoteShellWord } from "@/lib/db/console/shell-words";
 import { QueryError } from "@/lib/db/errors";
 import { applySourceBound } from "@/lib/db/object-kinds";
 import type {
@@ -240,7 +241,10 @@ async function keySource(
   const found = await readKeyAnywhere(surface.client, snapshot, key, call);
   if ("holders" in found) {
     if (found.holders > 1) throw new QueryError(oxiaKeyOnShardsSentence(key, found.holders), OXIA_TYPE);
-    throw new QueryError(`Oxia holds no key ${shownKey(key)} in namespace \`${snapshot.namespace}\`.`, OXIA_TYPE);
+    throw new QueryError(
+      `Oxia holds no key ${shownKey(key)} in namespace ${quoteShellWord(snapshot.namespace)}.`,
+      OXIA_TYPE,
+    );
   }
   const { record } = found;
   return { path: [key], kind: "key", parts: [valuePart(record, limit), metadataPart(key, record, limit)] };

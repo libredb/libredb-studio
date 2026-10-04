@@ -34,11 +34,11 @@ No file here is written by hand: the harness writes every capture and this READM
 | 0.16.10-natural/get-higher.json | b50f392f859a65db6d9fb7d3f95fcc0376302e1385fcd5cfed1a3be152d7045f |
 | 0.16.10-natural/get-lower.json | fa8e7d38f1a2b06fdfc2f313dc9d9c89de97c32030a166581fcf901443d81938 |
 | 0.16.10-natural/health-serving.json | d90e26ea7c7d6b97cf4ac69588986c0aee84a9c74eaa90a5d56a7c34204261b6 |
-| 0.16.10-natural/list-children-a-b.json | 7f17ae504ae172d688f608bb32928f828d3f603d1536264c06738b11f291ea81 |
-| 0.16.10-natural/list-children-trail.json | 2a63d310134e0bdfc8641e4bfe3167f3f34b6cd7d54540c8814cbb202fa5d728 |
+| 0.16.10-natural/list-children-a-b.json | 305135ef5a991bc7de1c2b1c2ed63c6fb9736b19e773161212b6d6d9d9428889 |
+| 0.16.10-natural/list-children-trail.json | a7282e14a43dc2ea8481b141c3da9fdf53420a5182e04bc0d8be1e14b9cebbe2 |
 | 0.16.10-natural/list-full-walk.json | 980c3e30778632483b3e80d345f307439c0f0abdc0804712e4da849aef870b00 |
 | 0.16.10-natural/list-nul-keys.json | 55a86083660b94239e97eae79374fbd503e280868a1b81322bb1799856dffb95 |
-| 0.16.10-natural/list-root-level.json | d351218259dc12cfa6844ba517ae3e7888ba4d10a11b656f629e80b07ca2436b |
+| 0.16.10-natural/list-root-level.json | 4f4ce8efdfd4dbd8d97b5f13f3cd98cd9ed59ad290365539996ec9c766178174 |
 | 0.16.10-natural/probe-order.json | 4860a619a6695e0e386763e139040d2a42eeaa14b405067a39adb0e0479c48f5 |
 | 0.16.10/assignments-default.json | e4ceb3ac98fc0dbe11cc67884b39311c79d2def63cc6af6dace5ab494bf3af8b |
 | 0.16.10/assignments-unknown-namespace.json | 5715992a7b1ac632c459275993857a5e339f2799224216c7e9600a4c2b2a3489 |
@@ -52,7 +52,7 @@ No file here is written by hand: the harness writes every capture and this READM
 | 0.16.10/get-json-int64.json | ad0026a1140e861f98ef358d435001efe93d7786913fb40c08caec915110295f |
 | 0.16.10/get-json.json | ce08d989c0b9de2c37a6205f51f86fb10b2d10f4cc18666e5bcff67f776b0496 |
 | 0.16.10/get-lower.json | cc66bfa79c9dd307a293e226c484d3ede60bd4448da05e5b7663b65952e5c051 |
-| 0.16.10/get-miss.json | 3079d875ed0f2736d9bef67537d59685e5a395bf78031e6448bdc45728a508c9 |
+| 0.16.10/get-miss.json | ecd1be6f3881f44fa7d3ec44a55a66333d3e73ca2cd841e8b117c1e22b68d748 |
 | 0.16.10/get-over-cap.json | fa30ecebce7363635eedacf18e930b2d7cd01b174fde72867a49801eeb02d7bd |
 | 0.16.10/get-partition-key.json | 3bc6bfe3dd97e72822d3fb67e633485849d520d5baaeae2039e56aac9fb11eaa |
 | 0.16.10/get-protobuf-like.json | 08cd8e4395086a8e77ebaff62f4a4b138368e623732bbe0ed6c94499ea1e7216 |

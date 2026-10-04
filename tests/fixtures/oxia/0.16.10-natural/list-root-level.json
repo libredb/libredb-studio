@@ -249,7 +249,7 @@
       "rows": [],
       "warnings": [
         {
-          "message": "This namespace sorts keys naturally, so `//` does not bound '''s children; `--prefix /` lists everything under /."
+          "message": "This namespace sorts keys naturally, so // does not bound '''s children; --prefix / lists everything under /."
         }
       ]
     }

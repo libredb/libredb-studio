@@ -7,6 +7,7 @@
  * The column names are the oxia CLI's own (`OutputVersion`), so an operator reads the fields they already know. A
  * stop (the run budget, the receive cap) is a result with its rows and a notice, never an error (SB1-9.3a).
  */
+import { quoteShellWord } from "@/lib/db/console/shell-words";
 import type { QueryResult, QueryWarning } from "@/lib/db/types";
 import type { OxiaKeysAnswer, OxiaRecordsAnswer, OxiaRecordView } from "./client";
 import type { OxiaCommand, OxiaCommandRange, ParsedOxiaCommand } from "./commands";
@@ -127,7 +128,7 @@ function getNotices(outcome: Extract<OxiaOutcome, { kind: "get" }>): string[] {
   if (answer === undefined) {
     if (command.comparison !== "equal") return [COMPARISON_MISS[command.comparison](asked)];
     if (command.index !== undefined) return [`Index ${shownKey(command.index)} holds no secondary key ${asked}.`];
-    return [`Oxia holds no key ${asked} in namespace \`${outcome.namespace}\`.`];
+    return [`Oxia holds no key ${asked} in namespace ${quoteShellWord(outcome.namespace)}.`];
   }
   const notices: string[] = [];
   // An index get asks for a secondary key and answers a primary one, so only a primary-key comparison names both.
@@ -146,10 +147,10 @@ function idiomNotice(range: OxiaCommandRange, verdict: OrderVerdict | undefined)
   const { min, max } = range;
   if (verdict.order === "natural" && min.endsWith("/") && max === `${min}/`) {
     const parent = min.slice(0, -1);
-    return `This namespace sorts keys naturally, so \`${shownKey(max)}\` does not bound ${shownKey(parent)}'s children; \`--prefix ${shownKey(min)}\` lists everything under ${shownKey(min)}.`;
+    return `This namespace sorts keys naturally, so ${shownKey(max)} does not bound ${shownKey(parent)}'s children; --prefix ${shownKey(min)} lists everything under ${shownKey(min)}.`;
   }
   if (verdict.order === "hierarchical" && min.endsWith("//") && max === `${min}/`)
-    return `A key ending in / sorts one level up under hierarchical order, so this range does not hold its children; \`--prefix ${shownKey(min)}\` lists everything under it.`;
+    return `A key ending in / sorts one level up under hierarchical order, so this range does not hold its children; --prefix ${shownKey(min)} lists everything under it.`;
   return undefined;
 }
 
@@ -185,7 +186,7 @@ function rangeNotices(outcome: Extract<OxiaOutcome, { kind: "list" | "range-scan
     command.partitionKey === undefined;
   if (nothing && command.index !== undefined)
     notices.push(`No key of index ${shownKey(command.index)} lies in this range.`);
-  else if (nothing && whole) notices.push(`The namespace \`${outcome.namespace}\` holds no keys.`);
+  else if (nothing && whole) notices.push(`The namespace ${quoteShellWord(outcome.namespace)} holds no keys.`);
   return notices;
 }
 

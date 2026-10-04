@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D222, U17 · 137
+- [Drivers and connections](#drivers-and-connections) — D1-D223, U17 · 138
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
@@ -2508,6 +2508,15 @@ Both read the panel through the shared `readGrpcTlsPanel`, which accepts verify-
 Found 2026-10-04 by the review of that change.
 
 **Done when:** etcd and Milvus name the trust store when no CA is pasted, as Oxia's `tlsSentence` does.
+
+### D223. A binary value's hex dump is captioned as rendered JSON
+
+The shared Source tab captions a part from its `origin` alone (`sourceCaption` in `src/components/object-source/source-caption.ts`), and a hex dump of a binary value has no origin of its own, so it is captioned "A structured definition, rendered here as JSON."
+Oxia's hex dump and etcd's base64 view of a binary value both carry that caption, though neither is JSON.
+
+Found 2026-10-04 by the review of the Oxia provider (ruling R37 of its PR).
+
+**Done when:** a binary dump part carries a caption that says what it is, for every engine.
 
 ## Value interpolation
 

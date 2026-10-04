@@ -261,7 +261,7 @@
       ],
       "warnings": [
         {
-          "message": "This namespace sorts keys naturally, so `/a/b//` does not bound /a/b's children; `--prefix /a/b/` lists everything under /a/b/."
+          "message": "This namespace sorts keys naturally, so /a/b// does not bound /a/b's children; --prefix /a/b/ lists everything under /a/b/."
         }
       ]
     }

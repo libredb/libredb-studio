@@ -332,14 +332,21 @@ describe("a key's Source (SB2-7.5)", () => {
     const { surface } = setup({ records: [] });
     const reading = readOxiaObjectSource(surface, ["/no/such/key"], "key", undefined, call());
     await expect(reading).rejects.toBeInstanceOf(QueryError);
-    await expect(reading).rejects.toThrow("Oxia holds no key /no/such/key in namespace `default`.");
+    await expect(reading).rejects.toThrow("Oxia holds no key /no/such/key in namespace default.");
+  });
+
+  test("an absent key's namespace is written as quoteShellWord writes it, with no Markdown backticks (ruling R37)", async () => {
+    const { surface } = setup({ records: [], namespace: "my ns" });
+    await expect(readOxiaObjectSource(surface, ["/no"], "key", undefined, call())).rejects.toThrow(
+      "Oxia holds no key /no in namespace 'my ns'.",
+    );
   });
 
   test("an absent key is named as SB2-6.1 shows a key: cut at 120 characters", async () => {
     const { surface } = setup({ records: [] });
     const key = `/k/${"x".repeat(200)}`;
     await expect(readOxiaObjectSource(surface, [key], "key", undefined, call())).rejects.toThrow(
-      `Oxia holds no key /k/${"x".repeat(117)}... in namespace \`default\`.`,
+      `Oxia holds no key /k/${"x".repeat(117)}... in namespace default.`,
     );
   });
 
@@ -434,7 +441,7 @@ describe("a key written with a partition key opens in the Source tab (ruling R33
       if (made.shard === holder && made.gets?.[0].includeValue === true) fake.remove("/gone");
     });
     await expect(readOxiaObjectSource(surface, ["/gone"], "key", undefined, call())).rejects.toThrow(
-      "Oxia holds no key /gone in namespace `default`.",
+      "Oxia holds no key /gone in namespace default.",
     );
   });
 
@@ -443,7 +450,7 @@ describe("a key written with a partition key opens in the Source tab (ruling R33
     const snapshot = await surface.snapshot(call());
     const before = fake.calls.length;
     await expect(readOxiaObjectSource(surface, ["/no/such/key"], "key", undefined, call())).rejects.toThrow(
-      "Oxia holds no key /no/such/key in namespace `default`.",
+      "Oxia holds no key /no/such/key in namespace default.",
     );
     const reads = fake.calls.slice(before).filter((made) => made.rpc === "Read");
     const home = shardFor(snapshot, "/no/such/key").id;

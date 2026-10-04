@@ -118,7 +118,7 @@
       "rows": [],
       "warnings": [
         {
-          "message": "Oxia holds no key /no/such/key in namespace `default`."
+          "message": "Oxia holds no key /no/such/key in namespace default."
         }
       ]
     }

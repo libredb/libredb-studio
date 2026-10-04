@@ -249,7 +249,7 @@
       "rows": [],
       "warnings": [
         {
-          "message": "This namespace sorts keys naturally, so `/trail//` does not bound /trail's children; `--prefix /trail/` lists everything under /trail/."
+          "message": "This namespace sorts keys naturally, so /trail// does not bound /trail's children; --prefix /trail/ lists everything under /trail/."
         }
       ]
     }
