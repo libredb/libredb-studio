@@ -5,6 +5,7 @@ import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
@@ -197,7 +198,9 @@ export async function POST(req: NextRequest) {
       connection = { ...connection, database: String(database) };
     }
 
-    const provider = await getOrCreateProvider(connection);
+    // The DuckDB editor file-access posture rides on the server-derived execution context: an
+    // admin keeps full filesystem reach, every other role opens with external access off (B1/K1).
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling

@@ -3,6 +3,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { livenessResponse } from "@/lib/api/liveness";
 
 /**
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
     const health = await provider.getHealth();
 
     return NextResponse.json(health);

@@ -3,6 +3,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 
 export async function POST(req: NextRequest) {
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string", cancelled: false }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
 
     // The same check `/api/db/provider-meta` reports as `supportsQueryCancel`, so the editor
     // does not offer a Cancel this refuses (#1364).

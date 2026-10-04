@@ -5,6 +5,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { logger } from "@/lib/logger";
 
 /**
@@ -79,7 +80,7 @@ export async function POST(request: Request) {
            * refused item is reported as that item's error, beside the health of the rest.
            */
           const resolved = await resolveConnection(buildConnectionPayload(conn), guard.session);
-          const provider = await getOrCreateProvider(resolved);
+          const provider = await getOrCreateProvider(resolved, {}, editorExecutionContext(guard.session));
           const health = await provider.getHealth();
           const latencyMs = Date.now() - start;
 

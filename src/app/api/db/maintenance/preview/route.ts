@@ -4,6 +4,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { maintenanceControl } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 
 const ROUTE = "POST /api/db/maintenance/preview";
 
@@ -57,7 +58,7 @@ export async function POST(request: Request) {
 
     const requestedContainer: string | undefined = container || undefined;
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
     const capabilities = provider.getCapabilities();
 
     if (!capabilities.supportsMaintenance) {

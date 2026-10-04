@@ -3,6 +3,7 @@ import { getOrCreateProvider } from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 
 export async function POST(request: NextRequest) {
   // Moved ahead of request.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -15,7 +16,7 @@ export async function POST(request: NextRequest) {
 
     const connection = await resolveConnection(body, guard.session);
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
 
     // Check if provider has getPoolStats
     if ("getPoolStats" in provider && typeof (provider as Record<string, unknown>).getPoolStats === "function") {

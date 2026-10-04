@@ -13,6 +13,7 @@ import { type DatabaseProvider, offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import {
   jsonCommandAddress,
   objectSegment,
@@ -211,7 +212,7 @@ export async function POST(req: NextRequest) {
     // The LABEL, for the response alone: the profiler names its export after it.
     const tableName = objectSegment(path);
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
 
     {
       const capabilities = provider.getCapabilities();

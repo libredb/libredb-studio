@@ -6,6 +6,7 @@ import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider,
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
@@ -127,7 +128,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection);
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
 
     if (!isTransactionProvider(provider)) {
       return NextResponse.json(
