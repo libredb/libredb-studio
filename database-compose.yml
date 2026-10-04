@@ -1860,6 +1860,154 @@ services:
     <<: *qdrant-limits
 
   # ---------------------------------------------------------------------------------------
+  # InfluxDB (the influxdb and influxdb3 providers). Three servers, one per line the providers
+  # are verified against: 1.13.1 and 2.9.1, which the influxdb type reads over the v1 /query
+  # API, and 3.12.0 Core, which both types read. Each is pinned by tag and by digest, and each
+  # has authentication on with the fixed test credentials below, as the clickhouse and neo4j
+  # services spell theirs; the read principals are added by the seed. influxdb-seed is a
+  # one-shot that runs docker/influxdb/seed.sh, the only writer of these fixtures: it creates
+  # the 1.x reader (READ on home), the 2.x read-only token for bucket home, which it keeps in
+  # the influxdb2-read-token volume, and the home and edge data on each server.
+  # influxdb3-filelimit, behind its profile, is the file-limit fixture (--query-file-limit 1),
+  # seeded by hand. No server has a named data volume; the 1.x and 2.x images declare anonymous
+  # ones, which survive --force-recreate, so a reset removes them with the container
+  # (`rm -s -f -v`), and the seed writes the server again with fresh timestamps.
+  # docker/influxdb/README.md describes the servers, the principals and the seed data.
+  # ---------------------------------------------------------------------------------------
+  influxdb1:
+    image: influxdb:1.13.1@sha256:3e3913d3b7512d1749922c8183bbf2a76973dd9f98e1a1e3249c652ec1576fc0
+    container_name: libredb-influxdb1
+    restart: unless-stopped
+    environment:
+      # The image's entrypoint creates the admin user and database home at first start.
+      INFLUXDB_HTTP_AUTH_ENABLED: "true"
+      INFLUXDB_ADMIN_USER: admin
+      INFLUXDB_ADMIN_PASSWORD: password123
+      INFLUXDB_DB: home
+      # A server otherwise reports to usage.influxdata.com every 24 hours.
+      INFLUXDB_REPORTING_DISABLED: "true"
+    ports:
+      - "127.0.0.1:8087:8086"
+    healthcheck: &influxdb-ping-health
+      # /ping needs no credential on 1.x and 2.x and answers 204; the image carries curl.
+      test: ["CMD", "curl", "-sf", "-o", "/dev/null", "http://127.0.0.1:8086/ping"]
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    # Bounded as the Qdrant fixtures are; no swap past it. 2 GiB leaves room for the hand-run
+    # bench database (docker/influxdb/README.md).
+    <<: &influxdb-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "2"
+            memory: 2G
+      memswap_limit: 2G
+
+  influxdb2:
+    image: influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e
+    container_name: libredb-influxdb2
+    restart: unless-stopped
+    environment:
+      # The image's entrypoint runs the initial setup at first start: user admin, org libredb,
+      # bucket home and this all-access operator token.
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: password123
+      DOCKER_INFLUXDB_INIT_ORG: libredb
+      DOCKER_INFLUXDB_INIT_BUCKET: home
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: libredb-influxdb2-operator-token
+      # A server otherwise reports to telemetry.influxdata.com every 8 hours.
+      INFLUXD_REPORTING_DISABLED: "true"
+    ports:
+      - "127.0.0.1:8086:8086"
+    healthcheck: *influxdb-ping-health
+    <<: *influxdb-limits
+
+  influxdb3:
+    image: influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076
+    container_name: libredb-influxdb3
+    restart: unless-stopped
+    environment: &influxdb3-env
+      # The admin token, in the file shape `influxdb3 create token --admin --offline` writes,
+      # read by `serve --admin-token-file`. That command mints a random token; this one is the
+      # fixed test token, so the seed and the evidence harness read it from this file.
+      LIBREDB_INFLUXDB3_TOKEN: apiv3_libredb-influxdb3-admin-token
+    entrypoint: &influxdb3-entrypoint
+      - bash
+      - -c
+      - >-
+        umask 077 &&
+        printf '{"token": "%s", "name": "_admin"}\n' "$$LIBREDB_INFLUXDB3_TOKEN" > /tmp/admin-token.json &&
+        exec influxdb3 serve --node-id libredb --object-store file
+        --data-dir /home/influxdb3/.influxdb3 --admin-token-file /tmp/admin-token.json
+        --disable-telemetry-upload "$$@"
+      - influxdb3
+    ports:
+      - "127.0.0.1:8181:8181"
+    healthcheck: &influxdb3-ping-health
+      # /ping needs a token on 3.x; the image carries curl.
+      test:
+        - CMD-SHELL
+        - 'curl -sf -o /dev/null -H "Authorization: Bearer $$LIBREDB_INFLUXDB3_TOKEN" http://127.0.0.1:8181/ping'
+      start_period: 30s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    <<: *influxdb-limits
+
+  influxdb3-filelimit:
+    # The same server with --query-file-limit 1, so a query over more than one of the Parquet
+    # files `seed.sh filelimit` persists meets the file-limit error: 21 timestamps 4 hours
+    # apart, each in its own 10-minute gen1 window, persist 21 files (measured 2026-10-04).
+    # A snapshot after every WAL file, and after 10 seconds at most, persists the seed within
+    # seconds of the write. Profile-gated: only the evidence harness and the preview-window
+    # measurement read it.
+    image: influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076
+    container_name: libredb-influxdb3-filelimit
+    profiles: ["influxdb-filelimit"]
+    restart: unless-stopped
+    environment: *influxdb3-env
+    entrypoint: *influxdb3-entrypoint
+    command: ["--query-file-limit", "1", "--wal-files-per-snapshot", "1", "--force-snapshot-max-age", "10s"]
+    ports:
+      - "127.0.0.1:8182:8181"
+    healthcheck: *influxdb3-ping-health
+    <<: *influxdb-limits
+
+  influxdb-seed:
+    # One-shot seed (docker/influxdb/seed.sh) in the 2.9.1 image, which carries bash, curl and
+    # GNU date, so the seed pulls no image of its own. It creates what is missing and leaves
+    # what exists: a second run on a seeded server writes nothing.
+    image: influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e
+    container_name: libredb-influxdb-seed
+    restart: "no"
+    depends_on:
+      influxdb1:
+        condition: service_healthy
+      influxdb2:
+        condition: service_healthy
+      influxdb3:
+        condition: service_healthy
+    volumes:
+      - ./docker/influxdb:/seed:ro
+      - influxdb2-read-token:/tokens
+    environment:
+      INFLUXDB1_URL: http://influxdb1:8086
+      INFLUXDB2_URL: http://influxdb2:8086
+      INFLUXDB3_URL: http://influxdb3:8181
+      # 2.9.1 shows a token's value only when it creates it, so the seed keeps the read-only
+      # token here; read it with `docker cp libredb-influxdb-seed:/tokens/influxdb2-read-token -`.
+      INFLUXDB2_READ_TOKEN_FILE: /tokens/influxdb2-read-token
+    entrypoint: ["bash", "/seed/seed.sh"]
+    # The one-shot bound of the Milvus certificate and Qdrant key jobs, shared here: the anchor
+    # is named after the vector fixtures that declared it.
+    <<: *vector-one-shot-limits
+
+  # ---------------------------------------------------------------------------------------
   # Neo4j (the neo4j provider). One Community server, Bolt for the provider and HTTP for the
   # health probe only. The seed is a graph written for this repository, loaded by hand once the
   # service is healthy; the official Movies graph carries no licence and is not vendored. The
@@ -2531,7 +2679,8 @@ volumes:
   # volume of its own, because the image runs as uid 999 and a bind mount crashed it;
   # milvus-certs and milvus-credentials hold the generated certificates and the seeded users'
   # passwords, and qdrant-keys the generated Qdrant keys, local.yaml files and certificates.
-  # Everything else uses the image's own anonymous volumes.
+  # influxdb2-read-token keeps the InfluxDB 2.x read-only token influxdb-seed created, whose
+  # value the server shows only once. Everything else uses the image's own anonymous volumes.
   #
   # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
   # that write or read segments. A `down -v` resets the cluster to empty.
@@ -2549,3 +2698,4 @@ volumes:
   milvus-certs: {}
   milvus-credentials: {}
   qdrant-keys: {}
+  influxdb2-read-token: {}
