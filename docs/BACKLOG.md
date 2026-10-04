@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D165, U17 · 109
+- [Drivers and connections](#drivers-and-connections) — D1-D167, U17 · 111
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U78 · 72
@@ -2050,7 +2050,7 @@ Found 2026-10-03 while reviewing the Neo4j provider (PR #1239, review N6).
 
 Inline row edit and the import into an existing table came back with `db2-node` 1.0.24, which reads non-ASCII text back as written and refuses a DECIMAL that does not fit its column, measured on Db2 12.1 and 11.5 by `tests/live/db2-live-check.ts` (K1 and K22 in `docs/providers/db2.md`).
 `db2Capabilities` (`src/lib/db/providers/sql/db2/capabilities.ts`) still sets `supportsCreateTable` to false, which also withholds an import into a new table, because neither path can spell a Db2 table.
-`CreateTableModal` (`src/components/CreateTableModal.tsx`) has no Db2 row in `DIALECTS` and would fall back to PostgreSQL's, and `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, which Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` and so cuts every fraction.
+`CreateTableModal` (`src/components/CreateTableModal.tsx`) has no Db2 row in `DIALECTS` and refuses to open without one, and `inferSqlType` in `src/components/DataImportModal.tsx` writes `TEXT`, which Db2 refuses (SQL0204N), and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` and so cuts every fraction.
 
 Found 2026-10-03 by the Db2 provider's driver spike (#786); narrowed to Create Table 2026-10-04 when writes came back.
 
@@ -2265,6 +2265,25 @@ That bound came from `db2-node` 1.0.22, which could not fetch a CLOB at all (K7 
 Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.24.
 
 **Done when:** a definition of any length reads whole through a statement that selects the CLOB alone, a non-ASCII definition longer than 32672 bytes reads back byte for byte in `tests/live/db2-live-check.ts` on 12.1 and 11.5, and the partial form and its reason are gone from section 6.5 of `docs/providers/db2.md`.
+
+### D166. A pending inline edit outlives a failed save onto the next query's result
+
+After a save of an inline edit fails, the edit stays pending, as #882 asks, and running another query keeps it pending over the new result.
+`handleApplyChanges` in `src/hooks/use-inline-editing.ts` keeps `pendingChanges` on a refusal, and nothing clears them when `currentTab.result` is replaced, so the grid and the Apply bar show a change addressed by row position against rows it was never made on.
+The apply itself checks each change's `originalValue` before it writes, so this is a display and intent defect rather than a wrong write.
+
+Found 2026-10-04 by the browser check of #1303 on a Db2 connection; the behaviour is the shared editor's and not the provider's.
+
+**Done when:** a pending change is tied to the result it was made on, so a new result either drops it with a notice or keeps it only where it still addresses the same row, and a hook test fails a save, runs a second query and finds no pending change shown against the second result.
+
+### D167. The import table picker names a table without its schema
+
+The existing-table picker in `src/components/DataImportModal.tsx` (`#import-target-table`) is valued by the object's path and labelled by `t.name` alone, so two tables of one name in two schemas read as two identical options and the user cannot tell which one an import writes to.
+The value is right since #789; only the label loses the container.
+
+Found 2026-10-04 by the browser check of #1303 on a Db2 connection with tables in `APP` and `REPORTING`; every engine with more than one container has it.
+
+**Done when:** each option's label names its container path wherever the engine has containers, the way the object tree qualifies a name, and a component test with two same-named tables in two schemas finds two distinct labels.
 
 ## Value interpolation
 
