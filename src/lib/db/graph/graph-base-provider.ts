@@ -22,7 +22,7 @@
  * `connect()`, so a provider made only for its declarations touches no socket.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseError, QueryError } from "@/lib/db/errors";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   Container,
@@ -185,6 +185,11 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   /** The connect attempt in flight, which an overlapping `connect()` awaits. */
   private connecting: Promise<void> | null = null;
   /**
+   * Moved by every `disconnect()`. A connect attempt reads it before its first await and again before it
+   * installs its session, so an attempt a disconnect overtook knows it lost.
+   */
+  private generation = 0;
+  /**
    * Statements in flight under the caller's id, so `cancelQuery` reaches them (spec 5.5). An id
    * holds a set: two runs sent under one id are both cancelled, never only the later one.
    */
@@ -258,18 +263,22 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   public connect(): Promise<void> {
     if (this.connecting !== null) return this.connecting;
     const attempt = this.connectOnce().finally(() => {
-      this.connecting = null;
+      // A disconnect drops the memo, so by now it may hold the attempt a later connect started.
+      if (this.connecting === attempt) this.connecting = null;
     });
     this.connecting = attempt;
     return attempt;
   }
 
   private async connectOnce(): Promise<void> {
+    // Read before the first await, so a disconnect anywhere in this attempt is seen below.
+    const generation = this.generation;
     // A connect on a connected provider replaces the session, so the previous client is closed
     // first and its statements aborted: no driver is left open, and a failed reconnect leaves no
     // stale session behind. A close that fails is logged; the new connect is what the caller asked.
+    // That is not a disconnect, so it leaves the generation where it is.
     if (this.session !== null) {
-      await this.disconnect().catch((closeError: unknown) => this.logError("reconnect cleanup", closeError));
+      await this.closeSession().catch((closeError: unknown) => this.logError("reconnect cleanup", closeError));
     }
     let client: GraphClient | undefined;
     try {
@@ -289,21 +298,38 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
       const configured = this.config.database;
       const database =
         configured !== undefined && configured !== "" ? configured : await this.profile.catalog.homeDatabase(client);
+      // A disconnect while this attempt awaited wins: its caller asked for a disconnected provider, so
+      // nothing is installed and the catch below closes this attempt's own client.
+      if (this.generation !== generation) {
+        throw new ConnectionError("Disconnected while connecting; the connection was closed.", this.type);
+      }
       this.session = { client, database };
     } catch (error) {
       // A client that was built holds a driver, so a connect that fails after it closes it. A close
       // that fails too is logged, never thrown over the failure that explains the connect.
       await client?.close().catch((closeError: unknown) => this.logError("connect cleanup", closeError));
       const mapped = this.providerError(error);
-      this.setError(mapped as Error);
+      // After a disconnect the provider's state belongs to it, and perhaps to a connect started since:
+      // an attempt that lost only rejects.
+      if (this.generation === generation) this.setError(mapped as Error);
       throw mapped;
     }
     this.clearCatalogCache();
     this.setConnected(true);
   }
 
-  /** Aborts every statement in flight, then closes the client. */
+  /**
+   * Aborts every statement in flight, then closes the client. A connect still in flight loses to it:
+   * that attempt closes the client it built and rejects, and a `connect()` from here on starts its own.
+   */
   public async disconnect(): Promise<void> {
+    this.generation++;
+    this.connecting = null;
+    await this.closeSession();
+  }
+
+  /** Ends the session without touching a connect in flight: what a reconnect does before it connects. */
+  private async closeSession(): Promise<void> {
     const session = this.session;
     this.session = null;
     for (const controllers of this.running.values()) {

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D231, U17 · 143
+- [Drivers and connections](#drivers-and-connections) — D1-D231, U17 · 142
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
@@ -292,34 +292,6 @@ and a refusal sentence that has never been seen from the server is exactly what 
 **Done when:** a Couchbase panel a role may not read is absent with the cluster's own wording, and
 the counts it feeds carry the same distinction - measured against a live cluster with a document-only
 role, not inferred from the code.
-
-### D33. Every parameterised read still prepares, so an engine without PREPARE loses all of them
-
-Measured 2026-08-27 against `datafuselabs/databend:v1.2.925-patch-11` (issue #424, Phase 0).
-Databend replies `Prepare is not support in Databend` to mysql2's prepared protocol, and that one
-answer takes the object reads, `getActiveSessions()`, `getTableStats()`, `getIndexStats()` and
-`getStorageStats()` - the whole object browser and every statistics panel - while the editor keeps
-working.
-
-**The catalogs are there.** Asked with literal SQL on the same connection,
-`information_schema.tables` returns the true 3 and 2000 rows with `data_length` 124 and 49000, and
-`information_schema.columns` answers in full. So the engine has the data and we cannot read it.
-
-This is **D8 one step further in**, and the remaining step is the harder half. D8 moved every
-*parameterless* statement onto MySQL's text protocol; these six reads carry placeholders
-(`WHERE table_schema = ?`) and therefore still prepare. Moving them means either interpolating the
-schema name into the statement - which is where a placeholder was the safe choice, so it needs an
-identifier-quoting decision rather than a string concat - or asking mysql2 for the text protocol
-with the parameters bound client-side. Neither is a one-line change, which is why this is filed
-rather than done inside a labelling PR, and why Databend's registry row reads `query-only` today.
-
-The `rows.filter is not a function` crash `runMaintenance('analyze')` hit on the same engine is
-gone: Databend answers `ANALYZE TABLE` with an OK packet, as TiDB and OceanBase do, and the report
-reader now reads that as a statement that ran without a report (`docs/providers/mysql.md` section 9).
-
-**Done when:** the six reads above answer on Databend, with the identifier path decided rather
-than concatenated, verified against the container, and the reading unchanged on MySQL, MariaDB and
-one analytics relative.
 
 ### D34. A pinned SSH host key has no way to be set, so the protection resets on restart
 

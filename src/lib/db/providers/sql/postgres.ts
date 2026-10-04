@@ -4650,7 +4650,8 @@ export class PostgresProvider extends SQLBaseProvider {
    * its grammar accepts answers `25P02` without parse analysis, planning or execution, and one it
    * does not have answers its own syntax or feature error. Measured on PostgreSQL 18.6 and
    * CockroachDB v26.3.2: all six of PostgreSQL's statements answer `25P02` on the first, and the
-   * five the second refuses answer `42601` while `ANALYZE <table>` answers `25P02`.
+   * five the second refuses answer `42601` while `ANALYZE <table>` answers `25P02`. Five are sent;
+   * the bare `ANALYZE` is inferred, for the reason given where the loop below skips it.
    *
    * A server whose block the poison does not abort is not asked at all, because there the
    * statements WOULD run: `SELECT 1` is sent first, and unless it answers `25P02` the probe ends.
@@ -4697,7 +4698,18 @@ export class PostgresProvider extends SQLBaseProvider {
       for (const operation of PROBED_MAINTENANCE) {
         const perEntity = await placement(this.maintenanceStatement(operation, database, MAINTENANCE_PROBE_TARGET));
         if (perEntity === undefined) return undefined;
-        const global = await placement(this.maintenanceStatement(operation, database));
+        // The bare `ANALYZE` is never sent, because it is the one whole-database statement a
+        // transaction block does not stop: `VACUUM` and `REINDEX DATABASE` refuse inside one with
+        // `25001`, while `ANALYZE` runs there. Behind a statement-routing proxy (Pgpool-II load
+        // balancing) the probe's block cannot be shown to reach the backend the next statement
+        // reaches, and on that backend a bare `ANALYZE` would really run over the whole database.
+        // It is inferred instead: offered where `ANALYZE <table>` and the bare `VACUUM ANALYZE`
+        // both parse, which is the measured answer on every server above (CockroachDB has the
+        // first and not the second, and refuses the bare `ANALYZE` too).
+        const global =
+          operation === "analyze"
+            ? perEntity && measured.vacuum?.global === true
+            : await placement(this.maintenanceStatement(operation, database));
         if (global === undefined) return undefined;
         measured[operation] = { perEntity, global };
       }

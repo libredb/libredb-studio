@@ -434,6 +434,7 @@ A read-only connection offers none of the three.
 ## 9. Capabilities & labels
 
 `queryLanguage: "json"` with `queryDialect: "etcd"`, `tablesAreDerivedGroupings: true`, `containerLevels: []`, `defaultPort: 2379`, `enforcesReadOnly: true`, and `false` for explain, table creation, transactions, inline row edits, result pagination, external query limiting, connection strings and foreign keys.
+It also declares `supportsMaintenance: true`, with `maintenanceOperations: ["compact", "defragment", "disarm"]` and the `maintenanceOperationSpecs` of the three cards of section 8; `statementTerminator: "none"`; `objectKinds`, the six kinds of section 6.1; `keyScan`, which pages the Keys panel of section 6.4; and `schemaRefreshPattern`, which reloads the tree after a write (section 2.2).
 A key-prefix row is labelled "Key Prefix", its rows "Key", its read "Get Keys" and its generator "Generate Command"; a click on a group runs `get <group> --prefix --limit=50`, and Generate Command writes that read with the other forms commented below it, or the read alone on a read-only connection.
 A group whose prefix holds a carriage return, a line separator (U+2028) or a paragraph separator (U+2029), which the editor does not keep as the command line spells them, is read through a `txn` whose `get` names the prefix in Go quoting, and Generate Command's one other form for it is the commented `txn` template.
 
@@ -516,6 +517,6 @@ kube-apiserver compacts etcd every 5 minutes, so Compact history is for a NOSPAC
 
 ## 14. References
 
-- The design: issue #1089, "Cloud-native control plane".
-- etcd's API reference and its authentication guide, v3.7.
+- The design: issue [#1089](https://github.com/libredb/libredb-studio/issues/1089), "Cloud-native control plane".
+- etcd's [API reference](https://etcd.io/docs/v3.7/learning/api/) and its [authentication guide](https://etcd.io/docs/v3.7/op-guide/authentication/), v3.7.
 - [`docker/etcd/README.md`](../../docker/etcd/README.md) and [`tests/fixtures/etcd/README.md`](../../tests/fixtures/etcd/README.md).

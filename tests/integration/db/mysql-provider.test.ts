@@ -8,7 +8,7 @@ import { callerBoundTruncationReason, isSourcePartUnavailable, kindHasColumns } 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
-import type { DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
+import type { DatabaseProvider, MaintenanceOperation, ObjectKindSpec } from "@/lib/db/types";
 import { maintenanceControl } from "@/lib/db/types";
 import { DatabaseConfigError, NO_TRANSACTION_OPENED, TRANSACTION_STATE_UNREPORTED } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
@@ -3497,6 +3497,36 @@ describe("MySQLProvider wire protocol", () => {
     await p.rollbackTransaction();
   });
 
+  /**
+   * Client-side binding lasts the pool's lifetime, so a passing failure of the prepared probe
+   * must not decide it. Each case below answers the text probe exactly as a Databend would, so
+   * the prepared path surviving is the probe's first question doing its job. (A switched pool
+   * would also call `pool.on`, which this mock pool does not have, and fail the connect.)
+   */
+  test.each([
+    ["errno 1461, a server out of prepared-statement slots", [{ errno: 1461 }]],
+    ["a fatal connection error", [{ errno: -104, fatal: true, code: "ECONNRESET" }]],
+    ["a refusal that does not repeat", [{ errno: 1105 }, undefined]],
+  ])("%s at connect keeps the prepared path", async (_label, answers) => {
+    let attempts = 0;
+    mockExecuteFn = (sql: string) => {
+      if (sql === "SELECT ? AS bound") {
+        const answer = answers[Math.min(attempts++, answers.length - 1)];
+        if (answer !== undefined) return Promise.reject(Object.assign(new Error("refused"), answer));
+        return Promise.resolve([[{ bound: 1 }], []]);
+      }
+      if (sql.startsWith("SELECT '") && sql.endsWith(" AS bound")) {
+        return Promise.resolve([[{ bound: "\0\b\t\n\r\x1a\"'\\ probe" }], []]);
+      }
+      return defaultMockExecute(sql);
+    };
+
+    await connected();
+    await provider.query("SELECT * FROM users WHERE id = ?", [7]);
+
+    expect(protocolCalls).toEqual([{ method: "execute", sql: "SELECT * FROM users WHERE id = ?", params: [7] }]);
+  });
+
   test("cancelQuery kills the running thread over the text protocol", async () => {
     let releaseStatement: () => void = () => {};
     let statementStarted: () => void = () => {};
@@ -4418,37 +4448,52 @@ function objectSurfaceFixture(options: { mariadb: boolean }) {
 }
 
 /**
- * The maintenance probe (#1387). Each verb is sent against a missing table in the connection's own
- * database, ANALYZE and OPTIMIZE with NO_WRITE_TO_BINLOG, and the answer is read from `errno` and
- * `sqlState` alone. The refusals are the servers' own, measured 2026-10-04 through mysql2: TiDB
- * v8.5.8's three, Vitess 24.0.4's `CHECK TABLE`, and the `1142` / `1227` a least-privilege account
- * gets on mysql:latest.
+ * The maintenance probe (#1387). A control statement, `SELECT 1 FROM` a missing table with a random
+ * name in the connection's own database, then each verb against the same table, ANALYZE and
+ * OPTIMIZE with NO_WRITE_TO_BINLOG; every answer is read from `errno` and `sqlState` alone. The
+ * refusals are the servers' own, measured 2026-10-04 through mysql2: the control answers `1146` on
+ * MySQL 26.7.0, MariaDB, TiDB v8.5.8 and Vitess 24.0.4; TiDB refuses OPTIMIZE (`8200`) and CHECK
+ * (`1064`); Vitess refuses CHECK (`1105`); a least-privilege account on mysql:latest gets `1227`
+ * for OPTIMIZE. The Doris-style `1105` for a missing table is the reviewed shape, not measured here.
  */
 describe("MySQLProvider maintenance probe (#1387)", () => {
   let provider: InstanceType<typeof MySQLProvider>;
 
-  const PROBE = {
-    analyze: "ANALYZE NO_WRITE_TO_BINLOG TABLE `testdb`.`libredb_maintenance_probe`",
-    optimize: "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `testdb`.`libredb_maintenance_probe`",
-    check: "CHECK TABLE `testdb`.`libredb_maintenance_probe`",
-  } as const;
+  /** The probe's statements with the random table name replaced by `<t>`, in order. */
+  const probeCalls = () =>
+    protocolCalls
+      .map((c) => c.sql)
+      .filter((sql) => sql.includes("libredb_maintenance_probe_"))
+      .map((sql) => sql.replace(/libredb_maintenance_probe_[0-9a-f]{32}/g, "<t>"));
 
-  /** TiDB v8.5.8's three answers. */
-  const TIDB: Record<string, () => Error> = {
-    [PROBE.analyze]: () =>
-      explainRefusal("Table 'testdb.libredb_maintenance_probe' doesn't exist", 1146, "ER_NO_SUCH_TABLE", "42S02"),
-    [PROBE.optimize]: () => explainRefusal("OPTIMIZE TABLE is not supported", 8200, "", "HY000"),
-    [PROBE.check]: () => explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000"),
-  };
+  const CONTROL = "SELECT 1 FROM `testdb`.`<t>`";
+  const ANALYZE = "ANALYZE NO_WRITE_TO_BINLOG TABLE `testdb`.`<t>`";
+  const OPTIMIZE = "OPTIMIZE NO_WRITE_TO_BINLOG TABLE `testdb`.`<t>`";
+  const CHECK = "CHECK TABLE `testdb`.`<t>`";
 
-  const refusing =
-    (refusals: Record<string, () => Error>) =>
+  const missingTable = () => explainRefusal("Table 'testdb.<t>' doesn't exist", 1146, "ER_NO_SUCH_TABLE", "42S02");
+
+  /**
+   * A server whose control answers `control` and whose statements named in `answers` answer the
+   * error built there; everything else answers through the shared fixture (a result set).
+   */
+  const server =
+    (answers: Record<string, () => Error>, control: (() => Error) | "resolves" = missingTable) =>
     (sql: string): Promise<[unknown[], unknown[]]> => {
-      const refusal = refusals[sql];
-      return refusal === undefined ? defaultMockExecute(sql) : Promise.reject(refusal());
+      const normalized = sql.replace(/libredb_maintenance_probe_[0-9a-f]{32}/g, "<t>");
+      if (normalized === CONTROL && control !== "resolves") return Promise.reject(control());
+      const answer = answers[normalized];
+      return answer === undefined ? defaultMockExecute(sql) : Promise.reject(answer());
     };
 
-  const probeCalls = () => protocolCalls.map((c) => c.sql).filter((sql) => sql.includes("libredb_maintenance_probe"));
+  const connectWith = async (execute: (sql: string) => Promise<[unknown[], unknown[]]>) => {
+    mockExecuteFn = execute;
+    provider = new MySQLProvider(makeMySQLConfig());
+    await provider.connect();
+    return provider.getCapabilities();
+  };
+
+  const DECLARED: MaintenanceOperation[] = ["analyze", "optimize", "check", "kill"];
 
   beforeEach(() => {
     mockExecuteFn = defaultMockExecute;
@@ -4465,100 +4510,160 @@ describe("MySQLProvider maintenance probe (#1387)", () => {
 
   test("before connect the provider declares MySQL's whole set", () => {
     provider = new MySQLProvider(makeMySQLConfig());
-    expect(provider.getCapabilities().maintenanceOperations).toEqual(["analyze", "optimize", "check", "kill"]);
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(DECLARED);
   });
 
-  test("MySQL answers all three and keeps every operation, asked once each and never into the binary log", async () => {
-    provider = new MySQLProvider(makeMySQLConfig());
-    await provider.connect();
-    const caps = provider.getCapabilities();
+  test("MySQL answers all three and keeps every operation, the control first and nothing into the binary log", async () => {
+    const caps = await connectWith(server({}));
 
-    expect(caps.maintenanceOperations).toEqual(["analyze", "optimize", "check", "kill"]);
+    expect(caps.maintenanceOperations).toEqual(DECLARED);
     for (const operation of ["analyze", "optimize", "check"] as const) {
       expect(maintenanceControl(caps, operation, "perEntity").offered).toBe(true);
       expect(maintenanceControl(caps, operation, "global").offered).toBe(true);
     }
-    expect(probeCalls()).toEqual([PROBE.analyze, PROBE.optimize, PROBE.check]);
+    expect(probeCalls()).toEqual([CONTROL, ANALYZE, OPTIMIZE, CHECK]);
   });
 
-  test("TiDB keeps Analyze, which it looked for, and loses Optimize and Check, which it refused", async () => {
-    mockExecuteFn = refusing(TIDB);
-    provider = new MySQLProvider(makeMySQLConfig());
-    await provider.connect();
-    const caps = provider.getCapabilities();
+  test("TiDB keeps Analyze and loses Optimize and Check, asked exactly once each with no plain retry", async () => {
+    const caps = await connectWith(
+      server({
+        [ANALYZE]: missingTable,
+        [OPTIMIZE]: () => explainRefusal("OPTIMIZE TABLE is not supported", 8200, "", "HY000"),
+        [CHECK]: () => explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000"),
+      }),
+    );
 
     expect(caps.maintenanceOperations).toEqual(["analyze", "kill"]);
     expect(maintenanceControl(caps, "analyze", "global").offered).toBe(true);
-    expect(maintenanceControl(caps, "optimize", "perEntity").offered).toBe(false);
-    expect(maintenanceControl(caps, "check", "global").offered).toBe(false);
+    expect(probeCalls()).toEqual([CONTROL, ANALYZE, OPTIMIZE, CHECK]);
   });
 
-  test("Vitess's 1105 syntax error drops Check", async () => {
-    mockExecuteFn = refusing({
-      [PROBE.check]: () => explainRefusal("syntax error at position 6 near 'CHECK'", 1105, "", "HY000"),
-    });
-    provider = new MySQLProvider(makeMySQLConfig());
-    await provider.connect();
+  test("Vitess's 1105 parse error drops Check, because the control answered 1146", async () => {
+    const caps = await connectWith(
+      server({ [CHECK]: () => explainRefusal("syntax error at position 6 near 'CHECK'", 1105, "", "HY000") }),
+    );
 
-    expect(provider.getCapabilities().maintenanceOperations).toEqual(["analyze", "optimize", "kill"]);
+    expect(caps.maintenanceOperations).toEqual(["analyze", "optimize", "kill"]);
+    expect(probeCalls()).toEqual([CONTROL, ANALYZE, OPTIMIZE, CHECK]);
+  });
+
+  test("a Doris-style generic 1105 on the control and on a verb keeps the verb; a 1064 on the verb alone drops it", async () => {
+    const generic = () => explainRefusal("Unknown table", 1105, "ER_UNKNOWN_ERROR", "HY000");
+    const caps = await connectWith(
+      server(
+        {
+          [ANALYZE]: generic,
+          [OPTIMIZE]: () => explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000"),
+          // The plain form is asked after a 1064 and refused the same way.
+          "OPTIMIZE TABLE `testdb`.`<t>`": () =>
+            explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000"),
+          [CHECK]: generic,
+        },
+        generic,
+      ),
+    );
+
+    expect(caps.maintenanceOperations).toEqual(["analyze", "check", "kill"]);
   });
 
   test("a least-privilege account's refusals are the verb existing, so nothing is lost", async () => {
-    mockExecuteFn = refusing({
-      [PROBE.analyze]: () =>
-        explainRefusal("SELECT, INSERT command denied to user 'appuser'", 1142, "ER_TABLEACCESS_DENIED_ERROR", "42000"),
-      [PROBE.optimize]: () =>
-        explainRefusal("Access denied; you need the OPTIMIZE_LOCAL_TABLE privilege", 1227, "", "42000"),
-      [PROBE.check]: () =>
-        explainRefusal("Access denied for user to database", 1044, "ER_DBACCESS_DENIED_ERROR", "42000"),
-    });
-    provider = new MySQLProvider(makeMySQLConfig());
-    await provider.connect();
+    const caps = await connectWith(
+      server({
+        [ANALYZE]: () => explainRefusal("SELECT, INSERT command denied", 1142, "ER_TABLEACCESS_DENIED_ERROR", "42000"),
+        [OPTIMIZE]: () => explainRefusal("you need the OPTIMIZE_LOCAL_TABLE privilege", 1227, "", "42000"),
+        [CHECK]: () => explainRefusal("Access denied for user to database", 1044, "ER_DBACCESS_DENIED_ERROR", "42000"),
+      }),
+    );
 
-    expect(provider.getCapabilities().maintenanceOperations).toEqual(["analyze", "optimize", "check", "kill"]);
+    expect(caps.maintenanceOperations).toEqual(DECLARED);
   });
 
-  test("an unknown database (1049) is the server looking for the table too", async () => {
-    mockExecuteFn = refusing({
-      [PROBE.check]: () => explainRefusal("Unknown database 'testdb'", 1049, "ER_BAD_DB_ERROR", "42000"),
-    });
-    provider = new MySQLProvider(makeMySQLConfig());
-    await provider.connect();
+  test.each<[string, number, string]>([
+    ["1049 unknown database", 1049, "42000"],
+    ["1051 unknown table", 1051, "42S02"],
+    ["1109 unknown table in the statement", 1109, "42S02"],
+  ])("%s is the server looking for the table, so the verb is kept", async (_label, errno, sqlState) => {
+    const caps = await connectWith(server({ [CHECK]: () => explainRefusal("missing", errno, "", sqlState) }));
 
-    expect(provider.getCapabilities().maintenanceOperations).toContain("check");
+    expect(caps.maintenanceOperations).toContain("check");
   });
 
   test("a server that cannot parse NO_WRITE_TO_BINLOG is asked again without it", async () => {
-    mockExecuteFn = refusing({
-      [PROBE.optimize]: () => explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000"),
-    });
-    provider = new MySQLProvider(makeMySQLConfig());
-    await provider.connect();
+    const caps = await connectWith(
+      server({
+        [OPTIMIZE]: () => explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000"),
+      }),
+    );
 
-    expect(probeCalls()).toContain("OPTIMIZE TABLE `testdb`.`libredb_maintenance_probe`");
-    expect(provider.getCapabilities().maintenanceOperations).toContain("optimize");
+    expect(probeCalls()).toContain("OPTIMIZE TABLE `testdb`.`<t>`");
+    expect(caps.maintenanceOperations).toContain("optimize");
+  });
+
+  test("a control that answers 1064 itself is no baseline for a retry, and the declaration stands", async () => {
+    const caps = await connectWith(
+      server({}, () => explainRefusal("You have an error in your SQL syntax", 1064, "ER_PARSE_ERROR", "42000")),
+    );
+
+    expect(caps.maintenanceOperations).toEqual(DECLARED);
+    expect(probeCalls()).toEqual([CONTROL]);
+  });
+
+  test.each<[string, (() => Error) | "resolves"]>([
+    ["resolves, so a table of that name exists", "resolves"],
+    ["answers with no errno", () => new Error("socket hang up")],
+    ["answers a code that is not a missing table", () => explainRefusal("Lock wait timeout", 1205, "", "HY000")],
+  ])("a control that %s leaves the declared set and sends no verb", async (_label, control) => {
+    const caps = await connectWith(server({}, control));
+
+    expect(caps.maintenanceOperations).toEqual(DECLARED);
+    expect(probeCalls()).toEqual([CONTROL]);
+  });
+
+  test.each<[string, () => Error]>([
+    ["a reset connection", () => Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET", errno: -104 })],
+    ["an error with no errno", () => new Error("socket hang up")],
+    ["a code that is neither an acceptance nor a refusal", () => explainRefusal("Lock wait", 1205, "", "HY000")],
+    ["an account limit (1203, 42000)", () => explainRefusal("max_user_connections", 1203, "", "42000")],
+    ["an account resource limit (1226, 42000)", () => explainRefusal("max_questions", 1226, "", "42000")],
+  ])("a verb answered with %s keeps the declared set and never fails the connection", async (_label, failure) => {
+    const caps = await connectWith(server({ [OPTIMIZE]: failure }));
+
+    expect(provider.isConnected()).toBe(true);
+    expect(caps.maintenanceOperations).toEqual(DECLARED);
+  });
+
+  test("every probe names a table of its own", async () => {
+    await connectWith(server({}));
+    await provider.disconnect();
+    const first = protocolCalls.map((c) => c.sql).find((sql) => sql.startsWith("SELECT 1 FROM"));
+    protocolCalls = [];
+    await connectWith(server({}));
+    const second = protocolCalls.map((c) => c.sql).find((sql) => sql.startsWith("SELECT 1 FROM"));
+
+    expect(first).toMatch(/libredb_maintenance_probe_[0-9a-f]{32}/);
+    expect(second).toMatch(/libredb_maintenance_probe_[0-9a-f]{32}/);
+    expect(first).not.toBe(second);
   });
 
   test("a connection string names the database the session selected", async () => {
     mockExecuteFn = (sql: string) =>
-      sql === "SELECT DATABASE() AS name" ? Promise.resolve([[{ name: "fromurl" }], []]) : defaultMockExecute(sql);
+      sql === "SELECT DATABASE() AS name" ? Promise.resolve([[{ name: "fromurl" }], []]) : server({})(sql);
     provider = new MySQLProvider(
       makeMySQLConfig({ database: undefined, connectionString: "mysql://u:p@localhost:3306/fromurl" }),
     );
     await provider.connect();
 
-    expect(probeCalls()[0]).toBe("ANALYZE NO_WRITE_TO_BINLOG TABLE `fromurl`.`libredb_maintenance_probe`");
+    expect(probeCalls()[0]).toBe("SELECT 1 FROM `fromurl`.`<t>`");
   });
 
   test.each<[string, (sql: string) => Promise<[unknown[], unknown[]]>]>([
     [
       "selected none",
-      (sql) =>
-        sql === "SELECT DATABASE() AS name" ? Promise.resolve([[{ name: null }], []]) : defaultMockExecute(sql),
+      (sql) => (sql === "SELECT DATABASE() AS name" ? Promise.resolve([[{ name: null }], []]) : server({})(sql)),
     ],
     [
       "would not say",
-      (sql) => (sql === "SELECT DATABASE() AS name" ? Promise.reject(new Error("nope")) : defaultMockExecute(sql)),
+      (sql) => (sql === "SELECT DATABASE() AS name" ? Promise.reject(new Error("nope")) : server({})(sql)),
     ],
   ])("a session that %s names a database that does not exist", async (_label, execute) => {
     mockExecuteFn = execute;
@@ -4567,22 +4672,7 @@ describe("MySQLProvider maintenance probe (#1387)", () => {
     );
     await provider.connect();
 
-    expect(probeCalls()[0]).toBe(
-      "ANALYZE NO_WRITE_TO_BINLOG TABLE `libredb_maintenance_probe`.`libredb_maintenance_probe`",
-    );
-  });
-
-  test.each<[string, () => Error]>([
-    ["a reset connection", () => Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET", errno: -104 })],
-    ["an error with no errno", () => new Error("socket hang up")],
-    ["a code that is neither an acceptance nor a refusal", () => explainRefusal("Lock wait", 1205, "", "HY000")],
-  ])("%s keeps the declared set and never fails the connection", async (_label, failure) => {
-    mockExecuteFn = refusing({ [PROBE.optimize]: failure });
-    provider = new MySQLProvider(makeMySQLConfig());
-    await provider.connect();
-
-    expect(provider.isConnected()).toBe(true);
-    expect(provider.getCapabilities().maintenanceOperations).toEqual(["analyze", "optimize", "check", "kill"]);
+    expect(probeCalls()[0]).toBe("SELECT 1 FROM `<t>`.`<t>`");
   });
 });
 
@@ -5306,6 +5396,87 @@ describe("MySQL object listing and detail", () => {
         unavailable: "SELECT command denied to user 'app'@'%' for table 'orders'",
       });
     }
+    await provider.disconnect();
+  });
+
+  // Only a statement the server REFUSED is asked again catalog by catalog. A connection that
+  // failed, or a statement that was stopped, would only fail four more times as slowly, and its
+  // own error is the one every folder should carry.
+  test.each([
+    [
+      "a fatal network error",
+      Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT", errno: -110, fatal: true }),
+    ],
+    [
+      "MySQL's max_execution_time",
+      Object.assign(new Error("Query execution was interrupted, maximum statement execution time exceeded"), {
+        errno: 3024,
+      }),
+    ],
+    ["an error that never reached the server", new Error("Pool is closed.")],
+  ])("%s is reported against every folder after one statement", async (_label, failure) => {
+    const provider = await connectedTo(false);
+    const counted: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("COUNT(*) AS n")) return [[], []];
+      counted.push(sql);
+      throw failure;
+    };
+
+    const counts = await provider.countObjects(["app"]);
+
+    expect(counted).toHaveLength(1);
+    for (const kind of provider.getCapabilities().objectKinds ?? []) {
+      expect(counts[kind.id]).toEqual({ unavailable: failure.message });
+    }
+    await provider.disconnect();
+  });
+
+  test("a catalog the server does not have costs only the folders it counts", async () => {
+    // Databend 1.2.881, measured 2026-10-04: `information_schema.tables` answers and
+    // `ROUTINES`, `TRIGGERS` and `EVENTS` are each `UnknownTable` (errno 1105). The union
+    // over all four failed as one statement, and its sentence was put on every folder,
+    // Tables and Views included.
+    const provider = await connectedTo(false);
+    const unknownTable = (view: string) =>
+      Object.assign(new Error(`Unknown table "app"."information_schema".${view} (unquoted).`), { errno: 1105 });
+    const counted: string[] = [];
+    mockExecuteFn = async (sql: string, params?: unknown[]) => {
+      if (!sql.includes("COUNT(*) AS n")) return [[], []];
+      counted.push(sql);
+      for (const view of ["ROUTINES", "TRIGGERS", "EVENTS"]) {
+        if (sql.includes(`information_schema.${view}`)) throw unknownTable(view);
+      }
+      expect(params).toEqual(["app"]);
+      return [
+        [
+          { kind: "table", n: 3 },
+          { kind: "view", n: 1 },
+          { kind: null, n: 9 },
+        ],
+        [],
+      ];
+    };
+
+    const counts = await provider.countObjects(["app"]);
+
+    expect(counts).toEqual({
+      table: { count: 3 },
+      view: { count: 1 },
+      procedure: { unavailable: 'Unknown table "app"."information_schema".ROUTINES (unquoted).' },
+      function: { unavailable: 'Unknown table "app"."information_schema".ROUTINES (unquoted).' },
+      trigger: { unavailable: 'Unknown table "app"."information_schema".TRIGGERS (unquoted).' },
+      event: { unavailable: 'Unknown table "app"."information_schema".EVENTS (unquoted).' },
+    });
+    // The one statement first, then one per catalog: nothing is re-asked on a server that
+    // answers the union, which every MySQL and MariaDB does.
+    expect(counted).toHaveLength(5);
+    expect(counted.slice(1).map((sql) => (sql.match(/information_schema\.[A-Z]+/g) ?? []).join())).toEqual([
+      "information_schema.TABLES",
+      "information_schema.ROUTINES",
+      "information_schema.TRIGGERS",
+      "information_schema.EVENTS",
+    ]);
     await provider.disconnect();
   });
 

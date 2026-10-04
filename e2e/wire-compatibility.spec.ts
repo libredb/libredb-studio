@@ -51,10 +51,12 @@ test.describe("Wire compatibility hint", () => {
     // the hint says otherwise.
     await expect(hint).toContainText("StarRocks");
     await expect(hint.getByTestId("wire-compat-tier-StarRocks")).toContainText("partial support");
-    // Databend (#424, probed 2026-08-27) is the first MySQL-wire relative to be query-only,
-    // so its suffix is asserted for the same reason StarRocks's is: the tier is the claim.
+    // Databend (#424, probed 2026-08-27) was the first MySQL-wire relative to be query-only.
+    // It moved to partial on 2026-10-04, when its parameterised reads began binding
+    // client-side and the object browser answered; its overview, health and session panels
+    // have no source on the engine. The suffix is asserted for the reason StarRocks's is.
     await expect(hint).toContainText("Databend");
-    await expect(hint.getByTestId("wire-compat-tier-Databend")).toContainText("query editor only");
+    await expect(hint.getByTestId("wire-compat-tier-Databend")).toContainText("partial support");
   });
 
   test("PostgreSQL marks its reduced-support relatives instead of listing bare names", async ({ page }) => {

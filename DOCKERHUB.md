@@ -174,7 +174,7 @@ Twenty-eight further engines speak the wire protocol of one of the twenty-six dr
 | VictoriaMetrics | `prometheus` | Partial |
 | Redpanda | `kafka` | Full |
 | Materialize · RisingWave | `postgres` | Partial |
-| Databend | `mysql` | Query editor only — SQL and a plain `EXPLAIN` run, but every parameterised read fails with *Prepare is not support in Databend*, so the object browser and all statistics panels are empty |
+| Databend | `mysql` | Partial - the editor, object browser and table stats work; overview, health and sessions do not (no `SHOW STATUS`, no process list) |
 
 Details, probed versions and each caveat: [`docs/providers/README.md`](https://github.com/libredb/libredb-studio/blob/main/docs/providers/README.md).
 

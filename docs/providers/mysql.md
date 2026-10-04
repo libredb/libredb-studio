@@ -187,6 +187,7 @@ module-local helper, `runStatement(queryable, sql, params?)`
 | Statement | Method | Protocol |
 |-----------|--------|----------|
 | carries parameters | `conn.execute(sql, params)` | binary, server-side prepared |
+| carries parameters, on a server measured to refuse `COM_STMT_PREPARE` | `conn.query(sql, params)` | text, values escaped in client-side ([below](#a-server-that-prepares-nothing-binds-client-side)) |
 | carries none (or an empty array) | `conn.query(sql)` | text |
 
 Parameterised statements are unchanged: the placeholders are what the prepared protocol is for, and
@@ -275,6 +276,101 @@ This section used to say affected-rows was not surfaced and `rowCount` was repor
 described the intent of one line; the line beside it called `.map` on the same header and threw, so
 what the user actually got for every DDL and DML statement was an error for work the server had
 already done.
+
+#### A server that prepares nothing binds client-side
+
+Databend's MySQL handler implements no prepared statement at all. Measured 2026-10-04 through mysql2
+3.24.4 on `datafuselabs/databend:latest` (`VERSION()` `8.0.90-v1.2.881-ca29960f5c`) and on
+`v1.2.925-patch-13`, one connection each:
+
+| Call | Answer |
+|---|---|
+| `execute("SELECT ? AS x", [1])` | errno 1105 `ER_UNKNOWN_ERROR`: `Prepare is not support in Databend.` |
+| `prepare("SELECT ? AS x")` | the same |
+| `execute("SELECT 1 AS x")`, no parameter | the same |
+| `query("SELECT ? AS x, ? AS s", [1, "a'b\\c"])` | `[{"x":1,"s":"a'b\\c"}]` |
+
+So every read here that carries a placeholder failed on Databend: the object tree, every statistics
+panel, a bound query and an inline row edit, over catalogs that answer in full when asked with literal
+SQL. `connect()` therefore asks two questions with `probeClientSideBinding()`, on the connection the
+pool check already holds:
+
+1. **Does the server refuse to prepare `SELECT ? AS bound`, for good?** If it prepares, nothing
+   changes: the prepared path is kept, because binding on the server is what keeps a value out of the
+   SQL text. MySQL 26.7.0 and StarRocks 4.1.6 both prepare it (measured the same day), and so does
+   every other engine in [README.md](./README.md#wire-compatible-engines) whose parameterised reads
+   work today. The family shares no errno for a refusal, so the errno does not have to name one, but a
+   decision that lasts the pool's lifetime is not taken on a passing failure: a `fatal` error (the
+   connection itself failed) and errno 1461 (`max_prepared_stmt_count`, a server that prepares and is
+   out of slots for now) keep the prepared path, and any other refusal has to repeat on a second
+   attempt. A pool that is switched over logs the refusal that did it, errno and message, as
+   `[MySQL] The server refused to prepare a statement (errno ...)`.
+2. **Does the literal this provider writes come back unchanged?** The probe sends
+   `SELECT '<value>' AS bound` with the value holding all nine characters mysql2's escaper writes a
+   backslash in front of: NUL, backspace, tab, newline, carriage return, 0x1a, `"`, `'` and `\`. Only
+   a server that reads the value back exactly is switched over.
+
+A pool whose server answers yes to both marks its connections the way
+[§3.8](#38-on-a-server-that-sends-utf-8-under-a-utf8mb3-label-utf8mb3-columns-are-read-as-utf-8)'s
+utf8mb3 probe does, from the pool's `acquire` event, and `runStatement` then writes that pool's
+parameterised statements out with `bindClientSide()` and sends them as text. Nothing is keyed on the
+type id or on the version string, and a second pool in the same process is untouched.
+
+**How a value is written, and why no value can close its literal.** A string becomes a single-quoted
+literal in which a quote is DOUBLED (`''`), a backslash is written as `\\`, and every other character
+is written as itself. A finite number is written as itself, with a space in front of a negative one so
+`1-?` never becomes the comment `1--5`; `null` becomes `NULL` and a boolean `true`/`false`. Any other
+value (an object, a Buffer, a Date, `NaN`) is refused with a sentence saying so; the API admits only
+strings, numbers, booleans and null anyway.
+
+The doubled quote is what makes the literal safe whichever way the session reads a backslash. A
+session can turn `NO_BACKSLASH_ESCAPES` on after connect: `SET SESSION sql_mode =
+CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')` from the editor stays on its pooled connection, and a `SET
+GLOBAL` reaches every connection opened after it. There a backslash is an ordinary character, so a
+`\'` escape would END the literal and the rest of the value would run as SQL; `''` is a quote inside
+the literal in both modes. Measured 2026-10-04 on MySQL 26.7.0 with the session switched that way:
+the value `' OR 1=1 -- ` written as this literal matched no row, and `a'b` read back as `a'b`. What
+that mode does change is the backslash: `\\` reads as two of them. So before sending a statement that
+carries a value with a backslash, the provider asks the session `SELECT 'a\\b'` on the same connection
+and refuses the statement, with a sentence naming `NO_BACKSLASH_ESCAPES`, when that reads two
+backslashes rather than one; the value is never stored changed, and the extra round trip is spent only
+on a value that has a backslash.
+
+mysql2's own escaper is deliberately not used for strings: besides writing `\'`, it writes escapes
+Databend does not read. Measured 2026-10-04 on 1.2.881 and 1.2.925-patch-11, each character as
+`a<char>b` through a `SELECT`, an `INSERT`, a `WHERE` match and an `UPDATE`:
+
+| Character | mysql2's escaper | This literal (`''` and `\\`, the rest as itself) |
+|---|---|---|
+| NUL, tab, newline, carriage return, `'`, `\` | all four unchanged | all four unchanged |
+| backspace (`\b`) | `INSERT` stores `a\bb` as the bytes `5c 62` (a backslash and `b`) | all four unchanged |
+| 0x1a (`\Z`) | every statement reads a backslash and `Z` | all four unchanged |
+| `"` (`\"`) | `INSERT` stores a backslash in front of it | all four unchanged |
+
+So an inline edit of a value holding a double quote would have stored a backslash in front of it. The
+same literal round-tripped all nine characters, `''` and `''''` included, in all four statements on
+MySQL 26.7.0 as well.
+
+**Where the placeholders are.** The formatter finds a `?` while skipping single-quoted strings,
+backtick identifiers and `--` and block comments. It does not skip a double-quoted string or a `#`
+comment, where a server preparing the statement would see no placeholder, so `SELECT "a?", ?` would
+put the value inside the double-quoted text; and it reads `??` as an identifier placeholder, which a
+server preparing the statement does not have. `bindClientSide()` therefore formats the statement with
+markers first and refuses it, with a sentence naming the cause (*"the statement has 2 value
+placeholders for 1 values ... A ? inside a double-quoted string or after # counts as a placeholder
+there, and ?? cannot be bound"*), when the formatter found a `??` or a number of value placeholders
+other than the number of values.
+
+`tests/integration/db/mysql-wire-decoding.test.ts` runs the real driver against an in-process server
+that refuses `COM_STMT_PREPARE` with Databend's own error and pins the exact text it receives.
+
+What this recovered on Databend 1.2.881, 1.2.925-patch-11 and 1.2.925-patch-13, through the provider and
+in a browser against the built app on 2026-10-04: the object tree lists `default` and `system` with
+their tables (49 under `system`) and views, a table expands to its columns and opens, table and
+storage statistics answer, and an inline edit of a `VARCHAR` to `it's \ edited` was saved and read
+back exactly. Through the provider, a value holding all nine characters above round-tripped through an
+`INSERT`, an `UPDATE ... WHERE name = ?` (one row matched) and a read. What stays unavailable there is
+the engine's: see [README.md](./README.md#wire-compatible-engines).
 
 ### 3.5 No server-side query timeout
 
@@ -1126,10 +1222,25 @@ declaration. The DECLARATION decides which folders exist.
 
 **A refused read is `{ unavailable }`, never 0**, carrying the server's own sentence unmapped, and
 every declared kind is seeded at `{ count: 0 }` before the read so a folder the database holds none
-of renders a zero rather than disappearing. There is no partial outcome to report and no retry that
-could produce one, because the four views are one statement. Worth knowing when reading a small
-number: `information_schema` FILTERS by privilege rather than refusing, so a role that can see only
-part of a database gets a real count of the part it can see.
+of renders a zero rather than disappearing. Worth knowing when reading a small number:
+`information_schema` FILTERS by privilege rather than refusing, so a role that can see only part of a
+database gets a real count of the part it can see.
+
+**When the one statement is refused, the four views are asked one at a time** (`COUNTS_BY_CATALOG`),
+and a view that refuses marks only the kinds it counts. Databend has `information_schema.tables` and
+no `ROUTINES`, `TRIGGERS` or `EVENTS` (each `UnknownTable`, errno 1105, measured 2026-10-04 on 1.2.881
+and 1.2.925-patch-13), so the union failed as a whole and its sentence was put on every folder,
+Tables and Views included. Now Tables and Views count, and the four routine, trigger and event
+folders carry Databend's own sentence. A server that refuses all four ends where the one statement
+did, every folder unavailable, and a server that answers the union, which every MySQL and MariaDB
+does, is asked nothing more.
+
+Only a REFUSAL is asked again: a positive server errno on a connection mysql2 did not mark `fatal`.
+A failed connection (a negative errno such as `ETIMEDOUT`, `fatal: true`), an error that never
+reached the server, and a statement the server stopped (`KILL QUERY` 1317, MySQL's
+`max_execution_time` 3024, MariaDB's `max_statement_time` 1969) are reported against every folder
+with the union's own error after that one statement, because four smaller statements would only fail
+the same way, as slowly.
 
 #### `describeObject()` reads three narrow statements, and only for the `TABLES` kinds
 
@@ -1896,11 +2007,20 @@ The `mysql` type id reaches wire-compatible engines that do not all have MySQL's
 so `probeMaintenance()` asks each server once per `connect()`, on the connection the pool check
 already holds, the way the EXPLAIN grammar is asked (#1387). It sends `ANALYZE NO_WRITE_TO_BINLOG
 TABLE`, `OPTIMIZE NO_WRITE_TO_BINLOG TABLE` and `CHECK TABLE` against
-`` <database>.`libredb_maintenance_probe` ``, a table that does not exist in the connection's own
-database, so nothing is touched. A connection string that names its database in the URL is asked
-`SELECT DATABASE()`; a session that selected none uses `` `libredb_maintenance_probe` `` as the
-database too, qualified because a bare name answers `1046 No database selected` before the verb
-is read.
+`` <database>.`libredb_maintenance_probe_<32 hex>` ``, a table that does not exist in the
+connection's own database, so nothing is touched. The suffix is a fresh random UUID per probe, so a
+table a user owns can never be the one the verbs reach. A connection string that names its database
+in the URL is asked `SELECT DATABASE()`; a session that selected none names a random database of
+the same shape, qualified because a bare name answers `1046 No database selected` before the verb is
+read.
+
+**A control statement goes first**: `SELECT 1 FROM` the same missing table. Its answer is what "the
+table is not there" sounds like on this server (`1146` on MySQL 26.7.0, MariaDB, TiDB v8.5.8 and
+Vitess 24.0.4, measured), so a verb that answers with the same `errno` reached the table and has the
+verb. That is what separates "table missing" from "verb missing" on an engine whose codes are
+generic: Apache Doris answers a missing table with `1105`, the code vtgate uses for a parse error. A
+control that resolves, or answers anything but a missing-table or privilege code (`1146`, `1049`,
+`1051`, `1109`, `1142`, `1044`, `1105`), leaves the declared set and no verb is sent.
 
 **The connection's own database, not an invented one.** An account granted only `ALL ON app.*` is
 refused `1142 command denied` for a table in any other database, for every verb, so a probe that
@@ -1911,19 +2031,21 @@ named a missing database read every verb as refused and the account lost all its
 for a table that does not exist, so every connect added two GTID transactions to a primary and to
 every replica behind it. With it `gtid_executed` did not move on MySQL 26.7.0, nor did MariaDB's
 `gtid_binlog_pos` or Vitess's `gtid_executed` (measured 2026-10-04). All four engines below parse
-the modifier; a server that answers it with `1064` is asked once more without it. `CHECK TABLE` is
+the modifier; a server that answers it with a `1064` the control did not get is asked once more
+without it. `CHECK TABLE` is
 never binlogged and takes no modifier.
 
 **How an answer is read**, from `errno` and `sqlState`, never the message:
 
-- kept: a result set, or `1146` no such table, `1049` unknown database, and the privilege refusals
-  `1142`, `1044` and `1227` (MySQL 26.7.0's `OPTIMIZE` asks a least-privilege account for
-  `OPTIMIZE_LOCAL_TABLE`). The verb exists there, and the run's own refusal is a 400 with the
-  engine's sentence;
-- dropped: `1064` parse error, `1105` (vtgate's parse error), `8200` (TiDB), `1235` not supported
-  yet, or any other SQLSTATE of class `42` or `0A`;
-- anything else (a reset connection, an error with no `errno`, any other code) is not a
-  measurement: the probe stops and the declared set stands.
+- kept: a result set, the control's own `errno`, or `1146`, `1049`, `1051`, `1109` for the missing
+  table or database, and the privilege refusals `1142`, `1044` and `1227` (MySQL 26.7.0's
+  `OPTIMIZE` asks a least-privilege account for `OPTIMIZE_LOCAL_TABLE`). The verb exists there, and
+  the run's own refusal is a 400 with the engine's sentence;
+- dropped, when it differs from the control's answer: `1064` parse error, `1105` (vtgate's parse
+  error), `8200` (TiDB), `1235` not supported yet, or any other SQLSTATE of class `42` or `0A`;
+- anything else (a reset connection, an error with no `errno`, the account limits `1203`
+  `max_user_connections` and `1226` `max_questions`, any other code) is not a measurement: the
+  probe stops and the declared set stands.
 
 Both placements follow the verb, because the whole-database form is the same statement over every
 table.
@@ -2215,7 +2337,17 @@ after every test. A second block runs every OK-packet shape on both servers and 
 header (`affectedRows`, `insertId`) and `rowCount`: `INSERT` over the text and the prepared protocol,
 `UPDATE`, `DELETE`, `CREATE TABLE`, an `INSERT` inside `beginTransaction()`/`queryInTransaction()`
 followed by a commit, and an answer that chains an OK packet, a result set and a closing OK packet;
-after each, the same pool must still answer.
+after each, the same pool must still answer. A third block runs servers that refuse `COM_STMT_PREPARE`
+with Databend's own error ([§3.4](#a-server-that-prepares-nothing-binds-client-side)): the exact text a
+parameterised read sends on both decoding paths (a quote, a backslash, a number, `NULL` and a boolean
+bound in), a `?` inside a string literal left alone, every other character written as itself, the
+statements refused before anything is sent (a `?` in a double-quoted string or after `#`, a `??`, a
+value with no placeholder, an object, `NaN`), a negative number after a minus sign, a session that
+switches to reading backslashes verbatim after connect never having a literal closed (and a value
+with a backslash refused there), a transaction's connection binding the same way, a server that
+reads a backslash verbatim or refuses the text probe never being sent client-side bound text, and a
+preparing server beside a refusing one keeping the prepared path. `mysql-provider.test.ts` pins that
+errno 1461, a fatal error and a refusal that does not repeat at connect all keep the prepared path.
 
 It also covers **the object surface** ([§7.1](#71-the-object-surface-789)) in two blocks. `object
 surface` holds the seven conformance tests: the declared kinds and roles on each server, the
@@ -2320,6 +2452,13 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   `performance_schema=ON`.
 - **`cancelQuery()` returns `true` on `KILL QUERY` success** without confirming the target was
   actually executing.
+- **Client-side binding on a server that prepares nothing reads the statement with mysql2's formatter.**
+  On such a server ([§3.4](#a-server-that-prepares-nothing-binds-client-side)) a `?` inside a
+  double-quoted string or after a `#` comment counts as a placeholder and `??` is an identifier
+  placeholder, so a bound statement that has either is refused rather than sent. A value holding a
+  backslash is refused in a session that has turned `NO_BACKSLASH_ESCAPES` on, because it would be
+  stored with the backslash doubled. Nothing the provider writes has any of these, and the editor
+  binds nothing.
 - **Cloud SSL auto-detect uses `rejectUnauthorized: false`** — encrypted but **not** authenticated
   (MITM-exposed). For verified TLS, set an explicit `connection.ssl` with mode `verify-system` (nothing
   to paste) or `verify-ca`/`verify-full`

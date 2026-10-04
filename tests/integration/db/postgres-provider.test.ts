@@ -4725,7 +4725,7 @@ describe("PostgresProvider maintenance probe (#1387)", () => {
     expect(caps.maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
   });
 
-  test("PostgreSQL accepts all six statements and keeps every operation in both placements", async () => {
+  test("PostgreSQL accepts all five statements and keeps every operation in both placements", async () => {
     const provider = await ask();
     const caps = provider.getCapabilities();
 
@@ -4743,7 +4743,6 @@ describe("PostgresProvider maintenance probe (#1387)", () => {
       'VACUUM ANALYZE public."libredb_maintenance_probe"',
       "VACUUM ANALYZE",
       'ANALYZE public."libredb_maintenance_probe"',
-      "ANALYZE",
       'REINDEX TABLE public."libredb_maintenance_probe"',
       'REINDEX DATABASE "testdb"',
       "ROLLBACK",
@@ -4804,19 +4803,43 @@ describe("PostgresProvider maintenance probe (#1387)", () => {
   test("an unexpected code while the block still reads as aborted is a refusal", async () => {
     // Materialize-style: an internal error rather than a grammar SQLSTATE. `SELECT 1` is asked
     // again and still answers 25P02, so nothing ran and the statement is counted refused.
-    mockAbortedBlockRefusals = { ANALYZE: Object.assign(new Error("internal error"), { code: "XX000" }) };
+    mockAbortedBlockRefusals = {
+      'REINDEX DATABASE "testdb"': Object.assign(new Error("internal error"), { code: "XX000" }),
+    };
     const provider = await ask();
     const caps = provider.getCapabilities();
 
-    expect(maintenanceControl(caps, "analyze", "global").offered).toBe(false);
+    expect(maintenanceControl(caps, "reindex", "global").offered).toBe(false);
+    expect(maintenanceControl(caps, "reindex", "perEntity").offered).toBe(true);
+    await provider.disconnect();
+  });
+
+  test("the bare ANALYZE is never sent; its placement follows ANALYZE <table> and the bare VACUUM", async () => {
+    // It is the one whole-database statement a block does not stop, so behind a statement-routing
+    // proxy it could run for real. A server without the bare VACUUM ANALYZE loses it too.
+    mockAbortedBlockRefusals = { "VACUUM ANALYZE": syntaxError('at or near "vacuum": syntax error') };
+    const provider = await ask();
+    const caps = provider.getCapabilities();
+
+    expect(mockWire).not.toContain("ANALYZE");
     expect(maintenanceControl(caps, "analyze", "perEntity").offered).toBe(true);
-    expect(caps.maintenanceOperations).toContain("reindex");
+    expect(maintenanceControl(caps, "analyze", "global").offered).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a server without ANALYZE <table> is offered no whole-database Analyze either", async () => {
+    mockAbortedBlockRefusals = { 'ANALYZE public."libredb_maintenance_probe"': syntaxError("syntax error") };
+    const provider = await ask();
+
+    expect(provider.getCapabilities().maintenanceOperations).not.toContain("analyze");
     await provider.disconnect();
   });
 
   test("an unexpected code after which the block no longer reads as aborted stops the probe", async () => {
     let sentinels = 0;
-    mockAbortedBlockRefusals = { ANALYZE: Object.assign(new Error("internal error"), { code: "XX000" }) };
+    mockAbortedBlockRefusals = {
+      'ANALYZE public."libredb_maintenance_probe"': Object.assign(new Error("internal error"), { code: "XX000" }),
+    };
     const original = mockAbortedBlockRefusals;
     mockQueryFn = async (sql) => defaultMockQuery(sql);
     // The second `SELECT 1` (the re-check after ANALYZE) answers a row: the block is gone.

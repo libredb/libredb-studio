@@ -6,7 +6,7 @@ So this is not a thank-you wall. Each entry links to the change itself, so a rea
 
 Nothing here is counted. Not merged pull requests, not changed lines, not closed issues. A count sees how often somebody showed up and misses everything that matters about it: the care taken, the bug nobody else found, the answer written out for a stranger. So the rungs below are judgements rather than totals, and where one is not obvious the reason is written beside the name — [CONTRIBUTING.md](CONTRIBUTING.md#the-contributor-ladder) says what each rung means.
 
-Everyone whose work is in `main` is here, maintainers included. Bots and coding agents are not — `dependabot`, `Copilot` and `claude` all appear in the repository's commit history and none of them is a person, so listing them beside people would blur the only thing this page is for. `git shortlog -sn` shows the whole history including theirs.
+Everyone whose work is in `main` is here, maintainers included. Bots and coding agents are not — `dependabot`, `Copilot` and `claude` all appear in the repository's commit history and none of them is a person, so listing them beside people would blur the only thing this page is for. `git shortlog -sn` shows the whole history including theirs. Accounts the organisation has blocked are not listed either.
 
 Within each rung, people are in the order they first landed a change.
 
@@ -314,13 +314,6 @@ Went wherever the work was: the login page, the admin fleet view, a license noti
 
 - [Corrected the Keycloak role mapping: realm roles reach the ID token only when mapped](https://github.com/libredb/libredb-studio/pull/904)
 
-### @Rayan-and-beyond
-
-- [Listed every translated README in the contributing guide's language exception and guard rule](https://github.com/libredb/libredb-studio/pull/903)
-- [Corrected the DigitalOcean checklist's health example to the `healthy` status the endpoint returns](https://github.com/libredb/libredb-studio/pull/915)
-- [Replaced the UI doc index's dark-only theme claim with the dark-first model](https://github.com/libredb/libredb-studio/pull/911)
-- [Documented `LIBREDB_NO_BANNER` for suppressing the startup banner in the Rancher guide](https://github.com/libredb/libredb-studio/pull/912)
-
 ### @YaoSong808
 
 - [Closed the Code Generator on an unhandled Escape, and recorded the new global listener](https://github.com/libredb/libredb-studio/pull/892)
@@ -343,6 +336,208 @@ Went wherever the work was: the login page, the admin fleet view, a license noti
 
 - [Documented how `TRUST_PROXY_HEADERS` and `TRUSTED_PROXY_HOPS` decide the rate-limit bucket key](https://github.com/libredb/libredb-studio/pull/938)
 - [Tabulated the `RATE_LIMIT_*` variables and defaults behind each rate-limit bucket](https://github.com/libredb/libredb-studio/pull/939)
+
+### @Anikesh348
+
+- [Gave the schema explorer's icon-only table actions button a table-specific accessible name](https://github.com/libredb/libredb-studio/pull/886)
+
+### @tunglambk
+
+- [Resolved seed connection credentials from HashiCorp Vault, so a rotated secret needs no restart](https://github.com/libredb/libredb-studio/pull/944)
+- [Documented the one-command Vault demo stack in the README](https://github.com/libredb/libredb-studio/pull/956)
+
+### @nawazish2
+
+- [Disclosed in the Admin Audit tab that denials recorded by the proxy do not appear there](https://github.com/libredb/libredb-studio/pull/989)
+- [Added Elasticsearch API key authentication, preferred over Basic auth when both halves are set](https://github.com/libredb/libredb-studio/pull/994)
+
+### @JavierparraDev
+
+- [Printed the schema beside each table on the admin Operations page, so same-named tables are told apart](https://github.com/libredb/libredb-studio/pull/984)
+
+### @linropx
+
+- [Refused a committed `.only` before the test run, instead of letting the skipped tests pass green](https://github.com/libredb/libredb-studio/pull/987)
+- [Stopped the launcher binding the machine name or container id that arrives as `HOSTNAME`](https://github.com/libredb/libredb-studio/pull/1053)
+
+### @sloemo01
+
+- [Read the SQLite object kinds from the provider in the agent guard, instead of scraping source text](https://github.com/libredb/libredb-studio/pull/986)
+- [Added the Civo Kubernetes Marketplace to the distribution channel inventory](https://github.com/libredb/libredb-studio/pull/996)
+
+### @KodYazicam
+
+- [Hoisted the copies of `assertObjectPathShape` into one export in `object-kinds.ts`](https://github.com/libredb/libredb-studio/pull/985)
+- [Added the embedded LibreDB provider to the architecture diagrams](https://github.com/libredb/libredb-studio/pull/1117)
+
+### @t957095
+
+- [Added the missing PostgreSQL Clients link to the Japanese, Spanish, Urdu and Hindi READMEs](https://github.com/libredb/libredb-studio/pull/1012)
+- [Proofread `README_zh.md` as a native speaker, and rewrote its stale transport-security note](https://github.com/libredb/libredb-studio/pull/1005)
+
+### @NotAFlightRisk
+
+- [Repointed the Kubero guide's dead install link at a page that exists](https://github.com/libredb/libredb-studio/pull/1021)
+
+### @chiliec
+
+- [Stopped schema diff writing `DEFAULT` before ClickHouse `MATERIALIZED`, `ALIAS` and `EPHEMERAL` columns](https://github.com/libredb/libredb-studio/pull/1035)
+- [Held Trino `nextUri` links to the connection's own origin, so its credentials are never sent elsewhere](https://github.com/libredb/libredb-studio/pull/1090)
+
+### @rahimahisah17
+
+- [Published the Postgres compose containers on loopback only](https://github.com/libredb/libredb-studio/pull/1039)
+- [Mounted the `postgres:18` data volume at `/var/lib/postgresql`, ending a restart loop](https://github.com/libredb/libredb-studio/pull/1041)
+
+### @bernalalexis-try
+
+- [Showed an empty-string default in the ER diagram's column tooltip instead of hiding it](https://github.com/libredb/libredb-studio/pull/1036)
+- [Read SQLite, libSQL and DuckDB column defaults as values rather than quoted catalog text](https://github.com/libredb/libredb-studio/pull/1048)
+
+### @saitakarcesme
+
+- [Corrected the local and hosted model counts in the LLM setup guide](https://github.com/libredb/libredb-studio/pull/1060)
+
+### @BladeRunner-KD6-37
+
+- [Corrected the agent API path and handler counts in `API_DOCS.md`](https://github.com/libredb/libredb-studio/pull/1063)
+
+### @lg114
+
+- [Expanded the Chinese README with the install channels, the feature set and the agent](https://github.com/libredb/libredb-studio/pull/1052)
+
+### @Ehtasham-Yasin
+
+- [Added Copy Cell and Copy Row as JSON to the results grid context menu, keeping masked values masked](https://github.com/libredb/libredb-studio/pull/1068)
+
+### @Aditya-XR
+
+- [Anchored the Schema Diff migration copy button outside the scrolling SQL](https://github.com/libredb/libredb-studio/pull/1082)
+- [Refused Redis commands such as `SELECT` and `AUTH` that would move the connection every request shares](https://github.com/libredb/libredb-studio/pull/1121)
+
+### @NikharAsthana
+
+- [Pinned the Schema Diff migration copy button with a clipboard test](https://github.com/libredb/libredb-studio/pull/1076)
+
+### @igorwfaoro
+
+- [Made the admin Overview's Recent Activity state what it covers, with a path to the Audit tab](https://github.com/libredb/libredb-studio/pull/1079)
+- [Sized each result grid column from its header instead of one fixed width](https://github.com/libredb/libredb-studio/pull/1113)
+
+### @Xavees
+
+- [Added the capabilities, error-handling and usage sections `duckdb.md` was missing](https://github.com/libredb/libredb-studio/pull/1103)
+
+### @yizhixiaokong
+
+- [Added a resumable walk of an engine's own key space, and the sidebar key browser that drives it](https://github.com/libredb/libredb-studio/pull/1095)
+
+### @MohamedIdhries
+
+- [Covered a long-form IPv6 Trino host against a short `nextUri` in the transport tests](https://github.com/libredb/libredb-studio/pull/1093)
+
+### @TehmeenaAkhtar
+
+- [Made the Urdu README read more naturally, and kept the link to its renamed install heading working](https://github.com/libredb/libredb-studio/pull/1118)
+
+### @Roberton003
+
+- [Started the read-only MCP server at `/api/mcp`, which the maintainers then rebuilt on the official SDK](https://github.com/libredb/libredb-studio/pull/1070)
+
+### @Reitzzz
+
+- [Reported a PostgreSQL `statement_timeout` as a timeout instead of a user cancel](https://github.com/libredb/libredb-studio/pull/1149)
+
+### @fatihcvs
+
+- [Replaced line-number citations in source comments with the declaration names they meant](https://github.com/libredb/libredb-studio/pull/1141)
+- [Stopped a short result page showing a `limited` badge when nothing was cut](https://github.com/libredb/libredb-studio/pull/1142)
+
+### @MFA-G
+
+- [Reset TLS, SSH, environment and Advanced fields when a new connection's dialog closes](https://github.com/libredb/libredb-studio/pull/1150)
+
+### @muskanbandta23
+
+- [Added ZopDay to the README's one-click deploy options](https://github.com/libredb/libredb-studio/pull/1183)
+
+### @Retsumdk
+
+- [Derived the provider docs' named citations inside the guard test instead of trusting a hand-kept list](https://github.com/libredb/libredb-studio/pull/1194)
+
+### @shivamcoderrrr
+
+- [Moved the query safety dialog onto the Radix alert dialog, for focus trapping and keyboard use](https://github.com/libredb/libredb-studio/pull/1191)
+
+### @paulocoutinhox
+
+- [Added the Portuguese README, linked it from the others and registered it with the drift guard](https://github.com/libredb/libredb-studio/pull/1017)
+
+### @Fristail27
+
+- [Added the Russian README, linked it from the others and registered it with the drift guard](https://github.com/libredb/libredb-studio/pull/1188)
+
+### @Object-ions
+
+- [Kept the confirmation dialogs' Cancel button on the studio theme's colour when the OS is dark](https://github.com/libredb/libredb-studio/pull/1202)
+- [Returned focus to where it was after closing confirmation dialogs opened from app state](https://github.com/libredb/libredb-studio/pull/1204)
+
+### @ArthurRamonSouza
+
+- [Reworded the Apache Kafka row of the Portuguese README](https://github.com/libredb/libredb-studio/pull/1206)
+
+### @abkucuk
+
+- [Dropped the `tcp:` prefix from a pasted ADO.NET `Server`, so an Azure connection string connects](https://github.com/libredb/libredb-studio/pull/1212)
+
+### @Maaz2212
+
+- [Dropped a stale engine count from `libsql.md`](https://github.com/libredb/libredb-studio/pull/1220)
+- [Stated in `login-page.md` that `NEXT_PUBLIC_APP_VERSION` comes from `package.json` at build time](https://github.com/libredb/libredb-studio/pull/1221)
+
+### @JaredAung
+
+- [Recorded the Scoop Extras listing in the channel inventory and the install docs](https://github.com/libredb/libredb-studio/pull/1226)
+
+### @gurkanceylan41
+
+- [Fixed the in-page links in `mssql.md` and `redis.md` that missed their headings](https://github.com/libredb/libredb-studio/pull/1234)
+
+### @rivolity
+
+- [Made the Vault Kubernetes auth mount configurable through `VAULT_K8S_AUTH_PATH`](https://github.com/libredb/libredb-studio/pull/1282)
+
+### @berkay-byte
+
+- [Corrected the `vacuumAction` provider count, and dropped a stale `reindex` reference](https://github.com/libredb/libredb-studio/pull/1280)
+
+### @lb1192176991-lab
+
+- [Documented the `*_PATH`, `*_DIR` and `*_FILE` env classification rule in `CONTRIBUTING.md`](https://github.com/libredb/libredb-studio/pull/1298)
+
+### @lui01212
+
+- [Corrected the X5 backlog entry's rendering notes after the modal extraction](https://github.com/libredb/libredb-studio/pull/1300)
+
+### @cestercian
+
+- [Added the second Neo4j integration test command, and linked the references in `neo4j.md`](https://github.com/libredb/libredb-studio/pull/1307)
+
+### @rnihesh
+
+- [Fixed the Db2 doc's statement terminator row, and filled the gaps it had against the code](https://github.com/libredb/libredb-studio/pull/1314)
+
+### @mgr-punith
+
+- [Corrected the non-SQL query formats intro in `DATABASE_PROVIDERS.md`, and added LibreDB to it](https://github.com/libredb/libredb-studio/pull/1319)
+
+### @DevKhizerer
+
+- [Replaced a stale type-id count in a schema statistics comment with the rule behind it](https://github.com/libredb/libredb-studio/pull/1360)
+
+### @hridhinvarkeyjoseph
+
+- [Retried MongoDB `listDatabases` without `authorizedDatabases` on FerretDB, which refuses the field](https://github.com/libredb/libredb-studio/pull/1302)
 
 ## Getting on this page
 

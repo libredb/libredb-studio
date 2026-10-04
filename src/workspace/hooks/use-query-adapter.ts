@@ -243,6 +243,9 @@ export function useQueryAdapter({
                 ...t,
                 isExecuting: true,
                 isLoadingMore: false,
+                // A new run answers the failure before it, whatever its own outcome: a run that is
+                // then cancelled must not leave the previous run's error in the pane (#1294).
+                runError: undefined,
               }
             : t,
         ),
@@ -377,6 +380,8 @@ export function useQueryAdapter({
                 ...t,
                 isExecuting: true,
                 isLoadingMore: false,
+                // The previous run's error goes with the claim, as in `executeQuery` (#1294).
+                runError: undefined,
               }
             : t,
         ),
@@ -649,6 +654,8 @@ export function useQueryAdapter({
               ...t,
               isExecuting: true,
               isLoadingMore: false,
+              // The previous run's error goes with the claim, as in `executeQuery` (#1294).
+              runError: undefined,
             }
           : t,
       ),

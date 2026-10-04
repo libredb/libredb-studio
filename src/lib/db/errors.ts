@@ -412,7 +412,7 @@ const STATEMENT_SQLSTATE = /^(0A|2[123]|4[24])[0-9A-Z]{3}$/;
  * `max_user_connections` and `1226` a per-account resource limit such as `max_questions`. The
  * account hit a limit; the same statement runs once it clears, so it keeps its 5xx class.
  */
-const MYSQL_ACCOUNT_LIMIT_ERRNOS = new Set([1203, 1226]);
+export const MYSQL_ACCOUNT_LIMIT_ERRNOS = new Set([1203, 1226]);
 
 /**
  * SQL Server error numbers for a statement the server parsed or ran and refused (#1427).

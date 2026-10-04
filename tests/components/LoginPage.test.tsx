@@ -359,7 +359,7 @@ describe("LoginPage showcase (issue #425)", () => {
   });
 
   test("marks the embedded provider in the pill list instead of dropping it", () => {
-    // The hero claims 14 external engines while showing 15 pills, and this marker is what
+    // The hero's engine count is one short of its pill list, and this marker is what
     // reconciles the two for a reader. Hiding the pill was the alternative and it is worse:
     // libredb is a provider the connection picker offers, so a login page that never names
     // it contradicts the app - the reasoning db-showcase.ts already records for issue #425.
@@ -376,9 +376,10 @@ describe("LoginPage showcase (issue #425)", () => {
   });
 
   test("names every verified relative on both surfaces, with the registry's own count", () => {
-    // The gap this closes: the page claimed its engine count while the product connects to
-    // forty named products, and the other twenty-six were published in README.md and the
-    // docs compatibility table but nowhere a visitor to the login page could see them.
+    // The gap this closes: the page claimed its engine count while the product also connects
+    // to every wire-compatible relative in WIRE_COMPATIBLE_ENGINES, and those relatives were
+    // published in README.md and the docs compatibility table but nowhere a visitor to the
+    // login page could see them.
     const { getByTestId } = renderShowcase();
     expect(WIRE_COMPATIBLE_ENGINES.length).toBeGreaterThan(0);
     for (const testId of ["wire-compatible-desktop", "wire-compatible-mobile"]) {
@@ -482,7 +483,7 @@ describe("LoginPage showcase (issue #425)", () => {
     // the showcase length (which includes libredb) fails the second assertion.
     // Matched with a tolerant regex rather than a substring: the desktop figure puts the
     // number and the unit in adjacent spans with no whitespace between them, so a
-    // "14 database engines" substring check would pass only on the mobile line and silently
+    // "<count> database engines" substring check would pass only on the mobile line and silently
     // stop covering the surface it was written for.
     const { container, getByTestId } = renderShowcase();
     const external = new RegExp(`${EXTERNAL_DATABASE_TYPES.length}\\s*database engines`);
