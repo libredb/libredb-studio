@@ -583,6 +583,30 @@ export const QdrantIcon: React.FC<IconProps> = ({ className, ...props }) => (
 );
 
 /**
+ * InfluxDB: a mark drawn for Studio, never InfluxData's logo or any vendor asset (InfluxDB spec E19), shared by the
+ * InfluxQL and the SQL connection type.
+ *
+ * Three stacked rising strokes, the series over time a time-series database stores, at the house weight with no
+ * fill, which is what stays identifiable at the 14px the connection list draws.
+ */
+export const InfluxDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M3 8 8 6l4 1.5L21 3" />
+    <path d="m3 14 5-2 4 1.5L21 9" />
+    <path d="m3 20 5-2 4 1.5 9-4.5" />
+  </svg>
+);
+
+/**
  * Milvus: a mark drawn for Studio, never the project's logo or any vendor or Attu asset (vector-family spec 10.3).
  *
  * A query point and its three nearest neighbours, the search a vector database answers, as strokes at the house

@@ -277,6 +277,8 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   etcd: ["host", "port", "user", "password"],
   db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
   qdrant: ["host", "port", "password"],
+  influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -316,6 +318,13 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
     },
     showSshTunnel: false,
   },
+  // Mirrored from the real entry (#786, #1303); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  db2: {
+    fieldHints: {
+      allowInsecureAuth:
+        "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
+  },
   // Mirrored from the real entry (#1089 6.1); tests/unit/lib/db-ui-config.test.ts pins the real one.
   etcd: {
     fieldHints: {
@@ -350,6 +359,32 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       password:
         "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice.",
     },
+  },
+  // Mirrored from the real entries (InfluxDB spec A.3); tests/unit/lib/db-ui-config.test.ts pins the real ones.
+  influxdb: {
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password: "1.x: the user's password. 2.x and InfluxDB 3: an API token, with User empty.",
+      database:
+        'A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as "db".."measurement".',
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+  },
+  influxdb3: {
+    fieldLabels: { password: "Token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password:
+        "Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token.",
+      database:
+        "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here.",
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
   },
 };
 
@@ -568,6 +603,35 @@ describe("ConnectionModal", () => {
     rerender(React.createElement(ConnectionModal, createDefaultProps()));
     expect(container.textContent).toContain("sends the password in cleartext");
   });
+  test.each(["db2", "influxdb", "influxdb3"] as const)(
+    "the consent box under %s draws that type's own hint, only while SSL Mode is disable, and forwards it (InfluxDB spec R4)",
+    (type) => {
+      mockFormOverrides = { type, sslMode: "disable" };
+      const { getByLabelText, queryByLabelText, container, rerender } = render(
+        React.createElement(ConnectionModal, createDefaultProps()),
+      );
+      const box = getByLabelText("Send the password without TLS") as HTMLInputElement;
+
+      expect(container.querySelector("#allowInsecureAuth-hint")?.textContent).toBe(
+        MOCK_FIELD_COPY[type].fieldHints?.allowInsecureAuth,
+      );
+      fireEvent.click(box);
+      expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(true);
+
+      mockFormOverrides = { type, sslMode: "disable", allowInsecureAuth: true };
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect((getByLabelText("Send the password without TLS") as HTMLInputElement).checked).toBe(true);
+      mockSetAllowInsecureAuth.mockClear();
+      fireEvent.click(getByLabelText("Send the password without TLS"));
+      expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(false);
+
+      for (const sslMode of ["require", "verify-system", "verify-ca", "verify-full"]) {
+        mockFormOverrides = { type, sslMode };
+        rerender(React.createElement(ConnectionModal, createDefaultProps()));
+        expect(queryByLabelText("Send the password without TLS")).toBeNull();
+      }
+    },
+  );
 
   test("shows the saved query timeout when editing", () => {
     mockFormOverrides = { isEditMode: true, queryTimeout: "120000" };
@@ -1495,6 +1559,7 @@ describe("ConnectionModal", () => {
       ["mysql", "mysql", {}, NETWORKED, {}],
       ["redis", "redis", {}, NETWORKED, {}],
       ["oracle", "oracle", {}, NETWORKED, {}],
+      // No password hint (#1303); the consent box's hint is drawn by the consent test above, not as a field hint.
       ["db2", "db2", {}, NETWORKED, {}],
       ["mssql", "mssql", {}, NETWORKED, {}],
       ["clickhouse", "clickhouse", {}, NETWORKED, {}],
@@ -1561,6 +1626,30 @@ describe("ConnectionModal", () => {
         {},
         { host: "Host & Instance", password: "API key or JWT" },
         MOCK_FIELD_COPY.qdrant.fieldHints ?? {},
+      ],
+      // The consent box's hint is drawn by the consent test, not as a field hint (InfluxDB spec A.3).
+      [
+        "influxdb",
+        "influxdb",
+        {},
+        { ...NETWORKED, password: "Password or token" },
+        {
+          host: MOCK_FIELD_COPY.influxdb.fieldHints?.host ?? "",
+          password: MOCK_FIELD_COPY.influxdb.fieldHints?.password ?? "",
+          database: MOCK_FIELD_COPY.influxdb.fieldHints?.database ?? "",
+        },
+      ],
+      // No User box: InfluxDB 3's token is the password.
+      [
+        "influxdb3",
+        "influxdb3",
+        {},
+        { host: "Host & Instance", password: "Token", database: "Database Name" },
+        {
+          host: MOCK_FIELD_COPY.influxdb3.fieldHints?.host ?? "",
+          password: MOCK_FIELD_COPY.influxdb3.fieldHints?.password ?? "",
+          database: MOCK_FIELD_COPY.influxdb3.fieldHints?.database ?? "",
+        },
       ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],

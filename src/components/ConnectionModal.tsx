@@ -1122,8 +1122,10 @@ export function ConnectionModal({
 
               {/*
                 The consent to a cleartext password (#786), outside the accordion so it is seen while
-                SSL Mode is disable: the Db2 provider refuses such a connection without it, and the
-                refusal names this box.
+                SSL Mode is disable: the provider of a type that takes it refuses such a connection
+                without it, and the refusal names this box. The sentence under it is the type's own
+                declared hint (InfluxDB spec R4), never a fallback; tests/unit/lib/db-ui-config.test.ts
+                holds every type that takes the field to declaring one.
               */}
               {takesConnectionField(type, "allowInsecureAuth") && sslMode === "disable" && (
                 <div className="space-y-1 p-3 rounded-lg border border-warning-tint/10 bg-warning-tint/5">
@@ -1139,8 +1141,7 @@ export function ConnectionModal({
                     <span className="text-xs font-medium text-warning">Send the password without TLS</span>
                   </label>
                   <p id="allowInsecureAuth-hint" className="text-xs text-fg-muted">
-                    With no SSL mode this driver sends the password in cleartext, so the connection is refused unless
-                    this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.
+                    {connectionFieldHint(uiConfig, "allowInsecureAuth")}
                   </p>
                 </div>
               )}

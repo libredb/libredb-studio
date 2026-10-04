@@ -1031,6 +1031,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     "neo4j",
     "milvus",
     "qdrant",
+    "influxdb",
+    "influxdb3",
   ];
   const dbTypes = selectableTypes.map((t) => {
     const cfg = getDBConfig(t);

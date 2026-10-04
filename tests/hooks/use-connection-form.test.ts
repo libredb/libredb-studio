@@ -20,6 +20,8 @@ const DEFAULT_PORTS: Record<string, string> = {
   etcd: "2379",
   milvus: "19530",
   qdrant: "6333",
+  influxdb: "8086",
+  influxdb3: "8181",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -50,6 +52,10 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
   // No User and no Database: Qdrant has neither, and the key or JWT is the password (vector-family spec 6.2).
   qdrant: ["host", "port", "password"],
+  // The consent to a cleartext password or token is both InfluxDB types' too; InfluxDB 3 takes no user name,
+  // its token being the password (InfluxDB spec A.3).
+  influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -1639,6 +1645,8 @@ describe("useConnectionForm", () => {
     neo4j: true,
     milvus: true,
     qdrant: true,
+    influxdb: true,
+    influxdb3: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {

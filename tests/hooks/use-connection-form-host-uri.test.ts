@@ -16,7 +16,7 @@ import {
 /**
  * The Host box of an engine that declares `hostAcceptsUri`, through the real form hook and the real
  * `DB_UI_CONFIG`: unlike tests/hooks/use-connection-form.test.ts, nothing here mocks `@/lib/db-ui-config`,
- * because the declaration is read from the real table. Milvus and Qdrant are the shipped entries that declare it;
+ * because the declaration is read from the real table. Milvus, Qdrant and both InfluxDB types are the shipped entries that declare it;
  * the synthetic cases declare it on the etcd entry for their own duration, so they read as before.
  */
 
@@ -486,4 +486,21 @@ describe("useConnectionForm: the real milvus row (vector-family spec 3.12, 5.2)"
     act(() => result.current.setPassword(pair.password));
     expect(result.current.credentialWarning).toBe(`Credential warning: ${pair.message}`);
   });
+});
+
+describe("useConnectionForm: the real InfluxDB rows (InfluxDB spec A.3)", () => {
+  test.each(["influxdb", "influxdb3"] as const)(
+    "the real %s row splits a pasted InfluxDB Cloud https address in the Host box and keeps 443",
+    (type) => {
+      const { result } = renderForm();
+      act(() => result.current.setType(type));
+      act(() => result.current.setHost("https://us-east-1-1.aws.cloud2.influxdata.com:443", "insertFromPaste"));
+      expect([result.current.type, result.current.host, result.current.port, result.current.sslMode]).toEqual([
+        type,
+        "us-east-1-1.aws.cloud2.influxdata.com",
+        "443",
+        "verify-system",
+      ]);
+    },
+  );
 });

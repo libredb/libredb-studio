@@ -24,6 +24,7 @@ import {
   Neo4jIcon,
   QdrantIcon,
   MilvusIcon,
+  InfluxDBIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -61,8 +62,9 @@ export interface DatabaseUIConfig {
     // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
     // `fieldOptions` below declares.
     | "saslMechanism"
-    // Db2 only (#786): the consent to send the password without TLS, drawn as a checkbox while SSL
-    // Mode is disable. The provider refuses a connection with no TLS unless it is set.
+    // Db2 (#786) and both InfluxDB types (InfluxDB spec I7): the consent to send the password without TLS,
+    // drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in `fieldHints`.
+    // The provider refuses a connection with no TLS unless it is set.
     | "allowInsecureAuth"
   )[];
   /**
@@ -224,6 +226,10 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "50000",
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    fieldHints: {
+      allowInsecureAuth:
+        "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
   },
   mssql: {
     icon: MSSQLIcon,
@@ -513,6 +519,60 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
       password:
         "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice.",
     },
+    hostAcceptsUri: ["http", "https"],
+  },
+  influxdb: {
+    // A generic time-series mark drawn for Studio, never InfluxData's logo (InfluxDB spec E19), shared by both types.
+    icon: InfluxDBIcon,
+    // `hue-purple` is Db2's; its `-alt` step is a second identity only because it clears the separation test, which
+    // is why `purple` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry.
+    color: "text-hue-purple-alt",
+    // One connection type per query language: this one sends InfluxQL over the v1 /query API of 1.x, 2.x and 3.x.
+    label: "InfluxDB (InfluxQL)",
+    defaultPort: "8086",
+    // The connection-string box reads http:// and https:// as ClickHouse, so a pasted address belongs in the Host
+    // box, which splits it (hostAcceptsUri below).
+    showConnectionStringToggle: false,
+    // The Prometheus precedent: one password box carries a 1.x password or, with User empty, a 2.x or 3.x token. The
+    // last field is the consent to send it without TLS, drawn while SSL Mode is disable (InfluxDB spec I7).
+    connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password: "1.x: the user's password. 2.x and InfluxDB 3: an API token, with User empty.",
+      database:
+        'A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as "db".."measurement".',
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    // The dialog's own sentence says the mode can be turned off, which is false here: Studio sends no write.
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+    hostAcceptsUri: ["http", "https"],
+  },
+  influxdb3: {
+    // The same mark as the InfluxQL type: one product, two connection types.
+    icon: InfluxDBIcon,
+    // The first hue with no identity `-alt` before it whose `-alt` step clears the separation test, which is why
+    // `violet` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry (InfluxDB spec K-D4).
+    color: "text-hue-violet-alt",
+    // InfluxDB 3 Core's SQL over /api/v3/query_sql.
+    label: "InfluxDB 3 (SQL)",
+    defaultPort: "8181",
+    showConnectionStringToggle: false,
+    // No User field: InfluxDB 3 has no user name, its token is the password, and the connection layer refuses a user
+    // from a seed or the API naming the field.
+    connectionFields: ["host", "port", "password", "database", "allowInsecureAuth"],
+    fieldLabels: { password: "Token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password:
+        "Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token.",
+      database:
+        "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here.",
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
     hostAcceptsUri: ["http", "https"],
   },
   libredb: {

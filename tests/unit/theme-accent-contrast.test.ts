@@ -223,7 +223,7 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
 ];
 
 /**
- * The eight hues where two engines share a hue and are held apart only by step, so
+ * The ten hues where two engines share a hue and are held apart only by step, so
  * the `-alt` is a distinct IDENTITY and has to join the separation set. Pinned by
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
  * `fuchsia` joined with Neo4j: of the hues with no identity `-alt` yet, only
@@ -235,8 +235,24 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
  * `indigo` joined with Milvus, whose own mark is a blue: `hue-blue` and `hue-sky` and
  * both their `-alt` steps are taken, `cyan-alt` fails the light-set test below, and
  * `indigo-alt` clears every test.
+ * `purple` joined with InfluxDB (InfluxQL): `hue-purple` is Db2's, and its `-alt` step,
+ * which theme.css already declared as an emphasis, clears every test below as an
+ * identity too. `violet` joined with InfluxDB 3 (SQL), the second InfluxDB type: of the
+ * hues with no identity `-alt` before it, tried in the order violet, pink, red, orange,
+ * amber, green, violet's was the first to clear every test below (InfluxDB spec K-D4).
  */
-const IDENTITY_ALTS = ["blue", "sky", "yellow", "emerald", "teal", "fuchsia", "rose", "indigo"] as const;
+const IDENTITY_ALTS = [
+  "blue",
+  "sky",
+  "yellow",
+  "emerald",
+  "teal",
+  "fuchsia",
+  "rose",
+  "indigo",
+  "purple",
+  "violet",
+] as const;
 
 /**
  * What theme.css actually declares, and what each declaration is supposed to be.
