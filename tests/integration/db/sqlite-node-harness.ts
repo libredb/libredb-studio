@@ -91,6 +91,12 @@ async function main(): Promise<void> {
   // Ordinary integers must stay ordinary numbers despite the all-or-nothing driver flag.
   report.bigSmallInteger = (await provider.query("SELECT 1 AS one")).rows;
   report.bigCount = (await provider.query("SELECT COUNT(*) AS count FROM big")).rows;
+
+  // A BLOB as the route serializes it: node:sqlite reads it as a plain Uint8Array, which
+  // JSON writes as an object keyed by index unless the seam hands back a Buffer.
+  report.blobWire = JSON.parse(
+    JSON.stringify((await provider.query("SELECT x'DEADBEEF00FF' AS bin, x'' AS empty")).rows),
+  );
   await provider.query("DROP TABLE big");
 
   // The same round trip on a column with NO affinity and on a BLOB one. SQLite

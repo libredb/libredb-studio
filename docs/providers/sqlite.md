@@ -522,6 +522,28 @@ A 64-bit id is where the two features meet: it leaves as the decimal string
 declared `INTEGER`, so the export writes an `INTEGER` column rather than the `TEXT` a value-shaped
 guess would produce.
 
+### BLOB values
+
+Both drivers read a `BLOB` as a plain `Uint8Array`, and the rows reach the browser through
+`JSON.stringify`, which writes one as an object keyed by index. Measured before the fix:
+`x'DEADBEEF00FF'` reached the grid as `{"0":222,"1":173,"2":190,"3":239,"4":0,"5":255}` and `x''` as
+`{}`, and "Export as SQL INSERT" wrote that object as quoted text, so replaying the file replaced the
+bytes with a string.
+
+The same seam in [`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts) that converts a
+64-bit integer ([§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions)) now hands
+every `BLOB` cell back as a `Buffer` over the same memory. A `Buffer` is a `Uint8Array`, so nothing
+in-process changes, and it serializes to `{"type":"Buffer","data":[...]}`, the form `asBytes` in
+[`binary.ts`](../../src/lib/export/binary.ts) reads and a PostgreSQL `bytea` already arrives in. So
+the grid, the row detail and the CSV show `\xdeadbeef00ff`, and the SQL export writes
+`X'deadbeef00ff'` (`X''` for an empty blob). Measured 2026-10-04 under both drivers (bun:sqlite on
+Bun 1.4.2 in the tests, node:sqlite on Node 24.11.0 behind `next start`): the exported INSERTs, run
+into a fresh `BLOB` table, read back in the `sqlite3` 3.53.4 CLI with identical `hex()`, `length()`
+and `typeof()` = `blob`, `0x00` and `0xFF` included.
+
+The JSON export still writes the `Buffer` form itself rather than hex; that is the same for every
+engine whose driver hands back bytes, and is tracked as X27 in [`BACKLOG.md`](../BACKLOG.md).
+
 ---
 
 ## 6. Schema introspection

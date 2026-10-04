@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D224, U17 · 139
+- [Drivers and connections](#drivers-and-connections) — D1-D224, U17 · 138
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U85 · 79
@@ -2117,20 +2117,6 @@ Measured 2026-10-03: no `provenance:` assignment exists in either provider, and 
 
 **Done when:** the owner has decided whether MongoDB's and Couchbase's sampled fields stay visible to models, and for each engine either its column builder sets `provenance: "sampled"` with a test that `inspect_schema` and the agent inventory hold none of them, or its provider doc (`docs/providers/mongodb.md`, `docs/providers/couchbase.md`) states that its sampled fields reach those surfaces; then this entry is deleted.
 
-### D152. A SQLite BLOB reaches the grid as an object keyed by byte index
-
-bun:sqlite and node:sqlite read a BLOB as a `Uint8Array`, and the SQLite provider (`src/lib/db/providers/sql/sqlite.ts`, through `sqlite-driver.ts`) returns it unchanged in the result rows.
-The query route serializes the result with `JSON.stringify`, which writes a `Uint8Array` as an object keyed by index, so the standalone grid receives `{"0":1,"1":2,"2":171,"3":255}` for the four bytes `01 02 ab ff`.
-`asBytes` in `src/lib/export/binary.ts` takes a live `Uint8Array` or the `{"type":"Buffer","data":[...]}` form a Node `Buffer` serializes to, and that object is neither, so every reader that goes through `asBytes` (the grid cell, the row detail, Copy Cell, the CSV and SQL export writers, inline editing and the agent's result tool) treats the value as a JSON object rather than as binary.
-PostgreSQL `bytea` and SQL Server `varbinary` arrive in the `Buffer` form and show and copy as `\x` hex.
-Measured 2026-10-03 in the browser pass of #1248, on the CI images of that branch and of `main` before it: the SQLite cell showed and copied the object form on both, and the PostgreSQL and SQL Server cells showed and copied `\x0102abff`.
-The libSQL transport also decodes a BLOB to a `Uint8Array` (`decodeBlob` in `src/lib/db/providers/sql/libsql/hrana-transport.ts`); that path was not measured.
-
-Found by the browser pass of the vector results grid (#1248).
-Not fixed there: the defect predates that PR, and its cause is in what the provider hands the route, not in the grid.
-
-**Done when:** a SQLite BLOB reaches the browser in a form `asBytes` reads, the grid shows it as `\x` hex and Copy Cell writes the whole value, a provider test reads a BLOB and asserts the serialized form, and the libSQL provider is measured the same way and fixed or recorded.
-
 ### D153. The etcd connection-options test can outrun bun's five-second hook timeout
 
 The file-level `beforeAll` in `tests/unit/db/etcd/connection-options.test.ts` makes its certificates at test time with `openssl`, eight of them over a new RSA-2048 key, and passes no timeout, so bun's default of 5000 ms bounds the whole setup.
@@ -2997,7 +2983,7 @@ Found by the acceptance pass of the vector-family work; the default predates it.
 `buildResultExport` (`src/lib/export/result-export.ts:892-893`) writes the JSON export as `jsonText(rows)`, the raw rows, so a PostgreSQL `bytea` or SQL Server `varbinary` value is written as `{"type":"Buffer","data":[0,1,...]}`.
 The grid, Copy Cell, the row detail and the CSV export show the same value as `\x` hex, through `asBytes` in `src/lib/export/binary.ts`.
 Measured 2026-10-03 in the acceptance pass of the vector-family work: a 100-byte `bytea` and a 100-byte `varbinary` each exported to JSON as the Buffer object with 100 numbers, and copied as `\x00010203...`.
-D152 has a separate cause: a SQLite BLOB never reaches the export as bytes at all.
+A SQLite or libSQL `BLOB` now arrives in the same `Buffer` form, so it is written the same way.
 
 Found by the acceptance pass of the vector-family work; the JSON writer dates from #422.
 

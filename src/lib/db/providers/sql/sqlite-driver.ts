@@ -226,12 +226,24 @@ function toSQLiteBindValues(params: unknown[]): unknown[] {
 }
 
 /**
- * Convert the BigInt cells of one returned record, in place.
+ * Convert the BigInt and BLOB cells of one returned record, in place.
  *
  * In place on purpose: node:sqlite returns null-prototype row objects and
  * bun:sqlite returns its own row objects, and rebuilding them would change what
- * every existing caller receives. Only the BigInt cells change. A BLOB column is
- * a typed array, never a row, and is left alone rather than walked byte by byte.
+ * every existing caller receives. Only the BigInt and BLOB cells change. A record
+ * that is itself a typed array is never a row, and is left alone rather than
+ * walked byte by byte.
+ *
+ * A BLOB cell becomes a `Buffer` over the same memory. Both drivers read a BLOB as
+ * a plain `Uint8Array`, and the rows reach the browser through `JSON.stringify`,
+ * which writes one as an object keyed by index: measured on bun:sqlite (Bun 1.4.2),
+ * `x'DEADBEEF00FF'` arrived in the grid as `{"0":222,"1":173,...,"5":255}` and
+ * `x''` as `{}`. Nothing downstream can tell that object from a document, so the
+ * grid showed it as JSON and the SQL export wrote it back as quoted text, replacing
+ * the bytes on replay. A `Buffer` IS a `Uint8Array`, so every in-process reader is
+ * unchanged, and it serializes to `{"type":"Buffer","data":[...]}`: the form
+ * `asBytes` in `src/lib/export/binary.ts` reads, and the one a Postgres `bytea`,
+ * a MySQL `BLOB` and an Oracle `RAW` already arrive in.
  */
 function normalizeRecordInPlace(record: unknown): unknown {
   if (record === null || record === undefined) {
@@ -248,6 +260,8 @@ function normalizeRecordInPlace(record: unknown): unknown {
     const value = row[key];
     if (typeof value === "bigint") {
       row[key] = normalizeSQLiteBigInt(value);
+    } else if (value instanceof Uint8Array) {
+      row[key] = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     }
   }
   return record;

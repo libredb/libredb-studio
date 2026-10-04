@@ -3487,6 +3487,11 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(report.bigSmallInteger).toEqual([{ one: 1 }]);
     expect(report.bigCount).toEqual([{ count: 2 }]);
 
+    // A BLOB reaches the wire as the Buffer form `asBytes` reads, as under bun.
+    expect(report.blobWire).toEqual([
+      { bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] }, empty: { type: "Buffer", data: [] } },
+    ]);
+
     // #42: on a column with NO affinity the same id used to match nothing at all, so the
     // row was uneditable. One row changes, and it is the one that was read.
     for (const key of ["none", "blob"]) {
@@ -4760,5 +4765,46 @@ describe("SQLiteProvider on a database file this process cannot write", () => {
     } finally {
       accessSpy.mockRestore();
     }
+  });
+});
+
+// ============================================================================
+// A BLOB round trip: provider, wire, export, replay
+// ============================================================================
+// The whole path a BLOB takes to a user's file and back, on the real bun:sqlite driver.
+// The rows cross `JSON.stringify` and `JSON.parse` exactly as `POST /api/db/query` and
+// the browser do. Before the driver seam handed back a Buffer, the bytes arrived as
+// `{"0":222,...}`, the SQL export wrote that object as quoted text, and the replay
+// below stored a TEXT value in place of the six bytes.
+
+describe("a BLOB survives the wire, the export and a replay", () => {
+  test("the SQL INSERT export writes X'..' and replays to identical bytes", async () => {
+    const provider = new SQLiteProvider(makeSQLiteConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE src (id INTEGER PRIMARY KEY, bin BLOB)");
+    await provider.query("INSERT INTO src VALUES (1, x'DEADBEEF00FF'), (2, x'')");
+
+    const read = await provider.query("SELECT id, bin FROM src ORDER BY id");
+    const wire = JSON.parse(JSON.stringify(read.rows)) as Record<string, unknown>[];
+    expect(wire[0]?.bin).toEqual({ type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] });
+
+    const source = { rows: wire, fields: read.fields, tabName: "dst", dialect: "sqlite" as const };
+    expect(buildResultExport("csv", source).content).toContain("1,\\xdeadbeef00ff");
+    const insert = buildResultExport("sql-insert", source).content;
+    expect(insert.split("\n")).toEqual([
+      `INSERT INTO dst ("id", "bin") VALUES (1, X'deadbeef00ff');`,
+      `INSERT INTO dst ("id", "bin") VALUES (2, X'');`,
+    ]);
+
+    await provider.query("CREATE TABLE dst (id INTEGER PRIMARY KEY, bin BLOB)");
+    await Promise.all(insert.split("\n").map((statement) => provider.query(statement)));
+    const replayed = await provider.query(
+      "SELECT d.id, typeof(d.bin) AS kind, hex(d.bin) AS hex, d.bin = s.bin AS same FROM dst d JOIN src s USING (id) ORDER BY d.id",
+    );
+    expect(replayed.rows).toEqual([
+      { id: 1, kind: "blob", hex: "DEADBEEF00FF", same: 1 },
+      { id: 2, kind: "blob", hex: "", same: 1 },
+    ]);
+    await provider.disconnect();
   });
 });

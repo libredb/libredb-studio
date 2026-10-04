@@ -693,6 +693,54 @@ describe("the record seam's guards", () => {
 });
 
 // ============================================================================
+// A BLOB cell leaves the seam as a Buffer
+// ============================================================================
+// Both drivers read a BLOB as a plain Uint8Array, and JSON.stringify writes one as an
+// object keyed by index (`{"0":222,"1":173,...}`), which no reader can tell from a
+// document. A Buffer serialises to `{"type":"Buffer","data":[...]}`, the form `asBytes`
+// reads and Postgres `bytea` already arrives in, so the grid, the CSV and the SQL export
+// see bytes.
+
+describe("a BLOB cell leaves the seam as a Buffer", () => {
+  /** A row whose BLOB is a VIEW into a larger buffer, so an offset mistake shows. */
+  function blobRow(): Record<string, unknown> {
+    const backing = new Uint8Array([7, 0xde, 0xad, 0xbe, 0xef, 0x00, 0xff, 7]);
+    return { id: 1, bin: backing.subarray(1, 7), empty: new Uint8Array(0) };
+  }
+
+  test("get() hands back a Buffer over exactly the cell's bytes", () => {
+    const stmt = new (driverReturning(blobRow()))(":memory:").prepare("SELECT bin FROM t");
+    const row = stmt.get() as Record<string, unknown>;
+
+    expect(Buffer.isBuffer(row.bin)).toBe(true);
+    expect(JSON.parse(JSON.stringify(row))).toEqual({
+      id: 1,
+      bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] },
+      empty: { type: "Buffer", data: [] },
+    });
+  });
+
+  test("all() converts every row's BLOB cells the same way", () => {
+    const stmt = new (driverReturning(blobRow()))(":memory:").prepare("SELECT bin FROM t");
+    const [row] = stmt.all() as Record<string, unknown>[];
+
+    expect(Buffer.isBuffer(row?.bin)).toBe(true);
+    expect(Array.from(row?.bin as Uint8Array)).toEqual([0xde, 0xad, 0xbe, 0xef, 0x00, 0xff]);
+  });
+
+  test("the real bun:sqlite driver answers a BLOB in the Buffer form", () => {
+    const db = new (createBunSQLiteDriver(BunDatabase as unknown as BunSQLiteConstructor))(":memory:");
+    const row = db.prepare("SELECT x'DEADBEEF00FF' AS bin, x'' AS empty").get() as Record<string, unknown>;
+
+    expect(JSON.parse(JSON.stringify(row))).toEqual({
+      bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] },
+      empty: { type: "Buffer", data: [] },
+    });
+    db.close(true);
+  });
+});
+
+// ============================================================================
 // The declared-type bridge (#273)
 // ============================================================================
 // A result carries the type each of its columns was DECLARED with. Both drivers
