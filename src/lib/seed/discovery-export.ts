@@ -53,7 +53,7 @@ const DiscoveredServiceSchema = z.object({
   appName: z.string().min(1).max(63),
   host: z.string().min(1).max(253),
   image: z.string().min(1).max(512),
-  // As with the lists below, the keys are counted before any value is validated, so a record of bad values costs one
+  // As with the lists below, the keys are counted before any value is validated, so an oversized record costs one
   // issue instead of one per value.
   env: z
     .record(z.string(), z.unknown())

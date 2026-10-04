@@ -429,7 +429,7 @@ describe("parseDiscoveryExport: bounds shared with the exporter", () => {
     expect(DISCOVERY_FILE_MAX_BYTES).toBe(LIMITS.fileBytes);
   });
 
-  // The exporter projects at most its allow-listed keys into a service's env, and the schema keeps at most 64 of
+  // The exporter projects at most its allow-listed keys into a service's env, and the schema accepts at most 64 of
   // them (ENV_KEYS_MAX): an allow-list that outgrew the bound would make Studio refuse a file the exporter wrote.
   it("keeps the exporter's env allow-list within the schema's bound of 64 keys", () => {
     expect(ENV_ALLOW_LIST.length).toBeLessThanOrEqual(64);
