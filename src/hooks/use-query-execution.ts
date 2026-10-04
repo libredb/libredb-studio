@@ -35,6 +35,14 @@ export interface QueryExecutionOptions {
    * #290) carries its values here so that no value can be read as statement text.
    */
   params?: unknown[];
+  /**
+   * Handed the message of a run that failed: the refusal, the engine's error, or the statement a
+   * script stopped at, the same text the tab shows. A dialog that ran a statement for the user
+   * keeps itself open and shows it there (#1396), where the toast fades and the results panel sits
+   * under the dialog. Not called for a run that did not fail, nor for one the safety dialog took
+   * over or a cancel stopped, which have no engine message to give.
+   */
+  onFailure?: (message: string) => void;
 }
 
 interface UseQueryExecutionParams {
@@ -405,6 +413,7 @@ export function useQueryExecution({
           ),
         );
         toast({ title: "Statement Refused", description: refusal, variant: "destructive" });
+        executionOptions?.onFailure?.(refusal);
         return false;
       }
 
@@ -607,7 +616,9 @@ export function useQueryExecution({
           // goes to the route that strips the `/`.
           isMultiStatement(queryToExecute, grammar);
 
-        // Use transaction endpoint if a transaction is active or in playground mode
+        // Use transaction endpoint if a transaction is active or in playground mode. It is sent the
+        // text whole and splits a script itself, running each statement on the transaction's
+        // connection (#1390), so the splitter above is not asked here.
         const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;
 
         // Start both queries in parallel (main query + background explain)
@@ -964,6 +975,7 @@ export function useQueryExecution({
         if (!isExplain && !isLoadMore && !resultData.hasError) {
           maybeInviteToStar();
         }
+        if (scriptFailure !== undefined) executionOptions?.onFailure?.(scriptFailure);
 
         // The run reached the engine and the engine accepted it. `hasError` is the
         // multi-statement path's own signal — the request succeeds while one of the
@@ -1035,6 +1047,7 @@ export function useQueryExecution({
           }));
         }
         toast({ title, description: errorMessage, variant: "destructive" });
+        executionOptions?.onFailure?.(errorMessage);
         return false;
       } finally {
         // Only the run that still owns this tab's slot may clear it. A superseded

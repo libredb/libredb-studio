@@ -337,6 +337,59 @@ describe("generateImportSQL", () => {
     expect(offersNewTableImport(undefined)).toBe(true);
   });
 
+  /**
+   * A header is whatever the file says, and a lowercase reserved word passes the bare-name test,
+   * so `CREATE TABLE imp_csv (..., when TEXT)` was a syntax error on PostgreSQL 18.6 (#1396).
+   * Both statements quote every name of the table they create, the same way.
+   */
+  describe("a new table's names are quoted in both statements (#1396)", () => {
+    const reserved: ParsedData = {
+      headers: ["when", "Order Date", "user"],
+      rows: [["2026-10-03", "2026-10-04", "ana"]],
+      totalRows: 1,
+    };
+    const mapping = { when: "when", "Order Date": "Order Date", user: "user" };
+    const cases: Array<[string, ProviderCapabilities, string, string]> = [
+      [
+        "PostgreSQL",
+        { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities,
+        'CREATE TABLE "imp_csv" (\n  "when" TEXT,\n  "Order Date" TEXT,\n  "user" TEXT\n);',
+        'INSERT INTO "imp_csv" ("when", "Order Date", "user")',
+      ],
+      [
+        "MySQL",
+        { queryLanguage: "sql", defaultPort: 3306 } as unknown as ProviderCapabilities,
+        "CREATE TABLE `imp_csv` (\n  `when` TEXT,\n  `Order Date` TEXT,\n  `user` TEXT\n);",
+        "INSERT INTO `imp_csv` (`when`, `Order Date`, `user`)",
+      ],
+      [
+        "SQL Server",
+        { queryLanguage: "sql", defaultPort: 1433 } as unknown as ProviderCapabilities,
+        "CREATE TABLE [imp_csv] (\n  [when] TEXT,\n  [Order Date] TEXT,\n  [user] TEXT\n);",
+        "INSERT INTO [imp_csv] ([when], [Order Date], [user])",
+      ],
+    ];
+    for (const [engine, capabilities, create, insert] of cases) {
+      test(engine, () => {
+        const sql = generateImportSQL(reserved, { kind: "new", name: "imp_csv" }, mapping, undefined, capabilities);
+        expect(sql).toContain(create);
+        expect(sql).toContain(insert);
+      });
+    }
+
+    test("a dotted name is a table in a container", () => {
+      const pg = { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities;
+      const sql = generateImportSQL(reserved, { kind: "new", name: "sales.imp" }, mapping, undefined, pg);
+      expect(sql).toContain('CREATE TABLE "sales"."imp"');
+    });
+
+    test("an existing table's columns keep the mapping's spelling", () => {
+      const pg = { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities;
+      const sql = generateImportSQL(sampleData, existing("users"), { name: "Name" }, undefined, pg);
+      expect(sql).toContain("INSERT INTO users (Name, age, active)");
+    });
+  });
+
   test("a new table is named exactly as it was typed", () => {
     const sql = generateImportSQL(sampleData, { kind: "new", name: "my table" }, { name: "name" });
     expect(sql).toContain("CREATE TABLE my table");

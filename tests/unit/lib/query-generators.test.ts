@@ -867,6 +867,21 @@ describe("Apache Cassandra (port 9042) generation", () => {
 // ============================================================================
 
 describe("quoteIdentifier", () => {
+  /** A lowercase reserved word passes every bare test, so only `always` quotes it (#1396). */
+  test("always quotes a name that would round-trip bare, in each dialect's own style", () => {
+    const always = { always: true };
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 5432 }), always)).toBe('"when"');
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 3306 }), always)).toBe("`when`");
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 1433 }), always)).toBe("[when]");
+    expect(quoteIdentifier("WHEN", makeCaps({ defaultPort: 1521 }), always)).toBe('"WHEN"');
+    expect(quoteIdentifier("when", makeCaps({ identifierQuoting: "double" }), always)).toBe('"when"');
+    expect(quoteIdentifier("when", makeCaps({ identifierQuoting: "backtick" }), always)).toBe("`when`");
+    expect(quoteObjectPath(["sales", "when"], makeCaps({ defaultPort: 5432 }), always)).toBe('"sales"."when"');
+    // The control: without it the same names stay bare.
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 5432 }))).toBe("when");
+    expect(quoteIdentifier("when", makeCaps({ identifierQuoting: "backtick" }))).toBe("when");
+  });
+
   test("PostgreSQL: leaves plain lowercase names unquoted", () => {
     expect(quoteIdentifier("users", makeCaps({ defaultPort: 5432 }))).toBe("users");
   });

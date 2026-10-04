@@ -307,20 +307,33 @@ export function ResultsGrid({
 
   const detailColumnId = useMemo(() => rowDetailColumnId(result.fields), [result.fields]);
 
-  // Filter rows based on column filters
+  /**
+   * Filter rows based on column filters.
+   *
+   * A masked column is matched against the masked text the grid displays, not the clear value
+   * under it (#1477). Matching the clear value let anyone who may not lift masking read a masked
+   * value one typed prefix at a time off the row count. A per-cell reveal does not change this:
+   * it shows one cell for ten seconds, while the filter runs over every row.
+   */
   const filteredRows = useMemo(() => {
     if (columnFilters.size === 0) return result.rows;
     // Folded once here, not once per row.
     const wanted = [...columnFilters]
       .filter(([, filterVal]) => filterVal)
-      .map(([col, filterVal]) => [col, foldFilterCase(filterVal)] as const);
+      .map(
+        ([col, filterVal]) =>
+          [col, foldFilterCase(filterVal), effectiveMaskingEnabled ? sensitiveColumns.get(col) : undefined] as const,
+      );
     return result.rows.filter((row) => {
-      for (const [col, folded] of wanted) {
-        if (!foldFilterCase(String(row[col] ?? "")).includes(folded)) return false;
+      for (const [col, folded, maskPattern] of wanted) {
+        const value = row[col];
+        const shown =
+          maskPattern && value !== null && value !== undefined ? maskValueByPattern(value, maskPattern) : value;
+        if (!foldFilterCase(String(shown ?? "")).includes(folded)) return false;
       }
       return true;
     });
-  }, [result.rows, columnFilters]);
+  }, [result.rows, columnFilters, effectiveMaskingEnabled, sensitiveColumns]);
 
   /**
    * Where each visible row sits in `result.rows`.

@@ -1000,8 +1000,22 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
               </div>
             )}
 
+            {/* Nothing read is nothing judged (#1389): a plan with no node this view knows used
+                to reach the success card below, which reads as a verdict about the query. */}
+            {analysis && analysis.nodeCount === 0 && (
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-fill-subtle border border-hairline">
+                <div className="p-1 rounded bg-fill">
+                  <Info strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                </div>
+                <div>
+                  <h4 className="text-xs font-medium text-fg-secondary">Plan could not be read</h4>
+                  <p className="text-xs text-fg-muted">The raw tab shows the plan as the server sent it.</p>
+                </div>
+              </div>
+            )}
+
             {/* No warnings */}
-            {analysis && analysis.warnings.length === 0 && (
+            {analysis && analysis.nodeCount > 0 && analysis.warnings.length === 0 && (
               <div className="flex items-center gap-3 p-3 rounded-lg bg-success-tint/5 border border-success-tint/10">
                 <div className="p-1 rounded bg-success-tint/10">
                   <CircleCheck strokeWidth={1.5} className="w-3 h-3 text-success" />

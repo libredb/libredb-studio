@@ -666,6 +666,21 @@ CONNECTED provider's `explainFormat` and names that format in its response
 `mysql-json`, which is exactly what it answered before the probe existed, so the client's pre-flight
 refusal for a non-SELECT statement is unchanged.
 
+**What the panel draws for each `mysql-json` answer** ([mysql-json.ts](../../src/lib/explain/mysql-json.ts),
+#1389). The servers that accept `EXPLAIN FORMAT=JSON` do not agree on what it returns. Measured
+2026-10-04 on a join with `GROUP BY`:
+
+| Engine | What `EXPLAIN FORMAT=JSON` returns | What the Explain panel draws |
+|---|---|---|
+| MySQL 26.7.0 (`mysql:latest`) | JSON format version 2: a `query_plan` of nodes with an `operation` sentence, `estimated_rows`, `estimated_total_cost`, children in `inputs` | a tree of the operations ("Group aggregate", "Nested loop inner join", "Index lookup on o using idx_c ...") with row and cost estimates |
+| MySQL 8.x, Percona Server 8.4, and MySQL 26.7.0 under `explain_json_format_version = 1` | the classic `query_block`, figures in `rows_examined_per_scan` and a `cost_info` of numeric strings | a tree by key (`query block #1`, `grouping operation`, `table c`) with row and cost estimates |
+| MariaDB 13.0.2 (`mariadb:latest`) | the classic `query_block`, figures in `rows` and `cost` | the same tree by key (`nested loop` members, `read sorted file`, `filesort`, `table customers`) |
+| OceanBase CE 4.4.2.1 | an ASCII plan in a `Query Plan` column, no JSON | the plan as text, one line per node, and the raw tab shows it as sent |
+
+A plan of any other shape is shown as text too. Until #1389 every one of these was cast to the
+PostgreSQL render model and the panel showed an empty plan under "Query looks good"; the panel now
+says "Plan could not be read" for a plan in which it finds no node, rather than judging it.
+
 ### 5.6 What the SQL-DDL export writes for dates and BIT
 
 The DDL writes the bare `datetime`, `timestamp` and `time` ([§5.4](#54-declared-column-types)) as `datetime(6)`, `timestamp(6)` and `time(6)`, since precision 0 rounds a replayed `.999` up to the next second (measured on MySQL 26.7.0: `'2024-12-31 23:59:59.999'` into a bare `datetime` reads back as `2025-01-01 00:00:00`), and a bare `bit` as `bit(64)`, which takes every width `mysql2` hands back as bytes where `bit(1)` refuses them (#1386).
@@ -687,7 +702,7 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 | Method | Behaviour |
 |--------|-----------|
 | `beginTransaction(options?)` | `pool.getConnection()` + `BEGIN` (`START TRANSACTION` if `BEGIN` is refused as a parse error), arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, refuses a `BEGIN` the server reports as having opened nothing, and answers `{ stateReported }`; with `requireReportedState` (SANDBOX) it also refuses a server that reports no state at all ([§6.0](#60-what-the-server-says-about-the-transaction)). |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). One statement per call: the route splits a selection of several and calls this once per statement, in order, stopping at the first failure (#1390). Measured on MySQL 26.7.0 before that: two `UPDATE` lines run inside BEGIN or SANDBOX answered "You have an error in your SQL syntax ... at line 2". |
 | `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |

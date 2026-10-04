@@ -216,6 +216,18 @@ describe("VisualExplain", () => {
     expect(queryByText(/No obvious performance issues/)).not.toBeNull();
   });
 
+  /**
+   * A plan with no node in it was read as a verdict (#1389): MySQL's rows cast to this model
+   * showed "Operations 0" under the green card. Nothing parsed is nothing judged.
+   */
+  test('a plan with no node it can read never says "Query looks good"', () => {
+    const { queryByText } = render(
+      <VisualExplain plan={[{ EXPLAIN: '{"query_block":{}}' } as unknown as ExplainPlanResult]} />,
+    );
+    expect(queryByText("Query looks good")).toBeNull();
+    expect(queryByText("Plan could not be read")).not.toBeNull();
+  });
+
   test("shows Expensive Sort warning", () => {
     const { queryByText } = render(<VisualExplain plan={sortPlan} />);
     expect(queryByText("Expensive Sort")).not.toBeNull();

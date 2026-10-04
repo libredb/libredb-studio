@@ -1,12 +1,14 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
-import type { BeginTransactionOptions, BeginTransactionResult, QueryResult } from "@/lib/db/types";
+import type { BeginTransactionOptions, BeginTransactionResult, DatabaseProvider, QueryResult } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
+import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import {
   claimTransaction,
   OWNERSHIP_IDLE_MS,
@@ -22,6 +24,82 @@ interface TransactionProvider {
   rollbackTransaction(): Promise<void>;
   isInTransaction(): boolean;
   queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult>;
+}
+
+/**
+ * Run a script's statements in order on the transaction's connection, stopping at the first one
+ * that fails (#1390).
+ *
+ * The editor sends a selection to this route whole whenever BEGIN or SANDBOX is on, and a driver
+ * that runs one statement per call answers a syntax error at the second: measured on MySQL 26.7.0,
+ * two UPDATE lines failed "near 'UPDATE ...' at line 2". The answer has the shape
+ * `/api/db/multi-query` gives a script, which the editor already reports (the executed count, the
+ * statement that failed, the last result with rows), plus `inTransaction`.
+ *
+ * A failure is part of the answer, not a thrown error: the statements before it ran inside the
+ * transaction and their work is still there to commit or roll back. Only the last statement is
+ * bounded, as on the script route, and only when it is a single statement and not a batch. A
+ * statement that ends the transaction ends the run as well, because the next one is refused by the
+ * provider ("No active transaction") rather than autocommitted.
+ */
+async function runScriptInTransaction(
+  provider: TransactionProvider & Pick<DatabaseProvider, "prepareQuery">,
+  units: ExecutionUnit[],
+  options: Record<string, unknown>,
+) {
+  const statements: {
+    index: number;
+    sql: string;
+    startLine: number;
+    status: "success" | "error";
+    rows?: Record<string, unknown>[];
+    fields?: string[];
+    rowCount?: number;
+    executionTime: number;
+    error?: string;
+  }[] = [];
+  let totalExecutionTime = 0;
+  for (const [index, unit] of units.entries()) {
+    const isLast = index === units.length - 1;
+    const sql = isLast && unit.statements.length === 1 ? provider.prepareQuery(unit.sql, options).query : unit.sql;
+    const startTime = performance.now();
+    const identity = { index, sql: unit.sql, startLine: unit.startLine };
+    try {
+      const result = await provider.queryInTransaction(sql);
+      const executionTime = Math.round(performance.now() - startTime);
+      totalExecutionTime += executionTime;
+      statements.push({
+        ...identity,
+        status: "success",
+        rows: rowsWithNonFiniteWords(result.rows),
+        fields: result.fields,
+        rowCount: result.rowCount,
+        executionTime,
+      });
+    } catch (error) {
+      const executionTime = Math.round(performance.now() - startTime);
+      totalExecutionTime += executionTime;
+      statements.push({
+        ...identity,
+        status: "error",
+        executionTime,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+      break;
+    }
+  }
+  const shown = [...statements].reverse().find((r) => r.status === "success" && r.rows && r.rows.length > 0);
+  return {
+    rows: shown?.rows ?? [],
+    fields: shown?.fields ?? [],
+    rowCount: shown?.rowCount ?? 0,
+    executionTime: totalExecutionTime,
+    multiStatement: true,
+    statementCount: units.length,
+    executedCount: statements.length,
+    hasError: statements.some((r) => r.status === "error"),
+    statements,
+  };
 }
 
 function isTransactionProvider(provider: unknown): provider is TransactionProvider {
@@ -133,6 +211,21 @@ export async function POST(req: NextRequest) {
         const bound = readBoundParams(body.params);
         if (!bound.valid) {
           return NextResponse.json({ error: bound.message }, { status: 400 });
+        }
+
+        // Several statements run one by one (#1390). Comment-only fragments are dropped first, so
+        // a statement with a trailing `-- note` stays one statement on the path below. Never with
+        // bound values: they belong to one statement's placeholders.
+        if (bound.params === undefined) {
+          const grammar = resolveSqlGrammar(connection.type);
+          const units = splitExecutionUnits(sql, grammar).filter((unit) => countCodeStatements(unit.sql, grammar) > 0);
+          if (units.length > 1) {
+            const script = await runScriptInTransaction(provider, units, options);
+            const stillOpen = provider.isInTransaction();
+            if (stillOpen) touchTransaction(connection.id);
+            else releaseTransaction(connection.id);
+            return NextResponse.json({ ...script, inTransaction: stillOpen });
+          }
         }
 
         // Apply limit for SELECT queries within transaction

@@ -756,6 +756,11 @@ export default function Studio() {
   const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
   const closeTestData = useCallback(() => setTestDataPath(null), []);
   const runModalStatement = useCallback((sql: string) => queryExec.executeQuery(sql), [queryExec.executeQuery]);
+  // The import dialog stays open on a failure and shows its message (#1396), so it is handed both.
+  const runImport = useCallback(
+    (sql: string, onFailure: (message: string) => void) => queryExec.executeQuery(sql, undefined, false, { onFailure }),
+    [queryExec.executeQuery],
+  );
 
   const handleConnect = useCallback(
     (c: DatabaseConnection) => {
@@ -1552,7 +1557,7 @@ export default function Studio() {
         showImport
         importModalOpen={isImportModalOpen}
         onCloseImport={closeImport}
-        onImport={runModalStatement}
+        onImport={runImport}
         safetyCheckQuery={queryExec.safetyCheckQuery}
         onCloseSafety={closeSafety}
         onProceedSafety={proceedSafety}

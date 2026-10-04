@@ -56,7 +56,8 @@ interface StudioModalsProps {
   showImport: boolean;
   importModalOpen: boolean;
   onCloseImport: () => void;
-  onImport: (sql: string) => void;
+  /** `DataImportModal`'s own contract: `false` keeps the dialog open with `onFailure`'s message. */
+  onImport: (sql: string, onFailure: (message: string) => void) => Promise<boolean | void> | void;
 
   // Query safety check (both shells; the embedded one supplies its own analyzer).
   safetyCheckQuery: string | null;

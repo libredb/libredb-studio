@@ -38,6 +38,8 @@
     A result column opens at a width that fits its header.
     Double-clicking a column's resize handle restores that width.
 *   **Row Detail:** A control at the left edge of every row opens that row field by field, values beside field names, with per-field copy and the same masking the grid applies.
+*   **Column Filter:** Each column header's funnel filters the rows by a case-insensitive substring of that column.
+    While masking is in force, a masked column is matched against the masked text the grid shows, so typing parts of a clear value cannot narrow the rows to reveal it.
     It is how a result with more columns than fit the window stays readable, so it is on the desktop grid and not only on the small-screen card and table views, where it shipped first (#800).
     The control is pinned to the left edge rather than scrolling away with the first column, and no breakpoint hides it.
     The field list flows into as many columns as the window fits, asked for by column width rather than by a breakpoint, and the panel is capped at a share of the window rather than always filling it, so a six field row no longer hides the grid it came from.
@@ -194,6 +196,8 @@ Two components are described below and a claim true of one can be false of the o
 ### 15. Professional Data Export
 *   **Format Versatility:** Instantly export query result sets to CSV, JSON, SQL `INSERT` statements, or a generated `CREATE TABLE` DDL.
 *   **CSV Delimiters:** Choose comma (default), semicolon or tab in the import preview or result export menu. Changing the import delimiter reparses the preview and retains the header setting and column mappings. Export quoting, formula neutralization and UTF-8 encoding apply to every separator.
+*   **Import into a new table:** the table name and every column name are quoted in the connection's own style in both the `CREATE TABLE` and the `INSERT`, so a header that is a reserved word (`when`, `order`, `user`), has mixed case or holds a space creates that column as written. A name typed with a dot (`sales.imported`) is a table in that schema.
+    An import the database refuses keeps the dialog open on the review step with the database's message, and the file, target and column mapping stay as they were; the dialog closes only once the import ran.
 *   **Developer-Ready:** Clean data output optimized for external analysis, reporting, or database migrations.
 *   **Binary Values:** A `bytea`, `BLOB`, `RAW` or `varbinary` value is written as the `\x` hex the grid shows (`\xdeadbeef00ff`) in the CSV and the JSON export and by Copy Row as JSON, and as the dialect's own binary literal in a SQL `INSERT`.
 *   **Formula-Safe CSV:** A cell whose value starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written with a leading apostrophe, so a spreadsheet shows it as text instead of evaluating it when the file is opened; this is unconditional and has no setting, and a plain number such as `-12.5` is left exactly as it is.

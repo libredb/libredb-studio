@@ -56,9 +56,12 @@ function couchbaseQuote(name: string): string {
  * this repo's coverage notes describe. A table has one executable line per entry and
  * no declaration line to lose.
  */
-const DECLARED_QUOTING: Record<NonNullable<ProviderCapabilities["identifierQuoting"]>, (name: string) => string> = {
-  backtick: (name) => (/^[A-Za-z_][\w$]*$/.test(name) ? name : couchbaseQuote(name)),
-  double: (name) => (/^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`),
+const DECLARED_QUOTING: Record<
+  NonNullable<ProviderCapabilities["identifierQuoting"]>,
+  (name: string, always: boolean) => string
+> = {
+  backtick: (name, always) => (!always && /^[A-Za-z_][\w$]*$/.test(name) ? name : couchbaseQuote(name)),
+  double: (name, always) => (!always && /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`),
   "double-always": (name) => `"${name.replaceAll('"', '""')}"`,
 };
 
@@ -89,8 +92,19 @@ const COUCHBASE_KEY_PROJECTION = `META(${COUCHBASE_ALIAS}).id AS ${COUCHBASE_DOC
  * quote character is the double quote, so the default branch is already exactly
  * right — both `SELECT "id" FROM "probe"` and the bare form parse (issue #264).
  * Adding a branch would only duplicate it.
+ *
+ * `always` quotes a name that would round-trip bare as well. The bare test is about case and
+ * characters only, so a lowercase reserved word passes it: `when`, `order`, `user` and `group`
+ * come back bare and the engine reads them as keywords (#1396). Quoting such a name never
+ * changes which object it means, because a name passes the bare test only in the case the
+ * engine folds a bare name to. A statement that names columns it is about to create, as an
+ * import into a new table does, asks for this.
  */
-export function quoteIdentifier(name: string, capabilities: ProviderCapabilities): string {
+export function quoteIdentifier(
+  name: string,
+  capabilities: ProviderCapabilities,
+  { always = false }: { always?: boolean } = {},
+): string {
   // The JSON-language engines don't use SQL identifier quoting: MongoDB, and Redis, LibreDB, Kafka
   // and etcd, which declare a JSON dialect of their own (#1088, #1089).
   if (capabilities.queryLanguage === "json") return name;
@@ -107,7 +121,7 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
   // fall-through default would produce silently wrong results here, not an error.
   // See `ProviderCapabilities.identifierQuoting`.
   const declared = capabilities.identifierQuoting;
-  if (declared !== undefined) return DECLARED_QUOTING[declared](name);
+  if (declared !== undefined) return DECLARED_QUOTING[declared](name, always);
 
   if (capabilities.defaultPort === COUCHBASE_PORT) {
     // Couchbase (SQL++): quote unconditionally. Reserved words (`bucket`, `scope`,
@@ -127,18 +141,18 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
   }
   if (capabilities.defaultPort === 1521) {
     // Oracle
-    return /^[A-Z_][A-Z0-9_$#]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
+    return !always && /^[A-Z_][A-Z0-9_$#]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
   }
   if (capabilities.defaultPort === 1433) {
     // SQL Server
-    return /^[A-Za-z_]\w*$/.test(name) ? name : `[${name.replaceAll("]", "]]")}]`;
+    return !always && /^[A-Za-z_]\w*$/.test(name) ? name : `[${name.replaceAll("]", "]]")}]`;
   }
   if (capabilities.defaultPort === 3306) {
     // MySQL
-    return /^[A-Za-z_][\w$]*$/.test(name) ? name : `\`${name.replaceAll("`", "``")}\``;
+    return !always && /^[A-Za-z_][\w$]*$/.test(name) ? name : `\`${name.replaceAll("`", "``")}\``;
   }
   // PostgreSQL / SQLite / default
-  return /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
+  return !always && /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`;
 }
 
 /**
@@ -160,8 +174,14 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
  * are all valid wherever the bare name is, so nothing here has to know which container a
  * connection defaults to - and no capability declares that, which is why the flat spelling
  * could not be qualified at the call site.
+ *
+ * `options.always` is `quoteIdentifier`'s, applied to every segment.
  */
-export function quoteObjectPath(path: readonly string[], capabilities: ProviderCapabilities): string {
+export function quoteObjectPath(
+  path: readonly string[],
+  capabilities: ProviderCapabilities,
+  options: { always?: boolean } = {},
+): string {
   if (capabilities.queryLanguage === "json") return path.join(".");
   // An InfluxQL measurement is `[database, measurement]`, written `"db".."m"`: the database's default retention
   // policy (InfluxDB spec 6.7). No object is the empty string, as on every other dialect: a modal mounted before an
@@ -173,7 +193,7 @@ export function quoteObjectPath(path: readonly string[], capabilities: ProviderC
     }
     return influxqlSource(path[0], path[1]);
   }
-  return path.map((segment) => quoteIdentifier(segment, capabilities)).join(".");
+  return path.map((segment) => quoteIdentifier(segment, capabilities, options)).join(".");
 }
 
 /**

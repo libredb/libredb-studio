@@ -390,8 +390,10 @@ mock.module("@/components/SchemaDiagram", () => ({
   },
 }));
 
+let capturedDataImportProps: Record<string, unknown> = {};
 mock.module("@/components/DataImportModal", () => ({
   DataImportModal: (props: { isOpen?: boolean }) => {
+    capturedDataImportProps = props;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return props.isOpen ? React.createElement("div", { "data-testid": "dataimportmodal" }, "DataImportModal") : null;
@@ -2136,6 +2138,16 @@ describe("Studio", () => {
     const fn = capturedQueryToolbarProps.onImport as () => void;
     act(() => fn());
     expect(queryByTestId("dataimportmodal")).not.toBeNull();
+  });
+
+  test("the import dialog's run hands the failure back to it (#1396)", async () => {
+    render(<Studio />);
+    const onFailure = () => {};
+    const run = capturedDataImportProps.onImport as (sql: string, onFailure: (m: string) => void) => unknown;
+    await act(async () => {
+      await run("CREATE TABLE t (a INT)", onFailure);
+    });
+    expect(mockExecuteQuery).toHaveBeenCalledWith("CREATE TABLE t (a INT)", undefined, false, { onFailure });
   });
 
   test("QueryToolbar onSaveQuery opens save query modal", () => {
