@@ -656,18 +656,30 @@ What the Docker socket costs is recorded in [`docs/SECURITY.md`](./SECURITY.md#k
 It has no dependency and no listening port, and it sends GET requests only, to two Docker Engine API paths pinned to v1.44: the network list filtered by name, and `/v1.44/services?status=true`.
 It must run as root with the socket mounted, so it has to replace the image entrypoint, because `docker-entrypoint.sh` drops every command it starts to uid 1001.
 A CapRover one-click `command` replaces the entrypoint.
-With Docker Compose or `docker run`, set the entrypoint instead:
+With Docker Compose or `docker run`, set the entrypoint instead, and give Studio the same volume and `SEED_DISCOVERY_PATH` (the fragment shows only the discovery settings):
 
 ```yaml
-discovery:
-  image: ghcr.io/libredb/libredb-studio:0.18.0
-  entrypoint: ["node", "/usr/local/lib/libredb-studio/discover.mjs"]
-  volumes:
-    - /var/run/docker.sock:/var/run/docker.sock
-    - discovered:/app/discovery
+services:
+  libredb:
+    image: ghcr.io/libredb/libredb-studio:0.18.0
+    environment:
+      SEED_DISCOVERY_PATH: /app/discovery/services.json
+    volumes:
+      - discovered:/app/discovery
+  discovery:
+    image: ghcr.io/libredb/libredb-studio:0.18.0
+    entrypoint: ["node", "/usr/local/lib/libredb-studio/discover.mjs"]
+    environment:
+      # Must name the overlay network the database services are on.
+      DISCOVERY_NETWORK: captain-overlay-network
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - discovered:/app/discovery
+volumes:
+  discovered:
 ```
 
-It lists Swarm services, so it needs a swarm manager; anywhere else it reports `swarm_unavailable`.
+It lists Swarm services, so it needs a swarm manager: a node that sees the network but is not a manager reports `swarm_unavailable`, and an engine with no network of that name reports `network_not_found` first, because it asks for the network before the services.
 
 Before its first scan it checks that the directory of `DISCOVERY_OUTPUT` is owned by its own uid and is not writable by group or others, and it exits non-zero otherwise.
 A directory the web process could write would let it plant a link for the root process to follow.
@@ -697,7 +709,7 @@ Every service on the network that is not excluded is listed with its name, host,
 The environment allow-list is exactly these ten keys, case-sensitive: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `MYSQL_ROOT_PASSWORD`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `REDIS_PASSWORD`, `VALKEY_EXTRA_FLAGS`, `KEYDB_PASSWORD`, `DFLY_requirepass`.
 `DFLY_requirepass` is mixed case because that is Dragonfly's own spelling.
 The list lives once, as `ENV_ALLOW_LIST` in `docker/discover.mjs`, and a unit test fails when a key Studio reads is missing from it.
-Every service in the export also carries `requirepassEnv`, which only the Redis mapping reads.
+Every service in the export also carries `requirepassEnv`, which only the Redis detection and mapping read.
 It is the name of the allow-listed variable that a `--requirepass $NAME` in the service's command refers to, or null when there is none, and never the command itself.
 
 ### Engine detection
@@ -788,7 +800,7 @@ A `generatedAt` ahead of Studio's own clock counts as fresh.
 
 The exporter's codes are `socket_unavailable`, `swarm_unavailable`, `api_version`, `network_not_found`, `docker_error` and `limit_exceeded`.
 When the file is still missing twice `SEED_DISCOVERY_MAX_AGE_MS` after Studio first looked, the waiting message says that the discovery app may not be running or may run on another node than Studio.
-Error messages never quote the file's content.
+Studio's own messages about an unreadable or invalid file never quote the file's content.
 
 The skipped list holds one entry per discovered service Studio refused, with its reason: a missing required variable, a host name Studio refuses, "id taken by the seed file", "id taken by another discovered service", or "did not answer on port" followed by the port number, for an environment-matched candidate.
 While Studio serves discovered data, that is in the state `ok` and in the state `error` with a fresh last good scan, the list also holds one entry per app name in the export's `excluded` list, after the others, with the reason "listed in Apps to skip".
@@ -810,6 +822,7 @@ After its first successful load, an open tab refetches the managed list every `m
 The 5000 is the floor `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS`, which is inlined at build time (see [Environment Variables](#environment-variables)).
 An install that keeps the default `SEED_CACHE_TTL_MS` of 60000 therefore refreshes an open tab once a minute, while the auto-connect template sets 5000, so its tabs refresh every 5 seconds.
 With the template's values a database appears or disappears in an open tab within about 20 seconds of the change in CapRover: the exporter scans every 10 seconds, Studio re-reads the export at most every 5, and the tab refreshes every 5.
+The template's end text says about 30 seconds, which also covers a database that is still starting: an image CapRover built itself, as the MariaDB and KeyDB templates produce, is listed only once its database accepts connections.
 The active connection stays open while its id is still listed; when it is withdrawn, the first remaining connection becomes active and Studio says so once.
 Pages that use the lighter connection list (the admin Overview and Operations tabs, Schema Diff and Monitoring) load it once and need a reload.
 
@@ -841,6 +854,7 @@ Pages that use the lighter connection list (the admin Overview and Operations ta
 | One discovered service maps to an invalid connection, or its id is taken by the seed file or by another discovered service | That service is skipped with a reason in the admin status; the others are listed. |
 | An environment-matched candidate does not accept a TCP connection | Not listed and reported as skipped; listed on a later read once it accepts connections. |
 | An app is named in "Apps to skip" (`DISCOVERY_EXCLUDE` of the exporter) | Never listed, and reported as skipped with the reason "listed in Apps to skip" while the export is fresh. |
+| An unexpected exception inside the discovery source | No discovered connections and state `error` with code `discovery_failed`; file seeds and samples are unaffected. |
 
 **Design principle:** One broken connection never breaks the others. Each connection is resolved independently.
 
@@ -948,20 +962,34 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
 
 1. Sign in as the admin: discovered connections are never listed for the standard user.
 2. Open the admin Overview page and read the discovery status.
+   There is no card at all while `SEED_DISCOVERY_PATH` is unset or for a user who is not an admin, so an install where discovery was added by hand and the variable was forgotten has no status to read: set it on the Studio app first.
+   The card's badge reads Running for `ok`, Waiting for `waiting`, Stale for `stale` and Failed for `error`, and the steps below use the state names.
 3. `waiting`: the export file does not exist yet.
    Check that the `-discovery` app is running, and on a cluster that it runs on the same node as Studio.
 4. `error` with `socket_unavailable`: the exporter cannot open the Docker socket.
    It must run as root with `/var/run/docker.sock` mounted; a Compose `command:` alone goes through the image entrypoint, which drops it to uid 1001.
-5. `error` with `swarm_unavailable`: the exporter runs on a worker node or outside a swarm.
+5. `error` with `swarm_unavailable`: the exporter runs on a worker node.
    Pin the `-discovery` app to the manager.
-6. `error` with `network_not_found`: no Docker network has exactly the name `DISCOVERY_NETWORK` gives.
+6. `error` with `network_not_found`: no Docker network has exactly the name `DISCOVERY_NETWORK` gives, or the exporter runs where that network does not exist, for example outside a swarm.
    Check the variable against `docker network ls` on the manager; CapRover's own network is `captain-overlay-network`.
-7. `stale`: the exporter stopped writing.
+7. `error` with any other code:
+   - `invalid_export`: Studio refused the file at `SEED_DISCOVERY_PATH`, and the message says why: over 2 MiB, unreadable (the reason follows in brackets), not JSON, or the first field that does not match the export's shape.
+     Check that `SEED_DISCOVERY_PATH` is the exporter's `DISCOVERY_OUTPUT`, and for `EACCES` that `DISCOVERY_FILE_UID` and `DISCOVERY_FILE_GID` name the user Studio runs as, because the file is mode 0600.
+     Studio also logs the reason as a `Discovery source error` warning when it appears or changes.
+   - `docker_error`: a Docker failure no other code covers, such as an HTTP status other than 400 and 503, and the message is the daemon's own text when it sent one.
+     The `-discovery` app's log repeats it.
+   - `api_version`: Docker answered HTTP 400, which the exporter reads as an Engine API version the daemon does not serve.
+     The exporter asks for v1.44, as CapRover does, so check that the Docker on the manager serves it.
+   - `limit_exceeded`: the exporter hit one of its bounds, and its message says which: more than 500 services on the network, an export over 2 MiB, or a Docker answer over 16 MiB.
+     For the first two it still exports the services that fit, in name order, so the databases after the cut are missing; an app named in `DISCOVERY_EXCLUDE` is not counted among the 500.
+8. `stale`: the exporter stopped writing.
    Check its logs and restart it.
-8. A database in the skipped list carries its reason: a missing required variable, a host name Studio refuses, an id the seed file already uses ("id taken by the seed file"), an id another discovered service already took ("id taken by another discovered service"), or no answer to the probe for an image CapRover built.
-9. An app named in "Apps to skip" (`DISCOVERY_EXCLUDE` of the `-discovery` app) is in the skipped list with the reason "listed in Apps to skip", and the exporter writes nothing about it but its name.
+   The state also becomes `stale` while the exporter still runs, once its scans have kept failing for longer than `SEED_DISCOVERY_MAX_AGE_MS` since the last good one.
+   The card then shows the exporter's error, so the cause is in steps 4 to 7.
+9. A database in the skipped list carries its reason: a missing required variable, a host name Studio refuses, an id the seed file already uses ("id taken by the seed file"), an id another discovered service already took ("id taken by another discovered service"), or no answer to the probe for an image CapRover built.
+10. An app named in "Apps to skip" (`DISCOVERY_EXCLUDE` of the `-discovery` app) is in the skipped list with the reason "listed in Apps to skip", and the exporter writes nothing about it but its name.
    To connect it after all, remove it from `DISCOVERY_EXCLUDE` under the `-discovery` app's **App Configs** and save.
-10. A database whose image is neither in the [detection table](#engine-detection) nor built by CapRover is not recognised: add it as a seed connection or by hand.
+11. A database whose image is neither in the [detection table](#engine-detection) nor built by CapRover is not recognised: add it as a seed connection or by hand.
 
 ---
 
