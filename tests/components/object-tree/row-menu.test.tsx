@@ -43,6 +43,7 @@ const oneLevel = {
     ],
   }),
   supportsInlineRowEdit: true,
+  supportsCreateTable: true,
 } as ProviderCapabilities;
 
 function connectionOf(): DatabaseConnection {

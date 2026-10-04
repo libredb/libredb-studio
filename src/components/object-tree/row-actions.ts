@@ -333,6 +333,11 @@ function objectActions(
  * folder is a relation folder that declares no row writes, and an item there would open a
  * modal that cannot produce a view.
  *
+ * And the engine's own `supportsCreateTable`, the flag the flat explorer already reads: a kind
+ * that takes row writes says nothing about whether `CreateTableModal` has a dialect for the
+ * engine. Db2 is the case that showed it, with writable tables and no dialect row, where the
+ * item opened the form on PostgreSQL DDL.
+ *
  * `supportsInlineRowEdit` deliberately does NOT gate this one: that flag is the results
  * grid's inline editor, and the three engines that declare it false still create tables.
  */
@@ -342,6 +347,12 @@ function folderActions(
   handlers: TreeRowActionHandlers,
 ): readonly TreeRowAction[] {
   const create = handlers.onCreateObject;
-  if (create === undefined || kind.role !== "relation" || !kindAcceptsRowWrites(capabilities, kind.id)) return [];
+  if (
+    create === undefined ||
+    !capabilities.supportsCreateTable ||
+    kind.role !== "relation" ||
+    !kindAcceptsRowWrites(capabilities, kind.id)
+  )
+    return [];
   return [{ id: "create", label: `Create ${kind.label}`, icon: Plus, run: create }];
 }

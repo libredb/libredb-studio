@@ -5,6 +5,7 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { graphObjectSegment } from "@/lib/db/graph/objects";
+import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { Wrench } from "lucide-react";
 import { SYNTHETIC_ENTITY_CAPABILITIES } from "../../fixtures/maintenance-entity-operations";
@@ -27,6 +28,7 @@ type Model = Partial<
     | "queryDialect"
     | "objectKinds"
     | "supportsInlineRowEdit"
+    | "supportsCreateTable"
     | "supportsMaintenance"
     | "maintenanceOperations"
     | "maintenanceOperationSpecs"
@@ -47,6 +49,7 @@ const routine = { id: "function", role: "routine", label: "Function", labelPlura
 const postgres = capabilitiesOf({
   objectKinds: [table, view, routine],
   supportsInlineRowEdit: true,
+  supportsCreateTable: true,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze"],
 });
@@ -368,8 +371,27 @@ describe("rowActions on a folder row", () => {
   test("the engine-wide row-edit flag does NOT gate creating a table", () => {
     // A different question again: `supportsInlineRowEdit` is the results grid's editor, and
     // three engines that declare it false still create tables.
-    const noGridEdit = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: false });
+    const noGridEdit = capabilitiesOf({
+      objectKinds: [table],
+      supportsInlineRowEdit: false,
+      supportsCreateTable: true,
+    });
     expect(idsFor(folderRow("table"), noGridEdit)).toEqual(["create"]);
+  });
+
+  test("an engine that declares no create-table support offers nothing, even on a writable kind", () => {
+    // `acceptsRowWrites` says the rows of a table can be written; it says nothing about
+    // whether `CreateTableModal` has a dialect for the engine. Db2 is the case that found
+    // this: its tables take row writes and it declares `supportsCreateTable: false`, and the
+    // folder menu offered a modal that wrote PostgreSQL DDL.
+    const noCreate = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: true, supportsCreateTable: false });
+    expect(idsFor(folderRow("table"), noCreate)).toEqual([]);
+  });
+
+  test("the real Db2 declarations offer no create on the Tables folder", () => {
+    const db2 = db2Capabilities({} as ProviderCapabilities);
+    expect(db2.objectKinds?.find((kind) => kind.id === "table")?.acceptsRowWrites).toBe(true);
+    expect(idsFor(folderRow("table"), db2)).toEqual([]);
   });
 });
 
