@@ -56,6 +56,8 @@ const ALLOWLIST: Record<string, string> = {
     "Injected by next.config.ts from package.json at build time; setting it by hand would misreport the version.",
   NEXT_PUBLIC_MANAGED_POLL_MS:
     "Inlined at build time, so a runtime value has no effect. Documented in docs/SEED_CONNECTIONS.md.",
+  NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS:
+    "Inlined at build time, so a runtime value has no effect. Documented in docs/SEED_CONNECTIONS.md.",
   VERCEL_DEPLOYMENT_ID:
     "Injected by the Vercel platform; read only to refuse an implicit hosted workflow backend, never set by an operator.",
 };

@@ -23,6 +23,21 @@ import {
  * inlined at build time, so packaged artifacts always use the default. */
 const MANAGED_POLL_MAX_ATTEMPTS = 30;
 
+/**
+ * Managed-list refresh after the first load (CapRover auto-connect spec, section 11): never
+ * more often than the floor and never less often than the cap. NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS
+ * moves the floor in source builds and tests only, because NEXT_PUBLIC_ values are inlined at
+ * build time, exactly like the poll tick above.
+ */
+export const MANAGED_REFRESH_DEFAULT_FLOOR_MS = 5000;
+export const MANAGED_REFRESH_MAX_MS = 60000;
+
+/** Milliseconds between two refreshes: max(cacheHint, floor), capped at MANAGED_REFRESH_MAX_MS. */
+export function managedRefreshIntervalMs(cacheHint: number | null): number {
+  const floor = Number(process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS) || MANAGED_REFRESH_DEFAULT_FLOOR_MS;
+  return Math.min(Math.max(cacheHint ?? 0, floor), MANAGED_REFRESH_MAX_MS);
+}
+
 export function useConnectionManager(storageReady = false) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);

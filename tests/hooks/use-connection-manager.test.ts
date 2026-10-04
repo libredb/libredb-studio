@@ -6,7 +6,12 @@ import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { mockGlobalFetch, restoreGlobalFetch } from "../helpers/mock-fetch";
 
-import { useConnectionManager } from "@/hooks/use-connection-manager";
+import {
+  MANAGED_REFRESH_DEFAULT_FLOOR_MS,
+  MANAGED_REFRESH_MAX_MS,
+  managedRefreshIntervalMs,
+  useConnectionManager,
+} from "@/hooks/use-connection-manager";
 import type { ManagedConnectionPayload } from "@/hooks/use-connection-payload";
 import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
@@ -1146,6 +1151,42 @@ describe("useConnectionManager", () => {
       getConnectionsSpy.mockRestore();
       warnSpy.mockRestore();
     }
+  });
+  // ── Managed refresh interval (CapRover auto-connect spec, section 11) ─────
+
+  describe("managed refresh interval", () => {
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS;
+    });
+
+    test("follows the server's cacheHint above the floor", () => {
+      expect(managedRefreshIntervalMs(12000)).toBe(12000);
+    });
+
+    test("never refreshes faster than the floor, which defaults to five seconds", () => {
+      expect(MANAGED_REFRESH_DEFAULT_FLOOR_MS).toBe(5000);
+      expect(managedRefreshIntervalMs(null)).toBe(5000);
+      expect(managedRefreshIntervalMs(1000)).toBe(5000);
+      expect(managedRefreshIntervalMs(0)).toBe(5000);
+    });
+
+    test("never waits longer than the cap", () => {
+      expect(MANAGED_REFRESH_MAX_MS).toBe(60000);
+      expect(managedRefreshIntervalMs(600000)).toBe(60000);
+    });
+
+    test("NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS moves the floor, and the cap still holds", () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      expect(managedRefreshIntervalMs(null)).toBe(25);
+      expect(managedRefreshIntervalMs(40)).toBe(40);
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "90000";
+      expect(managedRefreshIntervalMs(null)).toBe(60000);
+    });
+
+    test("a floor that is not a number falls back to the default", () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "soon";
+      expect(managedRefreshIntervalMs(null)).toBe(5000);
+    });
   });
 });
 
