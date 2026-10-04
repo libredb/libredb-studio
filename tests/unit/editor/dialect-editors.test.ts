@@ -19,6 +19,7 @@ const EDITOR_LANGUAGES: readonly EditorLanguage[] = [
   "milvus",
   "qdrant",
   "influxql",
+  "oxia",
 ];
 
 describe("DIALECT_EDITORS", () => {
@@ -31,6 +32,7 @@ describe("DIALECT_EDITORS", () => {
       "libredb",
       "milvus",
       "mongodb",
+      "oxia",
       "promql",
       "qdrant",
       "redis",
@@ -54,6 +56,7 @@ describe("DIALECT_EDITORS", () => {
       milvus: "milvus",
       qdrant: "qdrant",
       influxql: "influxql",
+      oxia: "oxia",
     });
   });
 

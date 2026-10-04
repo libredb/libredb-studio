@@ -1731,7 +1731,18 @@ turn and keeps the first that is accepted:
 | `EXPLAIN SELECT 1` | `postgres-text` | Materialize v26.40.0 |
 
 Each probe is the statement its strategy really sends, so a grammar that answers here is one the
-panel can use. The probe reads success or failure and never the message: the family shares no code or
+panel can use.
+
+**Only the Explain button executes.** The probe's `postgres-json` statement is the `analyze` form,
+the one the Explain button sends. The background plan the editor requests beside every run of a
+SELECT is the `estimate`, and for `postgres-json` that is `EXPLAIN (FORMAT JSON)`, which plans without
+running anything. A server that accepts the parenthesised ANALYZE form accepts that one too. Until
+#1311 the strategy ignored the mode and built the ANALYZE form for the estimate as well, so every
+SELECT ran twice: on PostgreSQL 18.6 one RUN of `SELECT nextval('my_seq')` advanced the sequence by
+two, on YugabyteDB 2026.1.2.0 the first `nextval` answered 101 (the plan's backend took the first
+cached block), and on Citus 14.2.0 and TimescaleDB 2.30.2 `create_distributed_table` and
+`create_hypertable` did their work in the hidden request first. `postgres-text-analyze` (CockroachDB)
+already honoured the mode, and `postgres-text` (Materialize) has no executing form. The probe reads success or failure and never the message: the family shares no code or
 wording for a grammar refusal, and keying on one would have to enumerate engines. A server that
 refuses all three declares `supportsExplain: false` and no format, and the connection still succeeds
 — a missing grammar is a fact about the Explain panel, not about the connection.

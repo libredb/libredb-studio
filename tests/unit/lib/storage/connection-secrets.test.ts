@@ -104,6 +104,8 @@ describe("the classification is exhaustive by construction", () => {
         "color",
         "connectionString",
         "createdAt",
+        // Oxia's data-server addresses. Addresses, as host is; the token they receive is the secret.
+        "dataServers",
         "database",
         "schema",
         "environment",
@@ -382,6 +384,18 @@ describe("withoutSecretFields", () => {
     const withheld = withoutSecretFields({ ...fullConnection(), password: "" });
     expect(withheld.password).toBe("");
     expect("apiKeySecret" in withheld).toBe(false);
+  });
+
+  test("a managed connection keeps dataServers and loses its password", () => {
+    const managed: DatabaseConnection = {
+      ...fullConnection(),
+      managed: true,
+      dataServers: "oxia-0.internal:6648,oxia-1.internal:6648",
+    };
+    const withheld = withoutSecretFields(managed);
+    expect(withheld.dataServers).toBe("oxia-0.internal:6648,oxia-1.internal:6648");
+    expect("password" in withheld).toBe(false);
+    expect(CONNECTION_FIELDS.dataServers).toBe("public");
   });
 
   test("leaves the connection it was given untouched", () => {

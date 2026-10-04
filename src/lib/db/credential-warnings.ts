@@ -28,7 +28,7 @@ export type CredentialWarning =
   | { readonly kind: "no-secret"; readonly message: string };
 
 /**
- * Each connection type's declared warnings. A provider adds its own row; Milvus, Qdrant and the two InfluxDB types declare one each.
+ * Each connection type's declared warnings. A provider adds its own row; Milvus, Qdrant, the two InfluxDB types and Oxia declare one each.
  *
  * Milvus (vector-family spec 3.12, E22): every server starts with the documented `root` pair, the default
  * survives a restart with a new configured default, and a server with authorization off, its default, accepts any
@@ -48,6 +48,11 @@ export type CredentialWarning =
  * InfluxDB 3 (SQL) (InfluxDB spec E12, I7): a server started with `--without-auth` accepts any token or none, so
  * a read-only seed without a token is refused for the same reason. The token is opaque too: nothing warns in the
  * dialog.
+ *
+ * Oxia (DECISIONS O7): a JWT is a credential the dialog can read without asking the server; Oxia has no
+ * authorization, so a token's claims never narrow what it reaches, and only a token without `exp` warns. No
+ * `no-secret` row: a standalone server has no authentication, so a read-only seed with no token protects nothing
+ * more than one with a token, and refusing it would refuse every seed of a standalone server.
  */
 export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>> = {
   milvus: [
@@ -90,6 +95,15 @@ export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly
       kind: "no-secret",
       message:
         "An InfluxDB 3 server started with --without-auth accepts any token or none, so a read-only seed without a token promises a boundary the server does not keep.",
+    },
+  ],
+  oxia: [
+    {
+      kind: "jwt",
+      noExp: true,
+      access: [],
+      message:
+        "This token declares no expiry, so it stays valid until the identity provider's signing key changes, and Oxia has no authorization, so it reads and writes every namespace. Prefer a token with an expiry.",
     },
   ],
 };

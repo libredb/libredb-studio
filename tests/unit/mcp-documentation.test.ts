@@ -10,6 +10,7 @@ import { MCP_EXPOSABLE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { mcpClientConfigs } from "@/lib/mcp/client-config";
 import { RUN_READ_QUERY_ENGINES } from "@/lib/mcp/tools/run-read-query";
+import type { DatabaseType } from "@/lib/types";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -52,8 +53,8 @@ describe("docs/MCP.md", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter((type) => !MCP_EXPOSABLE[type]).map(
       (type) => DB_UI_CONFIG[type].label,
     );
-    // The control that the record answers: etcd is the one engine it refuses today.
-    expect(refused).toEqual(["etcd"]);
+    // The control that the record answers: etcd and Oxia are the engines it refuses today.
+    expect(refused).toEqual(["etcd", "oxia"].map((type) => DB_UI_CONFIG[type as DatabaseType].label));
     const names =
       refused.length === 1 ? refused[0] : `${refused.slice(0, -1).join(", ")} and ${refused[refused.length - 1]}`;
     expect(MCP_DOC).toContain(`It works for every engine but ${names}, whose connections the seed file cannot opt in.`);

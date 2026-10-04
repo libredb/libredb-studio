@@ -1355,10 +1355,12 @@ export class SQLiteProvider extends SQLBaseProvider {
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          const isSelect = this.isReadOnlyQuery(sql);
+          const stmt = this.db!.prepare(sql);
 
-          if (isSelect) {
-            const stmt = this.db!.prepare(sql);
+          // Routed on what SQLite compiled, not on the leading keyword: a statement with
+          // result columns is read with `all()`, whatever it starts with. A keyword set
+          // missed WITH, VALUES and every `... RETURNING`, and `run()` dropped their rows.
+          if (stmt.returnsRows()) {
             const rows = params ? stmt.all(...params) : stmt.all();
             const fields = rows.length > 0 ? Object.keys(rows[0] as object) : [];
             return {
@@ -1374,7 +1376,6 @@ export class SQLiteProvider extends SQLBaseProvider {
               declared: declaredColumnTypes(stmt.declaredColumns()),
             };
           } else {
-            const stmt = this.db!.prepare(sql);
             const info = params ? stmt.run(...params) : stmt.run();
             return {
               rows: [],

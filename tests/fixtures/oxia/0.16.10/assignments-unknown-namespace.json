@@ -1,0 +1,30 @@
+{
+  "calls": [
+    {
+      "authority": "127.0.0.1:6648",
+      "end": {
+        "code": 110,
+        "details": "oxia: namespace not found",
+        "kind": "status"
+      },
+      "messageBytes": [],
+      "messages": [],
+      "method": "io.oxia.proto.v1.OxiaClient/GetShardAssignments",
+      "request": {
+        "namespace": "no-such-namespace"
+      },
+      "target": "127.0.0.1:6648",
+      "tls": {
+        "mode": "disable"
+      },
+      "token": false
+    }
+  ],
+  "file": "0.16.10/assignments-unknown-namespace.json",
+  "result": {
+    "error": {
+      "message": "No namespace no-such-namespace on this server (names are case sensitive). Namespace is set on the connection; empty means default, the only namespace of oxia standalone. A cluster's namespaces are in its coordinator configuration.",
+      "name": "DatabaseConfigError"
+    }
+  }
+}

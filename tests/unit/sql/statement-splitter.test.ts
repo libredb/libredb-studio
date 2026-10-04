@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { splitStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
+import { splitStatements, isMultiStatement, countCodeStatements } from "@/lib/sql/statement-splitter";
 import type { SplitStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
@@ -571,5 +571,40 @@ describe("splitStatements offsets", () => {
 
     expect(rest).toHaveLength(0);
     expect(input.slice(only!.start, only!.end)).toBe(input);
+  });
+});
+
+/**
+ * How many fragments carry CODE, for a caller that must not count a comment as a
+ * statement. `splitStatements` keeps a comment-only fragment (a note after the last
+ * `;` belongs to no statement, but it is text), so `SELECT 1; -- note` is two fragments
+ * and one statement. The explain path asks this (#1311): an EXPLAIN of more than one
+ * statement is refused, and a trailing note must not refuse a single SELECT.
+ */
+describe("countCodeStatements", () => {
+  const pg = resolveSqlGrammar("postgres");
+  const mysql = resolveSqlGrammar("mysql");
+
+  test.each<[string, string, number]>([
+    ["a single statement", "SELECT 1", 1],
+    ["a trailing semicolon", "SELECT 1;", 1],
+    ["a trailing line comment", "SELECT 1; -- note", 1],
+    ["a trailing block comment", "SELECT 1; /* c */", 1],
+    ["a nested block comment", "SELECT 1; /* a /* b */ c */", 1],
+    ["a leading comment-only fragment", "-- a;\nSELECT 1", 1],
+    ["two statements", "SELECT 1; SELECT 2", 2],
+    ["two statements and a trailing note", "SELECT 1; INSERT INTO t VALUES (7); -- done", 2],
+    ["a quoted semicolon", "SELECT ';' AS s", 1],
+    ["comments only", "-- a; /* b */", 0],
+  ])("PostgreSQL: %s", (_label, sql, count) => {
+    expect(countCodeStatements(sql, pg)).toBe(count);
+  });
+
+  test("MySQL: a trailing hash comment is not a statement", () => {
+    expect(countCodeStatements("SELECT 1; # x", mysql)).toBe(1);
+  });
+
+  test("the default grammar is used when none is given", () => {
+    expect(countCodeStatements("SELECT 1; -- note")).toBe(1);
   });
 });

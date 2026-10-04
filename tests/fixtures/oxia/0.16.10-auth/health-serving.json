@@ -1,0 +1,34 @@
+{
+  "calls": [
+    {
+      "authority": "localhost:6678",
+      "end": {
+        "code": 0,
+        "details": "",
+        "kind": "status"
+      },
+      "messageBytes": [
+        2
+      ],
+      "messages": [
+        {
+          "status": "SERVING"
+        }
+      ],
+      "method": "grpc.health.v1.Health/Check",
+      "request": {
+        "service": ""
+      },
+      "target": "localhost:6678",
+      "tls": {
+        "identity": "localhost",
+        "mode": "verify-full"
+      },
+      "token": true
+    }
+  ],
+  "file": "0.16.10-auth/health-serving.json",
+  "result": {
+    "ok": "SERVING"
+  }
+}

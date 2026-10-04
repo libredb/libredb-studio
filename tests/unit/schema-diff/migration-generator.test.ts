@@ -1051,6 +1051,7 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     qdrant: "engine-has-no-foreign-key",
     influxdb: "engine-has-no-foreign-key",
     influxdb3: "engine-has-no-foreign-key",
+    oxia: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1178,6 +1179,9 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   influxdb: { label: "InfluxDB (InfluxQL)", reason: "created by the points written to it" },
   // A table's tags and fields come from the line protocol written to it, and the 3.x SQL takes no DDL.
   influxdb3: { label: "InfluxDB 3 (SQL)", reason: "InfluxDB 3's SQL takes no DDL" },
+  // Not a table store either (SB2-4.3): a key holds opaque bytes, and the columns a read shows are a record's fixed
+  // shape, which nothing declares.
+  oxia: { label: "Oxia", reason: "has no schema, so there is no column definition to change" },
 };
 
 /**
@@ -1356,6 +1360,7 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "qdrant",
           "influxdb",
           "influxdb3",
+          "oxia",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1398,10 +1403,10 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining fifteen each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining sixteen each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the fifteen needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the sixteen needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1421,6 +1426,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   qdrant: false, // a Qdrant console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   influxdb: false, // an InfluxQL statement, not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (`NO_TABLE_DDL`)
+  oxia: false, // an `oxia client` read command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1455,6 +1461,7 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "qdrant",
             "influxdb",
             "influxdb3",
+            "oxia",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

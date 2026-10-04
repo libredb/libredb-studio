@@ -96,6 +96,9 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         // Db2's consent to a cleartext password (#786), copied for the reason skipObjectScan is:
         // dropped here, a seed the operator declared it for would be refused by the provider.
         allowInsecureAuth: conn.allowInsecureAuth,
+        // Oxia's data servers (O6), copied for the reason skipObjectScan is: dropped here, a seeded cluster would be
+        // refused by the provider for leaders the file did list.
+        dataServers: conn.dataServers,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

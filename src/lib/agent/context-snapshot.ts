@@ -1119,6 +1119,8 @@ export function connectionIdentity(connection: DatabaseConnection): string {
         // different indices. `apiKeySecret` is excluded on the password rule two lines
         // up - it admits you as that key, it does not decide what the key can see.
         connection.apiKeyId ?? "",
+        // Oxia's data servers: which servers answer is part of which catalog this is; over-keying is the safe direction.
+        connection.dataServers ?? "",
         connection.agentUser ?? "",
         // The tunnel is part of the ROUTE and not part of the credentials: `host` and
         // `port` above are resolved at the FAR END of it, so the same `db:5432` reached

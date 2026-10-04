@@ -27,12 +27,12 @@
 
 ## Overview
 
-LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus and Qdrant.
+LibreDB Studio provides a RESTful API for database management operations. The API supports PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia.
 
 ### Key Features
 
 - **JWT Authentication** - Secure token-based authentication stored in HTTP-only cookies
-- **Multi-Database Support** - Twenty-five engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant
+- **Multi-Database Support** - Twenty-six engines: PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Redis, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia
 - **AI-Powered Insights** - EXPLAIN explanations, query-safety analysis and schema docs, streamed
 - **Real-time Health Monitoring** - Database metrics and performance insights
 
@@ -423,7 +423,7 @@ Under that cap, a result of exactly `limit` rows still has `wasLimited: true` an
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
-Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus and Qdrant ignore it. `POST /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
+Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia ignore it. `POST /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
 
 **The database a run reads (optional):**
 ```json
@@ -448,14 +448,14 @@ ordinary case and the one every statement other than a key read sends.
 
 The field is accepted only where the provider declares `keyScan` and a container level to name, which is Redis: a Redis key space belongs to one numbered database, and a run cannot name that database in its statement.
 On an engine that declares no walk it would be a per-run override of an operator-pinned `database` with no walk to justify it, so it is refused rather than quietly honoured.
-etcd declares the walk and no container level, because one connection is one cluster with one key space, so it refuses the field as well.
+etcd and Oxia declare the walk and no container level, because one connection is one key space (one etcd cluster, one Oxia namespace), so they refuse the field as well.
 The declaration is read without connecting, so each refusal costs no socket, and an unreachable host still answers 400:
 
 | Condition | Status | Body |
 |-----------|--------|------|
 | `database` present and not a non-negative integer | `400` | `{ "error": "\"database\" must be a non-negative integer" }` — the same sentence `POST /api/db/keys/scan` refuses with, shared in `optionalDatabase` |
 | The provider declares no `keyScan` | `400` | `{ "error": "<type> declares no key-space walk: \"database\" names the database a key was walked in, and only an engine that needs such a name accepts it" }` |
-| The provider declares `keyScan` and no container level (etcd) | `400` | `{ "error": "<type> walks one key space and declares no database level: \"database\" names the numbered database a key was walked in, and this engine has none to name" }` |
+| The provider declares `keyScan` and no container level (etcd, Oxia) | `400` | `{ "error": "<type> walks one key space and declares no database level: \"database\" names the numbered database a key was walked in, and this engine has none to name" }` |
 | The server has no such database | `400` | `{ "error": "Redis refused database <n>: ERR DB index is out of range", "code": "QUERY_ERROR", "statusCode": 400 }`, never a read of database 0 |
 
 **A connection type's console text bound:**
@@ -470,7 +470,7 @@ The bound is read after the request body is parsed, because the type that select
 | `sql` is not a string | `400` | `{ "error": "sql must be a string" }` |
 
 `POST /api/db/multi-query` refuses every connection whose type declares such a bound with `400 { "error": "This connection type runs one statement per request: send it to POST /api/db/query, because this route would split its text into several requests." }`, before it splits anything.
-Milvus and Qdrant each declare a bound of 1,048,576 bytes and InfluxDB (InfluxQL) one of 65,536 bytes, and no other shipped engine declares one, so neither answer changes anything for a connection of another type.
+Milvus and Qdrant each declare a bound of 1,048,576 bytes and InfluxDB (InfluxQL) and Oxia one of 65,536 bytes each, and no other shipped engine declares one, so neither answer changes anything for a connection of another type.
 
 **Bound parameters (optional):**
 ```json
@@ -521,8 +521,23 @@ A `params` array may accompany an explain request. The strategies only prefix th
 placeholders are the same ones in the same order and the values bind the built statement, which is how a
 generated statement that sends its values separately still gets a plan.
 
-Two refusals, each a 400 that runs nothing:
+`estimate` never executes the statement, on any strategy: on PostgreSQL it is `EXPLAIN (FORMAT JSON)`,
+and only `analyze` builds `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, which runs it. The editor asks for
+the estimate in the background beside every run of a SELECT, so an executing estimate would run every
+SELECT twice; until #1311 the PostgreSQL strategy did exactly that.
 
+A `queryId` may accompany an explain request like any other, and `POST /api/db/cancel` with that id
+stops the plan statement on the server. The editor gives its background plan request an id of its own
+and cancels it together with the run.
+
+Three refusals, each a 400 that runs nothing:
+
+- `Only a single statement can be explained` when `sql` holds more than one statement, read under the
+  connection type's own grammar (a `;` inside a quote or a comment does not count, and neither does a
+  trailing one). An EXPLAIN prefixes one statement: handed `SELECT 1; INSERT ...`, PostgreSQL explains
+  the SELECT and then runs the INSERT. A text with a quote or comment the grammar cannot close is refused
+  the same way, since no boundary can be read in it (`SELECT E'\''; INSERT ...` is two statements to
+  PostgreSQL). Refused before a provider is opened (#1311).
 - `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
   format at all.
 - `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The
@@ -1287,13 +1302,15 @@ a route of its own rather than an option on the object routes.
 
 The walk is offered by an engine that declares `keyScan` in `POST /api/db/provider-meta`'s
 `capabilities`; Redis declares `{ "defaultCount": 500, "maxCount": 1000 }`.
-etcd declares its own counts ([providers/etcd.md](./providers/etcd.md), section 6.4).
+etcd declares its own counts ([providers/etcd.md](./providers/etcd.md), section 6.4), and Oxia declares `{ "defaultCount": 500, "maxCount": 1000 }` ([providers/oxia.md](./providers/oxia.md), section 6.4).
 Every other connection answers `400`, in this route's own words. A provider that declares the capability and implements no
 walk is a distinct `500` rather than a crash: `ProviderCapabilities` is published, so that is a state
 an external implementer can genuinely be in.
 
 The declaration also states the walk's shape, in four optional fields that each read as Redis's walk when absent: `separator` (`":"`) splits a key into the panel's folders, `cursor` (`"decimal"`) says how a cursor is spelled, `pattern` (`"glob"`) says what `pattern` is, and `totalScope` (`"database"`) says what `total` counts.
+A `totalScope` of `"none"` is an engine that publishes no count and pins no revision: `total` is not read, and a provider answers 0.
 etcd declares `"/"`, `"opaque"`, `"prefix"` and `"walk"`: a cursor only it can read, a literal prefix instead of a glob, and a total that counts the keys the walk covers.
+Oxia declares `"/"`, `"opaque"`, `"prefix"` and `"none"`: a cursor only it can read, a literal prefix, and no count.
 
 **Authentication:** Required.
 No admin gate, for the same reason the object routes have none: the role decides which connection may
@@ -1313,10 +1330,10 @@ be OPENED and nothing about what may be read through it.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `connection` or `connectionId` | object or string | Yes | The same connection selector every database route takes |
-| `cursor` | string | No | The cursor the previous page answered with. Absent means `"0"`, which starts a walk. Under a `"decimal"` declaration (Redis) it is refused unless it is a run of digits: Redis cursors are opaque, and only the obviously malformed one is refused here rather than passed through. Under an `"opaque"` declaration (etcd) it is any non-empty string, passed through exactly as the previous page wrote it, because only the provider that wrote it can read it |
+| `cursor` | string | No | The cursor the previous page answered with. Absent means `"0"`, which starts a walk. Under a `"decimal"` declaration (Redis) it is refused unless it is a run of digits: Redis cursors are opaque, and only the obviously malformed one is refused here rather than passed through. Under an `"opaque"` declaration (etcd, Oxia) it is any non-empty string, passed through exactly as the previous page wrote it, because only the provider that wrote it can read it |
 | `pattern` | string | No | The walk's pattern, in the shape the declaration names. Absent means every key, which is NOT the same as an empty string, which is refused: `MATCH ""` is a pattern no key satisfies. Under `"glob"` (Redis) it is a `MATCH` pattern, trimmed and then forwarded, and a caller scoping a walk has two things to know. `MATCH` is applied per batch server-side and is **not indexed**, so a scoped walk costs the server a full pass over the keyspace rather than a lookup. And it is a glob with **no escape**, so a key segment that contains `*`, `?` or `[` matches more than the prefix asked about: the answer must be filtered by the caller, compared segment by segment (`app:envelope` is not under `app:env`). Under `"prefix"` (etcd) it is the literal prefix every walked key begins with, forwarded exactly as sent, with nothing trimmed and nothing escaped, because a prefix is bytes and a space at either end is part of the range it names |
 | `count` | number | No | The batch size. Absent takes the provider's declared `defaultCount`. A value above the declared `maxCount` is **refused rather than clamped**, because a silent clamp answers a request for 10,000 with 1,000 and says nothing |
-| `database` | number | No | Which numbered database to walk, taken only from an engine that declares a container level to name (Redis). Absent means the one the session is in, since `SELECT` state lives on the connection and not in this route. A caller offering the choice reads the engine's own list from `POST /api/db/objects/containers`, the same container level the object tree's top level comes from, rather than assuming a count: the same server answers 16 outside cluster mode and 1 inside it. An engine that walks one key space and declares no level (etcd) refuses the field |
+| `database` | number | No | Which numbered database to walk, taken only from an engine that declares a container level to name (Redis). Absent means the one the session is in, since `SELECT` state lives on the connection and not in this route. A caller offering the choice reads the engine's own list from `POST /api/db/objects/containers`, the same container level the object tree's top level comes from, rather than assuming a count: the same server answers 16 outside cluster mode and 1 inside it. An engine that walks one key space and declares no level (etcd, Oxia) refuses the field |
 
 **Response (200 OK):**
 
@@ -1331,10 +1348,10 @@ be OPENED and nothing about what may be read through it.
 
 | Field | Description |
 |-------|-------------|
-| `keys` | The batch. Under `"glob"` (Redis) it is **not deduplicated and not ordered**: `SCAN` promises neither, so a key present for the whole walk may be returned twice while the table rehashes, and the order is the hash table's rather than the caller's. Under `"prefix"` (etcd) the pages of one walk read an ordered key range at one pinned revision, so they are one consistent view |
+| `keys` | The batch. Under `"glob"` (Redis) it is **not deduplicated and not ordered**: `SCAN` promises neither, so a key present for the whole walk may be returned twice while the table rehashes, and the order is the hash table's rather than the caller's. Under `"prefix"` (etcd) the pages of one walk read an ordered key range at one pinned revision, so they are one consistent view. Oxia also declares `"prefix"` and pins no revision: each page reads the namespace in its own key order, resumed after the last key the previous page answered |
 | `cursor` | The cursor for the next page. `"0"` means the walk reached the end, and it is the only end-of-walk signal the engine publishes |
 | `types` | Each key's value type, **by key name**. It travels with the page rather than being asked for separately: `TYPE` takes one key and Redis publishes no batch form, so the provider pipelines one call per key and the cost is ONE extra round trip per page whatever the page holds. A key **absent** from the map is one whose type could not be read and a caller should draw nothing for it; a key that vanished between the walk and this read is present with the server's own `"none"`. What it describes is the moment it was read, like everything else in a sampled walk |
-| `total` | What a progress indicator divides by, in the scope the declaration's `totalScope` names. Under `"database"` (Redis) it is `DBSIZE` for the database walked: the engine's own key count, and the only denominator a progress indicator can divide by, since a cursor says nothing about how much is left. On a clustered deployment it is the LOCAL node's count: `SCAN` walks one node's slots and `DBSIZE` has no cluster-wide form. Under `"walk"` (etcd) it is the exact count of the keys the walk covers, the pattern's prefix range or the whole key space, at the revision the walk's pages are pinned to; for a user whose grants are narrower, it counts the keys of the ranges that user may read |
+| `total` | What a progress indicator divides by, in the scope the declaration's `totalScope` names. Under `"database"` (Redis) it is `DBSIZE` for the database walked: the engine's own key count, and the only denominator a progress indicator can divide by, since a cursor says nothing about how much is left. On a clustered deployment it is the LOCAL node's count: `SCAN` walks one node's slots and `DBSIZE` has no cluster-wide form. Under `"walk"` (etcd) it is the exact count of the keys the walk covers, the pattern's prefix range or the whole key space, at the revision the walk's pages are pinned to; for a user whose grants are narrower, it counts the keys of the ranges that user may read. Under `"none"` the engine publishes no count and pins no revision: the field is not read, and a provider answers 0. |
 | `clustered` | Present and `true` only when the server's own `INFO cluster` reply says this deployment is clustered. `SCAN` and `DBSIZE` are per node and neither has a cluster-wide form, so on a cluster `keys` and `total` describe the node that answered and nothing else. **Absent** means the deployment does not say it is clustered, which is the ordinary server; a reply the provider could not read is absent rather than a guess. The fact is read in the same round trip as `total` |
 | `skipped` | Present only when the page left keys out: `{ "count", "reason" }`, how many keys this page read and could not name, and why. On etcd a key that is not UTF-8 text is counted here rather than listed, because a name decoded with replacement characters would address a different key. Redis never sends it |
 
@@ -1394,6 +1411,13 @@ Each of the three validates its key field and returns a `400` with an `error` st
 The exact strings differ: `explain` and `query-safety` return `"Query is required"`,
 `describe-schema` returns `"Schema context required"` — treat the status code, not the message text,
 as the contract.
+
+`query-safety` bounds its wait for the model: a provider request that has not finished after 30 seconds
+(`QUERY_SAFETY_ROUTE_TIMEOUT_MS` in `src/lib/llm/query-safety.ts`) is aborted, and a request that had not
+started streaming answers `504 { "error": "The AI safety analysis did not finish in time.", "code": "TIMEOUT_ERROR" }`;
+one that had started ends there. A caller that disconnects aborts the provider request as well. The bound is
+fixed, not configurable: the Query Safety dialog, the only caller in this repo, stops waiting after 15 seconds
+(`QUERY_SAFETY_ANALYSIS_TIMEOUT_MS`), aborts its request and lets the statement run without the analysis.
 
 **Provider-surfaced errors**
 
@@ -1913,7 +1937,7 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia), `dataServers` (Oxia), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
 
@@ -1941,7 +1965,8 @@ interface DatabaseConnection {
   localDataCenter?: string; // Cassandra only, and REQUIRED there: the driver refuses to connect without it (`datacenter1` on a stock single node)
   authSource?: string; // MongoDB only: the database the credentials live in (`?authSource=admin`). Not the database being opened - without it the driver checks the user against that one, which fails as a credentials error
   saslMechanism?: 'PLAIN' | 'SCRAM-SHA-256' | 'SCRAM-SHA-512'; // Kafka only: the SASL mechanism that checks user and password, absent meaning none. A user or password with no mechanism is refused, and every mechanism requires TLS
-  allowInsecureAuth?: boolean; // Db2 only (#786): connect with no TLS although the password then crosses the network in cleartext; without it the Db2 provider refuses a connection that has no TLS
+  allowInsecureAuth?: boolean; // Db2, both InfluxDB types and Oxia (#786): connect with no TLS although the password (Db2), the password or token (InfluxDB) or the token (Oxia) then crosses the network in cleartext; without it the Db2 provider refuses a connection that has no TLS, both InfluxDB providers one that sends its secret with no TLS to a host that is not loopback, and the Oxia provider one that sends a token with no TLS to a host that is not this machine (docs/providers/oxia.md section 4.6)
+  dataServers?: string; // Oxia only: a cluster's data-server addresses, host:port entries separated by commas or whitespace, at most 64; see docs/providers/oxia.md section 4.4
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect)
   readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
   managed?: boolean;       // true = admin-controlled: not editable in the UI, secrets kept on the server
@@ -1952,7 +1977,7 @@ interface DatabaseConnection {
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
 }
 
-type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3';
+type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb' | 'mongodb' | 'redis' | 'oracle' | 'db2' | 'mssql' | 'libredb' | 'couchbase' | 'clickhouse' | 'druid' | 'elasticsearch' | 'opensearch' | 'trino' | 'cassandra' | 'prometheus' | 'kafka' | 'etcd' | 'neo4j' | 'milvus' | 'qdrant' | 'influxdb' | 'influxdb3' | 'oxia';
 type ConnectionEnvironment = 'production' | 'staging' | 'development' | 'local' | 'other';
 ```
 
@@ -2127,7 +2152,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
-| `TIMEOUT_ERROR` | Query exceeded time limit (408) |
+| `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
 | `POOL_EXHAUSTED` | Connection pool exhausted (503) |
 | `DATABASE_ERROR` | Generic database error (500) |

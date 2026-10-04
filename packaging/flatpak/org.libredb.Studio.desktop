@@ -7,6 +7,6 @@ Exec=libredb-studio
 Icon=org.libredb.Studio
 Terminal=false
 Categories=Development;Database;
-Keywords=SQL;Database;PostgreSQL;MySQL;SQLite;libSQL;Turso;DuckDB;MongoDB;Redis;Oracle;Db2;SQLServer;ClickHouse;Couchbase;Druid;Elasticsearch;OpenSearch;Trino;Cassandra;Prometheus;PromQL;InfluxDB;InfluxQL;Kafka;etcd;Neo4j;Cypher;Milvus;Qdrant;IDE;Query;
+Keywords=SQL;Database;PostgreSQL;MySQL;SQLite;libSQL;Turso;DuckDB;MongoDB;Redis;Oracle;Db2;SQLServer;ClickHouse;Couchbase;Druid;Elasticsearch;OpenSearch;Trino;Cassandra;Prometheus;PromQL;InfluxDB;InfluxQL;Kafka;etcd;Neo4j;Cypher;Milvus;Qdrant;Oxia;IDE;Query;
 StartupNotify=true
 StartupWMClass=libredb-studio-desktop

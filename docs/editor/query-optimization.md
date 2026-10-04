@@ -187,8 +187,8 @@ A rule that could **not** be established is not guessed from a neighbouring dial
 at the compatibility default below, and it is listed here rather than left implicit. The default is per
 **fact**, not per dialect: a dialect whose `#` rule is known can still be undecided about its brackets.
 
-**MongoDB, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus and Qdrant are the nine types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those nine, which is what `readsSqlText()` reports on.
-Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, an InfluxQL statement, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request or a Qdrant request is not judged by a SQL reader that cannot parse it.
+**MongoDB, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia are the ten types whose query text is not SQL at all**: `NON_SQL_DIALECTS` in `src/lib/sql/grammar.ts` holds exactly those ten, which is what `readsSqlText()` reports on.
+Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, an InfluxQL statement, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request, a Qdrant request or an `oxia client` read command is not judged by a SQL reader that cannot parse it.
 
 The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).
 Beyond it, each type whose text is not SQL has a row of its own in `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts`, and a test holds that table to the set `readsSqlText()` reports on.
@@ -198,6 +198,7 @@ Before that table existed the answer for both types was a bare `false`, so a `FL
 The Prometheus and Kafka rows name no operation, the etcd row names what `guard.ts` classifies, and each of the three is the gate's whole answer, the rows the keyword test does not read in front of: PromQL has no statement that writes, its editor text only ever reaches `POST /api/v1/query`, and a metric may legally be named `update`, `delete` or `drop`, which the keyword test read as a write; a Kafka read request only reads, and a topic may be named any of those too; and etcd's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
 The InfluxDB (InfluxQL) row is read by the InfluxQL policy the provider runs (`src/lib/db/providers/timeseries/influxdb/influxql-policy.ts`), so what asks and what runs are one reading: an allowed statement only reads, so nothing asks, and what the policy refuses the editor refuses before anything is sent.
 InfluxDB 3 (SQL) is not in that set: its text is SQL, read under the DataFusion row of `SQL_GRAMMARS`.
+The Oxia row names no operation and, like the etcd row, is the gate's whole answer: Oxia's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
 The embedded LibreDB is not in that set: its text is read as SQL, and its undecided grammar facts are rows in the table below.
 
 | Fact | Undecided, so left at the default | Established, and it happens to equal the default |
@@ -572,7 +573,7 @@ ordering notice beside it cannot disagree:
 
 | Condition | Where it comes from | Why |
 |-----------|--------------------|-----|
-| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Twelve providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus and Qdrant answer it with page one. An absent flag reads as unsupported |
+| `supportsResultPagination === true` | the connection's `ProviderCapabilities` | Thirteen providers cannot serve page two. Cassandra and Elasticsearch throw on a positive offset; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia answer it with page one. An absent flag reads as unsupported |
 | `pagination.hasMore` | `POST /api/db/query` | Requires the limiter's `PreparedQuery.wasLimited` as well as a full page — see below |
 | the surface supplies `onLoadMore` | `BottomPanel` | A result hydrated from an agent run has no statement of its own to page |
 
@@ -724,13 +725,34 @@ for renders exactly as it did before.
 
 Every SELECT query automatically runs EXPLAIN in the background (parallel execution). This provides instant performance insights without user action.
 
+The background plan is always the **estimate**: it plans the statement and never executes it, because
+the run beside it already is the execution. On PostgreSQL that is `EXPLAIN (FORMAT JSON)`; the
+**Explain** button asks for `analyze` instead and gets `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, which
+runs the statement to report actual rows and timings. Until #1311 the background request built the
+ANALYZE form too, so every SELECT ran twice: measured on PostgreSQL 18.6, one RUN of
+`SELECT nextval('my_seq')` advanced the sequence by two, and on Citus and TimescaleDB
+`create_distributed_table` / `create_hypertable` did their work in the hidden request before the
+user's own call failed as "already distributed". An estimated plan shows the planner's rows
+(`~250.0K rows`) and cost on each node and says "not executed" in the header, instead of zero rows in
+zero time.
+
+The background plan is asked for **one statement only**. A run of several statements (for example
+`SELECT 1 AS a; INSERT ...`) gets no plan, the **Explain** button refuses one with "Only a single
+statement can be explained", and `POST /api/db/query` refuses an explain request of more than one
+statement with a 400: an EXPLAIN prefixes one statement, so the rest of the text would run as
+statements of their own (measured on Materialize, AlloyDB Omni and Cloudberry: the INSERT was applied
+twice).
+
+The plan request carries a `queryId` of its own, and **Cancel** cancels it on the server together
+with the run.
+
 ### Supported Databases
 
-| Database | EXPLAIN Format |
-|----------|---------------|
-| PostgreSQL | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
-| MySQL | `EXPLAIN FORMAT=JSON` |
-| SQLite | `EXPLAIN QUERY PLAN` (tree, no cost/timing metrics) |
+| Database | Background plan (estimate) | Explain button (analyze) |
+|----------|---------------|---------------|
+| PostgreSQL | `EXPLAIN (FORMAT JSON)` | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
+| MySQL | `EXPLAIN FORMAT=JSON` | `EXPLAIN FORMAT=JSON` |
+| SQLite | `EXPLAIN QUERY PLAN` (tree, no cost/timing metrics) | `EXPLAIN QUERY PLAN` |
 
 ### Non-SELECT Statements
 
@@ -740,7 +762,7 @@ be explained" — an explain run never falls back to running the original statem
 because it deliberately bypasses the dangerous-query confirmation dialog.
 
 Because it bypasses that dialog, the classification is the *only* screen on this path, and on
-PostgreSQL the wrapper is `EXPLAIN (ANALYZE, …)` — which **runs** what it explains. So the PostgreSQL
+PostgreSQL the Explain button's wrapper is `EXPLAIN (ANALYZE, …)`, which **runs** what it explains. So the PostgreSQL
 and ClickHouse strategies read the statement under their own dialect's grammar rather than the shared
 default (#300): block comments nest in both, and a flat reading of
 `/* a /* b */ SELECT 1 */ DELETE FROM users` reports `SELECT` as the leading keyword while PostgreSQL
@@ -761,7 +783,7 @@ User executes: SELECT * FROM orders WHERE status = 'pending'
 │                                                              │
 │  ┌──────────────────┐      ┌──────────────────────────────┐ │
 │  │   Main Query     │      │   Background EXPLAIN          │ │
-│  │   (with LIMIT)   │      │   (no LIMIT, ANALYZE)         │ │
+│  │   (with LIMIT)   │      │   (estimate, never executes)  │ │
 │  └────────┬─────────┘      └────────────┬─────────────────┘ │
 │           │                              │                   │
 │           ▼                              ▼                   │

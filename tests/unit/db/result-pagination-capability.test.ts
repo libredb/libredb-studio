@@ -77,6 +77,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   qdrant: false,
   influxdb: false,
   influxdb3: true,
+  oxia: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

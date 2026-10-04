@@ -25,6 +25,7 @@ import {
   QdrantIcon,
   MilvusIcon,
   InfluxDBIcon,
+  OxiaIcon,
 } from "@/components/icons/db-icons";
 
 describe("db-icons", () => {
@@ -54,6 +55,7 @@ describe("db-icons", () => {
     { name: "QdrantIcon", Component: QdrantIcon },
     { name: "MilvusIcon", Component: MilvusIcon },
     { name: "InfluxDBIcon", Component: InfluxDBIcon },
+    { name: "OxiaIcon", Component: OxiaIcon },
   ];
 
   for (const { name, Component } of icons) {

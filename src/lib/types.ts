@@ -134,7 +134,12 @@ export type DatabaseType =
   // DataFusion SQL, extending `SQLBaseProvider`. The connection is a host, a port, a token in `password` and an
   // optional database, the one session database whose tables are top-level objects (R1, R16); there is no user.
   // Served from the same directory as `influxdb` (I2, I23), and read-only whatever `readOnly` says.
-  | "influxdb3";
+  | "influxdb3"
+  // Oxia (CNCF Sandbox), a sharded key-value store read over its gRPC client API by a client of this repository's
+  // own (`src/lib/db/providers/keyvalue/oxia/`). Its editor text is one `oxia client` read command. Read-only in
+  // this version whatever `readOnly` says. The connection's Database field is the namespace and Password is a bearer
+  // token; `dataServers` lists a cluster's data servers.
+  | "oxia";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -329,12 +334,24 @@ export interface DatabaseConnection {
    * An explicit acceptance of a risk, and never a default. A stock Db2 server without TLS offers
    * only DRDA SECMEC 3, user and cleartext password, so the Db2 provider REFUSES a connection with
    * no TLS unless this is `true`, and then asks db2-node for that mechanism by name, which 1.0.24
-   * refuses to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by Db2 and by both
+   * and later refuse to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by Db2 and by both
    * InfluxDB types (`influxdb`, `influxdb3`, InfluxDB spec I7), each of which refuses a non-empty secret
-   * with TLS off, to a host that is not loopback and outside a tunnel, unless this is `true`. Read by no
+   * with TLS off, to a host that is not loopback and outside a tunnel, unless this is `true`. Oxia reads
+   * it too (DECISIONS O7): its bearer token crosses the network on every call, so an Oxia connection with
+   * a token and no TLS to a host other than this machine is refused unless this is `true`. Read by no
    * other engine: each of those either encrypts the password itself or follows its own driver's default.
    */
   allowInsecureAuth?: boolean;
+  /**
+   * Oxia only (DECISIONS O6): the public addresses of a cluster's data servers, as `host:port` entries separated by
+   * commas or whitespace, at most 64. A shard leader the server advertises is dialled only when it equals the
+   * address the connection's own bootstrap call was sent to, or one of these entries; every listed leader gets the
+   * connection's TLS mode, CA and client pair and its own host as TLS identity, and the bearer token with them.
+   * Exact entries only, never a pattern: a pattern would send the token to any address it matches. Absent and empty
+   * are one value. Refused together with an SSH tunnel, because the leaders would bypass the tunnel. Read by no
+   * other engine.
+   */
+  dataServers?: string;
   /**
    * Read no catalog when this connection opens.
    *
@@ -682,7 +699,8 @@ export interface QueryTab {
     | "cypher"
     | "milvus"
     | "qdrant"
-    | "influxql";
+    | "influxql"
+    | "oxia";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

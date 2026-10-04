@@ -32,7 +32,7 @@ const DML_RESULT_COLUMN = "Count";
  * Leading keywords that open a statement DuckDB answers with ROWS.
  *
  * Wider than `SQLBaseProvider.isReadOnlyQuery`'s set on purpose, and used for a
- * different question. That predicate ROUTES sqlite between two driver calls, and its
+ * different question. That predicate once ROUTED sqlite between two driver calls, and its
  * set (SELECT/SHOW/DESCRIBE/EXPLAIN/PRAGMA) is missing four forms DuckDB reads as
  * queries - `FROM tbl` (FROM-first syntax), `CALL`, `SUMMARIZE` and `PIVOT` - which is
  * bug #275 waiting in a new dialect. This provider never routes on a keyword at all:

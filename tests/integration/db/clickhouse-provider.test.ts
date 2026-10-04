@@ -821,6 +821,33 @@ describe("ClickHouseProvider query", () => {
     expect(result.columnTypes).toBeUndefined();
   });
 
+  test("keeps a Decimal past double precision exact, as the digits the server printed", async () => {
+    // Measured on 26.9.9.28: without `output_format_json_quote_decimals` a
+    // Decimal(38,10) arrives as the UNQUOTED number below and JSON.parse rounds it
+    // to 12345678901234567000 with no error. The fake answers the way the server
+    // does, quoting only when the request asked it to, so a transport that stopped
+    // asking would put the rounded value back in the grid.
+    const provider = await connectProvider();
+    replyFor = () => {
+      const quoted =
+        new URL(sentUrls[sentUrls.length - 1]).searchParams.get("output_format_json_quote_decimals") === "1";
+      const amount = quoted ? '"12345678901234567890.1234567891"' : "12345678901234567890.1234567891";
+      const small = quoted ? '"12.34"' : "12.34";
+      return {
+        body:
+          '{"meta":[{"name":"id","type":"UInt32"},{"name":"amount","type":"Decimal(38, 10)"},' +
+          '{"name":"small","type":"Decimal(10, 2)"},{"name":"f","type":"Float64"}],' +
+          `"data":[{"id":1,"amount":${amount},"small":${small},"f":1.5}],"rows":1,"statistics":{"elapsed":0.001}}`,
+      };
+    };
+
+    const result = await provider.query("SELECT id, amount, small, f FROM t1");
+
+    // A small Decimal is a string as well, the way the `pg` driver hands over
+    // NUMERIC; UInt32 and Float64 stay numbers.
+    expect(result.rows).toEqual([{ id: 1, amount: "12345678901234567890.1234567891", small: "12.34", f: 1.5 }]);
+  });
+
   test("leaves the type channel absent when the envelope described no columns at all", async () => {
     const provider = await connectProvider();
     replyFor = () => ({ body: JSON.stringify({ meta: [], data: [] }) });

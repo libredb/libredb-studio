@@ -7,6 +7,7 @@ import { createMockProvider } from "../../helpers/mock-provider";
 import { discoverRoutes } from "../../security/helpers/discover-routes";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { agentReadSqlInput } from "@/lib/db/operations/statement-guard";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
 import {
   QueryError,
   TimeoutError,
@@ -841,13 +842,89 @@ describe("POST /api/db/query with an explain request", () => {
     const data = await parseResponseJSON<{ explainFormat: string }>(res);
 
     expect(res.status).toBe(200);
+    // The estimate plans without ANALYZE, so the statement is never executed (#1311).
+    expect(provider.query).toHaveBeenCalledWith(
+      "EXPLAIN (FORMAT JSON) SELECT * FROM users LIMIT 50",
+      undefined,
+      undefined,
+      expect.any(String),
+    );
+    expect(data.explainFormat).toBe("postgres-json");
+  });
+
+  test("an analyze request builds the executing form the Explain button asks for", async () => {
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users", options: {}, explain: { mode: "analyze" } },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
     expect(provider.query).toHaveBeenCalledWith(
       "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users LIMIT 50",
       undefined,
       undefined,
       expect.any(String),
     );
-    expect(data.explainFormat).toBe("postgres-json");
+  });
+
+  /**
+   * An EXPLAIN prefixes ONE statement. Handed `SELECT 1 AS a; INSERT ...` it explained
+   * the SELECT and the simple-query protocol then ran the INSERT as a statement of its
+   * own: measured on Materialize 26.44.1, AlloyDB Omni 17.9 and Cloudberry 2.1.0, a RUN
+   * of that text applied the INSERT twice, once in the run and once in its background
+   * plan request (#1311). Refused before any provider is opened, so nothing runs.
+   */
+  test.each<[string, string]>([
+    ["a SELECT followed by a write", "SELECT 1 AS a; INSERT INTO t VALUES (7)"],
+    ["two SELECTs", "SELECT 1; SELECT 2"],
+    // `E'\\''` is one quote character to PostgreSQL, so the `;` after it ends the
+    // statement and the INSERT is a second one. Whether a backslash escapes is not a
+    // grammar fact the splitter carries, so it reads the run as unterminated and finds
+    // no boundary: an unresolvable text is not a single statement either.
+    ["a backslash-escaped string hiding a write", "SELECT E'\\''; INSERT INTO t VALUES (7)"],
+  ])("returns 400 and runs nothing for an explain of %s", async (_label, sql) => {
+    // No provider is queued: the refusal comes before one is opened, and a queued
+    // `mockResolvedValueOnce` nobody consumed would leak into the next test.
+    for (const mode of ["estimate", "analyze"]) {
+      const req = createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql, explain: { mode } },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("Only a single statement can be explained");
+    }
+    expect(mockProvider.query).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  // A comment is not a statement: the splitter keeps a note after the last `;` as a
+  // fragment of its own, and counting it refused a single SELECT the run itself accepts.
+  test.each<[string, string]>([
+    ["a trailing and a quoted semicolon", "SELECT ';' AS s;"],
+    ["a trailing line comment", "SELECT 1; -- note"],
+    ["a trailing block comment", "SELECT 1; /* c */"],
+  ])("a statement with %s is still one statement", async (_label, sql) => {
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql, options: {}, explain: { mode: "estimate" } },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(provider.query).toHaveBeenCalledTimes(1);
   });
 
   test("returns 400 and runs nothing when the provider declares no EXPLAIN support", async () => {
@@ -952,7 +1029,7 @@ describe("POST /api/db/query with an explain request", () => {
 
     expect(res.status).toBe(200);
     expect(provider.query).toHaveBeenCalledWith(
-      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
+      "EXPLAIN (FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
       [7],
       undefined,
       expect.any(String),
@@ -1405,5 +1482,47 @@ describe("POST /api/db/query: a declared console text bound", () => {
     const { res } = await post({ connection: validConnection, sql });
     expect(res.status).toBe(200);
     expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toHaveLength(sql.length);
+  });
+});
+
+describe("POST /api/db/query: an oxia buffer", () => {
+  const oxia = { id: "oxia-1", name: "Oxia", type: "oxia", host: "127.0.0.1", port: 6648 };
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
+  });
+
+  test("reaches the provider whole, its # comment and its quotes kept (SB2-4.3)", async () => {
+    // One `oxia client` read command is not SQL text: the route reads no SQL comment out of it and splits nothing.
+    const sql = "# the keys of one tenant\nlist --key-min '/t a/' --key-max \"/t a0\" # until the next tenant\n";
+    const res = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection: oxia, sql } }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(sql);
+  });
+
+  test("answers 413 one byte past the real row's bound, before any provider, and lets the bound itself through", async () => {
+    // The route reads the bound from oxia's own vocabulary row, so this is what the registration adds here.
+    const over = `get /${"x".repeat(OXIA_MAX_TEXT_BYTES - 4)}`;
+    const refused = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection: oxia, sql: over } }) as never,
+    );
+    expect(refused.status).toBe(413);
+    expect((await parseResponseJSON<{ error?: string }>(refused)).error).toBe(
+      `The statement is ${OXIA_MAX_TEXT_BYTES + 1} bytes in UTF-8, over the ${OXIA_MAX_TEXT_BYTES}-byte limit for this connection type. Shorten it to run it.`,
+    );
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    const atBound = `get /${"x".repeat(OXIA_MAX_TEXT_BYTES - 5)}`;
+    expect(atBound).toHaveLength(OXIA_MAX_TEXT_BYTES);
+    const res = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection: oxia, sql: atBound } }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(atBound);
   });
 });

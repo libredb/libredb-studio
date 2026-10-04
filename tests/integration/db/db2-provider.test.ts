@@ -1,7 +1,7 @@
 /**
  * The Db2 LUW provider (#786), driven through its driver seam.
  *
- * The fake client below answers each catalog statement the way db2-node 1.0.22 and 1.0.24 answer it against
+ * The fake client below answers each catalog statement the way db2-node 1.0.22 to 1.0.25 answer it against
  * the dev container's fixture (`docker/db2-init/01-object-fixture.sql`): names as the HEX of their
  * UTF-8 bytes, the code page 1208, a definition as two padded hex chunks and its byte length, and
  * the NULL text of an EXTERNAL routine. Every statement is matched by identity against the
@@ -12,7 +12,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, DatabaseError, QueryError, TimeoutError } from "@/lib/db/errors";
 import {
   callerBoundTruncationReason,
   isSourcePartUnavailable,
@@ -47,7 +47,13 @@ import {
   db2Labels,
 } from "@/lib/db/providers/sql/db2/capabilities";
 import type { CaFileSystem } from "@/lib/db/providers/sql/db2/connection";
-import type { Db2ClientOptions, Db2ColumnMeta, Db2Driver, Db2QueryResult } from "@/lib/db/providers/sql/db2/driver";
+import type {
+  Db2ArrayQueryResult,
+  Db2ClientOptions,
+  Db2ColumnMeta,
+  Db2Driver,
+  Db2QueryResult,
+} from "@/lib/db/providers/sql/db2/driver";
 import { Db2Provider } from "@/lib/db/providers/sql/db2/index";
 import { MAINTENANCE_TARGET_TYPE_SQL } from "@/lib/db/providers/sql/db2/maintenance";
 import { OBJECT_COUNTS_SQL, TABLE_STATS_SQL, VERSION_SQL } from "@/lib/db/providers/sql/db2/monitoring";
@@ -461,19 +467,22 @@ function catalogAnswer(sql: string, params: unknown[] = []): Db2QueryResult | un
 interface Sent {
   sql: string;
   params: unknown[] | undefined;
+  options?: { rowMode: "array" };
 }
 
 let sent: Sent[] = [];
 let built: Db2ClientOptions[] = [];
 let closed = 0;
 /** What a statement the catalog does not know answers; a test replaces it. */
-let userQuery: (sql: string, params?: unknown[]) => Promise<Db2QueryResult> = async (sql) => {
+let userQuery: (sql: string, params?: unknown[]) => Promise<Db2QueryResult | Db2ArrayQueryResult> = async (sql) => {
   throw new Error(`the fake catalog does not know this statement: ${sql}`);
 };
 /** Catalog statements a test makes the server refuse. */
 let refused = new Map<string, Error>();
 let connectError: unknown;
 let closeError: unknown;
+
+type EitherRows = Db2QueryResult & Db2ArrayQueryResult;
 
 const driver: Db2Driver = {
   Client: class {
@@ -483,11 +492,19 @@ const driver: Db2Driver = {
     async connect() {
       if (connectError !== undefined) throw connectError;
     }
-    async query(sql: string, params?: unknown[]) {
-      sent.push({ sql, params });
+    // Under `rowMode: "array"` an object row is handed back as its values in column order, as
+    // db2-node 1.0.25 does; a test that needs what an object row cannot hold answers arrays itself.
+    // The one return type both overloads of `Db2Client.query` accept.
+    async query(sql: string, params?: unknown[], options?: { rowMode: "array" }): Promise<EitherRows> {
+      sent.push(options === undefined ? { sql, params } : { sql, params, options });
       const refusal = refused.get(sql);
       if (refusal !== undefined) throw refusal;
-      return catalogAnswer(sql, params ?? []) ?? userQuery(sql, params);
+      const answer = catalogAnswer(sql, params ?? []) ?? (await userQuery(sql, params));
+      if (options?.rowMode !== "array") return answer as EitherRows;
+      const rows = answer.rows.map((row) =>
+        Array.isArray(row) ? row : answer.columns.map((column) => (row as Record<string, unknown>)[column.name]),
+      );
+      return { ...answer, rows } as EitherRows;
     }
     async close() {
       closed += 1;
@@ -595,6 +612,22 @@ describe("Db2Provider: declaration", () => {
     expect(capabilities.objectKinds?.some((kind) => kind.acceptsSourceEdits === true)).toBe(false);
   });
 
+  // K24, measured on 12.1.0.0 and 11.5.9.0 through 1.0.24 and 1.0.25: a value bound to a CLOB,
+  // DBCLOB or BLOB column declared 32768 bytes or longer is not written and no error is raised. A
+  // result declares those columns without their length (`CLOB(1K)` and `CLOB(1M)` both read
+  // `CLOB`), so the grid's editor refuses every one of them, and only them.
+  test("the inline editor refuses a CLOB, DBCLOB or BLOB column, and no other (K24)", () => {
+    const refused = makeProvider().getCapabilities().inlineEditRefusedColumns;
+    expect(refused).toBeDefined();
+    const pattern = new RegExp(refused!.type);
+
+    for (const type of ["CLOB", "DBCLOB", "BLOB"]) expect(pattern.test(type)).toBe(true);
+    for (const type of ["VARCHAR(20)", "XML", "VARBINARY(10)", "GRAPHIC(4)", "CLOBBER"]) {
+      expect(pattern.test(type)).toBe(false);
+    }
+    expect(refused!.reason).toContain("K24");
+  });
+
   test("declares none of the methods this version leaves out", () => {
     const provider = makeProvider() as unknown as Record<string, unknown>;
     for (const method of [
@@ -652,24 +685,18 @@ describe("Db2Provider: connect and disconnect", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
-  // 1.0.24 sends these characters wrongly over TLS and without it, under either mechanism, so the
-  // refusal holds for a TLS connection and for one behind the insecure opt-in alike.
+  // 1.0.25 sends these characters as typed over TLS and without it, under either mechanism,
+  // measured on 12.1.0.0 and 11.5.9.0 (K23, fixed), so the provider no longer refuses them.
   test.each([
     ["over TLS", {}],
     ["without TLS behind the insecure opt-in", { ssl: undefined, allowInsecureAuth: true }],
-  ] as const)(
-    "a password db2-node 1.0.24 cannot send is refused before the driver is reached, %s (K23)",
-    async (_, overrides) => {
-      const provider = makeProvider({ ...overrides, password: "Password123!" });
-      const error = await provider.connect().catch((caught: unknown) => caught);
+  ] as const)("a password holding ! ^ [ ] and | connects, %s (K23)", async (_, overrides) => {
+    const provider = await connected({ ...overrides, password: "Pw!a^b[c]d|9" });
 
-      expect(error).toBeInstanceOf(DatabaseConfigError);
-      expect((error as Error).message).toContain("contains !");
-      expect((error as Error).message).toContain("db2-node 1.0.24");
-      expect(built).toEqual([]);
-      expect(provider.isConnected()).toBe(false);
-    },
-  );
+    expect(built[0].password).toBe("Pw!a^b[c]d|9");
+    expect(provider.isConnected()).toBe(true);
+    await provider.disconnect();
+  });
 
   test("no TLS without the opt-in is refused for the transport first, whatever the password holds", async () => {
     const provider = makeProvider({ ssl: undefined, password: "Password123!" });
@@ -758,7 +785,55 @@ describe("Db2Provider: query", () => {
     expect(result.columnTypes).toEqual({ ID: "INTEGER", NAME: "VARCHAR(100)" });
     expect(result).not.toHaveProperty("warnings");
     expect(typeof result.executionTime).toBe("number");
-    expect(sent.at(-1)).toEqual({ sql: "SELECT ID, NAME FROM APP.CUSTOMERS", params: undefined });
+    expect(sent.at(-1)).toEqual({
+      sql: "SELECT ID, NAME FROM APP.CUSTOMERS",
+      params: undefined,
+      options: { rowMode: "array" },
+    });
+  });
+
+  // K15, fixed in 1.0.25: measured on 12.1.0.0 and 11.5.9.0, `SELECT 1 AS A, 2 AS A` answers the
+  // array row [1, 2], where an object row keeps only {A: 2}.
+  test("a duplicated column keeps both values, the repeat under a numbered name", async () => {
+    userQuery = async () => ({
+      rows: [[1, 2]],
+      rowCount: 1,
+      columns: [column("A", "Integer"), column("A", "Integer")],
+      diagnostics: [],
+    });
+    const provider = await connected();
+    const result = await provider.query("SELECT 1 AS A, 2 AS A FROM SYSIBM.SYSDUMMY1");
+
+    expect(result.fields).toEqual(["A", "A (2)"]);
+    expect(result.rows).toEqual([{ A: 1, "A (2)": 2 }]);
+    expect(result).not.toHaveProperty("warnings");
+  });
+
+  // K24, measured on 12.1.0.0 and 11.5.9.0 through 1.0.24 and 1.0.25: a value bound to a CLOB(1M)
+  // answers 0 changed rows and is not written, so a result holding one says the grid does not edit it.
+  test("a result holding a CLOB says the grid does not edit it (K24)", async () => {
+    userQuery = async () => ({
+      rows: [{ ID: 1, C_CLOB: "clob text" }],
+      rowCount: 1,
+      columns: [column("ID", "Integer"), column("C_CLOB", "VarChar(32777)")],
+      diagnostics: [],
+    });
+    const provider = await connected();
+    const result = await provider.query("SELECT ID, C_CLOB FROM APP.ALLTYPES");
+
+    expect(result.rows).toEqual([{ ID: 1, C_CLOB: "clob text" }]);
+    expect(result.warnings?.[0]?.message).toContain("does not edit C_CLOB (CLOB) inline");
+  });
+
+  // K16, fixed in 1.0.25: measured on 12.1.0.0 and 11.5.9.0, a BOOLEAN bound as the text "true" or
+  // "false", which is what the grid's inline editor sends, is stored as that boolean.
+  test("a BOOLEAN edit reaches the driver as the text the grid sends", async () => {
+    userQuery = async () => ({ rows: [], rowCount: 1, columns: [], diagnostics: [] });
+    const provider = await connected();
+    const result = await provider.query('UPDATE "APP"."FLAGS" SET "FLAG" = ? WHERE "ID" = ?', ["false", 1]);
+
+    expect(sent.at(-1)?.params).toEqual(["false", 1]);
+    expect(result.rowCount).toBe(1);
   });
 
   // db2-node 1.0.24 classifies a statement past its leading comments (K18) and binds a bigint
@@ -769,7 +844,11 @@ describe("Db2Provider: query", () => {
     const huge = BigInt(2) ** BigInt(63) - BigInt(1);
     await provider.query("-- note\n/* more */ SELECT A FROM T WHERE A = ?", [huge]);
 
-    expect(sent.at(-1)).toEqual({ sql: "-- note\n/* more */ SELECT A FROM T WHERE A = ?", params: [huge] });
+    expect(sent.at(-1)).toEqual({
+      sql: "-- note\n/* more */ SELECT A FROM T WHERE A = ?",
+      params: [huge],
+      options: { rowMode: "array" },
+    });
   });
 
   test("refuses an array parameter before anything is sent (M3)", async () => {
@@ -778,6 +857,52 @@ describe("Db2Provider: query", () => {
 
     await expect(provider.query("SELECT ?", [[1, 2]])).rejects.toBeInstanceOf(QueryError);
     expect(sent.length).toBe(before);
+  });
+
+  // K17, fixed in 1.0.25: measured on 12.1.0.0 and 11.5.9.0, a failure the driver raises itself
+  // carries a driverCode and no SQLSTATE, and its words alone used to decide its class.
+  test.each([
+    ["DB2_PARAMETER_TYPE", "Protocol error: DECIMAL parameter out of range for DECIMAL(5,2)", QueryError],
+    [
+      "DB2_PARAMETER_COUNT",
+      "Protocol error: parameter descriptor count 1 does not match parameter count 2",
+      QueryError,
+    ],
+  ] as const)("a %s failure is a QueryError carrying the driver's words and the statement", async (code, words) => {
+    userQuery = async () => {
+      throw Object.assign(new Error(words), { driverCode: code, code: "GenericFailure" });
+    };
+    const provider = await connected();
+    const error = (await provider
+      .query("VALUES CAST(? AS DECIMAL(5,2))", ["12345.67"])
+      .catch((e: unknown) => e)) as QueryError;
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(words);
+    expect(error.query).toBe("VALUES CAST(? AS DECIMAL(5,2))");
+  });
+
+  test.each(["DB2_PROTOCOL", "DB2_INVALID_OPTION"])(
+    "a %s failure is the driver's own, a plain DatabaseError whatever its words say",
+    async (code) => {
+      // "column" and "timeout" would each send the shared keyword mapping the wrong way.
+      userQuery = async () => {
+        throw Object.assign(new Error("Protocol error: column 3 reply timeout"), { driverCode: code });
+      };
+      const provider = await connected();
+      const error = (await provider.query("SELECT 1 FROM SYSIBM.SYSDUMMY1").catch((e: unknown) => e)) as Error;
+
+      expect(error.constructor).toBe(DatabaseError);
+      expect(error.message).toBe("Protocol error: column 3 reply timeout");
+    },
+  );
+
+  test("a driverCode this provider does not know falls to the shared mapping", async () => {
+    userQuery = async () => {
+      throw Object.assign(new Error("Query timeout after 5s"), { driverCode: "DB2_SOMETHING_NEW" });
+    };
+    const provider = await connected();
+    await expect(provider.query("SELECT 1 FROM SYSIBM.SYSDUMMY1")).rejects.toBeInstanceOf(TimeoutError);
   });
 
   test("a driver error is mapped with the statement", async () => {
@@ -838,12 +963,16 @@ describe("Db2Provider: prepareQuery", () => {
       { name: "C_BOOL", type: "BOOLEAN", nullable: true, isPrimary: false },
       { name: "C_TS0", type: "TIMESTAMP(0)", nullable: true, isPrimary: false },
       { name: "C_CLOB", type: "CLOB(1048576)", nullable: true, isPrimary: false },
+      { name: "C_DBCLOB", type: "DBCLOB(1024)", nullable: true, isPrimary: false },
+      { name: "C_BLOB", type: "BLOB(1048576)", nullable: true, isPrimary: false },
       { name: "C_XML", type: "XML", nullable: true, isPrimary: false },
     ]);
 
+    // K4 is fixed in 1.0.25, so XML is read beside the rest; a CLOB, DBCLOB or BLOB stays out,
+    // because db2-node writes nothing for a value bound to one (K24).
     expect(preview).toBe(
-      '-- Not read by this preview: "C_CLOB" CLOB(1048576), "C_XML" XML. db2-node can return a wrong value, or none, for a LOB or XML column read beside other columns; select each one on its own, as docs/providers/db2.md shows.\n' +
-        'SELECT "ID", "C_BIG", "C_VCHAR", "C_BOOL", "C_TS0" FROM "APP"."ALLTYPES";',
+      '-- Not read by this preview: "C_CLOB" CLOB(1048576), "C_DBCLOB" DBCLOB(1024), "C_BLOB" BLOB(1048576). db2-node writes nothing, and reports no error, for an inline edit of a CLOB, DBCLOB or BLOB column, so this preview does not offer one; select such a column in a query of your own to read it (docs/providers/db2.md, K24).\n' +
+        'SELECT "ID", "C_BIG", "C_VCHAR", "C_BOOL", "C_TS0", "C_XML" FROM "APP"."ALLTYPES";',
     );
     // The bound lands after the statement, and the leading comment goes to the driver as written.
     expect(provider.prepareQuery(preview, { limit: 50 }).query).toEndWith(

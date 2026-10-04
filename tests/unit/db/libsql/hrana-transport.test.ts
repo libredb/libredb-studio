@@ -345,6 +345,21 @@ describe("LibSQLHranaTransport value decoding", () => {
     expect(Array.from(decoded as Uint8Array)).toEqual([1, 2, 3]);
   });
 
+  test("decodes a blob as a Buffer, so the JSON that carries it to the browser still holds bytes", async () => {
+    // A plain Uint8Array serialises to `{"0":222,"1":173,...}`, an object no reader can
+    // tell from a document; a Buffer serialises to the form `asBytes` reads.
+    const decoded = await scalar({
+      type: "blob",
+      base64: Buffer.from([0xde, 0xad, 0xbe, 0xef, 0, 0xff]).toString("base64"),
+    });
+    expect(JSON.parse(JSON.stringify({ bin: decoded }))).toEqual({
+      bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0, 0xff] },
+    });
+    expect(JSON.parse(JSON.stringify({ bin: await scalar({ type: "blob", base64: "" }) }))).toEqual({
+      bin: { type: "Buffer", data: [] },
+    });
+  });
+
   test("passes an unrecognised value type through as null rather than inventing a reading", async () => {
     expect(await scalar({ type: "future-type", value: "x" })).toBeNull();
   });

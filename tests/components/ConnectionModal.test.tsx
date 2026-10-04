@@ -136,6 +136,7 @@ const mockSetApiKeySecret = mock(() => {});
 const mockSetSkipObjectScan = mock(() => {});
 const mockSetReadOnly = mock(() => {});
 const mockSetAllowInsecureAuth = mock(() => {});
+const mockSetDataServers = mock(() => {});
 const mockSetSaslMechanism = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
@@ -154,6 +155,8 @@ function getDefaultForm() {
     setReadOnly: mockSetReadOnly,
     allowInsecureAuth: false,
     setAllowInsecureAuth: mockSetAllowInsecureAuth,
+    dataServers: "",
+    setDataServers: mockSetDataServers,
     readOnlyOffered: false,
     credentialWarning: undefined as string | undefined,
     host: "localhost",
@@ -279,9 +282,15 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   qdrant: ["host", "port", "password"],
   influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
   influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
+  oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
 };
+/**
+ * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
+ * use it to draw the field under a declared label and hint that no shipped entry carries.
+ */
+let mockDeclaredFields: Record<string, string[]> = {};
 const mockFields = (type: string): string[] =>
-  MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
+  mockDeclaredFields[type] ?? MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
 
 /**
  * What a `DatabaseUIConfig` may declare about its connection fields: labels and hints keyed by
@@ -291,6 +300,7 @@ const mockFields = (type: string): string[] =>
 interface MockFieldCopy {
   readonly fieldLabels?: Readonly<Record<string, string>>;
   readonly fieldHints?: Readonly<Record<string, string>>;
+  readonly fieldPlaceholders?: Readonly<Record<string, string>>;
   readonly fieldOptions?: Readonly<Record<string, readonly { readonly value: string; readonly label: string }[]>>;
   readonly showSshTunnel?: false;
   readonly readOnlyHint?: string;
@@ -386,6 +396,24 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
     },
     readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
   },
+  // Mirrored from the real entry (SB3-1.5); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  oxia: {
+    fieldLabels: { password: "Token", database: "Namespace", dataServers: "Data servers" },
+    fieldPlaceholders: { database: "default" },
+    fieldHints: {
+      host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration.",
+      dataServers:
+        "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
+      allowInsecureAuth:
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
+    readOnlyHint:
+      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
+  },
 };
 
 /** Copy one test declares on top of the mirrored table, reset before every test. */
@@ -411,6 +439,8 @@ mock.module("@/lib/db-ui-config", () => ({
   connectionFieldLabel: (config: MockFieldCopy, field: string, fallback: string) =>
     config.fieldLabels?.[field] ?? fallback,
   connectionFieldHint: (config: MockFieldCopy, field: string) => config.fieldHints?.[field],
+  connectionFieldPlaceholder: (config: MockFieldCopy, field: string, fallback: string) =>
+    config.fieldPlaceholders?.[field] ?? fallback,
   readOnlyHint: (config: MockFieldCopy) =>
     config.readOnlyHint ??
     "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
@@ -466,6 +496,7 @@ describe("ConnectionModal", () => {
   beforeEach(() => {
     mockFormOverrides = {};
     mockDeclaredCopy = {};
+    mockDeclaredFields = {};
     mockSetType.mockClear();
     mockSetName.mockClear();
     mockSetQueryTimeout.mockClear();
@@ -475,6 +506,7 @@ describe("ConnectionModal", () => {
     mockSetShowSSL.mockClear();
     mockSetSaslMechanism.mockClear();
     mockSetReadOnly.mockClear();
+    mockSetDataServers.mockClear();
     mockHandleTestConnection.mockClear();
     mockHandleConnect.mockClear();
   });
@@ -567,13 +599,16 @@ describe("ConnectionModal", () => {
 
   test("offers Db2's consent to a cleartext password only while SSL Mode is disable, and forwards it (#786)", () => {
     mockFormOverrides = { type: "db2", sslMode: "disable" };
-    const { getByLabelText, queryByLabelText, rerender } = render(
+    const { container, getByLabelText, queryByLabelText, rerender } = render(
       React.createElement(ConnectionModal, createDefaultProps()),
     );
     const box = getByLabelText("Send the password without TLS") as HTMLInputElement;
 
     expect(box.checked).toBe(false);
     expect(box.getAttribute("aria-describedby")).toBe("allowInsecureAuth-hint");
+    expect(container.querySelector('[data-testid="allowInsecureAuth-hint"]')?.textContent).toBe(
+      "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    );
     fireEvent.click(box);
     expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(true);
 
@@ -588,6 +623,26 @@ describe("ConnectionModal", () => {
     mockFormOverrides = { type: "postgres", sslMode: "disable" };
     rerender(React.createElement(ConnectionModal, createDefaultProps()));
     expect(queryByLabelText("Send the password without TLS")).toBeNull();
+  });
+
+  test("the consent box draws the hint its type declares, and none where the type declares none", () => {
+    mockFormOverrides = { type: "db2", sslMode: "disable" };
+    mockDeclaredCopy = { fieldHints: { allowInsecureAuth: "Declared hint for allowInsecureAuth." } };
+    const { container, getByLabelText, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.querySelector("#allowInsecureAuth-hint")?.textContent).toBe(
+      "Declared hint for allowInsecureAuth.",
+    );
+    expect(getByLabelText("Send the password without TLS").getAttribute("aria-describedby")).toBe(
+      "allowInsecureAuth-hint",
+    );
+
+    // A type that takes the field and declares no hint draws the box with no sentence and no dangling reference.
+    mockFormOverrides = { type: "postgres", sslMode: "disable" };
+    mockDeclaredFields = { postgres: ["host", "port", "user", "password", "database", "allowInsecureAuth"] };
+    mockDeclaredCopy = {};
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.querySelector("#allowInsecureAuth-hint")).toBeNull();
+    expect(getByLabelText("Send the password without TLS").getAttribute("aria-describedby")).toBeNull();
   });
 
   test("warns about a cleartext Db2 password only while SSL Mode is disable", () => {
@@ -632,6 +687,27 @@ describe("ConnectionModal", () => {
       }
     },
   );
+
+  test("oxia draws Host, Port, Token, Namespace and Data servers, and no User box", () => {
+    mockFormOverrides = { type: "oxia", sslMode: "disable" };
+    const { container, getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    for (const field of ["host", "port", "password", "database", "dataServers"]) {
+      expect(container.querySelector(`#${field}`)).not.toBeNull();
+    }
+    expect(container.querySelector("#user")).toBeNull();
+    expect(container.querySelector('label[for="password"]')?.textContent).toBe("Token");
+    expect(container.querySelector('label[for="database"]')?.textContent).toBe("Namespace");
+    expect(container.querySelector('label[for="dataServers"]')?.textContent).toBe("Data servers");
+    // The Namespace box shows what an empty one means, not the dialog's "db" (ruling R34).
+    expect((container.querySelector("#database") as HTMLInputElement | null)?.placeholder).toBe("default");
+    // The consent box under SSL Mode disable, with Oxia's own sentence under it.
+    expect(getByLabelText("Send the password without TLS").getAttribute("aria-describedby")).toBe(
+      "allowInsecureAuth-hint",
+    );
+    expect(container.querySelector("#allowInsecureAuth-hint")?.textContent).toBe(
+      MOCK_FIELD_COPY.oxia.fieldHints?.allowInsecureAuth,
+    );
+  });
 
   test("shows the saved query timeout when editing", () => {
     mockFormOverrides = { isEditMode: true, queryTimeout: "120000" };
@@ -1517,6 +1593,8 @@ describe("ConnectionModal", () => {
       "apiKeyId",
       "apiKeySecret",
       "saslMechanism",
+      "allowInsecureAuth",
+      "dataServers",
     ] as const;
 
     /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */
@@ -1559,8 +1637,8 @@ describe("ConnectionModal", () => {
       ["mysql", "mysql", {}, NETWORKED, {}],
       ["redis", "redis", {}, NETWORKED, {}],
       ["oracle", "oracle", {}, NETWORKED, {}],
-      // No password hint (#1303); the consent box's hint is drawn by the consent test above, not as a field hint.
-      ["db2", "db2", {}, NETWORKED, {}],
+      // No password hint (#1303): the one declared hint is the consent box's, drawn while SSL Mode is disable.
+      ["db2", "db2", {}, NETWORKED, MOCK_FIELD_COPY.db2.fieldHints ?? {}],
       ["mssql", "mssql", {}, NETWORKED, {}],
       ["clickhouse", "clickhouse", {}, NETWORKED, {}],
       ["mongodb", "mongodb", {}, { ...NETWORKED, authSource: "Authentication Database" }, {}],
@@ -1627,17 +1705,13 @@ describe("ConnectionModal", () => {
         { host: "Host & Instance", password: "API key or JWT" },
         MOCK_FIELD_COPY.qdrant.fieldHints ?? {},
       ],
-      // The consent box's hint is drawn by the consent test, not as a field hint (InfluxDB spec A.3).
+      // Every declared hint, the consent box's among them: the default form's SSL Mode is disable (InfluxDB spec A.3).
       [
         "influxdb",
         "influxdb",
         {},
         { ...NETWORKED, password: "Password or token" },
-        {
-          host: MOCK_FIELD_COPY.influxdb.fieldHints?.host ?? "",
-          password: MOCK_FIELD_COPY.influxdb.fieldHints?.password ?? "",
-          database: MOCK_FIELD_COPY.influxdb.fieldHints?.database ?? "",
-        },
+        MOCK_FIELD_COPY.influxdb.fieldHints ?? {},
       ],
       // No User box: InfluxDB 3's token is the password.
       [
@@ -1645,11 +1719,16 @@ describe("ConnectionModal", () => {
         "influxdb3",
         {},
         { host: "Host & Instance", password: "Token", database: "Database Name" },
-        {
-          host: MOCK_FIELD_COPY.influxdb3.fieldHints?.host ?? "",
-          password: MOCK_FIELD_COPY.influxdb3.fieldHints?.password ?? "",
-          database: MOCK_FIELD_COPY.influxdb3.fieldHints?.database ?? "",
-        },
+        MOCK_FIELD_COPY.influxdb3.fieldHints ?? {},
+      ],
+      // No User box: Oxia has no user name (SB3-1.5). The default form's SSL Mode is disable, so the consent box and
+      // its hint are drawn too.
+      [
+        "oxia",
+        "oxia",
+        {},
+        { host: "Host & Instance", password: "Token", database: "Namespace", dataServers: "Data servers" },
+        MOCK_FIELD_COPY.oxia.fieldHints ?? {},
       ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
@@ -1800,6 +1879,39 @@ describe("ConnectionModal", () => {
       expect(queryByText(/turso db tokens create/)).not.toBeNull();
       expect(queryByText("Auth Token")).not.toBeNull();
     });
+
+    test("draws the Data servers box only for a type that takes the field, labelled and hinted from its declaration", () => {
+      mockFormOverrides = { type: "etcd", dataServers: "a.internal:6648" };
+      mockDeclaredFields = { etcd: ["host", "port", "user", "password", "dataServers"] };
+      mockDeclaredCopy = {
+        fieldLabels: { dataServers: "Declared label for dataServers" },
+        fieldHints: { dataServers: "Declared hint for dataServers." },
+      };
+      const { container, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+      const box = container.querySelector("#dataServers") as HTMLInputElement;
+      expect(box.value).toBe("a.internal:6648");
+      expect(box.getAttribute("autocomplete")).toBe("off");
+      expect(box.getAttribute("spellcheck")).toBe("false");
+      expect(box.getAttribute("aria-describedby")).toBe("dataServers-hint");
+      expect(container.querySelector('label[for="dataServers"]')?.textContent).toBe("Declared label for dataServers");
+      expect(container.querySelector('[data-testid="dataServers-hint"]')?.textContent).toBe(
+        "Declared hint for dataServers.",
+      );
+      fireEvent.change(box, { target: { value: "b.internal:6648" } });
+      expect(mockSetDataServers).toHaveBeenCalledWith("b.internal:6648");
+
+      // With no declared copy the dialog's own word labels it and no hint is drawn.
+      mockDeclaredCopy = {};
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect(container.querySelector('label[for="dataServers"]')?.textContent).toBe("Data servers");
+      expect(container.querySelector("#dataServers")?.getAttribute("aria-describedby")).toBeNull();
+
+      // Another engine draws no such box.
+      mockFormOverrides = { type: "postgres" };
+      mockDeclaredFields = {};
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect(container.querySelector("#dataServers")).toBeNull();
+    });
   });
 });
 
@@ -1811,6 +1923,7 @@ describe("ConnectionModal: the Host box address and the credential warning", () 
   beforeEach(() => {
     mockFormOverrides = {};
     mockDeclaredCopy = {};
+    mockDeclaredFields = {};
     mockSetHost.mockClear();
     mockSettleHost.mockClear();
     mockTakeHostAddress.mockReset();

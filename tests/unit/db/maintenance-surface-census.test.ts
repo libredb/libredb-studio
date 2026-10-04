@@ -20,11 +20,11 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  * monitoring Tables tab (`MAINTENANCE_ACTIONS`) over the same five candidates in the same order, and both row menus
  * over `analyze` and the provider's `vacuumActionOperation` redirect. The table below is the one measured over these
  * questions at `42050550` (R46 C3): ten type-ids offer per-row controls on the two tabs, nine on the row menus, and
- * none declares a per-row operation outside `MaintenanceType`. Four type-ids joined after that measurement: `neo4j`
- * (#1239) offers none, `db2` (#1238) offers analyze and optimize on both, `qdrant` (vector-family spec 6.7)
- * offers none, since it declares no maintenance, and `milvus` (vector-family spec 5.8) offers Load and Release per
- * collection, the first per-row operations outside `MaintenanceType`, which the surfaces offer through
- * `declaredEntityOperations` rather than through these questions. Db2 also names the kinds its two
+ * none declares a per-row operation outside `MaintenanceType`. Five type-ids joined after that measurement: `neo4j`
+ * (#1239) offers none, `db2` (#1238) offers analyze and optimize on both, `qdrant` (vector-family spec 6.7) and
+ * `oxia` (SB3-1.3) offer none, since neither declares maintenance, and `milvus` (vector-family spec 5.8) offers
+ * Load and Release per collection, the first per-row operations outside `MaintenanceType`, which the surfaces
+ * offer through `declaredEntityOperations` rather than through these questions. Db2 also names the kinds its two
  * operations run on, which these questions do not pass: they ask as a table row does. Nothing here connects:
  * `CENSUS_CONNECTION` builds each provider unconnected, and `getCapabilities()` and `getLabels()` are declarations.
  */
@@ -101,6 +101,7 @@ const EXPECTED: Readonly<Record<DatabaseType, SurfaceRow>> = {
   // Neither offers maintenance (InfluxDB spec I1): both declare `supportsMaintenance: false`.
   influxdb: NONE,
   influxdb3: NONE,
+  oxia: NONE,
   libredb: NONE,
 };
 
@@ -114,9 +115,9 @@ describe("every shipped provider's per-row maintenance controls (R46 C3)", () =>
     expect(surfacesOf(provider.getCapabilities(), provider.getLabels())).toEqual(EXPECTED[type]);
   });
 
-  test("11 of 26 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
+  test("11 of 27 type-ids offer per-row controls on the two tabs, 10 on the row menus, one outside MaintenanceType", () => {
     const rows = Object.values(EXPECTED);
-    expect(rows.length).toBe(26);
+    expect(rows.length).toBe(27);
     expect(rows.filter((row) => row.tabs !== "").length).toBe(11);
     expect(rows.filter((row) => row.tree !== "").length).toBe(10);
     expect(rows.filter((row) => row.outsideMaintenanceType !== "").length).toBe(1);
