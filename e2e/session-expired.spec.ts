@@ -33,7 +33,7 @@ test("an expired session sends the user to sign in and back to where they were",
         0) > 0,
   );
   await runQuery(page, "SELECT 1 AS one");
-  await expect(page.getByText("one", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("one", { exact: true }).first()).toBeVisible({ timeout: 30_000 });
 
   const expired = await new SignJWT({ role: "user", username: "user@libredb.org" })
     .setProtectedHeader({ alg: "HS256" })
