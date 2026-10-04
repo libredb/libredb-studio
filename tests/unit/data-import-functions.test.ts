@@ -517,6 +517,43 @@ describe("generateImportSQL", () => {
     expect(insertCount).toBe(3);
   });
 
+  // CQL's INSERT takes one row: on Cassandra 5.0.9 a two-row VALUES list answered "line 3:17
+  // mismatched input ',' expecting EOF" and inserted nothing (#1410).
+  test("writes one INSERT per row where the engine declares no multi-row insert", () => {
+    const cql = {
+      queryLanguage: "sql",
+      defaultPort: 9042,
+      supportsCreateTable: false,
+      supportsMultiRowInsert: false,
+      objectKinds: [{ id: "table", label: "Table", labelPlural: "Tables", acceptsRowWrites: true }],
+    } as unknown as ProviderCapabilities;
+    const data: ParsedData = {
+      headers: ["id", "v"],
+      rows: [
+        ["10", "on"],
+        ["11", "on bir, x"],
+      ],
+      totalRows: 2,
+    };
+    const target: ImportTarget = { kind: "existing", path: ["shop", "e2e_t"] };
+    expect(generateImportSQL(data, target, {}, "cassandra", cql)).toBe(
+      "INSERT INTO shop.e2e_t (id, v)\nVALUES\n  (10, 'on');\n\n" +
+        "INSERT INTO shop.e2e_t (id, v)\nVALUES\n  (11, 'on bir, x');",
+    );
+  });
+
+  test("an explicit multi-row declaration keeps the batches of 100", () => {
+    const rows = Array.from({ length: 150 }, (_, i) => [String(i)]);
+    const data: ParsedData = { headers: ["id"], rows, totalRows: 150 };
+    const caps = {
+      queryLanguage: "sql",
+      defaultPort: 5432,
+      supportsMultiRowInsert: true,
+    } as unknown as ProviderCapabilities;
+    const sql = generateImportSQL(data, existing("items"), { id: "id" }, "postgres", caps);
+    expect((sql.match(/INSERT INTO/g) || []).length).toBe(2);
+  });
+
   test("falls back to header name when mapping is empty", () => {
     const sql = generateImportSQL(sampleData, existing("users"), {});
     expect(sql).toContain("name, age, active");

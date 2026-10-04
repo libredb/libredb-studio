@@ -357,6 +357,7 @@ No kind declares `acceptsSourceEdits` or `acceptsRowWrites`: there is no source 
 | Storage stats | none | Bolt reports no store size |
 
 The transactions read names its columns, never the `parameters` column, which can hold a secret, and never `YIELD *`.
+Each `elapsedTime` is read as an ISO 8601 duration of days and time, a sign allowed on each component, and a negative total is shown as 0 ms (#1416): Neo4j 2026.09.0 reported a just-started transaction as `PT-0.001000000S` on about one Sessions load in three, and refusing that value dropped the whole panel. Any other text in that column still refuses the panel, naming the column.
 Each label in a count statement is backticked by the quoting module and checked by the read policy before it runs; a label the quoting refuses is left out, and the server log names every label left out, since the table stats have no field to say so.
 The monitoring reads run through the same READ session path without the user's policy, and a unit test checks every one against the policy: every monitoring read but the transactions read passes it.
 The transactions read stays out of the user allowlist (section 3.2), since a user's `SHOW TRANSACTIONS YIELD *` returns other sessions' query text and parameters, and the monitoring read keeps a fixed column list that names no `parameters` column.

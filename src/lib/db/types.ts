@@ -1166,6 +1166,25 @@ export interface ProviderCapabilities {
    */
   statementTerminator?: "none";
   /**
+   * Whether the grammar takes a constant predicate such as `WHERE 1=1` (#1410).
+   *
+   * Absent means it does, which is every SQL engine the generators served before #1410: "Generate
+   * Query" writes `WHERE 1=1` as a place to type a filter. `false` says the grammar has no such
+   * predicate, so the generator writes no WHERE clause at all. Measured on Cassandra 5.0.9 and
+   * ScyllaDB 2026.3.2: `SELECT ... FROM shop.customers WHERE 1=1 LIMIT 100;` answers "line 24:6 no
+   * viable alternative at input '1'", because a CQL predicate names a column.
+   */
+  supportsConstantPredicate?: boolean;
+  /**
+   * Whether one INSERT may carry several rows in its VALUES list (#1410).
+   *
+   * Absent means it may, and the import builder writes up to 100 rows per INSERT. `false` says an
+   * INSERT takes exactly one row, so the builder writes one statement per row. Measured on Cassandra
+   * 5.0.9: `INSERT INTO shop.e2e_t (id, v, n) VALUES (10, 'on', 100), (11, 'x', 110);` answers
+   * "line 3:17 mismatched input ',' expecting EOF" and inserts nothing.
+   */
+  supportsMultiRowInsert?: boolean;
+  /**
    * How a preview reads each column, for an engine whose driver misreads some column types
    * when they are selected as they are (#786).
    *

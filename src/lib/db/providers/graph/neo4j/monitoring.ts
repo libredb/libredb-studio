@@ -94,18 +94,25 @@ export function toOverview(input: Neo4jOverviewInput): DatabaseOverview {
   };
 }
 
-/** Days, hours, minutes and seconds: the form Neo4j writes a transaction's elapsed time in. */
-const ELAPSED = /^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/;
+/**
+ * Days, hours, minutes and seconds: the form Neo4j writes a transaction's elapsed time in. Each component may
+ * carry a `-`, since the driver writes a negative Duration's sign on the component (`PT-0.001000000S`).
+ */
+const ELAPSED = /^P(?:(-?\d+)D)?(?:T(?:(-?\d+)H)?(?:(-?\d+)M)?(?:(-?\d+(?:\.\d+)?)S)?)?$/;
 
 /**
  * An ISO 8601 duration of days and time to milliseconds; undefined for any other text, or one naming nothing
  * (`P`, `PT`). A trailing `T` after a day count is accepted, since the driver writes a whole-day Duration so.
+ *
+ * A negative total is 0 (#1416). Neo4j 2026.09.0 reported a just-started transaction's `elapsedTime` as
+ * `PT-0.001000000S`, its start and the read a millisecond apart on the server's clock, about one Sessions load
+ * in three; refusing it dropped the whole panel. A transaction cannot have run for less than nothing.
  */
 export function isoDurationMs(text: string): number | undefined {
   const match = ELAPSED.exec(text);
   if (match === null || text === "P" || text === "PT") return undefined;
   const [, days, hours, minutes, seconds] = match.map((part) => Number(part ?? 0));
-  return Math.round((((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000);
+  return Math.max(0, Math.round((((days * 24 + hours) * 60 + minutes) * 60 + seconds) * 1000));
 }
 
 /** One running transaction, its fields as `SHOW TRANSACTIONS` yields them, the elapsed time read. */

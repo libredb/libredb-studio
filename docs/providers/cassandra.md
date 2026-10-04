@@ -592,6 +592,8 @@ whatever the protocol declared rather than the DDL word. The schema tree reads
 | `CREATE MATERIALIZED VIEW …` | `Materialized views are disabled. Enable in cassandra.yaml to use.` |
 | `LIMIT 0` | `LIMIT must be strictly positive` |
 | `SELECT 1; SELECT 2;` | `mismatched input 'SELECT' expecting EOF` — one statement per request |
+| `SELECT … WHERE 1=1 LIMIT 100;` | `line 24:6 no viable alternative at input '1'`: a predicate names a column |
+| `INSERT INTO t (id, v) VALUES (10, 'a'), (11, 'b');` | `line 3:17 mismatched input ',' expecting EOF`: an INSERT carries one row |
 
 The four grammar facts in `src/lib/sql/grammar.ts` were all probed on this engine rather than read
 off a neighbour:
@@ -631,6 +633,16 @@ falls back to PostgreSQL's identity clause, which CQL does not have either), its
 (syntax errors — CQL types carry no length) and `INTEGER` and `JSONB` (`Unknown type`), and its NOT
 NULL, UNIQUE and DEFAULT options are each `no viable alternative at input`. DDL typed into the editor
 works normally.
+
+The last two rows of the [§5.4](#54-dialect-traps-a-user-will-hit) table are shapes the shared
+generators used to write here (#1410), and the provider now declares both away.
+`supportsConstantPredicate: false` makes **Generate Query** (on a table or a materialized view) write
+`SELECT <columns> FROM <keyspace>.<table> LIMIT 100;` with no `WHERE 1=1`, and
+`supportsMultiRowInsert: false` makes the **CSV/JSON import** into an existing table write one
+`INSERT` per row, which the editor sends through `/api/db/multi-query` one statement at a time.
+Measured on 5.0.9 on 2026-10-04 through the provider and the multi-query splitter: the generated
+select on a table runs, and a two-row import inserts both rows. ScyllaDB shares the provider and
+the declaration, and was not re-measured. An import into a **new** table stays withheld by `supportsCreateTable: false`.
 
 The **schema-diff migration generator refuses a Cassandra `CREATE TABLE` too**, for a second and
 independent reason. A CQL primary key is two things — the partition key, which places a row, and the
@@ -1174,6 +1186,8 @@ because there are no table statistics to list at all.)
   maintenanceOperations: [],
   supportsConnectionString: false,   // no URI carries localDataCenter (§4.2)
   defaultPort: 9042,
+  supportsConstantPredicate: false,  // `WHERE 1=1` is not CQL, so Generate Query writes no WHERE (§5.5, #1410)
+  supportsMultiRowInsert: false,     // an INSERT carries one row, so an import writes one per row (§5.5, #1410)
   schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\b",
   containerLevels: [{ id: "schema", label: "Keyspace", labelPlural: "Keyspaces" }], // one level: CQL has none above a keyspace and none below it (§6.4)
   containerPathShapes: "exact",      // only [keyspace] addresses a container; any other path is refused (§6.4, #1147)

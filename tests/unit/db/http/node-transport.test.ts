@@ -14,6 +14,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import {
   createNodeTransport,
+  IDLE_SOCKET_MS,
   type NodeRequest,
   type NodeResponse,
   type NodeTransport,
@@ -430,6 +431,42 @@ describe("bounded, stoppable and never resent", () => {
     expect((await transport.request(get(url("/")))).status).toBe(200);
     expect(listener.accepted()).toBe(2);
   });
+
+  // Qdrant closes an idle keep-alive socket after 5 s, and a request written on one as it closed was reset (#1419). The
+  // listener here keeps its sockets for 60 s, so the socket that closes is closed by the transport.
+  test(
+    "an idle pooled socket is closed by the transport after IDLE_SOCKET_MS, and the next request opens a new one",
+    async () => {
+      const listener = await httpListener((request, response, body) => {
+        request.socket.setKeepAlive(true);
+        jsonAnswer(200, "{}", { "keep-alive": "timeout=60" })(request, response, body);
+      });
+      const { transport, url } = connect(listener);
+      await transport.request(get(url("/")));
+      const answered = Date.now();
+      expect(listener.open()).toBe(1);
+      await eventually(() => listener.open() === 0, "the transport to close its idle socket", IDLE_SOCKET_MS + 2000);
+      const idle = Date.now() - answered;
+      expect(idle).toBeGreaterThanOrEqual(IDLE_SOCKET_MS - 100);
+      expect(idle).toBeLessThan(IDLE_SOCKET_MS + 900);
+      expect((await transport.request(get(url("/")))).status).toBe(200);
+      expect(listener.accepted()).toBe(2);
+    },
+    IDLE_SOCKET_MS + 6000,
+  );
+
+  test(
+    "an answer that takes longer than IDLE_SOCKET_MS still arrives: only an idle socket is closed",
+    async () => {
+      const listener = await httpListener((request, response, body) => {
+        setTimeout(() => jsonAnswer(200, '{"late":true}')(request, response, body), IDLE_SOCKET_MS + 500);
+      });
+      const { transport, url } = connect(listener);
+      const answer = await transport.request(get(url("/"), { signal: AbortSignal.timeout(IDLE_SOCKET_MS + 3000) }));
+      expect(answer.text).toBe('{"late":true}');
+    },
+    IDLE_SOCKET_MS + 6000,
+  );
 
   test("a refused connection is a network failure naming the runtime's code and no URL", async () => {
     const listener = await httpListener(jsonAnswer(200, "{}"));

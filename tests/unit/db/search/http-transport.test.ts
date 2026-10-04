@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
+import { SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 
 interface FetchCall {
@@ -131,5 +132,64 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ConnectionError);
+  });
+});
+
+// A 401/403 is a refused login only when its body says so or says nothing (#1413). Measured on
+// Elasticsearch 9.5.3: a SQL read of a closed index answers HTTP 403 with this body, and the
+// transport used to report it as "refused the credentials".
+const CLOSED_INDEX_REASON = "index [closed_idx] blocked by: [FORBIDDEN/4/index closed];";
+const CLOSED_INDEX_BODY = JSON.stringify({
+  error: {
+    root_cause: [{ type: "cluster_block_exception", reason: CLOSED_INDEX_REASON }],
+    type: "cluster_block_exception",
+    reason: CLOSED_INDEX_REASON,
+  },
+  status: 403,
+});
+const SECURITY_BODY = JSON.stringify({
+  error: {
+    type: "security_exception",
+    reason: "unable to authenticate user [nobody] for REST request [/_sql?format=json]",
+  },
+  status: 401,
+});
+
+describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s) 401 and 403 (#1413)", (dialect) => {
+  async function failureOf(status: number, body: string): Promise<SearchTransportError> {
+    handler = () => new Response(body, { status, headers: { "content-type": "application/json" } });
+    const caught = await new SearchHttpTransport(dialect, makeConnection(dialect))
+      .query("SELECT a FROM closed_idx")
+      .catch((error: unknown) => error);
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    return caught as SearchTransportError;
+  }
+
+  test("a 403 whose body is an engine fault is that fault, with the engine's reason", async () => {
+    const error = await failureOf(403, CLOSED_INDEX_BODY);
+
+    expect(error.category).toBe("engine");
+    expect(error.message).toBe(CLOSED_INDEX_REASON);
+  });
+
+  test("a 401 or 403 with a security fault in its body is a refused login", async () => {
+    for (const status of [401, 403]) {
+      const error = await failureOf(status, SECURITY_BODY);
+      expect(error.category).toBe("auth");
+      expect(error.message).toContain(`refused the credentials (HTTP ${status})`);
+    }
+  });
+
+  test("a 401 or 403 with no readable fault in its body stays a refused login", async () => {
+    for (const [status, body] of [
+      [401, ""],
+      [403, "Forbidden"],
+      [403, JSON.stringify({ error: "Unauthorized" })],
+      [401, JSON.stringify({ status: 401 })],
+      [403, JSON.stringify({ error: { reason: "no type" } })],
+    ] as const) {
+      const error = await failureOf(status, body);
+      expect(error.category).toBe("auth");
+    }
   });
 });

@@ -151,9 +151,16 @@ cannot read as a document with a string `operation` (mongosh syntax such as
 `serializeDocument()` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts)) recursively
 normalises BSON types so documents render in the JSON grid: `ObjectId` → string, `Decimal128` →
 string, `Date` → ISO-8601, `Binary` → `<Binary: N bytes>` (placeholder, not the raw bytes), and
-nested objects/arrays are walked recursively. **Only these types are special-cased** — other BSON
-types (`Long`, `Timestamp`, `UUID`, `RegExp`, `Code`, `DBRef`) fall through as generic objects and
-may render poorly ([Known limitations](#13-known-limitations--future-work)). A bigint or a `Double`
+nested objects/arrays are walked recursively, an array's entries by the same rules as a field. The
+rest of the BSON classes are shown as text too (#1423): a `Long` the driver keeps as one (past 2^53)
+→ its decimal digits, as other providers carry a 64-bit integer; a `Timestamp` →
+`Timestamp(t, i)`, the shell's spelling; a regular expression (native `RegExp` or `BSONRegExp`) →
+`/pattern/flags`; a subtype-4 `Binary` of 16 bytes (a UUID) → its dashed hex; an `Int32` → its
+number; and every other class (`Code`, `MinKey`, `MaxKey`, `DBRef`, `BSONSymbol`) → its relaxed
+Extended JSON text, such as `{"$minKey":1}`. Before #1423, measured on `mongo:8.2.12`, a `Long`
+showed as `{"high":2097152,"low":1,"unsigned":false}`, a `Timestamp` the same way, a regular
+expression as `{}` and a UUID as `<Binary: 16 bytes>`. A class is recognised by the `_bsontype` its
+prototype carries, so a document's own field of that name stays data. A bigint or a `Double`
 is reached only by a write echoing a typed `_id` the statement sent, and renders as a number (a
 bigint past 2^53 as its digits) ([§3.1](#extended-json-in-the-query)).
 
@@ -184,8 +191,13 @@ Caveats baked into this approach:
   dot is walked the same way, as a nested path, so it profiles as absent.
 - **Arrays are named and left closed.** `items.sku` addresses one value *per array entry*, so it
   does not mean on an array what the same syntax means on a subdocument; listing it in a flat field
-  list would invite exactly that confusion. Date/ObjectId/Binary/Decimal128 are scalars here and
-  are never descended into.
+  list would invite exactly that confusion. Date, ObjectId, Binary, Decimal128 and every other
+  BSON class are scalars here and are never descended into (#1423): a `Long` is typed `long`, a
+  `Timestamp` `timestamp`, a regular expression `regex`, a UUID `uuid`, and the rest by MongoDB's
+  own `$type` alias (`int`, `double`, `javascript`, `symbol`, `minKey`, `maxKey`) or `dbRef`.
+  Before #1423 a `Long` and a `Timestamp` were typed `object`, so `big.high`, `big.low`,
+  `big.unsigned` and `ts.high` were listed and reached Generate Find, the profiler and the agent's
+  inventory.
 - **The field list is capped at `MAX_INFERRED_FIELDS = 200` per collection**, applied after the
   sort, so what survives is a deterministic prefix and `_id` always survives. Nesting multiplies:
   60 subdocuments of 10 fields each is 661 rows in the schema tree and 661 lines in an agent run's
@@ -1105,7 +1117,7 @@ serialization, schema inference, monitoring, and maintenance.
 Validation, connect/disconnect, capabilities, labels, `prepareQuery`, every `query` operation
 (find/aggregate/count/distinct/insert/update/delete), column inference, health, maintenance,
 overview, performance, slow queries, active sessions, table/index/storage stats, **BSON
-serialization** (ObjectId/Binary/Decimal128/Date/nested), **Extended JSON input** (the BSON values
+serialization** (ObjectId/Binary/Decimal128/Date/nested, and Long/Timestamp/RegExp/UUID with their inferred types, #1423), **Extended JSON input** (the BSON values
 every operation hands the driver, asserted on the arguments the mocked collection receives), `getMonitoringData`, and **every `ssl.mode`
 branch** asserted against the options object the `MongoClient` constructor received.
 
@@ -1212,9 +1224,8 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   ([§7.3](#73-a-database-size-nobody-published-is-absent-not-0-b)). *Future:* the same change the
   connection count and the byte figure got, which needs the two fields to become optional across all
   17 type-ids.
-- **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes, and only
-  a subset of BSON types are normalised (`Long`/`Timestamp`/`UUID`/`RegExp`/`Code`/`DBRef` render as
-  generic objects).
+- **`Binary` values are shown as a placeholder** (`<Binary: N bytes>`), not the raw bytes; a UUID
+  (subtype 4) is the exception and is shown as its dashed hex ([§3.2](#32-bson-serialization-for-the-grid)).
 - **`findOne` silently ignores `sort`/`skip`/`limit`** (only `projection` is honoured), so it cannot
   be used to fetch "the latest" document by sort.
 - **`aggregate` ignores `options.limit`/`skip`** and has no safety cap — only an in-pipeline

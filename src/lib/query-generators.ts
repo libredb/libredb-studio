@@ -1109,7 +1109,9 @@ export function generateSelectQuery(
   if (capabilities.defaultPort === 1433) {
     return `SELECT TOP 100\n${cols}\nFROM ${table}\nWHERE 1=1;`;
   }
-  return `SELECT\n${cols}\nFROM ${table}\nWHERE 1=1\nLIMIT 100${terminator(capabilities)}`;
+  // A grammar with no constant predicate (CQL, #1410) gets no WHERE clause rather than one it refuses.
+  const where = capabilities.supportsConstantPredicate === false ? "" : "\nWHERE 1=1";
+  return `SELECT\n${cols}\nFROM ${table}${where}\nLIMIT 100${terminator(capabilities)}`;
 }
 
 /** Prepare an editable count statement, without a row limit or any execution (#702). */

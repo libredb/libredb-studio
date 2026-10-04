@@ -240,9 +240,10 @@ export function generateImportSQL(
     statements.push(`CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`);
   }
 
-  // INSERT statements (batch in groups of 100)
+  // INSERT statements, in groups of 100 rows, or one row each where the engine's INSERT takes
+  // a single row (CQL, #1410).
   const mappedHeaders = parsedData.headers.map((h) => columnMapping[h] || h);
-  const batchSize = 100;
+  const batchSize = capabilities?.supportsMultiRowInsert === false ? 1 : 100;
 
   for (let i = 0; i < parsedData.rows.length; i += batchSize) {
     const batch = parsedData.rows.slice(i, i + batchSize);

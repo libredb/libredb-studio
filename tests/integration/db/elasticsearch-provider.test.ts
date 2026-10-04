@@ -476,6 +476,13 @@ const MISSING_INDEX = engineFault(
   "Found 1 problem\nline 1:15: Unknown index [nope_missing]",
 );
 
+/** `SELECT a FROM closed_idx` after `POST closed_idx/_close` - HTTP 403 on 9.5.3 (#1413). */
+const CLOSED_INDEX = engineFault(
+  403,
+  "cluster_block_exception",
+  "index [closed_idx] blocked by: [FORBIDDEN/4/index closed];",
+);
+
 /** `SELECT nosuchfield FROM probe_orders` - HTTP 400, the same fault name. */
 const UNKNOWN_COLUMN = engineFault(
   400,
@@ -1877,6 +1884,19 @@ describe("ElasticsearchProvider error mapping", () => {
     denyEverything();
 
     await expect(provider.query("SELECT id FROM probe_orders")).rejects.toBeInstanceOf(AuthenticationError);
+  });
+
+  test("a 403 for a closed index is the engine's refusal, not a refused login (#1413)", async () => {
+    // Measured on 9.5.3 after `POST closed_idx/_close`: `SELECT a FROM closed_idx` answers
+    // HTTP 403 with this body, and the provider used to report refused credentials.
+    const provider = await connectProvider();
+    overrideSql(fail(403, CLOSED_INDEX));
+
+    const failure = provider.query("SELECT a FROM closed_idx");
+
+    await expect(failure).rejects.toBeInstanceOf(QueryError);
+    await expect(failure).rejects.not.toBeInstanceOf(AuthenticationError);
+    await expect(failure).rejects.toThrow("index [closed_idx] blocked by: [FORBIDDEN/4/index closed];");
   });
 
   test("a socket that never reached the cluster becomes a ConnectionError", async () => {

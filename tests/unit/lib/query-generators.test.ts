@@ -232,6 +232,28 @@ describe("generateSelectQuery — no statement terminator", () => {
 });
 
 // ============================================================================
+// generateSelectQuery: a grammar with no constant predicate (#1410)
+// ============================================================================
+
+describe("generateSelectQuery: no constant predicate (#1410)", () => {
+  // CQL has no constant predicate: measured on Cassandra 5.0.9 and ScyllaDB 2026.3.2,
+  // `SELECT ... FROM shop.customers WHERE 1=1 LIMIT 100;` answered "line 24:6 no viable
+  // alternative at input '1'".
+  test("writes no WHERE clause and keeps the bound and the terminator", () => {
+    const caps = makeCaps({ defaultPort: 9042, supportsConstantPredicate: false });
+    expect(generateSelectQuery(["shop", "customers"], sampleColumns, caps)).toBe(
+      "SELECT\n  id,\n  name\nFROM shop.customers\nLIMIT 100;",
+    );
+  });
+
+  test("an explicit true and an absent declaration both keep WHERE 1=1", () => {
+    for (const caps of [makeCaps({ supportsConstantPredicate: true }), makeCaps()]) {
+      expect(generateSelectQuery(["users"], sampleColumns, caps)).toContain("WHERE 1=1");
+    }
+  });
+});
+
+// ============================================================================
 // generateSelectQuery — LibreDB dialect
 // ============================================================================
 

@@ -1900,6 +1900,56 @@ describe("MongoDBProvider", () => {
       expect(typeof result.rows[0]._id).toBe("string");
     });
 
+    // Measured on MongoDB 8.2.12 (#1423): the grid showed `big` as `{"high":2097152,"low":1,"unsigned":false}`,
+    // `ts` the same way, `re` as `{}` and `uid` as `<Binary: 16 bytes>`. The values are the driver's own classes,
+    // as it reads them back: a Long past 2^53 stays a Long and a regular expression is a native RegExp.
+    test("Long, Timestamp, RegExp and UUID values are readable, alone, nested and in arrays (#1423)", async () => {
+      const { BSON } = realMongoDriver;
+      const big = BSON.Long.fromString("9007199254740993");
+      const ts = new BSON.Timestamp({ t: 1700000000, i: 1 });
+      const uid = new BSON.UUID("3b241101-e2bb-4255-8caf-4136c566a962");
+      mockCollectionData = [
+        {
+          big,
+          ts,
+          re: /ab+c/i,
+          bre: new BSON.BSONRegExp("x+", "m"),
+          uid,
+          i32: new BSON.Int32(7),
+          code: new BSON.Code("function () { return 1; }"),
+          min: new BSON.MinKey(),
+          other: new BSON.Binary(Buffer.from("abc"), 0),
+          short: new BSON.Binary(Buffer.from("abc"), BSON.Binary.SUBTYPE_UUID),
+          nested: { big, ts, at: new Date("2026-10-04T00:00:00.000Z") },
+          list: [big, uid, new MockObjectId("aaa"), [ts], { re: /z/g }],
+          // A document's own field named like the class marker is data, not a class.
+          own: { _bsontype: "Long", n: 1 },
+        },
+      ];
+      const result = await provider.query(JSON.stringify({ collection: "users", operation: "find", filter: {} }));
+      expect(result.rows[0]).toEqual({
+        big: "9007199254740993",
+        ts: "Timestamp(1700000000, 1)",
+        re: "/ab+c/i",
+        bre: "/x+/m",
+        uid: "3b241101-e2bb-4255-8caf-4136c566a962",
+        i32: 7,
+        code: '{"$code":"function () { return 1; }"}',
+        min: '{"$minKey":1}',
+        other: '{"$binary":{"base64":"YWJj","subType":"00"}}',
+        short: '{"$binary":{"base64":"YWJj","subType":"04"}}',
+        nested: { big: "9007199254740993", ts: "Timestamp(1700000000, 1)", at: "2026-10-04T00:00:00.000Z" },
+        list: [
+          "9007199254740993",
+          "3b241101-e2bb-4255-8caf-4136c566a962",
+          "aaa",
+          ["Timestamp(1700000000, 1)"],
+          { re: "/z/g" },
+        ],
+        own: { _bsontype: "Long", n: 1 },
+      });
+    });
+
     test("insertMany returns correct count", async () => {
       const result = await provider.query(
         JSON.stringify({
@@ -2408,6 +2458,36 @@ describe("object surface", () => {
     // MongoDB has no foreign key constraint at all, which is why the provider declares
     // `declaresForeignKeys: false`.
     expect(detail.foreignKeys).toEqual([]);
+  });
+
+  // A Long's `high`, `low` and `unsigned` and a Timestamp's were inferred as fields and reached Generate Find, the
+  // profiler and the agent's inventory (#1423). Every BSON class is a scalar to inference.
+  test("infers a BSON scalar as one field, never its internals (#1423)", async () => {
+    const { BSON } = realMongoDriver;
+    mockDocumentsByNs["app.customers"] = [
+      {
+        _id: new MockObjectId("c1"),
+        big: BSON.Long.fromString("9007199254740993"),
+        ts: new BSON.Timestamp({ t: 1700000000, i: 1 }),
+        re: /ab+c/i,
+        uid: new BSON.UUID("3b241101-e2bb-4255-8caf-4136c566a962"),
+        min: new BSON.MinKey(),
+        weird: Object.create({ _bsontype: "Unlisted" }),
+        address: { city: "Ankara" },
+      },
+    ];
+    const detail = await objectProvider.describeObject(["app", "customers"], "collection");
+    expect(detail.columns.map((c) => [c.name, c.type])).toEqual([
+      ["_id", "objectId"],
+      ["address", "object"],
+      ["address.city", "string"],
+      ["big", "long"],
+      ["min", "minKey"],
+      ["re", "regex"],
+      ["ts", "timestamp"],
+      ["uid", "uuid"],
+      ["weird", "Unlisted"],
+    ]);
   });
 
   test("describes a view with its fields and claims no indexes for it", async () => {
