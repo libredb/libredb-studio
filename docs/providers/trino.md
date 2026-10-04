@@ -635,6 +635,24 @@ it — the same reading the SQLite, Couchbase, ClickHouse and Druid strategies t
 
 ---
 
+### 5.7 What the SQL INSERT and DDL exports write
+
+Trino's INSERT coerces almost nothing from a quoted string: a `bigint`, `decimal`, `date`, `timestamp`, `json`, `array`, `map`, `uuid`, `varbinary` or `row` written as one is `Insert query has mismatched column types`.
+The SQL INSERT export reads each cell's declared type (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)) and writes:
+
+| Declared | Written as |
+|---|---|
+| `tinyint` to `bigint`, `double` | the number bare, a wide one from the text the wire carried; a `double` or `real` NaN or infinity as `DOUBLE 'NaN'`, `REAL '-Infinity'` |
+| `decimal`, `real`, `date`, `time`, `timestamp` (with or without zone), `json`, `uuid`, `ipaddress` | the type-prefixed literal, `DECIMAL '1.5'`, `TIMESTAMP '2024-12-31 23:59:59.999 Europe/Istanbul'`, `JSON '{"a":1}'` |
+| `varbinary` (base64 on the wire) | `X'0102ff'` |
+| `array`, `map`, `row` | `ARRAY[...]`, `MAP(ARRAY[...], ARRAY[...])` (`MAP()` when empty), `ROW(...)`, recursing through the element types |
+
+A composite that does not have its declared shape is skipped with a `-- Row N skipped` comment naming the column.
+
+Measured 2026-10-04 on Trino 483 (`memory` connector): a table of every type above, nested `array(array(integer))` and `map(varchar, row(x double, y array(varchar)))` included, was exported through the provider and replayed with the `trino` CLI into `CREATE TABLE ... AS SELECT * FROM src WITH NO DATA` and into the exported DDL's own table, and `EXCEPT` both ways answered no row once the one `timestamp(6)` column was left out. A second table of `double` and `real` NaN and infinities, an `array(double)` holding them and a `row(integer, timestamp(3) with time zone)` replayed to the same rows.
+That column differs because the result already carries milliseconds only, and the declared type reads `timestamp` rather than `timestamp(6)`: Trino answers both in that legacy form to a client that does not declare parametric datetime support.
+The DDL is lossless for those millisecond values, since a bare `timestamp` is `timestamp(3)` on Trino.
+
 ## 6. Schema introspection
 
 Two statements, run in parallel against the pinned catalog's `information_schema`: the table list and

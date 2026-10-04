@@ -248,6 +248,84 @@ function serializeBigInt(value: unknown): unknown {
   return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
 }
 
+/**
+ * The BSON class a driver value is an instance of, read from the `_bsontype` every BSON class
+ * carries. Read by NAME and not by `instanceof` for the reason `isMongoServerError` gives: the
+ * integration suite replaces the driver module, so only a name is the same on both sides.
+ */
+function bsonTypeOf(value: object): string | undefined {
+  // A BSON class declares it on its prototype; a document's own field of that name is data.
+  if (Object.hasOwn(value, "_bsontype")) return undefined;
+  const name = (value as { _bsontype?: unknown })._bsontype;
+  return typeof name === "string" ? name : undefined;
+}
+
+/** The Binary subtype of a UUID (BSON spec, subtype 4). */
+const BINARY_SUBTYPE_UUID = 4;
+
+/** A UUID in its dashed hex form, or null for any other value, a subtype-4 Binary of another length included. */
+function uuidText(value: object): string | null {
+  if (bsonTypeOf(value) !== "Binary") return null;
+  const binary = value as InstanceType<typeof mongodbDriver.BSON.Binary>;
+  if (binary.sub_type !== BINARY_SUBTYPE_UUID) return null;
+  const hex = binary.toString("hex");
+  if (hex.length !== 32) return null;
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** The type name schema inference gives each BSON class, MongoDB's own `$type` alias where there is one. */
+const BSON_TYPE_NAMES: Readonly<Record<string, string>> = {
+  Long: "long",
+  Timestamp: "timestamp",
+  BSONRegExp: "regex",
+  Int32: "int",
+  Double: "double",
+  Code: "javascript",
+  BSONSymbol: "symbol",
+  MinKey: "minKey",
+  MaxKey: "maxKey",
+  DBRef: "dbRef",
+  ObjectId: "objectId",
+  Decimal128: "decimal",
+  Binary: "binary",
+};
+
+/**
+ * The grid text of a BSON value the classic branches of `serializeDocument` do not know, or
+ * undefined for a value that is not a BSON class (#1423).
+ *
+ * Each of these used to fall through to the subdocument branch, which copies a value's own
+ * enumerable fields: measured on MongoDB 8.2.12, a Long above 2^53 showed as
+ * `{"high":2097152,"low":1,"unsigned":false}`, a Timestamp the same way, a regular expression
+ * as `{}` (its pattern lost) and a UUID as `<Binary: 16 bytes>`. A Long is its decimal digits,
+ * as other providers carry a 64-bit integer; a Timestamp is `Timestamp(t, i)`, the shell's own
+ * spelling; a regular expression is `/pattern/flags`; a UUID is its dashed hex, read before this
+ * by `uuidText`. Every other BSON class (Code, MinKey, MaxKey, DBRef, BSONSymbol) is its relaxed
+ * Extended JSON text.
+ */
+function bsonScalarText(value: object): string | number | undefined {
+  // The driver reads a BSON regular expression back as a native RegExp unless asked otherwise.
+  if (value instanceof RegExp) return String(value);
+  switch (bsonTypeOf(value)) {
+    case undefined:
+      return undefined;
+    case "Long":
+      return String(value);
+    case "Timestamp": {
+      const timestamp = value as InstanceType<typeof mongodbDriver.BSON.Timestamp>;
+      return `Timestamp(${timestamp.t}, ${timestamp.i})`;
+    }
+    case "BSONRegExp": {
+      const regexp = value as InstanceType<typeof mongodbDriver.BSON.BSONRegExp>;
+      return `/${regexp.pattern}/${regexp.options}`;
+    }
+    case "Int32":
+      return Number(value.valueOf());
+    default:
+      return mongodbDriver.BSON.EJSON.stringify(value, { relaxed: true });
+  }
+}
+
 function joinPath(path: string, key: string): string {
   return path === "" ? key : `${path}.${key}`;
 }
@@ -1212,36 +1290,31 @@ export class MongoDBProvider extends BaseDatabaseProvider {
 
   private serializeDocument(doc: Document): Record<string, unknown> {
     const serialized: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(doc)) {
-      if (value === null || value === undefined) {
-        serialized[key] = value;
-      } else if (typeof value === "object") {
-        if (value instanceof ObjectId) {
-          serialized[key] = value.toString();
-        } else if (value instanceof Binary) {
-          serialized[key] = `<Binary: ${value.length()} bytes>`;
-        } else if (value instanceof Decimal128) {
-          serialized[key] = value.toString();
-        } else if (value instanceof Date) {
-          serialized[key] = value.toISOString();
-        } else if (value instanceof mongodbDriver.BSON.Double) {
-          // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
-          // `_id`) is a Double here: the driver promotes every double it reads to a number.
-          serialized[key] = value.valueOf();
-        } else if (Array.isArray(value)) {
-          serialized[key] = value.map((v) =>
-            typeof v === "object" && v !== null ? this.serializeDocument(v) : serializeBigInt(v),
-          );
-        } else {
-          serialized[key] = this.serializeDocument(value as Document);
-        }
-      } else {
-        serialized[key] = serializeBigInt(value);
-      }
-    }
-
+    for (const [key, value] of Object.entries(doc)) serialized[key] = this.serializeValue(value);
     return serialized;
+  }
+
+  /**
+   * One value as the grid shows it. An array's entries go through the same rules as a field's
+   * (#1423): an ObjectId, a Date or a Long inside an array used to be copied field by field.
+   */
+  private serializeValue(value: unknown): unknown {
+    if (value === null || value === undefined) return value;
+    if (typeof value !== "object") return serializeBigInt(value);
+    if (value instanceof ObjectId) return value.toString();
+    // Before the Binary branch: a UUID is a subtype-4 Binary, and its hex is what identifies it.
+    const uuid = uuidText(value);
+    if (uuid !== null) return uuid;
+    if (value instanceof Binary) return `<Binary: ${value.length()} bytes>`;
+    if (value instanceof Decimal128) return value.toString();
+    if (value instanceof Date) return value.toISOString();
+    // Only an echo of what the statement wrote (`insertedId` of a `$numberDouble`
+    // `_id`) is a Double here: the driver promotes every double it reads to a number.
+    if (value instanceof mongodbDriver.BSON.Double) return value.valueOf();
+    if (Array.isArray(value)) return value.map((entry) => this.serializeValue(entry));
+    const scalar = bsonScalarText(value);
+    if (scalar !== undefined) return scalar;
+    return this.serializeDocument(value as Document);
   }
 
   // ============================================================================
@@ -1322,9 +1395,16 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     if (Array.isArray(value)) return "array";
     if (value instanceof Date) return "date";
     if (value instanceof ObjectId) return "objectId";
+    if (typeof value === "object" && uuidText(value) !== null) return "uuid";
     if (value instanceof Binary) return "binary";
     if (value instanceof Decimal128) return "decimal";
-    if (typeof value === "object") return "object";
+    if (value instanceof RegExp) return "regex";
+    // Every BSON class is a scalar, so inference never descends into a Long's `high` and `low`
+    // or a Timestamp's (#1423). An unlisted class keeps its own name, still a scalar.
+    if (typeof value === "object") {
+      const bsonType = bsonTypeOf(value);
+      return bsonType === undefined ? "object" : (BSON_TYPE_NAMES[bsonType] ?? bsonType);
+    }
     return typeof value;
   }
 

@@ -20,6 +20,7 @@ import type {
   DatabaseType,
   DatabaseConnection,
   QueryResult,
+  QueryWarning,
   ColumnSchema,
   IndexSchema,
   ForeignKeySchema,
@@ -318,6 +319,68 @@ export function maintenanceControl(
     ...(spec.confirmation === undefined ? {} : { confirmation: spec.confirmation }),
     ...(spec.preview === undefined ? {} : { preview: spec.preview }),
   };
+}
+
+/** The placements of one maintenance operation a connected server accepted, as a provider measured them (#1387). */
+export type MeasuredMaintenancePlacements = Readonly<Record<MaintenancePlacement, boolean>>;
+
+/** The maintenance half of `ProviderCapabilities`: the operations and how each is targeted. */
+export type MaintenanceDeclaration = Pick<ProviderCapabilities, "maintenanceOperations" | "maintenanceOperationSpecs">;
+
+/**
+ * A provider's declared maintenance narrowed to what the connected server accepted (#1387).
+ *
+ * The PostgreSQL and MySQL type ids each serve a family of wire-compatible engines, and the
+ * declaration is the engine-family default: CockroachDB, RisingWave, YugabyteDB, TiDB and Vitess
+ * each refuse part of it. A provider that measures its server at connect hands the answer here,
+ * one entry per operation it asked about, and the declaration loses every placement the server
+ * refused. An operation left with no placement leaves the list, so the gate both surfaces ask
+ * (`maintenanceControl`) offers it nowhere and the route refuses it before the engine is reached.
+ *
+ * An operation the measurement does not name keeps its declaration: `kill` takes a session id and
+ * no probe here can ask about it. `measured` undefined is "not measured", the unconnected provider
+ * `POST /api/db/provider-meta` reads, and answers the declaration unchanged.
+ */
+export function narrowMaintenance(
+  declared: Required<MaintenanceDeclaration>,
+  measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined,
+): Required<MaintenanceDeclaration> {
+  if (measured === undefined) return declared;
+  const maintenanceOperations: MaintenanceOperation[] = [];
+  const maintenanceOperationSpecs: Partial<Record<MaintenanceOperation, MaintenanceOperationSpec>> = {};
+  for (const operation of declared.maintenanceOperations) {
+    const spec = declared.maintenanceOperationSpecs[operation];
+    const accepted = measured[operation];
+    if (spec === undefined || accepted === undefined) {
+      maintenanceOperations.push(operation);
+      if (spec !== undefined) maintenanceOperationSpecs[operation] = spec;
+      continue;
+    }
+    const perEntity = spec.perEntity && accepted.perEntity;
+    const global = spec.global && accepted.global;
+    if (!perEntity && !global) continue;
+    maintenanceOperations.push(operation);
+    maintenanceOperationSpecs[operation] = { ...spec, perEntity, global };
+  }
+  return { maintenanceOperations, maintenanceOperationSpecs };
+}
+
+/**
+ * Declared capabilities with the CONNECTED provider's maintenance laid over them (#1387).
+ *
+ * The two maintenance surfaces read capabilities from `POST /api/db/provider-meta`, which never
+ * connects (#457), so it answers the type id's declaration and not what this server accepts.
+ * `POST /api/db/monitoring` does connect, and its payload carries the connected provider's
+ * maintenance declaration as `maintenance`; the tabs fed by it take that half from there. Either
+ * side absent answers the declared capabilities as they are, so an embedded host whose monitoring
+ * payload carries no `maintenance` sees exactly what it saw before.
+ */
+export function withConnectedMaintenance(
+  capabilities: ProviderCapabilities | undefined,
+  connected: MaintenanceDeclaration | undefined,
+): ProviderCapabilities | undefined {
+  if (capabilities === undefined || connected === undefined) return capabilities;
+  return { ...capabilities, ...connected };
 }
 
 /**
@@ -1104,6 +1167,26 @@ export interface ProviderCapabilities {
    */
   statementTerminator?: "none";
   /**
+   * Whether the grammar takes a constant predicate such as `WHERE 1=1` (#1410).
+   *
+   * Absent means it does, which is every SQL engine the generators served before #1410: "Generate
+   * Query" writes `WHERE 1=1` as a place to type a filter. `false` says the grammar has no such
+   * predicate, so the generator writes no WHERE clause at all. Measured on Cassandra 5.0.9 and
+   * ScyllaDB 2026.3.2: `SELECT ... FROM shop.customers WHERE 1=1 LIMIT 100;` answers "line 24:6 no
+   * viable alternative at input '1'", because a CQL predicate names a column.
+   */
+  supportsConstantPredicate?: boolean;
+  /**
+   * Whether one INSERT may carry several rows in its VALUES list (#1410).
+   *
+   * Absent means it may: the import builder writes up to 100 rows per INSERT and the Test Data
+   * Generator one INSERT for all its rows. `false` says an INSERT takes exactly one row, so both write
+   * one statement per row. Measured on Cassandra
+   * 5.0.9: `INSERT INTO shop.e2e_t (id, v, n) VALUES (10, 'on', 100), (11, 'x', 110);` answers
+   * "line 3:17 mismatched input ',' expecting EOF" and inserts nothing.
+   */
+  supportsMultiRowInsert?: boolean;
+  /**
    * How a preview reads each column, for an engine whose driver misreads some column types
    * when they are selected as they are (#786).
    *
@@ -1485,6 +1568,15 @@ export interface DatabaseProvider {
   connect(): Promise<void>;
 
   /**
+   * What the server cautioned while `connect()` opened the connection, in the server's own
+   * words; empty when it said nothing worth showing. A connect that succeeded is not always
+   * the connection asked for: Materialize accepts a session database that does not exist and
+   * reports it only as a startup NOTICE (#1401). Optional, because most engines have no such
+   * channel; `POST /api/db/test-connection` reads it when it is there.
+   */
+  connectWarnings?(): QueryWarning[];
+
+  /**
    * Close all connections and cleanup resources
    */
   disconnect(): Promise<void>;
@@ -1668,8 +1760,16 @@ export interface DatabaseProvider {
    * A kind that legitimately has no columns - a routine, a trigger, a sequence on some
    * engines - answers an empty `details` array without a round trip, exactly as
    * `describeObject` answers three empty arrays for one of them.
+   *
+   * `options` is the one sanctioned exception to "one round trip per container and kind",
+   * and it is OPT-IN for that reason: see `DescribeObjectsOptions`.
    */
-  describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
+  describeObjects(
+    container: readonly string[],
+    kind: string,
+    limit?: number,
+    options?: DescribeObjectsOptions,
+  ): Promise<ObjectDetailBatch>;
 
   /**
    * The definition text of ONE object, as a document of named parts (#789 Phase 2).
@@ -2161,6 +2261,16 @@ export interface MonitoringData {
   errors?: Partial<
     Record<"overview" | "performance" | "slowQueries" | "activeSessions" | "tables" | "indexes" | "storage", string>
   >;
+  /**
+   * The connected provider's maintenance declaration, added by `POST /api/db/monitoring` (#1387).
+   *
+   * What the server this connection reached accepts, measured at connect, where
+   * `POST /api/db/provider-meta` can only answer the type id's declaration. The Operations and
+   * monitoring Tables tabs lay it over the declared capabilities with `withConnectedMaintenance`.
+   * Optional: a provider's own `getMonitoringData` never sets it, and an embedded host's payload
+   * may not carry it.
+   */
+  maintenance?: MaintenanceDeclaration;
 }
 
 /**
@@ -2494,6 +2604,23 @@ export interface ObjectDetail {
   readonly columns: readonly ColumnSchema[];
   readonly indexes: readonly IndexSchema[];
   readonly foreignKeys: readonly ForeignKeySchema[];
+}
+
+/**
+ * What a `describeObjects` caller may ask for beyond the default read (#1031).
+ *
+ * `defaultSql` asks for `ColumnSchema.defaultExpression` on a provider whose catalog does not
+ * spell a default as SQL. MySQL is the one such provider today: its catalog reports the
+ * VALUE (`abc`, not `'abc'`) and truncates a binary default at its first zero byte, so the
+ * SQL text has to come from `SHOW CREATE TABLE`, ONE ROUND TRIP PER TABLE that has a default.
+ * Measured on MySQL 26.7.0: 5000 tables cost 2.35 s against 64 ms for the four-statement
+ * read, so about 100 s at a 20 ms round trip. That is why it is not the default. SchemaDiff
+ * asks, because a migration pastes the text and a snapshot must capture it when taken; the
+ * agent's inventory never asks, because it only reads. The caller's `limit` bounds the extra
+ * reads as it bounds the objects, and a provider whose catalog already spells SQL ignores it.
+ */
+export interface DescribeObjectsOptions {
+  readonly defaultSql?: boolean;
 }
 
 /**

@@ -530,9 +530,16 @@ Permission denied`, so nothing in it can even be read. The editor now asks first
 process can write the file and its directory (`isUnwritableExistingFile`, shared with the SQLite
 provider), and when it cannot, opens with `access_mode: 'READ_ONLY'`, logs
 `[DuckDB] Opened <path> read-only: this process cannot write the file or its directory`, and reads
-normally. A write is then refused by the engine:
-`Invalid Input Error: Cannot execute statement of type "INSERT" on database "<name>" which is attached
-in read-only mode!`.
+normally. A write is then refused by the engine, and the editor puts the reason in front of the
+engine's sentence (#1405), as the SQLite provider does:
+`DuckDB database <path> is open read-only because this process cannot write the file or its
+directory: Invalid Input Error: Cannot execute statement of type "INSERT" on database "<name>" which is
+attached in read-only mode!`. The reason is added only to that sentence as the engine words it,
+matched from its start, and only when the database it names is the editor's own file (its catalog
+name, read with `current_database()` at open): a write on another database `ATTACH`ed read-only, or
+the same words echoed inside a different error, keeps the engine's message alone. A file this
+process cannot even read still fails to open, with the
+engine's `Permission denied` in the ordinary `Failed to open DuckDB database <path>: ...` sentence.
 
 Only `access_mode` is added. This is still the editor, so `enable_external_access` stays on: the
 agent profile's sandbox (§3.10) is a different boundary for a different caller. The directory counts
@@ -643,6 +650,16 @@ form; the strategy publishes no timings and fabricates none. See §3.6 for the f
 §15 for why a later engine version does not change this.
 
 ---
+
+### What the SQL INSERT and DDL exports write
+
+`@duckdb/node-api` answers an INTERVAL as `{months, days, micros}`, a MAP as a list of `{key, value}` entries and a STRUCT as an object.
+Written as JSON, the INTERVAL and the MAP were `Conversion Error` on replay, so the SQL INSERT export reads the declared type (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)) and writes `INTERVAL '14 months 3 days 14706000001 microseconds'`, `MAP {'k': 1}` (`MAP {}` when empty), `{'a': 7, 'b': ['p']}` and `[1, 2, 3]`, recursing through the element types, with a number inside a container written bare.
+A quoted scalar (`'170141183460469231731687303715884105727'` into a `HUGEINT`) is left as it was, since DuckDB reads it back.
+The DDL keeps `STRUCT("a" INTEGER, "b" VARCHAR[])`, `INTEGER[3]`, `INTEGER[][]` and `MAP(INTEGER, VARCHAR[])` instead of writing `TEXT`.
+A composite that does not have its declared shape is skipped with a `-- Row N skipped` comment naming the column.
+
+Measured 2026-10-04 on DuckDB 1.5.5: a table of `INTERVAL`, `MAP(VARCHAR, INTEGER)`, `MAP(INTEGER, VARCHAR[])`, `INTEGER[]`, `VARCHAR[]` holding a quote and a comma, `STRUCT`, `HUGEINT`, `UBIGINT`, `DECIMAL(18,3)`, `TIMESTAMPTZ`, `TIMESTAMP_NS`, `UUID`, `BLOB`, an `ENUM`, `BIT`, `INTEGER[3]` and `INTEGER[][]` was exported through the provider and replayed into `CREATE TABLE copy AS SELECT * FROM src WHERE false` and into the exported DDL's own table, and `EXCEPT` both ways answered no row.
 
 ## 6. Schema introspection
 
@@ -1193,6 +1210,7 @@ message do not accidentally select an unrelated shared classification.
 |---|---|---|
 | `INTERRUPT Error` | `QueryCancelledError` | `Query was cancelled` |
 | Conflicting file lock | `ConnectionError` | `DuckDB file <path> is locked by <process>. DuckDB admits one operating-system process per database file, in read-only mode too, so the other process has to release it first. Engine message: <engine message>` |
+| A write in the editor on a file opened read-only because this process cannot write it (§3.15) | `QueryError` | `DuckDB database <path> is open read-only because this process cannot write the file or its directory: <engine message>` |
 | `Parser Error`, `Binder Error`, `Catalog Error`, `Conversion Error`, `Invalid Input Error`, `Constraint Error`, `Out of Range Error`, `Not implemented Error`, `Permission Error`, `Serialization Error`, `TransactionContext Error` | `QueryError` | The engine message, with the query attached when one is available |
 | Anything else | shared database error | `mapDatabaseError()` classifies the error using the common provider rules |
 

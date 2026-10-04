@@ -581,7 +581,9 @@ describeIf(
         await provider.connect();
 
         expect((await provider.query("SELECT count(*) AS n FROM users")).rows[0].n).toBe("2");
-        await expect(provider.query("INSERT INTO users VALUES (3, 'x')")).rejects.toThrow(/read-only mode/);
+        await expect(provider.query("INSERT INTO users VALUES (3, 'x')")).rejects.toThrow(
+          `DuckDB database ${file} is open read-only because this process cannot write the file or its directory: Invalid Input Error: Cannot execute statement of type "INSERT" on database "mode-0444" which is attached in read-only mode!`,
+        );
         expect(info.mock.calls.map(([message]) => String(message))).toContain(
           `[DuckDB] Opened ${file} read-only: this process cannot write the file or its directory`,
         );
@@ -591,6 +593,145 @@ describeIf(
         chmodSync(file, 0o644);
       }
       expect(digestOf(file)).toBe(before);
+    });
+
+    test("mode 0444 in a mode 0555 directory, as on a read-only mount: connects, reads, and names why a write is refused (#1405)", async () => {
+      const dir = join(workDir, "readonly-mount");
+      mkdirSync(dir);
+      const seeded = await seededFile("mount-src.duckdb");
+      const file = join(dir, "mounted.duckdb");
+      writeFileSync(file, readFileSync(seeded));
+      chmodSync(file, 0o444);
+      chmodSync(dir, 0o555);
+      const before = digestOf(file);
+      try {
+        provider = new DuckDBProvider(makeConfig({ database: file }));
+        await provider.connect();
+
+        expect((await provider.query("SELECT id, secret FROM users ORDER BY id")).rows).toEqual([
+          { id: 1, secret: "top" },
+          { id: 2, secret: "secret" },
+        ]);
+        await expect(provider.query("DELETE FROM users")).rejects.toThrow(
+          `DuckDB database ${file} is open read-only because this process cannot write the file or its directory: `,
+        );
+        await provider.disconnect();
+        expect(existsSync(`${file}.wal`)).toBe(false);
+      } finally {
+        if (provider?.isConnected()) await provider.disconnect();
+        chmodSync(dir, 0o755);
+        chmodSync(file, 0o644);
+      }
+      expect(digestOf(file)).toBe(before);
+    });
+
+    test("a file this process cannot even read still reports the permission problem, not a format one", async () => {
+      const file = await seededFile("mode-0000.duckdb");
+      chmodSync(file, 0o000);
+      try {
+        provider = new DuckDBProvider(makeConfig({ database: file }));
+
+        await expect(provider.connect()).rejects.toThrow(`Failed to open DuckDB database ${file}: `);
+        await expect(provider.connect()).rejects.toThrow(/Permission denied/);
+      } finally {
+        chmodSync(file, 0o644);
+      }
+    });
+
+    test("a writable file still opens read-write, with no read-only reason on its errors", async () => {
+      const file = await seededFile("writable.duckdb");
+      provider = new DuckDBProvider(makeConfig({ database: file }));
+      await provider.connect();
+
+      await provider.query("INSERT INTO users VALUES (3, 'x')");
+      expect((await provider.query("SELECT count(*) AS n FROM users")).rows[0].n).toBe("3");
+      await expect(provider.query("SELECT * FROM missing_table")).rejects.toThrow(/^Catalog Error/);
+    });
+
+    /** DuckDB's refusal of a write on `catalog`, as the engine words it. */
+    const engineRefusal = (catalog: string) =>
+      `Invalid Input Error: Cannot execute statement of type "INSERT" on database "${catalog}" which is attached in read-only mode!`;
+
+    test("on a writable file, a refusal from a database ATTACHed read-only is the engine's sentence alone", async () => {
+      const file = await seededFile("writable-main.duckdb");
+      const other = await seededFile("attached-other.duckdb");
+      provider = new DuckDBProvider(makeConfig({ database: file }));
+      await provider.connect();
+
+      await provider.query(`ATTACH '${other}' AS o (READ_ONLY)`);
+      const refusal = await provider.query("INSERT INTO o.users VALUES (3, 'x')").then(
+        () => null,
+        (error: unknown) => error as Error,
+      );
+      expect(refusal?.message.startsWith(engineRefusal("o"))).toBe(true);
+    });
+
+    test("the read-only reason does not outlive the handle: reconnected writable, the file takes writes and other refusals stay bare", async () => {
+      const dir = join(workDir, "remounted");
+      mkdirSync(dir);
+      const seeded = await seededFile("remount-src.duckdb");
+      const file = join(dir, "remounted.duckdb");
+      writeFileSync(file, readFileSync(seeded));
+      const other = await seededFile("remount-other.duckdb");
+      chmodSync(file, 0o444);
+      chmodSync(dir, 0o555);
+      provider = new DuckDBProvider(makeConfig({ database: file }));
+      try {
+        await provider.connect();
+        await expect(provider.query("INSERT INTO users VALUES (3, 'x')")).rejects.toThrow(/is open read-only because/);
+        await provider.disconnect();
+      } finally {
+        chmodSync(dir, 0o755);
+        chmodSync(file, 0o644);
+      }
+
+      await provider.connect();
+      await provider.query("INSERT INTO users VALUES (3, 'x')");
+      expect((await provider.query("SELECT count(*) AS n FROM users")).rows[0].n).toBe("3");
+      await provider.query(`ATTACH '${other}' AS o (READ_ONLY)`);
+      const refusal = await provider.query("INSERT INTO o.users VALUES (4, 'y')").then(
+        () => null,
+        (error: unknown) => error as Error,
+      );
+      expect(refusal?.message.startsWith(engineRefusal("o"))).toBe(true);
+    });
+
+    test("on a file opened read-only, the reason goes only on the engine's refusal of THAT file", async () => {
+      const dir = join(workDir, "readonly-scoped");
+      mkdirSync(dir);
+      const seeded = await seededFile("scoped-src.duckdb");
+      const file = join(dir, "scoped.duckdb");
+      writeFileSync(file, readFileSync(seeded));
+      const other = await seededFile("scoped-other.duckdb");
+      chmodSync(file, 0o444);
+      chmodSync(dir, 0o555);
+      provider = new DuckDBProvider(makeConfig({ database: file }));
+      const refusalOf = (sql: string) =>
+        provider.query(sql).then(
+          () => null,
+          (error: unknown) => error as Error,
+        );
+      try {
+        await provider.connect();
+
+        // The same words echoed in a different error are not the refusal.
+        const conversion = await refusalOf("SELECT 'which is attached in read-only mode'::INTEGER");
+        expect(conversion?.message.startsWith("Conversion Error")).toBe(true);
+
+        // A write on another database attached read-only is not about this file.
+        await provider.query(`ATTACH '${other}' AS o (READ_ONLY)`);
+        const attached = await refusalOf("INSERT INTO o.users VALUES (3, 'x')");
+        expect(attached?.message.startsWith(engineRefusal("o"))).toBe(true);
+
+        const own = await refusalOf("INSERT INTO users VALUES (3, 'x')");
+        expect(own?.message).toBe(
+          `DuckDB database ${file} is open read-only because this process cannot write the file or its directory: ${engineRefusal("scoped")}`,
+        );
+      } finally {
+        if (provider?.isConnected()) await provider.disconnect();
+        chmodSync(dir, 0o755);
+        chmodSync(file, 0o644);
+      }
     });
 
     test("a mode 0444 SQLite file is refused, and is not announced as opened read-only", async () => {

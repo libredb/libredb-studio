@@ -56,6 +56,7 @@ No `sql-*` module imports an `influxql-*` module, and no `influxql-*` module imp
 The constructor validates nothing and opens nothing, so a provider built from any connection answers its capabilities and labels.
 `connect()` builds the options, then reads `GET /ping` (and `GET /health` when `/ping` names no version), then the database listing, then settles the session database; each read shares one surface deadline, and a failure closes the client.
 `disconnect()` closes the client, which stops every request in flight.
+The shared transport closes a pooled socket left idle for 4 s itself, below a server keep-alive such as Qdrant's 5 s, so a request is never written on a socket the server is closing (#1419); a request in flight is not cut.
 The transport never goes through an `http_proxy` or `https_proxy` variable and never follows a redirect: use an SSH tunnel to reach a private endpoint.
 
 ## 3. Design decisions

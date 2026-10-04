@@ -1,4 +1,5 @@
 import { getBasePath, withBasePath } from "@/lib/config/base-path";
+import { safeReturnPath } from "@/lib/api/session-ended";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { login } from "@/lib/auth";
@@ -105,8 +106,10 @@ export async function GET(request: Request) {
       logger.error("Failed to record OIDC login_success audit event", auditError, { route: ROUTE });
     }
 
-    // Redirect based on role
-    return NextResponse.redirect(`${origin}${withBasePath(role === "admin" ? "/admin" : "/")}`);
+    // Back to the page the session ended on (#1420), checked again although the cookie is signed;
+    // otherwise by role.
+    const landing = safeReturnPath(oidcState.return_to) ?? (role === "admin" ? "/admin" : "/");
+    return NextResponse.redirect(`${origin}${withBasePath(landing)}`);
   } catch (error) {
     logger.error("OIDC callback error", error, { route: ROUTE });
     // Typed, not message substring matching: `error instanceof Error && error.message.includes(

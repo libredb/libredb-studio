@@ -38,6 +38,13 @@ export const ApiErrorCode = {
   LLM_STREAM: "LLM_STREAM",
   LLM_ERROR: "LLM_ERROR",
 
+  /**
+   * The request carries no session, or one that no longer verifies (#1420). Distinct from
+   * AUTH_ERROR, which is a database refusing its credentials while the Studio session is fine: the
+   * browser sends the user to sign in again for this code and only for this code.
+   */
+  AUTH_REQUIRED: "AUTH_REQUIRED",
+
   // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
   RATE_LIMITED: "RATE_LIMITED",
 

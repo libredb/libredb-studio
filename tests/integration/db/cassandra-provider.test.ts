@@ -518,6 +518,13 @@ describe("capabilities", () => {
     expect(capabilities.statementTerminator).toBeUndefined();
   });
 
+  test("no constant predicate and no multi-row INSERT, so the generators write neither (#1410)", () => {
+    // Measured on 5.0.9: `... WHERE 1=1 LIMIT 100;` is "no viable alternative at input
+    // '1'", and `INSERT ... VALUES (...), (...)` is "mismatched input ',' expecting EOF".
+    expect(capabilities.supportsConstantPredicate).toBe(false);
+    expect(capabilities.supportsMultiRowInsert).toBe(false);
+  });
+
   test("the schema tree reloads on the DDL that changes it", () => {
     const pattern = new RegExp(capabilities.schemaRefreshPattern, "i");
 

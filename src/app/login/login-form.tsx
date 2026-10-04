@@ -18,6 +18,7 @@ import { WireCompatibleLine } from "@/components/login/wire-compatible-line";
 import type { AuditReason } from "@/lib/audit";
 import type { PasskeySignInOffer } from "@/lib/passkey/api-types";
 import { passkeysUsableHere, signInWithPasskey } from "@/lib/passkey/client";
+import { RETURN_PATH_PARAM, safeReturnPath } from "@/lib/api/session-ended";
 
 /**
  * The agent half of the mobile summary. Pulled from `HERO_CLAIMS` rather than retyped, so
@@ -83,6 +84,12 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const oidcError = searchParams.get("error");
+  /**
+   * Where the user was when their session ended (#1420), set by the session-ended redirect. Read
+   * through safeReturnPath, so a crafted sign-in link cannot send anyone off this application.
+   */
+  const returnPath = safeReturnPath(searchParams.get(RETURN_PATH_PARAM));
+  const landingFor = (role: string) => returnPath ?? (role === "admin" ? "/admin" : "/");
 
   /**
    * Editing either credential drops the second-factor step. Without this, changing the email
@@ -121,7 +128,7 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
 
       if (data.success) {
         toast.success(`Welcome back, ${data.role}!`);
-        router.push(data.role === "admin" ? "/admin" : "/");
+        router.push(landingFor(data.role));
         router.refresh();
       } else if (data.mfaRequired) {
         // The first prompt needs no toast - the code field appearing IS the message, and an error
@@ -156,7 +163,7 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
       const result = await signInWithPasskey();
       if (result.ok) {
         toast.success(`Welcome back, ${result.role}!`);
-        router.push(result.role === "admin" ? "/admin" : "/");
+        router.push(landingFor(result.role));
         router.refresh();
       } else if (result.message !== null) {
         toast.error(result.message);
@@ -342,7 +349,12 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
                     className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all gap-2"
                     onClick={() => {
                       setIsLoading(true);
-                      window.location.href = withBasePath("/api/auth/oidc/login");
+                      // The return path rides through the provider in the signed state cookie.
+                      window.location.href = withBasePath(
+                        returnPath === null
+                          ? "/api/auth/oidc/login"
+                          : `/api/auth/oidc/login?${RETURN_PATH_PARAM}=${encodeURIComponent(returnPath)}`,
+                      );
                     }}
                     disabled={isLoading}
                   >

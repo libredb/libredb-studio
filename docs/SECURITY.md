@@ -195,7 +195,7 @@ is refused.
 Still **Partial**, for the one reason that survives: the proxy's `jwtVerify` failure arm is logged, not
 audited. A forged, tampered or truncated `auth-token` reaches the trailing `catch` in
 [`src/proxy.ts`](../src/proxy.ts) that covers the whole `verifyToken` call, which writes
-`logger.warn("JWT verification failed, redirecting to login")` and redirects without an
+`logger.warn("JWT verification failed, refusing the session")` and refuses (a redirect to `/login` for a page, a `401` `AUTH_REQUIRED` for an API path) without an
 `emitAuditEvent` call, so the attempt lands in stdout and never in `GET /api/admin/audit`. The proxy's
 other two refusals both emit: `origin_mismatch` and `insufficient_role`. See
 [`docs/BACKLOG.md`](./BACKLOG.md) H12.
@@ -224,7 +224,7 @@ Two qualifiers the grade rests on, both deliberate and documented at each call s
 
 - **Recorded, not unlimited.** Every `permission_denied` emit is metered through the anon bucket (the
   rate-limit table under 1.2), so a sustained denial is audited up to 5 lines per 300 s per key. The
-  refusals themselves are never metered, and a missing token redirecting to `/login` is ordinary
+  refusals themselves are never metered, and a missing token redirecting to `/login` (or answering `401` on an API path) is ordinary
   logged-out traffic, not a denial.
 - **The proxy's ring is its own.** [`src/proxy.ts`](../src/proxy.ts) compiles as a separate Next entry
   with its own module graph, so its audit writes do not appear in what `GET /api/admin/audit` returns.

@@ -67,6 +67,35 @@ describe("buildResultExport — json", () => {
     expect(file.mimeType).toBe("application/json");
     expect(file.extension).toBe("json");
   });
+
+  // The CSV, the SQL forms and the grid all read a binary cell as `\x` hex; the JSON
+  // wrote `{"type":"Buffer","data":[...]}`, so one result exported three ways
+  // disagreed with itself (#1381). Measured 2026-10-03 on PostgreSQL 18.6 (`bytea`)
+  // and on SQL Server (`varbinary`), whose cells both reach the browser in that form.
+  test("writes a bytea or varbinary cell as the same text the CSV writes for it", () => {
+    for (const dialect of ["postgres", "mssql", "mysql", "sqlite", "oracle"] as const) {
+      const rows = [{ id: 1, payload: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] } }];
+      const json = buildResultExport("json", source({ rows, fields: ["id", "payload"], dialect }));
+      const csv = buildResultExport("csv", source({ rows, fields: ["id", "payload"], dialect }));
+
+      expect(JSON.parse(json.content)).toEqual([{ id: 1, payload: "\\xdeadbeef00ff" }]);
+      expect(csv.content).toBe("id,payload\n1,\\xdeadbeef00ff");
+    }
+  });
+
+  test("writes a live Uint8Array the same way", () => {
+    const rows = [{ payload: Uint8Array.from([0x00, 0xff]) }];
+
+    expect(JSON.parse(buildResultExport("json", source({ rows, fields: ["payload"] })).content)).toEqual([
+      { payload: "\\x00ff" },
+    ]);
+  });
+
+  test("leaves a document that merely looks Buffer-shaped as JSON", () => {
+    const rows = [{ doc: { type: "Buffer", data: [1, "two"] } }];
+
+    expect(JSON.parse(buildResultExport("json", source({ rows, fields: ["doc"] })).content)).toEqual(rows);
+  });
 });
 
 describe("buildResultExport — sql-insert", () => {
@@ -385,10 +414,10 @@ describe("buildResultExport — the type the engine itself declared", () => {
     expect(file.content).toBe('CREATE TABLE users (\n  "a" TEXT\n);');
   });
 
-  test("refuses a declared type holding a quote", () => {
+  test("refuses a declared type holding a quote it does not close", () => {
     const file = buildResultExport(
       "sql-ddl",
-      source({ rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: 'ENUM("a")' } }),
+      source({ rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: 'ENUM("a)' } }),
     );
 
     expect(file.content).toContain('"a" BIGINT');
@@ -423,8 +452,13 @@ describe("buildResultExport — the type the engine itself declared", () => {
       "DateTime64(3, 'UTC\n')",
       "Int32 -- comment",
       "Int32 - 1",
-      "integer[]x",
-      "integer[1]",
+      "integer[x]",
+      "integer]",
+      'STRUCT("a\\" INTEGER)',
+      'STRUCT("a) b" INTEGER',
+      "map<text, int>)",
+      "map<text, int",
+      "list>int<",
       // Closes the column list and opens a new one: the character class alone admits it.
       "int) SELECT load_file('/etc/passwd') AS b, (c int",
       "Int32)",
@@ -1362,6 +1396,240 @@ describe("buildResultExport: a cell whose literal depends on its declared type (
     expect(insert("clickhouse", { a: "18446744073709551615" }, { a: "UInt64" })).toContain(
       "VALUES ('18446744073709551615');",
     );
+  });
+});
+
+describe("buildResultExport: Trino, DuckDB and Cassandra literals (#1386)", () => {
+  // Each value is the shape the provider hands over after the trip through JSON, and each
+  // literal replayed into the engine's own copy of the table on 2026-10-04.
+  const insert = (
+    dialect: Parameters<typeof buildResultExport>[1]["dialect"],
+    row: Record<string, unknown>,
+    columnTypes: Record<string, string>,
+  ) => buildResultExport("sql-insert", source({ rows: [row], fields: Object.keys(row), dialect, columnTypes })).content;
+
+  test("writes each Trino type by its own literal, since INSERT coerces no varchar into it", () => {
+    const content = insert(
+      "trino",
+      {
+        b: "9007199254740993",
+        dec: "1.5",
+        r: 0.1,
+        d: "2024-02-29",
+        t: "13:14:15.123",
+        ts: "2024-12-31 23:59:59.999",
+        tz: "2024-12-31 23:59:59.999 Europe/Istanbul",
+        j: '{"s":"it\'s"}',
+        u: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+        ip: "10.0.0.1",
+        vb: "AQL/",
+        v: "x",
+      },
+      {
+        b: "bigint",
+        dec: "decimal(20, 4)",
+        r: "real",
+        d: "date",
+        t: "time",
+        ts: "timestamp(3)",
+        tz: "timestamp with time zone",
+        j: "json",
+        u: "uuid",
+        ip: "ipaddress",
+        vb: "varbinary",
+        v: "varchar",
+      },
+    );
+
+    expect(content).toContain(
+      "VALUES (9007199254740993, DECIMAL '1.5', REAL '0.1', DATE '2024-02-29', TIME '13:14:15.123', " +
+        "TIMESTAMP '2024-12-31 23:59:59.999', TIMESTAMP '2024-12-31 23:59:59.999 Europe/Istanbul', " +
+        `JSON '{"s":"it''s"}', UUID 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', IPADDRESS '10.0.0.1', X'0102ff', 'x');`,
+    );
+  });
+
+  test("writes a Trino array, map and row, nested and empty", () => {
+    expect(insert("trino", { a: [[1, null], []] }, { a: "array(array(integer))" })).toContain(
+      "VALUES (ARRAY[ARRAY[1, NULL], ARRAY[]]);",
+    );
+    expect(
+      insert("trino", { a: { p: [1.5, ["q"]] } }, { a: "map(varchar, row(x double, y array(varchar)))" }),
+    ).toContain("VALUES (MAP(ARRAY['p'], ARRAY[ROW(1.5, ARRAY['q'])]));");
+    expect(insert("trino", { a: {} }, { a: "map(varchar, integer)" })).toContain("VALUES (MAP());");
+    expect(insert("trino", { a: { k: { s: 1 } } }, { a: "map(varchar, json)" })).toContain(
+      `VALUES (MAP(ARRAY['k'], ARRAY[JSON '{"s":1}']));`,
+    );
+  });
+
+  test("writes a DuckDB INTERVAL, MAP, STRUCT and list as DuckDB literals", () => {
+    expect(insert("duckdb", { a: { months: 14, days: 3, micros: "14706000001" } }, { a: "INTERVAL" })).toContain(
+      "VALUES (INTERVAL '14 months 3 days 14706000001 microseconds');",
+    );
+    expect(
+      insert(
+        "duckdb",
+        {
+          a: [
+            { key: "k", value: 1 },
+            { key: "it's", value: 2 },
+          ],
+        },
+        { a: "MAP(VARCHAR, INTEGER)" },
+      ),
+    ).toContain("VALUES (MAP {'k': 1, 'it''s': 2});");
+    expect(insert("duckdb", { a: [] }, { a: "MAP(VARCHAR, INTEGER)" })).toContain("VALUES (MAP {});");
+    expect(insert("duckdb", { a: { b: ["p"], a: "7" } }, { a: 'STRUCT("a" BIGINT, "b" VARCHAR[])' })).toContain(
+      "VALUES ({'a': 7, 'b': ['p']});",
+    );
+    expect(insert("duckdb", { a: [[1, null], []] }, { a: "INTEGER[][]" })).toContain("VALUES ([[1, NULL], []]);");
+    expect(insert("duckdb", { a: [1, 2, 3] }, { a: "INTEGER[3]" })).toContain("VALUES ([1, 2, 3]);");
+  });
+
+  test("leaves a quoted DuckDB scalar, which DuckDB reads back, to the generic writer", () => {
+    expect(insert("duckdb", { a: "170141183460469231731687303715884105727" }, { a: "HUGEINT" })).toContain(
+      "VALUES ('170141183460469231731687303715884105727');",
+    );
+  });
+
+  test("writes CQL collections, tuples, UDTs, wide numbers, uuids and durations unquoted", () => {
+    const content = insert(
+      "cassandra",
+      {
+        li: [1, 2],
+        st: ["a", "it's"],
+        mp: { "1": ["x"] },
+        tup: [7, "x"],
+        addr: { street: "Main", zip: 1 },
+        b: "9007199254740993",
+        vi: "-1",
+        u: "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+        du: "1mo2d3h",
+        nl: [[1], []],
+      },
+      {
+        li: "list<int>",
+        st: "set<varchar>",
+        mp: "map<int, frozen<set<varchar>>>",
+        tup: "tuple<int, varchar>",
+        addr: "address",
+        b: "bigint",
+        vi: "varint",
+        u: "uuid",
+        du: "duration",
+        nl: "list<list<int>>",
+      },
+    );
+
+    expect(content).toContain(
+      `VALUES ([1, 2], {'a', 'it''s'}, {1: {'x'}}, (7, 'x'), {"street": 'Main', "zip": 1}, 9007199254740993, -1, ` +
+        "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11, 1mo2d3h, [[1], []]);",
+    );
+  });
+
+  test("freezes a collection nested in a CQL collection in the DDL", () => {
+    const ddl = buildResultExport(
+      "sql-ddl",
+      source({
+        rows: [{ a: null, b: null, c: null, d: null }],
+        fields: ["a", "b", "c", "d"],
+        dialect: "cassandra",
+        columnTypes: {
+          a: "list<list<int>>",
+          b: "map<int, set<varchar>>",
+          c: "list<address>",
+          d: "list<frozen<list<int>>>",
+        },
+      }),
+    ).content;
+
+    expect(ddl).toContain('"a" list<frozen<list<int>>>');
+    expect(ddl).toContain('"b" map<int, frozen<set<varchar>>>');
+    expect(ddl).toContain('"c" list<frozen<address>>');
+    expect(ddl).toContain('"d" list<frozen<list<int>>>');
+  });
+
+  test("still completes a bare CQL name the frozen rewrite leaves alone", () => {
+    const ddl = buildResultExport(
+      "sql-ddl",
+      source({ rows: [{ a: null }], fields: ["a"], dialect: "cassandra", columnTypes: { a: "character varying" } }),
+    ).content;
+
+    expect(ddl).toContain('"a" TEXT');
+  });
+
+  test("keeps a DuckDB STRUCT, fixed array and nested list type in the DDL", () => {
+    const ddl = buildResultExport(
+      "sql-ddl",
+      source({
+        rows: [{ a: null, b: null, c: null }],
+        fields: ["a", "b", "c"],
+        dialect: "duckdb",
+        columnTypes: { a: 'STRUCT("a" INTEGER, "b" VARCHAR[])', b: "INTEGER[3]", c: "MAP(INTEGER, VARCHAR[])" },
+      }),
+    ).content;
+
+    expect(ddl).toContain('"a" STRUCT("a" INTEGER, "b" VARCHAR[])');
+    expect(ddl).toContain('"b" INTEGER[3]');
+    expect(ddl).toContain('"c" MAP(INTEGER, VARCHAR[])');
+  });
+});
+
+describe("buildResultExport: a row with a cell the dialect has no literal for (#1386)", () => {
+  test("skips that row with a comment naming the column, and writes the others", () => {
+    const content = buildResultExport(
+      "sql-insert",
+      source({
+        rows: [{ t: [7, "x"] }, { t: [7] }, { t: [8, "y"] }],
+        fields: ["t"],
+        dialect: "cassandra",
+        columnTypes: { t: "tuple<int, varchar>" },
+      }),
+    ).content;
+
+    expect(content).toBe(
+      [
+        `INSERT INTO users ("t") VALUES ((7, 'x'));`,
+        `-- Row 2 skipped: column "t" holds a tuple that does not have its declared length, which cassandra has no literal for.`,
+        `INSERT INTO users ("t") VALUES ((8, 'y'));`,
+      ].join("\n"),
+    );
+  });
+
+  test("cannot let a column name end the comment", () => {
+    const content = buildResultExport(
+      "sql-insert",
+      source({
+        rows: [{ "a\nDROP TABLE x; --\u2028": "not a list" }],
+        fields: ["a\nDROP TABLE x; --\u2028"],
+        dialect: "trino",
+        columnTypes: { "a\nDROP TABLE x; --\u2028": "array(integer)" },
+      }),
+    ).content;
+
+    expect(content.split("\n")).toHaveLength(1);
+    expect(content).toBe(
+      '-- Row 1 skipped: column "a\\nDROP TABLE x; --?" holds an array that is not a list, which trino has no literal for.',
+    );
+  });
+});
+
+describe("buildResultExport: the table the producing query read (#1386)", () => {
+  test("names the one table a SELECT reads, ahead of the tab's title", () => {
+    const content = buildResultExport(
+      "sql-insert",
+      source({ tabName: "Query 1", query: "SELECT * FROM public.orders WHERE id > 1" }),
+    ).content;
+
+    expect(content).toContain("INSERT INTO public.orders (");
+  });
+
+  test("falls back to the tab's title for a join, a quoted name or no query", () => {
+    const name = (query: string | undefined) =>
+      buildResultExport("sql-insert", source({ tabName: "users", query })).content.split(" (")[0];
+
+    expect(name("SELECT * FROM a JOIN b ON a.id = b.id")).toBe("INSERT INTO users");
+    expect(name('SELECT * FROM "Order Items"')).toBe("INSERT INTO users");
+    expect(name(undefined)).toBe("INSERT INTO users");
   });
 });
 

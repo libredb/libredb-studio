@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
+import { sessionRequiredBody } from "@/lib/api/session-ended";
 import { getManagedConnections, getPendingSeeds } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 import { withoutSecretFields } from "@/lib/storage/connection-secrets";
@@ -11,7 +12,7 @@ export async function GET() {
   try {
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+      return NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 });
     }
 
     // Read in its own try, so the `reason` below is a claim about the seed

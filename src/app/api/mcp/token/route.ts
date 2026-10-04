@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { guardRoute } from "@/lib/api/require-session";
+import { sessionRequiredBody } from "@/lib/api/session-ended";
 import { getSession, type UserPayload } from "@/lib/auth";
 import { logger } from "@/lib/logger";
 import { recordMcpMint } from "@/lib/mcp/audit";
@@ -27,7 +28,7 @@ const AUDIT_FAILED = "The token was not issued because its audit record could no
 const SEED_UNREADABLE =
   "The seed connection file could not be read, so the connections an MCP token reaches are unknown; the server log names the cause";
 const NO_STORE = { "Cache-Control": "no-store" };
-const UNAUTHENTICATED = { error: "Authentication required" };
+const UNAUTHENTICATED = sessionRequiredBody("Authentication required");
 const MINT_SESSION_MAX_AGE_SECONDS = 600;
 const RECENT_SIGN_IN_REQUIRED =
   "Sign in again to create a token: a token can only be created within 10 minutes of signing in.";

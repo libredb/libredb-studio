@@ -38,7 +38,7 @@ const mockShouldMask = mock(() => false);
 const mockCanToggleMasking = mock(() => true);
 const mockCanReveal = mock(() => true);
 const mockDetectSensitiveColumnsFromConfig = mock(() => new Map());
-const mockMaskValueByPattern = mock(() => "***");
+const mockMaskValueByPattern = mock((_value?: unknown) => "***");
 const mockLoadMaskingConfig = mock(() => ({
   enabled: false,
   patterns: [],
@@ -396,6 +396,39 @@ describe("ResultsGrid", () => {
     const { queryByText } = render(React.createElement(ResultsGrid, { result: mockEmptyResult }));
 
     expect(queryByText("Query returned no data")).not.toBeNull();
+  });
+
+  // ── A write's affected-row count (#1425) ──────────────────────────────────
+
+  test("says how many rows a write affected instead of the empty state", () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: { ...mockEmptyResult, rowCount: 10 } }));
+
+    expect(container.textContent).toContain("10 rows affected");
+    expect(container.textContent).not.toContain("Query returned no data");
+    expect(container.textContent).not.toContain("result set is currently empty");
+  });
+
+  test("uses the singular for a single affected row", () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: { ...mockEmptyResult, rowCount: 1 } }));
+
+    expect(container.textContent).toContain("1 row affected");
+    expect(container.textContent).not.toContain("1 rows");
+  });
+
+  test("says the count was rolled back when the run recorded a confirmed rollback", () => {
+    const { container } = render(
+      React.createElement(ResultsGrid, { result: { ...mockEmptyResult, rowCount: 3, rolledBack: true } }),
+    );
+
+    expect(container.textContent).toContain("3 rows affected, rolled back");
+  });
+
+  test("keeps the empty state for a SELECT that matched nothing", () => {
+    const { container } = render(
+      React.createElement(ResultsGrid, { result: { ...mockEmptyResult, fields: ["id"], rowCount: 0 } }),
+    );
+
+    expect(container.textContent).toContain("Query returned no data");
   });
 
   // ── 2. Renders column headers from result.fields ──────────────────────────
@@ -770,6 +803,77 @@ describe("ResultsGrid", () => {
     fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
 
     await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(JSON.stringify(row, null, 2)));
+  });
+
+  // The cell shows `\x` hex, and the copied row used to carry the Buffer form instead,
+  // one number per byte (#1381). The row copies what the grid and the CSV show.
+  test("copies a binary cell as the hex the grid shows, not as the Buffer form", async () => {
+    const result: QueryResult = {
+      rows: [{ name: "Blob", payload: { type: "Buffer", data: [0xde, 0xad, 0x00, 0xff] } }],
+      fields: ["name", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Blob", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Blob"));
+    fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Blob", payload: "\\xdead00ff" }, null, 2),
+      ),
+    );
+  });
+
+  // `JSON.stringify` throws on a bigint, which took the copy down with no clipboard
+  // write and no toast; the row now goes through `jsonText`, which writes the digits.
+  test("copies a bigint cell as its digits instead of throwing", async () => {
+    const result: QueryResult = {
+      rows: [{ name: "Big", n: BigInt("9007199254740993") }],
+      fields: ["name", "n"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Big", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Big"));
+    expect(() =>
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" })),
+    ).not.toThrow();
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Big", n: "9007199254740993" }, null, 2),
+      ),
+    );
+  });
+
+  test("copies an unmasked binary cell as hex when masking is active", async () => {
+    mockShouldMask.mockReturnValue(true);
+    mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["email", "email"]]));
+    const result: QueryResult = {
+      rows: [{ name: "Blob", email: "a@b.c", payload: { type: "Buffer", data: [0x00, 0xff] } }],
+      fields: ["name", "email", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result, maskingEnabled: true }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Blob", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Blob"));
+    fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Blob", email: "***", payload: "\\x00ff" }, null, 2),
+      ),
+    );
   });
 
   test("copies masked mobile-table cell and row values when masking is active", async () => {
@@ -2032,6 +2136,54 @@ describe("ResultsGrid", () => {
       const revealButton = container.querySelector('button[title="Reveal value (10s)"]');
       expect(revealButton).toBeNull();
     });
+
+    /**
+     * The column filter reads what the grid shows (#1477). It matched the clear value under a
+     * masked cell, so a user who may not lift masking could read a masked value one typed
+     * prefix at a time off the row count.
+     */
+    describe("column filter on a masked column (#1477)", () => {
+      function filterEmail(container: HTMLElement, value: string) {
+        fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[2]);
+        fireEvent.change(container.querySelector('input[placeholder="Filter email..."]')!, { target: { value } });
+      }
+      const countText = (container: HTMLElement) =>
+        container.querySelector('[data-testid="filtered-count"]')?.textContent ?? "";
+
+      test("a prefix of the clear value does not narrow the rows while masking is in force", () => {
+        setupMasking();
+        // The masked text keeps the first character, like the email preset.
+        mockMaskValueByPattern.mockImplementation((value: unknown) => `${String(value)[0]}***`);
+        const { container, getByTestId } = render(React.createElement(ResultsGrid, maskingProps));
+        fireEvent.click(getByTestId("view-table"));
+
+        filterEmail(container, "al");
+        expect(countText(container)).toContain("0 filtered");
+        expect(container.textContent).not.toContain("alice@example.com");
+      });
+
+      test("matches the masked text the grid displays", () => {
+        setupMasking();
+        mockMaskValueByPattern.mockImplementation((value: unknown) => `${String(value)[0]}***`);
+        const { container, getByTestId } = render(React.createElement(ResultsGrid, maskingProps));
+        fireEvent.click(getByTestId("view-table"));
+
+        filterEmail(container, "b***");
+        expect(countText(container)).toContain("1 filtered");
+      });
+
+      test("with masking off the filter still matches the clear value", () => {
+        setupMasking();
+        mockShouldMask.mockReturnValue(false);
+        const { container, getByTestId } = render(
+          React.createElement(ResultsGrid, { ...maskingProps, maskingEnabled: false }),
+        );
+        fireEvent.click(getByTestId("view-table"));
+
+        filterEmail(container, "alice@");
+        expect(countText(container)).toContain("1 filtered");
+      });
+    });
   });
 
   // ── Declared column types (#273) ──────────────────────────────────────────
@@ -2219,6 +2371,66 @@ describe("ResultsGrid", () => {
     expect(descending[0]).toContain("Charlie");
     expect(descending[1]).toContain("Bob");
     expect(descending[2]).toContain("Alice");
+  });
+
+  /**
+   * 64-bit integers and decimals reach the grid as digit strings (#1384), and the table's
+   * default comparison orders a string lexicographically: 1, 10, 100, 9. The column's declared
+   * type picks a numeric comparison, and a text column keeps the default.
+   */
+  describe("sorting numeric columns (#1384)", () => {
+    const numericResult: QueryResult = {
+      rows: [
+        { id: "10", total: "100.00", label: "10", memo: "b" },
+        { id: "9", total: "1.25", label: "9", memo: "a" },
+        { id: "9007199254740993", total: "-5.5", label: "9007199254740993", memo: "d" },
+        { id: null, total: null, label: "100", memo: "c" },
+        { id: "-5", total: "1000.00", label: "-5", memo: "e" },
+        { id: "9007199254740992", total: "10.00", label: "1", memo: "f" },
+      ],
+      fields: ["id", "total", "label", "memo"],
+      columnTypes: { id: "bigint", total: "numeric(12,2)", label: "varchar(30)", memo: "text" },
+      rowCount: 6,
+      executionTime: 1,
+    };
+
+    /** The memo column names each row with one letter, so the order read back is unambiguous. */
+    const memoOrder = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll("[data-index]:not([data-testid]):not(button)"))
+        .map((row) => /[a-f]$/.exec(row.textContent ?? "")?.[0])
+        .join("");
+
+    const clickHeader = (utils: ReturnType<typeof render>, name: RegExp) =>
+      fireEvent.click(utils.getAllByRole("button", { name })[0]);
+
+    test("a bigint column sorts ascending and descending as numbers, NULL last both ways", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^id, bigint$/);
+      // -5, 9, 10, 2^53, 2^53 + 1, NULL
+      expect(memoOrder(utils.container)).toBe("eabfdc");
+      clickHeader(utils, /^id, bigint, sorted ascending$/);
+      // 2^53 + 1, 2^53, 10, 9, -5, NULL
+      expect(memoOrder(utils.container)).toBe("dfbaec");
+    });
+
+    test("a numeric(12,2) column sorts decimals of different magnitudes as numbers", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^total, numeric\(12,2\)$/);
+      // -5.5, 1.25, 10.00, 100.00, 1000.00, NULL
+      expect(memoOrder(utils.container)).toBe("dafbec");
+      clickHeader(utils, /^total, numeric\(12,2\), sorted ascending$/);
+      expect(memoOrder(utils.container)).toBe("ebfadc");
+    });
+
+    test("a text column of digit strings keeps the text order", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^label, varchar\(30\)$/);
+      // "-5" < "1" < "10" < "100" < "9" < "9007199254740993" as text
+      expect(memoOrder(utils.container)).toBe("efbcad");
+    });
   });
 
   // ── A11y semantics (#100): keyboard-reachable interactive elements ────────

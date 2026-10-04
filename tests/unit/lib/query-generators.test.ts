@@ -232,6 +232,28 @@ describe("generateSelectQuery — no statement terminator", () => {
 });
 
 // ============================================================================
+// generateSelectQuery: a grammar with no constant predicate (#1410)
+// ============================================================================
+
+describe("generateSelectQuery: no constant predicate (#1410)", () => {
+  // CQL has no constant predicate: measured on Cassandra 5.0.9 and ScyllaDB 2026.3.2,
+  // `SELECT ... FROM shop.customers WHERE 1=1 LIMIT 100;` answered "line 24:6 no viable
+  // alternative at input '1'".
+  test("writes no WHERE clause and keeps the bound and the terminator", () => {
+    const caps = makeCaps({ defaultPort: 9042, supportsConstantPredicate: false });
+    expect(generateSelectQuery(["shop", "customers"], sampleColumns, caps)).toBe(
+      "SELECT\n  id,\n  name\nFROM shop.customers\nLIMIT 100;",
+    );
+  });
+
+  test("an explicit true and an absent declaration both keep WHERE 1=1", () => {
+    for (const caps of [makeCaps({ supportsConstantPredicate: true }), makeCaps()]) {
+      expect(generateSelectQuery(["users"], sampleColumns, caps)).toContain("WHERE 1=1");
+    }
+  });
+});
+
+// ============================================================================
 // generateSelectQuery — LibreDB dialect
 // ============================================================================
 
@@ -867,6 +889,21 @@ describe("Apache Cassandra (port 9042) generation", () => {
 // ============================================================================
 
 describe("quoteIdentifier", () => {
+  /** A lowercase reserved word passes every bare test, so only `always` quotes it (#1396). */
+  test("always quotes a name that would round-trip bare, in each dialect's own style", () => {
+    const always = { always: true };
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 5432 }), always)).toBe('"when"');
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 3306 }), always)).toBe("`when`");
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 1433 }), always)).toBe("[when]");
+    expect(quoteIdentifier("WHEN", makeCaps({ defaultPort: 1521 }), always)).toBe('"WHEN"');
+    expect(quoteIdentifier("when", makeCaps({ identifierQuoting: "double" }), always)).toBe('"when"');
+    expect(quoteIdentifier("when", makeCaps({ identifierQuoting: "backtick" }), always)).toBe("`when`");
+    expect(quoteObjectPath(["sales", "when"], makeCaps({ defaultPort: 5432 }), always)).toBe('"sales"."when"');
+    // The control: without it the same names stay bare.
+    expect(quoteIdentifier("when", makeCaps({ defaultPort: 5432 }))).toBe("when");
+    expect(quoteIdentifier("when", makeCaps({ identifierQuoting: "backtick" }))).toBe("when");
+  });
+
   test("PostgreSQL: leaves plain lowercase names unquoted", () => {
     expect(quoteIdentifier("users", makeCaps({ defaultPort: 5432 }))).toBe("users");
   });

@@ -701,6 +701,80 @@ describe("BottomPanel", () => {
     expect(queryByText("Export")).not.toBeNull();
   });
 
+  // A masked result is exported masked, and the menu says so (#1433). The notice names only the
+  // columns the file builder will actually mask, and SQL INSERT is withheld while there are any.
+  describe("export of a masked result (#1433)", () => {
+    const EMAIL_RESULT = {
+      rows: [{ id: 1, email: "a@b.co" }],
+      fields: ["id", "email"],
+      rowCount: 1,
+      executionTime: 3,
+    };
+    const emailMasking = {
+      enabled: true,
+      patterns: [
+        {
+          id: "p-email",
+          name: "Email",
+          columnPatterns: ["email"],
+          maskType: "email" as const,
+          enabled: true,
+          isBuiltin: true,
+        },
+      ],
+      roleSettings: {
+        admin: { canToggle: true, canReveal: true },
+        user: { canToggle: false, canReveal: false },
+      },
+    };
+    const maskedProps = (overrides: Record<string, unknown>) =>
+      createDefaultProps({
+        mode: "results",
+        currentTab: { result: EMAIL_RESULT },
+        maskingConfig: emailMasking,
+        ...overrides,
+      });
+
+    test("names the masked columns and withholds SQL INSERT in both lists", async () => {
+      const props = maskedProps({ maskingEnabled: true });
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      await userEvent.click(getByText("Export"));
+      const menu = within(document.body as HTMLElement);
+
+      expect(menu.getByTestId("export-masked").textContent).toContain("Masked columns (email)");
+      expect(menu.queryByText("Export as SQL INSERT")).toBeNull();
+      expect(menu.queryByText("Copy as SQL INSERT")).toBeNull();
+      expect(menu.queryByText("Export as CSV")).not.toBeNull();
+      expect(menu.queryByText("Export as DDL (CREATE TABLE)")).not.toBeNull();
+    });
+
+    test("says nothing while masking is off", async () => {
+      const props = maskedProps({ maskingEnabled: false });
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      await userEvent.click(getByText("Export"));
+      const menu = within(document.body as HTMLElement);
+
+      expect(menu.queryByTestId("export-masked")).toBeNull();
+      expect(menu.queryByText("Export as SQL INSERT")).not.toBeNull();
+    });
+
+    test("says nothing when masking is on but no column of the result matches a pattern", async () => {
+      const props = maskedProps({
+        maskingEnabled: true,
+        currentTab: { result: { ...EMAIL_RESULT, rows: [{ id: 1 }], fields: ["id"] } },
+      });
+      const { getByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      await userEvent.click(getByText("Export"));
+      const menu = within(document.body as HTMLElement);
+
+      expect(menu.queryByTestId("export-masked")).toBeNull();
+      expect(menu.queryByText("Copy as SQL INSERT")).not.toBeNull();
+    });
+  });
+
   // An export writes the rows the grid HOLDS, and the grid holds one page. The count
   // is on the button because a file of 500 rows off a table of two million is
   // indistinguishable from a complete answer once it has left the product.

@@ -58,7 +58,14 @@ import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sq
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  QueryCancelledError,
+  QueryError,
+  TimeoutError,
+} from "@/lib/db/errors";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
@@ -1155,6 +1162,29 @@ describe("OpenSearchProvider query", () => {
 
     await expect(failure).rejects.toBeInstanceOf(QueryError);
     await expect(failure).rejects.toThrow("no such index [nope_missing]");
+  });
+
+  test("a 403 naming an engine fault is that fault, not a refused login (#1413)", async () => {
+    // The transport is shared with Elasticsearch, which answers a closed index with 403 and
+    // `cluster_block_exception` (measured on 9.5.3). The same rule holds here: a 401/403 whose body
+    // names a fault that is not a security one is a query error carrying the engine's reason.
+    const provider = await connectProvider();
+    overridePath("/_plugins/_sql", {
+      status: 403,
+      body: JSON.stringify({
+        error: {
+          type: "cluster_block_exception",
+          reason: "index [closed_idx] blocked by: [FORBIDDEN/4/index closed];",
+        },
+        status: 403,
+      }),
+    });
+
+    const failure = provider.query("SELECT a FROM closed_idx");
+
+    await expect(failure).rejects.toBeInstanceOf(QueryError);
+    await expect(failure).rejects.not.toBeInstanceOf(AuthenticationError);
+    await expect(failure).rejects.toThrow("index [closed_idx] blocked by: [FORBIDDEN/4/index closed];");
   });
 
   test("carries the plugin's own wording through, banner and footer removed", async () => {

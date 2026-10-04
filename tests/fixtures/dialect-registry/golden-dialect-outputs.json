@@ -140,7 +140,7 @@
   "offersCodeGeneration": true,
   "offersCountQuery": true,
   "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nLIMIT 100;",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
  },
  "elasticsearch": {

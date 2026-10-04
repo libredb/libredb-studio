@@ -15,6 +15,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import type { DatabaseConnection } from "@/lib/types";
 import type { ContainerLevels, ObjectEditRefusalClass, ReadOnlyStatementBudget } from "@/lib/db/types";
+import { maintenanceControl } from "@/lib/db/types";
 import {
   ConnectionError,
   DatabaseConfigError,
@@ -93,6 +94,16 @@ let mockParseAnswer: "single" | "multi" | "syntax" | "accepted" | Error = "singl
  */
 let mockApplyResultCount: number | "not-an-array" = 4;
 
+/**
+ * What a server that does not have a statement answers for it inside an aborted block (#1387),
+ * keyed by the exact statement. Absent is `25P02`, PostgreSQL's answer for every statement its
+ * grammar has.
+ */
+let mockAbortedBlockRefusals: Record<string, Error | "resolves"> = {};
+
+/** The `notice` listeners currently on the mock client, so a test can play the server's notices. */
+const mockNoticeListeners = new Set<(notice: unknown) => void>();
+
 /** Every call the provider made on the mock client, in order, INCLUDING the Parse probe. */
 let mockWire: (string | MockParseConfig)[] = [];
 
@@ -135,6 +146,24 @@ const mockClient = {
     // ReadyForQuery. `mockBeginOpens = false` is the server that accepts BEGIN and opens
     // nothing, the way RisingWave does.
     if (mockBeginOpens && /^\s*BEGIN\s*;?\s*$/i.test(sql as string)) mockTxStatus = "T";
+    // The aborted block the maintenance probe asks inside (#1387), as PostgreSQL keeps it: the
+    // poison aborts an open block, and every later statement but the ROLLBACK is refused with
+    // `25P02` after its parse, or with the grammar error a statement in `mockAbortedBlockRefusals`
+    // gets from a server that does not have it.
+    if (sql === "SELECT 1/0" && mockTxStatus === "T") {
+      mockTxStatus = "E";
+      return Promise.reject(Object.assign(new Error("division by zero"), { code: "22012" }));
+    }
+    if (typeof sql === "string" && mockTxStatus === "E" && !ended) {
+      const refusal = mockAbortedBlockRefusals[sql];
+      if (refusal === "resolves") return Promise.resolve({ rows: [] });
+      return Promise.reject(
+        refusal ??
+          Object.assign(new Error("current transaction is aborted, commands ignored until end of transaction block"), {
+            code: "25P02",
+          }),
+      );
+    }
     const answer = mockQueryFn(sql as string, params);
     if (typeof sql !== "string") return answer;
     // One result per statement, which is what `pg` hands back for a multi-statement simple
@@ -145,6 +174,13 @@ const mockClient = {
       : answer;
   },
   getTransactionStatus: () => mockTxStatus,
+  // `pg`'s client is an EventEmitter; `runMaintenance` listens for the server's notices (#1387).
+  on: (event: string, listener: (notice: unknown) => void) => {
+    if (event === "notice") mockNoticeListeners.add(listener);
+  },
+  off: (event: string, listener: (notice: unknown) => void) => {
+    if (event === "notice") mockNoticeListeners.delete(listener);
+  },
   // Real pg signature: release(err?) — an error argument destroys the client
   // instead of returning it to the pool, which queryReadOnly relies on.
   release: (_destroy?: Error) => {},
@@ -162,7 +198,7 @@ class MockPool extends EventEmitter {
   public waitingCount = 0;
 
   async connect() {
-    return mockClient;
+    return mockPooledClient?.(this) ?? mockClient;
   }
 
   async end() {}
@@ -185,12 +221,31 @@ let lastPoolConfig: Record<string, unknown> = {};
  */
 const { types: realPgTypes } = await import("pg");
 
+/**
+ * The mocked `pg.Client`: an EventEmitter, which is all of `pg`'s client the provider's own
+ * subclass touches at construction (it listens for `notice`). The pool mock never builds one
+ * unless a test asks for it through `mockPooledClient`.
+ */
+class MockPgClient extends EventEmitter {
+  constructor(public readonly clientConfig?: unknown) {
+    super();
+  }
+}
+
+/**
+ * When set, what the pool hands out instead of the shared `mockClient`. The server-notice
+ * tests use it to hand out a client built from the class the provider gave the pool, so the
+ * provider's notice keeping is exercised the way `pg-pool` exercises it.
+ */
+let mockPooledClient: ((pool: MockPool) => unknown) | undefined;
+
 mock.module("pg", () => ({
   Pool: function (config: Record<string, unknown>) {
     lastPoolConfig = config;
     lastPool = new MockPool();
     return lastPool;
   },
+  Client: MockPgClient,
   types: realPgTypes,
 }));
 
@@ -3264,6 +3319,173 @@ describe("PostgresProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // Server notices (#1401)
+  // --------------------------------------------------------------------------
+
+  describe("server notices (#1401)", () => {
+    /** A NoticeResponse as `pg` parses it. The strings below are the servers' own, measured 2026-10-04. */
+    const notice = (severity: string, code: string, message: string) => ({ name: "notice", severity, code, message });
+    type Notice = ReturnType<typeof notice>;
+    type Session = EventEmitter & { query: (sql: string, params?: unknown[]) => Promise<unknown> };
+
+    const DO_BLOCK = "DO $$BEGIN RAISE NOTICE 'hello n'; RAISE WARNING 'hello w'; END$$";
+    const DROP_MISSING = "DROP TABLE IF EXISTS nope";
+
+    /** What the server raises while it runs each statement, keyed by the statement's text. */
+    let raised: Record<string, Notice[]>;
+    /** What it sends during the startup handshake, before the pool resolves the borrow. */
+    let startup: Notice[];
+    let session: Session | undefined;
+    let borrows: number;
+
+    beforeEach(() => {
+      raised = {};
+      startup = [];
+      session = undefined;
+      borrows = 0;
+      mockTxStatus = "I";
+      // ONE session for the whole test, so "the next statement over the same pooled client"
+      // is literally that. Built the way `pg-pool` builds one: from the `Client` the provider
+      // put in the pool config, its startup notices emitted before the borrow resolves, and
+      // its release announced on the pool.
+      mockPooledClient = (pool) => {
+        borrows++;
+        if (session) return session;
+        const SessionClient = lastPoolConfig.Client as new (config: unknown) => EventEmitter;
+        const built = new SessionClient(lastPoolConfig);
+        for (const sent of startup) built.emit("notice", sent);
+        session = Object.assign(built, {
+          query: async (sql: string, params?: unknown[]) => {
+            for (const sent of raised[sql] ?? []) built.emit("notice", sent);
+            return mockClient.query(sql, params);
+          },
+          getTransactionStatus: mockClient.getTransactionStatus,
+          release: () => {
+            pool.emit("release", undefined, built);
+          },
+        });
+        return session;
+      };
+    });
+
+    afterEach(() => {
+      mockPooledClient = undefined;
+    });
+
+    async function connected() {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      return provider;
+    }
+
+    test("a statement's RAISE NOTICE and RAISE WARNING come back as warnings, severity and SQLSTATE kept", async () => {
+      raised[DO_BLOCK] = [notice("NOTICE", "00000", "hello n"), notice("WARNING", "01000", "hello w")];
+      const result = await (await connected()).query(DO_BLOCK);
+
+      expect(result.warnings).toEqual([
+        { message: "hello n", code: "00000", severity: "NOTICE" },
+        { message: "hello w", code: "01000", severity: "WARNING" },
+      ]);
+    });
+
+    test("a statement the server sent no notice for carries no warnings key at all", async () => {
+      const result = await (await connected()).query("SELECT 1");
+      expect("warnings" in result).toBe(false);
+    });
+
+    test("one statement's notice is not reported again on the next statement over the same session", async () => {
+      raised[DROP_MISSING] = [notice("NOTICE", "00000", 'table "nope" does not exist, skipping')];
+      const opened = await connected();
+
+      const first = await opened.query(DROP_MISSING);
+      const second = await opened.query("SELECT 1");
+
+      expect(first.warnings).toEqual([
+        { message: 'table "nope" does not exist, skipping', code: "00000", severity: "NOTICE" },
+      ]);
+      expect("warnings" in second).toBe(false);
+      // The same session served both, so the second answer is a fact about scoping and not
+      // about a fresh client that never heard the notice.
+      expect(borrows).toBe(3);
+    });
+
+    test("a notice raised while the cancel PID was read is not the statement's", async () => {
+      raised["SELECT pg_backend_pid() as pid"] = [notice("WARNING", "01000", "not yours")];
+      const result = await (await connected()).query("SELECT 1", undefined, "run-1");
+      expect("warnings" in result).toBe(false);
+    });
+
+    test("a statement inside a transaction reports its notices, and only its own", async () => {
+      raised["SELECT 1"] = [notice("WARNING", "01000", "inside the transaction")];
+      const opened = await connected();
+      await opened.beginTransaction();
+      session!.emit("notice", notice("NOTICE", "00000", "left over from an earlier statement"));
+
+      const result = await opened.queryInTransaction("SELECT 1");
+      await opened.commitTransaction();
+
+      expect(result.warnings).toEqual([{ message: "inside the transaction", code: "01000", severity: "WARNING" }]);
+    });
+
+    test("a startup caution is kept for the connection test and the greeting is not", async () => {
+      startup = [
+        notice("NOTICE", "00000", "connected to Materialize v26.44.1"),
+        notice("NOTICE", "MZ004", 'session database "nosuchdb" does not exist'),
+      ];
+      const opened = await connected();
+
+      expect(opened.connectWarnings()).toEqual([
+        { message: 'session database "nosuchdb" does not exist', code: "MZ004", severity: "NOTICE" },
+      ]);
+      // Taken at connect, so the first statement on the same session does not repeat it.
+      expect("warnings" in (await opened.query("SELECT 1"))).toBe(false);
+    });
+
+    test("a server that cautions nothing at startup leaves the connection test nothing to show", async () => {
+      expect((await connected()).connectWarnings()).toEqual([]);
+    });
+
+    // `NOTICE_KEEP_LIMIT` in the provider: a `RAISE NOTICE` loop can send a million in one statement.
+    const KEEP_LIMIT = 100;
+    const flood = (count: number) =>
+      Array.from({ length: count }, (_, i) => notice("NOTICE", "00000", `notice ${i + 1}`));
+
+    test("past the keep limit the notices are counted, not kept, and the count closes the list", async () => {
+      raised["SELECT 1"] = flood(KEEP_LIMIT + 1);
+      const result = await (await connected()).query("SELECT 1");
+
+      expect(result.warnings).toHaveLength(KEEP_LIMIT + 1);
+      expect(result.warnings![KEEP_LIMIT - 1].message).toBe(`notice ${KEEP_LIMIT}`);
+      expect(result.warnings![KEEP_LIMIT]).toEqual({ message: "1 more notice not shown" });
+    });
+
+    test("the count is plural past one, and the next statement starts from zero", async () => {
+      raised["SELECT 1"] = flood(KEEP_LIMIT + 5);
+      raised["SELECT 2"] = [notice("WARNING", "01000", "only this one")];
+      const opened = await connected();
+
+      const first = await opened.query("SELECT 1");
+      const second = await opened.query("SELECT 2");
+
+      expect(first.warnings!.at(-1)).toEqual({ message: "5 more notices not shown" });
+      expect(second.warnings).toEqual([{ message: "only this one", code: "01000", severity: "WARNING" }]);
+    });
+
+    test("exactly the keep limit adds no count", async () => {
+      raised["SELECT 1"] = flood(KEEP_LIMIT);
+      const result = await (await connected()).query("SELECT 1");
+      expect(result.warnings).toHaveLength(KEEP_LIMIT);
+      expect(result.warnings!.at(-1)!.message).toBe(`notice ${KEEP_LIMIT}`);
+    });
+
+    test("a notice with no text still reaches the result, as an empty message", async () => {
+      raised["SELECT 1"] = [{ name: "notice", severity: "WARNING", code: "01000" } as unknown as Notice];
+      const result = await (await connected()).query("SELECT 1");
+      expect(result.warnings).toEqual([{ message: "", code: "01000", severity: "WARNING" }]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Pool Stats
   // --------------------------------------------------------------------------
 
@@ -3844,7 +4066,13 @@ describe("PostgresProvider", () => {
       const editor = new PostgresProvider(makePgConfig());
       await editor.connect();
 
-      expect(fresh.statements.map((s) => s.text)).toEqual(["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1"]);
+      // The EXPLAIN probe, then the maintenance probe's block (#1387). This fixture records what
+      // reaches the engine mock, and the statements inside the aborted block are refused before it.
+      expect(fresh.statements.map((s) => s.text)).toEqual([
+        "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1",
+        "BEGIN",
+        "ROLLBACK",
+      ]);
       await editor.disconnect();
     });
 
@@ -4449,6 +4677,269 @@ describe("PostgresProvider EXPLAIN grammar probe", () => {
     await provider.connect();
 
     expect(provider.getCapabilities().explainFormat).toBe("postgres-text");
+    await provider.disconnect();
+  });
+});
+
+/**
+ * The maintenance probe (#1387). Each statement is asked inside a block the poison has aborted,
+ * where PostgreSQL answers `25P02` for a statement its grammar has and runs nothing. The refusals
+ * below are the servers' own, measured 2026-10-04 on CockroachDB v26.3.2; the `0A000` wording is
+ * YugabyteDB's as the issue recorded it.
+ */
+describe("PostgresProvider maintenance probe (#1387)", () => {
+  const syntaxError = (message: string) => Object.assign(new Error(message), { code: "42601" });
+
+  /** CockroachDB v26.3.2's answers: only `ANALYZE <table>` is in its grammar. */
+  const COCKROACH_REFUSALS: Record<string, Error> = {
+    ANALYZE: syntaxError('at or near "EOF": syntax error'),
+    "VACUUM ANALYZE": syntaxError('at or near "vacuum": syntax error'),
+    'VACUUM ANALYZE public."libredb_maintenance_probe"': syntaxError('at or near "vacuum": syntax error'),
+    'REINDEX TABLE public."libredb_maintenance_probe"': syntaxError(
+      'at or near "libredb_maintenance_probe": syntax error: unimplemented: this syntax',
+    ),
+    'REINDEX DATABASE "testdb"': syntaxError('at or near "testdb": syntax error: unimplemented: this syntax'),
+  };
+
+  const ask = async () => {
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    return provider;
+  };
+
+  beforeEach(() => {
+    mockQueryFn = defaultMockQuery;
+    mockAbortedBlockRefusals = {};
+    mockTxStatus = "I";
+    mockWire = [];
+  });
+
+  afterEach(() => {
+    mockAbortedBlockRefusals = {};
+    mockBeginOpens = true;
+    mockTxStatus = "I";
+  });
+
+  test("before connect the provider declares PostgreSQL's whole set", () => {
+    const caps = new PostgresProvider(makePgConfig()).getCapabilities();
+    expect(caps.maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+  });
+
+  test("PostgreSQL accepts all six statements and keeps every operation in both placements", async () => {
+    const provider = await ask();
+    const caps = provider.getCapabilities();
+
+    expect(caps.maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+    for (const operation of ["vacuum", "analyze", "reindex"] as const) {
+      expect(maintenanceControl(caps, operation, "perEntity").offered).toBe(true);
+      expect(maintenanceControl(caps, operation, "global").offered).toBe(true);
+    }
+    // Asked inside the poisoned block, in order, and the client goes home idle.
+    const begin = mockWire.indexOf("BEGIN");
+    expect(mockWire.slice(begin)).toEqual([
+      "BEGIN",
+      "SELECT 1/0",
+      "SELECT 1",
+      'VACUUM ANALYZE public."libredb_maintenance_probe"',
+      "VACUUM ANALYZE",
+      'ANALYZE public."libredb_maintenance_probe"',
+      "ANALYZE",
+      'REINDEX TABLE public."libredb_maintenance_probe"',
+      'REINDEX DATABASE "testdb"',
+      "ROLLBACK",
+    ]);
+    expect(mockTxStatus).toBe("I");
+    await provider.disconnect();
+  });
+
+  test("CockroachDB keeps a per-row Analyze and loses Vacuum, Reindex and the whole-database Analyze", async () => {
+    mockAbortedBlockRefusals = COCKROACH_REFUSALS;
+    const provider = await ask();
+    const caps = provider.getCapabilities();
+
+    expect(caps.maintenanceOperations).toEqual(["analyze", "kill"]);
+    expect(maintenanceControl(caps, "analyze", "perEntity").offered).toBe(true);
+    expect(maintenanceControl(caps, "analyze", "global").offered).toBe(false);
+    expect(maintenanceControl(caps, "vacuum", "global").offered).toBe(false);
+    expect(maintenanceControl(caps, "reindex", "perEntity").offered).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a feature refusal at parse (0A000) counts as a refusal too", async () => {
+    mockAbortedBlockRefusals = {
+      'REINDEX TABLE public."libredb_maintenance_probe"': Object.assign(new Error("REINDEX not supported yet"), {
+        code: "0A000",
+      }),
+      'REINDEX DATABASE "testdb"': Object.assign(new Error("REINDEX SCHEMA/DATABASE/SYSTEM not supported yet"), {
+        code: "0A000",
+      }),
+    };
+    const provider = await ask();
+
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(["vacuum", "analyze", "kill"]);
+    await provider.disconnect();
+  });
+
+  test("a server whose BEGIN opens nothing is never asked, and is offered none of the three", async () => {
+    // RisingWave 3.1.0: there the statements would RUN, so not one is sent.
+    mockBeginOpens = false;
+    const provider = await ask();
+
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(["kill"]);
+    expect(mockWire.some((sql) => typeof sql === "string" && /VACUUM|REINDEX|^ANALYZE/.test(sql))).toBe(false);
+    await provider.disconnect();
+  });
+
+  test("a statement that RESOLVES inside the block stops the probe, and the declaration stands", async () => {
+    // No aborted block lets a statement succeed, so the block is not what the probe thinks it is
+    // and the next statement could run: nothing after it is sent.
+    mockAbortedBlockRefusals = { 'VACUUM ANALYZE public."libredb_maintenance_probe"': "resolves" };
+    const provider = await ask();
+
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+    expect(mockWire).not.toContain("VACUUM ANALYZE");
+    await provider.disconnect();
+  });
+
+  test("an unexpected code while the block still reads as aborted is a refusal", async () => {
+    // Materialize-style: an internal error rather than a grammar SQLSTATE. `SELECT 1` is asked
+    // again and still answers 25P02, so nothing ran and the statement is counted refused.
+    mockAbortedBlockRefusals = { ANALYZE: Object.assign(new Error("internal error"), { code: "XX000" }) };
+    const provider = await ask();
+    const caps = provider.getCapabilities();
+
+    expect(maintenanceControl(caps, "analyze", "global").offered).toBe(false);
+    expect(maintenanceControl(caps, "analyze", "perEntity").offered).toBe(true);
+    expect(caps.maintenanceOperations).toContain("reindex");
+    await provider.disconnect();
+  });
+
+  test("an unexpected code after which the block no longer reads as aborted stops the probe", async () => {
+    let sentinels = 0;
+    mockAbortedBlockRefusals = { ANALYZE: Object.assign(new Error("internal error"), { code: "XX000" }) };
+    const original = mockAbortedBlockRefusals;
+    mockQueryFn = async (sql) => defaultMockQuery(sql);
+    // The second `SELECT 1` (the re-check after ANALYZE) answers a row: the block is gone.
+    mockAbortedBlockRefusals = new Proxy(original, {
+      get: (target, key) => {
+        if (key === "SELECT 1" && ++sentinels === 2) return "resolves";
+        return Reflect.get(target, key);
+      },
+    });
+    const provider = await ask();
+
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+    expect(mockWire).not.toContain('REINDEX TABLE public."libredb_maintenance_probe"');
+    await provider.disconnect();
+  });
+
+  test("a sentinel answered with anything but 25P02 or a row is not a measurement", async () => {
+    mockAbortedBlockRefusals = { "SELECT 1": Object.assign(new Error("odd"), { code: "XX000" }) };
+    const provider = await ask();
+
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+    await provider.disconnect();
+  });
+
+  test("a failure that is not the server's answer keeps the declaration and never fails the connection", async () => {
+    // A pooler in statement mode refuses BEGIN; a reset connection fails the same way. Neither says
+    // anything about the grammar, and a cached provider must not lose its maintenance for good.
+    mockQueryFn = async (sql) => {
+      if (sql === "BEGIN") throw new Error("Connection terminated unexpectedly");
+      return defaultMockQuery(sql);
+    };
+    const provider = await ask();
+
+    expect(provider.isConnected()).toBe(true);
+    expect(provider.getCapabilities().maintenanceOperations).toEqual(["vacuum", "analyze", "reindex", "kill"]);
+    await provider.disconnect();
+  });
+
+  test("a ROLLBACK that fails destroys the connect client instead of pooling it", async () => {
+    const release = spyOn(mockClient, "release");
+    const fault = new Error("Connection terminated unexpectedly");
+    mockQueryFn = async (sql) => {
+      if (sql === "ROLLBACK") throw fault;
+      return defaultMockQuery(sql);
+    };
+    try {
+      const provider = await ask();
+      expect(release).toHaveBeenCalledWith(fault);
+      await provider.disconnect();
+    } finally {
+      release.mockRestore();
+    }
+  });
+
+  test("a connection with no configured database asks the server which one REINDEX DATABASE names", async () => {
+    mockQueryFn = async (sql) =>
+      sql === "SELECT current_database() AS name" ? { rows: [{ name: "postgres" }] } : defaultMockQuery(sql);
+    const provider = new PostgresProvider(
+      makePgConfig({ database: undefined, connectionString: "postgres://u:p@localhost:5432" }),
+    );
+    await provider.connect();
+
+    expect(mockWire).toContain('REINDEX DATABASE "postgres"');
+    expect(mockWire).not.toContain('REINDEX DATABASE ""');
+
+    mockWire = [];
+    await provider.runMaintenance("reindex");
+    expect(mockWire).toContain('REINDEX DATABASE "postgres"');
+    await provider.disconnect();
+  });
+
+  test("a server that names no current database is asked about an empty name", async () => {
+    mockQueryFn = async (sql) => (sql === "SELECT current_database() AS name" ? { rows: [] } : defaultMockQuery(sql));
+    const provider = new PostgresProvider(
+      makePgConfig({ database: undefined, connectionString: "postgres://u:p@localhost:5432" }),
+    );
+    await provider.connect();
+
+    expect(mockWire).toContain('REINDEX DATABASE ""');
+    await provider.disconnect();
+  });
+
+  test("the server's warnings are the result's message, bounded, and the run still succeeds", async () => {
+    const provider = await ask();
+    mockQueryFn = async (sql) => {
+      if (sql === "VACUUM ANALYZE") {
+        for (const table of ["a", "b", "c", "d", "e"]) {
+          for (const listener of mockNoticeListeners) {
+            listener({ severity: "WARNING", message: `permission denied to vacuum "${table}", skipping it` });
+          }
+        }
+        // INFO is what a VERBOSE run prints, and is not quoted.
+        for (const listener of mockNoticeListeners) listener({ severity: "INFO", message: "chatter" });
+      }
+      return { rows: [] };
+    };
+
+    const result = await provider.runMaintenance("vacuum");
+
+    expect(result.success).toBe(true);
+    expect(result.message).toBe(
+      'VACUUM completed, and the server said: permission denied to vacuum "a", skipping it; ' +
+        'permission denied to vacuum "b", skipping it; permission denied to vacuum "c", skipping it (and 2 more)',
+    );
+    // The listener is removed with the statement, so the next run hears nothing of this one.
+    expect(mockNoticeListeners.size).toBe(0);
+    await provider.disconnect();
+  });
+
+  test("YugabyteDB's no-op NOTICE is quoted, with no count", async () => {
+    const yugabyteNoOp =
+      "VACUUM is a no-op statement since YugabyteDB performs garbage collection of dead tuples automatically";
+    const provider = await ask();
+    mockQueryFn = async (sql) => {
+      if (sql.startsWith("VACUUM")) {
+        for (const listener of mockNoticeListeners) listener({ severity: "NOTICE", message: yugabyteNoOp });
+      }
+      return { rows: [] };
+    };
+
+    const result = await provider.runMaintenance("vacuum", "users");
+
+    expect(result.message).toBe(`VACUUM completed, and the server said: ${yugabyteNoOp}`);
     await provider.disconnect();
   });
 });
@@ -5692,6 +6183,69 @@ describe("PostgreSQL bulk column read", () => {
     const batch = await provider.describeObjects(["app"], "table");
     expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
     await provider.disconnect();
+  });
+});
+
+describe("PostgreSQL primary-key columns (#1394)", () => {
+  // Measured on PostgreSQL 18.6: `array_agg(kcu.column_name)` is `sql_identifier[]`, which
+  // node-postgres hands back as the text `{id}`. `includes()` on that text flagged every
+  // column whose name it contains, so `i` and `d` were keys of `{id}`.
+  const COLUMNS = ["order_id", "id", "user_id", "role_id", "user", "role", "_", "i", "d"].map((name) => ({
+    name,
+    type: "integer",
+    nullable: false,
+    defaultValue: null,
+  }));
+
+  async function keysFor(pkColumns: unknown): Promise<{ keys: string[]; sql: string[] }> {
+    const sql: string[] = [];
+    mockQueryFn = async (text) => {
+      sql.push(text);
+      if (!text.includes("object_columns")) return { rows: [] };
+      return { rows: [{ pk_columns: pkColumns, columns: COLUMNS, indexes: null, foreign_keys: null }] };
+    };
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const detail = await provider.describeObject(["public", "t"], "table");
+    await provider.disconnect();
+    return { keys: detail.columns.filter((column) => column.isPrimary).map((column) => column.name), sql };
+  }
+
+  test("the key list is read as text[] in its declared order", async () => {
+    const { sql } = await keysFor(["id"]);
+    const detail = sql.find((text) => text.includes("object_columns"));
+    expect(detail).toContain("array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) as pk_columns");
+  });
+
+  test("a key named order_id marks order_id and not id", async () => {
+    expect((await keysFor(["order_id"])).keys).toEqual(["order_id"]);
+  });
+
+  test("a key named id marks id and not i or d", async () => {
+    expect((await keysFor(["id"])).keys).toEqual(["id"]);
+  });
+
+  test("a composite key marks exactly its columns", async () => {
+    expect((await keysFor(["role_id", "user_id"])).keys).toEqual(["user_id", "role_id"]);
+  });
+
+  test("an unparsed array literal marks nothing rather than every substring", async () => {
+    expect((await keysFor("{user_id,role_id}")).keys).toEqual([]);
+  });
+
+  test("index statistics read their column names as text[]", async () => {
+    const sql: string[] = [];
+    mockQueryFn = async (text) => {
+      sql.push(text);
+      return { rows: [] };
+    };
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    await provider.getIndexStats();
+    await provider.disconnect();
+    expect(sql.find((text) => text.includes("pg_stat_user_indexes"))).toContain(
+      "array_agg(a.attname::text ORDER BY array_position(ix.indkey, a.attnum)) as columns",
+    );
   });
 });
 

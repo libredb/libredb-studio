@@ -260,6 +260,7 @@ mock.module("lucide-react", () => {
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import { QueryEditor } from "@/components/QueryEditor";
+import type { SchemaCompletionCache } from "@/lib/editor/sql-completions";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import type { MaintenanceType } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
@@ -766,7 +767,7 @@ describe("QueryEditor", () => {
 
   test("RUN SELECTION button not shown when no selection", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -1107,14 +1108,14 @@ describe("QueryEditor", () => {
   test("selection change shows RUN SELECTION button", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps()));
 
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
 
     mockSelectionReturn = { isEmpty: () => false };
     act(() => {
       capturedSelectionCb?.();
     });
 
-    expect(queryByText("Run Sel")).not.toBeNull();
+    expect(queryByText("Run Selected")).not.toBeNull();
   });
 
   test("RUN SELECTION button does not use ghost variant hover styles", () => {
@@ -1125,7 +1126,7 @@ describe("QueryEditor", () => {
       capturedSelectionCb?.();
     });
 
-    const runSelectionButton = queryByText("Run Sel")?.closest("button");
+    const runSelectionButton = queryByText("Run Selected")?.closest("button");
     expect(runSelectionButton).not.toBeNull();
     expect(runSelectionButton?.className).not.toContain("hover:bg-accent");
     expect(runSelectionButton?.className).not.toContain("hover:text-accent-foreground");
@@ -1151,13 +1152,13 @@ describe("QueryEditor", () => {
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).not.toBeNull();
+    expect(queryByText("Run Selected")).not.toBeNull();
 
     mockSelectionReturn = { isEmpty: () => true };
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -2881,14 +2882,14 @@ describe("QueryEditor", () => {
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).not.toBeNull();
+    expect(queryByText("Run Selected")).not.toBeNull();
 
     // Now set null selection
     mockSelectionReturn = null;
     act(() => {
       capturedSelectionCb?.();
     });
-    expect(queryByText("Run Sel")).toBeNull();
+    expect(queryByText("Run Selected")).toBeNull();
   });
 
   // -----------------------------------------------------------------------
@@ -3159,4 +3160,73 @@ describe("QueryEditor completion dialect", () => {
       expect(finalRegistration.dispose).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe("QueryEditor completion addresses (#1397)", () => {
+  /** The table items the last SQL completion registration was handed. */
+  function registeredTables(props: Partial<Parameters<typeof QueryEditor>[0]>) {
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps(props)));
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    const items = calls[calls.length - 1][1].tableItems;
+    unmount();
+    mockUseMonacoReturn = null;
+    return items;
+  }
+
+  const schema = JSON.stringify([
+    { name: "orders", path: ["public", "orders"], rowCount: 4 },
+    { name: "regions", path: ["sales", "regions"] },
+    { name: "legacy" },
+  ]);
+
+  test("a table outside the session's default container is marked to qualify, and only that one", () => {
+    expect(registeredTables({ schemaContext: schema, defaultContainer: ["public"] })).toEqual([
+      {
+        label: "orders",
+        labelLower: "orders",
+        rowCount: 4,
+        columnNames: "",
+        container: ["public"],
+        segment: "orders",
+        qualify: false,
+      },
+      // No rowCount: RisingWave reports none, and "(0 rows)" said the table was empty.
+      {
+        label: "regions",
+        labelLower: "regions",
+        columnNames: "",
+        container: ["sales"],
+        segment: "regions",
+        qualify: true,
+      },
+      { label: "legacy", labelLower: "legacy", columnNames: "" },
+    ]);
+  });
+
+  test("a null row count is as absent as a missing one", () => {
+    const items = registeredTables({ schemaContext: JSON.stringify([{ name: "t", rowCount: null }]) });
+    expect(items[0]).toEqual({ label: "t", labelLower: "t", columnNames: "" });
+  });
+
+  test("the connection's capabilities quote a segment, and there is no quoting before they load", () => {
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    const capabilities = { queryLanguage: "sql", defaultPort: 3306 } as unknown as Parameters<
+      typeof QueryEditor
+    >[0]["capabilities"];
+    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ capabilities })));
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe("`e2e-other`");
+    unmount();
+    const bare = render(React.createElement(QueryEditor, createDefaultProps()));
+    expect(calls[calls.length - 1][1].quoteSegment).toBeUndefined();
+    bare.unmount();
+    mockUseMonacoReturn = null;
+  });
+
+  test("with no reported default container nothing qualifies", () => {
+    expect(registeredTables({ schemaContext: schema }).map((item) => item.qualify)).toEqual([false, false, undefined]);
+  });
 });

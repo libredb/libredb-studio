@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   DatabaseConnection,
   DatabaseType,
@@ -10,7 +10,9 @@ import {
   SSLMode,
   SSLConfig,
   SSHTunnelConfig,
+  type QueryWarning,
 } from "@/lib/types";
+import { describeWarning } from "@/components/results-grid/utils";
 import { getDBConfig, hostUriSchemes, offersSshTunnel } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
@@ -209,11 +211,17 @@ interface UseConnectionFormProps {
    *
    * `degraded` carries the same distinction the route makes: the server accepted the
    * connection and refused the health read. An adapter that does not report it keeps
-   * the old two-outcome behaviour.
+   * the old two-outcome behaviour. `warnings` is what the server cautioned while the
+   * connection opened (#1401), and is read the same way.
    */
-  onTestConnection?: (
-    connection: DatabaseConnection,
-  ) => Promise<{ success: boolean; latency?: number; error?: string; degraded?: boolean; message?: string }>;
+  onTestConnection?: (connection: DatabaseConnection) => Promise<{
+    success: boolean;
+    latency?: number;
+    error?: string;
+    degraded?: boolean;
+    message?: string;
+    warnings?: QueryWarning[];
+  }>;
 }
 
 /** What the test route answered, in the shape both call sites read. */
@@ -223,6 +231,7 @@ interface TestOutcome {
   error?: string;
   degraded?: boolean;
   message?: string;
+  warnings?: QueryWarning[];
 }
 
 /**
@@ -234,6 +243,23 @@ interface TestOutcome {
  */
 function degradedSentence(result: TestOutcome): string {
   return result.message ?? result.error ?? "Connected, but this server answered no health data.";
+}
+
+/**
+ * The caution a successful connect carries, or null when there is none to give.
+ *
+ * Two sources, and either one makes the outcome a caution rather than a green tick: a
+ * health read the server refused (`degraded`), and what the server itself said while
+ * the connection opened (#1401). The second is the only sign that Materialize accepted
+ * a session database that does not exist, which is a connection to the wrong place
+ * rather than a degraded one, so its words are given whole.
+ */
+function cautionSentence(result: TestOutcome): string | null {
+  const reported = result.warnings?.length
+    ? `The server reported: ${result.warnings.map(describeWarning).join("; ")}`
+    : null;
+  if (result.degraded) return reported ? `${degradedSentence(result)} ${reported}` : degradedSentence(result);
+  return reported ? `Connected. ${reported}` : null;
 }
 
 /**
@@ -295,8 +321,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   );
   const [pasteInput, setPasteInput] = useState("");
   const [showPasteInput, setShowPasteInput] = useState(false);
-  /** Whether the user has been shown, and clicked past, a connection with no health surface. */
-  const [degradedSaveAcknowledged, setDegradedSaveAcknowledged] = useState(false);
+  /**
+   * The caution the user has been shown on a save and may now click past: a connection with no
+   * health surface, or what the server said while it opened (#1401). The sentence itself rather
+   * than a flag, so a DIFFERENT caution on the next click is shown before anything is saved.
+   */
+  const [acknowledgedCaution, setAcknowledgedCaution] = useState<string | null>(null);
 
   // SSL/TLS
   const [showSSL, setShowSSL] = useState(D.showSSL);
@@ -364,52 +394,58 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
   // Every connection-scoped setter, keyed like the defaults. A mapped type over the defaults'
   // keys, so a field added to CONNECTION_FORM_DEFAULTS without a setter here fails the
-  // typecheck instead of silently surviving the reset below.
-  const resetSetters: { [K in keyof ConnectionFormDefaults]: (value: ConnectionFormDefaults[K]) => void } = {
-    type: setType,
-    name: setName,
-    host: setHost,
-    port: setPort,
-    user: setUser,
-    password: setPassword,
-    database: setDatabase,
-    schema: setSchema,
-    queryTimeout: setQueryTimeout,
-    connectionString: setConnectionString,
-    mongoConnectionMode: setMongoConnectionMode,
-    environment: setEnvironment,
-    showSSL: setShowSSL,
-    sslMode: setSSLMode,
-    caCert: setCaCert,
-    clientCert: setClientCert,
-    clientKey: setClientKey,
-    showAdvanced: setShowAdvanced,
-    serviceName: setServiceName,
-    instanceName: setInstanceName,
-    localDataCenter: setLocalDataCenter,
-    authSource: setAuthSource,
-    apiKeyId: setApiKeyId,
-    apiKeySecret: setApiKeySecret,
-    saslMechanism: setSaslMechanism,
-    skipObjectScan: setSkipObjectScan,
-    readOnly: setReadOnly,
-    allowInsecureAuth: setAllowInsecureAuth,
-    dataServers: setDataServers,
-    showSSH: setShowSSH,
-    sshEnabled: setSSHEnabled,
-    sshHost: setSSHHost,
-    sshPort: setSSHPort,
-    sshUsername: setSSHUsername,
-    sshAuthMethod: setSSHAuthMethod,
-    sshPassword: setSSHPassword,
-    sshPrivateKey: setSSHPrivateKey,
-    sshPassphrase: setSSHPassphrase,
-  };
-  const resetConnectionFields = () => {
+  // typecheck instead of silently surviving the reset below. Memoized over nothing
+  // but the setters it maps, which `useState` keeps stable: the walk the map feeds
+  // runs from `handleConnect`'s `useCallback`, so the map's identity has to hold
+  // still for that callback to stay valid across renders.
+  const resetSetters: { [K in keyof ConnectionFormDefaults]: (value: ConnectionFormDefaults[K]) => void } = useMemo(
+    () => ({
+      type: setType,
+      name: setName,
+      host: setHost,
+      port: setPort,
+      user: setUser,
+      password: setPassword,
+      database: setDatabase,
+      schema: setSchema,
+      queryTimeout: setQueryTimeout,
+      connectionString: setConnectionString,
+      mongoConnectionMode: setMongoConnectionMode,
+      environment: setEnvironment,
+      showSSL: setShowSSL,
+      sslMode: setSSLMode,
+      caCert: setCaCert,
+      clientCert: setClientCert,
+      clientKey: setClientKey,
+      showAdvanced: setShowAdvanced,
+      serviceName: setServiceName,
+      instanceName: setInstanceName,
+      localDataCenter: setLocalDataCenter,
+      authSource: setAuthSource,
+      apiKeyId: setApiKeyId,
+      apiKeySecret: setApiKeySecret,
+      saslMechanism: setSaslMechanism,
+      skipObjectScan: setSkipObjectScan,
+      readOnly: setReadOnly,
+      allowInsecureAuth: setAllowInsecureAuth,
+      dataServers: setDataServers,
+      showSSH: setShowSSH,
+      sshEnabled: setSSHEnabled,
+      sshHost: setSSHHost,
+      sshPort: setSSHPort,
+      sshUsername: setSSHUsername,
+      sshAuthMethod: setSSHAuthMethod,
+      sshPassword: setSSHPassword,
+      sshPrivateKey: setSSHPrivateKey,
+      sshPassphrase: setSSHPassphrase,
+    }),
+    [],
+  );
+  const resetConnectionFields = useCallback(() => {
     for (const key of Object.keys(CONNECTION_FORM_DEFAULTS) as (keyof ConnectionFormDefaults)[]) {
       (resetSetters[key] as (value: ConnectionFormDefaults[typeof key]) => void)(CONNECTION_FORM_DEFAULTS[key]);
     }
-  };
+  }, [resetSetters]);
 
   const isEditMode = !!editConnection;
 
@@ -429,7 +465,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setShowPasteInput(false);
     setPasteInput("");
     // The next connection typed into this dialog has not been warned about anything.
-    setDegradedSaveAcknowledged(false);
+    setAcknowledgedCaution(null);
   };
 
   // Populate form when editing.
@@ -815,18 +851,18 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
     try {
       const result = await probeConnection(buildConnection());
+      const caution = cautionSentence(result);
 
       setTestResult({
         // A degraded connection IS connected, so it is not an error - but saying
         // "Connected successfully" and nothing else is what hid the missing
         // monitoring surface until the dashboard showed an error page. It is not a
         // plain success either: it is the same caution `handleConnect` offers below,
-        // so it gets the same warning tone rather than the green tick.
-        tone: !result.success ? "error" : result.degraded ? "warning" : "success",
+        // so it gets the same warning tone rather than the green tick. A server's own
+        // caution at connect is the same class (#1401).
+        tone: !result.success ? "error" : caution !== null ? "warning" : "success",
         message: result.success
-          ? result.degraded
-            ? degradedSentence(result)
-            : `Connected successfully${result.latency ? ` (${result.latency}ms)` : ""}`
+          ? (caution ?? `Connected successfully${result.latency ? ` (${result.latency}ms)` : ""}`)
           : result.error || "Connection failed",
         latency: result.latency,
       });
@@ -860,39 +896,52 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         while the editor and the object browser worked in full.
 
         What the save may NOT become is silent. The first click reports what the server
-        refused, in its own words, and saves nothing; only a second one saves. The
-        acknowledgement is withdrawn when the dialog closes, and when a different edit
+        refused, or what it cautioned while the connection opened (#1401), in its own
+        words, and saves nothing; only a second click that meets the SAME caution saves.
+        The acknowledgement is withdrawn when the dialog closes, and when a different edit
         target is applied while it stays open, so the next connection shown here is told
         too.
       */
-      if (result.degraded === true && !degradedSaveAcknowledged) {
-        setDegradedSaveAcknowledged(true);
+      const caution = cautionSentence(result);
+      if (caution !== null && caution !== acknowledgedCaution) {
+        setAcknowledgedCaution(caution);
         setTestResult({
           // The save is being OFFERED, not refused, and not yet completed either - a
           // sentence that asks the user to click again does not belong under a
-          // "success" tick (#498). This is the same class as the degraded
+          // "success" tick (#498). This is the same class as the cautioned
           // `handleTestConnection` message above: connected, but the server answered
-          // no health data.
+          // no health data or said something the user has to see first.
           tone: "warning",
           // The button's own label, because the dialog renders two of them: "Save
           // Changes" when editing and "Establish Connection" when creating, and naming
           // a button that is not on screen is worse than naming none.
-          message: `${degradedSentence(result)} Click ${
-            isEditMode ? "Save Changes" : "Establish Connection"
-          } again to save it anyway.`,
+          message: `${caution} Click ${isEditMode ? "Save Changes" : "Establish Connection"} again to save it anyway.`,
         });
         return;
       }
 
       onConnect(conn);
-      setQueryTimeout("");
-      // Reset form
-      setName("");
-      setUser("");
-      setPassword("");
-      setDatabase("");
-      setConnectionString("");
-      setMongoConnectionMode("host");
+      /*
+        A dialog a host keeps open after the save never runs the close path, so the
+        save itself has to reset: every connection-scoped field from the same object
+        that seeded it, the same walk (#1155). The hand-kept list this replaced
+        cleared only the credentials, so the host, TLS, SSH tunnel and environment
+        of the connection just saved stayed in the dialog and reached the next
+        one's test and save.
+
+        Edit mode resets nothing but the banner: the dialog is still bound to the
+        connection just saved, the close path deliberately leaves an edit target's
+        state alone for the same reason, and a half-cleared form would save a
+        credential-less connection on a second "Save Changes" click.
+
+        The acknowledgement is withdrawn here too, not only on close: the next
+        connection typed into this same open dialog has not been warned about
+        anything, and must not be saved on its first click.
+      */
+      if (!isEditMode) {
+        resetConnectionFields();
+        setAcknowledgedCaution(null);
+      }
       setTestResult(null);
     } catch {
       setTestResult({ tone: "error", message: "Network error - could not reach server" });
@@ -901,10 +950,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     }
   }, [
     buildConnection,
-    degradedSaveAcknowledged,
+    acknowledgedCaution,
     isEditMode,
     onConnect,
     probeConnection,
+    resetConnectionFields,
     validateQueryTimeout,
     validateHostAddress,
   ]);

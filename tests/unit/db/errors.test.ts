@@ -482,6 +482,158 @@ describe("mapDatabaseError", () => {
   });
 });
 
+/**
+ * A statement's own fault is read from the driver's code fields, never its words (#1427). Each
+ * shape below is the one the installed driver raises, measured on 2026-10-04: `pg` against
+ * PostgreSQL 18.6 and CockroachDB v26.3.2, `mysql2` against MySQL 26.7.0 and TiDB v8.5.8,
+ * `bun:sqlite` and `node:sqlite` in process. The messages hold none of the words the substring
+ * branches match, which is exactly the population that used to reach the generic 500.
+ */
+describe("mapDatabaseError: a statement's own fault, by driver code (#1427)", () => {
+  const shaped = (message: string, fields: Record<string, unknown>) => Object.assign(new Error(message), fields);
+
+  const statementFaults: [string, Error][] = [
+    [
+      "MySQL syntax error (1064, 42000)",
+      shaped("You have an error in your SQL syntax; check the manual near 'SELEC 1' at line 1", {
+        code: "ER_PARSE_ERROR",
+        errno: 1064,
+        sqlState: "42000",
+      }),
+    ],
+    [
+      "MySQL unknown table (1146, 42S02)",
+      shaped("Table 'app.nope' doesn't exist", { code: "ER_NO_SUCH_TABLE", errno: 1146, sqlState: "42S02" }),
+    ],
+    [
+      "MySQL duplicate key (1062, 23000)",
+      shaped("Duplicate entry '1' for key 't1.PRIMARY'", { code: "ER_DUP_ENTRY", errno: 1062, sqlState: "23000" }),
+    ],
+    [
+      "MySQL table privilege (1142, 42000)",
+      shaped("SELECT command denied to user 'u'@'%' for table 't'", {
+        code: "ER_TABLEACCESS_DENIED_ERROR",
+        errno: 1142,
+        sqlState: "42000",
+      }),
+    ],
+    [
+      "PostgreSQL-wire unique violation (23505)",
+      shaped('duplicate key value violates unique constraint "t_pkey"', { code: "23505" }),
+    ],
+    ["PostgreSQL-wire bad input (22P02)", shaped('invalid input syntax for type integer: "x"', { code: "22P02" })],
+    ["PostgreSQL-wire feature not supported (0A000)", shaped("REINDEX not supported yet", { code: "0A000" })],
+    [
+      "Db2 syntax error (SQLSTATE 42601)",
+      shaped('An unexpected token "SELEC" was found. SQLSTATE=42601', { sqlstate: "42601", sqlcode: -104 }),
+    ],
+    [
+      "SQL Server unknown procedure (2812)",
+      shaped("Could not find stored procedure 'SELEC'.", { code: "EREQUEST", number: 2812, class: 16 }),
+    ],
+    [
+      "SQL Server unique key (2627)",
+      shaped("Violation of PRIMARY KEY constraint 'PK_t'.", { code: "EREQUEST", number: 2627, class: 14 }),
+    ],
+    ["Oracle invalid SQL statement (ORA-00900)", shaped("ORA-00900: invalid SQL statement", { errorNum: 900 })],
+    ["Oracle unique constraint (ORA-00001)", shaped("ORA-00001: unique constraint violated", { errorNum: 1 })],
+    [
+      "Oracle check constraint (ORA-02290)",
+      shaped("ORA-02290: check constraint violated", { errorNum: 2290, code: "ORA-02290" }),
+    ],
+    [
+      "bun:sqlite unique constraint",
+      shaped("UNIQUE constraint failed: t.a", { code: "SQLITE_CONSTRAINT_PRIMARYKEY", errno: 1555 }),
+    ],
+    ["bun:sqlite syntax error", shaped('near "SELEC": syntax-like refusal', { code: "SQLITE_ERROR", errno: 1 })],
+    [
+      "node:sqlite unique constraint (extended 1555)",
+      shaped("UNIQUE constraint failed: t.a", { code: "ERR_SQLITE_ERROR", errcode: 1555, errstr: "constraint failed" }),
+    ],
+  ];
+
+  for (const [name, error] of statementFaults) {
+    test(`${name} is a QueryError carrying the engine's own message`, () => {
+      const mapped = mapDatabaseError(error, "mysql", "SELEC 1");
+      expect(mapped).toBeInstanceOf(QueryError);
+      expect(mapped.message).toBe(error.message);
+      expect(mapped.query).toBe("SELEC 1");
+    });
+  }
+
+  test("a statement error naming a table called pool_items is not a pool failure (B4)", () => {
+    const error = shaped("no such table: pool_items", { code: "SQLITE_ERROR", errno: 1 });
+    expect(mapDatabaseError(error, "sqlite")).toBeInstanceOf(QueryError);
+  });
+
+  test("a statement error naming a table called timeouts is not a timeout", () => {
+    const error = shaped("Table 'app.timeouts' doesn't exist", { errno: 1146, sqlState: "42S02" });
+    expect(mapDatabaseError(error, "mysql")).toBeInstanceOf(QueryError);
+  });
+
+  // The classes that are the connection's, the transaction's or the server's keep the class the
+  // rest of the mapper gives them.
+  const notStatementFaults: [string, Error, new (...args: never[]) => DatabaseError][] = [
+    [
+      "PostgreSQL statement timeout (57014)",
+      shaped("canceling statement due to statement timeout", { code: "57014" }),
+      TimeoutError,
+    ],
+    ["PostgreSQL internal error (XX000)", shaped("Failed to run the query", { code: "XX000" }), DatabaseError],
+    [
+      "TiDB unsupported statement (8200, HY000)",
+      shaped("OPTIMIZE TABLE is not supported", { errno: 8200, sqlState: "HY000" }),
+      DatabaseError,
+    ],
+    [
+      "SQL Server deadlock victim (1205)",
+      shaped("Transaction was deadlocked", { number: 1205, class: 13 }),
+      DatabaseError,
+    ],
+    [
+      "Oracle user cancel (ORA-01013)",
+      shaped("ORA-01013: user requested cancel of current operation", { errorNum: 1013 }),
+      DatabaseError,
+    ],
+    ["SQLite busy (SQLITE_BUSY)", shaped("database is locked", { code: "SQLITE_BUSY", errno: 5 }), DatabaseError],
+    [
+      "node:sqlite busy (errcode 5)",
+      shaped("database is locked", { code: "ERR_SQLITE_ERROR", errcode: 5 }),
+      DatabaseError,
+    ],
+    ["a system error code", shaped("write EPIPE", { code: "EPIPE" }), DatabaseError],
+    [
+      "MySQL max_user_connections (1203, 42000)",
+      shaped("User u already has more than 'max_user_connections' active connections", {
+        errno: 1203,
+        sqlState: "42000",
+      }),
+      DatabaseError,
+    ],
+    [
+      "MySQL account resource limit (1226, 42000)",
+      shaped("User 'u' has exceeded the 'max_questions' resource (current value: 10)", {
+        errno: 1226,
+        sqlState: "42000",
+      }),
+      DatabaseError,
+    ],
+    [
+      "PostgreSQL permission denied (42501) stays an authentication failure",
+      shaped("permission denied for table t", { code: "42501" }),
+      AuthenticationError,
+    ],
+  ];
+
+  for (const [name, error, expected] of notStatementFaults) {
+    test(`${name} keeps its own class`, () => {
+      const mapped = mapDatabaseError(error, "postgres");
+      expect(mapped).toBeInstanceOf(expected);
+      expect(mapped).not.toBeInstanceOf(QueryError);
+    });
+  }
+});
+
 // ============================================================================
 // Oracle Thick-mode diagnostics (#538)
 // ============================================================================

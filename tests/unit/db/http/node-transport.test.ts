@@ -14,6 +14,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import {
   createNodeTransport,
+  IDLE_SOCKET_MS,
   type NodeRequest,
   type NodeResponse,
   type NodeTransport,
@@ -429,6 +430,51 @@ describe("bounded, stoppable and never resent", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect((await transport.request(get(url("/")))).status).toBe(200);
     expect(listener.accepted()).toBe(2);
+  });
+
+  // Qdrant closes an idle keep-alive socket after 5 s (measured 4.8 s after its answer), and a request written on one as
+  // it closed was reset (#1419). The default stays below that; the timing cases below use a short idle bound.
+  test("by default an Agent closes a socket idle for IDLE_SOCKET_MS, below Qdrant's 4.8 s", async () => {
+    const listener = await httpListener(jsonAnswer(200, "{}"));
+    const timeouts: unknown[] = [];
+    const agentPrototype = withAddRequest(http.Agent.prototype as http.Agent);
+    const addRequest = agentPrototype.addRequest;
+    agentPrototype.addRequest = function (this: http.Agent & { options: { timeout?: number } }, ...args: unknown[]) {
+      timeouts.push(this.options.timeout);
+      return addRequest.apply(this, args);
+    };
+    try {
+      const { transport, url } = connect(listener);
+      await transport.request(get(url("/")));
+    } finally {
+      agentPrototype.addRequest = addRequest;
+    }
+    expect(timeouts).toEqual([IDLE_SOCKET_MS]);
+    expect(IDLE_SOCKET_MS).toBeLessThan(4800);
+  });
+
+  test("an idle pooled socket is closed by the transport after idleSocketMs, and the next request opens a new one", async () => {
+    // The listener keeps its sockets for Node's 5 s default, so the socket that closes is closed by the transport.
+    const listener = await httpListener(jsonAnswer(200, "{}"));
+    const { transport, url } = connect(listener, { idleSocketMs: 200 });
+    await transport.request(get(url("/")));
+    const answered = Date.now();
+    expect(listener.open()).toBe(1);
+    await eventually(() => listener.open() === 0, "the transport to close its idle socket");
+    const idle = Date.now() - answered;
+    expect(idle).toBeGreaterThanOrEqual(150);
+    expect(idle).toBeLessThan(1500);
+    expect((await transport.request(get(url("/")))).status).toBe(200);
+    expect(listener.accepted()).toBe(2);
+  });
+
+  test("an answer that takes longer than idleSocketMs still arrives: only an idle socket is closed", async () => {
+    const listener = await httpListener((request, response, body) => {
+      setTimeout(() => jsonAnswer(200, '{"late":true}')(request, response, body), 700);
+    });
+    const { transport, url } = connect(listener, { idleSocketMs: 200 });
+    const answer = await transport.request(get(url("/")));
+    expect(answer.text).toBe('{"late":true}');
   });
 
   test("a refused connection is a network failure naming the runtime's code and no URL", async () => {

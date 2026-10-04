@@ -52,7 +52,7 @@ It refuses every inference input except the local BM25 model, sends an API key w
 The constructor validates nothing and opens nothing, so a provider built from any connection answers its capabilities and labels.
 `connect()` checks the endpoint, the key and the TLS panel first, then sends exactly two requests: `GET /`, for the version the gates read, which proves reachability only, and `GET /collections`, the authenticated read every credential may make; it never sends a write-shaped request, `/cluster`, `/telemetry` or a manage-only read.
 A `connect()` that resolves means the server answered an authenticated read, which an open server answers for any key or none, and never that the credential can do anything more.
-`disconnect()` closes the connection's one keep-alive agent.
+`disconnect()` closes the connection's one keep-alive agent, which closes a socket left idle for 4 s on its own (section 3.3).
 The transport never goes through an `http_proxy` or `https_proxy` variable and never follows a redirect: use an SSH tunnel to reach a private endpoint.
 
 ### 2.4 The client, and why
@@ -85,6 +85,7 @@ No snapshot recover, upload or partial recover route is in the console.
 v1 runs reads only: no point, payload, vector, index, collection, alias, snapshot or cluster change is a route of the console, and each is refused by name, saying what v1 runs.
 No read writes as a side effect: no index is created for a facet or an `order_by`, and `wait` and `ordering` are never sent.
 Nothing is retried, so nothing is sent twice: a lost answer is reported as lost.
+So that a request is not lost to the server's own keep-alive, the transport closes a pooled socket after 4 s idle, below Qdrant's 5 s keep-alive, which closed an idle socket 4.8 s after its answer when measured (#1419): measured on 2026-10-03/04 against Qdrant 1.19.1, requests separated by about 5 s of idle failed now and then with `ECONNRESET` (1 of 16 at 4.93 s pauses), because a request was written on a pooled socket as the server closed it.
 
 ### 3.4 The read-only mode
 

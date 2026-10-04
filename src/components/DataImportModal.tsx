@@ -23,14 +23,21 @@ import { rowWritableObjects, type DetailedObject } from "@/lib/db/detailed-objec
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { declaredKinds } from "@/lib/db/object-kinds";
-import { quoteObjectPath } from "@/lib/query-generators";
+import { quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
 import { quoteLiteral } from "@/lib/sql/values";
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 interface DataImportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onImport: (sql: string) => void;
+  /**
+   * Runs the import. `false` together with a message handed to `onFailure` says the database or
+   * the editor refused it, and the dialog then stays open with the file, the target and the mapping
+   * as they were, showing that message (#1396). Anything else closes it: success, a host that
+   * reports no outcome, and a `false` with no message, which is a run handed to the safety dialog
+   * (it runs the statement on Proceed) or cancelled, as before.
+   */
+  onImport: (sql: string, onFailure: (message: string) => void) => Promise<boolean | void> | void;
   tables: readonly DetailedObject[];
   databaseType?: string;
   /**
@@ -171,10 +178,32 @@ export type ImportTarget =
  *
  * With no declaration yet the dotted address is the fallback rather than the label, so the
  * statement still names the object the operator chose; it can only lack the quoting.
+ *
+ * A new table is the name the operator typed, read as a dotted address (`sales.imported` is a
+ * table in `sales`) and quoted always, as its columns are (see `newColumnIdentifier`).
  */
 function targetIdentifier(target: ImportTarget, capabilities: ProviderCapabilities | undefined): string {
-  if (target.kind === "new") return target.name || "imported_data";
+  if (target.kind === "new") {
+    const name = target.name || "imported_data";
+    return capabilities === undefined ? name : quoteObjectPath(name.split("."), capabilities, { always: true });
+  }
   return capabilities === undefined ? objectPathLabel(target.path) : quoteObjectPath(target.path, capabilities);
+}
+
+/**
+ * A column of a table the import creates, as both of its statements spell it (#1396).
+ *
+ * Quoted always, not only when the name would not round-trip bare: a header is whatever the file
+ * says, and a lowercase reserved word (`when`, `order`, `user`, `group`) passes the bare test, so
+ * `CREATE TABLE imp_csv (..., when TEXT)` was refused with a syntax error. The CREATE and the INSERT
+ * spell the name the same way, so the quoting cannot make one miss the other on any engine.
+ *
+ * An existing table's columns stay as the mapping spells them: they name columns the engine
+ * already has, and quoting a name a bare spelling folds (`Name` for PostgreSQL's `name`) would
+ * address a different column.
+ */
+function newColumnIdentifier(name: string, capabilities: ProviderCapabilities | undefined): string {
+  return capabilities === undefined ? name : quoteIdentifier(name, capabilities, { always: true });
 }
 
 /**
@@ -234,15 +263,18 @@ export function generateImportSQL(
   // CREATE TABLE if new
   if (createNewTable) {
     const colDefs = parsedData.headers.map((h, idx) => {
-      const colName = columnMapping[h] || h;
+      const colName = newColumnIdentifier(columnMapping[h] || h, capabilities);
       return `  ${colName} ${columnTypes[idx]}`;
     });
     statements.push(`CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`);
   }
 
-  // INSERT statements (batch in groups of 100)
-  const mappedHeaders = parsedData.headers.map((h) => columnMapping[h] || h);
-  const batchSize = 100;
+  // INSERT statements, in groups of 100 rows, or one row each where the engine's INSERT takes
+  // a single row (CQL, #1410).
+  const mappedHeaders = parsedData.headers.map((h) =>
+    createNewTable ? newColumnIdentifier(columnMapping[h] || h, capabilities) : columnMapping[h] || h,
+  );
+  const batchSize = capabilities?.supportsMultiRowInsert === false ? 1 : 100;
 
   for (let i = 0; i < parsedData.rows.length; i += batchSize) {
     const batch = parsedData.rows.slice(i, i + batchSize);
@@ -295,6 +327,10 @@ export function DataImportModal({
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  // Bumped on every close, so an outcome that arrives after the dialog was closed is dropped
+  // rather than written into the next opening.
+  const openingRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const csvTextRef = useRef("");
   const [csvDelimiter, setCsvDelimiter] = useState<CsvDelimiter>(",");
@@ -318,9 +354,11 @@ export function DataImportModal({
     setColumnMapping({});
     setError(null);
     setIsImporting(false);
+    setImportError(null);
   }, []);
 
   const handleClose = () => {
+    openingRef.current += 1;
     resetState();
     onClose();
   };
@@ -408,13 +446,27 @@ export function DataImportModal({
     [parsedData, importTarget, columnMapping, databaseType, capabilities],
   );
 
-  const handleImport = () => {
+  /**
+   * Close only once the import landed (#1396). It used to close 200ms after starting, whatever
+   * happened, so a statement the engine refused took the file and the column mapping with it and
+   * the user picked and mapped everything again to retry.
+   */
+  const handleImport = async () => {
     if (!generatedSQL) return;
     setIsImporting(true);
-    onImport(generatedSQL);
-    setTimeout(() => {
-      handleClose();
-    }, 200);
+    setImportError(null);
+    const opening = openingRef.current;
+    let failure: string | undefined;
+    const outcome = await onImport(generatedSQL, (message) => {
+      failure = message;
+    });
+    if (opening !== openingRef.current) return;
+    if (outcome === false && failure !== undefined) {
+      setIsImporting(false);
+      setImportError(failure);
+      return;
+    }
+    handleClose();
   };
 
   if (refusal !== null) {
@@ -790,6 +842,16 @@ export function DataImportModal({
                   {generatedSQL.length > 3000 && "\n\n... (truncated for preview)"}
                 </pre>
               </div>
+
+              {importError && (
+                <div
+                  role="alert"
+                  className="p-3 rounded-lg bg-danger-tint/10 border border-danger-tint/20 flex items-start gap-2"
+                >
+                  <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-danger shrink-0 mt-0.5" />
+                  <span className="text-xs text-danger whitespace-pre-wrap">{importError}</span>
+                </div>
+              )}
 
               <div className="flex justify-between">
                 <Button

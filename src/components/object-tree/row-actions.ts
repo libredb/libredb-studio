@@ -104,11 +104,12 @@ export interface TreeRowActionHandlers {
   /** Deep-links to the maintenance surface with this object named. */
   readonly onOpenMaintenance?: (object: DatabaseObject) => void;
   /**
-   * Create an object of this folder's kind. Takes NO target: `CreateTableModal` qualifies
-   * nothing, so handing it the container would promise a placement it does not honour.
-   * Task 25 owns qualifying it.
+   * Create an object of this folder's kind IN THIS FOLDER'S CONTAINER, whose path it is
+   * handed (`[]` on an engine with no container level). It used to take no target, and the
+   * table then landed in the session's default container whichever folder was clicked:
+   * measured on MySQL 26.7.0, Create Table under `e2e_other` created `e2e.ct_other` (#1391).
    */
-  readonly onCreateObject?: () => void;
+  readonly onCreateObject?: (container: readonly string[]) => void;
   /**
    * Open this object's DEFINITION TEXT, read-only (#789 Phase 2).
    *
@@ -163,7 +164,7 @@ export function rowActions({
   // A container row, and a row whose kind the provider does not declare. Neither can be
   // reasoned about from a declaration that is not there.
   if (kind === undefined) return [];
-  if (row.kind === "folder") return folderActions(kind, capabilities, handlers);
+  if (row.kind === "folder") return folderActions(row.path, kind, capabilities, handlers);
   // An object row whose object the cache no longer holds: an action with no target is
   // worse than no action, because it looks like it addresses the row under the pointer.
   return object === undefined ? [] : objectActions(object, kind, capabilities, labels, handlers);
@@ -342,6 +343,7 @@ function objectActions(
  * grid's inline editor, and the three engines that declare it false still create tables.
  */
 function folderActions(
+  container: readonly string[],
   kind: ObjectKindSpec,
   capabilities: ProviderCapabilities,
   handlers: TreeRowActionHandlers,
@@ -354,5 +356,5 @@ function folderActions(
     !kindAcceptsRowWrites(capabilities, kind.id)
   )
     return [];
-  return [{ id: "create", label: `Create ${kind.label}`, icon: Plus, run: create }];
+  return [{ id: "create", label: `Create ${kind.label}`, icon: Plus, run: () => create(container) }];
 }

@@ -366,6 +366,16 @@ disabled and a bogus `Basic` header is *ignored* there (HTTP 200, measured), so 
 be captured — and rather than invent one, the code uses the one signal whose meaning HTTP itself fixes
 ([http-transport.ts:64-68](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
+The status decides only when the body says nothing better (#1413). Elasticsearch reuses 403 for a
+fault that has nothing to do with credentials: measured on 9.5.3 on 2026-10-04, `SELECT a FROM
+closed_idx` after `POST closed_idx/_close` answers HTTP 403 with `error.type`
+`cluster_block_exception` and the reason `index [closed_idx] blocked by: [FORBIDDEN/4/index
+closed];`. A 401/403 whose body is an `error` object naming a type that is not a security one
+(nothing matching `security`, `authenticat`, `authoriz`, `permission`, `access`, `credential`
+or `forbidden`) is therefore classified by that type
+like any other fault and carries the engine's reason; one with no body, a text body, a string
+`error` or a `security_exception` stays `auth`.
+
 ### 3.7a API key auth (#708)
 
 An `apiKeyId`/`apiKeySecret` pair on the connection is sent as `Authorization: ApiKey
@@ -1472,14 +1482,14 @@ instead of being quietly swallowed as a query error.
 
 | Category | Measured trigger on this product | Error raised |
 |---|---|---|
-| `auth` | HTTP 401/403 (status-decided; see [§3.7](#37-a-string-valued-error-means-the-request-never-reached-the-sql-engine)) | `AuthenticationError` |
+| `auth` | HTTP 401/403 with no body or a security fault in it (status-decided otherwise; see [§3.7](#37-a-string-valued-error-means-the-request-never-reached-the-sql-engine)) | `AuthenticationError` |
 | `unreachable` | A refused socket, an unresolvable host, or a **string-valued** `error` — the wrong endpoint path, the wrong method, a missing content type | `ConnectionError` carrying host and port |
 | `timeout` | The client deadline expired (`AbortSignal.timeout`) | `TimeoutError` — and the cluster is *still working on the statement* |
 | `cancelled` | The caller aborted | `QueryCancelledError` |
 | `syntax` | `parsing_exception` — `SELEKT 1`, a trailing `;`, `OFFSET`, `INSERT`, `CREATE`, `ALTER` | `QueryError` |
 | `unknown-object` | `verification_exception` (unknown index / column / function), `index_not_found_exception` from `_mapping` | `QueryError` |
 | `unsupported` | *never produced on this product* — the fork's `SQLFeatureNotSupportedException` is what lands here | `QueryError` |
-| `engine` | `arithmetic_exception` (`SELECT 1/0`, HTTP 500), any unrecognised fault name, the paging ceiling, an unreadable body | `QueryError` |
+| `engine` | `arithmetic_exception` (`SELECT 1/0`, HTTP 500), `cluster_block_exception` (a closed index, HTTP 403, #1413), any unrecognised fault name, the paging ceiling, an unreadable body | `QueryError` |
 
 The four that collapse onto `QueryError` do so because they describe the same event to a user — the
 cluster read the statement and refused it — and the engine's own wording, carried through verbatim, is

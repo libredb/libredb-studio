@@ -125,7 +125,7 @@ interface XTransport {
 
 **Send the requests through the shared REST transport.**
 A new provider that speaks HTTP builds the HTTP side of its transport seam on `createNodeTransport` in [`node-transport.ts`](../src/lib/db/http/node-transport.ts), so the provider's own transport file is a thin adapter.
-It dials through `node:http` or `node:https` with one keep-alive Agent per connection and `maxSockets` set to the provider's in-flight bound, so no proxy variable can route a request, no redirect is followed, a request whose answer was lost is never sent again, and an answer stops at the byte cap the provider passes.
+It dials through `node:http` or `node:https` with one keep-alive Agent per connection, `maxSockets` set to the provider's in-flight bound and an idle socket closed after 4 s (below a server keep-alive such as Qdrant's 5 s, #1419), so no proxy variable can route a request, no redirect is followed, a request whose answer was lost is never sent again, and an answer stops at the byte cap the provider passes.
 It maps the SSL / TLS panel through `nodeTlsMaterial`, the one TLS mapping a new provider takes, and checks the certificate against the far end of an SSH tunnel rather than the local forward.
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
 The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.
@@ -855,7 +855,7 @@ const result = await provider.query(prepared.query);
 | Field | Purpose |
 |-------|---------|
 | `query` | The (possibly modified) query string to execute |
-| `wasLimited` | Whether a LIMIT was injected. This preparation flag is unchanged for short results; the query and transaction routes report it on the response's `pagination.wasLimited` only when the returned page fills that bound, which the stats strip shows as the "limited" badge. A provider that bounds its own result instead, as the Prometheus provider cuts a vector at its series cap and the Kafka provider cuts a read at its row limit, its result byte budget and its cell limit, returns `false` here and reports its bound on `QueryResult.pagination.wasLimited`, which `POST /api/db/query` keeps (#1085, section 5.4); such a bound never sets `hasMore`, because no offset can advance it |
+| `wasLimited` | Whether a LIMIT was injected. This preparation flag is unchanged for short results; the query and transaction routes report it on the response's `pagination.wasLimited` only when a row past the page came back (#1440), which the stats strip shows as the "limited" badge. A provider that bounds its own result instead, as the Prometheus provider cuts a vector at its series cap and the Kafka provider cuts a read at its row limit, its result byte budget and its cell limit, returns `false` here and reports its bound on `QueryResult.pagination.wasLimited`, which `POST /api/db/query` keeps (#1085, section 5.4); such a bound never sets `hasMore`, because no offset can advance it |
 | `limit` | The effective row limit |
 | `offset` | The effective offset |
 

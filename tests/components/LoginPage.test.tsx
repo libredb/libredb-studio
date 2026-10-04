@@ -2,7 +2,12 @@ import "../setup-dom";
 import React from "react";
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { mockRouterPush, mockRouterRefresh } from "../helpers/mock-navigation";
+import {
+  mockRouterPush,
+  mockRouterRefresh,
+  resetMockSearchParams,
+  setMockSearchParams,
+} from "../helpers/mock-navigation";
 import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import { mock } from "bun:test";
 import { listShowcaseDatabases } from "@/lib/db-showcase";
@@ -134,6 +139,42 @@ describe("LoginPage", () => {
       expect(mockRouterPush).toHaveBeenCalledWith("/");
     });
     expect(mockToastSuccess).toHaveBeenCalledWith("Welcome back, user!");
+  });
+
+  // The session-ended redirect sends the user here with ?next= (#1420): signing in returns them to
+  // the page they were on rather than the role's default.
+  test("returns to the page the session ended on", async () => {
+    setMockSearchParams(new URLSearchParams({ next: "/settings/authenticator?x=1" }));
+    try {
+      globalThis.fetch = mock(() =>
+        Promise.resolve(new Response(JSON.stringify({ success: true, role: "admin" }))),
+      ) as never;
+      const { form, emailInput, passwordInput, user } = renderLogin();
+      await user.type(emailInput, "admin@libredb.org");
+      await user.type(passwordInput, "LibreDB.2026");
+      fireEvent.submit(form);
+
+      await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/settings/authenticator?x=1"));
+    } finally {
+      resetMockSearchParams();
+    }
+  });
+
+  test("ignores a return path that would leave the application", async () => {
+    setMockSearchParams(new URLSearchParams({ next: "//evil.example/" }));
+    try {
+      globalThis.fetch = mock(() =>
+        Promise.resolve(new Response(JSON.stringify({ success: true, role: "user" }))),
+      ) as never;
+      const { form, emailInput, passwordInput, user } = renderLogin();
+      await user.type(emailInput, "user@libredb.org");
+      await user.type(passwordInput, "LibreDB.2026");
+      fireEvent.submit(form);
+
+      await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/"));
+    } finally {
+      resetMockSearchParams();
+    }
   });
 
   test("shows error toast on failed login", async () => {

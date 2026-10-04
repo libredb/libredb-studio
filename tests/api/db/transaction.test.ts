@@ -152,12 +152,15 @@ describe("POST /api/db/transaction", () => {
     }));
   });
 
-  for (const [count, providerLimited, expectedLimited] of [
-    [2, false, false],
-    [50, false, true],
-    [2, true, true],
+  // `count` is what the engine answered to the statement that ran, which asks for one row past the
+  // 50-row page (#1440): 50 is a page that ended exactly full, 51 is a page with a next one.
+  for (const [count, providerLimited, expectedMore, expectedReturned, expectedLimited] of [
+    [2, false, false, 2, false],
+    [50, false, false, 50, false],
+    [51, false, true, 50, true],
+    [2, true, false, 2, true],
   ] as const) {
-    test(`reports a ${count}-row page with provider cut=${providerLimited} accurately`, async () => {
+    test(`reports a ${count}-row answer with provider cut=${providerLimited} accurately`, async () => {
       (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
         rows: Array.from({ length: count }, (_, i) => ({ id: i + 1 })),
         fields: ["id"],
@@ -175,8 +178,8 @@ describe("POST /api/db/transaction", () => {
       expect(data.pagination).toEqual({
         limit: 50,
         offset: 0,
-        hasMore: count === 50,
-        totalReturned: count,
+        hasMore: expectedMore,
+        totalReturned: expectedReturned,
         wasLimited: expectedLimited,
       });
     });
@@ -311,13 +314,132 @@ describe("POST /api/db/transaction", () => {
     });
     const req = createMockRequest("/api/db/transaction", {
       method: "POST",
-      body: { connection: validConnection, action: "query", sql: "SELECT 1 AS a; SELECT 2 AS b" },
+      // A T-SQL batch is one request, so the two sets come back from one call. Under a dialect
+      // that runs one statement per call the route sends them one by one instead (#1390).
+      body: { connection: { ...validConnection, type: "mssql" }, action: "query", sql: "SELECT 1 AS a; SELECT 2 AS b" },
     });
 
     const data = await parseResponseJSON<Record<string, unknown>>(await POST(req as never));
+    expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
 
     expect(data.rows).toEqual([{ a: 1 }]);
     expect(Object.hasOwn(data, "resultSets")).toBe(false);
+  });
+
+  /**
+   * A selection of several statements inside BEGIN or SANDBOX (#1390). It reached the engine as
+   * one text, and MySQL 26.7.0, which runs one statement per call, answered a syntax error at
+   * the start of the second. The route runs them in order on the transaction's connection and
+   * answers in the multi-statement shape `/api/db/multi-query` uses.
+   */
+  describe("query action with several statements (#1390)", () => {
+    type ScriptAnswer = {
+      multiStatement: boolean;
+      statementCount: number;
+      executedCount: number;
+      hasError: boolean;
+      inTransaction: boolean;
+      rows: unknown[];
+      pagination?: unknown;
+      statements: { index: number; sql: string; status: string; error?: string }[];
+    };
+    const run = async (sql: string) => {
+      const req = createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: { connection: { ...validConnection, type: "mysql" }, action: "query", sql },
+      });
+      const res = await POST(req as never);
+      return { res, data: await parseResponseJSON<ScriptAnswer>(res) };
+    };
+
+    test("runs each statement in order inside the transaction", async () => {
+      const { res, data } = await run(
+        "UPDATE e2e.ui_t SET price = 6 WHERE id = 2;\nUPDATE e2e.ui_t SET price = 7 WHERE id = 1;",
+      );
+
+      expect(res.status).toBe(200);
+      const sent = mockTxProvider.queryInTransaction.mock.calls.map((call) => String((call as unknown[])[0]));
+      expect(sent).toHaveLength(2);
+      expect(sent[0]).toContain("price = 6");
+      expect(sent[0]).not.toContain("price = 7");
+      expect(sent[1]).toContain("price = 7");
+      expect(data.multiStatement).toBe(true);
+      expect(data.statementCount).toBe(2);
+      expect(data.executedCount).toBe(2);
+      expect(data.hasError).toBe(false);
+      expect(data.inTransaction).toBe(true);
+      // A script has no next page: Load More would run every statement again.
+      expect(data.pagination).toBeUndefined();
+    });
+
+    test("bounds only the last statement, and shows the last result that has rows", async () => {
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => ({
+        rows: [],
+        fields: [],
+        rowCount: 1,
+        executionTime: 1,
+      }));
+      const { data } = await run("UPDATE t SET a = 1; SELECT * FROM t");
+
+      const sent = mockTxProvider.queryInTransaction.mock.calls.map((call) => String((call as unknown[])[0]));
+      expect(sent[0]).not.toContain("LIMIT 50");
+      expect(sent[1]).toContain("LIMIT 50");
+      expect(data.rows).toEqual([{ id: 1, name: "Alice" }]);
+    });
+
+    test("stops at the first failure and names it", async () => {
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        throw new Error("Duplicate entry '1' for key 'PRIMARY'");
+      });
+      const { res, data } = await run("INSERT INTO t VALUES (1); UPDATE t SET a = 2");
+
+      expect(res.status).toBe(200);
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+      expect(data.hasError).toBe(true);
+      expect(data.executedCount).toBe(1);
+      expect(data.statements[0]).toMatchObject({ index: 0, status: "error" });
+      expect(data.statements[0].error).toContain("Duplicate entry");
+    });
+
+    test("a statement and a trailing comment stay one statement", async () => {
+      const { data } = await run("SELECT * FROM t; -- note");
+
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+      expect(data.multiStatement).toBeUndefined();
+      expect(data.pagination).toBeDefined();
+      // Sent as the splitter read it, without the comment fragment, as the script route sends it.
+      expect(String((mockTxProvider.queryInTransaction.mock.calls[0] as unknown[])[0])).toBe(
+        "SELECT * FROM t LIMIT 50",
+      );
+    });
+
+    test("an Oracle block followed by its `/` line is sent without the separator", async () => {
+      const req = createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: {
+          connection: { ...validConnection, type: "oracle" },
+          action: "query",
+          sql: "BEGIN\n  UPDATE t SET a = 1;\nEND;\n/",
+        },
+      });
+      const res = await POST(req as never);
+
+      expect(res.status).toBe(200);
+      const sent = String((mockTxProvider.queryInTransaction.mock.calls[0] as unknown[])[0]);
+      expect(sent).toContain("END;");
+      expect(sent).not.toContain("/");
+    });
+
+    test("a statement that ended the transaction is reported and the connection handed back", async () => {
+      mockTxProvider.isInTransaction.mockImplementation(() => true);
+      mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+        mockTxProvider.isInTransaction.mockImplementation(() => false);
+        return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+      });
+      const { data } = await run("UPDATE t SET a = 1; COMMIT");
+
+      expect(data.inTransaction).toBe(false);
+    });
   });
 
   test("query action with sql returns result with pagination", async () => {
@@ -353,6 +475,19 @@ describe("POST /api/db/transaction", () => {
    * offered on a statement the limiter declined to rewrite would re-run it unchanged and
    * append the rows already on screen. One field, one meaning, both routes.
    */
+  test("refuses a limit that is not a non-negative integer before the limiter runs", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT 1", options: { limit: "500" } },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(400);
+    expect(mockTxProvider.prepareQuery).not.toHaveBeenCalled();
+    expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+  });
+
   test("offers no next page inside a transaction when the limiter left the statement alone", async () => {
     (mockTxProvider.prepareQuery as ReturnType<typeof mock>).mockImplementation((query: string) => ({
       query,
@@ -390,10 +525,11 @@ describe("POST /api/db/transaction", () => {
       limit: 2,
       offset: 0,
     }));
+    // The statement that runs asks for one row past the page, so a next page is three rows here.
     (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockImplementation(async () => ({
-      rows: [{ id: 1 }, { id: 2 }],
+      rows: [{ id: 1 }, { id: 2 }, { id: 3 }],
       fields: ["id"],
-      rowCount: 2,
+      rowCount: 3,
       executionTime: 3,
     }));
 
@@ -402,12 +538,18 @@ describe("POST /api/db/transaction", () => {
       body: { connection: validConnection, action: "query", sql: "SELECT * FROM users" },
     });
 
-    const data = await parseResponseJSON<{ pagination: { hasMore: boolean; wasLimited: boolean } }>(
-      await POST(req as never),
-    );
+    const data = await parseResponseJSON<{
+      rows: unknown[];
+      rowCount: number;
+      pagination: { hasMore: boolean; wasLimited: boolean; totalReturned: number };
+    }>(await POST(req as never));
 
     expect(data.pagination.wasLimited).toBe(true);
     expect(data.pagination.hasMore).toBe(true);
+    // The probe row is not part of the answer (#1440).
+    expect(data.rows).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(data.rowCount).toBe(2);
+    expect(data.pagination.totalReturned).toBe(2);
   });
 
   // A row edit applied while a transaction is open takes this endpoint, so the

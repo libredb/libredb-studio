@@ -169,10 +169,10 @@ describe("a token signed with JWT_SECRET that is not a session", () => {
     };
     const status = await GET();
     expect(status.status).toBe(401);
-    expect(await status.json()).toEqual({ error: "Authentication required" });
+    expect(await status.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
     const mint = await POST(mintRequest());
     expect(mint.status).toBe(401);
-    expect(await mint.json()).toEqual({ error: "Authentication required" });
+    expect(await mint.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test.each([
@@ -214,7 +214,7 @@ describe("POST /api/mcp/token", () => {
   test("answers guardRoute's 401 without a session", async () => {
     const response = await POST(mintRequest());
     expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "Authentication required" });
+    expect(await response.json()).toEqual({ error: "Authentication required", code: "AUTH_REQUIRED" });
   });
 
   test("mints for the session's user and role, once, with no-store, verifiable only under the MCP key", async () => {

@@ -100,11 +100,17 @@ describe("isoDurationMs", () => {
     ["P2D", 172_800_000],
     // The driver writes a whole-day Duration with its T: new Duration(0, 1, 0, 0).toString() is "P1DT".
     ["P1DT", 86_400_000],
+    // A just-started transaction, read on Neo4j 2026.09.0: the start and the read disagree by a millisecond,
+    // and a transaction cannot have run for less than nothing, so it is 0 (#1416).
+    ["PT-0.001000000S", 0],
+    ["PT-1S", 0],
+    // A sign on one component is that component's: the total is what is clamped.
+    ["PT1M-0.5S", 59_500],
   ])("%s is %d ms", (text, ms) => {
     expect(isoDurationMs(text)).toBe(ms);
   });
 
-  test.each(["", "P", "PT", "P1Y", "P1M", "1S", "PT-1S"])("refuses %j", (text) => {
+  test.each(["", "P", "PT", "P1Y", "P1M", "1S", "PT--1S", "PT-S", "-PT1S"])("refuses %j", (text) => {
     expect(isoDurationMs(text)).toBeUndefined();
   });
 });

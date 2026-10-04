@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D227, U17 · 138
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U89 · 82
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC13 · 10
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -2979,17 +2979,6 @@ Found by the acceptance pass of the vector-family work; the default predates it.
 
 **Done when:** `MonitoringDashboard` passes the signed-in role to both tabs, a non-admin sees no maintenance or Terminate control on /monitoring, and a component test renders the dashboard as a non-admin and finds none.
 
-### X27. A JSON export writes a binary value in Node's Buffer form
-
-`buildResultExport` (`src/lib/export/result-export.ts:892-893`) writes the JSON export as `jsonText(rows)`, the raw rows, so a PostgreSQL `bytea` or SQL Server `varbinary` value is written as `{"type":"Buffer","data":[0,1,...]}`.
-The grid, Copy Cell, the row detail and the CSV export show the same value as `\x` hex, through `asBytes` in `src/lib/export/binary.ts`.
-Measured 2026-10-03 in the acceptance pass of the vector-family work: a 100-byte `bytea` and a 100-byte `varbinary` each exported to JSON as the Buffer object with 100 numbers, and copied as `\x00010203...`.
-A SQLite or libSQL `BLOB` now arrives in the same `Buffer` form, so it is written the same way.
-
-Found by the acceptance pass of the vector-family work; the JSON writer dates from #422.
-
-**Done when:** the owner has decided the JSON form of a binary value (a hex string, a base64 string, or the Buffer form kept and documented), the JSON export writes it for every engine whose driver hands back bytes, and an export test pins it for `bytea` and `varbinary`.
-
 ---
 
 `U24` to `U31` came out of the #789 design that put columns back under an object row. Each was named
@@ -3461,15 +3450,15 @@ Not fixed in #1085: the spec and the rail predate it.
 
 **Done when:** the spec's locator names the editor's RUN button alone (`exact: true`, or a test id of its own), and the spec passes with an LLM configured.
 
-### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Sel" run nothing, and the toolbar Run sends the whole buffer
+### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Selected" run nothing, and the toolbar Run sends the whole buffer
 
-`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Sel" button all end there.
+`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Selected" button all end there.
 The only listener is in `src/hooks/use-query-execution.ts`, which only the standalone `src/components/Studio.tsx` uses.
 The embedded `StudioWorkspace` (`src/workspace/StudioWorkspace.tsx`, the npm package's shell) runs queries through `useQueryAdapter`, which registers none, so in the published shell those three controls never reach the host's `onQueryExecute`.
 The one control that runs there is the toolbar Run, and `executeQuery` in `src/workspace/hooks/use-query-adapter.ts` sends `overrideQuery || tabToExec.query`, the whole buffer: it never asks the editor for `getEffectiveQuery`, as `use-query-execution.ts` does, so neither a selection nor the statement at the caret can be run in that shell.
 On a PromQL tab that is a refusal: a buffer holding `up` and `rate(prometheus_http_requests_total[5m])` on two lines is sent whole, and the server answers `bad_data` with `2:1: parse error: unexpected identifier "rate"`, while `up` alone answers.
 The editor shows its Cmd/Ctrl+Enter hint in both shells, and the shortcut list in `docs/FEATURES.md`, generated from `src/lib/keyboard-shortcuts.ts`, offers it without naming a shell.
-Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Sel" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
+Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Selected" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
 `git log -S'execute-query' -- src/workspace` is empty, so the embedded shell never listened, and `tests/components/StudioWorkspace.test.tsx` mocks `QueryEditor`, so no test reaches the embedded run shortcut.
 
 Found 2026-09-23 by the #1085 review.
@@ -4471,8 +4460,8 @@ bypass.
 The proxy refuses a request on three grounds and audits two of them. `src/proxy.ts` emits
 `origin_mismatch` at `:65` and `insufficient_role` at `:156`, both through `emitAuditEvent`. The third
 is the trailing `catch` at `:173-176`: a token that fails `jwtVerify` because it is forged, tampered,
-expired or truncated falls into `logger.warn("JWT verification failed, redirecting to login")` and
-redirects. Nothing reaches the audit channel.
+expired or truncated falls into `logger.warn("JWT verification failed, refusing the session")` and
+is refused: redirected to `/login` on a page, `401` on an API path. Nothing reaches the audit channel.
 
 An operator reading `GET /api/admin/audit` sees origin and role refusals and no forged-token attempts
 at all, which is the direction the blind spot matters: those are the probes a deployment most wants
@@ -4866,23 +4855,26 @@ not compile until it does.
 
 `mapDatabaseError` classifies on **substring** matching of the engine's message, so an identifier can
 decide the class, and the agent's repairable-versus-environment split inherits the misdiagnosis.
-Verified against the live mapper:
 
-- `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
-  relation is treated as an environment fault and ends the run.
-- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
-  to a model as a statement it could rewrite (bounded at three attempts).
+#1427 settled the half that driver codes can reach: a statement's own fault is now read from the
+driver's code fields (`isStatementFault` in `src/lib/db/errors.ts`: SQLSTATE classes `0A`, `21`, `22`,
+`23`, `42`, `44` from `pg`, `mysql2` and `db2-node`, SQL Server error numbers, Oracle `errorNum`,
+SQLite result codes) before the `timeout`, `cancel`, `pool` and `relation` substring branches, so
+`no such table: pooled_items` is a `QueryError` now, not a `PoolExhaustedError`. What is left runs
+BEFORE that check, on purpose, so that nothing it classified changed class in that PR:
+
 - `relation "user_passwords" does not exist` matches `password` → `AuthenticationError`. Harmless on the
   agent path today only because a query-phase `AuthenticationError` is repairable there, which is a
   coincidence rather than a design.
+- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
+  to a model as a statement it could rewrite (bounded at three attempts).
+- An error with no code field at all (RisingWave answers its parser errors as `XX000`, HTTP drivers
+  carry none) still reaches the substring branches.
 
-Neither direction is a boundary failure: nothing runs that policy did not allow, and the statement and
-repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong before any
-consumer sees the error, so no consumer can correct it.
-
-**Done when:** classification no longer depends on a substring a table or column name can satisfy.
-Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
-each provider already has access to its own.
+**Done when:** the connection and authentication branches read the driver's code first too (SQLSTATE
+class `28` and `08`, MySQL `1045`, SQL Server `18456`, Oracle `1017`), so an identifier can no longer
+decide any class a code could, and the `permission denied` reading (`42501`, now an
+`AuthenticationError` and answered 401) is decided on purpose rather than inherited.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 

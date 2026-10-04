@@ -3,8 +3,9 @@ import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
 import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
-import { jsonText } from "./json";
-import { typedLiteral } from "./typed-literals";
+import { binaryCellsAsHex, jsonText } from "./json";
+import { resolveUpdateTarget } from "@/lib/sql/update-target";
+import { cqlFrozenNested, typedLiteral, UnwritableValue } from "./typed-literals";
 import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
 
 /**
@@ -26,6 +27,11 @@ export interface ResultExportSource {
   fields: readonly string[];
   /** The tab the result is showing in; where the SQL forms get their table name. */
   tabName: string;
+  /**
+   * The statement that produced the rows, when they are the tab's own. A SELECT reading
+   * exactly one table names that table for the SQL forms, ahead of the tab's title.
+   */
+  query?: string;
   /** The connected engine, whose literal and identifier grammars the SQL forms use. */
   dialect: DatabaseType | undefined;
   /**
@@ -199,14 +205,16 @@ const DIALECT_TYPES: Partial<Record<DatabaseType, Partial<Record<InferredKind, s
  * (`Nullable(Int64)`, `DECIMAL(10, 2)`, `TIMESTAMP WITH TIME ZONE`) and exclude every
  * character that could end the definition list it sits in.
  *
- * Three more shapes are real and were written as `TEXT` before #1386, which lost the type
- * the INSERT beside it needs: a trailing `[]` (Postgres `integer[]`), a single-quoted
- * argument (ClickHouse `DateTime64(3, 'Europe/Istanbul')`, `Enum8('a' = 1)`), and the
- * `=` and negative numbers those argument lists hold. A quoted argument may not contain a
- * quote, a backslash or a line break, so it cannot close early in any dialect, and a `-`
- * must be followed by a digit, so `--` cannot start a comment.
+ * More shapes are real and were written as `TEXT` before #1386, which lost the type the
+ * INSERT beside it needs: an array suffix (Postgres `integer[]`, DuckDB `INTEGER[3]` and
+ * `MAP(INTEGER, VARCHAR[])`), a single-quoted argument (ClickHouse `DateTime64(3,
+ * 'Europe/Istanbul')`, `Enum8('a' = 1)`), a double-quoted field name (DuckDB `STRUCT("a"
+ * INTEGER)`), angle brackets (CQL `map<text, int>`), and the `=` and negative numbers an
+ * enum's arguments hold. A quoted run may not contain its quote, a backslash or a line
+ * break, so it cannot close early in any dialect, and a `-` must be followed by a digit,
+ * so `--` cannot start a comment.
  */
-const PLAUSIBLE_TYPE = /^[A-Za-z](?:[A-Za-z0-9_(), =]|-(?=\d)|'[^'\\\r\n]*')*(?:\[\])*$/;
+const PLAUSIBLE_TYPE = /^[A-Za-z](?:[A-Za-z0-9_(), =<>]|\[\d*\]|-(?=\d)|'[^'\\\r\n]*'|"[^"\\\r\n]*")*$/;
 
 /**
  * `PLAUSIBLE_TYPE`, plus parentheses that balance outside the quoted arguments.
@@ -218,10 +226,18 @@ const PLAUSIBLE_TYPE = /^[A-Za-z](?:[A-Za-z0-9_(), =]|-(?=\d)|'[^'\\\r\n]*')*(?:
  */
 function isPlausibleType(declared: string): boolean {
   if (!PLAUSIBLE_TYPE.test(declared)) return false;
+  // The angle brackets of a CQL `map<text, int>` are held to the same rule, so neither
+  // pair can close a list the other opened.
+  const unquoted = declared.replace(/'[^']*'|"[^"]*"/g, "");
+  return balanced(unquoted, "(", ")") && balanced(unquoted, "<", ">");
+}
+
+/** `open` and `close` nest in `text`: the depth never drops below zero and ends at zero. */
+function balanced(text: string, open: string, close: string): boolean {
   let depth = 0;
-  for (const char of declared.replace(/'[^']*'/g, "")) {
-    if (char === "(") depth++;
-    else if (char === ")" && --depth < 0) return false;
+  for (const char of text) {
+    if (char === open) depth++;
+    else if (char === close && --depth < 0) return false;
   }
   return depth === 0;
 }
@@ -573,6 +589,18 @@ const DIALECT_BARE_SPELLING: Partial<Record<DatabaseType, Readonly<Record<string
 };
 
 /**
+ * The dialects whose declared types need a rewrite of their own before a CREATE TABLE takes
+ * them, ahead of the bare-name completion below.
+ *
+ * The Cassandra driver reports a nested collection without its `frozen<...>` (measured on
+ * 5.0.9: a `list<frozen<list<int>>>` column is declared `list<list<int>>`), and CQL refuses
+ * that spelling: `Non-frozen collections are not allowed inside collections`.
+ */
+const DECLARED_TYPE_REWRITE: Partial<Record<DatabaseType, (declared: string) => string>> = {
+  cassandra: cqlFrozenNested,
+};
+
+/**
  * A declared type, spelled so the target dialect can parse it without narrowing it.
  *
  * The target dialect is the ACTIVE connection's, not necessarily the one that declared
@@ -594,6 +622,10 @@ const DIALECT_BARE_SPELLING: Partial<Record<DatabaseType, Readonly<Record<string
  * which is what it did before and is a translation problem rather than this one.
  */
 function completeDeclaredType(declared: string, dialect: DatabaseType | undefined): string {
+  // Only a type the rewrite changed skips the completion below; a bare name it leaves alone
+  // is still completed like any other.
+  const rewritten = dialect === undefined ? undefined : DECLARED_TYPE_REWRITE[dialect]?.(declared);
+  if (rewritten !== undefined && rewritten !== declared.trim()) return rewritten;
   if (declared.includes("(")) return declared;
   const respelled = dialect === undefined ? undefined : DIALECT_BARE_SPELLING[dialect];
   // The element type of an array is re-spelled the same way: a Postgres `bit[]` holds the
@@ -985,13 +1017,39 @@ function sqlValue(
   return quoteLiteral(String(value), dialect);
 }
 
+/**
+ * The comment that stands where a row's INSERT would be, when one of its cells has no
+ * literal in the dialect (#1386). One refused statement stops the whole file on replay, so
+ * the row is skipped and named instead. The column name is engine output, so it is written
+ * as JSON with everything outside printable ASCII replaced: a line break in it would end
+ * the comment and put the rest of the name in the file as a statement.
+ */
+function skippedRow(rowIndex: number, column: string, what: string, dialect: DatabaseType | undefined): string {
+  const name = JSON.stringify(column).replace(/[^\x20-\x7e]/g, "?");
+  return `-- Row ${rowIndex + 1} skipped: column ${name} holds ${what}, which ${dialect ?? "this dialect"} has no literal for.`;
+}
+
+/**
+ * The table the SQL forms write to: the one table the producing SELECT reads, when there is
+ * exactly one (`resolveUpdateTarget`, the same reader inline editing trusts with a write),
+ * and otherwise the tab's title. Either way only a bare, optionally dotted, identifier is
+ * accepted, for the reason `deriveTableName` gives.
+ */
+function exportTableName(source: ResultExportSource): string {
+  if (source.query !== undefined) {
+    const target = resolveUpdateTarget(source.query, source.dialect);
+    if (target.kind === "table" && isBareIdentifier(target.table)) return target.table;
+  }
+  return deriveTableName(source.tabName);
+}
+
 /** Build the file for `format`. The caller owns naming it and handing it to the browser. */
 export function buildResultExport(format: ResultExportFormat, source: ResultExportSource): ResultExportFile {
   const { rows, dialect } = source;
   const columns = resolveColumns(rows, source.fields);
 
   if (format === "json") {
-    return { content: jsonText(rows, 2), mimeType: "application/json", extension: "json" };
+    return { content: jsonText(rows.map(binaryCellsAsHex), 2), mimeType: "application/json", extension: "json" };
   }
 
   if (format === "csv") {
@@ -1006,7 +1064,7 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
   // about why it is empty. A comment is valid SQL in every dialect here.
   if (columns.length === 0) return sql(NOTHING_TO_EXPORT.columns);
 
-  const tableName = deriveTableName(source.tabName);
+  const tableName = exportTableName(source);
   // A result field IS a name read from the engine, so quoting it is exactly right —
   // and it is the only thing standing between an aliased column (`count(*) AS "n, m"`)
   // and a statement that no longer parses.
@@ -1021,16 +1079,22 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
     const floatColumns = columns.map((column) => isFloatColumn(declaredTypeOf(source, column)));
     const declaredTypes = columns.map((column) => declaredTypeOf(source, column));
     const scalar = (value: unknown) => sqlValue(value, dialect);
-    const statements = rows.map((row) => {
-      const values = columns.map((column, index) => {
+    const statements = rows.map((row, rowIndex) => {
+      const values: string[] = [];
+      for (const [index, column] of columns.entries()) {
         const cell = cellOf(row, column);
-        // The cells whose literal depends on the declared type first (#1386): an array,
-        // an interval, a map, a BIT. Everything else is written as it always was.
-        return (
-          typedLiteral(cell, declaredTypes[index], dialect, scalar) ??
-          sqlValue(cell, dialect, oracleColumns?.[index], floatColumns[index])
-        );
-      });
+        try {
+          // The cells whose literal depends on the declared type first (#1386): an array,
+          // an interval, a map, a BIT. Everything else is written as it always was.
+          values.push(
+            typedLiteral(cell, declaredTypes[index], dialect, scalar) ??
+              sqlValue(cell, dialect, oracleColumns?.[index], floatColumns[index]),
+          );
+        } catch (error) {
+          if (!(error instanceof UnwritableValue)) throw error;
+          return skippedRow(rowIndex, column, error.message, dialect);
+        }
+      }
       return `INSERT INTO ${tableName} (${quotedColumns.join(", ")}) VALUES (${values.join(", ")});`;
     });
     return sql(statements.join("\n"));

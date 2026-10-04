@@ -193,9 +193,10 @@ test("a removed passkey is refused and ends the account's other sessions", async
   await expect(dialog).toBeHidden();
   await expect(page.getByText("No passkeys yet.", { exact: false })).toBeVisible();
 
-  // The editor is where a refused session is sent back to /login (src/hooks/use-auth.ts).
+  // The editor is where a refused session is sent back to /login (src/hooks/use-auth.ts), with the
+  // page it was on as the return path (#1420).
   await other.page.goto("/");
-  await expect(other.page).toHaveURL(/\/login$/);
+  await expect(other.page).toHaveURL(/\/login\?next=%2F$/);
   await other.context.close();
 
   // The caller's own session survives: this page never redirects, so prove it through a read the

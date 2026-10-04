@@ -359,6 +359,11 @@ security plugin disabled and a bogus `Basic` header is *ignored* there (HTTP 200
 401/403 body could be captured — and rather than invent one, the code uses the one signal whose
 meaning HTTP itself fixes
 ([http-transport.ts:64-68](../../src/lib/db/providers/sql/search/http-transport.ts)).
+The transport is shared with Elasticsearch, which reuses 403 for a closed index
+(`cluster_block_exception`, #1413), so a 401/403 whose body is an `error` object naming a type that
+is not a security one is classified by that type instead, with the engine's reason. A test pass on
+2026-10-03/04 found OpenSearch already reporting the same closed-index read with its own
+`IndexClosedException` text, so nothing changes for it.
 
 ### 3.8 The deadline is the client's, and only the client's
 
@@ -1437,7 +1442,7 @@ quietly swallowed as a query error.
 
 | Category | Measured trigger on this product | Error raised |
 |---|---|---|
-| `auth` | HTTP 401/403 (status-decided; see [§3.7](#37-a-string-valued-error-means-the-request-never-reached-the-sql-engine)) | `AuthenticationError` |
+| `auth` | HTTP 401/403 with no body or a security fault in it (status-decided otherwise; see [§3.7](#37-a-string-valued-error-means-the-request-never-reached-the-sql-engine)) | `AuthenticationError` |
 | `unreachable` | A refused socket, an unresolvable host, or a **string-valued** `error` — the upstream endpoint path (HTTP 405 here), a missing content type (406) | `ConnectionError` carrying host and port |
 | `timeout` | The client deadline expired (`AbortSignal.timeout`) | `TimeoutError` — and the cluster is *still working on the statement* |
 | `cancelled` | The caller aborted | `QueryCancelledError` |

@@ -19,6 +19,8 @@ export interface OIDCState {
   code_verifier: string;
   state: string;
   nonce: string;
+  /** The app-relative page to land on after sign-in (#1420); absent for the default landing page. */
+  return_to?: string;
 }
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -236,6 +238,7 @@ export async function decryptState(token: string): Promise<OIDCState> {
     code_verifier: payload.code_verifier as string,
     state: payload.state as string,
     nonce: payload.nonce as string,
+    ...(typeof payload.return_to === "string" ? { return_to: payload.return_to } : {}),
   };
 }
 

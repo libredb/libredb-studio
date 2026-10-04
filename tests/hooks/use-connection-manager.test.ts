@@ -273,6 +273,30 @@ describe("useConnectionManager", () => {
     expect(inventoryCall![1]?.method).toBe("POST");
   });
 
+  test("the session's default container is held with the schema and cleared with it (#1397)", async () => {
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, [], { defaultContainer: ["public"] }),
+    });
+    const { result } = renderHook(() => useConnectionManager(true));
+    expect(result.current.defaultContainer).toBeUndefined();
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+    expect(result.current.defaultContainer).toEqual(["public"]);
+
+    // A failed read describes no connection's catalog, so the default goes with the objects.
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": async () => ({ ok: false, json: { error: "boom" } }),
+    });
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+    expect(result.current.defaultContainer).toBeUndefined();
+  });
+
   test("an object the read described nothing for keeps empty columns rather than vanishing", async () => {
     // A routine has no columns and a bounded read can stop before a folder: both reach the
     // hook as an object with no detail, and neither may cost the object its row.

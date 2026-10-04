@@ -8,7 +8,7 @@ import { DatabaseConnection, QueryHistoryItem, SavedQuery, SchemaSnapshot, Saved
 import { type AuditEvent } from "../audit";
 import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "../data-masking";
 import { DEFAULT_THRESHOLDS, type ThresholdConfig } from "../monitoring-thresholds";
-import { readJSON, writeJSON, readString, writeString, remove } from "./local-storage";
+import { readJSON, writeJSON, readString, writeString, remove, removeWorkspaceTabs } from "./local-storage";
 import type { ConnectionGroup, StorageCollection } from "./types";
 
 const MAX_HISTORY_ITEMS = 500;
@@ -105,6 +105,10 @@ export const storage = {
       writeJSON("connection_groups", nextGroups);
       dispatchChange("connection_groups", nextGroups);
     }
+
+    // The SQL the user typed for this connection is still under its own key; nothing in the UI
+    // can reach it once the connection is gone (#1448).
+    removeWorkspaceTabs(id);
   },
 
   getFavoriteConnectionIds: (): string[] => {

@@ -36,6 +36,14 @@ function getRedirectLocation(response: Response): string | null {
   return response.headers.get("location");
 }
 
+/** The session-required answer an API path gets instead of a redirect to the sign-in page (#1420). */
+async function expectSessionRequired(response: Response, error: string) {
+  expect(response.status).toBe(401);
+  expect(response.headers.get("location")).toBeNull();
+  expect(response.headers.get("content-type")).toContain("application/json");
+  expect(await response.json()).toEqual({ error, code: "AUTH_REQUIRED" });
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe("proxy", () => {
@@ -255,9 +263,35 @@ describe("proxy", () => {
       expect(isRedirect(res)).toBe(false);
     });
 
-    test("/api/db/query without token redirects to /login", async () => {
-      const req = createNextRequest("/api/db/query");
-      const res = await proxy(req);
+    // A fetch follows a redirect to /login and gets the sign-in page's HTML, which every client
+    // caller failed to parse ("Unexpected token '<'") with nothing sending the user to sign in.
+    test("/api/db/query without token answers 401 JSON, not a redirect", async () => {
+      const res = await proxy(createNextRequest("/api/db/query"));
+
+      await expectSessionRequired(res, "Authentication required");
+    });
+
+    test("/api/db/query with an expired token answers 401 JSON, not a redirect", async () => {
+      const res = await proxy(createNextRequest("/api/db/query", await createToken("user", "-1h")));
+
+      await expectSessionRequired(res, "Session expired. Sign in again.");
+    });
+
+    test("/api/db/query with a token that does not verify answers 401 JSON", async () => {
+      const res = await proxy(createNextRequest("/api/db/query", "forged-token"));
+
+      await expectSessionRequired(res, "Session expired. Sign in again.");
+    });
+
+    test("the 401 carries the security headers a redirect did", async () => {
+      const res = await proxy(createNextRequest("/api/admin/audit"));
+
+      expect(res.status).toBe(401);
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    });
+
+    test("a page path that merely starts with api still redirects", async () => {
+      const res = await proxy(createNextRequest("/apidocs"));
 
       expect(isRedirect(res)).toBe(true);
       expect(getRedirectLocation(res)).toContain("/login");
@@ -295,13 +329,17 @@ describe("proxy", () => {
       // (`isStaticAsset` already is one), so this is the behavioural half. Every
       // path here is one the matcher genuinely routes through proxy() - see the
       // test below for the ones it does not.
-      const unlisted = ["/api/agent/runs", "/api/agent/drive", "/api/db/query", "/admin", "/"];
+      const unlistedApis = ["/api/agent/runs", "/api/agent/drive", "/api/db/query", "/api"];
+      const unlistedPages = ["/admin", "/"];
 
-      return Promise.all(
-        unlisted.map(async (pathname) => {
+      return Promise.all([
+        ...unlistedApis.map(async (pathname) => {
+          expect((await proxy(createNextRequest(pathname))).status).toBe(401);
+        }),
+        ...unlistedPages.map(async (pathname) => {
           expect(isRedirect(await proxy(createNextRequest(pathname)))).toBe(true);
         }),
-      );
+      ]);
     });
 
     test("the workflow runtime's own callback path would sit OUTSIDE this middleware entirely", () => {
@@ -327,11 +365,10 @@ describe("proxy", () => {
       expect(matcher.test("/.well-known/oauth-protected-resource")).toBe(false);
     });
 
-    test("the drive path is not public: no credential redirects to /login", async () => {
+    test("the drive path is not public: no credential answers 401", async () => {
       const res = await proxy(createNextRequest(AGENT_DRIVE_PATH));
 
-      expect(isRedirect(res)).toBe(true);
-      expect(getRedirectLocation(res)).toContain("/login");
+      await expectSessionRequired(res, "Authentication required");
     });
 
     test("a valid drive token passes the drive path through", async () => {
@@ -345,7 +382,7 @@ describe("proxy", () => {
       const req = createNextRequest(AGENT_DRIVE_PATH);
       req.headers.set(AGENT_DRIVE_HEADER, await createToken("admin"));
 
-      expect(isRedirect(await proxy(req))).toBe(true);
+      expect((await proxy(req)).status).toBe(401);
     });
 
     test("a drive token opens the drive path and nothing else", async () => {
@@ -354,7 +391,8 @@ describe("proxy", () => {
         const req = createNextRequest(pathname);
         req.headers.set(AGENT_DRIVE_HEADER, token);
 
-        expect(isRedirect(await proxy(req))).toBe(true);
+        const res = await proxy(req);
+        expect(pathname === "/admin" ? isRedirect(res) : res.status === 401).toBe(true);
       }
     });
   });
@@ -380,6 +418,14 @@ describe("proxy under a nested basePath", () => {
       });
     });
   }
+  test("a prefixed API path answers 401 JSON inside the mount, not a redirect", async () => {
+    await withBasePathEnv("/~/libredb", async () => {
+      const request = new NextRequest("http://localhost:3000/~/libredb/api/db/query", {
+        nextConfig: { basePath: "/~/libredb" },
+      });
+      await expectSessionRequired(await proxy(request), "Authentication required");
+    });
+  });
   test("prefixed health is public and prefixed API writes still reject hostile origins", async () => {
     await withBasePathEnv("/tools/libredb", async () => {
       const url = "http://localhost:3000/tools/libredb/api/db/health";

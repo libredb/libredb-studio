@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import { CreateTableModal } from "@/components/CreateTableModal";
 import type { DatabaseType } from "@/lib/types";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 describe("CreateTableModal", () => {
   afterEach(() => {
@@ -838,5 +839,79 @@ describe("CreateTableModal", () => {
       expect(baseElement.querySelectorAll('[role="combobox"]')[0].textContent).toBe(expected);
       cleanup();
     }
+  });
+
+  // ── 17. The container the folder named (#1391) ─────────────────────────────
+
+  /** Render in a container with the given capabilities, name the table, return the preview and the page. */
+  function previewIn(
+    dbType: DatabaseType,
+    container: readonly string[],
+    capabilities: ProviderCapabilities | undefined,
+    name = "ct_other",
+  ): { sql: string; text: string } {
+    const { baseElement } = render(
+      <CreateTableModal
+        isOpen
+        dbType={dbType}
+        container={container}
+        capabilities={capabilities}
+        onClose={mock(() => {})}
+        onTableCreated={mock(() => {})}
+      />,
+    );
+    act(() => {
+      fireEvent.change(baseElement.querySelector("#tableName") as HTMLInputElement, { target: { value: name } });
+    });
+    const result = {
+      sql: (baseElement.querySelector("pre") as HTMLElement).textContent || "",
+      text: baseElement.textContent || "",
+    };
+    cleanup();
+    return result;
+  }
+
+  const MYSQL_CAPS = { queryLanguage: "sql", defaultPort: 3306 } as unknown as ProviderCapabilities;
+  const PG_CAPS = { queryLanguage: "sql", defaultPort: 5432 } as unknown as ProviderCapabilities;
+
+  test("a table asked for in a container is created in it, and the header says where (#1391)", () => {
+    // Measured on MySQL 26.7.0: Create Table under `e2e_other` used to create `e2e.ct_other`.
+    const { sql, text } = previewIn("mysql", ["e2e_other"], MYSQL_CAPS);
+    expect(sql).toContain("CREATE TABLE e2e_other.ct_other (");
+    expect(text).toContain("In e2e_other");
+    expect(text).not.toContain("Define schema structure");
+  });
+
+  test("each segment is quoted in the connection's own dialect (#1391)", () => {
+    expect(previewIn("mysql", ["e2e-other"], MYSQL_CAPS).sql).toContain("CREATE TABLE `e2e-other`.ct_other (");
+    expect(previewIn("postgres", ["Sales"], PG_CAPS).sql).toContain('CREATE TABLE "Sales".ct_other (');
+  });
+
+  test("only the container is quoted; the typed name is written as the flat button writes it (#1391)", () => {
+    // Oracle folds an unquoted name to upper case, so quoting the typed `orders` would create a
+    // lowercase table that a later `SELECT * FROM orders` cannot find (ORA-00942).
+    const ORACLE_CAPS = { queryLanguage: "sql", defaultPort: 1521 } as unknown as ProviderCapabilities;
+    expect(previewIn("oracle", ["APP"], ORACLE_CAPS, "orders").sql).toContain("CREATE TABLE APP.orders (");
+    // A mixed-case PostgreSQL schema keeps its case through quoting; the table name stays as typed.
+    expect(previewIn("postgres", ["MySchema"], PG_CAPS, "orders").sql).toContain('CREATE TABLE "MySchema".orders (');
+  });
+
+  test("DuckDB's sequence is created beside the table it numbers (#1391)", () => {
+    const { sql } = previewIn("duckdb", ["main"], PG_CAPS, "widgets");
+    expect(sql).toContain("CREATE SEQUENCE IF NOT EXISTS main.widgets_id_seq;");
+    expect(sql).toContain("DEFAULT nextval('main.widgets_id_seq')");
+    expect(sql).toContain("CREATE TABLE main.widgets (");
+  });
+
+  test("a quote inside the sequence's name stays inside its string literal (#1391)", () => {
+    const { sql } = previewIn("duckdb", ["it's"], PG_CAPS, "widgets");
+    expect(sql).toContain(`DEFAULT nextval('"it''s".widgets_id_seq')`);
+  });
+
+  test("no container, or no capabilities to quote it with, keeps the bare name (#1391)", () => {
+    const bare = previewIn("mysql", [], MYSQL_CAPS);
+    expect(bare.sql).toContain("CREATE TABLE ct_other (");
+    expect(bare.text).toContain("Define schema structure");
+    expect(previewIn("mysql", ["e2e_other"], undefined).sql).toContain("CREATE TABLE ct_other (");
   });
 });

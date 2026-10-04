@@ -5,7 +5,8 @@
  * its connection sends, and gets back `request` and `close`. Nothing here knows about an engine, and no provider is
  * imported. Server-only: it imports Node built-ins, so nothing browser-side may import it.
  *
- * - One `node:http` or `node:https` Agent per connection, `keepAlive: true`, at most `maxSockets` sockets, destroyed by
+ * - One `node:http` or `node:https` Agent per connection, `keepAlive: true`, at most `maxSockets` sockets, an idle
+ *   socket closed after IDLE_SOCKET_MS so a server's keep-alive timeout never closes one under a request, destroyed by
  *   close(). Never the global agent, which routes through a proxy variable (HTTP_PROXY under NODE_USE_ENV_PROXY=1 on
  *   Node, and under Bun), and never `globalThis.fetch`, so no proxy variable can carry a request or its credential.
  * - With DB_HTTP_BLOCK_PRIVATE_HOSTS on, the guard's literal check runs when the transport is built, before any socket,
@@ -62,6 +63,8 @@ export interface NodeTransportOptions {
   readonly maxSockets: number;
   /** Set once per connection, the credential header among them. */
   readonly headers: Readonly<Record<string, string>>;
+  /** How long a pooled socket may sit idle before the transport closes it; IDLE_SOCKET_MS when absent. */
+  readonly idleSocketMs?: number;
 }
 
 export interface NodeRequest {
@@ -177,6 +180,16 @@ export function nodeTlsMaterial(ssl: SSLConfig | null | undefined, identity: str
 
 /** The longest Retry-After value kept: an HTTP date is 29 characters, and a longer value is no wait a client can read. */
 const MAX_RETRY_AFTER_LENGTH = 64;
+
+/**
+ * How long a pooled socket may sit idle before this side closes it (#1419): below the keep-alive of the servers this
+ * transport talks to, so the client, never the server, ends an idle socket. Qdrant 1.19.1 (actix-web) closes an idle
+ * keep-alive connection after 5 s (measured 4.8 s after its answer), and a request written on a pooled socket as the
+ * server closed it failed with
+ * ECONNRESET: measured on 2026-10-03/04, 1 of 16 requests separated by 4.93 s pauses, none with 1 s pauses. Node and Bun
+ * both apply the Agent's `timeout` to a free socket only; a request in flight longer than this is not cut by it.
+ */
+export const IDLE_SOCKET_MS = 4000;
 
 const FOREIGN_URL = "Invalid host: the request URL would not address the configured host, so it was not sent";
 const INVALID_MAX_SOCKETS = "Invalid maxSockets: expected a positive integer";
@@ -400,7 +413,12 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   const { lookup } = guardedNodeOptions(origin.host);
   const connectionOrigin = new URL(endpointUrl(origin, "/")).origin;
   const connectionHeaders = lowerCased(options.headers);
-  const shared: AgentOptions = { keepAlive: true, maxSockets, ...(lookup === undefined ? {} : { lookup }) };
+  const shared: AgentOptions = {
+    keepAlive: true,
+    timeout: options.idleSocketMs ?? IDLE_SOCKET_MS,
+    maxSockets,
+    ...(lookup === undefined ? {} : { lookup }),
+  };
   const agent = tls === null ? new HttpAgent(shared) : new HttpsAgent({ ...shared, ...tlsAgentOptions(tls) });
   const send = tls === null ? httpRequest : httpsRequest;
   /**

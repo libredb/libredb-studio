@@ -286,6 +286,12 @@ export class CassandraProvider extends SQLBaseProvider {
       // `statementTerminator` is absent for the same reason: measured, `SELECT id FROM
       // probe.customers WHERE id = 1;` returns the row, so the `;` the generators
       // already emit is valid CQL.
+      // Two shapes the shared SQL generators write that CQL has no grammar for (#1410), both
+      // measured on 5.0.9 and ScyllaDB 2026.3.2. A predicate names a column, so Generate
+      // Query's `WHERE 1=1` is "no viable alternative at input '1'"; and an INSERT carries one
+      // row, so the import's `VALUES (...), (...)` is "mismatched input ',' expecting EOF".
+      supportsConstantPredicate: false,
+      supportsMultiRowInsert: false,
       schemaRefreshPattern: SCHEMA_REFRESH_PATTERN,
       // One level and seven kinds, every one of them measured against a live 5.0.9
       // holding the committed fixture. The declaration and the four methods that read

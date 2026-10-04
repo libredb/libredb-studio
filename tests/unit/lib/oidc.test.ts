@@ -232,6 +232,14 @@ describe("encryptState / decryptState", () => {
     expect(decrypted.nonce).toBe(testState.nonce);
   });
 
+  test("carries the return path when there is one, and adds none when there is not (#1420)", async () => {
+    expect(await decryptState(await encryptState({ ...testState, return_to: "/admin" }))).toEqual({
+      ...testState,
+      return_to: "/admin",
+    });
+    expect(await decryptState(await encryptState(testState))).toEqual(testState);
+  });
+
   test("fails to decrypt tampered token", async () => {
     const encrypted = await encryptState(testState);
     const tampered = encrypted.slice(0, -5) + "XXXXX";

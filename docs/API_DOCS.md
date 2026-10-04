@@ -87,7 +87,9 @@ The middleware (`src/proxy.ts`) gates every route: all of them require a valid `
 - `/api/db/health` — excluded from the middleware for **both** methods; `GET` is fully public and answers the same as the two above, while `POST` performs its own session check and returns JSON `401` if unauthenticated
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
-Unauthenticated requests to any other (middleware-gated) route are redirected to `/login`. A few allowlisted handlers self-check instead and return JSON — e.g. `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+Without a session, or with one that no longer verifies (expired, signed with a rotated `JWT_SECRET`, tampered), the middleware answers any other API route with `401 { "error": "Authentication required" | "Session expired. Sign in again.", "code": "AUTH_REQUIRED" }`, and any other page with a redirect to `/login`. API routes used to get the redirect too, which a `fetch` follows to the sign-in page's HTML (#1420). Every route-level session check answers the same `AUTH_REQUIRED` code, which is distinct from `AUTH_ERROR` (a database refused its credentials) and `LLM_AUTH` (a model provider refused its key): those two are `401` as well, with the Studio session intact. A few allowlisted handlers self-check instead and return JSON, for example `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+
+The standalone app's browser code reacts to `AUTH_REQUIRED`, and only to it, by sending the tab to `/login?next=<the page it was on>`; signing in again, with a password, a passkey or OIDC, returns there. `next` is honoured only as an app-relative path, judged on the path it resolves to rather than the string as written (so `/..//host` and `/%2e%2e//host`, which resolve to `//host`, are refused): it must stay on this origin, must not resolve to a path starting `//` or to `/login`, holds no backslash or control character, and is at most 1024 UTF-8 bytes. The resolved form is what is used; anything else falls back to the role's landing page. One redirect per ten seconds per tab: a second refusal inside that window stays on the page as an error, so a session the server refuses while its cookie still verifies cannot loop between the editor and `/login`. An application that embeds the published `@libredb/studio` components gets no such redirect: the 401 reaches its own code unchanged, and handling sign-in stays with the host.
 `/api/mcp` is the exception: without a valid bearer token it answers 401 with `WWW-Authenticate`, never a redirect (see the [MCP API](#mcp-api) below).
 
 **Two routes are session-less without being public: `POST /api/agent/drive` and `/api/mcp`.**
@@ -218,7 +220,7 @@ A wrong password or code is `401` and is charged to the same two budgets as a fa
 
 The signed-in account's own passkeys ([PASSKEYS.md](./PASSKEYS.md)).
 Every answer of the passkey routes carries `Cache-Control: no-store`.
-`401 { "error": "Authentication required" }` without a session, and `404 { "error": "This session has no account in the registry." }` when the session's account row is missing.
+`401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }` without a session, and `404 { "error": "This session has no account in the registry." }` when the session's account row is missing.
 `200` answers one of:
 
 ```json
@@ -421,14 +423,15 @@ A value the engine itself sends as `null` stays `null`: ClickHouse's JSON format
 
 The `pagination` object reports the auto-limiting applied by the server.
 `limit` is `options.limit` when the caller sent one and 500 otherwise; the app's own tree click sends 50.
-`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify and the returned page filled that limit, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4), and the etcd provider does so whenever its row limit or its result byte budget stopped a `get` before the end of its range, or ended a watch before its window, and whenever its row limit held a list etcd answers whole (`lease list`, `lease timetolive --keys`, `user list`, `role list`, `user get --detail` and `role get`) to its row limit, and names the stop, or how many entries etcd answered, in a `warnings` entry (#1089, section 5.4).
+`wasLimited` is `true` when the server injected a `LIMIT` the query didn't specify and a row past that limit came back, and also when the provider bounded its own result and reported that bound on the result it returned: the Prometheus provider does so whenever it cut the result, at its series cap, at its matrix cell budget or at its result byte budget, and names each cut in a `warnings` entry (#1085, section 5.4), and the Kafka provider does so whenever its row limit left records unread or its result byte budget or its cell limit cut the result, and names the budget's and the cell limit's cuts in `warnings` entries (#1088, section 5.4), and the etcd provider does so whenever its row limit or its result byte budget stopped a `get` before the end of its range, or ended a watch before its window, and whenever its row limit held a list etcd answers whole (`lease list`, `lease timetolive --keys`, `user list`, `role list`, `user get --detail` and `role get`) to its row limit, and names the stop, or how many entries etcd answered, in a `warnings` entry (#1089, section 5.4).
 A value the etcd provider's cell bound cut sets no `wasLimited`: its encoding gains `, cut`, and one `warnings` entry counts the cut values.
 
 A shorter result under an injected cap has `wasLimited: false`.
-Under that cap, a result of exactly `limit` rows still has `wasLimited: true` and `hasMore: true` even when the next page comes back empty, because the limiter asks for `limit` rows and not one more.
-`POST /api/db/transaction` answers a query inside a transaction by the same rule.
+Under that cap, a result of exactly `limit` rows has `wasLimited: false` and `hasMore: false`: the statement that runs asks for `limit + 1` rows, the extra row is never answered, and only its arrival makes `hasMore` and `wasLimited` true (#1440).
+`POST /api/db/transaction` answers a query inside a transaction by the same rule. Because the statement that runs asks for one row more, a `SELECT ... FOR UPDATE` without its own `LIMIT` in a held transaction now locks `limit + 1` rows.
+`options.limit` and `options.offset` must be non-negative integers when sent; anything else is answered `400` before a provider is reached.
 
-`hasMore` is `wasLimited && rows.length === limit` with `wasLimited` read from the server's own limiter alone, and both halves matter.
+`hasMore` is `wasLimited && rows.length > limit` over the probed statement, with `wasLimited` read from the server's own limiter alone, and both halves matter.
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
@@ -495,6 +498,8 @@ Milvus and Qdrant each declare a bound of 1,048,576 bytes and InfluxDB (InfluxQL
 Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
 
 **`inTransaction` in a transaction `query` answer.** `POST /api/db/transaction` answers its `query` action with `inTransaction`, and `false` there means the server ended the transaction while running the statement: a typed `COMMIT` or `ROLLBACK`, or a statement the engine commits implicitly (MySQL DDL). The answer does not say whether the work was kept, because the server reports the same state after either; the session is released, and a following `rollback` answers 400 "No active transaction" rather than reporting a rollback that undid nothing. A `begin` the server accepts without opening a transaction (RisingWave's `BEGIN`) answers 400 with the reason, and nothing has been held. A `begin` answer carries `stateReported`: `false` when the server opened the transaction without reporting any transaction state (Databend, StarRocks and Apache Doris over the MySQL wire), `true` when it reported an open one, `null` when the provider does not say. A `begin` sent with `requireReportedState: true`, which is what SANDBOX sends, answers 400 on a `stateReported: false` server instead, with nothing left open.
+
+**Several statements in a transaction `query`.** When the `sql` of a `query` action holds more than one statement under the connection's dialect (a fragment of comments only does not count), `POST /api/db/transaction` runs them one by one, in order, on the transaction's connection and stops at the first one that fails. The answer has the shape `POST /api/db/multi-query` gives a script: `multiStatement: true`, `statementCount`, `executedCount`, `hasError`, `statements` with each statement's outcome, and the last result that has rows as `rows`/`fields`, plus `inTransaction`. A failure is part of that 200 answer, not an error status: the statements before it ran inside the transaction and stay there to commit or roll back. There is no `pagination`, because a next page would run every statement again. A request with `params` is one statement, as before. Measured on MySQL 26.7.0 before this: two `UPDATE` lines sent inside BEGIN answered 500 "You have an error in your SQL syntax ... at line 2".
 
 **Query plan (optional):**
 ```json
@@ -964,7 +969,8 @@ Milvus's provider implements `engineUser()`: the Milvus user name, the user name
 **Response (401 Unauthorized):**
 ```json
 {
-  "error": "Authentication required"
+  "error": "Authentication required",
+  "code": "AUTH_REQUIRED"
 }
 ```
 
@@ -1006,6 +1012,10 @@ is not refused: its target is a session or query id that neither half describes 
 A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
 
 A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
+
+On a `postgres` or `mysql` connection the supported set and its placements are the CONNECTED server's, measured when the provider connects, and not the type id's (#1387): CockroachDB keeps only a targeted `analyze`, RisingWave keeps only `kill`, YugabyteDB loses `reindex`, TiDB keeps `analyze` and Vitess loses `check`. A request for an operation the server refused gets the same `400` as any other unsupported operation, before anything is sent. The per-engine measurements are in `docs/providers/postgres.md` section 9.1 and `docs/providers/mysql.md` section 9.1.
+
+When the engine itself refuses the statement, the reply is the engine's answer, not a server fault (#1387): the thrown driver error is typed by `mapDatabaseError`, and one whose driver code says the statement is at fault answers `400` with `code: "QUERY_ERROR"` and the engine's own sentence, for example `{ "error": "at or near \"vacuum\": syntax error", "code": "QUERY_ERROR", "statusCode": 400 }`. Any other thrown error keeps a `5xx`.
 
 #### POST /api/db/maintenance/preview
 
@@ -1162,7 +1172,7 @@ engine as broken.
 | `path` empty | `400` | `{ "error": "\"path\" must name an object, and an empty path names none" }` |
 | `kind` absent, not a string, or blank | `400` | `{ "error": "\"kind\" must be a non-empty string" }` |
 | The engine refused the read: a kind it does not declare, a path shape that kind does not take, a permission error | `400` | `{ "error": "<the engine's own sentence>", "code": "QUERY_ERROR" }` |
-| No session | `401` | `{ "error": "Authentication required" }` |
+| No session | `401` | `{ "error": "Authentication required", "code": "AUTH_REQUIRED" }` |
 | Seed connection not available for the caller's role | `403` | the existing `SeedConnectionError` body |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 | Anything undeclared | `500` | `createErrorResponse`'s body |
@@ -1291,7 +1301,7 @@ answer both become `interrupted` with `committed: "unknown"` at `200`.
 | Caller mistakes decided from the DECLARATION: undeclared kind, kind not editable, `path` not a path, missing `partId`, malformed plan, a build answering both a plan and a refusal, an unacknowledged required consequence | `400` | `{ "error": "..." }` |
 | Plan token invalid, expired, digest mismatch, wrong connection fingerprint, unknown `planVersion` | `400` | `{ "error": "...", "code": "EDIT_PLAN_INVALID" }` |
 | Body above 8,388,608 bytes, or `text` above 1,000,000 characters | `413` | `{ "error": "..." }` |
-| No session | `401` | `{ "error": "Authentication required" }` |
+| No session | `401` | `{ "error": "Authentication required", "code": "AUTH_REQUIRED" }` |
 | Seed connection not available for the caller's role | `403` | the existing `SeedConnectionError` body |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 | A throw BEFORE the provider call | as `createErrorResponse` maps it | inherited |
@@ -1483,7 +1493,7 @@ Three properties hold across the whole family and are not repeated per route:
 #### GET /api/agent/config
 
 Whether this server runs agents. **Authentication:** required (`401 { "error": "Authentication
-required" }` without a session). Never `500`, and never names a key's value.
+required", "code": "AUTH_REQUIRED" }` without a session). Never `500`, and never names a key's value.
 
 ```json
 // 200 — available
@@ -1834,7 +1844,7 @@ Mints a token for the signed-in user and role; it reads no body field and spends
 | Status | Body |
 |---|---|
 | 200 | `{ "token": "...", "expiresAt": "<ISO 8601>", "url": "..." }` with `Cache-Control: no-store`; the token appears in no other response |
-| 401 | `{ "error": "Authentication required" }` |
+| 401 | `{ "error": "Authentication required", "code": "AUTH_REQUIRED" }` |
 | 403 | `{ "error": "Sign in again to create a token: a token can only be created within 10 minutes of signing in." }`, with `Cache-Control: no-store`, when the session was signed in more than ten minutes ago |
 | 409 | `{ "error": "MCP tokens cannot be issued on this server", "problems": [ "..." ] }` |
 | 429 | The rate-limit body of [Error Handling](#error-handling), with `Retry-After` |
@@ -1910,7 +1920,7 @@ configuration is what failed.
 
 ### Admin API
 
-Every route here requires an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role — the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required" }`, and only a valid session with a non-admin role returns the `403` above.
+Every route here requires an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role; the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }`, and only a valid session with a non-admin role returns the `403` above.
 
 #### GET /api/admin/audit
 
@@ -2034,6 +2044,8 @@ interface ColumnSchema {
   nullable: boolean;       // Allows NULL
   isPrimary: boolean;      // Primary key
   defaultValue?: string;   // Default value
+  defaultExpression?: string; // The SQL that produces it, where the provider has it. MySQL
+                           // only with includeDefaultSql, since its catalog spells a value (#1031)
   provenance?: "sampled";  // Inferred from sampled rows rather than declared; never sent to MCP or a model
 }
 
@@ -2059,6 +2071,7 @@ interface QueryResult {
   rowCount: number;        // Number of rows returned
   executionTime: number;   // Execution time in ms
   explainPlan?: any;       // Query execution plan (if requested)
+  rolledBack?: boolean;    // Set by the client when SANDBOX ran the statement and the server confirmed the rollback; never sent by a route
   pagination?: QueryPagination;          // Auto-limiting the route attaches to every response
   warnings?: QueryWarning[];             // Notices the engine attached; ABSENT when it reported none
   columnTypes?: Record<string, string>;  // Declared type per column, keyed by its name in `fields`
@@ -2077,6 +2090,7 @@ interface QueryPagination {
 interface QueryWarning {
   message: string;         // The notice, as the engine worded it
   code?: number | string;  // The engine's own identifier, when it reported one
+  severity?: string;       // The level it was raised at (`WARNING`, `NOTICE`), as the server spells it (may be localized), when it reports one
 }
 
 interface VectorColumn {                            // One entry of `vectorColumns`
@@ -2094,6 +2108,18 @@ produced no warnings omits the field rather than sending `[]`, so a client can d
 from the field's presence alone. `columnTypes` is the declared type of *this* result, which is the
 only source for a computed column or an ad-hoc projection — the schema has no catalog entry to
 answer with.
+
+A binary cell (a PostgreSQL `bytea`, a MySQL `BLOB`/`VARBINARY`, a SQL Server `varbinary`, an Oracle
+`RAW`/`BLOB`, a SQLite or libSQL `BLOB`) crosses this response in the form a Node `Buffer`
+serializes to, `{"type":"Buffer","data":[222,173,0,255]}`, and that shape is how the client
+recognises it as binary. Everywhere the client writes the value out it is lowercase hex behind `\x`
+instead (`\xdead00ff`): the grid, Copy Cell, the row detail sheet, the CSV export, the JSON export
+and its Copy as JSON, Copy Row as JSON and the row detail's Copy JSON. The JSON export writes it as
+that plain string and carries no column types, so what tells a reader it is binary is the source
+column's declared type (the schema, or the DDL export), not the file. The SQL INSERT export writes
+the dialect's binary literal built from the same hex (`'\xdead00ff'::bytea`, `X'dead00ff'`,
+`HEXTORAW('dead00ff')`). The graph view's own JSON export (`graphJson`) is not one of these
+surfaces: node and relationship properties keep the form the driver handed them in.
 
 `vectorColumns` names the columns of this result that hold vectors, keyed by their names in `fields`, and is absent when the result has none, never an empty object.
 A declared column's cells render as vector cells: the first 8 elements and the size in the grid (`768 dims`, bits for a binary vector, entries for a sparse one, rows for a multivector), a header line such as `dense float32, 768 dims` over the whole value in the row detail, and the whole value on Copy Cell.
@@ -2161,6 +2187,8 @@ interface ActiveSession {
 
 ### Error Codes
 
+An engine error is `QUERY_ERROR` when the driver's own code says the statement is at fault, read from the code and never the message (#1427): a SQLSTATE of class `0A`, `21`, `22`, `23`, `42` or `44` (PostgreSQL-wire, MySQL-wire and Db2 drivers), a SQL Server error number for a syntax, name, constraint, conversion or object-permission error (`102`, `156`, `208`, `2627`, `2812` and their neighbours), an Oracle statement error (`ORA-00001`, `ORA-00900` to `ORA-00999`, `ORA-01400`, `ORA-01722`, `ORA-02290` to `ORA-02292` and their neighbours) or a SQLite `SQLITE_ERROR`, `SQLITE_CONSTRAINT`, `SQLITE_MISMATCH` or `SQLITE_RANGE`. So `SELEC 1`, an unknown table and a duplicate key answer `400` on MySQL as on PostgreSQL. Connection, authentication, timeout and cancellation errors keep their own codes, MySQL's account limits `1203` (`max_user_connections`) and `1226` (`max_questions` and the like) stay `DATABASE_ERROR` although their SQLSTATE is `42000`, and an engine error with no recognised code is still `DATABASE_ERROR`.
+
 These are the values of the `code` field emitted by `createErrorResponse` (`src/lib/api/error-codes.ts`):
 
 | Code | Description |
@@ -2169,6 +2197,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
+| `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
 | `POOL_EXHAUSTED` | Connection pool exhausted (503) |
@@ -2337,6 +2366,11 @@ curl -X POST http://localhost:3000/api/db/objects/inventory \
     "includeColumns": true
   }'
 ```
+
+Add `"includeDefaultSql": true` (with `includeColumns`) to have each column carry `defaultExpression`,
+the SQL a migration writes after `DEFAULT`. On MySQL that costs one `SHOW CREATE TABLE` per table with a
+default, because its catalog reports the value rather than the SQL; SchemaDiff asks for it, nothing
+else does (#1031). Without `includeColumns` it is a 400.
 
 #### AI Explanation of a Plan
 ```bash

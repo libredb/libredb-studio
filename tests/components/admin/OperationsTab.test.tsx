@@ -112,6 +112,18 @@ import {
   SYNTHETIC_REFUSED_PREVIEW,
 } from "../../fixtures/maintenance-entity-operations";
 
+/**
+ * Confirm a whole-database run in its dialog (#1438). The dialog's own button carries the card's
+ * name, and nothing is sent before it is pressed.
+ */
+async function confirmWholeDatabaseRun(view: ReturnType<typeof render>, name: string) {
+  expect(mockRunMaintenance).not.toHaveBeenCalled();
+  const dialog = view.getByRole("alertdialog");
+  await act(async () => {
+    fireEvent.click(within(dialog).getByRole("button", { name }));
+  });
+}
+
 // =============================================================================
 // Test data
 // =============================================================================
@@ -711,6 +723,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(analyzeBtn!.closest("button")!);
     });
+    await confirmWholeDatabaseRun(renderResult!, "Run Analyze");
 
     expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", undefined, undefined);
     // Operation log should appear with success
@@ -729,6 +742,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(vacuumBtn!.closest("button")!);
     });
+    await confirmWholeDatabaseRun(renderResult!, "Run Vacuum");
     expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", undefined, undefined);
     expect(queryByText("VACUUM")).not.toBeNull();
   });
@@ -744,6 +758,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(reindexBtn!.closest("button")!);
     });
+    await confirmWholeDatabaseRun(renderResult!, "Run Reindex");
     expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", undefined, undefined);
     expect(queryByText("REINDEX")).not.toBeNull();
   });
@@ -764,6 +779,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(analyzeBtn!.closest("button")!);
     });
+    await confirmWholeDatabaseRun(renderResult!, "Run Analyze");
 
     expect(queryByText("ANALYZE")).not.toBeNull();
     // The log entry should show — the component uses XCircle icon for failure
@@ -791,10 +807,111 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(analyzeBtn!.closest("button")!);
     });
+    await confirmWholeDatabaseRun(renderResult!, "Run Analyze");
 
     // Log should appear with failure entry
     expect(queryByText("Operation Log (this session)")).not.toBeNull();
     expect(queryByText("ANALYZE")).not.toBeNull();
+  });
+
+  // =========================================================================
+  // Whole-database confirmation (#1438)
+  // =========================================================================
+
+  test.each([
+    ["Run Analyze", "ANALYZE"],
+    ["Run Vacuum", "VACUUM"],
+    ["Run Reindex", "REINDEX"],
+  ])("%s asks first, naming the operation, the connection and the database, and sends nothing", async (label, verb) => {
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    await act(async () => {
+      fireEvent.click(view!.getByRole("button", { name: label }));
+    });
+
+    const dialog = view!.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(`${label}?`);
+    expect(dialog.textContent).toContain(verb);
+    expect(dialog.textContent).toContain("PG Dev");
+    expect(dialog.textContent).toContain("Database: dev");
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("cancelling the whole-database confirmation sends nothing", async () => {
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    await act(async () => {
+      fireEvent.click(view!.getByRole("button", { name: "Run Reindex" }));
+    });
+    await act(async () => {
+      fireEvent.click(within(view!.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    });
+
+    expect(view!.queryByRole("alertdialog")).toBeNull();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("confirming sends exactly one request for the whole database", async () => {
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    await act(async () => {
+      fireEvent.click(view!.getByRole("button", { name: "Run Vacuum" }));
+    });
+    await confirmWholeDatabaseRun(view!, "Run Vacuum");
+
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", undefined, undefined);
+  });
+
+  test("a connection with no database names none in the confirmation", async () => {
+    mockConnectionsList = [{ ...mockConnectionsList[0], database: undefined }];
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    await act(async () => {
+      fireEvent.click(view!.getByRole("button", { name: "Run Analyze" }));
+    });
+
+    expect(view!.getByRole("alertdialog").textContent).not.toContain("Database:");
+  });
+
+  // =========================================================================
+  // The connected server's maintenance (#1387)
+  // =========================================================================
+
+  test("the monitoring payload's maintenance replaces the declared set, so a refused operation has no control", async () => {
+    // CockroachDB v26.3.2 as the connected provider measured it: a per-row Analyze and nothing else.
+    monitoringOverride = {
+      data: {
+        activeSessions: defaultSessions,
+        tables: defaultTables,
+        maintenance: {
+          maintenanceOperations: ["analyze", "kill"],
+          maintenanceOperationSpecs: {
+            analyze: { label: "Analyze Table", perEntity: true, global: false },
+            kill: { label: "Terminate Backend", perEntity: false, global: false },
+          },
+        },
+      },
+    };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+
+    expect(view!.queryByText("Run Analyze")).toBeNull();
+    expect(view!.queryByText("Run Vacuum")).toBeNull();
+    expect(view!.queryByText("Run Reindex")).toBeNull();
+    const titles = [...view!.container.querySelectorAll("button[title]")].map((b) => b.getAttribute("title"));
+    expect(titles).toContain("Analyze Table");
+    expect(titles).not.toContain("Vacuum Table");
   });
 
   // =========================================================================
@@ -1719,13 +1836,14 @@ describe("OperationsTab", () => {
       labels: { vacuumActionOperation: "optimize", vacuumGlobalLabel: "Rebuild Indexes" },
     };
 
-    const { queryByText } = await render_();
-    const button = queryByText("Rebuild Indexes");
+    const view = await render_();
+    const button = view.queryByText("Rebuild Indexes");
     expect(button).not.toBeNull();
 
     await act(async () => {
       fireEvent.click(button!);
     });
+    await confirmWholeDatabaseRun(view, "Rebuild Indexes");
 
     expect(mockRunMaintenance).toHaveBeenCalledWith("optimize", undefined, undefined);
   });
@@ -2373,11 +2491,13 @@ describe("OperationsTab", () => {
         expect({ other, drawn: view.queryByText(other) !== null }).toEqual({ other, drawn: true });
       }
 
-      // No confirmation is declared, so the card sends with one click, as every other card on the tab does.
+      // No typed confirmation is declared, so the card asks the plain whole-database question every
+      // card on the tab asks (#1438), under its own label, and sends once that is answered.
       await act(async () => {
         fireEvent.click(view.getByRole("button", { name: `Declared ${type}` }));
       });
-      expect(view.queryByRole("alertdialog")).toBeNull();
+      expect(within(view.getByRole("alertdialog")).queryByRole("textbox")).toBeNull();
+      await confirmWholeDatabaseRun(view, `Declared ${type}`);
       expect(mockRunMaintenance).toHaveBeenCalledWith(type, undefined, undefined);
     },
   );

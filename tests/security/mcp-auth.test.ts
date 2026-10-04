@@ -141,12 +141,12 @@ describe("through proxy(), a request to /api/mcp", () => {
 });
 
 describe("through proxy(), the rest of the application", () => {
-  test("still redirects /api/db/query without a cookie to /login", async () => {
+  test("still refuses /api/db/query without a cookie, with the session-required 401", async () => {
     const response = await proxy(
       new NextRequest("http://localhost:3000/api/db/query", { headers: { host: "localhost:3000" } }),
     );
-    expect(response.status).toBe(307);
-    expect(response.headers.get("location")).toContain("/login");
+    expect(response.status).toBe(401);
+    expect((await response.json()).code).toBe("AUTH_REQUIRED");
   });
 
   test("does not open the drive path for an MCP token", async () => {
@@ -154,7 +154,7 @@ describe("through proxy(), the rest of the application", () => {
       headers: { host: "localhost:3000" },
     });
     request.headers.set(AGENT_DRIVE_HEADER, await mintTestToken());
-    expect((await proxy(request)).status).toBe(307);
+    expect((await proxy(request)).status).toBe(401);
   });
 
   test("refuses a cross-origin POST to the minting endpoint with checkOrigin's 403", async () => {

@@ -229,6 +229,23 @@ describe("readActiveSessions", () => {
     );
   });
 
+  test("a just-started transaction with a negative elapsed time is listed at 0 ms (#1416)", async () => {
+    // Read on Neo4j 2026.09.0: about one Sessions load in three carried this value, and refusing it
+    // dropped the whole panel.
+    const row = {
+      database: "neo4j",
+      transactionId: "neo4j-transaction-7",
+      username: "neo4j",
+      currentQuery: "q",
+      startTime: "2026-10-03T05:18:20.881Z",
+      status: "Running",
+      elapsedTime: "PT-0.001000000S",
+    };
+    const [session] = await readActiveSessions(replacing({ [transactions]: rows(row) }).client, DATABASE);
+    expect(session?.pid).toBe("neo4j-transaction-7");
+    expect(session?.durationMs).toBe(0);
+  });
+
   test("an elapsed time that is not a duration is refused by statement", async () => {
     const row = {
       database: "neo4j",

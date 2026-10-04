@@ -1320,8 +1320,49 @@ acquires a pooled client, optionally records its backend PID for cancellation, r
 (optionally parameterized — `$1`, `$2`, …) statement, and returns the standard envelope:
 
 ```ts
-{ rows, fields: string[], rowCount, executionTime, columnTypes? }
+{ rows, fields: string[], rowCount, executionTime, columnTypes?, warnings? }
 ```
+
+#### Server notices (#1401)
+
+The NOTICE and WARNING messages the server sends while a statement that SUCCEEDS runs come back in
+`warnings`, one entry per notice: `message` is the server's primary message line, `code` its
+SQLSTATE and `severity` its level as the server spells it (`NOTICE`, `WARNING`, `INFO`), which may
+be localized by the server's `lc_messages`. A notice's DETAIL and HINT fields are not carried. The
+results panel shows them beside the result, `NOTICE: ...` the way `psql` prints it; a statement the
+server sent none for has no `warnings` key at all. `queryInTransaction()` reports them the same way.
+
+A statement that FAILS reports only its error: notices it raised before the error are dropped.
+
+At most 100 notices are kept per statement. A `RAISE NOTICE` in a loop can send millions, and each
+kept one is held in memory and drawn as a line of the results panel, so the rest are only counted and
+the list ends with one entry saying how many were not shown (`5 more notices not shown`).
+
+`pg` only emits a notice as an event on the client that received it, so the pool builds its clients
+from a subclass that keeps each client's notices, and a statement takes what arrived on its own
+client between its start and its answer. What a client held before the statement (its startup
+greeting, the cancel-PID read) is dropped first, and a client returned to the pool drops what it
+held, so one statement's notice never surfaces on another's result.
+
+On the PostgreSQL-wire relatives these are often the only sign a statement did not do what it
+looks like. Measured on 2026-10-04:
+
+| Engine | Statement | Notice |
+| --- | --- | --- |
+| PostgreSQL 18 | `DO $$BEGIN RAISE NOTICE 'n'; RAISE WARNING 'w'; END$$` | `NOTICE 00000 n`, `WARNING 01000 w` |
+| PostgreSQL 18 | `DROP TABLE IF EXISTS nope` | `NOTICE 00000 table "nope" does not exist, skipping` |
+| Apache Cloudberry 2.1.0 | `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY ...` | `WARNING referential integrity (FOREIGN KEY) constraints are not supported in Apache Cloudberry, will not be enforced` |
+| RisingWave | `BEGIN` (typed in the editor) | `NOTICE 00000 ... no transaction is actually started` |
+
+Notices the server sends while a connection OPENS are read once, by `connect()`, and returned by
+`connectWarnings()`; Test Connection shows them as a caution instead of "Connected successfully",
+and the first save asks for a second click, as a degraded connection does. Materialize is the case:
+it opens a session on a database that does not exist and reports only `NOTICE MZ004 session
+database "nosuchdb" does not exist`. Startup notices of SQLSTATE class `00` (successful completion)
+are left out, because Materialize greets every session with one (`connected to Materialize ...`).
+
+The agent's read-only path (`queryReadOnly()`, section 12) and the internal catalog and monitoring
+reads do not report notices.
 
 Native `pg` errors are normalised through `mapDatabaseError()` into the shared
 [`errors.ts`](../../src/lib/db/errors.ts) classes (syntax → `QueryError`, auth → `AuthenticationError`,
@@ -1616,6 +1657,16 @@ base) fans these out in parallel.
 `getTableStats()` / `getIndexStats()` accept an optional `{ schema }` filter; with none they cover
 all user schemas.
 
+**Every catalog name list is read as `text[]` (#1394).** node-postgres parses no array of
+`information_schema.sql_identifier` or of `name`, so `array_agg(kcu.column_name)` and
+`array_agg(a.attname)` reached the provider as the text `{id}`. On the key read that turned
+`includes()` into a substring test: measured on PostgreSQL 18.6, a table keyed on `id` showed its
+columns `i` and `d` as keys too in the tree, the ERD and Docs. On the index statistics read the
+array guard turned every index's column list into `[]`. Both aggregates now cast each name to
+`text`, the key list in `ordinal_position` order, and a key list that still arrives as anything
+but an array marks no column. The index lists inside the `jsonb` object reads were never
+affected: `jsonb_build_object` serialises the array itself.
+
 **Database size is absent, never zeroed, when it is not measured.** `getOverview()` sizes the
 database with `pg_database_size($1)` and reads the byte figure only, the shape `mssql.ts` uses:
 `databaseSize` is `formatBytes()` over that number, so no `pg_size_pretty()` column is selected. A
@@ -1770,8 +1821,85 @@ with targets quoted via [§3.6](#36-safe-maintenance-targets):
 | `reindex` | `REINDEX TABLE <target>` | `REINDEX DATABASE <db>` |
 | `kill` | `pg_terminate_backend(<pid>)` | throws (PID required) |
 
-`getCapabilities().maintenanceOperations = ['vacuum', 'analyze', 'reindex', 'kill']`. `kill`
-validates that the target parses as an integer PID.
+`getCapabilities().maintenanceOperations` is `['vacuum', 'analyze', 'reindex', 'kill']` before
+connect and on PostgreSQL itself; a connected relative keeps only what its server accepts
+([§9.1](#91-what-the-connected-server-accepts-measured-at-connect)). `kill` validates that the
+target parses as an integer PID.
+
+A statement that succeeds can still have done nothing, and the server says so in a notice:
+PostgreSQL skips a table the role does not own with the `WARNING` `permission denied to vacuum "t",
+skipping it`, and YugabyteDB 2026.1.2.0 answers every `VACUUM` with the `NOTICE` *VACUUM is a no-op
+statement since YugabyteDB performs garbage collection of dead tuples automatically* (measured
+2026-10-04). `runMaintenance` listens for the server's notices while its statement runs, and when a
+`NOTICE` or `WARNING` arrived the result reads `VACUUM completed, and the server said: <first
+three>; ... (and N more)` instead of `VACUUM completed successfully` (#1387). `INFO`, `LOG` and
+`DEBUG` are not quoted.
+
+A statement the server refuses is thrown as the driver raised it, and `POST /api/db/maintenance`
+types it through `mapDatabaseError`: a SQLSTATE of class `42`, `0A`, `22`, `23`, `21` or `44` is the
+statement's own fault and answers `400 QUERY_ERROR` with the server's sentence; anything else keeps a
+5xx (#1387, #1427).
+
+### 9.1 What the connected server accepts, measured at connect
+
+The `postgres` type id reaches wire-compatible engines that refuse part of PostgreSQL's
+maintenance, and each refuses it in its own words, so the set is measured per server the way the
+EXPLAIN grammar is ([§10.1](#101-the-explain-grammar-is-measured-at-connect-597)): `probeMaintenance()`
+asks once per `connect()`, on the client connect already borrowed, about the six statements the
+table above sends (the per-row ones carry the table name `libredb_maintenance_probe`, the global
+ones are the exact whole-database statements). Skipped under the agent's read-only profile, which
+keeps the declaration.
+
+**Nothing is run.** The probe opens a block, aborts it with `SELECT 1/0`, and sends each statement
+inside it. PostgreSQL parses a simple query before it checks the block, so a statement in its
+grammar answers `25P02` without parse analysis, planning or execution, and one it does not have
+answers its own grammar or feature error. The verdict is the SQLSTATE, never the message: `25P02`
+keeps the placement, anything else drops it. The block is rolled back before the client goes back
+to the pool.
+
+**A server whose `BEGIN` opens nothing is not asked**, because there the statements would run. The
+probe sends `SELECT 1` after the poison and stops unless it answers `25P02`; such a server is
+offered none of `vacuum`, `analyze` and `reindex`. The status `getTransactionStatus()` reports is
+not used for this: a rejected query settles before `pg` reads the ReadyForQuery that follows the
+error, and under bun 1.4.2 it still read `T` there on PostgreSQL 18.6 while node read `E`.
+
+**Only the server's answer narrows anything.** `25P02` keeps a placement and `42601` or `0A000`
+drops it. Any other code is followed by `SELECT 1` again: if the block still answers `25P02`,
+nothing ran and the statement counts as refused (an engine that reports a grammar refusal as
+`XX000`); if it does not, or if a statement RESOLVED, the probe stops at once and the declared set
+stands, because the next statement could run. A failure that is not an answer at all (a reset
+connection, a pooler in statement mode that refuses `BEGIN`) also leaves the declared set, so a
+cached provider never loses its maintenance to a transient fault. Only the measured "`BEGIN`
+opened nothing" offers none of the three. The probe never fails the connection, and a `ROLLBACK`
+that fails releases the connect client with that error, so `pg` destroys it instead of pooling a
+client still inside the probe's block.
+
+`REINDEX DATABASE` names the configured database, or for a connection string that names none,
+the one `SELECT current_database()` reports (asked only for that statement), so the probe and the
+run never send `REINDEX DATABASE ""`.
+
+Measured 2026-10-04 through `pg`:
+
+| Server | `VACUUM ANALYZE <t>` / bare | `ANALYZE <t>` / bare | `REINDEX TABLE <t>` / `DATABASE` | Offered |
+|--------|-----------------------------|----------------------|----------------------------------|---------|
+| PostgreSQL 18.6 (`postgres:latest`) | `25P02` / `25P02` | `25P02` / `25P02` | `25P02` / `25P02` | everything |
+| CockroachDB v26.3.2 (`cockroachdb/cockroach:latest`) | `42601` / `42601` | `25P02` / `42601` | `42601` (`unimplemented: this syntax`) / `42601` | per-row Analyze only |
+| RisingWave 3.1.0 (`risingwavelabs/risingwave:latest`) | not asked | not asked | not asked | none: `BEGIN` opens nothing (ReadyForQuery `I`) |
+| YugabyteDB 2026.1.2.0 (`yugabytedb/yugabyte:latest`) | `25P02` / `25P02` | `25P02` / `25P02` | `0A000 REINDEX not supported yet` / `0A000 REINDEX SCHEMA/DATABASE/SYSTEM not supported yet` | Vacuum and Analyze |
+
+YugabyteDB raises its `REINDEX` refusals in its grammar, so they reach the probe as `0A000` and drop
+both placements. Its `VACUUM` is in the grammar and stays offered, and the run then quotes the
+server's no-op `NOTICE` as described above.
+
+The two maintenance surfaces read capabilities from `POST /api/db/provider-meta`, which never
+connects (#457) and so can only answer this declaration. `POST /api/db/monitoring` connects, and
+its payload carries the connected provider's `maintenanceOperations` and `maintenanceOperationSpecs`
+as `maintenance`; the admin Operations tab and the monitoring Tables tab lay that over the declared
+capabilities (`withConnectedMaintenance` in `src/lib/db/types.ts`), so a refused operation has no
+control there. The route refuses it too, from the same connected provider, with its existing 400.
+
+Every whole-database card on the admin Operations tab asks before it sends (#1438): a dialog names
+the run, the connection and its database, and nothing is sent until it is confirmed.
 
 ### Where each operation may be offered (`maintenanceOperationSpecs`)
 
@@ -1797,7 +1925,9 @@ placements or neither.
 
 PostgreSQL is the engine both surfaces were already right about - every statement here has
 a one-table form and a whole-database form - so these declarations record the baseline the
-other providers are measured against rather than a change in behaviour. `vacuumAction`
+other providers are measured against rather than a change in behaviour. On a connected relative
+they are what [§9.1](#91-what-the-connected-server-accepts-measured-at-connect) narrows: a
+placement the server refused is `false` there, and an operation with neither is left out. `vacuumAction`
 really means `vacuum` here, so `vacuumActionOperation` stays absent.
 
 ---
@@ -1821,7 +1951,7 @@ Overrides the SQL base defaults:
 | `implicitCommitStatements` | `END`, `PREPARE TRANSACTION`: the two statements besides COMMIT and ROLLBACK that end the transaction. No DDL is listed, because PostgreSQL's DDL is transactional; a relative that commits DDL anyway (CockroachDB's `autocommit_before_ddl`) is caught after the statement instead ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; an empty `foreignKeys` list is then a fact about the schema or the reading role, never about the engine |
 | `supportsMaintenance` | `true` |
-| `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |
+| `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` before connect; after it, the operations the server accepted plus `kill`: **measured, not declared** (see [§9.1](#91-what-the-connected-server-accepts-measured-at-connect)) |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `5432` |
 | `containerLevels` | one level, `schema`: the connection pins one database and nothing can switch it ([§3.1.4](#314-what-the-object-surface-declares-and-which-catalog-answers-for-it)) |

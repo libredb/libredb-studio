@@ -328,6 +328,14 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                     </td>
                     <td className="px-4 py-4 max-w-md">
                       <div className="bg-canvas border border-hairline rounded-md p-2 relative group-hover:border-hairline-strong transition-colors">
+                        {item.kind === "explain" && (
+                          <span
+                            className="mb-1 inline-block px-1.5 py-0.5 rounded text-xs font-medium text-brand bg-fill"
+                            title="This run asked for the query plan, not for the rows"
+                          >
+                            Plan
+                          </span>
+                        )}
                         <pre className="text-xs font-mono text-fg-tertiary line-clamp-2 break-all whitespace-pre-wrap leading-relaxed">
                           {item.query}
                         </pre>
@@ -359,7 +367,7 @@ export function QueryHistory({ onSelectQuery, activeConnectionId, refreshTrigger
                         size="sm"
                         className="h-8 w-8 p-0 hover:bg-hue-emerald-tint/10 hover:text-hue-emerald"
                         onClick={() => onSelectQuery(item.query)}
-                        title="Restore Query"
+                        title={item.kind === "explain" ? "Restore Query (it was run as a plan)" : "Restore Query"}
                       >
                         <RotateCcw className="w-3 h-3" />
                       </Button>

@@ -22,6 +22,7 @@ import {
   type IndexSchema,
   type KindCount,
   type ObjectDetail,
+  type DescribeObjectsOptions,
   type ObjectDetailBatch,
   type ObjectKindSpec,
   type ObjectSourceDocument,
@@ -30,8 +31,12 @@ import {
   type ObjectSourcePart,
   type QueryResult,
   type HealthInfo,
+  type MaintenanceDeclaration,
+  type MaintenanceOperation,
   type MaintenanceType,
   type MaintenanceResult,
+  type MeasuredMaintenancePlacements,
+  narrowMaintenance,
   type ProviderOptions,
   type ProviderCapabilities,
   type ExplainFormat,
@@ -73,6 +78,7 @@ import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 import { unquoteLiteral } from "@/lib/sql/values";
+import { portableDefaultSql, showCreateColumnDefaults } from "./mysql-show-create";
 
 /**
  * MySQL's identity for the shared container-path renderer.
@@ -607,6 +613,136 @@ const probeExplainFormat = async (queryable: MySQLQueryable): Promise<ExplainFor
     }
   }
   return undefined;
+};
+
+/**
+ * MySQL's maintenance, as MySQL itself runs it.
+ *
+ * MySQL has no VACUUM, and every statement it does have names tables: `ANALYZE/OPTIMIZE/CHECK
+ * TABLE <t>` with a target, the same verb over every table in the database without one
+ * (`getAllTablesForMaintenance`). `kill` takes a connection id from the Sessions panel. This is the
+ * declaration before a server is measured; what a connected server keeps of it is
+ * `probeMaintenance`'s answer (#1387).
+ */
+const MYSQL_MAINTENANCE: Required<MaintenanceDeclaration> = {
+  maintenanceOperations: ["analyze", "optimize", "check", "kill"],
+  maintenanceOperationSpecs: {
+    analyze: { label: "Analyze Table", perEntity: true, global: true },
+    optimize: { label: "Optimize Table", perEntity: true, global: true },
+    check: { label: "Check Table", perEntity: true, global: true },
+    kill: { label: "Kill Connection", perEntity: false, global: false },
+  },
+};
+
+/** The verbs `probeMaintenance` asks about; `kill` takes a connection id, not a table. */
+const PROBED_MAINTENANCE = ["analyze", "optimize", "check"] as const;
+
+/** The table the probe names. It is never created, so every verb resolves to nothing and does no work. */
+const MAINTENANCE_PROBE_TABLE = "libredb_maintenance_probe";
+
+/**
+ * The database the probe names when the connection selected none: a connection string with no
+ * path. It does not exist, and the qualification is what keeps a bare name from answering `1046 No
+ * database selected` before the verb is read (measured on MySQL 26.7.0 and TiDB v8.5.8).
+ */
+const MAINTENANCE_PROBE_FALLBACK_DATABASE = "libredb_maintenance_probe";
+
+/**
+ * Answers that mean the server parsed the verb and went on to the table or to the caller's rights:
+ * `1146` no such table and `1049` unknown database (TiDB and Vitess raise these where MySQL reports
+ * them in its result set), and `1142`, `1044` and `1227`, the refusals a least-privilege account
+ * gets. Measured 2026-10-04 on mysql:latest and mariadb:latest with an account granted `ALL ON
+ * app.*`: a table in a database it has no grant on is `1142 command denied` for every verb, and
+ * MySQL 26.7.0's `OPTIMIZE` asks for `OPTIMIZE_LOCAL_TABLE` with `1227`. The verb exists there,
+ * and the run's own refusal is the engine's answer, a 400 with its sentence.
+ */
+const MAINTENANCE_PROBE_ACCEPTED_ERRNOS = new Set([1146, 1049, 1142, 1044, 1227]);
+
+/**
+ * Answers that mean the server does not have the verb: `1064` a parse error (TiDB's `CHECK TABLE`),
+ * `1105` the generic error vtgate answers a parse error with (`syntax error at position 6 near
+ * 'CHECK'`), `8200` TiDB's `OPTIMIZE TABLE is not supported` and `1235` not supported yet, plus
+ * any other answer in SQLSTATE class `42` or `0A`.
+ */
+const MAINTENANCE_PROBE_REFUSED_ERRNOS = new Set([1064, 1105, 8200, 1235]);
+
+/** `ER_PARSE_ERROR`, the one answer on which the probe retries without `NO_WRITE_TO_BINLOG`. */
+const PARSE_ERROR_ERRNO = 1064;
+
+/** A backtick-quoted identifier, the backtick doubled, as `SQLBaseProvider.escapeIdentifier` quotes one. */
+const escapeMySQLIdentifier = (name: string): string => `\`${name.replace(/`/g, "``")}\``;
+
+/** The database this session selected, or undefined when it selected none or the server would not say. */
+const selectedDatabase = async (queryable: MySQLQueryable): Promise<string | undefined> => {
+  try {
+    const [rows] = await runStatement(queryable, "SELECT DATABASE() AS name");
+    const name = rows[0]?.name;
+    return typeof name === "string" && name !== "" ? name : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+type ProbeVerdict = "accepted" | "refused" | "unknown";
+
+/** One probe statement's answer, read from `errno` and `sqlState` and never the message. */
+const probeVerdict = async (queryable: MySQLQueryable, sql: string): Promise<ProbeVerdict | number> => {
+  try {
+    await runStatement(queryable, sql);
+    return "accepted";
+  } catch (error) {
+    const { errno, sqlState } = error as { errno?: unknown; sqlState?: unknown };
+    if (typeof errno !== "number") return "unknown";
+    if (MAINTENANCE_PROBE_ACCEPTED_ERRNOS.has(errno)) return "accepted";
+    if (errno === PARSE_ERROR_ERRNO) return errno;
+    if (MAINTENANCE_PROBE_REFUSED_ERRNOS.has(errno)) return "refused";
+    return typeof sqlState === "string" && /^(42|0A)/.test(sqlState) ? "refused" : "unknown";
+  }
+};
+
+/**
+ * Which of ANALYZE, OPTIMIZE and CHECK TABLE this server's grammar has (#1387), asked once per
+ * `connect()` on the connection the pool check already holds.
+ *
+ * The MySQL type id serves wire-compatible engines that refuse part of MySQL's maintenance.
+ * Measured 2026-10-04 against a missing table in the connection's own database: MySQL 26.7.0 and
+ * MariaDB answer all three with a result set whose row says the table does not exist; TiDB v8.5.8
+ * answers ANALYZE with `1146`, OPTIMIZE with `8200 OPTIMIZE TABLE is not supported` and CHECK with
+ * `1064`; Vitess 24.0.4 answers ANALYZE and OPTIMIZE and refuses CHECK with `1105 syntax error at
+ * position 6 near 'CHECK'`. The table is in the connection's OWN database because an account
+ * granted only that database is refused (`1142`) for a table anywhere else.
+ *
+ * ANALYZE and OPTIMIZE carry `NO_WRITE_TO_BINLOG`. Without it MySQL writes both to the binary log
+ * even for a table that does not exist, so every connect added two GTID transactions to a primary
+ * and to every replica downstream; with it `gtid_executed` stayed unchanged on MySQL 26.7.0, as did
+ * MariaDB's `gtid_binlog_pos` and Vitess's `gtid_executed` (measured). All four engines parse the
+ * modifier; a server that answers it with a parse error is asked once more without it. CHECK TABLE
+ * is never written to the binary log and takes no modifier.
+ *
+ * Both placements follow the verb: the whole-database form is the same statement over every table.
+ * Nothing here rejects, and only a server's refusal narrows anything: an answer that is neither an
+ * acceptance nor a grammar refusal (a reset connection, an unknown code) leaves the result
+ * undefined, and the declaration stands.
+ */
+const probeMaintenance = async (
+  queryable: MySQLQueryable,
+  database: string | undefined,
+): Promise<Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined> => {
+  // A connection string carries its database in the URL rather than in `config.database`, so the
+  // server is asked which one the session selected before the fallback is used.
+  const selected = database || (await selectedDatabase(queryable)) || MAINTENANCE_PROBE_FALLBACK_DATABASE;
+  const table = `${escapeMySQLIdentifier(selected)}.${escapeMySQLIdentifier(MAINTENANCE_PROBE_TABLE)}`;
+  const measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> = {};
+  for (const verb of PROBED_MAINTENANCE) {
+    const plain = `${verb.toUpperCase()} TABLE ${table}`;
+    const quiet = verb === "check" ? plain : `${verb.toUpperCase()} NO_WRITE_TO_BINLOG TABLE ${table}`;
+    let verdict = await probeVerdict(queryable, quiet);
+    if (verdict === PARSE_ERROR_ERRNO && quiet !== plain) verdict = await probeVerdict(queryable, plain);
+    if (verdict === "unknown") return undefined;
+    const accepted = verdict === "accepted";
+    measured[verb] = { perEntity: accepted, global: accepted };
+  }
+  return measured;
 };
 
 /**
@@ -2386,11 +2522,16 @@ interface CatalogDefaultReading {
   readonly absence: "sql-null" | "null-keyword";
   /** Whether a string default arrives evaluated, or as the SQL literal as written. */
   readonly literal: "evaluated" | "as-written";
+  /**
+   * Where a default's SQL text comes from: the catalog row itself, or - on the flavour whose
+   * catalog carries none - `SHOW CREATE TABLE`, read only for a caller that asks (#1031).
+   */
+  readonly defaultSql: "catalog" | "show-create";
 }
 
 const CATALOG_DEFAULT_READING: Record<MySQLFlavour, CatalogDefaultReading> = {
-  mysql: { absence: "sql-null", literal: "evaluated" },
-  mariadb: { absence: "null-keyword", literal: "as-written" },
+  mysql: { absence: "sql-null", literal: "evaluated", defaultSql: "show-create" },
+  mariadb: { absence: "null-keyword", literal: "as-written", defaultSql: "catalog" },
 };
 
 /**
@@ -2442,9 +2583,10 @@ function catalogDefault(
   }
   // MySQL reports the VALUE, and no column of the row says whether that text is also SQL:
   // `abc` is a value and is not valid after DEFAULT, while `b'1'` and `0x616263` ARE SQL,
-  // and all three arrive with an EMPTY `EXTRA`. So this flavour declares no SQL text at all
-  // rather than a guessed one. Do not "complete" this arm without a measurement that tells
-  // the two apart.
+  // and all three arrive with an EMPTY `EXTRA`. So the CATALOG row declares no SQL text
+  // rather than a guessed one. The text comes from the engine instead, `SHOW CREATE TABLE`,
+  // for a caller that asks for it (`defaultSql: "show-create"`, #1031), and is filled in by
+  // `objectDetailFromRows`. Do not guess it here from the value or the type.
   return { defaultValue: raw };
 }
 
@@ -2472,15 +2614,23 @@ function objectDetailFromRows(
   schema: string,
   rows: DetailRows,
   reading: CatalogDefaultReading,
+  ddlDefaults?: ReadonlyMap<string, string>,
 ): ObjectDetail {
-  const columns: ColumnSchema[] = rows.columns.map((row) => ({
-    name: row.column_name,
-    type: row.column_type,
-    ...(row.column_type === row.data_type ? {} : { baseType: row.data_type }),
-    nullable: row.is_nullable === "YES",
-    isPrimary: row.column_key === "PRI",
-    ...catalogDefault(row.column_default, row.extra, reading),
-  }));
+  const columns: ColumnSchema[] = rows.columns.map((row) => {
+    const catalog = catalogDefault(row.column_default, row.extra, reading);
+    // Only for a column the catalog says HAS a default: the DDL says `DEFAULT NULL` for a
+    // nullable column with none, and that is not a default the column was given (#1031).
+    const ddl = catalog.defaultValue === undefined ? undefined : ddlDefaults?.get(row.column_name);
+    return {
+      name: row.column_name,
+      type: row.column_type,
+      ...(row.column_type === row.data_type ? {} : { baseType: row.data_type }),
+      nullable: row.is_nullable === "YES",
+      isPrimary: row.column_key === "PRI",
+      ...catalog,
+      ...(ddl === undefined ? {} : { defaultExpression: portableDefaultSql(ddl, row.data_type) }),
+    };
+  });
 
   const byIndex = new Map<string, IndexSchema>();
   for (const row of rows.indexes) {
@@ -2554,6 +2704,13 @@ export class MySQLProvider extends SQLBaseProvider {
    */
   private measuredFlavour: MySQLFlavour = "mysql";
 
+  /**
+   * Which maintenance verbs this server's grammar has, measured by `probeMaintenance()` at connect
+   * (#1387). Undefined is "not measured", and answers the whole MySQL set, for the same reason
+   * `measuredExplainFormat` starts at MySQL's grammar.
+   */
+  private measuredMaintenance: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined;
+
   // Transaction support: dedicated connection held outside pool
   private txConn: PoolConnection | null = null;
   private txActive = false;
@@ -2592,17 +2749,9 @@ export class MySQLProvider extends SQLBaseProvider {
       // refuses them instead of reporting a rollback that undid nothing.
       implicitCommitStatements: MYSQL_IMPLICIT_COMMIT_STATEMENTS,
       implicitCommitExceptions: MYSQL_IMPLICIT_COMMIT_EXCEPTIONS,
-      maintenanceOperations: ["analyze", "optimize", "check", "kill"],
-      // MySQL has no VACUUM, and every statement it does have names tables:
-      // `ANALYZE/OPTIMIZE/CHECK TABLE <t>` with a target, the same verb over every
-      // table in the database without one (`getAllTablesForMaintenance`). `kill`
-      // takes a connection id from the Sessions panel.
-      maintenanceOperationSpecs: {
-        analyze: { label: "Analyze Table", perEntity: true, global: true },
-        optimize: { label: "Optimize Table", perEntity: true, global: true },
-        check: { label: "Check Table", perEntity: true, global: true },
-        kill: { label: "Kill Connection", perEntity: false, global: false },
-      },
+      // MySQL's own set, narrowed to what the connected server accepted (#1387): see
+      // `probeMaintenance`. Unconnected, it is the whole set.
+      ...narrowMaintenance(MYSQL_MAINTENANCE, this.measuredMaintenance),
       // One level, and on MySQL the level IS a database: a schema is not a thing created
       // beside a database, the two words name the same object. `catalog` is not a second
       // level here - MySQL has exactly one and `information_schema.SCHEMATA` is what a
@@ -2698,6 +2847,8 @@ export class MySQLProvider extends SQLBaseProvider {
       // Measured rather than derived from the type id, because there is no `mariadb` type
       // id to derive from.
       this.measuredFlavour = flavourFor(await probeServerVersion(conn));
+      // Which of ANALYZE, OPTIMIZE and CHECK TABLE this server has (#1387). Never rejects.
+      this.measuredMaintenance = await probeMaintenance(conn, this.config.database);
       // Every later acquisition, this probe connection's included, then reads utf8mb3
       // columns as UTF-8 through `runStatement`. Only this pool's connections are marked.
       if (await probeUtf8UnderUtf8mb3(conn)) {
@@ -3326,8 +3477,20 @@ export class MySQLProvider extends SQLBaseProvider {
    * on path. The three detail reads may carry rows for the extra `limit + 1` object; they
    * are dropped here rather than by a fourth bound, since the target list is what says which
    * objects the answer is about.
+   *
+   * `defaultSql` adds ONE `SHOW CREATE TABLE` per described table that has a default, on the
+   * flavour whose catalog spells no default as SQL (#1031, `readDefaultSql`). It is the one
+   * read here that grows with the folder, which is why only a caller that asks pays it, and
+   * the caller's `limit` bounds it, since only described objects are read. Tables only: a
+   * view's columns report the defaults of the columns they select, and the statement answers
+   * no column list for a view, so reading one costs a round trip and always falls back.
    */
-  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+  public async describeObjects(
+    container: readonly string[],
+    kind: string,
+    limit?: number,
+    options?: DescribeObjectsOptions,
+  ): Promise<ObjectDetailBatch> {
     this.ensureConnected();
     const capabilities = this.getCapabilities();
     // Two questions, asked in order, and only the DECLARATION answers the first, for the
@@ -3375,6 +3538,12 @@ export class MySQLProvider extends SQLBaseProvider {
       );
       const indexes = byObjectName(await this.runObjectQuery<DetailIndexRow[]>(conn, statements.indexes, detailParams));
 
+      const reading = CATALOG_DEFAULT_READING[this.measuredFlavour];
+      const ddlDefaults =
+        options?.defaultSql === true && reading.defaultSql === "show-create" && kind === "table"
+          ? await this.readDefaultSql(conn, schema, described, columns, reading)
+          : undefined;
+
       const details = described
         .map((row) =>
           objectDetailFromRows(
@@ -3385,7 +3554,8 @@ export class MySQLProvider extends SQLBaseProvider {
               foreignKeys: foreignKeys.get(row.name) ?? [],
               indexes: indexes.get(row.name) ?? [],
             },
-            CATALOG_DEFAULT_READING[this.measuredFlavour],
+            reading,
+            ddlDefaults?.get(row.name),
           ),
         )
         .sort((left, right) => comparePaths(left.path, right.path));
@@ -3393,6 +3563,49 @@ export class MySQLProvider extends SQLBaseProvider {
     } finally {
       conn.release();
     }
+  }
+
+  /**
+   * Each described table's default SQL, read from `SHOW CREATE TABLE` (#1031), keyed by table
+   * then column. A table is absent from the answer whenever its text cannot be trusted, and
+   * an absent table keeps today's catalog reading - no `defaultExpression` - rather than
+   * failing a read that was going to succeed:
+   *
+   * - A table with no catalog default is never read: its DDL has nothing to add.
+   * - A refusal or an absence is `readSourcePart`'s own classification, so this read and the
+   *   Source tab agree about what a refusal is. Measured: a column-level `GRANT SELECT (cols)`
+   *   reads the catalog and is refused `SHOW CREATE TABLE` with 1142, and a table dropped
+   *   between the catalog read and this one answers 1146. Anything else still raises.
+   * - Text `showCreateColumnDefaults` cannot read to the end, or that lacks a DEFAULT for a
+   *   column the catalog says has one, leaves the WHOLE table on the catalog: half a table
+   *   on each reading would put both readings into one diff.
+   *
+   * ONE ROUND TRIP PER TABLE, sequential on the connection the three catalog reads used. That
+   * is the N+1 shape this method's caller exists to avoid, taken on deliberately and only when
+   * asked: see `DescribeObjectsOptions`.
+   */
+  private async readDefaultSql(
+    conn: PoolConnection,
+    schema: string,
+    described: readonly ObjectRow[],
+    columns: ReadonlyMap<string, readonly DetailColumnRow[]>,
+    reading: CatalogDefaultReading,
+  ): Promise<Map<string, ReadonlyMap<string, string>>> {
+    const plan = MYSQL_SOURCE_PART_PLANS.table[0];
+    const answer = new Map<string, ReadonlyMap<string, string>>();
+    for (const row of described) {
+      const withDefault = (columns.get(row.name) ?? []).filter(
+        (column) => catalogDefault(column.column_default, column.extra, reading).defaultValue !== undefined,
+      );
+      if (withDefault.length === 0) continue;
+      const address = `${this.escapeIdentifier(schema)}.${this.escapeIdentifier(row.name)}`;
+      const read = await this.readSourcePart(conn, plan, address);
+      if (read.outcome !== "text") continue;
+      const defaults = showCreateColumnDefaults(read.text);
+      if (defaults === undefined || withDefault.some((column) => !defaults.has(column.column_name))) continue;
+      answer.set(row.name, defaults);
+    }
+    return answer;
   }
 
   /**
