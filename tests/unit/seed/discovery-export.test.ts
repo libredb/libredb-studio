@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { LIMITS } from "../../../docker/discover.mjs";
 import {
   DISCOVERY_FILE_MAX_BYTES,
   type DiscoveredService,
@@ -287,6 +288,8 @@ describe("parseDiscoveryExport: invalid files", () => {
     ["a requirepassEnv that is not an env var name", { requirepassEnv: "redis_password" }, "services.0.requirepassEnv"],
     ["requirepassEnv missing", { requirepassEnv: undefined }, "services.0.requirepassEnv"],
     ["negative running tasks", { tasks: { running: -1, desired: 1 } }, "services.0.tasks.running"],
+    ["fractional running tasks", { tasks: { running: 1.5, desired: 1 } }, "services.0.tasks.running"],
+    ["negative desired tasks", { tasks: { running: 1, desired: -1 } }, "services.0.tasks.desired"],
     ["fractional desired tasks", { tasks: { running: 1, desired: 1.5 } }, "services.0.tasks.desired"],
   ])("refuses a service with %s", (_label, overrides, path) => {
     const reason = reasonOf(parse(validExport({ services: [pgService(overrides)] })));
@@ -377,11 +380,68 @@ describe("parseDiscoveryExport: size cap", () => {
     expect(reasonOf(parseDiscoveryExport(raw))).toBe("the file is 2097153 bytes, over the 2097152-byte limit");
   });
 
+  // The body above is valid JSON, so it cannot tell whether the size or the text is checked first. This one can.
+  it("gives an oversized file that is not JSON the size reason, not the parse reason", () => {
+    const raw = "x".repeat(DISCOVERY_FILE_MAX_BYTES + 1);
+    expect(reasonOf(parseDiscoveryExport(raw))).toBe("the file is 2097153 bytes, over the 2097152-byte limit");
+  });
+
   it("measures bytes, not characters", () => {
     const json = JSON.stringify(validExport());
     // One two-byte character keeps the length in characters at the cap and puts the byte count one over.
     const raw = json + " ".repeat(DISCOVERY_FILE_MAX_BYTES - json.length - 1) + String.fromCharCode(0xe9);
     expect(raw.length).toBe(DISCOVERY_FILE_MAX_BYTES);
     expect(reasonOf(parseDiscoveryExport(raw))).toBe("the file is 2097153 bytes, over the 2097152-byte limit");
+  });
+});
+
+/**
+ * The schema repeats the exporter's limits as literals (LIMITS in docker/discover.mjs). Each row takes one
+ * bound the two share: a value at the limit is accepted and one past it is refused at the named path, so a
+ * limit changed on one side alone fails here instead of making Studio refuse a file the exporter wrote.
+ */
+describe("parseDiscoveryExport: bounds shared with the exporter", () => {
+  it("caps the file at the exporter's fileBytes", () => {
+    expect(DISCOVERY_FILE_MAX_BYTES).toBe(LIMITS.fileBytes);
+  });
+
+  const bounds: Array<[string, number, (size: number) => Record<string, unknown>, string]> = [
+    [
+      "the services count",
+      LIMITS.services,
+      (n) => ({ services: Array.from({ length: n }, () => pgService()) }),
+      "services",
+    ],
+    ["a service name", LIMITS.name, (n) => ({ services: [pgService({ name: "n".repeat(n) })] }), "services.0.name"],
+    [
+      "a service appName",
+      LIMITS.name,
+      (n) => ({ services: [pgService({ appName: "a".repeat(n) })] }),
+      "services.0.appName",
+    ],
+    ["an excluded name", LIMITS.name, (n) => ({ excluded: ["e".repeat(n)] }), "excluded.0"],
+    ["a service host", LIMITS.host, (n) => ({ services: [pgService({ host: "h".repeat(n) })] }), "services.0.host"],
+    ["a service image", LIMITS.image, (n) => ({ services: [pgService({ image: "i".repeat(n) })] }), "services.0.image"],
+    [
+      "the status message",
+      LIMITS.messageChars,
+      (n) => ({ status: { ok: false, code: "docker_error", message: "m".repeat(n) } }),
+      "status.message",
+    ],
+    // ASCII only, so the length in characters is the exporter's limit in bytes.
+    [
+      "an env value",
+      LIMITS.envValueBytes,
+      (n) => ({ services: [pgService({ env: { POSTGRES_PASSWORD: "p".repeat(n) } })] }),
+      "services.0.env",
+    ],
+  ];
+
+  it.each(bounds)("accepts %s at the exporter's limit of %d and refuses one more", (_label, limit, build, path) => {
+    const atLimit = parse(validExport(build(limit)));
+    expect(atLimit.ok ? "accepted" : atLimit.reason).toBe("accepted");
+    expect(reasonOf(parse(validExport(build(limit + 1))))).toStartWith(
+      `the file does not match the export schema at ${path} (`,
+    );
   });
 });

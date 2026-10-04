@@ -88,6 +88,8 @@ describe("detectEngine: by image repository (spec section 9.3)", () => {
     "constructor",
     "__proto__",
     "img-captain-app/web:1",
+    // The prefix is inside the last segment but does not start it: only an image CapRover built starts with it.
+    "registry.example.com/team/my-img-captain-pg:1",
   ])("ignores %s", (image) => {
     expect(detectEngine(service(image, { POSTGRES_PASSWORD: "x" }))).toBeNull();
   });
@@ -146,6 +148,11 @@ describe("detectEngine: env fallback for images CapRover built (spec section 9.3
     expect(detectEngine(service("img-captain-db1:3", { REDIS_PASSWORD: "x" }))).toBeNull();
   });
 
+  it("ignores a requirepassEnv when the env carries no REDIS_PASSWORD and none of the other keys", () => {
+    const svc = service("img-captain-db1:3", { POSTGRES_USER: "u" }, { requirepassEnv: "REDIS_PASSWORD" });
+    expect(detectEngine(svc)).toBeNull();
+  });
+
   it("ignores a built image with none of the keys", () => {
     expect(detectEngine(service("img-captain-web1:4", { POSTGRES_USER: "u", POSTGRES_DB: "d" }))).toBeNull();
   });
@@ -153,6 +160,17 @@ describe("detectEngine: env fallback for images CapRover built (spec section 9.3
   it("takes the first row of the table when several keys are present", () => {
     const svc = service("img-captain-db1:3", { POSTGRES_PASSWORD: "x", MYSQL_ROOT_PASSWORD: "y" });
     expect(detectEngine(svc)?.type).toBe("mysql");
+  });
+
+  // Each row beats the next one, so the three pairs fix the whole order: MySQL, KeyDB, PostgreSQL, MongoDB.
+  it.each([
+    ["MYSQL_ROOT_PASSWORD", "KEYDB_PASSWORD", "MySQL-compatible"],
+    ["KEYDB_PASSWORD", "POSTGRES_PASSWORD", "KeyDB"],
+    ["POSTGRES_PASSWORD", "MONGO_INITDB_ROOT_PASSWORD", "PostgreSQL"],
+  ])("takes %s before %s", (first, second, label) => {
+    // The loser is written first, so the answer cannot come from the order of the env object.
+    const svc = service("img-captain-db1:3", { [second]: "x", [first]: "y" });
+    expect(detectEngine(svc)?.label).toBe(label);
   });
 
   it("counts a key with an empty value as present, so the mapping reports the missing value", () => {
@@ -517,6 +535,13 @@ describe("mapToSeedConnection: hosts and invalid connections", () => {
     const svc = service("postgres:16", { POSTGRES_PASSWORD: "pw" }, { appName });
     const result = mapToSeedConnection(svc, matchOf(svc));
     expect(result).toEqual({ ok: false, reason: "the connection is not valid: id (too_big)" });
+  });
+
+  it("lists every issue in the reason, in the order the schema reports them", () => {
+    // 63 uppercase characters: the longest app name the export allows, too long for the id and not lowercase.
+    const svc = service("postgres:16", { POSTGRES_PASSWORD: "pw" }, { appName: "A".repeat(63) });
+    const result = mapToSeedConnection(svc, matchOf(svc));
+    expect(result).toEqual({ ok: false, reason: "the connection is not valid: id (too_big), id (invalid_format)" });
   });
 
   it("accepts an app name of 55 characters, the longest that fits the id", () => {
