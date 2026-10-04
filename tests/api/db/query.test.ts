@@ -363,6 +363,34 @@ describe("POST /api/db/query", () => {
     expect(data.pagination.wasLimited).toBe(false);
   });
 
+  test("carries the engine's notices beside the result (#1401)", async () => {
+    // Apache Cloudberry 2.1.0's own WARNING for a foreign key it accepts and will not enforce.
+    const warning = {
+      message:
+        "referential integrity (FOREIGN KEY) constraints are not supported in Apache Cloudberry, will not be enforced",
+      code: "01000",
+      severity: "WARNING",
+    };
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [],
+      fields: [],
+      rowCount: 0,
+      executionTime: 1,
+      warnings: [warning],
+    });
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: {
+        connection: validConnection,
+        sql: "ALTER TABLE orders ADD CONSTRAINT orders_cust_fk FOREIGN KEY (customer_id) REFERENCES customers(id)",
+      },
+    });
+
+    const data = await parseResponseJSON<{ warnings?: unknown[] }>(await POST(req as never));
+
+    expect(data.warnings).toEqual([warning]);
+  });
+
   test("returns 400 when connection is missing", async () => {
     const req = createMockRequest("/api/db/query", {
       method: "POST",

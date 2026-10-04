@@ -269,12 +269,15 @@ class MockPool extends EventEmitter {
 
 // The provider imports `types` from pg for its per-pool parsers, so the mock has to export
 // it. These rows never reach a parser, and the real registry is passed rather than a stub.
-const { types: realPgTypes } = await import("pg");
+// `Client` likewise: the provider subclasses it to keep server notices (#1401), and the
+// mocked pool never builds one.
+const { types: realPgTypes, Client: realPgClient } = await import("pg");
 
 mock.module("pg", () => ({
   Pool: function () {
     return new MockPool();
   },
+  Client: realPgClient,
   types: realPgTypes,
 }));
 

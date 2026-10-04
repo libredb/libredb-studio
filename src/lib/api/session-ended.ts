@@ -23,7 +23,7 @@ export const RETURN_PATH_PARAM = "next";
 const MAX_RETURN_PATH_BYTES = 1024;
 // oxlint-disable-next-line no-control-regex -- control characters are exactly what a return path may not hold
 const CONTROL_CHARACTER = /[\u0000-\u001f\u007f]/;
-const PROBE_ORIGIN = "http://studio.invalid";
+const PROBE_ORIGIN = "https://studio.invalid";
 
 /**
  * A return path is only ever an app-relative path, judged on the path it RESOLVES to rather than

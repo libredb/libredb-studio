@@ -64,6 +64,12 @@ function diffColumns(sourceCols: readonly ColumnSchema[], targetCols: readonly C
     // reports one "Default changed: NULL -> none" per no-default column and one MODIFY that
     // changes nothing. Reading the keyword as absence here would put back the very ambiguity
     // #795 removed, since `NULL` is also a value a column can really default to.
+    // A second one, same verdict (#1031): a MySQL snapshot taken before SchemaDiff read the
+    // DDL holds only the catalog's value, and today's reading carries the SQL text too, so it
+    // reports "Default changed: abc -> 'abc'" for every default the server spells with quotes
+    // or as an expression (string, date, enum, binary, expression). A bare number is the same
+    // text on both sides. The old value cannot be told from SQL, which is the defect #1031
+    // fixed, so nothing here can reconcile the two; a new snapshot clears it.
     const sourceDefault = sourceCol.defaultExpression ?? sourceCol.defaultValue;
     const targetDefault = targetCol.defaultExpression ?? targetCol.defaultValue;
     if (sourceDefault !== targetDefault) {

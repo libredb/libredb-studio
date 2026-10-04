@@ -198,7 +198,7 @@ class MockPool extends EventEmitter {
   public waitingCount = 0;
 
   async connect() {
-    return mockClient;
+    return mockPooledClient?.(this) ?? mockClient;
   }
 
   async end() {}
@@ -221,12 +221,31 @@ let lastPoolConfig: Record<string, unknown> = {};
  */
 const { types: realPgTypes } = await import("pg");
 
+/**
+ * The mocked `pg.Client`: an EventEmitter, which is all of `pg`'s client the provider's own
+ * subclass touches at construction (it listens for `notice`). The pool mock never builds one
+ * unless a test asks for it through `mockPooledClient`.
+ */
+class MockPgClient extends EventEmitter {
+  constructor(public readonly clientConfig?: unknown) {
+    super();
+  }
+}
+
+/**
+ * When set, what the pool hands out instead of the shared `mockClient`. The server-notice
+ * tests use it to hand out a client built from the class the provider gave the pool, so the
+ * provider's notice keeping is exercised the way `pg-pool` exercises it.
+ */
+let mockPooledClient: ((pool: MockPool) => unknown) | undefined;
+
 mock.module("pg", () => ({
   Pool: function (config: Record<string, unknown>) {
     lastPoolConfig = config;
     lastPool = new MockPool();
     return lastPool;
   },
+  Client: MockPgClient,
   types: realPgTypes,
 }));
 
@@ -3296,6 +3315,173 @@ describe("PostgresProvider", () => {
       await provider.connect();
 
       expect(lastPool?.listenerCount("error")).toBe(1);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Server notices (#1401)
+  // --------------------------------------------------------------------------
+
+  describe("server notices (#1401)", () => {
+    /** A NoticeResponse as `pg` parses it. The strings below are the servers' own, measured 2026-10-04. */
+    const notice = (severity: string, code: string, message: string) => ({ name: "notice", severity, code, message });
+    type Notice = ReturnType<typeof notice>;
+    type Session = EventEmitter & { query: (sql: string, params?: unknown[]) => Promise<unknown> };
+
+    const DO_BLOCK = "DO $$BEGIN RAISE NOTICE 'hello n'; RAISE WARNING 'hello w'; END$$";
+    const DROP_MISSING = "DROP TABLE IF EXISTS nope";
+
+    /** What the server raises while it runs each statement, keyed by the statement's text. */
+    let raised: Record<string, Notice[]>;
+    /** What it sends during the startup handshake, before the pool resolves the borrow. */
+    let startup: Notice[];
+    let session: Session | undefined;
+    let borrows: number;
+
+    beforeEach(() => {
+      raised = {};
+      startup = [];
+      session = undefined;
+      borrows = 0;
+      mockTxStatus = "I";
+      // ONE session for the whole test, so "the next statement over the same pooled client"
+      // is literally that. Built the way `pg-pool` builds one: from the `Client` the provider
+      // put in the pool config, its startup notices emitted before the borrow resolves, and
+      // its release announced on the pool.
+      mockPooledClient = (pool) => {
+        borrows++;
+        if (session) return session;
+        const SessionClient = lastPoolConfig.Client as new (config: unknown) => EventEmitter;
+        const built = new SessionClient(lastPoolConfig);
+        for (const sent of startup) built.emit("notice", sent);
+        session = Object.assign(built, {
+          query: async (sql: string, params?: unknown[]) => {
+            for (const sent of raised[sql] ?? []) built.emit("notice", sent);
+            return mockClient.query(sql, params);
+          },
+          getTransactionStatus: mockClient.getTransactionStatus,
+          release: () => {
+            pool.emit("release", undefined, built);
+          },
+        });
+        return session;
+      };
+    });
+
+    afterEach(() => {
+      mockPooledClient = undefined;
+    });
+
+    async function connected() {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      return provider;
+    }
+
+    test("a statement's RAISE NOTICE and RAISE WARNING come back as warnings, severity and SQLSTATE kept", async () => {
+      raised[DO_BLOCK] = [notice("NOTICE", "00000", "hello n"), notice("WARNING", "01000", "hello w")];
+      const result = await (await connected()).query(DO_BLOCK);
+
+      expect(result.warnings).toEqual([
+        { message: "hello n", code: "00000", severity: "NOTICE" },
+        { message: "hello w", code: "01000", severity: "WARNING" },
+      ]);
+    });
+
+    test("a statement the server sent no notice for carries no warnings key at all", async () => {
+      const result = await (await connected()).query("SELECT 1");
+      expect("warnings" in result).toBe(false);
+    });
+
+    test("one statement's notice is not reported again on the next statement over the same session", async () => {
+      raised[DROP_MISSING] = [notice("NOTICE", "00000", 'table "nope" does not exist, skipping')];
+      const opened = await connected();
+
+      const first = await opened.query(DROP_MISSING);
+      const second = await opened.query("SELECT 1");
+
+      expect(first.warnings).toEqual([
+        { message: 'table "nope" does not exist, skipping', code: "00000", severity: "NOTICE" },
+      ]);
+      expect("warnings" in second).toBe(false);
+      // The same session served both, so the second answer is a fact about scoping and not
+      // about a fresh client that never heard the notice.
+      expect(borrows).toBe(3);
+    });
+
+    test("a notice raised while the cancel PID was read is not the statement's", async () => {
+      raised["SELECT pg_backend_pid() as pid"] = [notice("WARNING", "01000", "not yours")];
+      const result = await (await connected()).query("SELECT 1", undefined, "run-1");
+      expect("warnings" in result).toBe(false);
+    });
+
+    test("a statement inside a transaction reports its notices, and only its own", async () => {
+      raised["SELECT 1"] = [notice("WARNING", "01000", "inside the transaction")];
+      const opened = await connected();
+      await opened.beginTransaction();
+      session!.emit("notice", notice("NOTICE", "00000", "left over from an earlier statement"));
+
+      const result = await opened.queryInTransaction("SELECT 1");
+      await opened.commitTransaction();
+
+      expect(result.warnings).toEqual([{ message: "inside the transaction", code: "01000", severity: "WARNING" }]);
+    });
+
+    test("a startup caution is kept for the connection test and the greeting is not", async () => {
+      startup = [
+        notice("NOTICE", "00000", "connected to Materialize v26.44.1"),
+        notice("NOTICE", "MZ004", 'session database "nosuchdb" does not exist'),
+      ];
+      const opened = await connected();
+
+      expect(opened.connectWarnings()).toEqual([
+        { message: 'session database "nosuchdb" does not exist', code: "MZ004", severity: "NOTICE" },
+      ]);
+      // Taken at connect, so the first statement on the same session does not repeat it.
+      expect("warnings" in (await opened.query("SELECT 1"))).toBe(false);
+    });
+
+    test("a server that cautions nothing at startup leaves the connection test nothing to show", async () => {
+      expect((await connected()).connectWarnings()).toEqual([]);
+    });
+
+    // `NOTICE_KEEP_LIMIT` in the provider: a `RAISE NOTICE` loop can send a million in one statement.
+    const KEEP_LIMIT = 100;
+    const flood = (count: number) =>
+      Array.from({ length: count }, (_, i) => notice("NOTICE", "00000", `notice ${i + 1}`));
+
+    test("past the keep limit the notices are counted, not kept, and the count closes the list", async () => {
+      raised["SELECT 1"] = flood(KEEP_LIMIT + 1);
+      const result = await (await connected()).query("SELECT 1");
+
+      expect(result.warnings).toHaveLength(KEEP_LIMIT + 1);
+      expect(result.warnings![KEEP_LIMIT - 1].message).toBe(`notice ${KEEP_LIMIT}`);
+      expect(result.warnings![KEEP_LIMIT]).toEqual({ message: "1 more notice not shown" });
+    });
+
+    test("the count is plural past one, and the next statement starts from zero", async () => {
+      raised["SELECT 1"] = flood(KEEP_LIMIT + 5);
+      raised["SELECT 2"] = [notice("WARNING", "01000", "only this one")];
+      const opened = await connected();
+
+      const first = await opened.query("SELECT 1");
+      const second = await opened.query("SELECT 2");
+
+      expect(first.warnings!.at(-1)).toEqual({ message: "5 more notices not shown" });
+      expect(second.warnings).toEqual([{ message: "only this one", code: "01000", severity: "WARNING" }]);
+    });
+
+    test("exactly the keep limit adds no count", async () => {
+      raised["SELECT 1"] = flood(KEEP_LIMIT);
+      const result = await (await connected()).query("SELECT 1");
+      expect(result.warnings).toHaveLength(KEEP_LIMIT);
+      expect(result.warnings!.at(-1)!.message).toBe(`notice ${KEEP_LIMIT}`);
+    });
+
+    test("a notice with no text still reaches the result, as an empty message", async () => {
+      raised["SELECT 1"] = [{ name: "notice", severity: "WARNING", code: "01000" } as unknown as Notice];
+      const result = await (await connected()).query("SELECT 1");
+      expect(result.warnings).toEqual([{ message: "", code: "01000", severity: "WARNING" }]);
     });
   });
 

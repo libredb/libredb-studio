@@ -826,6 +826,9 @@ export default function Studio() {
         // fallback name: naming the tab's table would attribute them to a table that
         // never produced them.
         tabName: hydrated === null ? tabMgr.currentTab.name : FALLBACK_TABLE_NAME,
+        // The statement that fetched the tab's own rows names their table when it reads
+        // exactly one (#1386); a run's rows were fetched by no statement of this tab.
+        query: hydrated === null ? tabMgr.currentTab.resultQuery : undefined,
         dialect: conn.activeConnection?.type,
         // The types the engine declared for THIS result, which is what the DDL form
         // writes when they are there — the only source for a computed column.
@@ -833,7 +836,14 @@ export default function Studio() {
         csvDelimiter,
       });
     },
-    [tabMgr.currentTab.result, tabMgr.currentTab.name, maskingConfig, effectiveMasking, conn.activeConnection?.type],
+    [
+      tabMgr.currentTab.result,
+      tabMgr.currentTab.name,
+      tabMgr.currentTab.resultQuery,
+      maskingConfig,
+      effectiveMasking,
+      conn.activeConnection?.type,
+    ],
   );
 
   const exportResults = useCallback(

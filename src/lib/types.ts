@@ -533,6 +533,13 @@ export interface QueryWarning {
    * reports no identifier, rather than claiming a zero.
    */
   code?: number | string;
+  /**
+   * The level the engine raised it at, as the server spells it (`WARNING`, `NOTICE`), which
+   * may be localized (`lc_messages`), when it reports one. A PostgreSQL-wire server sends
+   * both levels through the same channel (#1401), and `table "t" does not exist, skipping`
+   * is not a warning.
+   */
+  severity?: string;
 }
 
 /**

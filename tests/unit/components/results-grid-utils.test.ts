@@ -91,6 +91,13 @@ describe("describeWarning", () => {
   test("still reports an entry that carries neither message nor code", () => {
     expect(describeWarning({ message: "" })).toBe("Warning");
   });
+
+  test("leads with the severity the engine reported, the way psql prints it (#1401)", () => {
+    expect(
+      describeWarning({ message: 'table "nope" does not exist, skipping', code: "00000", severity: "NOTICE" }),
+    ).toBe('NOTICE: table "nope" does not exist, skipping');
+    expect(describeWarning({ message: "", code: "01000", severity: "WARNING" })).toBe("WARNING: Warning 01000");
+  });
 });
 
 describe("formatCellCopy", () => {

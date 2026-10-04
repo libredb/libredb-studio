@@ -9,6 +9,7 @@ import {
   type DatabaseObject,
   type KindCount,
   type ObjectDetail,
+  type DescribeObjectsOptions,
   type ObjectDetailBatch,
   type DatabaseType,
   type DatabaseConnection,
@@ -178,6 +179,7 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
     container: readonly string[],
     kind: string,
     limit?: number,
+    options?: DescribeObjectsOptions,
   ): Promise<ObjectDetailBatch>;
 
   public abstract getHealth(): Promise<HealthInfo>;

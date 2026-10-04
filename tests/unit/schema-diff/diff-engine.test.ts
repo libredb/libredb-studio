@@ -274,6 +274,17 @@ describe("diffSchemas: modified columns", () => {
     expect(defaultChanges({ defaultValue: "'abc'" }, { defaultValue: "abc", defaultExpression: "'abc'" })).toEqual([]);
   });
 
+  test("a MySQL snapshot taken before the DDL read reports one change per quoted default", () => {
+    // Measured and accepted, like the MariaDB keyword case (#1031): the old snapshot holds
+    // only the catalog's value, today's reading holds the SQL text too, and the text differs
+    // for every default the server spells with quotes or as an expression. A new snapshot
+    // clears it. A bare number is one text on both sides and reports nothing.
+    expect(defaultChanges({ defaultValue: "abc" }, { defaultValue: "abc", defaultExpression: "'abc'" })).toEqual([
+      "Default changed: abc → 'abc'",
+    ]);
+    expect(defaultChanges({ defaultValue: "42" }, { defaultValue: "42", defaultExpression: "42" })).toEqual([]);
+  });
+
   test("a real default change is still reported", () => {
     expect(
       defaultChanges(

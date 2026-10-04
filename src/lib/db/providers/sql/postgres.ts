@@ -4,12 +4,22 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfig, types } from "pg";
+import {
+  Client,
+  type ClientBase,
+  type ClientConfig,
+  Pool,
+  type PoolClient,
+  type PoolConfig as PgPoolConfig,
+  type QueryConfig,
+  types,
+} from "pg";
 import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
   type OpenQueryTransactionOutcome,
   type QueryResult,
+  type QueryWarning,
   type HealthInfo,
   type MaintenanceDeclaration,
   type MaintenanceOperation,
@@ -160,6 +170,96 @@ function instantOrInfinity(value: string): unknown {
 function instantsOrInfinities(element: unknown): unknown {
   if (Array.isArray(element)) return element.map(instantsOrInfinities);
   return typeof element === "string" ? instantOrInfinity(element) : element;
+}
+
+/** The fields of a `NoticeResponse` this provider reads; `pg` hands over the parsed message. */
+interface ServerNotice {
+  severity?: string;
+  code?: string;
+  message?: string;
+}
+
+/**
+ * The notices each pooled client has received and nobody has taken yet (#1401).
+ *
+ * `pg` emits a server's NoticeResponse as a `notice` event on the client and does nothing else
+ * with it, so without a listener every WARNING and NOTICE is thrown away. On the PostgreSQL-wire
+ * relatives that is often the only sign a statement did not do what it looks like: measured
+ * 2026-10-03/04, Apache Cloudberry 2.1.0 accepts a foreign key and WARNs that it will not be
+ * enforced, and Materialize v26.44.1 accepts a session database that does not exist and says so
+ * only in a NOTICE (`MZ004`) sent during the startup handshake, before any statement.
+ *
+ * Kept per client because a notice belongs to the session that raised it, and a pool hands
+ * several sessions out at once. Weak so a client the pool destroys takes its list with it.
+ */
+const pendingNotices = new WeakMap<ClientBase, NoticeBatch>();
+
+/**
+ * How many notices one client keeps before it only counts them. A `RAISE NOTICE` in a loop can
+ * send a million in one statement, and every one kept would be held in memory here and then
+ * drawn as a line of the results panel. The first ones are the ones a reader acts on.
+ */
+const NOTICE_KEEP_LIMIT = 100;
+
+/** What one client received: the first `NOTICE_KEEP_LIMIT` notices, and how many came after them. */
+interface NoticeBatch {
+  kept: ServerNotice[];
+  dropped: number;
+}
+
+/**
+ * The client every pool of this provider builds, so its notices are kept from the first byte.
+ *
+ * A listener attached after `pool.connect()` would be too late for the startup handshake, which
+ * is where Materialize reports a missing session database: the pool resolves the borrow only
+ * after ReadyForQuery, and the NOTICE arrives before it.
+ */
+class NoticeKeepingClient extends Client {
+  constructor(config?: string | ClientConfig) {
+    super(config);
+    const batch: NoticeBatch = { kept: [], dropped: 0 };
+    pendingNotices.set(this, batch);
+    this.on("notice", (notice: ServerNotice) => {
+      if (batch.kept.length < NOTICE_KEEP_LIMIT) batch.kept.push(notice);
+      else batch.dropped++;
+    });
+  }
+}
+
+/** Everything `client` has received and not yet handed out, emptied as it is read. */
+function takeNotices(client: ClientBase): NoticeBatch {
+  const batch = pendingNotices.get(client);
+  if (batch === undefined) return { kept: [], dropped: 0 };
+  const taken = { kept: batch.kept.splice(0), dropped: batch.dropped };
+  batch.dropped = 0;
+  return taken;
+}
+
+/**
+ * A statement's result's `warnings`: absent when the server sent no notice, per the contract on
+ * `QueryResult.warnings`, never an empty array. The severity travels with each one because a
+ * NOTICE (`table "t" does not exist, skipping`) and a WARNING read differently. Only the primary
+ * message line is carried; a notice's DETAIL and HINT fields are not. Notices past the keep limit
+ * are reported as one closing entry that counts them, so the reader knows the list is not whole.
+ */
+function noticesAsWarnings({ kept, dropped }: NoticeBatch): { warnings?: QueryWarning[] } {
+  if (kept.length === 0) return {};
+  const warnings: QueryWarning[] = kept.map((notice) => ({
+    message: notice.message ?? "",
+    code: notice.code,
+    severity: notice.severity,
+  }));
+  if (dropped > 0) warnings.push({ message: `${dropped} more notice${dropped === 1 ? "" : "s"} not shown` });
+  return { warnings };
+}
+
+/**
+ * Whether a notice sent during the startup handshake is worth showing. SQLSTATE class `00` is
+ * successful completion: Materialize greets every session with one (`00000`, "connected to
+ * Materialize v26.44.1" and a block of session facts), which is no caution at all.
+ */
+function isStartupCaution(notice: ServerNotice): boolean {
+  return !notice.code?.startsWith("00");
 }
 
 // ============================================================================
@@ -2223,6 +2323,9 @@ export class PostgresProvider extends SQLBaseProvider {
   private txTimeout: ReturnType<typeof setTimeout> | null = null;
   private static readonly TX_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
+  /** The cautions the server raised while `connect()` opened its first session (#1401). */
+  private startupWarnings: QueryWarning[] = [];
+
   /** True when this instance was opened under the agent read-only profile. */
   private readonly readOnlyProfile: boolean;
 
@@ -2429,9 +2532,14 @@ export class PostgresProvider extends SQLBaseProvider {
     try {
       const poolConfig = this.buildPoolConfig();
       this.pool = new Pool(poolConfig);
-      this.attachPoolErrorListener(this.pool);
+      this.attachPoolListeners(this.pool);
 
       const client = await this.pool.connect();
+      // Read before the probes below run on the same session, so what is kept is only what
+      // the server said while opening it.
+      const startup = takeNotices(client);
+      this.startupWarnings =
+        noticesAsWarnings({ kept: startup.kept.filter(isStartupCaution), dropped: startup.dropped }).warnings ?? [];
       // Set only when the maintenance probe could not roll its block back (#1387).
       let connectClientFault: Error | undefined;
       try {
@@ -2513,10 +2621,23 @@ export class PostgresProvider extends SQLBaseProvider {
    * event non-fatal and visible — not to reconnect. The pool opens a fresh client on the
    * next acquire by itself.
    */
-  private attachPoolErrorListener(pool: Pool): void {
+  private attachPoolListeners(pool: Pool): void {
     pool.on("error", (error) => {
       console.error("[Postgres] Idle pool client error:", error);
     });
+    // Most borrows (the object browser, monitoring) never read their notices, so a client
+    // returned to the pool drops what it holds rather than keeping it for the life of the
+    // process. A statement that reports them took them before its own release.
+    pool.on("release", (_error, client) => takeNotices(client));
+  }
+
+  /**
+   * What the server cautioned while the connection was opened: Materialize's `MZ004 session
+   * database "nosuchdb" does not exist` is the case that motivated it (#1401). The class `00`
+   * greeting a server sends with every session is left out (`isStartupCaution`).
+   */
+  public connectWarnings(): QueryWarning[] {
+    return this.startupWarnings;
   }
 
   private buildPoolConfig(): PgPoolConfig {
@@ -2531,6 +2652,7 @@ export class PostgresProvider extends SQLBaseProvider {
       ssl: sslConfig,
       // In the base so both connection forms below carry it.
       types: ZONELESS_AS_TEXT,
+      Client: NoticeKeepingClient,
     };
 
     if (this.config.connectionString) {
@@ -2607,8 +2729,11 @@ export class PostgresProvider extends SQLBaseProvider {
               const pidRes = await client.query("SELECT pg_backend_pid() as pid");
               this.runningQueries.set(queryId, { pid: pidRes.rows[0].pid, client });
             }
+            // Dropped first: a client fresh from the pool still holds its startup greeting, and
+            // the PID read above is not the user's statement.
+            takeNotices(client);
             const res = await client.query(sql, params);
-            return res;
+            return { res, notices: takeNotices(client) };
           } finally {
             if (queryId) this.runningQueries.delete(queryId);
             // Read while this call still HOLDS the client, and before the release that
@@ -2626,11 +2751,12 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: result.rows,
-        fields: result.fields?.map((f) => f.name) ?? [],
-        ...postgresColumnTypes(result.fields),
-        rowCount: result.rowCount ?? 0,
+        rows: result.res.rows,
+        fields: result.res.fields?.map((f) => f.name) ?? [],
+        ...postgresColumnTypes(result.res.fields),
+        rowCount: result.res.rowCount ?? 0,
         executionTime,
+        ...noticesAsWarnings(result.notices),
       };
     });
   }
@@ -3060,8 +3186,13 @@ export class PostgresProvider extends SQLBaseProvider {
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
+        const held = this.txClient!;
         try {
-          return await this.txClient!.query(sql, params);
+          // The held client is one session for the whole transaction, so what an earlier
+          // statement left behind is dropped before this one runs.
+          takeNotices(held);
+          const res = await held.query(sql, params);
+          return { res, notices: takeNotices(held) };
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
         } finally {
@@ -3076,11 +3207,12 @@ export class PostgresProvider extends SQLBaseProvider {
       });
 
       return {
-        rows: result.rows,
-        fields: result.fields?.map((f) => f.name) ?? [],
-        ...postgresColumnTypes(result.fields),
-        rowCount: result.rowCount ?? 0,
+        rows: result.res.rows,
+        fields: result.res.fields?.map((f) => f.name) ?? [],
+        ...postgresColumnTypes(result.res.fields),
+        rowCount: result.res.rowCount ?? 0,
         executionTime,
+        ...noticesAsWarnings(result.notices),
       };
     });
   }

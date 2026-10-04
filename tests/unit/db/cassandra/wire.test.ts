@@ -54,6 +54,22 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 describe("normalizeCassandraValue", () => {
+  // #1386: the driver's own `toString()` divides months into years with `toFixed(0)`, so
+  // 18 months printed `2y6mo` (30 months), and the SQL export writes the duration bare.
+  test("a duration is spelled from its three fields, with whole years", () => {
+    const spell = (months: number, days: number, nanoseconds: string) =>
+      normalizeCassandraValue(new types.Duration(months, days, types.Long.fromString(nanoseconds)));
+
+    expect(String(new types.Duration(18, 0, types.Long.ZERO))).toBe("2y6mo");
+    expect(spell(18, 0, "0")).toBe("1y6mo");
+    expect(spell(24, 0, "0")).toBe("2y");
+    expect(spell(1, 2, "10984005006007")).toBe("1mo2d3h3m4s5ms6us7ns");
+    expect(spell(0, -1, "0")).toBe("-1d");
+    expect(spell(0, 0, "-1500")).toBe("-1us500ns");
+    // The driver prints a zero duration as the empty string, which is no CQL literal.
+    expect(spell(0, 0, "0")).toBe("0s");
+  });
+
   test("a blob is handed on AS BYTES, for the one module that reads them", () => {
     // The exact bytes of `probe.type_matrix.c_blob`, whose JSON.stringify was
     // captured as {"type":"Buffer","data":[76,105,98,114,101,68,66,0,195,191,…]}.
