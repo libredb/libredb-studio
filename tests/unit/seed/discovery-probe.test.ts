@@ -213,7 +213,7 @@ describe("discovery probe", () => {
 
   // Review focus (Task 4), at probe level: 100 fallback candidates, at most 16 sockets open at once,
   // and a pass over them that takes one probe timeout per batch of 16, not one per candidate.
-  it("probe level: probes 100 candidates with at most 16 sockets open and finishes within one timeout per batch", async () => {
+  it("probe level: probes 100 candidates with at most 16 sockets open and finishes within one timeout per batch plus three of slack", async () => {
     const timeoutMs = 200;
     const never = neverConnecting();
     let peakOpen = 0;
@@ -238,7 +238,7 @@ describe("discovery probe", () => {
     expect(never.sockets).toHaveLength(100);
     expect(peakOpen).toBe(16);
     expect(never.sockets.every((socket) => socket.destroyed)).toBe(true);
-    // The ideal is batches * timeoutMs (1400 ms). Two timeouts of slack absorb timer granularity across the waves on
+    // The ideal is batches * timeoutMs (1400 ms). Three timeouts of slack absorb timer granularity across the waves on
     // the Windows and macOS runners; a cap of 8 needs 13 waves (2600 ms) and still fails.
     expect(elapsed).toBeLessThan((batches + 3) * timeoutMs);
   });
