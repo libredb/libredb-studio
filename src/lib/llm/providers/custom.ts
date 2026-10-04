@@ -45,22 +45,25 @@ export class CustomProvider extends BaseLLMProvider {
    * Stream completion from custom endpoint
    */
   public async stream(options: LLMStreamOptions): Promise<ReadableStream<Uint8Array>> {
-    return this.streamWithRetry(async () => {
-      const model = this.getModel(options);
-      const messages = this.buildMessages(options);
+    return this.streamWithRetry(
+      async () => {
+        const model = this.getModel(options);
+        const messages = this.buildMessages(options);
 
-      try {
-        const response = await this.fetchStream(model, messages, options);
-        await this.validateResponse(response);
+        try {
+          const response = await this.fetchStream(model, messages, options);
+          await this.validateResponse(response);
 
-        return createStreamFromSSEResponse(response, "custom");
-      } catch (error) {
-        if (error instanceof LLMAuthError || error instanceof LLMRateLimitError || error instanceof LLMConfigError) {
-          throw error;
+          return createStreamFromSSEResponse(response, "custom");
+        } catch (error) {
+          if (error instanceof LLMAuthError || error instanceof LLMRateLimitError || error instanceof LLMConfigError) {
+            throw error;
+          }
+          throw this.mapError(error);
         }
-        throw this.mapError(error);
-      }
-    });
+      },
+      { signal: options.signal },
+    );
   }
 
   /**
@@ -100,6 +103,7 @@ export class CustomProvider extends BaseLLMProvider {
         ...(options.temperature !== undefined && { temperature: options.temperature }),
         ...(options.maxTokens !== undefined && { max_tokens: options.maxTokens }),
       }),
+      signal: options.signal,
     });
 
     return response;
