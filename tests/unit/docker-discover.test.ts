@@ -183,6 +183,34 @@ describe("readConfig and parseExcludeList", () => {
     expect(() => readConfig({ [name]: "-1" })).toThrow(name);
   });
 
+  // setTimeout turns a delay above 2147483647 into 1 ms, so the loop would rescan back to back.
+  test("DISCOVERY_INTERVAL_MS is accepted up to 2147483647, the longest delay a timer honours", () => {
+    expect(readConfig({ DISCOVERY_INTERVAL_MS: "2147483647" }).intervalMs).toBe(2147483647);
+    expect(() => readConfig({ DISCOVERY_INTERVAL_MS: "2147483648" })).toThrow(
+      'DISCOVERY_INTERVAL_MS must be an integer of at most 2147483647, got "2147483648"',
+    );
+  });
+
+  // Number() reads a digit string this long as Infinity, which setTimeout also turns into 1 ms.
+  test("a 400-digit DISCOVERY_INTERVAL_MS is refused, not read as Infinity", () => {
+    const raw = "9".repeat(400);
+    expect(() => readConfig({ DISCOVERY_INTERVAL_MS: raw })).toThrow(
+      `DISCOVERY_INTERVAL_MS must be an integer of at most 2147483647, got "${raw}"`,
+    );
+  });
+
+  // fchownSync throws on an id above 4294967295 and reads 4294967295 itself as "leave the owner as it is",
+  // which would leave a root-owned 0600 file that Studio cannot read.
+  test.each([
+    ["DISCOVERY_FILE_UID", "fileUid"],
+    ["DISCOVERY_FILE_GID", "fileGid"],
+  ] as const)("%s is accepted up to 4294967294, the largest id fchownSync sets", (name, key) => {
+    expect(readConfig({ [name]: "4294967294" })[key]).toBe(4294967294);
+    expect(() => readConfig({ [name]: "4294967295" })).toThrow(
+      `${name} must be an integer of at most 4294967294, got "4294967295"`,
+    );
+  });
+
   test("the exclude list drops blanks and empty items and keeps each name once", () => {
     expect(parseExcludeList(" a, ,b,,a ")).toEqual(new Set(["a", "b"]));
     expect(parseExcludeList("")).toEqual(new Set());
@@ -323,7 +351,9 @@ describe("projectEnv - the allow-list", () => {
   });
 
   test("entries without '=' or with an empty key, and non-strings, are skipped", () => {
-    expect(projectEnv(["POSTGRES_PASSWORD", "=POSTGRES_PASSWORD", 42, null], ENV_ALLOW_LIST)).toEqual({
+    // "POSTGRES_USERx" has no "=": it must not be read as the allow-listed key POSTGRES_USER with a cut-off letter.
+    const entries = ["POSTGRES_PASSWORD", "POSTGRES_USERx", "=POSTGRES_PASSWORD", 42, null];
+    expect(projectEnv(entries, ENV_ALLOW_LIST)).toEqual({
       env: {},
       dropped: 0,
     });
@@ -420,6 +450,10 @@ describe("selectServices", () => {
     dockerService({ id: "s-web", name: "blog", image: "img-captain-blog:3", status: {} }),
     { ID: 7, Spec: { Name: "no-id" } },
     { ID: "no-spec" },
+    // The three above fail two guards at once, so each guard hides the other. These two fail one guard each:
+    // "nonet" has no network list (Swarm omits it for a service on no network), "numid" has a numeric ID.
+    { ID: "x", Spec: { Name: "nonet" } },
+    dockerService({ id: 7 as unknown as string, name: "numid", image: "redis:7" }),
     null,
   ];
 

@@ -67,6 +67,12 @@ export const LIMITS = Object.freeze({
   messageChars: 512,
 });
 
+/** The longest delay setTimeout honours: a longer one, and Infinity, becomes 1 ms, a back-to-back rescan. */
+const MAX_TIMER_DELAY_MS = 2147483647;
+
+/** The largest owner id fchownSync can set: 4294967295 reads as "leave the owner as it is", and more throws. */
+const MAX_OWNER_ID = 4294967294;
+
 const SYSTEM_SERVICE_PREFIX = "captain-";
 const SERVICE_ALIAS_PREFIX = "srv-captain--";
 const STUDIO_REPOSITORY = "libredb/libredb-studio";
@@ -100,12 +106,19 @@ function clip(message) {
   return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
-/** A non-negative integer read from the environment, or `fallback` when the variable is unset or blank. */
-function integerSetting(env, name, fallback, minimum) {
+/**
+ * A non-negative integer read from the environment, or `fallback` when the variable is unset or blank.
+ * `maximum` is the largest value the setting can be used with. Left out, it is the largest integer a double
+ * holds exactly, so a digit string that Number() reads as Infinity is refused either way.
+ */
+function integerSetting(env, name, fallback, minimum, maximum = Number.MAX_SAFE_INTEGER) {
   const raw = trimmed(env[name]);
   if (raw === "") return fallback;
   if (!/^\d+$/.test(raw) || Number(raw) < minimum) {
     throw new Error(`${name} must be an integer of at least ${minimum}, got "${raw}"`);
+  }
+  if (Number(raw) > maximum) {
+    throw new Error(`${name} must be an integer of at most ${maximum}, got "${raw}"`);
   }
   return Number(raw);
 }
@@ -129,11 +142,17 @@ export function readConfig(env) {
   return {
     output: trimmed(source.DISCOVERY_OUTPUT) || DEFAULTS.output,
     network: trimmed(source.DISCOVERY_NETWORK) || DEFAULTS.network,
-    intervalMs: integerSetting(source, "DISCOVERY_INTERVAL_MS", DEFAULTS.intervalMs, DEFAULTS.minIntervalMs),
+    intervalMs: integerSetting(
+      source,
+      "DISCOVERY_INTERVAL_MS",
+      DEFAULTS.intervalMs,
+      DEFAULTS.minIntervalMs,
+      MAX_TIMER_DELAY_MS,
+    ),
     exclude: parseExcludeList(source.DISCOVERY_EXCLUDE),
     socket: trimmed(source.DOCKER_SOCKET) || DEFAULTS.socket,
-    fileUid: integerSetting(source, "DISCOVERY_FILE_UID", DEFAULTS.fileUid, 0),
-    fileGid: integerSetting(source, "DISCOVERY_FILE_GID", DEFAULTS.fileGid, 0),
+    fileUid: integerSetting(source, "DISCOVERY_FILE_UID", DEFAULTS.fileUid, 0, MAX_OWNER_ID),
+    fileGid: integerSetting(source, "DISCOVERY_FILE_GID", DEFAULTS.fileGid, 0, MAX_OWNER_ID),
     once: trimmed(source.DISCOVERY_ONCE) === "1",
   };
 }
