@@ -375,6 +375,21 @@ describe("connect (spec 6.2, 5.8)", () => {
     expect(made.requests.map(path)).toEqual(["/ping", "/api/v3/configure/database"]);
   });
 
+  // R48: a readable listing that does not hold Database is the answer, so a typo fails the connect and the test.
+  test.each([
+    ["a name the server does not have", "nope"],
+    ["a name that differs only in case, as the server matches names exactly", "Home"],
+    ["a name with a space the listing does not hold", " home"],
+  ])("R48: Database as %s is refused at connect, and nothing is read from it", async (_, database) => {
+    const made = harness(CONNECT, { database });
+    const error = await rejection(made.provider.connect());
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error.message).toBe(S.sqlDatabaseNotFound(database));
+    expect(made.requests.map(path)).toEqual(["/ping", "/api/v3/configure/database"]);
+    expect(made.closed()).toBe(1);
+    expect(made.provider.isConnected()).toBe(false);
+  });
+
   test.each([
     ["1.13.1", "InfluxDB 1.13.1"],
     ["2.9.1", "InfluxDB 2.9.1"],
@@ -867,6 +882,14 @@ describe("monitoring (spec 7)", () => {
   test.each([401, 403, 404])("the overview counts no table for a %i", async (status) => {
     const { provider } = await connected([built(status, "", null)]);
     expect((await provider.getOverview()).tableCount).toBe(0);
+  });
+
+  test("R48: a 404 that says database not found is thrown, worded as the tree words it, never counted as none", async () => {
+    // The database was dropped after the connect, or the listing that admitted it was refused (a resource token).
+    const { provider } = await connected([v3("sql-db-not-found")]);
+    const error = await rejection(provider.getOverview());
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(S.sqlDatabaseNotFound("home"));
   });
 
   test("an overview read that is not a refusal is thrown, worded", async () => {

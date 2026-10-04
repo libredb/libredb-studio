@@ -4,7 +4,7 @@
  * columns are the ordered union of keys in the order the lines name them, and the row cut and the cell budget set
  * `cut`.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { INFLUX_CELL_BUDGET, INFLUX_ROW_CUT } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { InfluxAnswerShapeError } from "@/lib/db/providers/timeseries/influxdb/errors";
 import { shapeJsonlBody } from "@/lib/db/providers/timeseries/influxdb/sql-results";
@@ -233,5 +233,54 @@ describe("shapeJsonlBody over hostile text (R40)", () => {
     const shaped = shapeJsonlBody(`{"${key}":"${'}],\\"'.repeat(MIB)}"}\n`, LIMITS);
     expect(shaped.fields).toEqual([JSON.parse(`"${key}"`)]);
     expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  // R46: 3.12.0 sends `{}` for a row whose cells are all null and `{"a":1}` for a one-column row, so a 32 MiB answer
+  // of short lines is ordinary; splitting it whole held 160 MiB of heap for rows the cut throws away.
+  test.each([
+    ["{}", {}],
+    ['{"a":1}', { a: 1 }],
+  ])("R46: a 32 MiB body of %s lines shapes to the row cut", (line, row) => {
+    const body = `${line}\n`.repeat(Math.floor((32 * MIB) / (line.length + 1)));
+    const shaped = shapeJsonlBody(body, LIMITS);
+    expect(shaped.rows).toHaveLength(INFLUX_ROW_CUT);
+    expect(shaped.rows[0]).toEqual(row);
+    expect(shaped.cut).toBe(true);
+  });
+
+  test("R46: the body is walked line by line, never split whole", () => {
+    const body = '{"a":1}\n'.repeat(100_000);
+    const split = spyOn(String.prototype, "split");
+    try {
+      expect(shapeJsonlBody(body, LIMITS).cut).toBe(true);
+      const splitLengths = split.mock.contexts.map((context) => String(context).length);
+      expect(splitLengths.filter((length) => length >= body.length)).toEqual([]);
+    } finally {
+      split.mockRestore();
+    }
+  });
+
+  test("R46: at most rowCut + 1 lines are read, so a later line that is not JSON is never parsed", () => {
+    const body = `${'{"a":1}\n'.repeat(3)}not json\n`;
+    const shaped = shapeJsonlBody(body, { rowCut: 2, cellBudget: 1000 });
+    expect(shaped.rows).toEqual([{ a: 1 }, { a: 1 }]);
+    expect(shaped.cut).toBe(true);
+  });
+
+  // R47: a line nested deeper than 64 levels is refused, so no later JSON.stringify of a row overflows the stack.
+  const nested = (levels: number) => `{"a":${"[".repeat(levels - 1)}${"]".repeat(levels - 1)}}\n`;
+  const nestedObjects = (levels: number) => `${'{"a":'.repeat(levels - 1)}{}${"}".repeat(levels - 1)}\n`;
+
+  test("R47: a line nested 64 levels deep is a row", () => {
+    expect(shapeJsonlBody(nested(64), LIMITS).rows).toHaveLength(1);
+    expect(shapeJsonlBody(nestedObjects(64), LIMITS).fields).toEqual(["a"]);
+  });
+
+  test.each([
+    ["arrays 65 levels deep", nested(65)],
+    ["objects 65 levels deep", nestedObjects(65)],
+    ["arrays a million levels deep", nested(1_000_000)],
+  ])("R47: a line of %s is a not-json shape error", (_, text) => {
+    expect(shapeError(`{"ok":1}\n${text}`).fault).toBe("not-json");
   });
 });

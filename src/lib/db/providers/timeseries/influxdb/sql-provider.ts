@@ -130,10 +130,11 @@ function sentenceTemplate(key: string): (...parts: string[]) => string {
   return template;
 }
 
-/** The two connect refusals errors.ts leaves to this provider (spec 5.9, the connect table). */
+/** The connect refusals errors.ts leaves to this provider (spec 5.9, the connect table; R48). */
 const SENTENCES = Object.freeze({
   noSqlOnVersion: sentenceTemplate("noSqlOnVersion"),
   pingForbiddenNoDatabase: sentenceText("pingForbiddenNoDatabase"),
+  sqlDatabaseNotFound: sentenceTemplate("sqlDatabaseNotFound"),
 });
 
 const NO_HOST = "An InfluxDB 3 connection needs a host.";
@@ -148,6 +149,8 @@ const LISTING_CAP_REASON = "the table listing reads at most 2,000 tables";
  * a credential it does not accept, one without the grant, and a route it does not serve.
  */
 const REFUSAL_STATUSES: ReadonlySet<number> = new Set([401, 403, 404]);
+/** What 3.x says in the 404 of a read whose `db` it does not have (R48): an answer, never a refused read. */
+const DATABASE_NOT_FOUND = "database not found: ";
 /** What a timeout says while a call waits for a permit, in the shared transport's words. */
 const WAIT_TIMEOUT = "The request did not finish within its time limit";
 /** The media types the SQL routes answer with: `json` for the listing, `jsonl` for a query. */
@@ -285,6 +288,15 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       if ("refused" in session) throw new DatabaseConfigError(session.refused, this.type);
       // The listing was refused, so nothing has shown the field names a database this token reads (I10).
       if (visible === undefined) await this.checkDatabase(send, session.database, signal);
+      // R48: a readable listing without the field is the answer; the server matches names exactly, and so does this.
+      else if (!visible.includes(session.database)) {
+        throw new ConnectionError(
+          SENTENCES.sqlDatabaseNotFound(session.database),
+          this.type,
+          options.endpoint.host,
+          options.endpoint.port,
+        );
+      }
       const previous = this.session;
       this.session = { client: opened, options, version, database: session.database };
       // A second connect replaces the session; the first one's client is closed, not left open.
@@ -548,7 +560,8 @@ export class InfluxDB3Provider extends SQLBaseProvider {
 
   /**
    * The version, the session database and its tables (R24), the listing capped; a listing the server refuses (a
-   * 401, 403 or 404) counts none, never a throw (spec 7); any other failure is thrown, worded.
+   * 401, 403 or 404) counts none, never a throw (spec 7); any other failure is thrown, worded, and so is the 404 that
+   * says the session database is not found (R48), as the tree throws it.
    */
   public async getOverview(): Promise<DatabaseOverview> {
     const session = this.requireSession();
@@ -557,7 +570,11 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       try {
         count = await countInfluxdb3Tables(context);
       } catch (error) {
-        if (!(error instanceof InfluxAnswerError && REFUSAL_STATUSES.has(error.answer.status))) throw error;
+        const refused =
+          error instanceof InfluxAnswerError &&
+          REFUSAL_STATUSES.has(error.answer.status) &&
+          !(error.answer.status === 404 && error.answer.text.includes(DATABASE_NOT_FOUND));
+        if (!refused) throw error;
       }
       // The reader answers `{ count }` or a floor with `sampledFrom` past the cap; `unavailable` is not its answer.
       if ("unavailable" in count) throw new TypeError(`The table count answered unavailable: ${count.unavailable}`);

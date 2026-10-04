@@ -11,12 +11,20 @@
  * columns of an empty result cannot be known from JSON (the I9 known limit), and no column type is reported.
  *
  * The row cut and the cell budget (rows times columns) stop the read and set `cut`; a row the budget drops adds no
- * column. A line that is not a JSON object is an `InfluxAnswerShapeError("not-json")`, worded by errors.ts. No
- * pattern reads the server's text (R40): every pass over it is one forward walk.
+ * column. A line that is not a JSON object, or one nested deeper than `MAX_LINE_DEPTH` (R47), is an
+ * `InfluxAnswerShapeError("not-json")`, worded by errors.ts. No pattern reads the server's text (R40): every pass over
+ * it is one forward walk, and the body is walked line by line, never split whole, so at most `rowCut + 1` line
+ * strings exist however short its lines are (R46).
  */
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import type { InfluxShapeLimits, ShapedResult } from "./connection-options";
 import { InfluxAnswerShapeError } from "./errors";
+
+/**
+ * R47: the deepest nesting a line may have, the row's own object counted as level one. Far above anything 3.12.0
+ * writes, and low enough that no later `JSON.stringify` of a row can overflow the stack.
+ */
+const MAX_LINE_DEPTH = 64;
 
 /** Index just past the JSON string that opens at `start`; the text is already known to be valid JSON. */
 function endOfString(text: string, start: number): number {
@@ -27,7 +35,8 @@ function endOfString(text: string, start: number): number {
 
 /**
  * The keys of a JSON object's text in the order the text names them, decoded, repeats included. One forward walk:
- * a string is stepped over whole, and only a string read where the top-level object expects a key is a key.
+ * a string is stepped over whole, and only a string read where the top-level object expects a key is a key. A text
+ * nested deeper than `MAX_LINE_DEPTH` is not a row (R47).
  */
 function keysInTextOrder(text: string): string[] {
   const keys: string[] = [];
@@ -47,6 +56,7 @@ function keysInTextOrder(text: string): string[] {
     }
     if (ch === "{" || ch === "[") {
       depth++;
+      if (depth > MAX_LINE_DEPTH) throw new InfluxAnswerShapeError("not-json");
       expectKey = depth === 1;
     } else if (ch === "}" || ch === "]") {
       depth--;
@@ -79,7 +89,12 @@ export function shapeJsonlBody(text: string, limits: InfluxShapeLimits): ShapedR
   const parsedRows: Readonly<Record<string, unknown>>[] = [];
   let cut = false;
 
-  for (const line of text.split("\n")) {
+  let cursor = 0;
+  while (cursor < text.length) {
+    const newline = text.indexOf("\n", cursor);
+    const end = newline === -1 ? text.length : newline;
+    const line = text.slice(cursor, end);
+    cursor = end + 1;
     if (line.trim() === "") continue;
     if (parsedRows.length >= limits.rowCut) {
       cut = true;
