@@ -19,6 +19,7 @@ import { join } from "node:path";
 import ts from "typescript";
 import { MILVUS_CLIENT_METHODS } from "@/lib/db/providers/vector/milvus/client";
 import { MILVUS_ALLOWLISTED_RPCS } from "@/lib/db/providers/vector/milvus/grpc-client";
+import { GRPC_SEAM_HOLDINGS } from "../../../helpers/grpc-seam-holdings";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const MILVUS = "src/lib/db/providers/vector/milvus";
@@ -35,15 +36,9 @@ const THIS_FILE = "tests/unit/db/milvus/seam-guard.test.ts";
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 
 /** The files this guard holds; the etcd guard skips exactly these. */
-const MILVUS_HELD: readonly RegExp[] = [
-  /^src\/lib\/db\/providers\/vector\/milvus\//,
-  /^scripts\/generate-milvus-descriptor\.mjs$/,
-  /^tests\/unit\/db\/milvus\//,
-  /^tests\/helpers\/milvus-/,
-  /^tests\/live\/milvus-/,
-];
+const MILVUS_HELD: readonly RegExp[] = GRPC_SEAM_HOLDINGS.milvus.held;
 
-const GRPC_IMPORTERS = [ADAPTER, HARNESS, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
+const GRPC_IMPORTERS = [HARNESS, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
 const PROTO_LOADER_IMPORTERS = [
   ADAPTER,
   HARNESS,

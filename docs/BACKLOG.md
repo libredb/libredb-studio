@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D167, U17 · 111
+- [Drivers and connections](#drivers-and-connections) — D1-D180, U17 · 110
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U78 · 72
@@ -347,6 +347,7 @@ Amended 2026-09-25: the mapping now exists three times, the third in the Kafka p
 Amended 2026-09-30: the mapping now exists four times, the fourth in the etcd provider (#1089), `connection-options.ts`, deliberate for the same reason; like Kafka's it is a mapping only, over grpc-js's own TLS, and it adds the IP-identity rule of the etcd design's E5.
 Amended 2026-10-03: the shared helper this entry asks for now exists outside any provider directory, `src/lib/db/http/node-transport.ts`: `createNodeTransport` is the request path for plaintext and TLS alike, built on the Prometheus shape with `rejectRedirect` on both, and `nodeTlsMaterial` is the one TLS mapping a REST provider takes, so later providers reuse it instead of adding a copy; no provider uses it yet, the Qdrant provider will be its first consumer, and moving Couchbase and Prometheus onto it, and the five `fetch` transports, stays open under this entry.
 Amended 2026-10-03 again: the mapping now exists five times, the fifth in the Milvus provider's `connection-options.ts` (vector-family spec 5.1, decision Q1a), deliberate for the reason the fourth was; like etcd's it is a mapping over grpc-js's own TLS, with the IP-identity rule, and the copied channel options add `grpc.enable_retries: 0`, which is an addition and not a copy.
+Amended 2026-10-04: the two gRPC copies are one, `readGrpcTlsPanel` and `grpcTlsIdentity` in `src/lib/db/grpc/tls.ts` with the credentials in `src/lib/db/grpc/credentials.ts`, which etcd and Milvus both take, so the mapping exists four times: Couchbase's, Prometheus's, Kafka's and the shared gRPC one, beside `nodeTlsMaterial`; a new gRPC provider takes the shared one, and the done-when below, which is about the HTTP providers, is unchanged.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -1920,12 +1921,13 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec 6.1).
 
 `@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
 The etcd provider works around it with a server-name override that is not an IP and a `checkServerIdentity` that verifies the IP (spec E5), which depends on grpc-js internals and is why grpc-js is pinned exactly.
+Amended 2026-10-04: the override now lives once, in `grpcTlsIdentity` (`src/lib/db/grpc/tls.ts`) and `grpcChannelCredentials` (`src/lib/db/grpc/credentials.ts`), for every gRPC provider.
 No open grpc-node issue covers it; the closed #1919 is about `0.0.0.0`.
 An upstream issue is drafted in the etcd PR's final report and is posted only with the maintainer's approval.
 
 Found 2026-09-30 by the client measurement of the etcd design (R07, M6).
 
-**Done when:** grpc-node answers the issue with a release that sends no IP as the server name, the etcd provider drops its override for an IP identity, and `tests/unit/db/etcd/tls-handshake.test.ts` still passes on Node 24, Node 26 and Bun.
+**Done when:** grpc-node answers the issue with a release that sends no IP as the server name, the shared gRPC transport drops its override for an IP identity, and `tests/unit/db/etcd/tls-handshake.test.ts` and `tests/unit/db/milvus/tls-handshake.test.ts` still pass on Node 24, Node 26 and Bun.
 
 ### D133. Application secret roots in etcd are shown by default
 
@@ -2151,25 +2153,6 @@ Found 2026-10-03 while designing the Qdrant provider (vector-family spec 6.2).
 
 **Done when:** a Qdrant Cloud test cluster passes gate 4 of #424 (captures, the live check and the browser pass), and the provider doc, the README and the listings name it with the tier it measured.
 
-### D155. The gRPC transport exists twice, in the etcd and Milvus providers
-
-`src/lib/db/providers/keyvalue/etcd/grpc-client.ts` and `src/lib/db/providers/vector/milvus/grpc-client.ts` each carry the channel options, the IP-identity rule, the closing-credentials wrapper, the TLS mapping and the call wrapper, because the Milvus provider copied etcd's under the isolation rule (vector-family spec 5.1, decision Q1a: copied, not extracted).
-Two copies are cheaper than a shared module whose first change would touch both providers.
-
-Found 2026-10-03 while building the Milvus provider (vector-family spec 10.4).
-
-**Done when:** a third gRPC provider is designed; its PR first extracts one shared gRPC transport outside any provider directory, moves etcd and Milvus onto it with their own suites unchanged, and adds no third copy.
-
-### D156. The etcd provider sets no `grpc.enable_retries`
-
-The etcd channel options (`src/lib/db/providers/keyvalue/etcd/grpc-client.ts`, `channelOptions`) leave `grpc.enable_retries` at grpc-js's default, while the Milvus copy sets it to 0.
-With the default and no service config, grpc-js 1.14.5 retries only a call that was never sent or whose stream the server refused (`TRANSPARENT_ONLY`, `retrying-call.js` near 131-150), both safe, so no etcd write is sent twice today; the option would make every failure an explicit error and guard against a service config that ever loads.
-Recorded as defence, not as a defect.
-
-Found 2026-10-03 while copying etcd's transport into the Milvus provider (vector-family spec E7, R51 U31).
-
-**Done when:** etcd's `channelOptions()` sets `grpc.enable_retries: 0` with its exact-equality test updated and a fake server that drops the connection after a write sees exactly one call, or this entry is closed by the shared transport of D155.
-
 ### D157. Zilliz Cloud is not claimed
 
 Zilliz Cloud speaks the Milvus API and connects as a `milvus` connection (its address pasted into the Host box, SSL mode `verify-system`, an API key in Password or token, or `db_admin` and its password), and the provider doc says how to try it, but no test cluster has passed gate 4 of #424, so no listing, README or doc claims it (vector-family decision Q13).
@@ -2285,6 +2268,17 @@ The value is right since #789; only the label loses the container.
 Found 2026-10-04 by the browser check of #1303 on a Db2 connection with tables in `APP` and `REPORTING`; every engine with more than one container has it.
 
 **Done when:** each option's label names its container path wherever the engine has containers, the way the object tree qualifies a name, and a component test with two same-named tables in two schemas finds two distinct labels.
+
+### D180. The etcd live check still points at a worktree that no longer exists
+
+`tests/live/etcd-live-check.ts` holds `LANE_E`, the absolute path of the lane worktree the etcd provider was built in, as the working directory of its `--idempotence` run, the compose file its `--service measure --seed` run reads and the mount its `--drive-cluster-container` run takes; its header and `docs/providers/etcd.md` section 11.4 also name the compose project `etcd-lane-e`.
+That worktree was removed after the provider merged, so `--idempotence` fails before any check, with `posix_spawn 'docker'` in a working directory that does not exist (measured 2026-10-04); the four `--service` runs of section 11.4 do not need it and pass.
+Under Node the `etcd-auth` run also stops at its own snapshot: the harness reads the gateway with the global `fetch`, which cannot present the client certificate that fixture requires, while Bun's `fetch` takes one.
+So the Node runs that work are `etcd`, `etcd-cluster` and, with `NODE_EXTRA_CA_CERTS` naming the fixture CA, `etcd-auth-password`.
+
+Found 2026-10-04 while running the live check over the shared gRPC transport.
+
+**Done when:** the script takes the repository root from its own location and the compose project from a flag, `--idempotence` passes from any worktree, and the `etcd-auth` snapshot under Node goes through `node:https` with the client pair.
 
 ## Value interpolation
 

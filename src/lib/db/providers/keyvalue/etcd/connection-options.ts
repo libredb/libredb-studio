@@ -21,26 +21,31 @@
  * is always set as `grpc.ssl_target_name_override`, because grpc-js otherwise takes the server name
  * from the dial target, which through a tunnel is always 127.0.0.1 (spec E5). An IP identity is
  * overridden with ETCD_IP_SERVER_NAME, because Node 25 and later and Bun refuse an IP as a TLS server
- * name, and the adapter verifies the certificate against the IP itself (reconciliation D0-3).
+ * name, and `grpcChannelCredentials` (src/lib/db/grpc/credentials.ts) verifies the certificate against
+ * the IP itself (reconciliation D0-3).
  *
- * The TLS rule `verify = ssl.rejectUnauthorized ?? ssl.mode !== "require"` is the Couchbase and Kafka
- * mapping, written again here because the isolation rule forbids importing another provider (spec
- * 3.5); docs/BACKLOG.md D37 names this copy.
+ * The TLS panel is read by the shared gRPC mapping, `readGrpcTlsPanel` and `grpcTlsIdentity` in
+ * src/lib/db/grpc/tls.ts, which docs/BACKLOG.md D37 counts once for every gRPC provider.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which
  * addressing fields a provider reads by the `config.<field>` pattern, so this file reads `config.user`
  * as written and never reads a `database` field, since one connection is one cluster (spec 6.1).
  */
-import { createPrivateKey, type KeyObject, X509Certificate } from "node:crypto";
-import { isIP, isIPv6 } from "node:net";
-import { validateHost, validatePort } from "@/lib/db/http/endpoint";
+import { X509Certificate } from "node:crypto";
+import { validatePort } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import {
+  type GrpcConfigWords,
+  type GrpcTlsOptions,
+  grpcEndpointHost,
+  grpcTarget,
+  grpcTlsIdentity,
+  readGrpcTlsPanel,
+} from "@/lib/db/grpc/tls";
 import {
   type DatabaseConnection,
   type DatabaseType,
   type SSHTunnelConfig,
-  type SSLConfig,
-  type SSLMode,
   TUNNEL_FAR_END,
   type TunnelFarEnd,
   type WithTunnelFarEnd,
@@ -55,27 +60,12 @@ export type EtcdAuthMode =
   /** A client certificate and no password: etcd reads its Common Name as the user under RBAC. */
   | { readonly kind: "certificate" };
 
-export interface EtcdTlsOptions {
-  /** `disable`, an absent and a `null` panel are no TLS (spec E2, E5). */
-  readonly mode: "require" | "verify-system" | "verify-ca" | "verify-full";
-  /** PEM as configured; absent means the runtime's roots. */
-  readonly ca?: string;
-  readonly clientCertificate?: { readonly cert: string; readonly key: string };
-  /** False only for `require`, or an explicit `rejectUnauthorized: false` (spec 3.5's rule). */
-  readonly verify: boolean;
-  /** The TLS identity: the tunnel's far end when one carries the connection, else the host (spec E5). */
-  readonly identity: string;
-  readonly identityIsIp: boolean;
-  /** Always set as `grpc.ssl_target_name_override`: the identity, or ETCD_IP_SERVER_NAME for an IP identity. */
-  readonly serverNameOverride: string;
-}
-
 /** The client port etcd listens on (spec 6.1), for a connection that names no port. */
 export const ETCD_DEFAULT_PORT = 2379;
 
 /**
  * The fixed override for an IP identity: a name that is not an IP (spec E5). `.invalid` is reserved
- * (RFC 6761), so the name belongs to no host; R07 measured it, with a `checkServerIdentity` that
+ * (RFC 6761), so the name belongs to no host; R07 measured it, with a server identity check that
  * verifies the IP, connecting under Node 24.14.0, 26.7.0 and 26.10.0 and Bun 1.4.2
  * (`07-MEASUREMENTS-grpc.md`, the iponly log).
  */
@@ -100,7 +90,7 @@ export interface EtcdConnectionOptions {
    * `EtcdErrorConnection.host` is; a reader that joins it with the port brackets an IPv6 host.
    */
   readonly endpoint: { readonly host: string; readonly port: number };
-  readonly tls?: EtcdTlsOptions;
+  readonly tls?: GrpcTlsOptions;
   readonly auth: EtcdAuthMode;
   /** Who etcd sees: the `user`, or the client certificate's subject Common Name read with X509Certificate (spec 4.7). */
   readonly principal?: { readonly name: string; readonly via: "password" | "certificate" };
@@ -113,63 +103,20 @@ export interface EtcdConnectionOptions {
 
 const PROVIDER: DatabaseType = "etcd";
 
-/**
- * Spec E5's table, one row per SSLMode member: a record, so a mode added to SSLMode fails the typecheck
- * here until this table answers for it. `null` is a plaintext channel; a row names the TLS mode and
- * whether it verifies the chain and the name when `rejectUnauthorized` does not decide. The chain is
- * checked against the pasted CA when one is configured, and against the runtime's roots otherwise.
- */
-const TLS_MODES: Readonly<Record<SSLMode, { readonly mode: EtcdTlsOptions["mode"]; readonly verify: boolean } | null>> =
-  Object.freeze({
-    disable: null,
-    require: { mode: "require", verify: false },
-    "verify-system": { mode: "verify-system", verify: true },
-    "verify-ca": { mode: "verify-ca", verify: true },
-    "verify-full": { mode: "verify-full", verify: true },
-  });
+/** What the shared TLS panel reader words its refusals with: etcd's name and etcd's own errors. */
+const WORDS: GrpcConfigWords = { engine: "etcd", refuse: configError, wrongType };
 
 /** CR, LF and NUL: a pasted credential carries one by mistake, and trimming it would send a different secret (spec E2). */
 const FORBIDDEN_IN_CREDENTIAL = /[\r\n\0]/;
 
-/** A PEM BEGIN marker with anything before it on its line, where no PEM reader opens a block (checkCa). */
-const PEM_BEGIN_INSIDE_A_LINE = /[^\n]-----BEGIN/;
-/** OpenSSL's trust form of a certificate, which Node reads with its trust settings and Bun reads nothing from (checkCa). */
-const PEM_TRUSTED_CERTIFICATE = /-----BEGIN TRUSTED CERTIFICATE-----/;
-/**
- * One certificate block under a label both runtimes read, as whole lines: its BEGIN line through the
- * first line that starts with an END marker, or through the end of the text when no line does (checkCa).
- */
-const PEM_CERTIFICATE_BLOCK = /-----BEGIN (?:X509 )?CERTIFICATE-----[\s\S]*?(?:\n-----END [^\n]*|$)/g;
-
-/** The two encrypted PEM key forms: PKCS#8's own label, and the header of a legacy encrypted key. */
-const ENCRYPTED_PEM_KEY = /-----BEGIN ENCRYPTED PRIVATE KEY-----|^Proc-Type: 4,ENCRYPTED/m;
-
 /** The largest query timeout, the dialog's own bound (`validateQueryTimeout`): above it Node's timers fire at once. */
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-/** Spec E1's sentence, for the two ways a whole endpoint reaches Host: a URL, or `host:port`. */
-const HOST_TAKES_NAME_ONLY = "Host takes a name or address only; put the port in Port and choose TLS under SSL / TLS.";
 /** Spec E2's sentence, for a user or a password over no TLS. */
 const CREDENTIAL_NEEDS_TLS =
   "A User or Password needs TLS on etcd: choose an SSL mode under SSL / TLS, or clear them. A plaintext etcd with password authentication cannot be connected.";
 const CREDENTIAL_PAIR =
   "A User and a Password go together on etcd: enter both, or clear both to sign in with the client certificate under SSL / TLS or with no credential.";
-const CLIENT_PAIR =
-  "The Client Certificate and the Client Private Key under SSL / TLS go together: add the missing one, or clear both.";
-const CLIENT_CERTIFICATE_NOT_PEM =
-  "The Client Certificate under SSL / TLS is not a PEM certificate: paste the certificate issued for this client there, and its key under Client Private Key.";
-const CA_NOT_PEM =
-  "The CA Certificate under SSL / TLS is not one or more PEM certificates: paste the certificate of the CA that issued etcd's server certificate there.";
-const CA_BEGIN_INSIDE_A_LINE =
-  "The CA Certificate under SSL / TLS has a -----BEGIN marker that does not start its line: put each -----BEGIN marker at the start of a line there, with nothing before it, not even a space or a byte order mark.";
-const CA_TRUSTED_FORM =
-  "The CA Certificate under SSL / TLS holds a TRUSTED CERTIFICATE block, OpenSSL's form with trust settings, which not every runtime reads: paste the certificate in its plain PEM form there, as openssl x509 -in <file> prints it.";
-const CLIENT_KEY_NOT_PEM =
-  "The Client Private Key under SSL / TLS is not a PEM private key: paste the private key of the Client Certificate there.";
-const CLIENT_KEY_ENCRYPTED =
-  "The Client Private Key under SSL / TLS is encrypted, and SSL / TLS has no passphrase field: paste the key unencrypted there.";
-const CLIENT_KEY_MISMATCH =
-  "The Client Private Key under SSL / TLS is not the key of the Client Certificate: paste the private key issued with that certificate there.";
 const TUNNEL_NOT_OPENED =
   "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so etcd was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const READ_ONLY_NOT_BOOLEAN = "readOnly must be true or false.";
@@ -181,17 +128,18 @@ export function buildEtcdConnectionOptions(
   context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
 ): EtcdConnectionOptions {
   const farEnd = tunnelFarEnd(config);
-  const targetHost = endpointHost(config.host);
+  const targetHost = grpcEndpointHost(config.host, WORDS);
   const targetPort = shared(() => validatePort(config.port ?? ETCD_DEFAULT_PORT));
   const endpoint =
     farEnd === undefined
-      ? { host: unbracketed(targetHost), port: targetPort }
-      : { host: unbracketed(endpointHost(farEnd.host)), port: shared(() => validatePort(farEnd.port)) };
-  const tls = tlsOptions(config, endpoint.host);
+      ? { host: targetHost, port: targetPort }
+      : { host: grpcEndpointHost(farEnd.host, WORDS), port: shared(() => validatePort(farEnd.port)) };
+  const material = readGrpcTlsPanel(config.ssl, WORDS);
+  const tls = material === undefined ? undefined : grpcTlsIdentity(material, endpoint.host, ETCD_IP_SERVER_NAME);
   const { auth, principal } = credentials(config, tls);
   const readOnly = readOnlySource(config, context.executionReadOnly);
   return {
-    target: `dns:${targetHost}:${targetPort}`,
+    target: grpcTarget(targetHost, targetPort),
     endpoint,
     ...(tls === undefined ? {} : { tls }),
     auth,
@@ -237,118 +185,12 @@ function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarE
   return farEnd;
 }
 
-/**
- * A validated host, in validateHost's form (lower case, an IPv6 literal in brackets). A host carrying a
- * colon that is not an IPv6 literal's is a pasted endpoint, `host:port` or a URL, refused with E1's
- * sentence; Node's `isIPv6` also admits a zone (`::1%lo`), which validateHost then refuses in its own
- * words.
- */
-function endpointHost(host: unknown): string {
-  if (typeof host === "string" && host.includes(":") && !isIPv6(unbracketed(host))) {
-    throw configError(HOST_TAKES_NAME_ONLY);
-  }
-  return shared(() => validateHost(host));
-}
-
-/** A host without the brackets an IPv6 literal is written in; any other host unchanged. */
-function unbracketed(host: string): string {
-  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-}
-
 /** The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as etcd's, the message unchanged. */
 function shared<T>(validate: () => T): T {
   try {
     return validate();
   } catch (error) {
     throw configError((error as Error).message);
-  }
-}
-
-function tlsOptions(config: DatabaseConnection, identity: string): EtcdTlsOptions | undefined {
-  // The whole panel is checked, whatever its mode, before any of it is read (spec 6.1, Kafka 6.1).
-  const panel = optionalObject<keyof SSLConfig>(config.ssl, "ssl");
-  if (panel === undefined) return undefined;
-  // A panel with no mode verifies, as every provider with the Couchbase rule reads it: a seed file's
-  // panel may omit the mode (src/lib/seed/types.ts), and so does the API.
-  const mode = panel.mode ?? "verify-full";
-  if (typeof mode !== "string" || !Object.hasOwn(TLS_MODES, mode)) {
-    throw wrongType("ssl.mode", "disable, require, verify-system, verify-ca or verify-full");
-  }
-  const ca = optionalText(panel.caCert, "ssl.caCert");
-  const cert = optionalText(panel.clientCert, "ssl.clientCert");
-  const key = optionalText(panel.clientKey, "ssl.clientKey");
-  const rejectUnauthorized = optionalBoolean(panel.rejectUnauthorized, "ssl.rejectUnauthorized");
-  const row = TLS_MODES[mode as SSLMode];
-  if (row === null) return undefined;
-  if ((cert === undefined) !== (key === undefined)) throw configError(CLIENT_PAIR);
-  // In the order the panel draws them, and in every TLS mode, since grpc-js reads all three whatever it verifies.
-  if (ca !== undefined) checkCa(ca);
-  if (cert !== undefined && key !== undefined) checkClientPair(cert, key);
-  const identityIsIp = isIP(identity) !== 0;
-  return {
-    mode: row.mode,
-    ...(ca === undefined ? {} : { ca }),
-    ...(cert === undefined || key === undefined ? {} : { clientCertificate: { cert, key } }),
-    verify: rejectUnauthorized ?? row.verify,
-    identity,
-    identityIsIp,
-    serverNameOverride: identityIsIp ? ETCD_IP_SERVER_NAME : identity,
-  };
-}
-
-/**
- * The TLS material grpc-js's `createSsl` would otherwise meet unchecked, refused in words before any
- * channel is built. Measured under Bun 1.4.2 and Node 24.14.0: `createSsl` throws the runtime's own
- * code for a key that is not PEM (ERR_OSSL_PEM_NO_START_LINE under Bun, ERR_OSSL_UNSUPPORTED under
- * Node) and for a key that is another certificate's (ERR_OSSL_X509_KEY_VALUES_MISMATCH), and Bun for a
- * CA that holds no certificate ("Invalid CA", ERR_BORINGSSL) and for a key of another type than the
- * certificate's (ERR_OSSL_X509_KEY_TYPE_MISMATCH); Node reads no certificate from such a CA, so every
- * chain fails, and drops a key of another type, so the handshake goes on without the certificate.
- *
- * A CA is read as both runtimes' PEM readers read it, line by line, a line being what a LF ends: a
- * block opens only at a line that starts with its BEGIN marker, and every other line is skipped, so a
- * bundle's comment lines are kept. A BEGIN marker with anything before it on its line is refused in
- * its own words, since the runtimes skip its certificate, or Bun throws "Invalid CA" when two
- * certificates are joined with no line break; Node alone skips a leading byte order mark, which is
- * refused as well, so one rule holds under both. Each block under the two labels both runtimes read,
- * CERTIFICATE and the older X509 CERTIFICATE, is read whole with X509Certificate, from its BEGIN line
- * through its END line, so a block that does not read, text after its END marker included, is refused,
- * as is a field with no block. A TRUSTED CERTIFICATE block, OpenSSL's trust form, is refused in its
- * own words, because Node reads it with its trust settings and Bun reads no certificate from it.
- */
-function checkCa(pem: string): void {
-  if (PEM_BEGIN_INSIDE_A_LINE.test(pem)) throw configError(CA_BEGIN_INSIDE_A_LINE);
-  if (PEM_TRUSTED_CERTIFICATE.test(pem)) throw configError(CA_TRUSTED_FORM);
-  const blocks = pem.match(PEM_CERTIFICATE_BLOCK) ?? [];
-  if (blocks.length === 0) throw configError(CA_NOT_PEM);
-  for (const block of blocks) certificate(block, CA_NOT_PEM);
-}
-
-/**
- * The client certificate, its key, and that the key is the certificate's own. Every private key form
- * the runtimes read is taken (PKCS#8, PKCS#1 RSA and SEC1 EC); an encrypted key is refused in its own
- * words, because the panel has no passphrase field and neither runtime can use the key without one
- * (spec E2, E5).
- */
-function checkClientPair(cert: string, key: string): void {
-  const x509 = certificate(cert, CLIENT_CERTIFICATE_NOT_PEM);
-  if (!x509.checkPrivateKey(privateKey(key))) throw configError(CLIENT_KEY_MISMATCH);
-}
-
-function certificate(pem: string, refusal: string): X509Certificate {
-  try {
-    return new X509Certificate(pem);
-  } catch {
-    throw configError(refusal);
-  }
-}
-
-function privateKey(pem: string): KeyObject {
-  try {
-    return createPrivateKey(pem);
-  } catch {
-    // The runtimes disagree on the code (ERR_MISSING_PASSPHRASE under Bun, an OpenSSL one under Node), so the PEM decides.
-    throw configError(ENCRYPTED_PEM_KEY.test(pem) ? CLIENT_KEY_ENCRYPTED : CLIENT_KEY_NOT_PEM);
   }
 }
 
@@ -361,7 +203,7 @@ function privateKey(pem: string): KeyObject {
  */
 function credentials(
   config: DatabaseConnection,
-  tls: EtcdTlsOptions | undefined,
+  tls: GrpcTlsOptions | undefined,
 ): { readonly auth: EtcdAuthMode; readonly principal?: EtcdConnectionOptions["principal"] } {
   const user = credential(config.user, "user");
   const password = credential(config.password, "password");

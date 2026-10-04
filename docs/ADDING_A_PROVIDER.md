@@ -128,6 +128,10 @@ It maps the SSL / TLS panel through `nodeTlsMaterial`, the one TLS mapping a new
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
 The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.
 
+**Send gRPC calls through the shared gRPC transport.**
+A new provider that speaks gRPC opens its channel with `openGrpcChannel` in [`channel.ts`](../src/lib/db/grpc/channel.ts) and reads its SSL / TLS panel with `readGrpcTlsPanel` and `grpcTlsIdentity` in [`tls.ts`](../src/lib/db/grpc/tls.ts), so its adapter holds only its RPC table, descriptor, metadata and error mapping.
+It imports neither `@grpc/grpc-js` nor a TLS mapping of its own, and it adds its row to `tests/helpers/grpc-seam-holdings.ts`, which `tests/unit/db/grpc/seam-guard.test.ts` reads.
+
 **Make the result type neutral, not the wire envelope.** An interface shaped like the HTTP response
 (`{ results, signature, status, metrics, errors }`) would force any future driver adapter to
 fabricate fields that only the REST API produces naturally. Define the shape both sources could

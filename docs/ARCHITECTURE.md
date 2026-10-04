@@ -338,17 +338,18 @@ src/
     │   ├── providers/
     │   │   ├── sql/         # postgres, mysql, sqlite (+ sqlite-driver runtime adapter), oracle, db2/ (driver seam + SYSCAT catalog over db2-node), mssql, clickhouse/ (transport seam + SQL over HTTP), druid/ (transport seam + SQL over POST /druid/v2/sql), search/ (transport seam + SQL over HTTP; elasticsearch and opensearch, two ids one module), trino/ (transport seam + SQL over the Trino client protocol), cassandra/ (transport seam + CQL over the native protocol via cassandra-driver), libsql/ (transport seam + SQLite's dialect over the Hrana protocol), duckdb/ (driver seam + an embedded analytical engine over @duckdb/node-api)
     │   │   ├── document/    # mongodb, couchbase/ (transport seam + SQL++ over REST)
-    │   │   ├── keyvalue/    # redis, etcd/ (gRPC client seam + an etcdctl subset over etcd's gRPC API via @grpc/grpc-js)
+    │   │   ├── keyvalue/    # redis, etcd/ (gRPC client seam + an etcdctl subset over etcd's gRPC API via the shared gRPC transport)
     │   │   ├── timeseries/  # prometheus/ (transport seam + PromQL over the Prometheus HTTP API)
     │   │   ├── stream/      # kafka/ (read-client seam + JSON read requests over the Kafka protocol via @platformatic/kafka)
     │   │   ├── graph/       # neo4j/ (an engine profile, catalog, statement gate and monitoring on the graph layer below)
-    │   │   ├── vector/      # milvus/ (a gRPC client of its own via @grpc/grpc-js, Milvus's REST v2 requests as the console, run over gRPC); qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample)
+    │   │   ├── vector/      # milvus/ (a gRPC client of its own via the shared gRPC transport, Milvus's REST v2 requests as the console, run over gRPC); qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends (docs/ADDING_A_PROVIDER.md, "Adding a graph engine"):
     │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators), objects.ts, values.ts and
     │   │                    #   profile.ts are pure and browser-safe; bolt/ (the GraphClient seam, the URI, the one
     │   │                    #   neo4j-driver-lite client, driver values to JSON) and graph-base-provider.ts are server only
     │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap)
+    │   ├── grpc/            # channel.ts: the one gRPC channel (options, unary and bidirectional calls, deadlines, aborts, the sent or unsent notice); credentials.ts: TLS credentials and the closing wrapper; tls.ts: the SSL / TLS panel, the TLS identity and the dial target, for every gRPC provider
     │   ├── factory.ts       # Provider factory
     │   ├── query-dialects.ts # The dialect registry: each queryDialect's tab type and row-menu answers
     │   └── types.ts         # Database types
