@@ -1455,8 +1455,9 @@ describe("useConnectionManager", () => {
         });
         const before = result.current.connections;
 
-        // A non-OK answer, attributed to the seed configuration: only the initial load may
-        // record that, so the served seeds stay loaded and the list stays the same object.
+        // A non-OK answer, attributed to the seed configuration: a quiet refresh never records that
+        // (only the initial load and the pending-seed poll may), so the served seeds stay loaded and the
+        // list stays the same object.
         focusWindow();
         await waitFor(() => {
           expect(managedCallCount(fetchMock)).toBe(2);

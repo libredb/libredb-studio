@@ -24,8 +24,9 @@ import {
 const MANAGED_POLL_MAX_ATTEMPTS = 30;
 
 /**
- * Managed-list refresh after the first load (CapRover auto-connect spec, section 11): never
- * more often than the floor and never less often than the cap. NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS
+ * Managed-list refresh after the first load (CapRover auto-connect spec, section 11): the interval
+ * never runs more often than the floor and never less often than the cap, while focus and visibility
+ * refresh at once, bounded only by the refresh's in-flight guard. NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS
  * moves the floor in source builds and tests only, because NEXT_PUBLIC_ values are inlined at
  * build time, exactly like the poll tick above.
  */
@@ -357,8 +358,8 @@ export function useConnectionManager(storageReady = false) {
         // seeds" are different sentences, and only this response can tell them apart.
         // Any other failure — a 404 where the route does not exist at all, as in the
         // platform embed — is not evidence about that configuration and says nothing.
-        // A quiet read (the refresh below) records nothing on failure: only the initial load
-        // may mark the served seeds unread, so a refresh that fails changes nothing at all.
+        // A quiet read (the refresh below) records nothing on failure: only the initial load and the
+        // pending-seed poll may mark the served seeds unread, so a refresh that fails changes nothing at all.
         const body = (await managedRes.json().catch(() => ({}))) as { reason?: string };
         if (!quiet && !cancelled && body.reason === SEED_CONFIG_UNREADABLE_REASON) {
           setServedSeeds({ loaded: false });
@@ -379,8 +380,8 @@ export function useConnectionManager(storageReady = false) {
         merged: managedConns && managedConns.length > 0 ? mergeManagedConnections(managedConns) : null,
         pendingSeeds: pendingSeeds ?? [],
         failed: false,
-        // The server's seed cache lifetime in ms (SEED_CACHE_TTL_MS): a read inside it answers
-        // the same list, so the refresh never asks more often than that.
+        // The server's seed cache lifetime in ms (SEED_CACHE_TTL_MS); the refresh interval follows it,
+        // between the floor and the one-minute cap (managedRefreshIntervalMs).
         cacheHint: typeof cacheHint === "number" && Number.isFinite(cacheHint) ? cacheHint : null,
       };
     };
