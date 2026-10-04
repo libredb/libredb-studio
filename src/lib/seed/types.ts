@@ -272,4 +272,10 @@ export interface ManagedConnection extends DatabaseConnection {
   seedId: string;
   /** Visible to MCP clients (#246); absent on the built-in samples, which never opt in. */
   mcp?: boolean;
+  /**
+   * Set in code by the discovery source (and by SEED_LITERAL_VALUES later); never read from a file;
+   * stripped by GET /api/connections/managed. A connection carrying it is used with its values as
+   * written: no `${NAME}` or `${vault:...}` in it is resolved.
+   */
+  literal?: true;
 }
