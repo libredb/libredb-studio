@@ -320,6 +320,68 @@ export function maintenanceControl(
   };
 }
 
+/** The placements of one maintenance operation a connected server accepted, as a provider measured them (#1387). */
+export type MeasuredMaintenancePlacements = Readonly<Record<MaintenancePlacement, boolean>>;
+
+/** The maintenance half of `ProviderCapabilities`: the operations and how each is targeted. */
+export type MaintenanceDeclaration = Pick<ProviderCapabilities, "maintenanceOperations" | "maintenanceOperationSpecs">;
+
+/**
+ * A provider's declared maintenance narrowed to what the connected server accepted (#1387).
+ *
+ * The PostgreSQL and MySQL type ids each serve a family of wire-compatible engines, and the
+ * declaration is the engine-family default: CockroachDB, RisingWave, YugabyteDB, TiDB and Vitess
+ * each refuse part of it. A provider that measures its server at connect hands the answer here,
+ * one entry per operation it asked about, and the declaration loses every placement the server
+ * refused. An operation left with no placement leaves the list, so the gate both surfaces ask
+ * (`maintenanceControl`) offers it nowhere and the route refuses it before the engine is reached.
+ *
+ * An operation the measurement does not name keeps its declaration: `kill` takes a session id and
+ * no probe here can ask about it. `measured` undefined is "not measured", the unconnected provider
+ * `POST /api/db/provider-meta` reads, and answers the declaration unchanged.
+ */
+export function narrowMaintenance(
+  declared: Required<MaintenanceDeclaration>,
+  measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined,
+): Required<MaintenanceDeclaration> {
+  if (measured === undefined) return declared;
+  const maintenanceOperations: MaintenanceOperation[] = [];
+  const maintenanceOperationSpecs: Partial<Record<MaintenanceOperation, MaintenanceOperationSpec>> = {};
+  for (const operation of declared.maintenanceOperations) {
+    const spec = declared.maintenanceOperationSpecs[operation];
+    const accepted = measured[operation];
+    if (spec === undefined || accepted === undefined) {
+      maintenanceOperations.push(operation);
+      if (spec !== undefined) maintenanceOperationSpecs[operation] = spec;
+      continue;
+    }
+    const perEntity = spec.perEntity && accepted.perEntity;
+    const global = spec.global && accepted.global;
+    if (!perEntity && !global) continue;
+    maintenanceOperations.push(operation);
+    maintenanceOperationSpecs[operation] = { ...spec, perEntity, global };
+  }
+  return { maintenanceOperations, maintenanceOperationSpecs };
+}
+
+/**
+ * Declared capabilities with the CONNECTED provider's maintenance laid over them (#1387).
+ *
+ * The two maintenance surfaces read capabilities from `POST /api/db/provider-meta`, which never
+ * connects (#457), so it answers the type id's declaration and not what this server accepts.
+ * `POST /api/db/monitoring` does connect, and its payload carries the connected provider's
+ * maintenance declaration as `maintenance`; the tabs fed by it take that half from there. Either
+ * side absent answers the declared capabilities as they are, so an embedded host whose monitoring
+ * payload carries no `maintenance` sees exactly what it saw before.
+ */
+export function withConnectedMaintenance(
+  capabilities: ProviderCapabilities | undefined,
+  connected: MaintenanceDeclaration | undefined,
+): ProviderCapabilities | undefined {
+  if (capabilities === undefined || connected === undefined) return capabilities;
+  return { ...capabilities, ...connected };
+}
+
 /**
  * The six members of `MaintenanceType`, as a value. A record rather than a list, so a seventh member of the type
  * fails to compile here until it is placed.
@@ -2161,6 +2223,16 @@ export interface MonitoringData {
   errors?: Partial<
     Record<"overview" | "performance" | "slowQueries" | "activeSessions" | "tables" | "indexes" | "storage", string>
   >;
+  /**
+   * The connected provider's maintenance declaration, added by `POST /api/db/monitoring` (#1387).
+   *
+   * What the server this connection reached accepts, measured at connect, where
+   * `POST /api/db/provider-meta` can only answer the type id's declaration. The Operations and
+   * monitoring Tables tabs lay it over the declared capabilities with `withConnectedMaintenance`.
+   * Optional: a provider's own `getMonitoringData` never sets it, and an embedded host's payload
+   * may not carry it.
+   */
+  maintenance?: MaintenanceDeclaration;
 }
 
 /**

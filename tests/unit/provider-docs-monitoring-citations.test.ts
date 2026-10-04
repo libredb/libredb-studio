@@ -329,6 +329,7 @@ const NAMED_CITATIONS = [
       "readObjectSource",
       "getHealth",
       "qualifyMaintenanceTarget",
+      "probeMaintenance",
       "runMaintenance",
       "getPoolStats",
       "getOverview",

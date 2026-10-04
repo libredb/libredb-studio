@@ -379,6 +379,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Its table and index counts are the user's own. CockroachDB documents exactly four system schemas, and crdb_internal objects reach pg_tables even though information_schema's BASE TABLE filter never shows them - so before those two schemas were excluded, the overview counted 98 tables (93 crdb_internal, 3 pg_extension) for the 2 the object browser listed, and the two panels disagreed inside one app.",
       "Performance metrics, slow queries and active sessions do work: the pg_stat_* views CockroachDB provides are enough for them.",
       'The Explain panel works, and shows what the query really did. CockroachDB refuses PostgreSQL\'s parenthesised options (`at or near "analyze": syntax error`, and `JSON` is legal there only beside DISTSQL, where it answers a processor diagram rather than a plan), so the grammar is measured at connect and this server gets its own unparenthesised EXPLAIN ANALYZE. Until it was measured the panel showed its "no execution plan" empty state, so a failed plan request read as a query with no plan.',
+      "Maintenance offers Analyze on one table and nothing else. CockroachDB has no VACUUM, no REINDEX and no whole-database ANALYZE (each a 42601 syntax error), so the provider asks the server at connect which of PostgreSQL's six maintenance statements its grammar has and draws no control for the rest; measured on v26.3.2 on 2026-10-04 (#1387). Until then all three were offered and each click answered HTTP 500 with the parser's error.",
     ],
   },
   {
@@ -407,6 +408,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Expanding a table, a view or a materialized view shows its columns, with their types and in the table's own order, through describeObject() and describeObjects() alike, measured 2026-09-24 (#1075). This caveat used to call the gap the engine's, and it was ours: RisingWave has no json type and refused the json_agg(), json_build_object() and '[]'::json the reads were built with, while it answers every jsonb form, which is what the reads use now. It also refuses a subquery inside an aggregate call, which is how an index's column list was built; that is a LATERAL join now.",
       "Nullability and defaults are read from the engine's catalog, which states neither: pg_attribute answers attnotnull false for every column, so a NOT NULL column and a primary key both read nullable, and pg_attrdef is empty, so no column shows a default, one declared with DEFAULT included. The nullability half is filed as D119.",
       "Foreign keys are empty because RisingWave has none: CREATE TABLE refuses REFERENCES in both its column and its table form. The primary key is listed as an index named after its table, and an index lists every column pg_index.indkey names, which on RisingWave is the key columns followed by every column the index carries, the primary key always among them: an index on (amount, customer_id) of a four-column table reads as amount, customer_id, order_id, note.",
+      "No maintenance operation is offered. RisingWave has none of VACUUM, ANALYZE and REINDEX in PostgreSQL's form, and because its BEGIN opens no transaction the connect-time probe cannot ask about them without running them, so it asks nothing and offers none; measured on 3.1.0 on 2026-10-04 (#1387).",
     ],
   },
   {
@@ -443,6 +445,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Index sizes always read 0 bytes, before and after ANALYZE: index storage lives in DocDB, where pg_relation_size() cannot see it.",
       "The overview's database size reads 0 bytes even with populated tables.",
       "Index types read lsm rather than btree - that is YugabyteDB's real storage, not a misreading.",
+      "Reindex is not offered: YugabyteDB refuses REINDEX in both forms (0A000 REINDEX not supported yet), and the provider asks at connect. Vacuum is offered, and its result quotes the server's NOTICE that VACUUM is a no-op there rather than claiming it completed; measured on 2026.1.2.0 on 2026-10-04 (#1387).",
     ],
   },
   {
@@ -539,6 +542,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "The slow-query panel is always empty: TiDB keeps its slow log in information_schema.SLOW_QUERY, not in the performance_schema view the provider reads.",
       "Storage stats list a phantom InnoDB entry at ibdata1:12M:autoextend, which is a MySQL default echoed back by a server that has no InnoDB.",
       "The Explain panel renders TiDB's own operator tree rather than a MySQL JSON plan: TiDB rejects EXPLAIN FORMAT='json' outright, so the provider sends a plain EXPLAIN and the panel shows the operator tree with estRows as the row estimate (browser, 2026-09-06).",
+      "Of the maintenance actions only Analyze is offered: TiDB answers OPTIMIZE TABLE with 8200 OPTIMIZE TABLE is not supported and does not parse CHECK TABLE, and the provider asks at connect which of the three it has; measured on v8.5.8 on 2026-10-04 (#1387).",
       "Probed on a standalone --store=unistore server only; a PD + TiKV deployment was not probed.",
     ],
   },
@@ -602,6 +606,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Table and index statistics name the physical shard database (vt_probe_0), not the keyspace the connection points at.",
       "Per-index sizes always read 0 bytes: the size query matches information_schema.INNODB_TABLES.NAME against '<database>/%', and Vitess names the InnoDB table after the shard database, so on a keyspace called probe nothing matches.",
       "Setting a session variable can fail where reading it works: SET @@cte_max_recursion_depth is rejected with VT05006 unknown system variable, while SELECT @@cte_max_recursion_depth answers 1000.",
+      "Check Table is not offered: vtgate does not parse CHECK TABLE (syntax error at position 6 near 'CHECK'), and the provider asks at connect which of the three maintenance verbs it has, so Analyze and Optimize are drawn; measured on 24.0.4 on 2026-10-04 (#1387).",
       "Probed on an unsharded single-shard keyspace only (show vitess_shards returns probe/0); nothing here is measured about a sharded keyspace.",
       "No permission-error class could be measured, and the reason is the test image rather than Vitess: vttestserver accepts any username with any password and grants it full rights, and CREATE USER is a vtgate parse error, so no restricted role could be created to test with.",
     ],

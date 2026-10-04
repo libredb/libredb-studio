@@ -3706,8 +3706,9 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(report.tableCount).toBe(2);
     expect(report.integrity).toContain("OK");
 
-    // Error mapping (same mapDatabaseError path as the bun driver)
-    expect(report.queryErrorName).toBe("DatabaseError");
+    // Error mapping (same mapDatabaseError path as the bun driver). A missing table is the
+    // statement's own fault, read from node:sqlite's `errcode` 1 (SQLITE_ERROR) since #1427.
+    expect(report.queryErrorName).toBe("QueryError");
     expect(report.queryErrorMessage).toContain("no such table");
 
     // ------------------------------------------------------------------

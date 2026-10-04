@@ -154,6 +154,44 @@ describe("POST /api/db/monitoring", () => {
     expect(data.activeSessions).toBeDefined();
   });
 
+  // #1387: provider-meta never connects, so the maintenance a CONNECTED server accepts reaches the
+  // tabs from here, read off the same provider the panels came from.
+  test("the payload carries the connected provider's maintenance declaration", async () => {
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementationOnce(() => ({
+      maintenanceOperations: ["analyze", "kill"],
+      maintenanceOperationSpecs: {
+        analyze: { label: "Analyze Table", perEntity: true, global: false },
+        kill: { label: "Terminate Backend", perEntity: false, global: false },
+      },
+    }));
+
+    const res = await POST(
+      createMockRequest("/api/db/monitoring", { method: "POST", body: { connection: validConnection } }) as never,
+    );
+    const data = await parseResponseJSON<{ maintenance: unknown }>(res);
+
+    expect(data.maintenance).toEqual({
+      maintenanceOperations: ["analyze", "kill"],
+      maintenanceOperationSpecs: {
+        analyze: { label: "Analyze Table", perEntity: true, global: false },
+        kill: { label: "Terminate Backend", perEntity: false, global: false },
+      },
+    });
+  });
+
+  test("a provider that declares no operation specs sends the operations alone", async () => {
+    (mockProvider.getCapabilities as ReturnType<typeof mock>).mockImplementationOnce(() => ({
+      maintenanceOperations: ["vacuum"],
+    }));
+
+    const res = await POST(
+      createMockRequest("/api/db/monitoring", { method: "POST", body: { connection: validConnection } }) as never,
+    );
+    const data = await parseResponseJSON<{ maintenance: unknown }>(res);
+
+    expect(data.maintenance).toEqual({ maintenanceOperations: ["vacuum"] });
+  });
+
   test("empty body returns 400", async () => {
     const req = new Request("http://localhost:3000/api/db/monitoring", {
       method: "POST",

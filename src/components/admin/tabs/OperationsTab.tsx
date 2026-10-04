@@ -57,6 +57,7 @@ import {
   type TableStats,
 } from "@/lib/db/types";
 import { readObjectPathParam } from "@/lib/db/object-path";
+import { withConnectedMaintenance } from "@/lib/db/types";
 import { useProviderMetadata } from "@/hooks/use-provider-metadata";
 
 /**
@@ -190,6 +191,9 @@ export function OperationsTab() {
   // in its own state, so every opening mounts a fresh one, as the account dialogs do (#1089, section 7.2).
   const [typedDialog, setTypedDialog] = useState<TypedDialogOpening | null>(null);
   const [typedDialogOpenings, setTypedDialogOpenings] = useState(0);
+  // A whole-database run waiting for its confirmation (#1438), with the name its card gave it.
+  const [confirmGlobal, setConfirmGlobal] = useState<{ type: MaintenanceOperation; name: string } | null>(null);
+  const confirmGlobalReturnFocus = useReturnFocus();
   // A per-row operation's dialog, keyed per opening the same way (spec 3.11).
   const [entityDialog, setEntityDialog] = useState<EntityDialogOpening | null>(null);
   const [entityDialogOpenings, setEntityDialogOpenings] = useState(0);
@@ -255,7 +259,17 @@ export function OperationsTab() {
   // src/lib/db/types.ts - so that neither can offer a control the other's engine
   // rejects. `capabilities` may be undefined here (provider-meta in flight, or its
   // request failed), which that helper reads as a denial.
-  const capabilities = metadata?.capabilities;
+  //
+  // The maintenance half comes from the monitoring payload when it carries one (#1387): that is
+  // read off the CONNECTED provider, which measured what this server accepts, where provider-meta
+  // answers the type id's declaration and so offered PostgreSQL's and MySQL's whole sets to
+  // CockroachDB, RisingWave, TiDB and the rest.
+  const declaredCapabilities = metadata?.capabilities;
+  const connectedMaintenance = data?.maintenance;
+  const capabilities = useMemo(
+    () => withConnectedMaintenance(declaredCapabilities, connectedMaintenance),
+    [declaredCapabilities, connectedMaintenance],
+  );
   const offers = (type: MaintenanceType, placement: "perEntity" | "global") =>
     maintenanceControl(capabilities, type, placement).offered;
   // The six analyze/vacuum global ProviderLabels fields were declared, set by
@@ -301,6 +315,13 @@ export function OperationsTab() {
   // Never twice: where the vacuum slot already names `reindex`, this card would send
   // the same operation under a second set of words.
   const globalReindex = vacuumOperation !== "reindex" && !declared.has("reindex") && offers("reindex", "global");
+  // What each whole-database card's button says, so the confirmation names the run the way the card did.
+  const globalNames: Partial<Record<MaintenanceOperation, string>> = {
+    analyze: labels?.analyzeGlobalLabel ?? "Run Analyze",
+    reindex: labels?.reindexGlobalLabel ?? "Run Reindex",
+    [vacuumOperation]: labels?.vacuumGlobalLabel ?? "Run Vacuum",
+    ...Object.fromEntries(declaredCards.map((card) => [card.type, card.label ?? card.title])),
+  };
   // Declared cards count: an engine may offer none of the operations the three worded cards send.
   const anyMaintenance = globalAnalyze || globalVacuum || globalReindex || declaredCards.length > 0;
 
@@ -365,8 +386,9 @@ export function OperationsTab() {
 
   // The handler every maintenance control on this tab calls (#1089, section 7.2). A declared card whose spec asks
   // for a typed confirmation opens the typed dialog here instead, and the dialog sends the operation only once the
-  // connection's name matches. A per-row call whose spec asks for the row's own name or for a preview opens the
-  // per-row dialog instead (spec 3.11); every other per-row call sends with one click, as before.
+  // connection's name matches. Every other whole-database call opens the plain confirmation (#1438). A per-row call
+  // whose spec asks for the row's own name or for a preview opens the per-row dialog instead (spec 3.11); every other
+  // per-row call sends with one click, as before.
   const handleRunMaintenance = async (type: MaintenanceOperation, target?: string, container?: string) => {
     const typedCard = target === undefined ? declaredCards.find((card) => card.type === type && card.typed) : undefined;
     if (typedCard !== undefined) {
@@ -374,13 +396,27 @@ export function OperationsTab() {
       setTypedDialogOpenings(typedDialogOpenings + 1);
       return;
     }
-    const entity = target === undefined ? null : entityRequest(capabilities, type, target, container);
+    // A whole-database run asks first (#1438). The cards warn that these operations are
+    // resource-intensive, and on PostgreSQL "Run Reindex" is REINDEX DATABASE, which locks every
+    // table; terminating one session already asked, and these sent on the first click.
+    if (target === undefined) {
+      setConfirmGlobal({ type, name: globalNames[type] ?? type.toUpperCase() });
+      return;
+    }
+    const entity = entityRequest(capabilities, type, target, container);
     if (entity !== null) {
       setEntityDialog({ request: entity, open: true, key: entityDialogOpenings });
       setEntityDialogOpenings(entityDialogOpenings + 1);
       return;
     }
     await runMaintenanceNow(type, target, container);
+  };
+
+  // The whole-database confirmation's own button (#1438): the run it was opened for, once.
+  const handleConfirmGlobal = async () => {
+    if (!confirmGlobal) return;
+    setConfirmGlobal(null);
+    await runMaintenanceNow(confirmGlobal.type);
   };
 
   const handleKillClick = (session: ActiveSessionDetails) => {
@@ -555,7 +591,7 @@ export function OperationsTab() {
                     disabled={!!actionLoading || !selectedConnection}
                   >
                     {actionLoading === "analyze-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                    {labels?.analyzeGlobalLabel ?? "Run Analyze"}
+                    {globalNames.analyze}
                   </Button>
                 </div>
                 <h4 className="text-sm font-bold text-fg mb-1">{labels?.analyzeGlobalTitle ?? "Update Statistics"}</h4>
@@ -582,7 +618,7 @@ export function OperationsTab() {
                     {actionLoading === `${vacuumOperation}-global` ? (
                       <RefreshCw className="w-3 h-3 animate-spin mr-1" />
                     ) : null}
-                    {labels?.vacuumGlobalLabel ?? "Run Vacuum"}
+                    {globalNames[vacuumOperation]}
                   </Button>
                 </div>
                 <h4 className="text-sm font-bold text-fg mb-1">{labels?.vacuumGlobalTitle ?? "Reclaim Space"}</h4>
@@ -611,7 +647,7 @@ export function OperationsTab() {
                     disabled={!!actionLoading || !selectedConnection}
                   >
                     {actionLoading === "reindex-global" ? <RefreshCw className="w-3 h-3 animate-spin mr-1" /> : null}
-                    {labels?.reindexGlobalLabel ?? "Run Reindex"}
+                    {globalNames.reindex}
                   </Button>
                 </div>
                 <h4 className="text-sm font-bold text-fg mb-1">{labels?.reindexGlobalTitle ?? "Rebuild Indexes"}</h4>
@@ -971,6 +1007,36 @@ export function OperationsTab() {
             >
               Terminate
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* A whole-database run's confirmation (#1438): the operation, the connection and the database, as the
+          Terminate dialog above names the session it will end. */}
+      <AlertDialog open={!!confirmGlobal} onOpenChange={() => setConfirmGlobal(null)}>
+        <AlertDialogContent className="bg-surface border-hairline-strong" {...confirmGlobalReturnFocus}>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-fg">{confirmGlobal?.name}?</AlertDialogTitle>
+            <AlertDialogDescription className="text-fg-tertiary">
+              This runs <span className="font-mono font-bold text-fg">{confirmGlobal?.type.toUpperCase()}</span> over
+              the whole database.
+              <br />
+              <br />
+              Connection: <span className="font-medium text-fg-secondary">{selectedConnection?.name}</span>
+              {selectedConnection?.database ? (
+                <>
+                  <br />
+                  Database: <span className="font-medium text-fg-secondary">{selectedConnection.database}</span>
+                </>
+              ) : null}
+              <br />
+              <br />
+              These operations can be resource-intensive. Avoid running them during peak traffic hours.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-hairline-strong text-fg-tertiary">Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmGlobal}>{confirmGlobal?.name}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

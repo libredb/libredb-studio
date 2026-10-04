@@ -4883,23 +4883,26 @@ not compile until it does.
 
 `mapDatabaseError` classifies on **substring** matching of the engine's message, so an identifier can
 decide the class, and the agent's repairable-versus-environment split inherits the misdiagnosis.
-Verified against the live mapper:
 
-- `no such table: pooled_items` matches `pool` → `PoolExhaustedError`. A plainly repairable missing
-  relation is treated as an environment fault and ends the run.
-- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
-  to a model as a statement it could rewrite (bounded at three attempts).
+#1427 settled the half that driver codes can reach: a statement's own fault is now read from the
+driver's code fields (`isStatementFault` in `src/lib/db/errors.ts`: SQLSTATE classes `0A`, `21`, `22`,
+`23`, `42`, `44` from `pg`, `mysql2` and `db2-node`, SQL Server error numbers, Oracle `errorNum`,
+SQLite result codes) before the `timeout`, `cancel`, `pool` and `relation` substring branches, so
+`no such table: pooled_items` is a `QueryError` now, not a `PoolExhaustedError`. What is left runs
+BEFORE that check, on purpose, so that nothing it classified changed class in that PR:
+
 - `relation "user_passwords" does not exist` matches `password` → `AuthenticationError`. Harmless on the
   agent path today only because a query-phase `AuthenticationError` is repairable there, which is a
   coincidence rather than a design.
+- `Connection terminated unexpectedly` matches nothing → base `DatabaseError`. A dead socket is offered
+  to a model as a statement it could rewrite (bounded at three attempts).
+- An error with no code field at all (RisingWave answers its parser errors as `XX000`, HTTP drivers
+  carry none) still reaches the substring branches.
 
-Neither direction is a boundary failure: nothing runs that policy did not allow, and the statement and
-repair budgets still bound the waste. What is wrong is the diagnosis, and it is wrong before any
-consumer sees the error, so no consumer can correct it.
-
-**Done when:** classification no longer depends on a substring a table or column name can satisfy.
-Driver error codes (PostgreSQL `SQLSTATE`, SQLite `errcode`) are the signal that does not collide, and
-each provider already has access to its own.
+**Done when:** the connection and authentication branches read the driver's code first too (SQLSTATE
+class `28` and `08`, MySQL `1045`, SQL Server `18456`, Oracle `1017`), so an identifier can no longer
+decide any class a code could, and the `permission denied` reading (`42501`, now an
+`AuthenticationError` and answered 401) is decided on purpose rather than inherited.
 
 ### B5. The agent run ledger cannot fence two writers, so single ownership has to be asserted above it
 

@@ -38,8 +38,19 @@ export async function POST(req: NextRequest) {
 
     const provider = await getOrCreateProvider(connection);
     const monitoringData = await provider.getMonitoringData(options);
+    // The maintenance this connected server accepts (#1387). Read here, off the provider the
+    // panels came from, because `POST /api/db/provider-meta` never connects and can only answer
+    // the type id's declaration, which offers PostgreSQL's and MySQL's whole sets to every
+    // wire-compatible engine.
+    const { maintenanceOperations, maintenanceOperationSpecs } = provider.getCapabilities();
 
-    return NextResponse.json(monitoringData);
+    return NextResponse.json({
+      ...monitoringData,
+      maintenance: {
+        maintenanceOperations,
+        ...(maintenanceOperationSpecs === undefined ? {} : { maintenanceOperationSpecs }),
+      },
+    });
   } catch (error) {
     // Ignore aborted requests (client cancelled)
     if (
