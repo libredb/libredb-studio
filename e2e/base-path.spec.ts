@@ -6,10 +6,15 @@ const prefix = "/~/libredb";
 test("production deployment behind a path-preserving reverse proxy", async ({ page, context, request, baseURL }) => {
   const failedAppRequests: string[] = [];
   const pageErrors: string[] = [];
+  // Set while the test is signed out behind the editor's back (the logout below is a bare fetch, so
+  // the editor stays mounted). Its in-flight calls then get the session-required 401 an API path
+  // answers without a session (#1420); before that they got a redirect, which this check never saw.
+  let signedOut = false;
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("response", (response) => {
-    if (response.url().startsWith(baseURL!) && response.status() >= 400)
-      failedAppRequests.push(`${response.status()} ${response.url()}`);
+    if (!response.url().startsWith(baseURL!) || response.status() < 400) return;
+    if (signedOut && response.status() === 401) return;
+    failedAppRequests.push(`${response.status()} ${response.url()}`);
   });
   await page.route("**/*", (route) => (route.request().url().startsWith(baseURL!) ? route.continue() : route.abort()));
 
@@ -80,6 +85,7 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
   expect(failedAppRequests).toEqual([]);
   expect(pageErrors).toEqual([]);
 
+  signedOut = true;
   const logoutStatus = await page.evaluate(
     async (path) => (await fetch(`${path}/api/auth/logout`, { method: "POST" })).status,
     prefix,
@@ -93,6 +99,7 @@ test("production deployment behind a path-preserving reverse proxy", async ({ pa
   await page.locator('input[type="password"]:visible').fill("test-admin");
   await page.getByRole("button", { name: /sign in/i }).click();
   await expect(page).toHaveURL(`${baseURL}${prefix}/admin/overview`);
+  signedOut = false;
   await expect(page.getByTestId("admin-content-overview")).toBeVisible();
   // Server redirects, Next links and native quick actions all stay inside the mount.
   await expect(page.getByRole("link", { name: "Operations", exact: true })).toHaveAttribute(
