@@ -71,6 +71,13 @@ export async function resolveConnection(
       user: session.username,
     });
 
+    // A discovered connection (CapRover auto-connect spec 9.5) carries the literal text another app on the platform
+    // network set, so a `${vault:...}` in it is that app's text and never a reference to Studio's Vault: it is
+    // returned unresolved, and the VaultError that would quote the value is never built. The marker is set in code
+    // by the discovery source after the role filter and never read from a file, so a seed-file connection whose id
+    // happens to start with caprover- is resolved below as before.
+    if (seedConn.literal) return seedConn;
+
     // After the access decision, never before it: a `${vault:...}` reference is read here,
     // for this one connection. The list path handed it back unresolved, so listing
     // connections never reads a secret.
