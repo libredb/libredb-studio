@@ -241,7 +241,8 @@ covering `TINYINT(1)`, `INT`, `BIGINT` past 2^53, `BIGINT UNSIGNED`, `DECIMAL(20
 
 - every value identical by `typeof` and by `JSON.stringify` — including the `Buffer` for `BLOB` and
   both `BIT` widths ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)), the `Date` for the
-  three temporal types, the string for `DECIMAL` and `TIME`, the parsed object for `JSON`, and the
+  three temporal types (the server's text since [§3.9](#39-date-datetime-and-timestamp-arrive-as-the-servers-own-text),
+  which is NOT identical across the protocols: the prepared one drops an all-zero fraction), the string for `DECIMAL` and `TIME`, the parsed object for `JSON`, and the
   same `"9007199254740993"` for a `BIGINT` written as `9007199254740993` — a STRING on both
   protocols, because the pool asks mysql2 not to round it ([§3.7](#37-a-bigint-past-253-arrives-as-a-string));
 - every `FieldPacket` identical in `columnType`, `flags`, `characterSet`, `columnLength` and
@@ -485,6 +486,51 @@ stack differs, because the promise wrapper rewrites the stack to its caller's.
 > while it parses the definition, before `fields` fires, so `SELECT 1 AS "<U+1F600>"` comes back with
 > a four-U+FFFD key. Values are repaired; aliases are not.
 
+### 3.9 `DATE`, `DATETIME` and `TIMESTAMP` arrive as the server's own text
+
+The pool asks mysql2 for **`dateStrings: true`** (`buildPoolConfig()`,
+[`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)), on both the structured and the connection-string
+path (#1388). Left to itself mysql2 builds a JavaScript `Date` for the three temporal types, and a `Date`
+holds milliseconds and always a time of day. So `DATETIME(6)` lost its last three digits, a `DATE` became a
+UTC midnight instant, and the grid, the row detail and every export showed an ISO form with a `Z` the column
+does not have. The inline editor pre-filled that ISO text, and the server refused it on the `UPDATE`
+(`Incorrect date value: '2024-03-01T00:00:00.000Z' for column 'dt_date' at row 1`).
+
+Measured 2026-10-04 through this provider, one row holding `DATE '2024-02-29'`,
+`DATETIME(6) '2024-12-31 23:59:59.999999'` and `TIMESTAMP(6) '2024-06-01 10:30:00.123456'` written in a
+`+03:00` session, plus a zero-date row where `sql_mode` allows it:
+
+| Value | Before | After, text protocol | After, prepared protocol |
+|---|---|---|---|
+| `DATE` | `2024-02-29T00:00:00.000Z` | `2024-02-29` | `2024-02-29` |
+| `DATETIME(6)` | `2024-12-31T23:59:59.999Z` | `2024-12-31 23:59:59.999999` | `2024-12-31 23:59:59.999999` |
+| `TIMESTAMP(6)` | `2024-06-01T10:30:00.123Z` | `2024-06-01 10:30:00.123456` | `2024-06-01 10:30:00.123456` |
+| `TIMESTAMP(6) '2024-06-01 10:30:00'` | `2024-06-01T10:30:00.000Z` | `2024-06-01 10:30:00.000000` | `2024-06-01 10:30:00` |
+| `DATE '0000-00-00'` | `1899-11-30T00:00:00.000Z` | `0000-00-00` | `0000-00-00` |
+| `DATETIME(6) '0000-00-00 00:00:00'` | `null` | `0000-00-00 00:00:00.000000` | `0000-00-00 00:00:00` |
+
+on MySQL 26.7.0, MariaDB 13.0.2, Percona Server 8.4.11-11 and TiDB v8.5.8 alike. The text protocol is what a
+statement without parameters takes and the prepared one what a parameterised read takes
+([§3.4](#34-which-wire-protocol-a-statement-takes)). **The two differ in one case**: the server sends the text
+protocol's value as text, padded to the declared scale, while the prepared protocol sends a binary
+date-time that mysql2 renders itself and leaves the fraction off when it is all zeros. Both spellings name
+the same value and the server accepts either back; the provider does not normalise them. Databend
+v1.2.925-patch-13 and StarRocks 4.1.6 answer the three non-zero rows above the same way over the text
+protocol. A `TIMESTAMP` is the reading in the
+session `time_zone`, which is what the server shows any client and what it accepts back in a literal: the
+`Z` it used to carry claimed UTC for a wall clock read in `+03:00`.
+
+The text is exactly what the server takes back, so it round-trips: on those six engines an `INSERT` of the
+read values as literals (what the SQL export writes) reread equal, and on the four that accept a prepared
+`UPDATE` a bound edit of the `DATE` and the `DATETIME(6)` saved and reread as the text sent. A zero date
+writes back only where the server's own `sql_mode` allows one (`NO_ZERO_DATE` refuses it, as it would from
+any client).
+
+The declared type is unaffected: `columnTypes` still names the columns `date`, `datetime` and `timestamp`
+([§5.4](#54-declared-column-types)), so the SQL-DDL export keeps the temporal types. The grid's key guard
+still refuses a temporal column as the row key, because it reads the declaration; that is conservative now
+rather than necessary.
+
 ---
 
 ## 4. Connection
@@ -514,6 +560,7 @@ options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/
 | mysql2 option | Value | Source |
 |---------------|-------|--------|
 | `supportBigNumbers` | `true` | fixed — the first entry, so it survives the `connectionString` branch ([§3.7](#37-a-bigint-past-253-arrives-as-a-string)) |
+| `dateStrings` | `true` | fixed, in the shared base so it survives the `connectionString` branch too ([§3.9](#39-date-datetime-and-timestamp-arrive-as-the-servers-own-text)) |
 | `connectionLimit` | pool `max` (default 10) | `ProviderOptions.pool.max` |
 | `waitForConnections` | `true` | fixed |
 | `queueLimit` | `0` (unbounded queue) | fixed |
@@ -534,6 +581,8 @@ options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/
 > Without a zone mysql2 reads `DATE` and `DATETIME` in the Node process's local zone.
 > Measured 2026-09-27 on `mysql:8.4` under `TZ=Europe/Istanbul`, before the fix: the structured form read `DATE '2026-09-01'` as `2026-09-01T00:00:00.000Z` and a pasted connection string read it as `2026-08-31T21:00:00.000Z`, the previous day, with `TIMESTAMP '2026-09-01 10:30:00'` at `07:30`.
 > After it, both forms answer `2026-09-01T00:00:00.000Z` and `2026-09-01T10:30:00.000Z`, and a string with `?timezone=%2B03:00` read under `TZ=UTC` answers `2026-08-31T21:00:00.000Z`, the zone it asked for.
+> Since `dateStrings` ([§3.9](#39-date-datetime-and-timestamp-arrive-as-the-servers-own-text)) no row is read through `timezone` any more: both forms answer `2026-09-01` whatever the process zone.
+> It still decides how a JavaScript `Date` bound as a parameter is written.
 
 `connect()` is idempotent. Unlike the PostgreSQL provider, MySQL exposes **no** `getPoolStats()`.
 

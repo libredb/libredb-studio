@@ -689,6 +689,49 @@ describe("useInlineEditing", () => {
     }
   });
 
+  test("characterisation: an edit of a MySQL date cell sends the server's own text, digits and all (#1388)", async () => {
+    // Characterisation, not a red-first test: the hook already passed edited text through,
+    // and the defect was the ISO text the grid pre-filled. This pins the half that has to stay.
+    // The MySQL pool reads DATE and DATETIME as the server's text, so the grid pre-fills
+    // `2024-12-31 23:59:59.999999` and the user changes one digit. That text is what the
+    // server accepts back; the ISO form it used to be shown as was refused with
+    // `Incorrect date value`. The hook must hand the edited text over untouched.
+    const { result } = renderHook(() =>
+      useInlineEditing({
+        activeConnection: makeConnection({ type: "mysql" }),
+        currentTab: makeTab({
+          query: "SELECT * FROM events",
+          result: makeResult({
+            fields: ["id", "d", "dt"],
+            rows: [{ id: 1, d: "2024-02-29", dt: "2024-12-31 23:59:59.999999" }],
+            columnTypes: { id: "int", d: "date", dt: "datetime" },
+          }),
+        }),
+        executeQuery: mockExecuteQuery as (sql: string) => void,
+      }),
+    );
+
+    act(() => {
+      result.current.handleCellChange(
+        makeChange({ columnId: "d", originalValue: "2024-02-29", newValue: "2024-03-01" }),
+      );
+      result.current.handleCellChange(
+        makeChange({
+          columnId: "dt",
+          originalValue: "2024-12-31 23:59:59.999999",
+          newValue: "2024-12-31 23:59:58.999999",
+        }),
+      );
+    });
+    await act(async () => {
+      await result.current.handleApplyChanges();
+    });
+
+    expect(updateCalls()).toHaveLength(1);
+    expect(updateCalls()[0][0]).toBe("UPDATE events SET `d` = ?, `dt` = ? WHERE `id` = ?");
+    expect(updateCalls()[0][3]).toEqual({ skipSafety: true, params: ["2024-03-01", "2024-12-31 23:59:58.999999", 1] });
+  });
+
   test("a backslash-escaping dialect cannot read the edited value as SQL", async () => {
     // The issue #290 payload: interpolated into a MySQL statement it closed the
     // literal early and `WHERE 1=1` became the real predicate, so every row in the

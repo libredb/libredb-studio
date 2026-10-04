@@ -88,11 +88,12 @@ type KeyColumnKind = "date-time" | "float64" | "decimal" | "declared" | "undecla
  * `time` and `time with time zone` are deliberately ABSENT. `pg` and `mysql2` both hand a
  * time-of-day back as the string the engine prints (`'10:00:00'`), which is its own
  * identity and matches when sent back, so refusing one would take away a key that works.
- * A date or a timestamp is the opposite: mysql2 hands back a JavaScript `Date`, and so does
- * `pg` for `timestamp with time zone`, and that is the value this whole check exists for.
- * `pg`'s `date` and `timestamp without time zone` arrive as the engine's own text since the
- * provider's per-pool parsers, and are still refused here: the refusal reads the declaration,
- * which is conservative for those two rather than wrong.
+ * A date or a timestamp is the opposite: `pg` hands back a JavaScript `Date` for `timestamp
+ * with time zone`, and that is the value this whole check exists for. `pg`'s `date` and
+ * `timestamp without time zone` arrive as the engine's own text since the provider's per-pool
+ * parsers, and so do mysql2's `date`, `datetime` and `timestamp` since the MySQL pool's
+ * `dateStrings` (#1388). They are still refused here: the refusal reads the declaration,
+ * which is conservative for those rather than wrong.
  */
 const INSTANT_TYPE_NAMES: ReadonlySet<string> = new Set([
   "date",

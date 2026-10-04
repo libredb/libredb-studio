@@ -2901,6 +2901,62 @@ describe("MySQLProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // Temporal values as the server's own text (#1388)
+  // --------------------------------------------------------------------------
+
+  describe("temporal values", () => {
+    /**
+     * Measured 2026-10-04 on MySQL 26.7.0 before the fix: `DATETIME(6)` holding
+     * `2024-12-31 23:59:59.999999` reached every surface as `2024-12-31T23:59:59.999Z` and
+     * `DATE '2024-02-29'` as `2024-02-29T00:00:00.000Z`, because mysql2 built a `Date` for
+     * both. The inline editor pre-filled that text and MySQL refused it on the UPDATE
+     * (`Incorrect date value`). `dateStrings` makes the driver hand over the text the server
+     * sent instead, fractional digits included.
+     */
+    test("the structured configuration reads DATE, DATETIME and TIMESTAMP as text", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(lastPoolConfig.dateStrings).toBe(true);
+    });
+
+    test("a pasted connection string reads them as text too", async () => {
+      provider = new MySQLProvider(
+        makeMySQLConfig({ connectionString: "mysql://example-user:example-fake-db-pw@localhost:3306/testdb" }),
+      );
+      await provider.connect();
+      expect(lastPoolConfig.dateStrings).toBe(true);
+      // Resolved by the REAL mysql2 `ConnectionConfig`, which is where `uri` and the
+      // options meet: the option survives that merge.
+      const { ConnectionConfig } = (await import("mysql2")) as unknown as {
+        ConnectionConfig: new (options: Record<string, unknown>) => { dateStrings: unknown };
+      };
+      expect(new ConnectionConfig(lastPoolConfig).dateStrings).toBe(true);
+    });
+
+    /**
+     * Characterisation, not a red-first test: it passes without the fix too, because the
+     * driver is mocked. It pins that nothing on the provider's row path turns the text back
+     * into a `Date` or reshapes it. The rows are the two shapes mysql2 really hands over with
+     * `dateStrings` on, measured 2026-10-04 on MySQL 26.7.0: the text protocol pads the
+     * fraction to the declared scale, the prepared one leaves an all-zero fraction off, and
+     * each is passed through as it came rather than normalised.
+     */
+    test("characterisation: a temporal value reaches the caller as the text the driver handed over", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const fields = [{ name: "d" }, { name: "dt" }, { name: "zero" }];
+      const textShape = { d: "0000-00-00", dt: "2024-12-31 23:59:59.999999", zero: "0000-00-00 00:00:00.000000" };
+      const preparedShape = { d: "0000-00-00", dt: "2024-12-31 23:59:59.999999", zero: "0000-00-00 00:00:00" };
+
+      mockExecuteFn = () => Promise.resolve([[textShape], fields]);
+      expect((await provider.query("SELECT d, dt, zero FROM types_t")).rows).toEqual([textShape]);
+
+      mockExecuteFn = () => Promise.resolve([[preparedShape], fields]);
+      expect((await provider.query("SELECT d, dt, zero FROM types_t WHERE id = ?", [1])).rows).toEqual([preparedShape]);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Wide integers (BIGINT past 2^53)
   // --------------------------------------------------------------------------
 

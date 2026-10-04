@@ -2935,6 +2935,15 @@ export class MySQLProvider extends SQLBaseProvider {
       // cannot hold arrive as strings. `bigNumberStrings` is deliberately NOT set: it would
       // turn both of those into strings too, changing types that were never wrong.
       supportBigNumbers: true,
+      // DATE, DATETIME and TIMESTAMP as the text the server sends (#1388). Left to itself
+      // mysql2 builds a `Date`, which holds milliseconds and always a time of day, so
+      // `DATETIME(6)` lost three digits, a `DATE` became a UTC midnight instant, and every
+      // surface showed an ISO form with a `Z` the column does not have. The inline editor
+      // pre-filled that ISO text and the server refused it back (`Incorrect date value`).
+      // The text is the server's own rendering, in the session `time_zone` for TIMESTAMP,
+      // which is also what it accepts in a literal, so an edit or an exported INSERT
+      // round-trips it, a zero date included. Same first-entry placement, for both paths.
+      dateStrings: true,
       connectionLimit: this.poolConfig.max,
       waitForConnections: true,
       queueLimit: 0,
@@ -2946,7 +2955,9 @@ export class MySQLProvider extends SQLBaseProvider {
     // row then serialises as ISO UTC, so the value moves with the server's TZ. Measured under
     // TZ=Europe/Istanbul on MySQL 8.4: a pasted connection string answered `DATE '2026-09-01'`
     // as 2026-08-31T21:00:00.000Z, the previous day, while the structured form, the only one
-    // that set this, answered 2026-09-01.
+    // that set this, answered 2026-09-01. Since `dateStrings` no row is read through it any
+    // more; it still decides how a JavaScript `Date` bound as a PARAMETER is written, which
+    // is the same zone question in the other direction.
     const timezone = this.options.timezone ?? "Z";
 
     if (this.config.connectionString) {
