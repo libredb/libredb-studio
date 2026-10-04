@@ -11,7 +11,7 @@ import { ObjectSourceView, type ObjectSourcePatch } from "@/components/object-so
 import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
 import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/index";
 import { StudioModals } from "@/components/studio/StudioModals";
-import type { MaskingConfig } from "@/lib/data-masking";
+import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "@/lib/data-masking";
 import type { DatabaseObject } from "@/lib/db/types";
 import { findKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
 import { objectPathLabel } from "@/lib/db/object-path";
@@ -718,7 +718,7 @@ export function StudioWorkspace({
    *
    * - `src/components/studio/StudioTabBar.tsx:115`, on `document`: the new-tab shortcut, which is
    *   the one this handler guards. It opens a tab and `addTab` activates it.
-   * - `src/components/DataProfiler.tsx:210`, on `document`, and MOUNTED BY THIS SHELL below. It is
+   * - `src/components/DataProfiler.tsx` (its Escape effect), on `document`, and MOUNTED BY THIS SHELL below. It is
    *   bound only while the profiler is open, it answers Escape alone, and all it does is call the
    *   profiler's `onClose`. It moves no tab, and it cannot unmount this pane.
    * - `src/components/CodeGenerator.tsx`, on `document`, and MOUNTED BY THIS SHELL below. It is
@@ -1136,6 +1136,10 @@ export function StudioWorkspace({
         showCodeGenerator={features.codeGenerator}
         profilerPath={profilerPath}
         onCloseProfiler={closeProfiler}
+        // NOT the grid's no-op configuration: this profiler has always masked the built-in kinds,
+        // in the summary it hands a host's onDescribeSchema too, and #1421 keeps that. Parity
+        // with this shell's grid, which masks nothing, is a separate decision.
+        profilerMasking={{ config: DEFAULT_MASKING_CONFIG, enabled: true, role: currentUser?.role }}
         codeGenPath={codeGenPath}
         onCloseCodeGen={closeCodeGen}
         showTestDataGenerator={features.testDataGenerator}
@@ -1197,7 +1201,7 @@ export function StudioWorkspace({
         at `letter-spacing: normal` on the body. The `--studio-*` colour tokens are declared on
         `:root` and `.dark` in `src/styles/theme.css`, which `build:lib` ships, so `bg-overlay`,
         `border-hairline` and `text-fg` read the same either side. That font hazard is the one
-        `DataProfiler.tsx:186-196` weighs the other way; here two sentences of chrome in the host's
+        the Escape docblock in `DataProfiler.tsx` weighs the other way; here two sentences of chrome in the host's
         own font is the smaller loss against a refusal no screen reader is told about.
 
         Rendered only while the refusal is live: the mirror above clears it the moment the apply

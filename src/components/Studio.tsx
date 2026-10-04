@@ -684,6 +684,11 @@ export default function Studio() {
     });
   }, []);
   const toggleMasking = userCanToggle ? handleToggleMasking : undefined;
+  // The grid's three masking inputs, handed to the profiler as one value it can memoize on.
+  const profilerMasking = useMemo(
+    () => ({ config: maskingConfig, enabled: effectiveMasking, role: user?.role }),
+    [maskingConfig, effectiveMasking, user?.role],
+  );
 
   const handleLoadQuery = useCallback(
     (q: string) => {
@@ -1552,6 +1557,7 @@ export default function Studio() {
         showCodeGenerator
         profilerPath={profilerPath}
         onCloseProfiler={closeProfiler}
+        profilerMasking={profilerMasking}
         codeGenPath={codeGenPath}
         onCloseCodeGen={closeCodeGen}
         showTestDataGenerator
