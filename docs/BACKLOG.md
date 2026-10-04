@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D224, U17 · 139
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U85 · 79
 - [Dependencies](#dependencies) — P1-P9 · 8
 - [Documentation](#documentation) — DOC3-DOC9 · 6
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -3838,6 +3838,51 @@ A server with several databases therefore needs a connection per database, becau
 Found 2026-10-04 while designing the InfluxDB provider (rulings R1 and R16).
 
 **Done when:** a session-addressed multi-database feature lands: a database level in the tree, a run-body field for the database, a tab field set from the tree, and an editor-toolbar database selector, accepted by the query route only for a type declaring a capability that entry designs, with tests on the route, the tab model and the toolbar.
+
+### U82. The cleartext consent box says "password" on engines whose secret is a token
+
+The consent box the connection dialog draws while SSL Mode is disable is labelled "Send the password without TLS" for every type that takes `allowInsecureAuth` (`src/components/ConnectionModal.tsx`, the `allowInsecureAuth` block).
+On Oxia, `influxdb` and `influxdb3` the secret the box covers is a token: Oxia's field above the box is Token, and its declared hint under the box speaks of the token only.
+The refusals quote the label word for word, so they carry the same word: `CONSENT_CLAUSE` in `src/lib/db/providers/keyvalue/oxia/connection-options.ts` and the cleartext refusal in `src/lib/db/providers/timeseries/influxdb/connection-options.ts`.
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310), in the New connection dialog for Oxia with SSL Mode disable.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the label is shared by every type that takes the field, and the refusals of two other providers quote it.
+
+**Done when:** the label names the secret the type takes, from a declared word in the type's UI config rather than a branch on the type id, every refusal that quotes the label quotes the new one, and a test renders the dialog for a password type and a token type and asserts each label.
+
+### U83. A read-only engine's Source tab calls a key's value a definition it cannot replace
+
+An Oxia key's Value and Metadata tabs in the Source view say "This database offers no way to replace this definition in place.", which is `NOT_OFFERED_SENTENCE` in `src/components/object-source/source-editable.ts`, the sentence `partEditability` gives any part whose provider offers no edit.
+A key's value is not a definition, and the sentence reads as a limit of the engine, when what blocks the edit is that the connection is read-only.
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310), on `/pk/tenant-a/2` and on `/values/over-cap`.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the sentence is shared by every engine's Source tab.
+
+**Done when:** a part that is not offered says why in words that fit the object and the reason, either through a sentence the provider declares for the part or a shared sentence for a read-only connection, and a test pins the sentence for a read-only key-value part and for a definition an engine cannot replace.
+
+### U84. The Keys panel keeps "Scan all" enabled after a walk that answered complete
+
+After a scan that reached the end of the keyspace, "Scan more" is disabled and "Scan all" is not: the Scan more button's `disabled` reads `exhausted` and the Scan all button's does not (`src/components/key-browser/KeyBrowser.tsx`).
+An enabled "Scan all" suggests there is more to read when the walk has already answered that there is not.
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310): the prefix `/pk/` read "Scanned 3", with Scan more disabled and Scan all enabled.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the panel is shared by every key-value engine.
+
+**Done when:** "Scan all" is disabled once the walk is exhausted, as "Scan more" is, and a component test asserts both buttons after a scan that answered complete.
+
+### U85. The agent rail says a conversation "ended when the page reloaded" after in-app navigation
+
+Going from Studio to Monitoring and back with the browser's Back button, without a reload, the rail says "The conversation this browser was in (1 question, ...) ended when the page reloaded. Your next question starts a new one."
+`interrupted` in `src/components/agent/use-agent-run.ts` is the stored thread whenever the mounted rail follows no run, and the rail's `runId` starts empty each time the rail mounts, so a remount after in-app navigation reads as a reload (`agent-thread-ended` in `src/components/agent/AgentRail.tsx`).
+Seen 2026-10-04 in the final browser pass of the Oxia provider (#1310); nothing in it is specific to Oxia.
+
+Found by the final browser pass of the Oxia provider (#1310).
+Not fixed there: the rail is shared by every engine, and the PR does not touch it.
+
+**Done when:** in-app navigation away from Studio and back either keeps following the conversation or says what actually ended it, the reload wording appears only after a reload, and a test remounts the rail without a reload and asserts the notice.
 
 ## Dependencies
 
