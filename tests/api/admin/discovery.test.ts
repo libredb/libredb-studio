@@ -50,6 +50,7 @@ const ENV_KEYS = [
   "SEED_CONFIG_PATH",
   "AUTH_COOKIE_SECURE",
   "TRUST_PROXY_HEADERS",
+  "RATE_LIMIT_QUERY_MAX",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -94,6 +95,11 @@ function request(url = "http://localhost:3000/api/admin/discovery", headers: Rec
 async function answer(req: Request = request()): Promise<{ status: number; body: DiscoveryBody }> {
   const res = await GET(req);
   return { status: res.status, body: await parseResponseJSON<DiscoveryBody>(res) };
+}
+
+/** The audit events a console.log spy captured: one JSON line each. */
+function auditLines(sink: { mock: { calls: unknown[][] } }): Array<Record<string, unknown>> {
+  return sink.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
 }
 
 beforeEach(() => {
@@ -142,18 +148,62 @@ describe("GET /api/admin/discovery: access", () => {
     expect(discoveryCalls).toBe(0);
   });
 
-  // A standard user learns nothing: the body is the unchanged 403 and the loader never runs.
+  // A standard user learns nothing: the body is the unchanged 403 and the loader never runs. The
+  // refusal is recorded as a permission_denied event with reason insufficient_role.
   test("returns 403 for a non-admin user without reading the discovery status", async () => {
     mockGetSession.mockResolvedValueOnce({ role: "user", username: "user" });
     process.env.SEED_DISCOVERY_PATH = exportPath;
     writeExport();
+    const sink = spyOn(console, "log").mockImplementation(() => {});
 
-    const res = await GET(request());
-    const data = await parseResponseJSON<{ error: string }>(res);
+    try {
+      const res = await GET(request());
+      const data = await parseResponseJSON<{ error: string }>(res);
 
-    expect(res.status).toBe(403);
-    expect(data).toEqual({ error: "Unauthorized. Admin access required." });
-    expect(discoveryCalls).toBe(0);
+      expect(res.status).toBe(403);
+      expect(data).toEqual({ error: "Unauthorized. Admin access required." });
+      expect(discoveryCalls).toBe(0);
+      expect(auditLines(sink)).toEqual([
+        expect.objectContaining({
+          event: "permission_denied",
+          reason: "insufficient_role",
+          actor: "user",
+          route: "GET /api/admin/discovery",
+        }),
+      ]);
+    } finally {
+      sink.mockRestore();
+    }
+  });
+
+  // The route is metered on the query bucket and no other: the ai bucket allows 20 a minute by
+  // default, so a route moved there would still answer 200 to all four requests below. The limit is
+  // lowered for this test only: the file's afterEach restores it with the rest of the environment,
+  // and the spent counters are cleared here so no later test starts with them.
+  test("is metered on the query bucket: the third request in a window answers 429", async () => {
+    process.env.RATE_LIMIT_QUERY_MAX = "2";
+    const sink = spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      const first = await GET(request());
+      const second = await GET(request());
+      const third = await GET(request());
+      const fourth = await GET(request());
+
+      expect([first.status, second.status, third.status, fourth.status]).toEqual([200, 200, 429, 429]);
+      // Only the first refusal in a window is audited, and the event names the bucket that refused it.
+      expect(auditLines(sink)).toEqual([
+        expect.objectContaining({
+          event: "rate_limit_exceeded",
+          bucket: "query",
+          actor: "admin",
+          route: "GET /api/admin/discovery",
+        }),
+      ]);
+    } finally {
+      sink.mockRestore();
+      clearRateLimitState();
+    }
   });
 });
 
@@ -266,8 +316,10 @@ describe("GET /api/admin/discovery: states", () => {
 
     try {
       const res = await GET(request());
+      const data = await parseResponseJSON<{ error: string; code: string; statusCode: number }>(res);
 
       expect(res.status).toBe(500);
+      expect(data).toEqual({ error: "discovery status read failed", code: "INTERNAL_ERROR", statusCode: 500 });
       expect(error).toHaveBeenCalled();
     } finally {
       error.mockRestore();
