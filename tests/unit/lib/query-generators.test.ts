@@ -30,6 +30,8 @@ import { toJsonText } from "@/lib/db/console/tagged-json";
 import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
+import { parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
@@ -2335,5 +2337,35 @@ describe("the influxql arms", () => {
     // The control: the language the diagram line above it reads, and SQL, keep their answers.
     expect(offersSchemaDiagram(makeCaps({ queryLanguage: "cypher" }))).toBe(false);
     expect(offersSchemaDiagram(makeCaps())).toBe(true);
+  });
+});
+
+// Oxia (SB2-4.5): both generators read the DIALECT_GENERATORS record, which writes the provider's own browser-safe
+// text, every output a command the provider's parser accepts, and no count statement.
+describe("generateTableQuery and generateSelectQuery: Oxia", () => {
+  const oxiaCaps = makeCaps({ queryLanguage: "json", queryDialect: "oxia", supportsExplain: false });
+  const path = ["/admin/policies"];
+
+  test("the click on an Oxia key writes get, never a MongoDB find", () => {
+    const text = generateTableQuery(path, oxiaCaps, []);
+    expect(text).toBe(oxiaTableQuery(path));
+    expect(text).toBe("get /admin/policies");
+    const parsed = parseOxiaCommand(text, {});
+    expect(parsed.ok && parsed.parsed.command).toEqual({
+      kind: "get",
+      key: "/admin/policies",
+      comparison: "equal",
+      hex: false,
+    });
+  });
+
+  test("Generate Command writes the get, with the prefix forms as comments", () => {
+    const text = generateSelectQuery(path, [], oxiaCaps);
+    expect(text).toBe(oxiaSelectQuery(path));
+    expect(parseOxiaCommand(text, {}).ok).toBe(true);
+  });
+
+  test("offers no count statement", () => {
+    expect(generators.generateCountQuery(path, oxiaCaps)).toBeNull();
   });
 });

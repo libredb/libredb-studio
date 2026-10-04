@@ -1,0 +1,65 @@
+{
+  "calls": [
+    {
+      "authority": "localhost:6678",
+      "end": {
+        "code": 16,
+        "details": "failed to verify signature: no public keys able to verify jwt",
+        "kind": "status"
+      },
+      "messageBytes": [],
+      "messages": [],
+      "method": "grpc.health.v1.Health/Check",
+      "request": {
+        "service": ""
+      },
+      "target": "localhost:6678",
+      "tls": {
+        "identity": "localhost",
+        "mode": "verify-full"
+      },
+      "token": true
+    },
+    {
+      "authority": "localhost:6678",
+      "end": {
+        "code": 16,
+        "details": "failed to verify signature: no public keys able to verify jwt",
+        "kind": "status"
+      },
+      "messageBytes": [],
+      "messages": [],
+      "method": "io.oxia.proto.v1.OxiaClient/GetShardAssignments",
+      "request": {
+        "namespace": "default"
+      },
+      "target": "localhost:6678",
+      "tls": {
+        "identity": "localhost",
+        "mode": "verify-full"
+      },
+      "token": true
+    }
+  ],
+  "file": "0.16.10-auth/auth-bad-signature.json",
+  "result": {
+    "ok": {
+      "health": {
+        "error": {
+          "authCause": "bad-signature",
+          "category": "unauthenticated",
+          "message": "The Oxia client failed (unauthenticated)",
+          "name": "OxiaError"
+        }
+      },
+      "snapshot": {
+        "error": {
+          "authCause": "bad-signature",
+          "category": "unauthenticated",
+          "message": "The Oxia client failed (unauthenticated)",
+          "name": "OxiaError"
+        }
+      }
+    }
+  }
+}

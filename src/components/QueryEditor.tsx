@@ -14,6 +14,7 @@ import { registerMongoDBCompletionProvider } from "@/lib/editor/mongodb-completi
 import { registerLibreDBLanguage } from "@/lib/editor/libredb-language";
 import { registerRedisLanguage } from "@/lib/editor/redis-language";
 import { registerEtcdLanguage } from "@/lib/editor/etcd-language";
+import { registerOxiaLanguage } from "@/lib/editor/oxia-language";
 import { registerPromqlLanguage } from "@/lib/editor/promql-language";
 import { CYPHER_LANGUAGE_ID, registerCypherLanguage } from "@/lib/editor/cypher-language";
 import { cypherCompletionSchemaOf, registerCypherCompletionProvider } from "@/lib/editor/cypher-completions";
@@ -87,7 +88,8 @@ interface QueryEditorProps {
     | "graph-cypher"
     | "milvus"
     | "qdrant"
-    | "influxql";
+    | "influxql"
+    | "oxia";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
@@ -516,13 +518,14 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB, Redis and etcd command languages, PromQL, Cypher and InfluxQL (each
+      // Register the LibreDB, Redis, etcd and Oxia command languages, PromQL, Cypher and InfluxQL (each
       // idempotent) so their tabs highlight correctly instead of being treated as JSON or SQL
-      // (#427, #1085, #1089, Neo4j spec 6.5, InfluxDB spec 6.7).
+      // (#427, #1085, #1089, #424, Neo4j spec 6.5, InfluxDB spec 6.7).
       registerLibreDBLanguage(monacoInstance);
       registerRedisLanguage(monacoInstance);
       registerPromqlLanguage(monacoInstance);
       registerEtcdLanguage(monacoInstance);
+      registerOxiaLanguage(monacoInstance);
       registerCypherLanguage(monacoInstance);
       registerInfluxqlLanguage(monacoInstance);
       // Every console dialect's language, from its editor record (vector-family spec 3.5): the records are the

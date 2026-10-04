@@ -689,6 +689,32 @@ describe("createDatabaseProvider", () => {
     expect((await createDatabaseProvider(conn)).type).toBe("qdrant");
   });
 
+  test('creates provider for type "oxia"', async () => {
+    // No user and no namespace: Oxia has no user name, and an empty namespace means default. The constructor
+    // validates nothing and opens nothing, so the provider is built, and declares its language, its dialect and
+    // its read-only enforcement, with no Oxia running (SB3-1.2).
+    const conn = makeConnection("oxia", { port: 6648, user: undefined, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("oxia");
+    expect(provider.getCapabilities().queryLanguage).toBe("json");
+    expect(provider.getCapabilities().queryDialect).toBe("oxia");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("an oxia connection with readOnly: true is built, since its provider keeps the mode (DECISIONS O1)", async () => {
+    const conn = { ...makeConnection("oxia", { port: 6648, user: undefined, database: undefined }), readOnly: true };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("oxia");
+    expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
+  });
+
+  test("the factory error lists oxia among the supported types, after etcd and before prometheus", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\betcd, oxia, prometheus\b/);
+  });
+
   test('creates provider for type "milvus"', async () => {
     // The constructor validates nothing and opens nothing, as etcd's, so the provider is built, and declares its
     // language, its dialect and its read-only enforcement, with no Milvus running (vector-family spec 5.7).

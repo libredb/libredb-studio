@@ -365,6 +365,25 @@ describe("POST /api/db/keys/scan in a declared shape", () => {
     }
   });
 
+  test('passes a page through with total 0 for a declaration whose totalScope is "none"', async () => {
+    const uncountedScan = { ...ETCD_SCAN, totalScope: "none" } as const;
+    const uncountedPage: KeyScanPage = { keys: ["/app/a", "/app/b"], cursor: "k:L2FwcC9i:h", total: 0, types: {} };
+    const walk = mock(async () => uncountedPage);
+    const provider = createMockProvider({
+      type: "etcd",
+      capabilities: { keyScan: uncountedScan, containerLevels: [] },
+    });
+    provider.scanKeysPage = mock(walk);
+    activeProvider = provider;
+
+    const { status, body } = await post<KeyScanPage>({});
+
+    expect(status).toBe(200);
+    // The route neither reads nor replaces the total: 0 travels as the provider answered it.
+    expect(body).toEqual(uncountedPage);
+    expect(walk).toHaveBeenLastCalledWith({ cursor: "0", pattern: undefined, count: 500, database: undefined });
+  });
+
   test("refuses an opaque cursor that is not a non-empty string", async () => {
     activeProvider = prefixProvider(async () => ETCD_PAGE);
 

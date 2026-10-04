@@ -431,6 +431,21 @@ describe("SeedConnectionSchema: Db2's consent to a cleartext password (#786)", (
     expect(result.success).toBe(false);
     expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["allowInsecureAuth"]);
   });
+
+  // The schema has no type gate on this field: `db2` is only a valid seed to carry it.
+  it("dataServers survives parsing (zod strips an undeclared key)", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, dataServers: "a.internal:6648" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.dataServers).toBe("a.internal:6648");
+  });
+
+  it("rejects a dataServers that is not a string, naming the field", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, dataServers: 6648 });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([["dataServers"]]);
+  });
 });
 
 describe("SeedConnectionSchema: Kafka's SASL mechanism", () => {
@@ -699,6 +714,32 @@ describe("SeedConfigSchema: MCP is not offered for etcd (#1089 E12)", () => {
   it("parses an etcd seed that says nothing of mcp, and one with mcp: false", () => {
     expect(SeedConfigSchema.safeParse({ version: "1", connections: [etcd] }).success).toBe(true);
     expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: false }] }).success).toBe(true);
+  });
+});
+
+describe("SeedConnectionSchema: an oxia seed (SB2-10, SB3-5.6)", () => {
+  const oxia = { id: "metadata", name: "Metadata", type: "oxia", host: "oxia.internal", port: 6648, roles: ["*"] };
+
+  it("accepts the oxia type", () => {
+    expect(SeedConnectionSchema.safeParse(oxia).success).toBe(true);
+  });
+
+  it("refuses an oxia seed with mcp: true, with the issue at mcp naming oxia", () => {
+    const result = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...oxia, mcp: true }] });
+    expect(result.success).toBe(false);
+    const issues = result.error?.issues ?? [];
+    expect(issues.map((issue) => issue.path)).toEqual([["connections", 0, "mcp"]]);
+    expect(issues[0]?.message).toBe(
+      "mcp is not offered for oxia: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+    );
+  });
+
+  it("accepts readOnly: true on an oxia seed, with no token", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [{ ...oxia, readOnly: true, managed: true }],
+    });
+    expect(result.success).toBe(true);
   });
 });
 

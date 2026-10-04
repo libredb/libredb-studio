@@ -1,4 +1,5 @@
 import { afterEach, describe, test, expect } from "bun:test";
+import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
@@ -16,6 +17,8 @@ import {
   INFLUXQL_POLICY_SENTENCES,
   influxqlRefusal,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
+import { oxiaRefusal, OXIA_DESTRUCTIVE_OPERATIONS, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { MILVUS_CONSOLE } from "@/lib/db/providers/vector/milvus/routes";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
@@ -322,7 +325,7 @@ describe("isDestructiveNonSqlQuery", () => {
 describe("vocabularyDecidesAlone", () => {
   // The rows the gate reads without its SQL keyword test in front. MongoDB and Redis keep that
   // test as a backstop; a type with no row is read by the SQL half entirely.
-  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant and influxdb and for no other type", () => {
+  test("is true for prometheus, kafka, etcd, neo4j, milvus, qdrant, influxdb and oxia and for no other type", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => vocabularyDecidesAlone(type))).toEqual([
       "prometheus",
       "kafka",
@@ -331,6 +334,7 @@ describe("vocabularyDecidesAlone", () => {
       "milvus",
       "qdrant",
       "influxdb",
+      "oxia",
     ]);
   });
 
@@ -348,6 +352,7 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
       "milvus",
       "mongodb",
       "neo4j",
+      "oxia",
       "prometheus",
       "qdrant",
       "redis",
@@ -456,12 +461,13 @@ describe("vocabularySendsToModel", () => {
 
   // What the dialog did for every engine before the field existed, but for etcd, whose row keeps its statements,
   // values included, on this deployment (#1089 E10).
-  test("keeps etcd's, Milvus's, Qdrant's and InfluxDB's statements from the AI analysis, and no other shipped type's", () => {
+  test("keeps etcd's, Milvus's, Qdrant's, InfluxDB's and Oxia's statements from the AI analysis, and no other shipped type's", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => !vocabularySendsToModel(type))).toEqual([
       "etcd",
       "milvus",
       "qdrant",
       "influxdb",
+      "oxia",
     ]);
   });
 
@@ -554,8 +560,8 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("only milvus's, qdrant's and influxdb's rows declare a refusal and a bound, so no other shipped type changes", () => {
-    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb"];
+  test("only milvus's, qdrant's, influxdb's and oxia's rows declare a refusal and a bound, so no other shipped type changes", () => {
+    const declaring: readonly string[] = ["milvus", "qdrant", "influxdb", "oxia"];
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
       if (declaring.includes(type)) continue;
       expect(row?.refuse).toBeUndefined();
@@ -665,6 +671,57 @@ describe("the qdrant row", () => {
   test("refuses a text one byte past the bound before guard.ts reads it", () => {
     const over = `# ${"x".repeat(QDRANT_CONSOLE.maxTextBytes)}\n${READ}`;
     expect(statementRefusal(over, "qdrant")).toContain(`over the ${QDRANT_CONSOLE.maxTextBytes}-byte limit`);
+  });
+});
+
+/**
+ * Oxia's row (SB2-4.2; O10, C17): the provider's own guard.ts reads the text with the parser the provider runs, v1
+ * only reads, so nothing asks, the row keeps every statement from the AI analysis, and the editor refuses what
+ * guard.ts refuses, past the dialect's own byte bound.
+ */
+describe("the oxia row", () => {
+  const READ = "get /a";
+  const WRITE = "put /a b";
+
+  test("decides alone, names no destructive operation and asks about no read", () => {
+    const row = NON_SQL_DESTRUCTIVE_VOCABULARY.oxia;
+    expect(row?.decidesAlone).toBe(true);
+    expect(row?.operations).toBe(OXIA_DESTRUCTIVE_OPERATIONS);
+    expect(row?.operations.size).toBe(0);
+    expect(row?.read).toBe(readOxiaOperations);
+    expect(row?.read(READ)).toEqual(["get"]);
+    expect(isDestructiveNonSqlQuery(READ, "oxia")).toBe(false);
+    expect(row?.typedConfirmation).toBeUndefined();
+  });
+
+  test("never reads a key spelled like SQL as SQL", () => {
+    expect(isDangerousQuery("get /delete/from", "oxia")).toBe(false);
+    expect(isDangerousQuery("list --key-min /drop/table --key-max /drop/tablf", "oxia")).toBe(false);
+    // A shell-escaped quote a SQL span reader would read as an unterminated string, and prompt on (grammar.ts's
+    // NON_SQL_DIALECTS entry): the SQL half answers true, the oxia row false.
+    const escapedQuote = "get /it\\'s";
+    expect(isDangerousQuery(escapedQuote, "postgres")).toBe(true);
+    expect(isDangerousQuery(escapedQuote, "oxia")).toBe(false);
+  });
+
+  test("keeps every statement from the AI analysis (SEC-05)", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.oxia?.safetyAnalysis).toBe(false);
+    expect(vocabularySendsToModel("oxia")).toBe(false);
+  });
+
+  test("refuses a write with guard.ts's browser sentence, by reference, and declares the dialect's byte bound", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.oxia?.refuse).toBe(oxiaRefusal);
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.oxia?.maxTextBytes).toBe(OXIA_MAX_TEXT_BYTES);
+    expect(consoleTextByteLimit("oxia")).toBe(65_536);
+    expect(oxiaRefusal(WRITE)).toBeDefined();
+    expect(statementRefusal(WRITE, "oxia")).toBe(oxiaRefusal(WRITE));
+    expect(statementRefusal(READ, "oxia")).toBeUndefined();
+  });
+
+  test("refuses a text one byte past the bound before guard.ts reads it", () => {
+    const over = `get /${"x".repeat(OXIA_MAX_TEXT_BYTES - 4)}`;
+    expect(Buffer.byteLength(over, "utf8")).toBe(OXIA_MAX_TEXT_BYTES + 1);
+    expect(statementRefusal(over, "oxia")).toContain(`over the ${OXIA_MAX_TEXT_BYTES}-byte limit`);
   });
 });
 

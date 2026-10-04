@@ -1,0 +1,33 @@
+{
+  "calls": [
+    {
+      "authority": "127.0.0.1:6668",
+      "end": {
+        "code": 0,
+        "details": "",
+        "kind": "status"
+      },
+      "messageBytes": [
+        2
+      ],
+      "messages": [
+        {
+          "status": "SERVING"
+        }
+      ],
+      "method": "grpc.health.v1.Health/Check",
+      "request": {
+        "service": ""
+      },
+      "target": "127.0.0.1:6668",
+      "tls": {
+        "mode": "disable"
+      },
+      "token": false
+    }
+  ],
+  "file": "0.17.1/health-serving.json",
+  "result": {
+    "ok": "SERVING"
+  }
+}

@@ -176,6 +176,15 @@ describe("filterByRoles: engine-specific fields", () => {
     expect(none.allowInsecureAuth).toBeUndefined();
   });
 
+  it("a seed's dataServers is copied onto the managed connection", () => {
+    const result = filterByRoles([{ ...baseConn, dataServers: "a.internal:6648 b.internal:6648" }], ["user"]);
+    const [none] = filterByRoles([{ ...baseConn }], ["user"]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].dataServers).toBe("a.internal:6648 b.internal:6648");
+    expect(none.dataServers).toBeUndefined();
+  });
+
   it("leaves the mechanism absent on a seeded connection that names none", () => {
     const [managed] = filterByRoles([{ ...baseConn, type: "kafka", port: 9092 }], ["user"]);
 

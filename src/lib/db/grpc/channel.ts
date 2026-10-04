@@ -1,6 +1,6 @@
 /**
- * The one gRPC channel Studio opens, its option set, and unary and bidirectional calls with a deadline, the call's own
- * AbortSignal and the sent or unsent notice. Nothing here knows about an engine, and no provider is imported; each
+ * The one gRPC channel Studio opens, its option set, and unary, bidirectional and server-streaming calls with a deadline,
+ * the call's own AbortSignal and the sent or unsent notice. Nothing here knows about an engine, and no provider is imported; each
  * provider's adapter maps its own RPCs onto `openGrpcChannel` and hands it the method definitions its descriptor
  * loads. Server-only.
  */
@@ -9,6 +9,7 @@ import {
   type ChannelOptions,
   Client,
   type ClientDuplexStream,
+  type ClientReadableStream,
   credentials,
   type MethodDefinition,
   Metadata,
@@ -99,10 +100,33 @@ export interface GrpcBidiStream {
   cancel(): void;
 }
 
+export interface GrpcServerStreamLimits {
+  /** Received serialized bytes at which the stream cancels itself; required, no default. */
+  readonly maxReceivedBytes: number;
+}
+
+/** One server stream, read in paused mode by one reader at a time: each read() is awaited before the next. */
+export interface GrpcServerStream {
+  /** The next message; undefined at the server's end, after cancel() or past the limit; rejects with the call's failure. */
+  read(): Promise<object | undefined>;
+  /** Serialized bytes received so far, counted in the wrapped responseDeserialize, read-ahead included. */
+  readonly receivedBytes: number;
+  /** True once the stream ended by cancel() or by its limit, never by the server's end. */
+  readonly truncated: boolean;
+  /** Ends the call; pending and later reads answer undefined. Idempotent. */
+  cancel(): void;
+}
+
 /** The channel of one provider connection; messages are the provider descriptor's, as its loader options read them. */
 export interface GrpcChannel {
   unary(method: MethodDefinition<object, object>, request: object, call: GrpcCall): Promise<object>;
   bidiStream(method: MethodDefinition<object, object>, call: GrpcCall): GrpcBidiStream;
+  serverStream(
+    method: MethodDefinition<object, object>,
+    request: object,
+    call: GrpcCall,
+    limits: GrpcServerStreamLimits,
+  ): GrpcServerStream;
   /** Cancels every stream still open, closes the grpc-js client, then ends every socket the credentials hold. */
   close(): void;
 }
@@ -119,10 +143,12 @@ export function openGrpcChannel(config: GrpcChannelConfig): GrpcChannel {
       ...(config.tls === undefined ? {} : { serverNameOverride: config.tls.serverNameOverride }),
     }),
   );
-  const streams = new Set<GrpcBidiStream>();
+  const streams = new Set<{ cancel(): void }>();
   return {
     unary: (method, request, call) => unaryCall(client, method, request, call, config.unsent),
     bidiStream: (method, call) => openStream(client, method, call, streams, config.unsent),
+    serverStream: (method, request, call, limits) =>
+      openServerStream(client, method, request, call, limits, streams, config.unsent),
     close: () => {
       // Each stream ends with call.cancel(), grpc-js's close() releases the subchannels, and every socket they still
       // hold ends last, whatever it waits for.
@@ -210,6 +236,16 @@ function unaryCall(
 }
 
 /**
+ * A read() of a bidirectional stream waiting for the next message, the end or the call's error. A module-level type,
+ * so no type-only line sits inside openStream: a test process that never opens a bidirectional stream reports the
+ * function's whole span, and scripts/merge-lcov.mjs would count such a line as coverable and missed.
+ */
+interface PendingRead {
+  readonly resolve: (message: object | undefined) => void;
+  readonly reject: (error: unknown) => void;
+}
+
+/**
  * A grpc-js bidirectional stream as the adapter reads it: messages in order, then the end or the call's error. It is
  * one of `open` until it is cancelled, so the channel's close() can cancel it first.
  */
@@ -217,7 +253,7 @@ function openStream(
   client: Client,
   method: MethodDefinition<object, object>,
   call: GrpcCall,
-  open: Set<GrpcBidiStream>,
+  open: Set<{ cancel(): void }>,
   unsent: GrpcChannelConfig["unsent"],
 ): GrpcBidiStream {
   const pick = pickNotice();
@@ -229,10 +265,7 @@ function openStream(
     { deadline: call.deadline, credentials: pick.credentials },
   );
   const received: object[] = [];
-  const waiting: Array<{
-    readonly resolve: (message: object | undefined) => void;
-    readonly reject: (error: unknown) => void;
-  }> = [];
+  const waiting: PendingRead[] = [];
   let ended = false;
   let failure: { readonly error: unknown } | undefined;
   duplex.on("data", (message: object) => {
@@ -270,4 +303,118 @@ function openStream(
   };
   open.add(stream);
   return stream;
+}
+
+/**
+ * A grpc-js server stream as the adapter reads it: paused, one message per read(), with a received-byte limit that
+ * ends the call from inside the deserializer. grpc-js deserializes up to sixteen messages ahead of a paused reader,
+ * so the bytes are counted where they arrive, and every counted message is kept in the stream's own queue: the
+ * reader gets exactly the messages that were counted, the one that reached the limit included, whatever grpc-js
+ * keeps buffered after a cancel. It is one of `open` until it ends in any way.
+ */
+function openServerStream(
+  client: Client,
+  method: MethodDefinition<object, object>,
+  request: object,
+  call: GrpcCall,
+  limits: GrpcServerStreamLimits,
+  open: Set<{ cancel(): void }>,
+  unsent: GrpcChannelConfig["unsent"],
+): GrpcServerStream {
+  if (!Number.isInteger(limits.maxReceivedBytes) || limits.maxReceivedBytes < 1) {
+    throw new RangeError("maxReceivedBytes must be a whole number of at least 1");
+  }
+  const pick = pickNotice();
+  const queued: object[] = [];
+  let receivedBytes = 0;
+  let truncated = false; // by cancel() or by the limit
+  let dropped = false; // by cancel(): what was not read is gone
+  let ended = false;
+  let failure: { readonly error: unknown } | undefined;
+  let taken = 0; // messages handed to the reader
+  let drained = 0; // messages taken out of grpc-js's own buffer, which keeps HTTP/2 flow control moving
+  let wake: (() => void) | undefined;
+  const notify = () => {
+    const waiting = wake;
+    wake = undefined;
+    waiting?.();
+  };
+  const readable: ClientReadableStream<object> = client.makeServerStreamRequest(
+    method.path,
+    method.requestSerialize,
+    (buffer: Buffer) => {
+      // Nothing after the limit or a cancel is counted or kept.
+      if (truncated) return method.responseDeserialize(buffer);
+      receivedBytes += buffer.length;
+      const message = method.responseDeserialize(buffer);
+      queued.push(message);
+      if (receivedBytes >= limits.maxReceivedBytes) {
+        truncated = true;
+        readable.cancel();
+      }
+      return message;
+    },
+    request,
+    metadataOf(call),
+    { deadline: call.deadline, credentials: pick.credentials },
+  );
+  // What the channel's close() and the call's abort run: grpc-js's cancel, whose status then fails the reads.
+  const entry = { cancel: () => readable.cancel() };
+  const release = cancelOnAbort(call.signal, entry.cancel);
+  const finish = () => {
+    open.delete(entry);
+    release();
+    notify();
+  };
+  readable.on("readable", notify);
+  readable.on("end", () => {
+    ended = true;
+    finish();
+  });
+  // After a truncation the status grpc-js raises is the cancel this stream asked for, so it is not a failure.
+  readable.on("error", (error: ServiceError) => {
+    if (!truncated) failure = { error: callFailure(error, call.signal, pick.picked(), unsent) };
+    finish();
+  });
+  open.add(entry);
+  const drain = () => {
+    while (drained < taken && readable.read() !== null) drained++;
+  };
+  return {
+    get receivedBytes() {
+      return receivedBytes;
+    },
+    get truncated() {
+      return truncated;
+    },
+    read: async () => {
+      for (;;) {
+        if (dropped) return undefined;
+        if (failure !== undefined) throw failure.error;
+        const message = queued.shift();
+        if (message !== undefined) {
+          taken++;
+          drain();
+          return message;
+        }
+        if (ended || truncated) return undefined;
+        // Asking grpc-js for a message is what requests the next one from the server. Its answer is always null
+        // here: grpc-js hands a message to the deserializer only after a promise resolves, never inside read(), and
+        // drain() has taken every message the reader was given, so its buffer is empty.
+        readable.read();
+        // oxlint-disable-next-line no-await-in-loop -- one reader waits for the stream's next event.
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+    },
+    cancel: () => {
+      if (dropped) return;
+      dropped = true;
+      truncated = true;
+      queued.length = 0;
+      readable.cancel();
+      finish();
+    },
+  };
 }

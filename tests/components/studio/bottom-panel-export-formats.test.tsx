@@ -150,6 +150,10 @@ describe("the result export menu offers the SQL formats where the dialect says t
     expect(await exportMenuItems(capabilitiesOf({ queryDialect: "qdrant" }))).toEqual(WITHOUT_SQL);
   });
 
+  test("oxia, whose record declines them, loses both from the Export and the Copy items (SB2-4.4)", async () => {
+    expect(await exportMenuItems(capabilitiesOf({ queryDialect: "oxia" }))).toEqual(WITHOUT_SQL);
+  });
+
   test("a dialect whose record declines them loses both, from the Export and the Copy items alike", async () => {
     const declared = capabilitiesOf({ queryDialect: SYNTHETIC_DIALECT as ProviderCapabilities["queryDialect"] });
     expect(await exportMenuItems(declared)).toEqual(WITHOUT_SQL);

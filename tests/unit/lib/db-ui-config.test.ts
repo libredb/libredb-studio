@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   connectionFieldHint,
   connectionFieldLabel,
+  connectionFieldPlaceholder,
   DB_UI_CONFIG,
   getDBConfig,
   getDBIcon,
@@ -57,6 +58,7 @@ const ALL_TYPES: DatabaseType[] = [
   "qdrant",
   "influxdb",
   "influxdb3",
+  "oxia",
 ];
 
 describe("db-ui-config", () => {
@@ -425,10 +427,11 @@ describe("db-ui-config", () => {
      * name, and its provider refuses a non-empty `config.user` naming the field before any socket (vector-family
      * spec 4.4), pinned in tests/unit/db/qdrant/credential-record.test.ts. InfluxDB 3 has no user name either: its
      * token is the password, and the connection layer it shares with the InfluxQL type refuses a user on it (InfluxDB
-     * spec A.3). Listed by name, so the read stays visible.
+     * spec A.3). Oxia has no user name either, and its provider refuses a non-empty `config.user` with "Oxia has no
+     * user name: clear User. A bearer token goes under Token." (SB1-4.3) Listed by name, so the read stays visible.
      */
     const READ_ONLY_TO_REFUSE: Readonly<Record<"user" | "database", readonly DatabaseType[]>> = {
-      user: ["qdrant", "influxdb3"],
+      user: ["qdrant", "influxdb3", "oxia"],
       database: [],
     };
 
@@ -507,7 +510,7 @@ describe("db-ui-config", () => {
     });
   });
 
-  test("db2 declares its label, DRDA port and fields, and no password hint (#786)", () => {
+  test("db2 declares its label, DRDA port and fields, the consent box's hint and no password hint (#786)", () => {
     const db2 = getDBConfig("db2");
     expect(db2).toMatchObject({
       label: "Db2 LUW",
@@ -598,6 +601,7 @@ const FIELD_CHECKLIST: Record<ConnectionField, true> = {
   apiKeySecret: true,
   saslMechanism: true,
   allowInsecureAuth: true,
+  dataServers: true,
 };
 const EVERY_FIELD = Object.keys(FIELD_CHECKLIST) as ConnectionField[];
 
@@ -654,6 +658,44 @@ describe("declared connection-field copy (#1085)", () => {
     });
     expect(hostUriSchemes("qdrant")).toEqual(["http", "https"]);
     expect(qdrant.credentialWarnings).toBe(CREDENTIAL_WARNINGS.qdrant);
+  });
+
+  test("oxia declares its label, port, fields, labels, the five hints and the read-only hint (SB3-1.5)", () => {
+    const oxia = getDBConfig("oxia");
+    expect(oxia.label).toBe("Oxia");
+    expect(oxia.color).toBe("text-hue-orange-alt");
+    expect(oxia.defaultPort).toBe("6648");
+    expect(oxia.showConnectionStringToggle).toBe(false);
+    expect(oxia.connectionFields).toEqual(["host", "port", "password", "database", "dataServers", "allowInsecureAuth"]);
+    expect(oxia.fieldLabels).toEqual({ password: "Token", database: "Namespace", dataServers: "Data servers" });
+    expect(oxia.fieldHints).toEqual({
+      host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration.",
+      dataServers:
+        "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
+      allowInsecureAuth:
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    });
+    expect(oxia.readOnlyHint).toBe(
+      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
+    );
+    // The Namespace box shows the namespace an empty one means, not the dialog's "db" (ruling R34).
+    expect(oxia.fieldPlaceholders).toEqual({ database: "default" });
+    expect(connectionFieldPlaceholder(oxia, "database", "db")).toBe("default");
+    expect(connectionFieldPlaceholder(oxia, "host", "localhost")).toBe("localhost");
+    expect(connectionFieldPlaceholder(getDBConfig("postgres"), "database", "db")).toBe("db");
+    expect(readOnlyHint(oxia)).toBe(oxia.readOnlyHint ?? "");
+    // No User box, no Host address, no option list and the default SSH tunnel (SB3-1.5).
+    expect(takesConnectionField("oxia", "user")).toBe(false);
+    expect(oxia.hostAcceptsUri).toBeUndefined();
+    expect(oxia.fieldOptions).toBeUndefined();
+    expect(oxia.showSshTunnel).toBeUndefined();
+    expect(offersSshTunnel("oxia")).toBe(true);
+    expect(hostUriSchemes("oxia")).toEqual([]);
+    expect(oxia.credentialWarnings).toBe(CREDENTIAL_WARNINGS.oxia);
   });
 
   test("milvus declares its port, the Database box, Password or token, the field hints and the Host box addresses (vector-family spec 5.2)", () => {
@@ -746,14 +788,14 @@ describe("declared connection-field copy (#1085)", () => {
     // The consent box draws the type's own sentence, with no fallback, so a type that takes the field and declares no
     // hint would draw an empty paragraph under the box (InfluxDB spec R4).
     const taking = ALL_TYPES.filter((type) => takesConnectionField(type, "allowInsecureAuth"));
-    expect(taking).toEqual(["db2", "influxdb", "influxdb3"]);
+    expect(taking).toEqual(["db2", "influxdb", "influxdb3", "oxia"]);
     for (const type of taking) {
       const hint = connectionFieldHint(getDBConfig(type), "allowInsecureAuth");
       expect({ type, hint: typeof hint, empty: hint?.length === 0 }).toEqual({ type, hint: "string", empty: false });
     }
   });
 
-  test("only db2, prometheus, kafka, etcd, neo4j, milvus, qdrant and the two InfluxDB types declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only db2, prometheus, kafka, etcd, neo4j, milvus, qdrant, the two InfluxDB types and oxia declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
@@ -767,6 +809,7 @@ describe("declared connection-field copy (#1085)", () => {
       "qdrant",
       "influxdb",
       "influxdb3",
+      "oxia",
     ]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
@@ -871,6 +914,9 @@ describe("db-showcase", () => {
         // the one of the two an evaluator is more likely to have met.
         "milvus",
         "qdrant",
+        // Behind Qdrant and ahead of libSQL (SB3-1.2 R19): the store an Apache Pulsar cluster keeps its metadata
+        // in, met beside the databases rather than as one of them.
+        "oxia",
         "libsql",
         "libredb",
       ]);

@@ -14,7 +14,8 @@ export type EditorLanguage =
   | "graph-cypher"
   | "milvus"
   | "qdrant"
-  | "influxql";
+  | "influxql"
+  | "oxia";
 
 /**
  * The tab type a connection's tabs take.

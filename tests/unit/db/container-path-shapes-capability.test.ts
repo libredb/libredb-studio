@@ -59,6 +59,7 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   qdrant: "absent",
   // No container level (R16): its tables are top-level objects of the session database, the Qdrant shape.
   influxdb3: "absent",
+  oxia: "absent",
 });
 
 const TYPES = Object.keys(EXPECTED_CONTAINER_PATH_SHAPES) as DatabaseType[];

@@ -154,7 +154,7 @@ On 2026-10-04 it printed the same verdict for every row on 12.1.0.0 and on 11.5.
 K24 was found on 2026-10-04 while moving to 1.0.25, and 1.0.24 has it too: a `CLOB(1M)` or `BLOB(1M)` bound alone answered 0 rows on both, and beside another parameter 1.0.24 refused the statement with "parameter descriptor count 1 does not match parameter count 2" where 1.0.25 writes nothing.
 The README of 1.0.25 binds a Buffer through `CAST(? AS BLOB(1M))`, and that statement wrote nothing either, on 12.1.0.0 and 11.5.9.0.
 A `DBCLOB(1K)` and an `XML` column are written.
-It is reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31); D205 in `docs/BACKLOG.md` tracks it.
+It is reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31); D225 in `docs/BACKLOG.md` tracks it.
 
 The provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns`, so the grid's inline editor opens no editor on such a cell and shows the reason on it, and a result with such a column carries a warning above the grid that names those columns and says the grid does not edit them.
 The declared length does not reach a result, a `CLOB(1M)` column arrives described as `VarChar(32777)` and a `CLOB(1K)` as `CLOB`, so every such column is refused and named, a short one included.

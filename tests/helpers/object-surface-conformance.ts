@@ -57,7 +57,10 @@
  * narrower: a provider that declares `hasColumns` on every kind it listed runs the negative
  * direction zero times, so its expectation must SAY so with `noAbstainingKinds`, and an
  * expectation that says so while a listed kind does abstain is refused in the other
- * direction. Exactly three engines are the former (druid, mongodb, libredb).
+ * direction. Exactly three engines are the former (druid, mongodb, libredb). The third guard's
+ * mirror is `noColumnKinds`: a provider with no column-bearing kind can never answer the column
+ * set invariant 7's guard asks for, so its expectation says so, and the bulk read then holds every
+ * listed kind to an empty answer instead. Exactly one engine is that (oxia).
  *
  * Invariant 4 replaced an assertion that `name` equals the last path segment. That is no
  * longer true and must not be: `DatabaseObject.path` addresses, `DatabaseObject.name`
@@ -206,6 +209,15 @@ export interface ObjectSurfaceExpectation {
    * (`table`, `collection`, `keyspace`).
    */
   readonly noAbstainingKinds?: true;
+  /**
+   * This provider declares `hasColumns` on NO kind, so invariant 7's vacuity guard, which wants a
+   * listed kind answering a column set, can never be met. The mirror of `noAbstainingKinds`, stated
+   * rather than silent for the same reason. True of exactly one engine: oxia, whose only listed kind,
+   * `shard`, answers `{ details: [] }`. When set, the bulk read holds every listed kind to an empty
+   * answer with no truncation, unbounded and with limit 1, and the field is refused by name when any
+   * kind the provider declares carries `hasColumns`.
+   */
+  readonly noColumnKinds?: true;
   /**
    * The one object of a kind only the Keys panel enumerates, AUTHORED, with the kind it is read
    * under (#1089 3.4).
@@ -378,7 +390,8 @@ export async function assertObjectSurface(
   const detail = await provider.describeObject!(sample.path, sample.kind);
   expect(detail.path).toEqual([...sample.path]);
 
-  await assertBulkColumnRead(provider, container, listings);
+  if (expected.noColumnKinds === true) await assertNoColumnRead(provider, container, listings);
+  else await assertBulkColumnRead(provider, container, listings);
   // The answer just read is handed on rather than asked for again: it is the sample's kind
   // described at the object THIS EXPECTATION chose, which is the strongest object of that
   // kind to hold the declaration against, and a second read would probe a different one.
@@ -559,6 +572,43 @@ async function assertBulkColumnRead(
       `describeObjects("${richest.kind}", limit 1) reported "${bounded.truncated.reason}", which does not carry ` +
         `the one sentence a caller's bound is reported with: "${callerSentence}"`,
     );
+  }
+}
+
+/**
+ * Invariant 7 for a provider with no column-bearing kind (`noColumnKinds`).
+ *
+ * The flag is refused first when any declared kind carries `hasColumns`, so it cannot silence the
+ * vacuity guard of `assertBulkColumnRead()` on a provider that has columns to describe. Then every
+ * listed kind is read twice, unbounded and with limit 1, and each answer must be empty and report
+ * no truncation: an empty answer is the whole of what such a provider can say, and a truncation
+ * reason over nothing would tell a reader that something was withheld.
+ */
+async function assertNoColumnRead(
+  provider: DatabaseProvider,
+  container: readonly string[],
+  listings: ReadonlyMap<string, DatabaseObject[]>,
+): Promise<void> {
+  const bearing = declaredKinds(provider.getCapabilities())
+    .filter((kind) => kindHasColumns(kind))
+    .map((kind) => kind.id);
+  if (bearing.length > 0) {
+    throw new Error(
+      `the expectation sets noColumnKinds and the kind(s) ${bearing.join(", ")} declare hasColumns, ` +
+        "so the field states a fact this provider's own declarations contradict",
+    );
+  }
+  for (const kind of listings.keys()) {
+    for (const limit of [undefined, 1]) {
+      const batch = await provider.describeObjects(container, kind, limit);
+      const call = limit === undefined ? `describeObjects("${kind}")` : `describeObjects("${kind}", limit ${limit})`;
+      if (batch.details.length > 0) {
+        throw new Error(`${call} answered ${batch.details.length} column set(s) under noColumnKinds`);
+      }
+      if (batch.truncated !== undefined) {
+        throw new Error(`${call} reported a truncation under noColumnKinds: "${batch.truncated.reason}"`);
+      }
+    }
   }
 }
 

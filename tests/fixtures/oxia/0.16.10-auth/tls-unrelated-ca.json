@@ -1,0 +1,33 @@
+{
+  "calls": [
+    {
+      "authority": "localhost:6678",
+      "end": {
+        "code": 14,
+        "details": "No connection established. Last error: Error: unable to verify the first certificate. Resolution note: ",
+        "kind": "status"
+      },
+      "messageBytes": [],
+      "messages": [],
+      "method": "io.oxia.proto.v1.OxiaClient/GetShardAssignments",
+      "request": {
+        "namespace": "default"
+      },
+      "target": "localhost:6678",
+      "tls": {
+        "identity": "localhost",
+        "mode": "verify-full"
+      },
+      "token": true
+    }
+  ],
+  "file": "0.16.10-auth/tls-unrelated-ca.json",
+  "result": {
+    "error": {
+      "category": "tls",
+      "message": "The Oxia client failed (tls)",
+      "name": "OxiaError",
+      "tlsFailure": "chain"
+    }
+  }
+}

@@ -69,7 +69,7 @@ describe("connectionFingerprint", () => {
     expect(await connectionFingerprint(vary({ serviceName: "XEPDB1" }))).not.toBe(base);
     expect(await connectionFingerprint(vary({ instanceName: "SQLEXPRESS" }))).not.toBe(base);
     // The tenth, which the four above were audited without and which a review of THAT audit found
-    // one field away: the bastion is the ROUTE, and `factory.ts:678-685` rewrites `host` and `port`
+    // one field away: the bastion is the ROUTE, and `factory.ts:685-692` rewrites `host` and `port`
     // to the tunnel's local endpoint before the provider is constructed, so the tunnel and not the
     // record decides which machine the sealed statement reaches.
     expect(await connectionFingerprint(vary({ sshTunnel: BASTION }))).not.toBe(base);
@@ -95,7 +95,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // `factory.ts:678` branches on exactly that flag and only the enabled arm rewrites the endpoint.
+    // `factory.ts:685` branches on exactly that flag and only the enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
     // a key changes who may reach the bastion, never which machine it is. `hostKeyFingerprint` is
@@ -189,6 +189,14 @@ describe("connectionFingerprint", () => {
     // Nor the credential: a fingerprint that moved with the password would refuse every plan
     // built before a rotation, and the password is not part of WHICH SERVER this is.
     expect(await connectionFingerprint(vary({ password: "rotated" }))).toBe(base);
+  });
+
+  test("dataServers is NOT in it: the list gates the cluster's own leaders and names no other server", async () => {
+    // Changing the list alone admits or refuses a leader the cluster at host and port advertises; it
+    // never sends a plan to another server, so by the docblock's criterion it is not a server field.
+    // The provider cache key carries it instead, since a cached provider holds the policy it built.
+    const listed = vary({ dataServers: "oxia-1.example:6648,oxia-2.example:6648" });
+    expect(await connectionFingerprint(listed)).toBe(await connectionFingerprint(BASE));
   });
 
   test("the framing holds, so two fields cannot slide across their boundary", async () => {
