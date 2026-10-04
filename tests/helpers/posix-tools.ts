@@ -128,6 +128,17 @@ export const MISSING_POSIX_FILE_MODES: string | null =
     ? "POSIX file modes: NTFS has no exec bit and Windows cannot exec an extension-less #! stub"
     : null;
 
+/**
+ * Null on Linux and macOS, a reason on Windows. The discovery exporter (docker/discover.mjs) talks to the
+ * Docker Engine over a unix domain socket, and its tests stand a fake Engine on one; Docker on Windows
+ * serves a named pipe instead, and the exporter only ever runs in a Linux container. Platform rather than
+ * a probe, for the reason MISSING_POSIX_FILE_MODES gives.
+ */
+export const MISSING_UNIX_SOCKETS: string | null =
+  process.platform === "win32"
+    ? "unix domain sockets: the exporter dials a POSIX Docker socket, and Docker on Windows serves a named pipe"
+    : null;
+
 /** `describe` when `missing` is null, else a skipped describe whose title carries the reason. */
 export function describeIf(missing: string | null, title: string, body: () => void): void {
   if (missing === null) {

@@ -11,6 +11,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   MISSING_POSIX_FILE_MODES,
+  MISSING_UNIX_SOCKETS,
   type ToolLookup,
   describeIf,
   describeIfPosixShell,
@@ -185,6 +186,16 @@ describe("the reasons a skip carries", () => {
     expect(MISSING_POSIX_FILE_MODES).toBe(
       process.platform === "win32"
         ? "POSIX file modes: NTFS has no exec bit and Windows cannot exec an extension-less #! stub"
+        : null,
+    );
+  });
+
+  test("unix domain sockets are a platform fact too", () => {
+    // The discovery exporter's tests stand a fake Docker Engine on a unix socket. Docker on Windows
+    // serves a named pipe, and the exporter only ever runs in a Linux container.
+    expect(MISSING_UNIX_SOCKETS).toBe(
+      process.platform === "win32"
+        ? "unix domain sockets: the exporter dials a POSIX Docker socket, and Docker on Windows serves a named pipe"
         : null,
     );
   });
