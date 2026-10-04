@@ -11,9 +11,13 @@
  *   bun tests/live/oxia-evidence.ts --only <name,...> --target ... --version ...    one or more runs alone
  *   bun tests/live/oxia-evidence.ts --readme                                         render tests/fixtures/oxia/README.md
  *
- * `--provenance <file>` names where the image digest, the date and the command of each set are kept between a capture
- * and `--readme` (default: oxia-evidence/provenance.json under the system's temporary directory, never the repository).
- * `--out <directory>` writes the captures under another directory, to compare two runs byte for byte.
+ * The fixtures README is the provenance store, and the harness keeps no state outside tests/fixtures/oxia: the image,
+ * the digest, the date and the command of each set live in the README's set table, which replaced the `--provenance`
+ * file once kept under the system's temporary directory. A full-set run writes its set's new row and takes the other
+ * sets' rows from the README's own table; an `--only` run keeps every row and renews the file digests; `--readme`
+ * renders the README from its own rows and the captures on disk.
+ * `--out <directory>` writes the captures under another directory, to compare two runs byte for byte, and leaves the
+ * README alone.
  *
  * It never changes a server: the provider's stub holds only reads, the fixture must hold its marker, and the
  * namespace's key count and the marker's version are read before the first run and after the last; a difference
@@ -23,7 +27,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { grpcOxiaWireTransport } from "@/lib/db/providers/keyvalue/oxia/grpc-client";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
@@ -51,6 +54,9 @@ const FIXTURES = path.join(ROOT, "tests/fixtures/oxia");
 const STEPS: OxiaRunSteps = { assertSurface: (provider) => assertObjectSurface(provider, OXIA_CONFORMANCE) };
 /** The files of tests/fixtures/oxia that are vectors with their own provenance, not captures. */
 const VECTORS = ["xxh3-vectors.json", "order-vectors.json"];
+const README = path.join(FIXTURES, "README.md");
+const SET_TABLE_HEADER = "| Set | Image | Digest | Captured | Command |";
+const SET_ROW = /^\| (\S+) \| `([^`]+)` \| `([^`]+)` \| (\d{4}-\d{2}-\d{2}) \| `([^`]+)` \|$/;
 
 /** One set's provenance: what the README states for it. */
 interface SetProvenance {
@@ -70,12 +76,20 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-const provenanceFile = argument("--provenance") ?? path.join(tmpdir(), "oxia-evidence", "provenance.json");
-
+/** The set table of the fixtures README, by set: the provenance store. A row in no known form is refused. */
 function readProvenance(): Record<string, SetProvenance> {
-  return existsSync(provenanceFile)
-    ? (JSON.parse(readFileSync(provenanceFile, "utf8")) as Record<string, SetProvenance>)
-    : {};
+  if (!existsSync(README)) return {};
+  const lines = readFileSync(README, "utf8").split("\n");
+  const header = lines.indexOf(SET_TABLE_HEADER);
+  if (header === -1) fail(`tests/fixtures/oxia/README.md holds no set table`);
+  const provenance: Record<string, SetProvenance> = {};
+  for (const line of lines.slice(header + 2)) {
+    if (line === "") break;
+    const row = SET_ROW.exec(line);
+    if (row === null) fail(`tests/fixtures/oxia/README.md holds a set row in no known form: ${line}`);
+    provenance[row[1]] = { image: row[2], digest: row[3], date: row[4], command: row[5] };
+  }
+  return provenance;
 }
 
 /** The fixture's image as the container was created from it, and that image's repository digest. */
@@ -145,20 +159,19 @@ function captureFiles(): string[] {
   }).sort();
 }
 
-function renderReadme(): void {
-  const provenance = readProvenance();
+function renderReadme(provenance: Record<string, SetProvenance>): void {
   const lines = [
     "# Oxia captures",
     "",
     "Each JSON file under a set directory is one named read-only run of `tests/live/oxia-live-support.ts`, recorded against a live compose fixture by `tests/live/oxia-evidence.ts` through the real provider and adapter.",
     "No file here is written by hand: the harness writes every capture and this README, and `tests/integration/db/oxia-provider.test.ts` replays each capture and holds it by the digest below.",
     "",
-    "| Set | Image | Digest | Captured | Command |",
+    SET_TABLE_HEADER,
     "|---|---|---|---|---|",
   ];
   for (const fixture of OXIA_FIXTURES) {
     const set = provenance[fixture.set];
-    if (set === undefined) fail(`${provenanceFile} holds no provenance for ${fixture.set}; capture the set first`);
+    if (set === undefined) fail(`tests/fixtures/oxia/README.md holds no row for ${fixture.set}; capture the set first`);
     lines.push(`| ${fixture.set} | \`${set.image}\` | \`${set.digest}\` | ${set.date} | \`${set.command}\` |`);
   }
   lines.push("", "| File | SHA-256 |", "|---|---|");
@@ -173,7 +186,7 @@ function renderReadme(): void {
     `${VECTORS.map((name) => `\`${name}\``).join(" and ")} are vectors with their own provenance, not captures.`,
     "",
   );
-  writeFileSync(path.join(FIXTURES, "README.md"), lines.join("\n"));
+  writeFileSync(README, lines.join("\n"));
   console.log(`oxia-evidence: wrote tests/fixtures/oxia/README.md over ${captureFiles().length} captures`);
 }
 
@@ -241,24 +254,23 @@ async function capture(): Promise<void> {
     if (after !== before) fail(`the fingerprint changed during the run; nothing was written`);
   }
 
-  for (const { file, text } of written) {
-    mkdirSync(path.dirname(path.join(out, file)), { recursive: true });
-    writeFileSync(path.join(out, file), text);
-  }
-  if (only === undefined && out === FIXTURES) {
-    const provenance = readProvenance();
+  // Read before any capture is written, so that a README in no known form leaves the tree as it was.
+  const provenance = out === FIXTURES ? readProvenance() : undefined;
+  if (provenance !== undefined && only === undefined)
     provenance[fixture.set] = {
       ...imageOf(fixture.container),
       date: new Date().toISOString().slice(0, 10),
       command: `bun tests/live/oxia-evidence.ts --target ${fixture.target} --version ${fixture.set}${certs === undefined ? "" : " --certs <a copy of the volume>"}`,
     };
-    mkdirSync(path.dirname(provenanceFile), { recursive: true });
-    writeFileSync(provenanceFile, `${JSON.stringify(provenance, null, 2)}\n`);
+  for (const { file, text } of written) {
+    mkdirSync(path.dirname(path.join(out, file)), { recursive: true });
+    writeFileSync(path.join(out, file), text);
   }
+  if (provenance !== undefined) renderReadme(provenance);
   console.log(
     `oxia-evidence: wrote ${written.length} captures of ${fixture.set} under ${path.relative(ROOT, out) || out}`,
   );
 }
 
-if (process.argv.includes("--readme")) renderReadme();
+if (process.argv.includes("--readme")) renderReadme(readProvenance());
 else await capture();

@@ -10,7 +10,7 @@
  *
  * The third block holds `tests/live/oxia-seed-raw.ts`, the one file of the repository that writes to an Oxia server
  * (SB3-5.9): its fixed targets, the marker check before any write, its keys against the README's table, and that no
- * other `tests/live/oxia-*.ts` file names a write.
+ * other `tests/live/oxia-*.ts` file names a write, nor keeps state under the system's temporary directory.
  *
  * Each rule is a pure function from the parsed fixtures to a list of findings, so it is proven both ways: the real
  * tree gives none, and a planted copy with one fault gives the finding that names it.
@@ -1535,6 +1535,16 @@ function seederRoutingFindings(files: LiveFiles): string[] {
   return findings;
 }
 
+const TEMPORARY_WORDS = /\btmpdir\b|\bTMPDIR\b|\bmkdtemp(?:Sync)?\b/;
+
+// Rule 34.
+function repositoryStateFindings(files: LiveFiles): string[] {
+  return Object.entries(files.live)
+    .filter(([name, text]) => TEMPORARY_WORDS.test(codeOf(name, text)))
+    .map(([name]) => `tests/live/${name} keeps state under the system's temporary directory`)
+    .sort();
+}
+
 const liveFiles = loadLiveFiles();
 
 describe("tests/live/oxia-seed-raw.ts, the one writer", () => {
@@ -1591,6 +1601,22 @@ describe("tests/live/oxia-seed-raw.ts, the one writer", () => {
       draft.live["oxia-evidence.ts"] = `${draft.live["oxia-evidence.ts"] ?? ""}\n// never a Write\n`;
     });
     clean(writeSurfaceFindings(commented));
+  });
+
+  test("no live file keeps state outside the repository: the fixtures README is the harness's provenance store", () => {
+    clean(repositoryStateFindings(liveFiles));
+    const temporary = plantedLive(liveFiles, (draft) => {
+      draft.live["oxia-evidence.ts"] =
+        `import { tmpdir } from "node:os";\nconst kept = path.join(tmpdir(), "x.json");\n${draft.live["oxia-evidence.ts"] ?? ""}`;
+    });
+    finds(
+      repositoryStateFindings(temporary),
+      "tests/live/oxia-evidence.ts keeps state under the system's temporary directory",
+    );
+    const commented = plantedLive(liveFiles, (draft) => {
+      draft.live["oxia-evidence.ts"] = `${draft.live["oxia-evidence.ts"] ?? ""}\n// never tmpdir\n`;
+    });
+    clean(repositoryStateFindings(commented));
   });
 
   test("the keys it writes are the README's rows for it, and the counts match", () => {
