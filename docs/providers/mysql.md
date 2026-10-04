@@ -1223,6 +1223,12 @@ A snapshot taken before this change stored MariaDB's catalog text in `defaultVal
 A column with NO default is the exception: the old reading stored the four-character keyword `NULL` there and the current one stores neither field, so such a snapshot reports one spurious default change per no-default column, with a `MODIFY COLUMN` that changes nothing.
 Reading that keyword as absence would put back the ambiguity this section exists to remove, since `NULL` is also a value a column can really default to.
 
+A second one, for a MySQL snapshot taken before SchemaDiff read the DDL (#1031), accepted the same way.
+Such a snapshot holds only the catalog's value, and today's reading carries the SQL text as well, so the comparison is `abc` against `'abc'`.
+It reports `Default changed: abc → 'abc'` for every default the server spells with quotes or as an expression: string, date and time, enum, binary and expression defaults.
+A bare numeric default is the same text on both sides and reports nothing.
+The stored value cannot be told apart from SQL, which is the defect the DDL read exists to fix, so the comparison has nothing to reconcile them with; taking a new snapshot clears it.
+
 MySQL's own parenthesised expression defaults read back from the catalog charset-introduced and backslash-escaped, `concat(_latin1\'x\',_latin1\'y\')`, which is not what the user wrote and is `ER_PARSE_ERROR` after `DEFAULT`.
 `defaultValue` carries it as reported.
 The DDL read below carries `(concat(_latin1'x',_latin1'y'))` as `defaultExpression`, which the server accepts back.
@@ -1238,6 +1244,7 @@ Measured 2026-09-23 and 2026-09-24 on MySQL 26.7.0 and MariaDB 13.0.2, through `
 
 **It costs one round trip per table, so it is opt-in.**
 Only a table with at least one catalog default is read, and only a described one, so the caller's `limit` bounds it.
+A view is never read: its columns report the defaults of the columns they select, and `SHOW CREATE TABLE` answers a view with no column list to read them from.
 5000 tables, one connection, local Docker:
 
 | read | time |
@@ -1291,7 +1298,19 @@ It reads the ONE primary after the top-level `DEFAULT`, which stops it at `ON UP
 Identifiers are read in all three quotings the server uses: backticks, the double quote under `ANSI_QUOTES`, and bare under `sql_quote_show_create=0`.
 It does not use `src/lib/sql/spans.ts`, which declines a quote behind a backslash because in text a user wrote the escaping depends on the session; this text is the server's, which always escapes with a backslash.
 
-Not measured: the wire-compatible engines this provider also serves (TiDB, StarRocks, Doris and the rest). They take the same path, and DDL the reader cannot use falls back as above.
+It answers nothing for the whole table when a default is followed directly by anything but a space, a comment or the end of the column, or holds U+FFFD, the driver's mark for a byte it could not decode.
+Both come from SingleStore 9.1.1, measured 2026-10-04, which this provider also serves:
+
+| DDL | SingleStore `SHOW CREATE TABLE` | read as one primary | now |
+| --- | --- | --- | --- |
+| `decimal(6,2) DEFAULT 1.50` | `DEFAULT 1.50` | `1` | falls back |
+| `double DEFAULT 0.1` | `DEFAULT 0.1` | `0` | falls back |
+| `int DEFAULT 42` | `DEFAULT 42` | `42` | read |
+| `binary(4) DEFAULT 0x00FF0A27` | a string with the 0xFF byte raw | `0x00EFBFBD0A27` after the hex rewrite | falls back |
+
+MySQL quotes every numeric default and writes a binary default that is not valid text as hex, so neither shape occurs there.
+
+Not measured: the other wire-compatible engines this provider serves (TiDB, StarRocks, Doris and the rest). They take the same path, and DDL the reader cannot use falls back as above.
 
 #### `describeObjects()` describes a whole folder in four statements (#789)
 

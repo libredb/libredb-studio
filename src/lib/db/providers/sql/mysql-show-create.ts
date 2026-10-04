@@ -37,7 +37,8 @@
  * column; every one of them is reserved, so a column of that name is always quoted.
  *
  * ANY DOUBT IS `undefined`, NEVER A PARTIAL MAP. An unterminated string, identifier, comment
- * or parenthesis, a missing column list, a DEFAULT with no primary after it, or an item that
+ * or parenthesis, a missing column list, a DEFAULT with no primary after it, a primary with
+ * more text written against it or holding an undecodable byte (`primaryAt`), or an item that
  * starts with anything else: the caller keeps today's catalog reading for the whole table.
  * A partial map would leave some columns of one table on each reading, and a diff of that
  * table would compare the two.
@@ -151,15 +152,36 @@ function tokens(text: string): Token[] | undefined {
 /**
  * The one primary after DEFAULT, as the server wrote it: a group, a string, or a word with
  * the string or group written against it (`b'101'`, `CURRENT_TIMESTAMP(6)`).
+ *
+ * `undefined` for a primary this would read SHORT or WRONG, both measured on SingleStore
+ * 9.1.1, which this provider also serves:
+ *
+ * - Anything but a space, a comment or the item's end right after it. MySQL quotes every
+ *   numeric default; SingleStore writes `DEFAULT 1.50` bare, and one word of that is `1`.
+ * - A U+FFFD in it. That is the driver's mark for a byte it could not decode: SingleStore
+ *   writes `binary(4) DEFAULT 0x00FF0A27` as a string with the 0xFF raw, and the hex rewrite
+ *   would carry EF BF BD in its place. MySQL never does this (it writes such a default as
+ *   hex), so on MySQL the mark can only be a default that really holds U+FFFD, which then
+ *   keeps the catalog reading.
  */
 function primaryAt(item: readonly Token[], index: number): string | undefined {
-  let i = index;
-  while (item[i]?.kind === "space") i++;
-  const first = item[i];
-  if (first?.kind === "group" || first?.kind === "string") return first.text;
-  if (first?.kind !== "word") return undefined;
-  const next = item[i + 1];
-  return next?.kind === "string" || next?.kind === "group" ? first.text + next.text : first.text;
+  let start = index;
+  while (item[start]?.kind === "space") start++;
+  const first = item[start];
+  let end = start + 1;
+  if (first?.kind === "word") {
+    const next = item[end];
+    if (next?.kind === "string" || next?.kind === "group") end++;
+  } else if (first?.kind !== "group" && first?.kind !== "string") {
+    return undefined;
+  }
+  const after = item[end];
+  if (after !== undefined && after.kind !== "space" && after.kind !== "comment") return undefined;
+  const text = item
+    .slice(start, end)
+    .map((token) => token.text)
+    .join("");
+  return text.includes("\uFFFD") ? undefined : text;
 }
 
 /**

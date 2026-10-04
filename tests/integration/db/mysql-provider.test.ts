@@ -6084,13 +6084,46 @@ describe("MySQL bulk column read", () => {
  */
 describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
   const DEFAULTS_COLUMNS = [
-    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
-    { column_name: "note", data_type: "varchar", is_nullable: "YES", column_default: "abc", column_key: "", extra: "" },
-    { column_name: "qty", data_type: "int", is_nullable: "YES", column_default: "42", column_key: "", extra: "" },
-    { column_name: "bin", data_type: "binary", is_nullable: "YES", column_default: "0x", column_key: "", extra: "" },
+    {
+      column_name: "id",
+      data_type: "int",
+      column_type: "int",
+      is_nullable: "NO",
+      column_default: null,
+      column_key: "PRI",
+      extra: "",
+    },
+    {
+      column_name: "note",
+      data_type: "varchar",
+      column_type: "varchar(20)",
+      is_nullable: "YES",
+      column_default: "abc",
+      column_key: "",
+      extra: "",
+    },
+    {
+      column_name: "qty",
+      data_type: "int",
+      column_type: "int",
+      is_nullable: "YES",
+      column_default: "42",
+      column_key: "",
+      extra: "",
+    },
+    {
+      column_name: "bin",
+      data_type: "binary",
+      column_type: "binary(4)",
+      is_nullable: "YES",
+      column_default: "0x",
+      column_key: "",
+      extra: "",
+    },
     {
       column_name: "path",
       data_type: "varchar",
+      column_type: "varchar(20)",
       is_nullable: "YES",
       column_default: "a\\b",
       column_key: "",
@@ -6099,6 +6132,7 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
     {
       column_name: "ts",
       data_type: "timestamp",
+      column_type: "timestamp",
       is_nullable: "NO",
       column_default: "CURRENT_TIMESTAMP",
       column_key: "",
@@ -6107,6 +6141,7 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
     {
       column_name: "ex",
       data_type: "varchar",
+      column_type: "varchar(20)",
       is_nullable: "YES",
       column_default: "concat(_utf8mb4\\'x\\',_utf8mb4\\'y\\')",
       column_key: "",
@@ -6115,6 +6150,7 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
     {
       column_name: "gen",
       data_type: "int",
+      column_type: "int",
       is_nullable: "YES",
       column_default: null,
       column_key: "",
@@ -6124,8 +6160,24 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
   const DEFAULTS_DDL =
     "CREATE TABLE `defaults_1031` (\n  `id` int NOT NULL,\n  `note` varchar(20) DEFAULT 'abc',\n  `qty` int DEFAULT '42',\n  `bin` binary(4) DEFAULT 0x00FF0A27,\n  `path` varchar(20) DEFAULT 'a\\\\b',\n  `ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  `ex` varchar(20) DEFAULT (concat(_utf8mb4'x',_utf8mb4'y')),\n  `gen` int GENERATED ALWAYS AS ((`qty` + 1)) VIRTUAL,\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
   const PLAIN_COLUMNS = [
-    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
-    { column_name: "label", data_type: "varchar", is_nullable: "YES", column_default: null, column_key: "", extra: "" },
+    {
+      column_name: "id",
+      data_type: "int",
+      column_type: "int",
+      is_nullable: "NO",
+      column_default: null,
+      column_key: "PRI",
+      extra: "",
+    },
+    {
+      column_name: "label",
+      data_type: "varchar",
+      column_type: "varchar(20)",
+      is_nullable: "YES",
+      column_default: null,
+      column_key: "",
+      extra: "",
+    },
   ];
 
   /**
@@ -6167,11 +6219,12 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
     options?: { defaultSql?: boolean },
     mariadb = false,
     limit?: number,
+    kind = "table",
   ) {
     const provider = await connectedTo(mariadb);
     mockExecuteFn = withTables(objectSurfaceFixture({ mariadb }), showCreate);
     protocolCalls = [];
-    const batch = await provider.describeObjects(["app"], "table", limit, options);
+    const batch = await provider.describeObjects(["app"], kind, limit, options);
     const showCreates = protocolCalls
       .filter((call) => call.sql.startsWith("SHOW CREATE TABLE"))
       .map((call) => call.sql);
@@ -6283,23 +6336,64 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
    * 2026-09-24: `note varchar(20) DEFAULT 'abc'` and `qty int DEFAULT 42`.
    */
   const PAIR_MYSQL_COLUMNS = [
-    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
-    { column_name: "note", data_type: "varchar", is_nullable: "YES", column_default: "abc", column_key: "", extra: "" },
-    { column_name: "qty", data_type: "int", is_nullable: "YES", column_default: "42", column_key: "", extra: "" },
+    {
+      column_name: "id",
+      data_type: "int",
+      column_type: "int",
+      is_nullable: "NO",
+      column_default: null,
+      column_key: "PRI",
+      extra: "",
+    },
+    {
+      column_name: "note",
+      data_type: "varchar",
+      column_type: "varchar(20)",
+      is_nullable: "YES",
+      column_default: "abc",
+      column_key: "",
+      extra: "",
+    },
+    {
+      column_name: "qty",
+      data_type: "int",
+      column_type: "int",
+      is_nullable: "YES",
+      column_default: "42",
+      column_key: "",
+      extra: "",
+    },
   ];
   const PAIR_MYSQL_DDL =
     "CREATE TABLE `pair_1031` (\n  `id` int NOT NULL,\n  `note` varchar(20) DEFAULT 'abc',\n  `qty` int DEFAULT '42',\n  PRIMARY KEY (`id`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci";
   const PAIR_MARIADB_COLUMNS = [
-    { column_name: "id", data_type: "int", is_nullable: "NO", column_default: null, column_key: "PRI", extra: "" },
+    {
+      column_name: "id",
+      data_type: "int",
+      column_type: "int(11)",
+      is_nullable: "NO",
+      column_default: null,
+      column_key: "PRI",
+      extra: "",
+    },
     {
       column_name: "note",
       data_type: "varchar",
+      column_type: "varchar(20)",
       is_nullable: "YES",
       column_default: "'abc'",
       column_key: "",
       extra: "",
     },
-    { column_name: "qty", data_type: "int", is_nullable: "YES", column_default: "42", column_key: "", extra: "" },
+    {
+      column_name: "qty",
+      data_type: "int",
+      column_type: "int(11)",
+      is_nullable: "YES",
+      column_default: "42",
+      column_key: "",
+      extra: "",
+    },
   ];
 
   /** `pair_1031` as the provider describes it on one server, ready for the diff engine. */
@@ -6322,12 +6416,19 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
     return { ...detail, name: "pair_1031", kind: "table" };
   }
 
+  const defaultChangesOf = (diff: ReturnType<typeof diffSchemas>): string[] =>
+    diff.tables.flatMap((table) =>
+      table.columns.flatMap((column) => column.changes.filter((change) => change.startsWith("Default changed"))),
+    );
+
   test("an unchanged table diffs equal from MySQL to MariaDB, the int pair and the varchar pair alike", async () => {
     const diff = diffSchemas([await pairOn(false, { defaultSql: true })], [await pairOn(true)]);
 
     // qty: MySQL writes `'42'` and MariaDB `42`. Unquoted on the numeric type, it stays equal,
     // as it was before this change. note: `'abc'` on both, where it used to differ (below).
-    expect(diff.tables).toEqual([]);
+    // The two servers still print an int's type differently (`int` and `int(11)`, #1033), so
+    // the claim here is about defaults and reads only those.
+    expect(defaultChangesOf(diff)).toEqual([]);
   });
 
   test("without the DDL read the varchar pair differs, which is the false difference this removes", async () => {
@@ -6335,9 +6436,26 @@ describe("MySQL default SQL from SHOW CREATE TABLE (#1031)", () => {
 
     // Today's reading, kept as the control: MySQL's catalog value `abc` against MariaDB's SQL
     // `'abc'` for the same default. qty was already equal and stays so.
-    expect(diff.tables.flatMap((table) => table.columns.flatMap((column) => column.changes))).toEqual([
-      "Default changed: abc → 'abc'",
-    ]);
+    expect(defaultChangesOf(diff)).toEqual(["Default changed: abc → 'abc'"]);
+  });
+
+  test("a view is never read, since SHOW CREATE TABLE answers no view's defaults", async () => {
+    // A view's columns report the defaults of the columns they select, so the catalog says
+    // "has a default" for a view too, and the read then cost a round trip per view for text
+    // the reader always declined.
+    const { showCreates, columns } = await describeWith(
+      { defaults_1031: DEFAULTS_DDL },
+      { defaultSql: true },
+      false,
+      undefined,
+      "view",
+    );
+
+    expect(showCreates).toEqual([]);
+    expect(columns("defaults_1031").get("note")).toMatchObject({ defaultValue: "abc" });
+    for (const column of columns("defaults_1031").values()) {
+      expect(Object.hasOwn(column, "defaultExpression")).toBe(false);
+    }
   });
 
   test("the caller's limit bounds the DDL reads, since only described objects are read", async () => {

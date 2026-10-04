@@ -4,8 +4,8 @@
  * Every well-formed statement below is VERBATIM server output, captured from MySQL 26.7.0 on
  * 2026-09-23, never a hand-written approximation of it: a fixture shaped by what the parser's
  * author expected would only test the author. `MEASURED` drops some of the #1031 table's rows
- * and edits none. The malformed statements at the end are the only hand-written text, since
- * no server produces them; each is a captured statement cut short.
+ * and edits none. The malformed statements are hand-written, since no server produces them;
+ * each is a captured statement cut short. The SingleStore statements say where they are from.
  */
 
 import { describe, test, expect } from "bun:test";
@@ -167,6 +167,39 @@ describe("showCreateColumnDefaults", () => {
       ],
     ])("%s", (_label, text) => {
       expect(showCreateColumnDefaults(text)).toBeUndefined();
+    });
+  });
+
+  // A wire-compatible engine goes through this provider and is free to spell a default in a
+  // way MySQL never does. Both statements are lines of one `SHOW CREATE TABLE` answer captured
+  // from SingleStore 9.1.1 through mysql2 on 2026-10-04, the other columns dropped.
+  describe("answers undefined for a default it would read short or wrong", () => {
+    test("a bare number with a fraction, which one primary would cut at the dot", () => {
+      // MySQL quotes every numeric default; SingleStore writes it bare. Read as one word,
+      // `1.50` is `1` and `0.1` is `0`, and the migration would carry a different default.
+      const text =
+        "CREATE TABLE `d1119` (\n  `id` int(11) NOT NULL,\n  `dec_` decimal(6,2) DEFAULT 1.50,\n  `dbl` double DEFAULT 0.1,\n  PRIMARY KEY (`id`)\n) AUTOSTATS_CARDINALITY_MODE=INCREMENTAL";
+      expect(showCreateColumnDefaults(text)).toBeUndefined();
+    });
+
+    test("a string holding U+FFFD, which is a byte the driver could not decode", () => {
+      // `binary(4) DEFAULT 0x00FF0A27`: SingleStore writes the 0xFF raw, mysql2 decodes it to
+      // U+FFFD, and the hex rewrite would then carry EF BF BD where FF was declared.
+      const text =
+        "CREATE TABLE `d1119` (\n  `id` int(11) NOT NULL,\n  `bin` binary(4) DEFAULT '\\0\uFFFD\\n\\'',\n  PRIMARY KEY (`id`)\n) AUTOSTATS_CARDINALITY_MODE=INCREMENTAL";
+      expect(showCreateColumnDefaults(text)).toBeUndefined();
+    });
+
+    test("a bare whole number, a space or a comment after the primary still reads", () => {
+      const text =
+        "CREATE TABLE `d1119` (\n  `qty` int(11) DEFAULT 42,\n  `inv` int DEFAULT '7'/*!80023 INVISIBLE */,\n  `ts` timestamp NULL DEFAULT CURRENT_TIMESTAMP\n)";
+      expect(showCreateColumnDefaults(text)).toEqual(
+        new Map([
+          ["qty", "42"],
+          ["inv", "'7'"],
+          ["ts", "CURRENT_TIMESTAMP"],
+        ]),
+      );
     });
   });
 });
