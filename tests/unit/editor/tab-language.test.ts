@@ -70,6 +70,10 @@ describe("resolveTabType", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "cypher" }))).toBe("cypher");
   });
 
+  test("InfluxDB (queryLanguage influxql, no dialect) gets an influxql tab, not the SQL fallback (InfluxDB spec 6.7)", () => {
+    expect(resolveTabType(makeCaps({ queryLanguage: "influxql" }))).toBe("influxql");
+  });
+
   test("missing capabilities fall back to sql", () => {
     expect(resolveTabType(undefined)).toBe("sql");
     expect(resolveTabType(null)).toBe("sql");
@@ -86,6 +90,7 @@ describe("editorLanguageForTabType", () => {
     expect(editorLanguageForTabType("kafka")).toBe("json");
     expect(editorLanguageForTabType("etcd")).toBe("etcd");
     expect(editorLanguageForTabType("cypher")).toBe("graph-cypher");
+    expect(editorLanguageForTabType("influxql")).toBe("influxql");
   });
 
   test("a Kafka tab renders in Monaco's built-in json mode, and no language of its own (#1088)", () => {

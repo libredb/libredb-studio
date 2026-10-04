@@ -17,6 +17,8 @@ import { registerEtcdLanguage } from "@/lib/editor/etcd-language";
 import { registerPromqlLanguage } from "@/lib/editor/promql-language";
 import { CYPHER_LANGUAGE_ID, registerCypherLanguage } from "@/lib/editor/cypher-language";
 import { cypherCompletionSchemaOf, registerCypherCompletionProvider } from "@/lib/editor/cypher-completions";
+import { INFLUXQL_LANGUAGE_ID, registerInfluxqlLanguage } from "@/lib/editor/influxql-language";
+import { influxqlCompletionSchemaOf, registerInfluxqlCompletionProvider } from "@/lib/editor/influxql-completions";
 import { graphPolicyProfileOf } from "@/lib/db/graph-policy-profiles";
 import { configureMonacoLoader } from "@/lib/editor/monaco-loader";
 import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
@@ -514,14 +516,15 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
     }, []);
 
     const handleBeforeMount = (monacoInstance: typeof Monaco) => {
-      // Register the LibreDB, Redis and etcd command languages, PromQL and Cypher (each idempotent)
-      // so their tabs highlight correctly instead of being treated as JSON or SQL
-      // (#427, #1085, #1089, Neo4j spec 6.5).
+      // Register the LibreDB, Redis and etcd command languages, PromQL, Cypher and InfluxQL (each
+      // idempotent) so their tabs highlight correctly instead of being treated as JSON or SQL
+      // (#427, #1085, #1089, Neo4j spec 6.5, InfluxDB spec 6.7).
       registerLibreDBLanguage(monacoInstance);
       registerRedisLanguage(monacoInstance);
       registerPromqlLanguage(monacoInstance);
       registerEtcdLanguage(monacoInstance);
       registerCypherLanguage(monacoInstance);
+      registerInfluxqlLanguage(monacoInstance);
       // Every console dialect's language, from its editor record (vector-family spec 3.5): the records are the
       // only input, so nothing here names a dialect.
       registerDialectConsoles(monacoInstance);
@@ -581,6 +584,16 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         return () => disposable.dispose();
       }
     }, [monaco, language, parsedSchema, graphPolicy]);
+
+    // InfluxQL completion provider (InfluxDB spec 6.7). Its sources and keys are read from the schema
+    // objects' `[database, measurement]` paths and typed columns, and every insert is quoted by the
+    // provider's own quoter, so an inserted name passes the read policy.
+    useEffect(() => {
+      if (monaco && language === INFLUXQL_LANGUAGE_ID) {
+        const disposable = registerInfluxqlCompletionProvider(monaco, influxqlCompletionSchemaOf(parsedSchema));
+        return () => disposable.dispose();
+      }
+    }, [monaco, language, parsedSchema]);
 
     // Every model change reaches here: a keystroke, and equally the writes Format, Clear
     // and the imperative setValue make, since Monaco reports those through the same

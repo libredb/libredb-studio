@@ -65,6 +65,7 @@ describe("the tab-type and language readers take their answers from the registri
 
   test("without a record, resolveTabType keeps its language rungs", () => {
     expect(resolveTabType(makeCaps({ queryLanguage: "json" }))).toBe("mongodb");
+    expect(resolveTabType(makeCaps({ queryLanguage: "influxql" }))).toBe("influxql");
     expect(resolveTabType(makeCaps())).toBe("sql");
   });
 

@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { beforeAll, describe, test, expect } from "bun:test";
 import {
   generateTableQuery,
   generateSelectQuery,
@@ -33,6 +33,10 @@ import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/q
 import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
+import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
+import { InfluxqlQuoteError } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
+import { offersSchemaDiagram } from "@/lib/db/types";
 
 // ============================================================================
 // Helpers
@@ -2260,5 +2264,69 @@ describe("generateTableQuery and generateSelectQuery: Qdrant", () => {
     expect(request.route.template).toBe("collections/{collection_name}/points/query");
     const body = JSON.parse(toJsonText(request.body)) as Record<string, unknown>;
     expect([(body.query as number[]).length, body.limit, body.using]).toEqual([4, 10, undefined]);
+  });
+});
+
+// InfluxQL (InfluxDB spec 6.6, 6.7): the arms read the browser-safe InfluxQL generators and quoter, so a tree click
+// and Generate Query write the text the provider's read policy allows, the measurement source `"db".."m"`.
+describe("the influxql arms", () => {
+  const path = ["home", "home"];
+  const columns: ColumnSchema[] = [
+    { name: "time", type: "time", nullable: false, isPrimary: false },
+    { name: "room", type: "tag", nullable: true, isPrimary: false },
+    { name: "temp", type: "float", nullable: true, isPrimary: false },
+  ];
+  let influxCaps: ProviderCapabilities;
+
+  beforeAll(async () => {
+    influxCaps = (await createDatabaseProvider(CENSUS_CONNECTION.influxdb)).getCapabilities();
+  });
+
+  test("the InfluxDB (InfluxQL) provider declares the influxql language these arms read", () => {
+    expect(influxCaps.queryLanguage).toBe("influxql");
+  });
+
+  test("quoteIdentifier always double-quotes, with the InfluxQL escapes", () => {
+    expect(quoteIdentifier("temp", influxCaps)).toBe('"temp"');
+    expect(quoteIdentifier('we"ird name;x', influxCaps)).toBe('"we\\"ird name;x"');
+    expect(() => quoteIdentifier("bad\u0001name", influxCaps)).toThrow(InfluxqlQuoteError);
+  });
+
+  test('quoteObjectPath writes a [database, measurement] path as the source "db".."m"', () => {
+    expect(quoteObjectPath(path, influxCaps)).toBe('"home".."home"');
+    expect(quoteObjectPath(["home", 'we"ird name;x'], influxCaps)).toBe('"home".."we\\"ird name;x"');
+    expect(() => quoteObjectPath(["home"], influxCaps)).toThrow(RangeError);
+    expect(() => quoteObjectPath(["home", "rp", "m"], influxCaps)).toThrow(RangeError);
+  });
+
+  test("a tree click writes the windowed preview of the InfluxQL generator, which the read policy allows", () => {
+    const text = generateTableQuery(path, influxCaps, columns);
+    expect(text).toBe(influxqlTableQuery(path));
+    expect(text).toBe(
+      "-- Newest points of the last hour, LIMIT 50 per series. No row means no point is newer: widen 1h below.\n" +
+        'SELECT * FROM "home".."home" WHERE time > now() - 1h ORDER BY time DESC LIMIT 50',
+    );
+    expect(evaluateInfluxql(text).allowed).toBe(true);
+  });
+
+  test("Generate Query writes the preview with its example lines, from the described columns", () => {
+    const text = generateSelectQuery(path, columns, influxCaps);
+    expect(text).toBe(influxqlSelectQuery(path, columns));
+    expect(text).toContain('SELECT mean("temp") FROM "home".."home"');
+    expect(text).toContain('WITH KEY = "room"');
+    expect(evaluateInfluxql(text).allowed).toBe(true);
+  });
+
+  test("a path that is not [database, measurement] is refused, never spelled", () => {
+    expect(() => generateTableQuery(["home"], influxCaps)).toThrow(RangeError);
+    expect(() => generateSelectQuery(["a", "b", "c"], columns, influxCaps)).toThrow(RangeError);
+  });
+
+  test("Count stays gated, and the schema diagram is not offered for influxql", () => {
+    expect(generators.generateCountQuery(path, influxCaps)).toBeNull();
+    expect(offersSchemaDiagram(influxCaps)).toBe(false);
+    // The control: the language the diagram line above it reads, and SQL, keep their answers.
+    expect(offersSchemaDiagram(makeCaps({ queryLanguage: "cypher" }))).toBe(false);
+    expect(offersSchemaDiagram(makeCaps())).toBe(true);
   });
 });

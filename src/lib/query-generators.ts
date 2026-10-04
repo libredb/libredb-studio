@@ -4,6 +4,8 @@ import { declaredLevels } from "@/lib/db/object-kinds";
 import { type QueryDialect, registeredDialect } from "@/lib/db/query-dialects";
 import { encodeKey } from "@/lib/db/providers/keyvalue/etcd/keys";
 import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyvalue/etcd/lexer";
+import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
+import { influxqlSource, quoteInfluxqlIdentifier } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
 import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
 import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
@@ -93,6 +95,8 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
   if (capabilities.queryLanguage === "json") return name;
   // Cypher writes every name in backticks, a backtick doubled, as its generators do (Neo4j spec 6.5).
   if (capabilities.queryLanguage === "cypher") return quoteCypherName(name);
+  // InfluxQL always double-quotes a name, with the scanner's escapes (InfluxDB spec 6.7, C6).
+  if (capabilities.queryLanguage === "influxql") return quoteInfluxqlIdentifier(name);
 
   // An explicit declaration wins over the port heuristic below, because the port
   // stopped being a faithful proxy for the dialect: Elasticsearch and OpenSearch
@@ -158,6 +162,14 @@ export function quoteIdentifier(name: string, capabilities: ProviderCapabilities
  */
 export function quoteObjectPath(path: readonly string[], capabilities: ProviderCapabilities): string {
   if (capabilities.queryLanguage === "json") return path.join(".");
+  // An InfluxQL measurement is `[database, measurement]`, written `"db".."m"`: the database's default retention
+  // policy (InfluxDB spec 6.7).
+  if (capabilities.queryLanguage === "influxql") {
+    if (path.length !== 2) {
+      throw new RangeError(`An InfluxQL source path is [database, measurement]; received ${path.length} segment(s)`);
+    }
+    return influxqlSource(path[0], path[1]);
+  }
   return path.map((segment) => quoteIdentifier(segment, capabilities)).join(".");
 }
 
@@ -755,6 +767,9 @@ export function generateTableQuery(
   if (capabilities.queryLanguage === "cypher") {
     return cypherForSegment(tableName) ?? "";
   }
+  // InfluxQL (InfluxDB spec 6.6, I20): the newest points of the last hour, `LIMIT 50` per series written in the
+  // text, because the type declares no external limiting. The path must be `[database, measurement]`.
+  if (capabilities.queryLanguage === "influxql") return influxqlTableQuery(path);
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++). The one SQL branch left, and it is about the PROJECTION: the
   // document key is not a column, so the grid has nothing to show without the alias.
@@ -1033,6 +1048,9 @@ export function generateSelectQuery(
   if (capabilities.queryLanguage === "cypher") {
     return cypherForSegment(tableName) ?? "";
   }
+  // InfluxQL (InfluxDB spec 6.6): the click's preview with its example lines as `--` comments, naming a field and
+  // a tag from the described columns.
+  if (capabilities.queryLanguage === "influxql") return influxqlSelectQuery(path, columns);
   const table = quoteObjectPath(path, capabilities);
   // Couchbase (SQL++): every field is reached through the keyspace alias, and the
   // document key comes from META() rather than from the document body.

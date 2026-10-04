@@ -494,6 +494,10 @@ export function offersSqlExport(capabilities: ProviderCapabilities | undefined):
  * known not to fit it.
  */
 export function offersSchemaDiagram(capabilities: ProviderCapabilities | undefined): boolean {
+  // InfluxDB spec 6.3: a measurement's columns are the union of the tag and field keys its points happened to carry,
+  // read with two SHOW statements per measurement, so a diagram would cost two requests per box to draw a schema the
+  // engine never declares, with no relation between boxes.
+  if (capabilities?.queryLanguage === "influxql") return false;
   return capabilities?.queryLanguage !== "cypher";
 }
 
