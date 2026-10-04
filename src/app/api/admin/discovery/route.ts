@@ -3,9 +3,14 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { isPlainHttpRequest } from "@/lib/api/request-scheme";
 import { auditRoleDenial, guardRoute } from "@/lib/api/require-session";
 import { readCookieSecureOverride } from "@/lib/auth";
-import { getDiscoveryStatus } from "@/lib/seed/discovery-loader";
+import { getDiscoveryStatus, type DiscoveryStatus } from "@/lib/seed/discovery-loader";
 
 const GET_ROUTE = "GET /api/admin/discovery";
+
+/** The body of a 200 answer, which the admin Overview card (PlatformDiscoveryCard) imports. */
+export type DiscoveryResponse =
+  | { discovery: null }
+  | { discovery: DiscoveryStatus; transport: { plainHttp: boolean; cookieSecureOff: boolean } };
 
 async function requireAdmin(request: Request, route: string) {
   const guard = await guardRoute({ route, bucket: "query", request });
@@ -26,11 +31,17 @@ export async function GET(request: Request) {
   if ("response" in guard) return guard.response;
   try {
     const discovery = await getDiscoveryStatus();
-    if (discovery === null) return NextResponse.json({ discovery: null });
-    return NextResponse.json({
-      discovery,
-      transport: { plainHttp: isPlainHttpRequest(request), cookieSecureOff: readCookieSecureOverride() === false },
-    });
+    const body: DiscoveryResponse =
+      discovery === null
+        ? { discovery: null }
+        : {
+            discovery,
+            transport: {
+              plainHttp: isPlainHttpRequest(request),
+              cookieSecureOff: readCookieSecureOverride() === false,
+            },
+          };
+    return NextResponse.json(body);
   } catch (error) {
     return createErrorResponse(error, { route: GET_ROUTE });
   }

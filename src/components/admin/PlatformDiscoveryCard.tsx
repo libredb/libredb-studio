@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 import { Radar, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import type { DiscoveryResponse } from "@/app/api/admin/discovery/route";
 import { appFetch } from "@/lib/config/base-path";
-import type { DiscoveryState, DiscoveryStatus } from "@/lib/seed/discovery-loader";
+import type { DiscoveryState } from "@/lib/seed/discovery-loader";
 
 const CARD_TITLE = "Platform Discovery (CapRover)";
 const STATE_LABEL = "State";
@@ -25,10 +26,6 @@ const STATE_BADGES: Record<DiscoveryState, { label: string; className: string }>
   stale: { label: "Stale", className: "bg-warning-tint/10 text-warning border border-warning-tint/20 text-xs" },
   error: { label: "Failed", className: "bg-danger-tint/10 text-danger border border-danger-tint/20 text-xs" },
 };
-
-type DiscoveryResponse =
-  | { discovery: null }
-  | { discovery: DiscoveryStatus; transport: { plainHttp: boolean; cookieSecureOff: boolean } };
 
 /**
  * The CapRover discovery status (GET /api/admin/discovery). Mounted on the Overview page above
