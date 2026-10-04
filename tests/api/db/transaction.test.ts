@@ -17,6 +17,7 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
+  NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
 
 // ─── Create mock provider with transaction methods ──────────────────────────
@@ -684,6 +685,40 @@ describe("POST /api/db/transaction", () => {
     openableProvider();
     asSession("bob", "admin");
     expect((await call("d72-failed-begin", { action: "begin" })).status).toBe(200);
+  });
+
+  test("a statement that ended the transaction is reported, and the connection is handed back", async () => {
+    // The provider ends its session when the server says the statement committed (MySQL DDL,
+    // a typed COMMIT). The caller is told, instead of being left to ask for a ROLLBACK that
+    // would answer success and undo nothing.
+    const provider = openableProvider();
+    mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+      provider.expire();
+      return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+    });
+
+    asSession("alice");
+    await call("sandbox-ddl", { action: "begin" });
+    const res = await call("sandbox-ddl", { action: "query", sql: "CREATE TABLE t (id INT)" });
+
+    expect(res.status).toBe(200);
+    expect((await parseResponseJSON<{ inTransaction: boolean }>(res)).inTransaction).toBe(false);
+
+    // The record went with the transaction: another session may begin at once.
+    asSession("bob", "admin");
+    expect((await call("sandbox-ddl", { action: "begin" })).status).toBe(200);
+  });
+
+  test("a begin the server opened no transaction for answers 400 with the reason", async () => {
+    mockTxProvider.beginTransaction.mockImplementation(async () => {
+      throw new QueryError(NO_TRANSACTION_OPENED, "postgres");
+    });
+
+    const res = await call("no-tx-engine", { action: "begin" });
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe(NO_TRANSACTION_OPENED);
   });
 
   test("DatabaseError returns 500", async () => {

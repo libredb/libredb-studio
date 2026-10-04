@@ -1,14 +1,16 @@
 /**
- * IBM Db2 LUW provider (#786), over db2-node 1.0.24.
+ * IBM Db2 LUW provider (#786), over db2-node 1.0.25.
  *
- * The driver's known defects are listed in `docs/providers/db2.md` under "Known issues", and the
- * ones 1.0.22 had were reported upstream (gurungabit/db2-node#12) and fixed in 1.0.24. This class
- * contains the ones a provider still can:
+ * The driver's known defects are listed in `docs/providers/db2.md` under "Known issues"; the ones
+ * 1.0.22 had were fixed in 1.0.24 (gurungabit/db2-node#12) and most of the rest in 1.0.25
+ * (gurungabit/db2-node#19 to #25). This class contains what a provider still can:
  *
  * - M1 no LOB in a catalog row beside other columns, and catalog text read as HEX (`catalog.ts`);
  * - M3 an array or object parameter refused before the driver reads it as bytes (`params.ts`);
  * - M4 the schema always bound, never the session's; M5 padded CHAR trimmed (`catalog.ts`);
- * - M6 no `queryTimeout` and no `cancelQuery`; M7 a duplicate column named (`values.ts`);
+ * - M6 no `queryTimeout` and no `cancelQuery`; M7 a duplicate column kept, under a numbered name
+ *   (`values.ts`); a lost LOB edit named, and kept out of the preview (K24, `values.ts`);
+ * - a driver failure classified by its `driverCode` (K17, `driver.ts`);
  * - TLS that fails closed, and a tunnel that is never dialled around (`connection.ts`).
  *
  * One client per provider, no pool: four concurrent queries on one client were measured
@@ -16,7 +18,7 @@
  * out of TLS.
  *
  * Absent on purpose: `queryReadOnly` and `endOpenQueryTransaction` (no read-only profile in this
- * version), `cancelQuery` (1.0.24's `Client.cancel()` and server-side `queryTimeout` need
+ * version), `cancelQuery` (the driver's `Client.cancel()` and server-side `queryTimeout` need
  * monitoring and cancel privileges and are a change of their own, D148), interactive
  * transactions, and the object-edit pair.
  */
@@ -45,7 +47,7 @@ import type {
   StorageStats,
   TableStats,
 } from "../../../types";
-import { DatabaseConfigError, QueryError, mapDatabaseError } from "../../../errors";
+import { DatabaseConfigError, QueryError } from "../../../errors";
 import { analyzeQuery, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
@@ -53,7 +55,7 @@ import { SQLBaseProvider } from "../sql-base";
 import { db2Capabilities, db2Labels } from "./capabilities";
 import { CODE_PAGE_SQL, decodeCatalogRow } from "./catalog";
 import { type CaFileSystem, type Db2Connection, NODE_CA_FILE_SYSTEM, openClient, resolveTarget } from "./connection";
-import { type Db2Client, type Db2Driver, loadDb2Driver } from "./driver";
+import { type Db2Client, type Db2Driver, loadDb2Driver, mapDb2Error } from "./driver";
 import { MAINTAINED_TABLE_TYPES, MAINTENANCE_TARGET_TYPE_SQL, maintenanceStatement } from "./maintenance";
 import { neutralHealth, readOverview, TABLE_STATS_SQL, tableStatsRow } from "./monitoring";
 import * as objects from "./objects";
@@ -111,7 +113,7 @@ export class Db2Provider extends SQLBaseProvider {
       this.caDir = opened.caDir;
       this.setConnected(true);
     } catch (error) {
-      const mapped = mapDatabaseError(error, "db2");
+      const mapped = mapDb2Error(error);
       this.setError(mapped);
       throw mapped;
     }
@@ -128,7 +130,7 @@ export class Db2Provider extends SQLBaseProvider {
     try {
       if (client !== null) await client.close();
     } catch (error) {
-      throw mapDatabaseError(error, "db2");
+      throw mapDb2Error(error);
     } finally {
       if (caDir !== undefined) await this.caFileSystem.rm(caDir, { recursive: true, force: true });
     }
@@ -145,18 +147,18 @@ export class Db2Provider extends SQLBaseProvider {
   // ============================================================================
 
   /**
-   * One statement, sent as written with its parameters checked (M3). db2-node 1.0.24 classifies a
-   * statement past its leading comments, which 1.0.22 refused (K18, fixed). No timeout is passed
-   * (M6).
+   * One statement, sent as written with its parameters checked (M3), and read as array rows so a
+   * duplicated column keeps every value (M7, K15). db2-node 1.0.24 classifies a statement past its
+   * leading comments, which 1.0.22 refused (K18, fixed). No timeout is passed (M6).
    */
   public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
     const client = this.connected();
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          return await client.query(sql, normaliseParams(params));
+          return await client.query(sql, normaliseParams(params), { rowMode: "array" });
         } catch (error) {
-          throw mapDatabaseError(error, "db2", sql);
+          throw mapDb2Error(error, sql);
         }
       });
       return { ...readResult(result), executionTime };
@@ -222,7 +224,7 @@ export class Db2Provider extends SQLBaseProvider {
     try {
       return await read();
     } catch (error) {
-      throw mapDatabaseError(error, "db2");
+      throw mapDb2Error(error);
     }
   }
 
@@ -286,7 +288,7 @@ export class Db2Provider extends SQLBaseProvider {
       try {
         await client.query(statement.sql, undefined);
       } catch (error) {
-        throw mapDatabaseError(error, "db2", statement.sql);
+        throw mapDb2Error(error, statement.sql);
       }
     });
     return { success: true, executionTime, message: statement.message };

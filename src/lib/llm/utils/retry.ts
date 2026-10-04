@@ -22,6 +22,11 @@ export interface RetryOptions {
   provider?: LLMProviderType;
   /** Operation name for logging */
   operation?: string;
+  /**
+   * The caller's abort signal. Once it has aborted, a failure is the abort and not a transient fault,
+   * so it is thrown at once instead of being retried after a backoff.
+   */
+  signal?: AbortSignal;
 }
 
 // ============================================================================
@@ -52,12 +57,16 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
     maxDelay = DEFAULT_MAX_DELAY,
     provider,
     operation = "LLM request",
+    signal,
   } = options;
 
   let lastError: Error | undefined;
   let delay = initialDelay;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Checked before every attempt, not left to `fn`: the Gemini SDK (0.24.1) listens for the abort event and
+    // never reads `aborted`, so a request handed a signal that already aborted is sent, unbounded.
+    if (signal?.aborted) throw lastError ?? signal.reason;
     try {
       return await fn();
     } catch (error) {
@@ -78,8 +87,9 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
         `[LLM${provider ? `:${provider}` : ""}] ${operation} failed (attempt ${attempt}/${maxAttempts}): ${lastError.message}. Retrying in ${delay}ms...`,
       );
 
-      // Wait before retrying
-      await sleep(delay);
+      // Wait before retrying. An abort ends the wait early, and the check at the top of the loop then ends the
+      // retries with the error this attempt raised.
+      await sleep(delay, signal);
 
       // Increase delay with exponential backoff
       delay = Math.min(delay * backoffMultiplier, maxDelay);
@@ -97,8 +107,18 @@ export async function withRetry<T>(fn: () => Promise<T>, options: RetryOptions =
 /**
  * Sleep for a specified duration
  */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
 }
 
 // ============================================================================

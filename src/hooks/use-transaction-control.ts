@@ -61,11 +61,16 @@ export function useTransactionControl({ activeConnection }: UseTransactionContro
     setPlaygroundMode(false);
   }, []);
 
+  // The server ended the transaction itself (a COMMIT typed in it, or a statement the engine
+  // commits implicitly), so there is nothing left for COMMIT or ROLLBACK to act on.
+  const markTransactionEnded = useCallback(() => setTransactionActive(false), []);
+
   return {
     transactionActive,
     playgroundMode,
     setPlaygroundMode,
     handleTransaction,
     resetTransactionState,
+    markTransactionEnded,
   };
 }

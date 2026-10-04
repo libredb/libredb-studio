@@ -84,6 +84,38 @@ const ORACLE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
 // stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
 
 // Shared by getHealth() and getPerformanceMetrics().
+/**
+ * What Oracle can commit inside the held transaction. Its DDL commits before and after every
+ * statement ("Oracle Database implicitly commits the current transaction before and after every
+ * DDL statement", SQL Language Reference, "Types of SQL Statements"). A PL/SQL block or a
+ * `CALL` may commit too, through `EXECUTE IMMEDIATE` or a procedure's own `COMMIT`, and this
+ * provider reads no transaction state back from the server to notice afterwards, so SANDBOX
+ * refuses those as well rather than promise a rollback it cannot check.
+ */
+const ORACLE_IMPLICIT_COMMIT_STATEMENTS: readonly string[] = [
+  "ALTER",
+  "ANALYZE",
+  "ASSOCIATE",
+  "AUDIT",
+  "BEGIN",
+  "CALL",
+  "COMMENT",
+  "CREATE",
+  "DECLARE",
+  "DISASSOCIATE",
+  "DROP",
+  "FLASHBACK",
+  "GRANT",
+  "NOAUDIT",
+  "PURGE",
+  "RENAME",
+  "REVOKE",
+  "TRUNCATE",
+];
+
+/** `ALTER SESSION` and `ALTER SYSTEM` are session and system control, not DDL, and commit nothing. */
+const ORACLE_IMPLICIT_COMMIT_EXCEPTIONS: readonly string[] = ["ALTER SESSION", "ALTER SYSTEM"];
+
 const CACHE_HIT_RATIO_SQL = `SELECT ROUND(
             (1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
                   NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0)
@@ -1558,6 +1590,10 @@ export class OracleProvider extends SQLBaseProvider {
       supportsResultPagination: true,
       // Oracle is always in a transaction; the held connection commits or rolls back.
       supportsTransactions: true,
+      // Oracle commits before and after every DDL statement, and a PL/SQL block may commit,
+      // so SANDBOX refuses them instead of reporting a rollback that undid nothing.
+      implicitCommitStatements: ORACLE_IMPLICIT_COMMIT_STATEMENTS,
+      implicitCommitExceptions: ORACLE_IMPLICIT_COMMIT_EXCEPTIONS,
       maintenanceOperations: ["analyze", "optimize", "kill"],
       // `optimize` now takes a TABLE and rebuilds that table's own indexes, which is
       // what SQL Server's identically worded control has always done. It used to take

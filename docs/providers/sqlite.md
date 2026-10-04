@@ -81,7 +81,8 @@ SQLite driver by runtime:
   big-integer flag is `safeIntegers` on bun and `readBigInts` on node,
   [§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions); the declared column types
   are `columnNames` + `declaredTypes` on bun and one `columns()` on node,
-  [§5](#declared-column-types)), so results and error mapping are the same under both runtimes.
+  [§5](#declared-column-types); whether a statement returns rows is `columnNames.length` on bun and
+  `columns().length` on node, [§3.3](#33-read-vs-write-dispatch)), so results and error mapping are the same under both runtimes.
 - **Why not `better-sqlite3`?** Bun refuses to load it outright, and its native binding must match
   the installing runtime's ABI (a bun-installed binding fails under Node). The built-in drivers
   need no native dependency at all. (`better-sqlite3` remains the *storage-layer* driver.)
@@ -202,14 +203,33 @@ used to leave the handle held, so the user could not delete or move the file the
 
 ### 3.3 Read vs write dispatch
 
-`query()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) branches on
-`isReadOnlyQuery(sql)` (inherited): reads use `stmt.all()` and return rows; writes use `stmt.run()`
-and return `{ changes }`. `rowCount = rows.length || changes`. Both drivers are **synchronous** —
-the provider wraps them in the async signature but there is no real concurrency or cancellation.
+`query()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) prepares the statement and
+branches on `stmt.returnsRows()`: a statement with result columns uses `stmt.all()` and returns rows;
+one without uses `stmt.run()` and returns `{ changes }`. `rowCount = rows.length || changes`. Both
+drivers are **synchronous**: the provider wraps them in the async signature but there is no real
+concurrency or cancellation.
 
-The inherited predicate reads the statement's first keyword past any leading comment
-(`src/lib/sql/leading-keyword.ts`), so an annotated `SELECT` takes the read branch. It previously
-took the **write** branch and returned an empty result with `changes: 0` for a query that has rows.
+`returnsRows()` is SQLite's own answer, the prepared statement's result column count
+(`sqlite3_column_count`), read before the statement runs: bun:sqlite publishes it as
+`columnNames`, node:sqlite as `columns()`, and the driver bridge
+([`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts)) republishes both as one
+method. So the branch does not depend on how the statement is spelled:
+
+| Statement | Branch | Result |
+|---|---|---|
+| `SELECT ...`, `WITH ... SELECT`, `WITH RECURSIVE ...`, `VALUES (1), (2)`, `EXPLAIN ...`, `PRAGMA journal_mode` | `all()` | the rows |
+| `INSERT` / `UPDATE` / `DELETE ... RETURNING ...` | `all()` | the returned rows, and the write is applied; `rowCount` is the number of rows returned |
+| plain `INSERT` / `UPDATE` / `DELETE` (CTE-led ones included), DDL, `BEGIN`, `PRAGMA user_version = 3` | `run()` | no rows, `rowCount` from `changes` |
+
+The router used to be the inherited `isReadOnlyQuery(sql)`, a leading-keyword set of `SELECT`,
+`SHOW`, `DESCRIBE`, `EXPLAIN` and `PRAGMA`. Measured 2026-10-03 on node:sqlite (SQLite 3.50.4), a
+CTE, a bare `VALUES` list and an `INSERT ... RETURNING` all took the `run()` branch, which steps the
+statement and drops its rows: the editor showed "Query returned no data" with the connection's
+previous change count as `rowCount`, and the RETURNING insert landed with its row lost.
+
+A statement with no result columns answers `rowCount` from the driver's `changes`, which SQLite does
+not reset for a statement that changes no row: on node:sqlite a DDL statement or a value-setting
+`PRAGMA` reports the previous write's count (D139 in [`docs/BACKLOG.md`](../BACKLOG.md)).
 
 ### 3.4 No transactions API, no cancellation, no pool
 
@@ -531,6 +551,28 @@ A 64-bit id is where the two features meet: it leaves as the decimal string
 [§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions) prints, and it is still
 declared `INTEGER`, so the export writes an `INTEGER` column rather than the `TEXT` a value-shaped
 guess would produce.
+
+### BLOB values
+
+Both drivers read a `BLOB` as a plain `Uint8Array`, and the rows reach the browser through
+`JSON.stringify`, which writes one as an object keyed by index. Measured before the fix:
+`x'DEADBEEF00FF'` reached the grid as `{"0":222,"1":173,"2":190,"3":239,"4":0,"5":255}` and `x''` as
+`{}`, and "Export as SQL INSERT" wrote that object as quoted text, so replaying the file replaced the
+bytes with a string.
+
+The same seam in [`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts) that converts a
+64-bit integer ([§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions)) now hands
+every `BLOB` cell back as a `Buffer` over the same memory. A `Buffer` is a `Uint8Array`, so nothing
+in-process changes, and it serializes to `{"type":"Buffer","data":[...]}`, the form `asBytes` in
+[`binary.ts`](../../src/lib/export/binary.ts) reads and a PostgreSQL `bytea` already arrives in. So
+the grid, the row detail and the CSV show `\xdeadbeef00ff`, and the SQL export writes
+`X'deadbeef00ff'` (`X''` for an empty blob). Measured 2026-10-04 under both drivers (bun:sqlite on
+Bun 1.4.2 in the tests, node:sqlite on Node 24.11.0 behind `next start`): the exported INSERTs, run
+into a fresh `BLOB` table, read back in the `sqlite3` 3.53.4 CLI with identical `hex()`, `length()`
+and `typeof()` = `blob`, `0x00` and `0xFF` included.
+
+The JSON export still writes the `Buffer` form itself rather than hex; that is the same for every
+engine whose driver hands back bytes, and is tracked as X27 in [`BACKLOG.md`](../BACKLOG.md).
 
 ---
 

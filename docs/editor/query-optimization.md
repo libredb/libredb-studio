@@ -785,13 +785,34 @@ for renders exactly as it did before.
 
 Every SELECT query automatically runs EXPLAIN in the background (parallel execution). This provides instant performance insights without user action.
 
+The background plan is always the **estimate**: it plans the statement and never executes it, because
+the run beside it already is the execution. On PostgreSQL that is `EXPLAIN (FORMAT JSON)`; the
+**Explain** button asks for `analyze` instead and gets `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, which
+runs the statement to report actual rows and timings. Until #1311 the background request built the
+ANALYZE form too, so every SELECT ran twice: measured on PostgreSQL 18.6, one RUN of
+`SELECT nextval('my_seq')` advanced the sequence by two, and on Citus and TimescaleDB
+`create_distributed_table` / `create_hypertable` did their work in the hidden request before the
+user's own call failed as "already distributed". An estimated plan shows the planner's rows
+(`~250.0K rows`) and cost on each node and says "not executed" in the header, instead of zero rows in
+zero time.
+
+The background plan is asked for **one statement only**. A run of several statements (for example
+`SELECT 1 AS a; INSERT ...`) gets no plan, the **Explain** button refuses one with "Only a single
+statement can be explained", and `POST /api/db/query` refuses an explain request of more than one
+statement with a 400: an EXPLAIN prefixes one statement, so the rest of the text would run as
+statements of their own (measured on Materialize, AlloyDB Omni and Cloudberry: the INSERT was applied
+twice).
+
+The plan request carries a `queryId` of its own, and **Cancel** cancels it on the server together
+with the run.
+
 ### Supported Databases
 
-| Database | EXPLAIN Format |
-|----------|---------------|
-| PostgreSQL | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
-| MySQL | `EXPLAIN FORMAT=JSON` |
-| SQLite | `EXPLAIN QUERY PLAN` (tree, no cost/timing metrics) |
+| Database | Background plan (estimate) | Explain button (analyze) |
+|----------|---------------|---------------|
+| PostgreSQL | `EXPLAIN (FORMAT JSON)` | `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` |
+| MySQL | `EXPLAIN FORMAT=JSON` | `EXPLAIN FORMAT=JSON` |
+| SQLite | `EXPLAIN QUERY PLAN` (tree, no cost/timing metrics) | `EXPLAIN QUERY PLAN` |
 
 ### Non-SELECT Statements
 
@@ -801,7 +822,7 @@ be explained" — an explain run never falls back to running the original statem
 because it deliberately bypasses the dangerous-query confirmation dialog.
 
 Because it bypasses that dialog, the classification is the *only* screen on this path, and on
-PostgreSQL the wrapper is `EXPLAIN (ANALYZE, …)` — which **runs** what it explains. So the PostgreSQL
+PostgreSQL the Explain button's wrapper is `EXPLAIN (ANALYZE, …)`, which **runs** what it explains. So the PostgreSQL
 and ClickHouse strategies read the statement under their own dialect's grammar rather than the shared
 default (#300): block comments nest in both, and a flat reading of
 `/* a /* b */ SELECT 1 */ DELETE FROM users` reports `SELECT` as the leading keyword while PostgreSQL
@@ -822,7 +843,7 @@ User executes: SELECT * FROM orders WHERE status = 'pending'
 │                                                              │
 │  ┌──────────────────┐      ┌──────────────────────────────┐ │
 │  │   Main Query     │      │   Background EXPLAIN          │ │
-│  │   (with LIMIT)   │      │   (no LIMIT, ANALYZE)         │ │
+│  │   (with LIMIT)   │      │   (estimate, never executes)  │ │
 │  └────────┬─────────┘      └────────────┬─────────────────┘ │
 │           │                              │                   │
 │           ▼                              ▼                   │

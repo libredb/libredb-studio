@@ -1326,6 +1326,22 @@ describe("OracleProvider", () => {
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
     });
 
+    test("declares the DDL and the blocks Oracle can commit inside, so SANDBOX refuses them", () => {
+      // "Oracle Database implicitly commits the current transaction before and after every
+      // DDL statement": a ROLLBACK after one answers success and undoes nothing.
+      const implicit = provider.getCapabilities().implicitCommitStatements;
+
+      expect(implicit).toContain("CREATE");
+      expect(implicit).toContain("TRUNCATE");
+      expect(implicit).not.toContain("INSERT");
+      // A PL/SQL block may commit through EXECUTE IMMEDIATE or a procedure, and nothing here
+      // reads the transaction state back to notice, so blocks are declared too.
+      expect(implicit).toContain("BEGIN");
+      expect(implicit).toContain("DECLARE");
+      // Session and system control are not DDL and commit nothing.
+      expect(provider.getCapabilities().implicitCommitExceptions).toEqual(["ALTER SESSION", "ALTER SYSTEM"]);
+    });
+
     test("the vacuum label names the index rebuild, and the surfaces send that", () => {
       // Oracle has no VACUUM; this slot has said "Rebuild Indexes" since the provider
       // shipped, and the global card gated on the literal `vacuum` never showed it.

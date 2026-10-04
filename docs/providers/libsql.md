@@ -409,6 +409,17 @@ columnTypes? }`.
   map is the common case rather than a failure.
 - **`executionTime`** is the engine's own measurement when it rounds to at least a millisecond, and
   the wall-clock one otherwise.
+- **A `BLOB` arrives as a `Buffer`.** Hrana carries a blob as base64 (`x'DEADBEEF00FF'` answers
+  `{"type":"blob","base64":"3q2+7wD/"}` on sqld 0.24.33, `x''` answers `"base64":""`), and
+  [`hrana-transport.ts`](../../src/lib/db/providers/sql/libsql/hrana-transport.ts) decodes it to a
+  `Buffer` rather than a plain `Uint8Array`. The rows reach the browser through `JSON.stringify`, which
+  writes a plain `Uint8Array` as an object keyed by index (`{"0":222,"1":173,...}`): the grid showed
+  that object and "Export as SQL INSERT" wrote it back as quoted text, so a replay stored a string
+  where the bytes had been. A `Buffer` serializes to `{"type":"Buffer","data":[...]}`, which
+  `asBytes` in [`binary.ts`](../../src/lib/export/binary.ts) reads, so the grid and the CSV show
+  `\xdeadbeef00ff` and the SQL export writes `X'deadbeef00ff'` (and `X''` for an empty blob), the
+  same as the SQLite provider. Measured 2026-10-04 on sqld 0.24.33: the exported INSERTs, run into a
+  fresh `BLOB` table, read back with identical `hex()` and `length()`, `0x00` and `0xFF` included.
 
 ### EXPLAIN
 

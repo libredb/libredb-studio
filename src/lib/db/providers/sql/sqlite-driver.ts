@@ -63,6 +63,25 @@ export type SQLiteStatement = {
    * wrong and broken every PRAGMA the provider runs.
    */
   declaredColumns(): readonly SQLiteDeclaredColumn[];
+  /**
+   * Whether the statement produces rows, as SQLite itself reports it: a result column
+   * count above zero (`sqlite3_column_count`). The provider routes on this, `all()` when
+   * true and `run()` when false, so a statement is typed by what SQLite compiled rather
+   * than by its leading keyword.
+   *
+   * The keyword was the wrong question. Measured 2026-10-03 on node:sqlite (SQLite
+   * 3.50.4): a CTE, a bare `VALUES` list and an `INSERT ... RETURNING` all took the
+   * `run()` branch, which steps the statement and throws its rows away, and answered an
+   * empty "success" carrying the connection's previous change count. A `RETURNING` clause
+   * can follow any write, so no keyword set can see it.
+   *
+   * Unlike `declaredColumns`, this one is READ BEFORE THE ROWS, and both drivers answer
+   * it then. Measured 2026-10-04 on bun:sqlite (Bun 1.4.2) and node:sqlite (Node 24.11.0):
+   * bun's `columnNames` and node's `columns()` are both filled at prepare time, a
+   * `... RETURNING` names its returned columns, and a plain write, DDL, `BEGIN` or a
+   * `PRAGMA` that sets a value names none.
+   */
+  returnsRows(): boolean;
 };
 
 export type SQLiteDatabase = {
@@ -226,12 +245,24 @@ function toSQLiteBindValues(params: unknown[]): unknown[] {
 }
 
 /**
- * Convert the BigInt cells of one returned record, in place.
+ * Convert the BigInt and BLOB cells of one returned record, in place.
  *
  * In place on purpose: node:sqlite returns null-prototype row objects and
  * bun:sqlite returns its own row objects, and rebuilding them would change what
- * every existing caller receives. Only the BigInt cells change. A BLOB column is
- * a typed array, never a row, and is left alone rather than walked byte by byte.
+ * every existing caller receives. Only the BigInt and BLOB cells change. A record
+ * that is itself a typed array is never a row, and is left alone rather than
+ * walked byte by byte.
+ *
+ * A BLOB cell becomes a `Buffer` over the same memory. Both drivers read a BLOB as
+ * a plain `Uint8Array`, and the rows reach the browser through `JSON.stringify`,
+ * which writes one as an object keyed by index: measured on bun:sqlite (Bun 1.4.2),
+ * `x'DEADBEEF00FF'` arrived in the grid as `{"0":222,"1":173,...,"5":255}` and
+ * `x''` as `{}`. Nothing downstream can tell that object from a document, so the
+ * grid showed it as JSON and the SQL export wrote it back as quoted text, replacing
+ * the bytes on replay. A `Buffer` IS a `Uint8Array`, so every in-process reader is
+ * unchanged, and it serializes to `{"type":"Buffer","data":[...]}`: the form
+ * `asBytes` in `src/lib/export/binary.ts` reads, and the one a Postgres `bytea`,
+ * a MySQL `BLOB` and an Oracle `RAW` already arrive in.
  */
 function normalizeRecordInPlace(record: unknown): unknown {
   if (record === null || record === undefined) {
@@ -248,6 +279,8 @@ function normalizeRecordInPlace(record: unknown): unknown {
     const value = row[key];
     if (typeof value === "bigint") {
       row[key] = normalizeSQLiteBigInt(value);
+    } else if (value instanceof Uint8Array) {
+      row[key] = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     }
   }
   return record;
@@ -258,7 +291,7 @@ function normalizeRecordInPlace(record: unknown): unknown {
  * declarations. Neither driver publishes `declaredColumns` — it is this module's name for
  * a question each of them answers its own way.
  */
-type RawSQLiteStatement = Omit<SQLiteStatement, "declaredColumns">;
+type RawSQLiteStatement = Omit<SQLiteStatement, "declaredColumns" | "returnsRows">;
 
 /**
  * Wrap one prepared statement so every row it returns, and every parameter it is given,
@@ -274,19 +307,21 @@ type RawSQLiteStatement = Omit<SQLiteStatement, "declaredColumns">;
  * quietly bypass it. The parameters travel the same three methods, so the two
  * directions are inverses at ONE seam rather than at two that can drift apart.
  *
- * `declaredColumns` is handed in rather than read off `stmt`, because it is the one part
- * of the surface the two drivers do not already spell the same way; each adapter below
- * passes its own spelling and both come out of here as one method on one object. Keeping
- * it on the SAME object as the rows is what makes "after the rows" checkable: a caller
- * holds the statement that produced them and asks it, rather than holding a second handle
- * whose order nothing constrains.
+ * `declaredColumns` and `returnsRows` are handed in rather than read off `stmt`, because
+ * they are the part of the surface the two drivers do not already spell the same way;
+ * each adapter below passes its own spelling and each comes out of here as one method on
+ * one object. Keeping `declaredColumns` on the SAME object as the rows is what makes
+ * "after the rows" checkable: a caller holds the statement that produced them and asks
+ * it, rather than holding a second handle whose order nothing constrains.
  */
 function withoutBigInts(
   stmt: RawSQLiteStatement,
   declaredColumns: SQLiteStatement["declaredColumns"],
+  returnsRows: SQLiteStatement["returnsRows"],
 ): SQLiteStatement {
   return {
     declaredColumns,
+    returnsRows,
     all: (...params: unknown[]): unknown[] => {
       const rows = stmt.all(...toSQLiteBindValues(params));
       for (const row of rows) {
@@ -355,8 +390,11 @@ export function createBunSQLiteDriver(DatabaseCtor: BunSQLiteConstructor): SQLit
       // Read lazily, never here: bun refuses `declaredTypes` until the statement has run
       // (measured - see `SQLiteStatement.declaredColumns`), so reading it at `prepare()`
       // would throw on every query the provider makes.
-      return withoutBigInts(stmt, () =>
-        stmt.columnNames.map((name, index) => [name, stmt.declaredTypes[index] ?? undefined] as const),
+      return withoutBigInts(
+        stmt,
+        () => stmt.columnNames.map((name, index) => [name, stmt.declaredTypes[index] ?? undefined] as const),
+        // `columnNames`, unlike `declaredTypes`, is filled at prepare time.
+        () => stmt.columnNames.length > 0,
       );
     }
 
@@ -450,6 +488,9 @@ async function loadBunDriver(): Promise<SQLiteConstructor> {
  *   dropped it would leave the result carrying no types at all, which is the state this
  *   provider was in: the SQL export then names a column by the JavaScript type of its
  *   value, and the inline editor has nothing to read a key's width from.
+ * - whether a statement returns rows is `columns().length` here and `columnNames.length`
+ *   on bun:sqlite, both answered at prepare time; `withoutBigInts` republishes it as one
+ *   `returnsRows()`, which is what the provider routes `all()` against `run()` on.
  * - `get()` returns `undefined` on a miss where bun:sqlite returns `null`.
  * - `run()` reports `changes` as `number | bigint`; normalize to `number`.
  *
@@ -483,6 +524,7 @@ export function createNodeSQLiteDriver(DatabaseSyncCtor: NodeSQLiteModule["Datab
         // node answers this before the statement has run as readily as after it, so the
         // "after the rows" rule the bun half needs costs this half nothing.
         () => stmt.columns().map((column) => [column.name, column.type ?? undefined] as const),
+        () => stmt.columns().length > 0,
       );
     }
 

@@ -695,7 +695,12 @@ async function keyAddressesOneRow(
     return typeof key === "number" ? String(key) : quoteLiteral(String(key), dialect);
   });
   const key = quoteIdentifier(keyColumn, dialect);
-  const sql = `SELECT ${key}, COUNT(*) FROM ${table} WHERE ${key} IN (${placeholders.join(", ")}) GROUP BY ${key}`;
+  // The count gets a name of its own, quoted so its case survives an engine that folds an
+  // unquoted one (Oracle and Db2 upper-case it), and is read back by that name below. The key
+  // is `id` or ends in `_id` (`handleApplyChanges` picks no other), so it is never this name.
+  const countName = "key_rows";
+  const count = quoteIdentifier(countName, dialect);
+  const sql = `SELECT ${key}, COUNT(*) AS ${count} FROM ${table} WHERE ${key} IN (${placeholders.join(", ")}) GROUP BY ${key}`;
 
   let data: { rows?: Record<string, unknown>[]; error?: string };
   try {
@@ -722,13 +727,13 @@ async function keyAddressesOneRow(
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 
-  // `/api/db/query` answers rows as objects, always, and the name a bare `COUNT(*)` comes
-  // back under is the engine's business: `count` on PostgreSQL, `COUNT(*)` on MySQL and
-  // SQLite. So the count is read by POSITION — second value of each row, after the key —
-  // rather than by a name no dialect agrees on. PostgreSQL returns it as a STRING, which
-  // is why it goes through `Number`.
+  // `/api/db/query` answers rows as objects, so the count is read by the name the statement
+  // gave it. Not by position: a bare `COUNT(*)` is named by the engine, and Db2 names it by
+  // its position, `2`, which a JavaScript object lists BEFORE the key, so `{"2":1,"ID":2}`
+  // read the key as the count. PostgreSQL returns the count as a STRING, which is
+  // why it goes through `Number`. A row without it is `NaN`, refused just below.
   const groups = data.rows ?? [];
-  const counts = groups.map((row) => Number(Object.values(row)[1]));
+  const counts = groups.map((row) => Number(Object.hasOwn(row, countName) ? row[countName] : undefined));
   if (counts.some((count) => !Number.isFinite(count))) {
     return { ok: false, reason: "the check returned no count" };
   }

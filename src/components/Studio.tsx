@@ -403,6 +403,7 @@ export default function Studio() {
     playgroundMode: txn.playgroundMode,
     fetchSchema: conn.fetchSchema,
     onObjectsChanged: objectsChanged,
+    onTransactionEnded: txn.markTransactionEnded,
     queryEditorRef,
   });
   const { executeQuery, cancelQuery } = queryExec;

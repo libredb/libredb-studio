@@ -13,7 +13,7 @@
  * error whatsoever.
  */
 import { describe, expect, test } from "bun:test";
-import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
+import { carriesLossyNumber, quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 
 /**
  * `SELECT id, name, snowflake_id FROM libredb_demo WHERE region = ? LIMIT 1` as the
@@ -144,5 +144,28 @@ describe("quoteUnsafeIntegers", () => {
 
   test("quotes a truncated literal it did reach the end of", () => {
     expect(quoteUnsafeIntegers(`[${LIVE_UNSAFE}`)).toBe(`["${LIVE_UNSAFE}"`);
+  });
+});
+
+describe("carriesLossyNumber", () => {
+  // A stored JSON value is shown re-serialised, so every number in it makes the round
+  // trip `JSON.stringify(JSON.parse(literal))`. Measured on LibreDB 0.2.2: these come back
+  // as 9007199254740992, 12345678901234567000, 0.12345678901234568 and null.
+  test.each<[string, string]>([
+    ["an integer past 2^53", '{"n":9007199254740993}'],
+    ["a wide decimal", '{"amount":12345678901234567890.12}'],
+    ["a fraction past double precision", "[0.1234567890123456789]"],
+    ["an exponent past the double range", "[1e400]"],
+    ["a spelling the round trip changes", '{"x":1.0}'],
+  ])("is true for %s", (_label, text) => {
+    expect(carriesLossyNumber(text)).toBe(true);
+  });
+
+  test.each<[string, string]>([
+    ["safe integers and floats", '{"s":42,"f":1.5,"neg":-7,"max":9007199254740991}'],
+    ["digits inside a string value", '{"note":"id 9007199254740993 and 1e400"}'],
+    ["no number at all", '{"a":"b","c":[true,null]}'],
+  ])("is false for %s", (_label, text) => {
+    expect(carriesLossyNumber(text)).toBe(false);
   });
 });
