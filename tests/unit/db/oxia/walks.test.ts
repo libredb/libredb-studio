@@ -50,7 +50,12 @@ import {
   readKeys,
 } from "@/lib/db/providers/keyvalue/oxia/walks";
 import { engineLimiter, LimiterFullError } from "@/lib/db/utils/bounded-limiter";
-import { createFakeOxiaClient, type FakeOxiaOptions, type FakeOxiaRecord } from "../../../helpers/oxia-fake-client";
+import {
+  createFakeOxiaClient,
+  type FakeOxiaClient,
+  type FakeOxiaOptions,
+  type FakeOxiaRecord,
+} from "../../../helpers/oxia-fake-client";
 import { blindSpotKeyset, j4Keyset, pulsarKeyset, sortedKeys } from "../../../helpers/oxia-keyset";
 
 const ORDERS: readonly KeyOrder[] = ["hierarchical", "natural"];
@@ -2228,4 +2233,71 @@ describe("a record written with a partition key is read on the shard that holds 
     expect(answer?.key).toBe("p1");
     expect(answer?.value).toEqual(Uint8Array.of(9));
   });
+});
+
+describe("the order probe's sample paths list a partition-keyed key on the shard that sampled it (ruling R32)", () => {
+  /** Natural keys all written under one partition key whose shard is not the hash shard of the one key with "/". */
+  async function sampledOn(flat: number, more?: Partial<FakeOxiaOptions>) {
+    const shell = await fakeOf("natural", []);
+    const partitionKey = offHome(shell.snapshot, "!a/b");
+    const keys = [...Array.from({ length: flat }, (_, i) => `!${String(i).padStart(3, "0")}`), "!a/b", ".z"];
+    const { fake, snapshot } = await fakeOf(
+      "natural",
+      keys.map((key) => ({ key, partitionKey })),
+      more,
+    );
+    const holder = shardFor(snapshot, "", partitionKey);
+    expect(await listShard(fake, holder)).toEqual(keys);
+    return { fake, snapshot, holder };
+  }
+
+  const decisiveListsOn = (fake: FakeOxiaClient) =>
+    fake.calls.filter((made) => made.rpc === "List" && made.range?.startInclusive === "!a/b").map((made) => made.shard);
+
+  test("a key with / among a shard's sampled keys", async () => {
+    // 99 flat keys then the key with "/" as the sample's hundredth: no pair tells, and the probe's gets meet no "/".
+    const { fake, snapshot, holder } = await sampledOn(99);
+    expect(await detectKeyOrder(fake, snapshot, callOf())).toEqual({ order: "natural", learnedBy: "decisive-list" });
+    expect(decisiveListsOn(fake)).toEqual([holder.id]);
+  });
+
+  test("a key with / in a shard's first message past its sample", async () => {
+    const { fake, snapshot, holder } = await sampledOn(120);
+    expect(await detectKeyOrder(fake, snapshot, callOf())).toEqual({ order: "natural", learnedBy: "decisive-list" });
+    expect(decisiveListsOn(fake)).toEqual([holder.id]);
+  });
+
+  test("a key with / found by reading on past a shard's first message", async () => {
+    const { fake, snapshot, holder } = await sampledOn(120, { chunkBytes: 64 });
+    expect(await detectKeyOrder(fake, snapshot, callOf())).toEqual({ order: "natural", learnedBy: "decisive-list" });
+    expect(fake.calls.some((made) => made.rpc === "List" && made.range?.startInclusive.startsWith("!0"))).toBe(true);
+    expect(decisiveListsOn(fake)).toEqual([holder.id]);
+  });
+});
+
+describe("a key stored on two shards under different partition keys (ruling R32)", () => {
+  for (const order of ORDERS) {
+    test(`a range-scan answers each shard's record with its own value (${order})`, async () => {
+      const shell = await fakeOf(order, []);
+      const home = shardFor(shell.snapshot, "/dup");
+      const [first, second] = shell.snapshot.shards.filter((shard) => shard !== home);
+      const records = [
+        { key: "/dup", partitionKey: offHome(shell.snapshot, "/dup", second), value: Uint8Array.of(2) },
+        { key: "/dup", partitionKey: offHome(shell.snapshot, "/dup", first), value: Uint8Array.of(1) },
+        { key: "/a", value: Uint8Array.of(0) },
+        { key: "/z", value: Uint8Array.of(9) },
+      ];
+      const { fake, snapshot } = await fakeOf(order, records);
+      const scanned = await rangeScanPage(fake, snapshot, order, { range: ALL, limit: 100 }, callOf());
+      const ids = snapshot.shards.map((shard) => shard.id);
+      const dup = scanned.records.filter((record) => record.key === "/dup");
+      expect(dup.map((record) => [record.shard, [...(record.value ?? [])]])).toEqual(
+        [
+          [first.id, [1]],
+          [second.id, [2]],
+        ].sort((a, b) => ids.indexOf(a[0] as string) - ids.indexOf(b[0] as string)),
+      );
+      expect(scanned.records.map((record) => record.key)).toEqual([...sortedKeys(["/a", "/dup", "/dup", "/z"], order)]);
+    });
+  }
 });
