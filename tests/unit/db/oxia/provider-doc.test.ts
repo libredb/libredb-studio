@@ -1031,11 +1031,14 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     expect(entry).toContain("`tests/unit/db/etcd/lexer.test.ts`");
   });
 
-  test("P15. a key several shards hold is one key in every walk, and D224 files its one record (ruling R38)", () => {
+  test("P15. a key several shards hold is one key in every walk without --index, and D224 files its one record (ruling R38)", () => {
     expect(flat(sectionOf(DOC, "## 13. Known limitations"))).toContain(
-      "A key stored on several shards under different partition keys is one key in every walk, and `range-scan` shows one record for it, read on the lowest shard id that listed it; read the others with `get -p` ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).",
+      "Without `--index`, a key stored on several shards under different partition keys is one key in every walk and `range-scan` shows one record for it, read on the lowest shard id that listed it (read the others with `get -p`), while an `--index` walk shows each shard's copy ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).",
     );
     expect(backlogEntry("D224")).toContain("lowest shard id");
+    expect(backlogEntry("D224")).toContain(
+      "An `--index` walk lists the shards one after another, so it shows each copy.",
+    );
     expect(backlogEntry("D224")).not.toMatch(PRIVATE_FINDING_ID);
   });
 

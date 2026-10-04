@@ -2385,3 +2385,27 @@ describe("a key stored on two shards under different partition keys is one key i
     }
   }
 });
+
+describe("an --index walk shows each shard's copy of a key several shards hold (ruling R38, BACKLOG D224)", () => {
+  for (const order of ORDERS) {
+    test(`list --index and range-scan --index answer the key once per shard that holds it (${order})`, async () => {
+      const { fake, snapshot } = await fakeOf(order, []);
+      const holders = snapshot.shards.filter((shard) => shard !== shardFor(snapshot, "/dup"));
+      for (const on of holders)
+        fake.put({
+          key: "/dup",
+          partitionKey: offHome(snapshot, "/dup", on),
+          value: new TextEncoder().encode(on.id),
+          secondaryIndexes: { idx: "v" },
+        });
+      const ask = { range: { startInclusive: "a", endExclusive: "z" }, limit: 100, index: "idx" };
+      const listed = await listRange(fake, snapshot, order, ask, callOf());
+      expect(listed.keys).toEqual(["/dup", "/dup"]);
+      expect(listed.indexConcatenated).toBe(true);
+      const scanned = await rangeScanPage(fake, snapshot, order, ask, callOf());
+      expect(scanned.records.map((record) => [record.key, record.shard])).toEqual(
+        [...holders].sort((a, b) => a.id.length - b.id.length || (a.id < b.id ? -1 : 1)).map((on) => ["/dup", on.id]),
+      );
+    });
+  }
+});

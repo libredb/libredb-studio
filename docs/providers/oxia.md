@@ -767,7 +767,7 @@ For TLS, start each data server with `--tls-cert-file` and `--tls-key-file`; for
 - The first Keys page discovers folders within 256 rounds and its other bounds, and a deeper or wider tree is narrowed by prefix ([D216](../BACKLOG.md#d216-the-oxia-keys-panel-discovers-folders-on-its-first-page-only)).
 - A 0.16 standalone server needs the version note of section 4.7 ([D217](../BACKLOG.md#d217-studios-oxia-doc-recommends-0171-because-of-a-016-standalone-lock)).
 - The cluster dial policy is checked live by hand only ([D218](../BACKLOG.md#d218-the-oxia-cluster-dial-policy-is-checked-by-hand-only)).
-- A key stored on several shards under different partition keys is one key in every walk, and `range-scan` shows one record for it, read on the lowest shard id that listed it; read the others with `get -p` ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).
+- Without `--index`, a key stored on several shards under different partition keys is one key in every walk and `range-scan` shows one record for it, read on the lowest shard id that listed it (read the others with `get -p`), while an `--index` walk shows each shard's copy ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).
 - No agent execution and no MCP surface ([B100](../BACKLOG.md#b100-oxia-has-no-agent-execution-and-no-mcp-surface)).
 - `client_identity` is what the writing client reported, which the server does not check.
 

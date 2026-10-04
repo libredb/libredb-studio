@@ -97,8 +97,8 @@ class CursorHeap {
 
 /**
  * Merges the shards' items in the order's sequence, each key once however many shards list it, emitting only items at
- * or below the bound: the least last key of the incomplete shards. A shard cut short may hold keys below another shard's later keys, so nothing above its last
- * key is emitted until it is read further.
+ * or below the bound: the least last key of the incomplete shards. A shard cut short may hold keys below another
+ * shard's later keys, so nothing above its last key is emitted until it is read further.
  */
 function mergeShards<T>(
   shards: readonly MergeInput<T>[],
