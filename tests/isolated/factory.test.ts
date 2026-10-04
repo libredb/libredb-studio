@@ -1965,6 +1965,25 @@ describe("acquireExecutionProfileProvider", () => {
       expect(getExecutionProfileCacheStats().size).toBe(0);
     });
 
+    test("nor can an execution context: a readOnly in it is refused, so no read-only handle enters the writable cache", async () => {
+      // The execution context is server-injected, and getOrCreateProvider takes the file-access
+      // posture on it (B1/K1). A readOnly riding along used to reach the provider while the key
+      // ignored it: the read-only provider was then served to every later editor request, or a
+      // read-only caller was handed the writable one. Refused before the cache is touched.
+      const conn = await seedFileConnection();
+
+      for (const readOnly of [true, false]) {
+        const refusal: unknown = await getOrCreateProvider(conn, {}, { readOnly } as never).catch((e: unknown) => e);
+        expect(refusal).toBeInstanceOf(DatabaseConfigError);
+        expect((refusal as Error).message).toContain("takes no readOnly");
+      }
+      expect(getProviderCacheStats().size).toBe(0);
+
+      // The editor is still served a writable provider.
+      const shared = await getOrCreateProvider(conn);
+      expect((await shared.query("INSERT INTO t (id, v) VALUES (2, 'editor')")).rowCount).toBe(1);
+    });
+
     test("refuses an in-memory sqlite target for the agent profile (fail closed)", async () => {
       const conn = makeConnection("sqlite", { id: "sqlite-memory-agent", database: ":memory:" });
 

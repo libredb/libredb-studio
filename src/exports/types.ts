@@ -31,6 +31,16 @@ export type {
   MaintenancePreview,
 } from "../lib/db/types";
 
+/**
+ * The server-side execution context the provider factories take (B1 / K1).
+ *
+ * Exported because an ABSENT context denies DuckDB's file access: `createDatabaseProvider` and
+ * `getOrCreateProvider` called without one open a DuckDB handle with `enable_external_access: 'false'`.
+ * Pass `{ allowExternalFileAccess: true }` as the third argument for the full editor reach.
+ * `getOrCreateProvider` takes the narrower `EditorExecutionContext` and refuses a `readOnly`.
+ */
+export type { EditorExecutionContext, ProviderExecutionContext } from "../lib/db/types";
+
 // The vector column declaration a result carries (`QueryResult.vectorColumns`, `WorkspaceQueryResult.vectorColumns`)
 export type { VectorColumn, VectorKind, VectorDType, SparseEncoding } from "../lib/db/vector/types";
 

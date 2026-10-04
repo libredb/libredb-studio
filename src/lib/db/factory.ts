@@ -33,11 +33,16 @@ import * as path from "path";
  * @param options - Optional provider options (pooling, timeout, etc.)
  * @param execution - Server-injected execution context (#328, B1/K1). Never built
  *   from caller-supplied options. `acquireExecutionProfileProvider` passes the agent
- *   profile's context, and `getOrCreateProvider` now also passes one the route derived
- *   from the session role (`editorExecutionContext`). Providers whose read-only boundary
+ *   profile's context, and `getOrCreateProvider` and the routes that build their own
+ *   provider pass the editor file-access posture `editorExecutionContext` derived from
+ *   the verified session and the resolved connection. Providers whose read-only boundary
  *   is established at OPEN time read `readOnly` (SQLite); DuckDB additionally reads
  *   `allowExternalFileAccess` on its editor handle; the rest establish theirs per
- *   statement and ignore both.
+ *   statement and ignore both. ABSENT MEANS DENY: called without a context, as an
+ *   embedder that predates the posture calls it, a DuckDB handle opens with
+ *   `enable_external_access: 'false'`, so `read_csv`, `COPY`, `ATTACH` of a file and
+ *   `INSTALL` are refused while the database stays writable; pass
+ *   `{ allowExternalFileAccess: true }` for the full editor reach.
  * @returns Promise<DatabaseProvider> instance
  * @throws DatabaseConfigError if connection type is not supported, or if its `readOnly` cannot be
  *   honoured (see assertReadOnlyHonoured)
@@ -443,11 +448,12 @@ interface CachedProvider {
    */
   singleWriterFile?: string | null;
   /**
-   * Whether this entry's DuckDB handle was opened with filesystem access allowed (B1 / K1):
-   * the derived posture `getOrCreateProvider` opened it under. Only the single-writer borrow
-   * for DuckDB reads it, so an admin's open handle is never borrowed by a non-admin caller nor
-   * the reverse. It is the derived boolean, so it is `true`/`false` rather than absent, and it
-   * is ignored for every engine but DuckDB (the borrow gates on it only there).
+   * Whether this entry's DuckDB handle was opened with file access allowed (B1 / K1): the
+   * derived posture `getOrCreateProvider` opened it under. Only the single-writer borrow for
+   * DuckDB reads it, so a handle is lent only to a caller of the same posture and nobody is
+   * handed a handle wider than its own. It is the derived boolean, so it is `true`/`false`
+   * rather than absent, and it is ignored for every engine but DuckDB (the borrow gates on it
+   * only there).
    */
   allowExternalFileAccess?: boolean;
 }
@@ -510,11 +516,14 @@ function fileIdentity(connection: DatabaseConnection): string | null {
  *
  * POSTURE-AWARE FOR DUCKDB (B1 / K1). A DuckDB entry records the file-access posture it was
  * opened under, and a borrow matches only an entry opened under the caller's own posture, so a
- * non-admin never borrows an admin's full handle and an admin never borrows a non-admin's
- * sandboxed one. Both sides are normalised to `=== true`, so an absent caller posture (no
- * argument) reads as deny, matching the default `getOrCreateProvider` records and keeping the
- * fail-closed polarity. The gate is skipped for every other engine (libredb), where no such
- * posture exists, so their borrow is unchanged.
+ * caller is never lent a handle wider than its own. Both sides are normalised to `=== true`, so
+ * an absent caller posture (no argument) reads as deny, matching the default
+ * `getOrCreateProvider` records and keeping the fail-closed polarity. The gate is skipped for
+ * every other engine (libredb), where no such posture exists, so their borrow is unchanged.
+ * Under `editorExecutionContext` every role that can resolve one seed record gets the same
+ * posture, so on a seed the gate never splits one record between two handles. When it finds
+ * nothing to lend while the file is open, `isSingleWriterFileOpen` says so, and Test Connection
+ * opens a read-only handle rather than a second read-write one.
  *
  * The cost of that is real and is paid by the editor. If an agent run reaches a
  * single-writer connection nobody has browsed yet, `acquireExecutionProfileProvider`
@@ -695,15 +704,33 @@ function startIdleSweep(): void {
  *
  * @param connection - Database connection configuration
  * @param options - Optional provider options
+ * @param execution - The DuckDB editor file-access posture (B1/K1), and nothing else. Studio's
+ *   routes derive it with `editorExecutionContext` from the verified session and the resolved
+ *   connection. ABSENT MEANS DENY: called without it, as an embedder that predates the posture
+ *   calls it, a DuckDB handle opens with `enable_external_access: 'false'`, so `read_csv`,
+ *   `COPY`, `ATTACH` of a file and `INSTALL` are refused while the database stays writable. Pass
+ *   `{ allowExternalFileAccess: true }` for the full editor reach. Every other engine ignores it.
+ *   A `readOnly` in it is refused (`DatabaseConfigError`): this cache holds writable providers,
+ *   and a read-only one comes from `createDatabaseProvider` or an execution profile.
  * @returns Cached or new DatabaseProvider instance
  */
 export async function getOrCreateProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
-  execution: ProviderExecutionContext = {},
+  execution: EditorExecutionContext = {},
 ): Promise<DatabaseProvider> {
   // First, ahead of the cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   assertReadOnlyHonoured(connection);
+  // The writable cache never holds a read-only handle, and its key frames no such mode for an
+  // execution context: a readOnly reaching the provider from here would be served to every later
+  // editor request, or a read-only caller handed the writable one. The type has no such field; a
+  // caller that passes one anyway is refused rather than silently given the writable provider.
+  if ((execution as ProviderExecutionContext).readOnly !== undefined) {
+    throw new DatabaseConfigError(
+      "getOrCreateProvider takes no readOnly in its execution context: it caches writable providers, so a read-only one would be served to every later request. Build a read-only provider with createDatabaseProvider instead.",
+      connection.type,
+    );
+  }
   // The DuckDB editor file-access posture, server-derived (B1/K1). A definite boolean, so the
   // handle it opens and the key it is cached under agree, and absent reads as deny (fail closed).
   // Only DuckDB reads it; the cache key and the single-writer borrow ignore it for other engines.
@@ -746,9 +773,10 @@ export async function getOrCreateProvider(
     effectiveConnection = tunnelledConnection(connection, tunnel);
   }
 
-  // Create new provider (async - dynamically loads the provider module). The execution context
-  // carries the DuckDB editor file-access posture; every other provider ignores it (B1/K1).
-  const provider = await createDatabaseProvider(effectiveConnection, options, execution);
+  // Create new provider (async - dynamically loads the provider module). Only the derived posture
+  // is handed on, so the handle opens under exactly the posture its key frames; every provider but
+  // DuckDB ignores it (B1/K1).
+  const provider = await createDatabaseProvider(effectiveConnection, options, { allowExternalFileAccess });
   try {
     await provider.connect();
   } catch (error) {

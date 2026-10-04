@@ -367,6 +367,25 @@ const { details } = await provider.describeObjects(['public'], 'table');
 await provider.disconnect();
 ```
 
+### DuckDB file access and the execution context
+
+Both factories take a third argument, a server-side execution context, and only DuckDB reads it.
+Without it, a DuckDB handle opens with `enable_external_access: 'false'`: a statement that reads or writes a file or reaches the network (`read_csv`, `COPY`, `ATTACH` of a file, `INSTALL`) is refused, while the database the connection names stays writable.
+That default is fail-closed on purpose, and it changed what a call without the argument does: before it, every DuckDB handle had that reach.
+An embedder of `@libredb/studio/providers` that needs it back passes `{ allowExternalFileAccess: true }`, and should do so only where whoever writes the statements may read the server's files:
+
+```typescript
+import { createDatabaseProvider, getOrCreateProvider } from '@libredb/studio/providers';
+import type { EditorExecutionContext } from '@libredb/studio/types';
+
+const fullReach: EditorExecutionContext = { allowExternalFileAccess: true };
+const cached = await getOrCreateProvider(duckdbConnection, {}, fullReach);
+const uncached = await createDatabaseProvider(duckdbConnection, {}, fullReach);
+```
+
+`getOrCreateProvider` takes only this posture and refuses a `readOnly` in it, because its cache holds writable providers.
+Studio's own routes derive the posture from the session and the connection; [providers/duckdb.md](./providers/duckdb.md) section 3.16 has the rule.
+
 ## Non-SQL Query Formats
 
 The non-SQL providers take a query that is not SQL, in the format each bullet below names. The full format, operation list, and worked 
