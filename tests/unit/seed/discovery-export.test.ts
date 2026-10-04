@@ -196,8 +196,8 @@ describe("parseDiscoveryExport: invalid files", () => {
     ["generatedAt not an ISO time", { generatedAt: "2026-10-04" }, "generatedAt"],
     ["generatedAt a number", { generatedAt: 1_780_000_000_000 }, "generatedAt"],
     ["status missing", { status: undefined }, "status"],
-    ["status with an unknown code", { status: { ok: false, code: "exploded", message: "m" } }, "status"],
-    ["status error without a message", { status: { ok: false, code: "docker_error" } }, "status"],
+    ["status with an unknown code", { status: { ok: false, code: "exploded", message: "m" } }, "status.code"],
+    ["status error without a message", { status: { ok: false, code: "docker_error" } }, "status.message"],
     [
       "status message over 512 characters",
       { status: { ok: false, code: "docker_error", message: "m".repeat(513) } },
@@ -206,7 +206,7 @@ describe("parseDiscoveryExport: invalid files", () => {
     [
       "status httpStatus not an integer",
       { status: { ok: false, code: "docker_error", httpStatus: 5.5, message: "m" } },
-      "status",
+      "status.httpStatus",
     ],
     ["network without an id", { network: { name: "captain-overlay-network" } }, "network.id"],
     ["services not an array", { services: {} }, "services"],

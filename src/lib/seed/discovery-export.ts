@@ -23,8 +23,9 @@ export const DISCOVERY_FILE_MAX_BYTES = 2 * 1024 * 1024;
 
 const ISO_TIME = z.iso.datetime();
 
-// A union on the literal ok, so the inferred ExporterStatus narrows: code and message exist only when ok is false.
-const ExporterStatusSchema = z.union([
+// Discriminated on the literal ok: the inferred ExporterStatus narrows (code and message exist only when ok is
+// false), and an invalid status names its bad field instead of failing as an unmatched union.
+const ExporterStatusSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
   z.object({
     ok: z.literal(false),
