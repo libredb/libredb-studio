@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   DatabaseConnection,
   DatabaseType,
@@ -354,51 +354,57 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
   // Every connection-scoped setter, keyed like the defaults. A mapped type over the defaults'
   // keys, so a field added to CONNECTION_FORM_DEFAULTS without a setter here fails the
-  // typecheck instead of silently surviving the reset below.
-  const resetSetters: { [K in keyof ConnectionFormDefaults]: (value: ConnectionFormDefaults[K]) => void } = {
-    type: setType,
-    name: setName,
-    host: setHost,
-    port: setPort,
-    user: setUser,
-    password: setPassword,
-    database: setDatabase,
-    schema: setSchema,
-    queryTimeout: setQueryTimeout,
-    connectionString: setConnectionString,
-    mongoConnectionMode: setMongoConnectionMode,
-    environment: setEnvironment,
-    showSSL: setShowSSL,
-    sslMode: setSSLMode,
-    caCert: setCaCert,
-    clientCert: setClientCert,
-    clientKey: setClientKey,
-    showAdvanced: setShowAdvanced,
-    serviceName: setServiceName,
-    instanceName: setInstanceName,
-    localDataCenter: setLocalDataCenter,
-    authSource: setAuthSource,
-    apiKeyId: setApiKeyId,
-    apiKeySecret: setApiKeySecret,
-    saslMechanism: setSaslMechanism,
-    skipObjectScan: setSkipObjectScan,
-    readOnly: setReadOnly,
-    allowInsecureAuth: setAllowInsecureAuth,
-    showSSH: setShowSSH,
-    sshEnabled: setSSHEnabled,
-    sshHost: setSSHHost,
-    sshPort: setSSHPort,
-    sshUsername: setSSHUsername,
-    sshAuthMethod: setSSHAuthMethod,
-    sshPassword: setSSHPassword,
-    sshPrivateKey: setSSHPrivateKey,
-    sshPassphrase: setSSHPassphrase,
-  };
-  const resetConnectionFields = () => {
+  // typecheck instead of silently surviving the reset below. Memoized over nothing
+  // but the setters it maps, which `useState` keeps stable: the walk the map feeds
+  // runs from `handleConnect`'s `useCallback`, so the map's identity has to hold
+  // still for that callback to stay valid across renders.
+  const resetSetters: { [K in keyof ConnectionFormDefaults]: (value: ConnectionFormDefaults[K]) => void } = useMemo(
+    () => ({
+      type: setType,
+      name: setName,
+      host: setHost,
+      port: setPort,
+      user: setUser,
+      password: setPassword,
+      database: setDatabase,
+      schema: setSchema,
+      queryTimeout: setQueryTimeout,
+      connectionString: setConnectionString,
+      mongoConnectionMode: setMongoConnectionMode,
+      environment: setEnvironment,
+      showSSL: setShowSSL,
+      sslMode: setSSLMode,
+      caCert: setCaCert,
+      clientCert: setClientCert,
+      clientKey: setClientKey,
+      showAdvanced: setShowAdvanced,
+      serviceName: setServiceName,
+      instanceName: setInstanceName,
+      localDataCenter: setLocalDataCenter,
+      authSource: setAuthSource,
+      apiKeyId: setApiKeyId,
+      apiKeySecret: setApiKeySecret,
+      saslMechanism: setSaslMechanism,
+      skipObjectScan: setSkipObjectScan,
+      readOnly: setReadOnly,
+      allowInsecureAuth: setAllowInsecureAuth,
+      showSSH: setShowSSH,
+      sshEnabled: setSSHEnabled,
+      sshHost: setSSHHost,
+      sshPort: setSSHPort,
+      sshUsername: setSSHUsername,
+      sshAuthMethod: setSSHAuthMethod,
+      sshPassword: setSSHPassword,
+      sshPrivateKey: setSSHPrivateKey,
+      sshPassphrase: setSSHPassphrase,
+    }),
+    [],
+  );
+  const resetConnectionFields = useCallback(() => {
     for (const key of Object.keys(CONNECTION_FORM_DEFAULTS) as (keyof ConnectionFormDefaults)[]) {
       (resetSetters[key] as (value: ConnectionFormDefaults[typeof key]) => void)(CONNECTION_FORM_DEFAULTS[key]);
     }
-  };
+  }, [resetSetters]);
 
   const isEditMode = !!editConnection;
 
@@ -867,14 +873,27 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       }
 
       onConnect(conn);
-      setQueryTimeout("");
-      // Reset form
-      setName("");
-      setUser("");
-      setPassword("");
-      setDatabase("");
-      setConnectionString("");
-      setMongoConnectionMode("host");
+      /*
+        A dialog a host keeps open after the save never runs the close path, so the
+        save itself has to reset: every connection-scoped field from the same object
+        that seeded it, the same walk (#1155). The hand-kept list this replaced
+        cleared only the credentials, so the host, TLS, SSH tunnel and environment
+        of the connection just saved stayed in the dialog and reached the next
+        one's test and save.
+
+        Edit mode resets nothing but the banner: the dialog is still bound to the
+        connection just saved, the close path deliberately leaves an edit target's
+        state alone for the same reason, and a half-cleared form would save a
+        credential-less connection on a second "Save Changes" click.
+
+        The acknowledgement is withdrawn here too, not only on close: the next
+        connection typed into this same open dialog has not been warned about
+        anything, and must not be saved on its first click.
+      */
+      if (!isEditMode) {
+        resetConnectionFields();
+        setDegradedSaveAcknowledged(false);
+      }
       setTestResult(null);
     } catch {
       setTestResult({ tone: "error", message: "Network error - could not reach server" });
@@ -887,6 +906,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     isEditMode,
     onConnect,
     probeConnection,
+    resetConnectionFields,
     validateQueryTimeout,
     validateHostAddress,
   ]);
