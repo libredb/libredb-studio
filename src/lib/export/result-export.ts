@@ -327,14 +327,16 @@ const BARE_TYPE_FAMILY: Record<string, InferredKind> = {
  * it answers `Unknown type 'text'` to.
  *
  * The map is total, for the reason `BINARY_LITERAL` below is: a new provider must not
- * inherit a silently wrong answer. The fourteen dialects with NO row measured have an
+ * inherit a silently wrong answer. The sixteen dialects with NO row measured have an
  * empty one. Db2 is the one of them that parses both statements (#786); no bare name was
  * measured standing alone there, so each is re-spelled from its family. Druid takes no INSERT at all without the MSQ extension. The two search
  * endpoints and Couchbase parse no CREATE TABLE: a SQL++ collection is schemaless and
  * `CREATE COLLECTION` takes no columns, which is why the Couchbase provider declares
- * `supportsCreateTable: false`. MongoDB, Redis, Kafka, etcd, Milvus, Qdrant and the embedded store declare
- * `queryLanguage: "json"`, `prometheus` declares `"promql"` and `neo4j` declares `"cypher"`,
- * so no SQL statement is ever built for those nine to read. A file for any of those thirteen
+ * `supportsCreateTable: false`. InfluxDB 3 parses SQL, but its 3.12 planner refuses DDL and DML, so
+ * a generated file is for another engine, the search pair's reason. MongoDB, Redis, Kafka, etcd,
+ * Milvus, Qdrant and the embedded store declare `queryLanguage: "json"`, `prometheus` declares
+ * `"promql"`, `neo4j` declares `"cypher"` and `influxdb` declares `"influxql"`, so no SQL statement
+ * is ever built for those ten to read. A file for any of those fifteen
  * is by definition meant to run somewhere else, so every bare name in it is re-spelled
  * portably rather than kept as one engine's private word.
  */
@@ -532,6 +534,8 @@ const STANDS_ALONE: Record<DatabaseType, readonly string[]> = {
   neo4j: NOTHING_STANDS_ALONE,
   milvus: NOTHING_STANDS_ALONE,
   qdrant: NOTHING_STANDS_ALONE,
+  influxdb: NOTHING_STANDS_ALONE,
+  influxdb3: NOTHING_STANDS_ALONE,
 };
 
 /**
@@ -671,6 +675,12 @@ const BINARY_LITERAL: Record<DatabaseType, BinaryLiteral> = {
   prometheus: "standard-hex",
   // Cypher, not SQL: it has no INSERT and no byte literal, so no statement is built for it either.
   neo4j: "standard-hex",
+  // InfluxQL, not SQL: it has no INSERT and no byte literal, so no statement is built for it either.
+  influxdb: "standard-hex",
+  // Measured on InfluxDB 3.12.0: `SELECT arrow_typeof(X'00ff')` answers `Binary`, and `SELECT
+  // arrow_typeof(X''), encode(X'','hex'), encode(X'0102deadbeef','hex')` answers `Binary`, the empty
+  // string and `0102deadbeef`, so the empty value has a spelling too.
+  influxdb3: "standard-hex",
   // Measured on SQL Server 2022: `SELECT CONVERT(varchar(64), 0x0102deadbeef, 2)`
   // answers `0102DEADBEEF`, `DATALENGTH(0x)` answers 0 — so the empty case is spelled
   // — and `SELECT X'0102'` is `Msg 207 … Invalid column name 'X'`.

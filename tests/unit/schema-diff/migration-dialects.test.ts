@@ -41,6 +41,8 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   neo4j: null,
   milvus: null,
   qdrant: null,
+  influxdb: null,
+  influxdb3: null,
 };
 
 describe("migration dialect regressions (#284)", () => {

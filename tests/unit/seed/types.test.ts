@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { refuseMcpWhereNotOffered, SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
 
 describe("SeedConnectionSchema", () => {
@@ -742,3 +743,50 @@ describe("SeedConnectionSchema: a qdrant seed", () => {
     expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...qdrant, mcp: true }] }).success).toBe(true);
   });
 });
+
+// The same five cases for each InfluxDB type: the type loads, a managed read-only seed with a secret reference
+// loads, a read-only seed with no secret is refused with the type's no-secret sentence, and mcp and
+// allowInsecureAuth both load.
+for (const { type, secret } of [
+  { type: "influxdb", secret: "${INFLUX_READER_PASSWORD}" },
+  { type: "influxdb3", secret: "${INFLUXDB3_TOKEN}" },
+] as const) {
+  describe(`SeedConnectionSchema: an ${type} seed`, () => {
+    const seed = { id: "metrics", name: "Metrics", type, host: "influx.internal", roles: ["*"] };
+
+    it(`accepts the ${type} type`, () => {
+      expect(SeedConnectionSchema.safeParse(seed).success).toBe(true);
+    });
+
+    it(`loads a managed read-only ${type} seed holding a secret reference`, () => {
+      const result = SeedConfigSchema.safeParse({
+        version: "1",
+        connections: [{ ...seed, user: "reader", password: secret, readOnly: true, managed: true }],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it(`refuses a read-only ${type} seed with no secret, naming the no-secret warning`, () => {
+      const result = SeedConfigSchema.safeParse({
+        version: "1",
+        connections: [{ ...seed, readOnly: true, managed: true }],
+      });
+      expect(result.success).toBe(false);
+      const issues = result.error?.issues ?? [];
+      expect(issues.map((issue) => issue.path.join("."))).toEqual(["connections.0.password"]);
+      const warning = CREDENTIAL_WARNINGS[type]?.find((entry) => entry.kind === "no-secret");
+      expect(warning).toBeDefined();
+      expect(issues[0]?.message).toContain(warning?.message ?? "");
+    });
+
+    it(`loads an ${type} seed with mcp: true`, () => {
+      expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...seed, mcp: true }] }).success).toBe(true);
+    });
+
+    it(`loads an ${type} seed with allowInsecureAuth: true`, () => {
+      const result = SeedConnectionSchema.safeParse({ ...seed, allowInsecureAuth: true });
+      expect(result.success).toBe(true);
+      expect(result.data?.allowInsecureAuth).toBe(true);
+    });
+  });
+}

@@ -103,6 +103,16 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "kafka")).toBe("'O''Brien'");
   });
 
+  test("escapes with a backslash for InfluxQL and doubles the quote for InfluxDB 3's SQL", () => {
+    // Measured on InfluxDB 1.13.1: `... WHERE room = 'it\'s'` parses and `'it''s'` does not, so the
+    // quote and the backslash are both spelled with a backslash.
+    expect(quoteLiteral("it's", "influxdb")).toBe("'it\\'s'");
+    expect(quoteLiteral("a\\b", "influxdb")).toBe("'a\\\\b'");
+    // Measured on InfluxDB 3.12.0: `SELECT 'a\b'` answers the three characters `a\b`, so a backslash is data.
+    expect(quoteLiteral("a\\b", "influxdb3")).toBe("'a\\b'");
+    expect(quoteLiteral("it's", "influxdb3")).toBe("'it''s'");
+  });
+
   test("escapes with a backslash for Cypher, where a doubled quote is not an escape (Neo4j)", () => {
     // Cypher's string grammar has backslash escapes and no doubling, the reading the graph lexer
     // (`src/lib/db/graph/cypher/lexer.ts`) decodes, so a quote and a backslash are both spelled with one.
@@ -190,6 +200,11 @@ describe("positionalPlaceholder", () => {
     // Nor a Cypher statement: Cypher binds named `$name` parameters only, and the provider sends none in
     // this version, so the read policy refuses a parameter in the text before it is sent.
     expect(positionalPlaceholder("neo4j", 1)).toBeNull();
+    // Nor InfluxQL: it is not SQL and nothing binds.
+    expect(positionalPlaceholder("influxdb", 1)).toBeNull();
+    // Nor InfluxDB 3: the engine has placeholders, but the route body is exactly `db`, `q` and
+    // `format`, so the provider refuses bound params and a placeholder would go unfilled.
+    expect(positionalPlaceholder("influxdb3", 1)).toBeNull();
   });
 });
 

@@ -1049,6 +1049,8 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     neo4j: "engine-has-no-foreign-key",
     milvus: "engine-has-no-foreign-key",
     qdrant: "engine-has-no-foreign-key",
+    influxdb: "engine-has-no-foreign-key",
+    influxdb3: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1172,6 +1174,10 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // Not a table store either (vector-family spec 6.3): a collection holds points whose payloads are schemaless, and
   // the columns the object browser shows are its vectors, its payload indexes and a sample of its payload keys.
   qdrant: { label: "Qdrant", reason: "payloads are schemaless" },
+  // Not a table store either: a measurement's tags and fields come from the points written to it.
+  influxdb: { label: "InfluxDB (InfluxQL)", reason: "created by the points written to it" },
+  // A table's tags and fields come from the line protocol written to it, and the 3.x SQL takes no DDL.
+  influxdb3: { label: "InfluxDB 3 (SQL)", reason: "InfluxDB 3's SQL takes no DDL" },
 };
 
 /**
@@ -1348,6 +1354,8 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
           "neo4j",
           "milvus",
           "qdrant",
+          "influxdb",
+          "influxdb3",
         ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
@@ -1411,6 +1419,8 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   neo4j: false, // a Cypher statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   milvus: false, // a Milvus console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
   qdrant: false, // a Qdrant console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  influxdb: false, // an InfluxQL statement, not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1443,6 +1453,8 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "neo4j",
             "milvus",
             "qdrant",
+            "influxdb",
+            "influxdb3",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);

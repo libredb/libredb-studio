@@ -36,6 +36,8 @@ describe("fenceTagEngine", () => {
       "neo4j",
       "milvus",
       "qdrant",
+      "influxdb",
+      "influxdb3",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -136,6 +138,20 @@ describe("fenceTagEngine", () => {
     for (const tag of ["json", "http", "rest"]) expect(fenceTagEngine(tag)).not.toBe("qdrant");
     expect(fenceTagEngine("qdrant")).toBe("qdrant");
     expect(isQueryFenceTag("qdrant")).toBe(true);
+  });
+
+  test("influxql names influxdb, the only type-id that runs InfluxQL; flux names nothing and is no query tag", () => {
+    // The `promql` rule: InfluxQL is a language, and `influxdb3` runs SQL, so a ```influxql block on
+    // any other connection was written for another engine.
+    expect(fenceTagEngine("influxql")).toBe("influxdb");
+    expect(isQueryFenceTag("influxql")).toBe(true);
+    // No type-id runs Flux (I3): an alias would make a Flux block look runnable on `influxdb`.
+    expect(fenceTagEngine("flux")).toBeNull();
+    expect(isQueryFenceTag("flux")).toBe(false);
+    // `influxdb3` has no alias: its blocks are DataFusion SQL, and `sql` names no engine.
+    expect(fenceTagEngine("influxdb3")).toBe("influxdb3");
+    expect(isQueryFenceTag("influxdb3")).toBe(true);
+    expect(fenceTagEngine("sql")).toBeNull();
   });
 
   test("promql is a language tag that still names one engine, because one type-id runs PromQL", () => {

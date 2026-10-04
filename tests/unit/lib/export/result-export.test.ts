@@ -408,7 +408,8 @@ describe("buildResultExport — a binary value in a statement", () => {
   });
 
   test("writes the standard X'…' form for the dialects whose engines take it", () => {
-    for (const dialect of ["mysql", "sqlite", "trino", "druid"] as const) {
+    // InfluxDB 3 measured on 3.12.0: `SELECT arrow_typeof(X'00ff')` answers `Binary`.
+    for (const dialect of ["mysql", "sqlite", "trino", "druid", "influxdb3"] as const) {
       const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect }));
 
       expect(file.content).toContain("VALUES (X'0102deadbeef');");
@@ -420,7 +421,7 @@ describe("buildResultExport — a binary value in a statement", () => {
     // declare `queryLanguage: "json"` and Prometheus declares `"promql"` (#1085, #1088), so the
     // export can claim only the portable form, as `values.ts` does for their literals. Neo4j writes
     // Cypher, which has no INSERT and no byte literal, so the same holds for it, and for Milvus and Qdrant, whose
-    // console requests are JSON.
+    // console requests are JSON, and for InfluxQL, which has no INSERT and no byte literal either.
     for (const dialect of [
       "mongodb",
       "redis",
@@ -431,6 +432,7 @@ describe("buildResultExport — a binary value in a statement", () => {
       "neo4j",
       "milvus",
       "qdrant",
+      "influxdb",
     ] as const) {
       const file = buildResultExport("sql-insert", source({ ...binaryRow(wire), dialect }));
 
@@ -884,12 +886,12 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
     expect(ddl({ c: "year" }, undefined)).toContain('"c" BIGINT');
   });
 
-  // The thirteen dialects no row could be measured for: Druid takes no INSERT without the
-  // MSQ extension, the two search endpoints and Couchbase parse no CREATE TABLE (a SQL++
-  // collection takes no columns), and MongoDB, Redis, Kafka, etcd and the embedded store
-  // declare `queryLanguage: "json"`, `prometheus` declares `"promql"`, `neo4j` declares
-  // `"cypher"`, and `milvus` and `qdrant` each declare `"json"` with a dialect of their own, so no
-  // SQL statement is ever built for those nine to read.
+  // The fifteen dialects no row could be measured for: Druid takes no INSERT without the
+  // MSQ extension, the two search endpoints and Couchbase parse no CREATE TABLE (a SQL++ collection
+  // takes no columns), InfluxDB 3 parses SQL but its 3.12 planner refuses DDL and DML, and MongoDB, Redis, Kafka,
+  // etcd and the embedded store declare `queryLanguage: "json"`, `prometheus` declares `"promql"`,
+  // `neo4j` declares `"cypher"`, `influxdb` declares `"influxql"`, and `milvus` and `qdrant` each
+  // declare `"json"` with a dialect of their own, so no SQL statement is ever built for those ten to read.
   // A file for one of those is a file meant to run somewhere else, so it gets the same
   // portable spelling as no dialect at all rather than a guessed row.
   test("writes portable standard SQL for the dialects that parse no CREATE TABLE", () => {
@@ -909,6 +911,8 @@ describe("buildResultExport — the bare names the remaining reachable dialects 
       "neo4j",
       "milvus",
       "qdrant",
+      "influxdb",
+      "influxdb3",
     ] as const) {
       expect(ddl({ c: "VARCHAR2" }, dialect)).toContain(" TEXT\n");
       expect(ddl({ c: "BINARY_DOUBLE" }, dialect)).toContain(" DOUBLE PRECISION\n");

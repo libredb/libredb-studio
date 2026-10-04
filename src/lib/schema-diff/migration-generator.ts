@@ -197,6 +197,20 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "A collection's payloads are schemaless and its vectors are declared through Qdrant's own collection API, not SQL DDL, so there is no column definition to change.",
   },
+  // Not a table store either: a measurement's tags and fields come into being with the points written to it, and
+  // the provider is read-only. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  influxdb: {
+    label: "InfluxDB (InfluxQL)",
+    reason:
+      "A measurement's tags and fields are created by the points written to it, not declared with columns, so there is no column definition to change.",
+  },
+  // The same for InfluxDB 3, whose SQL is a read surface: the 3.x planner refuses DDL and DML. The sentence is the
+  // one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  influxdb3: {
+    label: "InfluxDB 3 (SQL)",
+    reason:
+      "A table's tags and fields are created by the line protocol written to it, and InfluxDB 3's SQL takes no DDL, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -253,7 +267,9 @@ const NO_DROP_IF_EXISTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["ora
  * `kafka` (#1088) joined on the same fact and for the same reason: its text is a JSON read
  * request, not SQL. `etcd` (#1089) joined the same way: its text is an etcdctl command line, and
  * `neo4j` too: its text is a Cypher statement, `milvus`: its text is a Milvus console request, and `qdrant`: its
- * text is a Qdrant console request.
+ * text is a Qdrant console request. `influxdb` joined on the same fact: its text is an InfluxQL statement, and
+ * `influxdb3` on `NO_TABLE_DDL`'s: its text is SQL, but the 3.x planner takes no DDL, so there is no table DDL
+ * to wrap.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
@@ -276,6 +292,8 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "neo4j",
   "milvus",
   "qdrant",
+  "influxdb",
+  "influxdb3",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -295,6 +313,8 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "neo4j",
   "milvus",
   "qdrant",
+  "influxdb",
+  "influxdb3",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

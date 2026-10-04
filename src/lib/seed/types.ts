@@ -71,6 +71,8 @@ const SeedDatabaseType = z.enum([
   "neo4j",
   "milvus",
   "qdrant",
+  "influxdb",
+  "influxdb3",
 ]);
 
 export const SeedDefaultsSchema = z.object({
