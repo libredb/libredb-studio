@@ -124,7 +124,17 @@ export type DatabaseType =
   // text is Qdrant's own `METHOD /path` request with one JSON body, so it declares `queryLanguage: "json"` with a
   // `queryDialect` of its own. The connection is one REST endpoint plus TLS and an API key or JWT in `password`;
   // there is no user and no database, and `readOnly` is a mode its provider enforces.
-  | "qdrant";
+  | "qdrant"
+  // InfluxDB (InfluxDB spec I2). A time-series store read over the v1 `/query` endpoint, as a form POST (R14), in
+  // InfluxQL: the TSM generation (1.x, and 2.x through its virtual DBRP mappings) and InfluxDB 3 through its
+  // v1-compatible handler. It declares `queryLanguage: "influxql"`. The connection is a host, a port, an optional
+  // user, a password or token, and an optional database; it is read-only whatever `readOnly` says.
+  | "influxdb"
+  // InfluxDB 3 (InfluxDB spec I2). InfluxDB 3 Core and Enterprise read over `POST /api/v3/query_sql` in Apache
+  // DataFusion SQL, extending `SQLBaseProvider`. The connection is a host, a port, a token in `password` and an
+  // optional database, the one session database whose tables are top-level objects (R1, R16); there is no user.
+  // Served from the same directory as `influxdb` (I2, I23), and read-only whatever `readOnly` says.
+  | "influxdb3";
 
 export type ConnectionEnvironment = "production" | "staging" | "development" | "local" | "other";
 
@@ -319,8 +329,10 @@ export interface DatabaseConnection {
    * An explicit acceptance of a risk, and never a default. A stock Db2 server without TLS offers
    * only DRDA SECMEC 3, user and cleartext password, so the Db2 provider REFUSES a connection with
    * no TLS unless this is `true`, and then asks db2-node for that mechanism by name, which 1.0.24
-   * refuses to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by no other
-   * engine: each of those either encrypts the password itself or follows its own driver's default.
+   * refuses to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by Db2 and by both
+   * InfluxDB types (`influxdb`, `influxdb3`, InfluxDB spec I7), each of which refuses a non-empty secret
+   * with TLS off, to a host that is not loopback and outside a tunnel, unless this is `true`. Read by no
+   * other engine: each of those either encrypts the password itself or follows its own driver's default.
    */
   allowInsecureAuth?: boolean;
   /**
@@ -659,7 +671,18 @@ export interface QueryTab {
    */
   runError?: string;
   isExecuting: boolean;
-  type: "sql" | "mongodb" | "redis" | "libredb" | "promql" | "kafka" | "etcd" | "cypher" | "milvus" | "qdrant";
+  type:
+    | "sql"
+    | "mongodb"
+    | "redis"
+    | "libredb"
+    | "promql"
+    | "kafka"
+    | "etcd"
+    | "cypher"
+    | "milvus"
+    | "qdrant"
+    | "influxql";
   viewMode?: "results" | "explain" | "history" | "saved";
   explainPlan?: unknown;
   // Pagination state

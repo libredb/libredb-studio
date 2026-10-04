@@ -122,6 +122,7 @@ type StatementLanguage =
   | "graph-cypher"
   | "milvus"
   | "qdrant"
+  | "influxql"
   | "unknown";
 
 /**
@@ -147,6 +148,11 @@ type StatementLanguage =
  *
  * Qdrant takes pink (vector-family spec 6.7): a hue no other language here uses and none of the three status hues
  * above. No guard here reads a Qdrant request either, so its draft too stands beside the amber "not checked" chip.
+ *
+ * InfluxQL takes green (InfluxDB spec I12, R11). The nine language hues in use are blue, cyan, fuchsia, violet,
+ * indigo, sky, purple, teal and pink, the status hues are amber, rose and emerald, and of the four left green is the
+ * one whose neighbouring status hue (emerald, the `checked` chip) never stands beside an InfluxQL draft, because no
+ * guard reads InfluxQL and its draft always carries the amber `not checked` chip.
  */
 const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.freeze({
   sql: "border-hue-blue/40",
@@ -158,6 +164,7 @@ const LANGUAGE_ACCENTS: Readonly<Record<StatementLanguage, string>> = Object.fre
   "graph-cypher": "border-hue-purple/40",
   milvus: "border-hue-teal/40",
   qdrant: "border-hue-pink/40",
+  influxql: "border-hue-green/40",
   unknown: "border-hairline-strong",
 });
 

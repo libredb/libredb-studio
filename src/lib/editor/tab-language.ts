@@ -13,7 +13,8 @@ export type EditorLanguage =
   | "etcd"
   | "graph-cypher"
   | "milvus"
-  | "qdrant";
+  | "qdrant"
+  | "influxql";
 
 /**
  * The tab type a connection's tabs take.

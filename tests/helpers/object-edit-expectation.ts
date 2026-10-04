@@ -41,6 +41,10 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "druid",
   "duckdb",
   "elasticsearch",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 is read-only (InfluxDB spec I1), which docs/providers/influxdb.md names.
+  "influxdb",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 is read-only (InfluxDB spec I1), which docs/providers/influxdb3.md names.
+  "influxdb3",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: Kafka has writes, and this product
   // declines them in v1 by decision (#1088 sections 2 and 4.6), which docs/providers/kafka.md names.
   "kafka",

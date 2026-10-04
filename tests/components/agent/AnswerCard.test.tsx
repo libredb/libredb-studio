@@ -131,7 +131,17 @@ function draftEvent(options: {
     | { readonly kind: "no-inventory" }
     | { readonly kind: "not-applicable" };
   /** The editor language the server recorded with the draft; absent, as a ledger written before it. */
-  readonly language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher" | "milvus" | "qdrant";
+  readonly language?:
+    | "sql"
+    | "json"
+    | "libredb"
+    | "redis"
+    | "promql"
+    | "etcd"
+    | "graph-cypher"
+    | "milvus"
+    | "qdrant"
+    | "influxql";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -411,6 +421,32 @@ describe("AnswerCard — a plan run's statement", () => {
     ] as const) {
       const other = render(<AnswerCard timeline={qdrantDraft} capabilities={capabilitiesFor(language, dialect)} />);
       expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-pink/40");
+      cleanup();
+    }
+  });
+
+  test("tints an InfluxQL read in the influxql language its tab renders in, in green (InfluxDB spec I12, R11)", () => {
+    // No guard here reads InfluxQL (`validatePlanStatement` declines it), so the draft always stands beside the amber
+    // "not checked" chip and never beside emerald's `checked` one, which is why green, emerald's neighbour, is safe.
+    // Read from the language the server recorded, as the rail renders the card with no capabilities.
+    const influxqlDraft = (language: "influxql" | "sql" | "promql" | "graph-cypher" | "etcd" | "milvus" | "qdrant") =>
+      planTimeline({
+        sql: 'SELECT "temp" FROM "home" WHERE time > now() - 1h ORDER BY time DESC',
+        readOnly: false,
+        guardApplicable: false,
+        identifiers: { kind: "not-applicable" },
+        language,
+      });
+    const influxql = render(<AnswerCard timeline={influxqlDraft("influxql")} />);
+    const block = influxql.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("influxql");
+    expect(block.className).toContain("border-hue-green/40");
+    cleanup();
+
+    // The controls: every other recorded language's accent is not it, so the class above is InfluxQL's own.
+    for (const language of ["sql", "promql", "graph-cypher", "etcd", "milvus", "qdrant"] as const) {
+      const other = render(<AnswerCard timeline={influxqlDraft(language)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-green/40");
       cleanup();
     }
   });

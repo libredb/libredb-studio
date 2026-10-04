@@ -6,14 +6,15 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { typeIdsOfProviderFile } from "../../helpers/provider-directory-map";
 
 /**
  * `containerPathShapes` as every shipped type-id declares it (#1147).
  *
  * The expectation is transcribed from the issue's table and never derived from the build.
- * The seventeen providers that call `assertContainerPathShape` declare a value explicitly; the
- * six that call no kernel check and declare no container level (elasticsearch, opensearch,
- * prometheus, kafka, etcd, qdrant) leave it absent, which the kernel reads as `exact`: the same `[]`-only set
+ * The eighteen providers that call `assertContainerPathShape` declare a value explicitly; the
+ * seven that call no kernel check and declare no container level (elasticsearch, opensearch,
+ * prometheus, kafka, etcd, qdrant, influxdb3) leave it absent, which the kernel reads as `exact`: the same `[]`-only set
  * their own `container.length !== 0` checks accept. neo4j leaves it absent too: its one level is the
  * database, and `GraphBaseProvider` refuses any container but `[database]` with a check of its own,
  * which is the `exact` reading the kernel gives the absent field.
@@ -42,6 +43,8 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   mongodb: "exact",
   redis: "exact",
   milvus: "exact",
+  // Its one level is the database (InfluxDB spec I11), checked in influxql-provider.ts.
+  influxdb: "exact",
   libredb: "exact",
   duckdb: "prefixes",
   mssql: "prefixes",
@@ -54,6 +57,8 @@ const EXPECTED_CONTAINER_PATH_SHAPES: Readonly<
   etcd: "absent",
   neo4j: "absent",
   qdrant: "absent",
+  // No container level (R16): its tables are top-level objects of the session database, the Qdrant shape.
+  influxdb3: "absent",
 });
 
 const TYPES = Object.keys(EXPECTED_CONTAINER_PATH_SHAPES) as DatabaseType[];
@@ -94,10 +99,14 @@ function sourceFiles(dir: string): string[] {
 
 /**
  * The type-id a provider file serves: its basename, or its directory's name when the provider is
- * split across modules (`trino/objects.ts` is trino). Every caller of `assertContainerPathShape`
- * is one of those two layouts, which is the layout CLAUDE.md names for providers.
+ * split across modules (`trino/objects.ts` is trino), or, in a directory that serves two type-ids,
+ * the one its declared table names (`timeseries/influxdb/influxql-objects.ts` is influxdb, InfluxDB
+ * spec F1). A shared file of such a directory serves both, so it maps to the two names joined, which
+ * no type-id is, and a caller there is reported as unmappable rather than credited to either.
  */
 function providerTypeId(file: string): string {
+  const mapped = typeIdsOfProviderFile(file);
+  if (mapped !== null) return mapped.join(",");
   const base = path.basename(file, ".ts");
   return base === "objects" || base === "index" ? path.basename(path.dirname(file)) : base;
 }
@@ -123,10 +132,13 @@ describe("the declaration follows the check (#1147)", () => {
         path.join(providers, "sql/mssql.ts"),
         path.join(providers, "sql/helpers.ts"),
         path.join(providers, "sql/trino/statements.ts"),
+        path.join(providers, "timeseries/influxdb/influxql-objects.ts"),
+        path.join(providers, "timeseries/influxdb/client.ts"),
       ]),
     ).toEqual([
       ["src/lib/db/providers/sql/helpers.ts", "helpers"],
       ["src/lib/db/providers/sql/trino/statements.ts", "statements"],
+      ["src/lib/db/providers/timeseries/influxdb/client.ts", "influxdb,influxdb3"],
     ]);
   });
 
@@ -139,7 +151,7 @@ describe("the declaration follows the check (#1147)", () => {
     expect(unknownTypeIds(callerFiles)).toEqual([]);
     const callers = callerFiles.map(providerTypeId).sort();
     const declaring = TYPES.filter((type) => EXPECTED_CONTAINER_PATH_SHAPES[type] !== "absent").sort();
-    expect(callers).toHaveLength(17);
+    expect(callers).toHaveLength(18);
     expect(callers).toEqual(declaring);
   });
 });

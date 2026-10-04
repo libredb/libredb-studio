@@ -248,6 +248,20 @@ export async function createDatabaseProvider(
       return new PrometheusProvider(connection, options);
     }
 
+    // Two type-ids served by one directory, one per query language (InfluxDB spec I2, I23). Both are read-only
+    // whatever the flag says, so no execution context rides along, as for Neo4j.
+    case "influxdb": {
+      // The explicit /index specifier keeps this dynamic import statically analysable.
+      const { InfluxDBProvider } = await import("./providers/timeseries/influxdb/index");
+      return new InfluxDBProvider(connection, options);
+    }
+
+    case "influxdb3": {
+      // The explicit /index specifier keeps this dynamic import statically analysable.
+      const { InfluxDB3Provider } = await import("./providers/timeseries/influxdb/index");
+      return new InfluxDB3Provider(connection, options);
+    }
+
     // Message logs - dynamically imported
     case "kafka": {
       // The explicit /index specifier keeps this dynamic import statically
@@ -292,7 +306,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, kafka, neo4j, milvus, qdrant, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, libredb`,
         connection.type,
       );
   }

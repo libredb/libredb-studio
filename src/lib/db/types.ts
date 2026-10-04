@@ -716,16 +716,20 @@ export interface ProviderCapabilities {
    * same reason: Cypher is neither JSON nor SQL. Its tabs render in the `graph-cypher` language, a
    * tree click writes a bounded Cypher read, and the count, profiling and code-generation gates
    * below refuse it by naming the languages they serve.
+   * `"influxql"` is the InfluxDB provider's (InfluxDB spec I12), declared with no `queryDialect`
+   * because InfluxQL is neither JSON nor SQL. Its tabs render in the `influxql` language over the
+   * provider's own lexer, a tree click writes a time-windowed newest-first read, and the count,
+   * profiling and code-generation gates refuse it by naming the languages they serve.
    *
    * Published through `src/exports/types.ts`, so widening it breaks a consumer's exhaustive
    * switch over it; that ships with a release note, not a compatibility layer.
    */
-  queryLanguage: "sql" | "json" | "promql" | "cypher";
+  queryLanguage: "sql" | "json" | "promql" | "cypher" | "influxql";
   /**
    * Optional client-side query dialect, declared only beside `queryLanguage: "json"`, where it
    * names the grammar the editor text really is: JSON of this product's own schema (Kafka) or a
    * command line (Redis, LibreDB, etcd), for which `"json"` means only "not SQL". `queryLanguage`
-   * says SQL, JSON, PromQL or Cypher; for a `"json"` provider the query generators otherwise
+   * says SQL, JSON, PromQL, Cypher or InfluxQL; for a `"json"` provider the query generators otherwise
    * assume MongoDB syntax.
    * A provider sets `queryDialect` to opt its tables into a custom client-side
    * generator (see `query-generators.ts`), and it is checked BEFORE

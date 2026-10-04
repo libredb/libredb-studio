@@ -147,6 +147,10 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
   milvus: ["collection/json"],
   // A collection's two-part Source, JSON under the declared language (vector-family spec 6.3).
   qdrant: ["collection/json"],
+  // No kind has a source in v1 (InfluxDB spec I11): a measurement and an InfluxDB 3 table are listed and described,
+  // and neither provider implements readObjectSource.
+  influxdb: [],
+  influxdb3: [],
   libredb: [],
 });
 
@@ -166,7 +170,13 @@ const UNCONNECTED_SOURCE_KINDS: readonly string[] = CENSUS_TYPES.flatMap((type) 
  * It is also the third thing a new provider has to move, and `docs/ADDING_A_PROVIDER.md` says so:
  * the guard below asserts that the shipped checklist names every member of this list.
  */
-const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze(["druid", "neo4j", "libredb"]);
+const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
+  "druid",
+  "neo4j",
+  "influxdb",
+  "influxdb3",
+  "libredb",
+]);
 
 /** MariaDB's two extra kinds, which arrive only once the flavour has been measured. */
 const MARIADB_EXTRA_SOURCE_KINDS: readonly string[] = ["mysql/package/mysql", "mysql/sequence/mysql"];
@@ -230,8 +240,8 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    // EXTERNAL_DATABASE_TYPES.length (23 with db2, neo4j, milvus and qdrant) plus the embedded store.
-    expect(CENSUS_TYPES).toHaveLength(24);
+    // EXTERNAL_DATABASE_TYPES.length (25 with db2, neo4j, milvus, qdrant, influxdb and influxdb3) plus the embedded store.
+    expect(CENSUS_TYPES).toHaveLength(26);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -252,9 +262,9 @@ describe("the fleet census of object source declarations", () => {
     expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(79);
     expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(79);
     // neo4j added four kinds, none source-bearing, db2 five source-bearing kinds and four others, and milvus and
-    // qdrant one source-bearing kind each.
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(31);
-    expect(rows).toHaveLength(110);
+    // qdrant one source-bearing kind each, and influxdb and influxdb3 one kind each, neither source-bearing.
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(33);
+    expect(rows).toHaveLength(112);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -369,8 +379,8 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    // 110 unconnected kinds plus the MariaDB branch's eight.
-    expect(rows).toHaveLength(118);
+    // 112 unconnected kinds plus the MariaDB branch's eight.
+    expect(rows).toHaveLength(120);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)

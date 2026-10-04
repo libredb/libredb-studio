@@ -37,10 +37,13 @@ const STATEMENT = "SELECT * FROM t";
  *   carries its own `--limit`, and no offset can page it.
  * - `false` for `neo4j`, whose `prepareQuery` (`GraphBaseProvider`) hands the statement on untouched:
  *   the provider bounds a read by the rows it takes from the server, and no offset can page it.
+ * - `false` for `influxdb` (InfluxDB spec I19), whose `prepareQuery` hands the InfluxQL text on untouched: the
+ *   provider bounds a read by the rows it takes from the answer, and no offset can page it. `influxdb3` is `true`:
+ *   it inherits `SQLBaseProvider.prepareQuery`, which writes `LIMIT ... OFFSET` like the other SQL engines.
  * - `false` for `libredb`, the quiet one: it inherits `BaseDatabaseProvider.prepareQuery`,
  *   which echoes `offset: 50` back while applying nothing, so a `true` here would render a
  *   control whose every click re-fetches page one.
- * - `true` for the other thirteen, each of which emits a real offset clause; the shapes
+ * - `true` for the other fourteen, each of which emits a real offset clause; the shapes
  *   differ per dialect and the invariant below does not care which, only that the
  *   statement CHANGED and the provider says it applied the bound.
  *
@@ -72,6 +75,8 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   neo4j: false,
   milvus: false,
   qdrant: false,
+  influxdb: false,
+  influxdb3: true,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];

@@ -554,6 +554,58 @@ describe("createDatabaseProvider", () => {
     expect(provider.getCapabilities().queryLanguage).toBe("promql");
   });
 
+  test('creates provider for type "influxdb"', async () => {
+    // No `database`: an empty one lists every database the credential reads, resolved in connect(). The
+    // constructor validates nothing and opens nothing, so the provider is built, and declares its language with no
+    // dialect, its read-only enforcement and no maintenance, with no server running.
+    const conn = makeConnection("influxdb", { port: 8086, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("influxdb");
+    const capabilities = provider.getCapabilities();
+    expect(capabilities.queryLanguage).toBe("influxql");
+    expect(capabilities.queryDialect).toBeUndefined();
+    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(capabilities.supportsMaintenance).toBe(false);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("an influxdb connection with readOnly: true is built, since its provider keeps the mode (InfluxDB spec I8)", async () => {
+    const conn = { ...makeConnection("influxdb", { port: 8086, database: undefined }), readOnly: true };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("influxdb");
+  });
+
+  test('creates provider for type "influxdb3"', async () => {
+    // No user: InfluxDB 3 has none, and the token rides in `password`. The constructor validates nothing and opens
+    // nothing, so the provider is built, and declares SQL, its read-only enforcement and no maintenance, with no
+    // server running.
+    const conn = makeConnection("influxdb3", { port: 8181, user: undefined, database: undefined });
+    const provider = await createDatabaseProvider(conn);
+    expect(provider.type).toBe("influxdb3");
+    const capabilities = provider.getCapabilities();
+    expect(capabilities.queryLanguage).toBe("sql");
+    expect(capabilities.queryDialect).toBeUndefined();
+    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(capabilities.supportsMaintenance).toBe(false);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("an influxdb3 connection with readOnly: true is built, since its provider keeps the mode (InfluxDB spec I8)", async () => {
+    const conn = {
+      ...makeConnection("influxdb3", { port: 8181, user: undefined, database: undefined }),
+      readOnly: true,
+    };
+    expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
+    expect((await createDatabaseProvider(conn)).type).toBe("influxdb3");
+  });
+
+  test("the factory error lists both InfluxDB types after prometheus, in their family block", async () => {
+    const conn = makeConnection("not-an-engine");
+    await expect(createDatabaseProvider(conn)).rejects.toThrow(
+      /Supported types: .*\bprometheus, influxdb, influxdb3, kafka\b/,
+    );
+  });
+
   test('creates provider for type "kafka"', async () => {
     // No `database`: one connection is one cluster. The constructor validates nothing and opens
     // nothing, since the connection's rules run in connect() before any client exists, so the

@@ -75,7 +75,17 @@ interface QueryEditorProps {
   /** Called when content changes in real-time. Use sparingly as it triggers on every keystroke. */
   onContentChange?: (val: string) => void;
   onExplain?: () => void;
-  language?: "sql" | "json" | "libredb" | "redis" | "promql" | "etcd" | "graph-cypher" | "milvus" | "qdrant";
+  language?:
+    | "sql"
+    | "json"
+    | "libredb"
+    | "redis"
+    | "promql"
+    | "etcd"
+    | "graph-cypher"
+    | "milvus"
+    | "qdrant"
+    | "influxql";
   /**
    * The connected engine, whose grammar decides where a statement ends.
    *
