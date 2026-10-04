@@ -355,8 +355,14 @@ function CreateTableForm({
   // Qualified only when there is a container AND the capabilities to quote it with. The
   // tree offers the item only once capabilities have loaded, so the second half guards an
   // imperative caller rather than a reachable state.
+  //
+  // Only the CONTAINER is quoted. The container is a catalog name read back from the engine,
+  // so quoting keeps it exact; the table name is what the user typed, and it stays exactly as
+  // the flat button writes it. Quoting it too would make the two buttons create different
+  // objects on an engine that folds case: on Oracle, `APP."orders"` is a lowercase table a
+  // later `SELECT * FROM orders` does not find.
   const qualified = container.length > 0 && capabilities !== undefined;
-  const nameInContainer = (name: string) => (qualified ? quoteObjectPath([...container, name], capabilities) : name);
+  const nameInContainer = (name: string) => (qualified ? `${quoteObjectPath(container, capabilities)}.${name}` : name);
 
   const generateSQL = () => {
     if (!tableName.trim()) return "";

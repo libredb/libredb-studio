@@ -175,6 +175,21 @@ as the object inventory reported it (`defaultContainer`). Three rules follow (#1
 - **A row count is shown only where the engine measured one.** A table whose count is absent
   reads `Table`, not `Table (0 rows)`; RisingWave 3.1.0 reports no count for a four-row table.
 
+Qualified segments are quoted the way the dialect needs: PostgreSQL with its keyword-aware
+rule, every other engine through the connection's own identifier quoting, so a MySQL database
+named `e2e-other` is inserted as `` `e2e-other` ``.
+
+### Known limits
+
+- A `;` inside a string or comment after the cursor ends the statement early. The aliases
+  defined after it are not read, which is the old before-the-cursor behaviour, not a wrong one.
+- A quoted qualifier such as `"Sales".` is not matched against containers; only bare
+  identifiers are.
+- Matching a qualifier is case-insensitive, so on an engine where two containers differ only
+  in case, both containers' tables are offered.
+- A qualifier longer than a table's container path matches nothing: a Trino
+  `catalog.schema.` against a one-segment path offers no tables.
+
 ## Integration
 
 The alias completion is automatically available in the SQL editor. No configuration required.

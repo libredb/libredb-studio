@@ -887,6 +887,15 @@ describe("CreateTableModal", () => {
     expect(previewIn("postgres", ["Sales"], PG_CAPS).sql).toContain('CREATE TABLE "Sales".ct_other (');
   });
 
+  test("only the container is quoted; the typed name is written as the flat button writes it (#1391)", () => {
+    // Oracle folds an unquoted name to upper case, so quoting the typed `orders` would create a
+    // lowercase table that a later `SELECT * FROM orders` cannot find (ORA-00942).
+    const ORACLE_CAPS = { queryLanguage: "sql", defaultPort: 1521 } as unknown as ProviderCapabilities;
+    expect(previewIn("oracle", ["APP"], ORACLE_CAPS, "orders").sql).toContain("CREATE TABLE APP.orders (");
+    // A mixed-case PostgreSQL schema keeps its case through quoting; the table name stays as typed.
+    expect(previewIn("postgres", ["MySchema"], PG_CAPS, "orders").sql).toContain('CREATE TABLE "MySchema".orders (');
+  });
+
   test("DuckDB's sequence is created beside the table it numbers (#1391)", () => {
     const { sql } = previewIn("duckdb", ["main"], PG_CAPS, "widgets");
     expect(sql).toContain("CREATE SEQUENCE IF NOT EXISTS main.widgets_id_seq;");

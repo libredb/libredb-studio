@@ -32,6 +32,7 @@ import { toast } from "sonner";
 import { splitCursorTargets } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
+import { quoteIdentifier } from "@/lib/query-generators";
 
 // Serve Monaco from our own origin rather than @monaco-editor/react's jsdelivr default.
 // Runs at module load so it is in place before the first <Editor> mounts.
@@ -124,7 +125,7 @@ interface ParsedTable {
   name: string;
   /** The object's address; Cypher completion reads a label or relationship type from its last segment. */
   path?: string[];
-  rowCount?: number;
+  rowCount?: number | null;
   columns?: Array<{
     name: string;
     type: string;
@@ -323,7 +324,8 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
           label: table.name,
           labelLower: tableLower,
           // Absent stays absent: the detail line says "(0 rows)" only for a measured zero (#1397).
-          ...(table.rowCount === undefined ? {} : { rowCount: table.rowCount }),
+          // `== null` so a null count from the JSON is as absent as a missing one.
+          ...(table.rowCount == null ? {} : { rowCount: table.rowCount }),
           columnNames: table.columns?.map((c) => c.name).join(", ") || "",
           ...(container === undefined
             ? {}
@@ -353,8 +355,15 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         columnMap.set(tableLower, tableColumns);
       });
 
-      return { tableItems, columnMap, allColumns };
-    }, [parsedSchema, defaultContainer]);
+      return {
+        tableItems,
+        columnMap,
+        allColumns,
+        ...(capabilities === undefined
+          ? {}
+          : { quoteSegment: (segment: string) => quoteIdentifier(segment, capabilities) }),
+      };
+    }, [parsedSchema, defaultContainer, capabilities]);
 
     // The formatter of the tab's language, from its `DIALECT_EDITORS` record: SQL's, the JSON one MongoDB and
     // Kafka share, or none, in which case the toolbar draws no Format button and the shortcut does nothing.

@@ -205,6 +205,11 @@ export interface SchemaCompletionCache {
   tableItems: SchemaTableItem[];
   columnMap: Map<string, SchemaColumnItem[]>;
   allColumns: Map<string, SchemaColumnItem>;
+  /**
+   * The connection's own identifier quoting, for the segments of an address this module
+   * writes. Absent before capabilities load, and then a segment is written as it is.
+   */
+  quoteSegment?: (segment: string) => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,8 +250,16 @@ export function registerSQLCompletionProvider(
       const typedQualifier = line.substring(0, word.startColumn - 1).match(/((?:[\w$]+\.)+)$/)?.[1] ?? "";
       // Preserve ordinary identifiers; quote catalog names only when needed
       // to preserve case, escape special characters, or avoid keywords.
+      // PostgreSQL keeps its keyword-aware quoting; every other dialect quotes through the
+      // connection's capabilities, so a MySQL `e2e-other` or a SQL Server segment with a space
+      // is written in a form the engine parses.
+      const quoteSegment = schemaCompletionCache.quoteSegment;
       const formatSegment = (segment: string) =>
-        databaseType === "postgres" ? formatPostgresIdentifier(segment) : segment;
+        databaseType === "postgres"
+          ? formatPostgresIdentifier(segment)
+          : quoteSegment === undefined
+            ? segment
+            : quoteSegment(segment);
       const tableItem = (table: SchemaTableItem, insertText: string, tableRange: Monaco.IRange) => ({
         label: table.label,
         kind: monaco.languages.CompletionItemKind.Class,

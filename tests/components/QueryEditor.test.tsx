@@ -3205,6 +3205,27 @@ describe("QueryEditor completion addresses (#1397)", () => {
     ]);
   });
 
+  test("a null row count is as absent as a missing one", () => {
+    const items = registeredTables({ schemaContext: JSON.stringify([{ name: "t", rowCount: null }]) });
+    expect(items[0]).toEqual({ label: "t", labelLower: "t", columnNames: "" });
+  });
+
+  test("the connection's capabilities quote a segment, and there is no quoting before they load", () => {
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    const capabilities = { queryLanguage: "sql", defaultPort: 3306 } as unknown as Parameters<
+      typeof QueryEditor
+    >[0]["capabilities"];
+    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ capabilities })));
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe("`e2e-other`");
+    unmount();
+    const bare = render(React.createElement(QueryEditor, createDefaultProps()));
+    expect(calls[calls.length - 1][1].quoteSegment).toBeUndefined();
+    bare.unmount();
+    mockUseMonacoReturn = null;
+  });
+
   test("with no reported default container nothing qualifies", () => {
     expect(registeredTables({ schemaContext: schema }).map((item) => item.qualify)).toEqual([false, false, undefined]);
   });

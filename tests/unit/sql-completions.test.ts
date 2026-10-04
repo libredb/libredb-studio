@@ -821,6 +821,38 @@ describe("Completion addresses outside the default container (#1397)", () => {
     expect(complete("SELECT * FROM x.libredb_objects.app.", "mssql")).toEqual([]);
   });
 
+  test("other dialects quote each segment through the connection's own quoting", () => {
+    const monaco = createMockMonaco();
+    const cache = createSchemaCache({
+      tableItems: [
+        {
+          label: "ct_other",
+          labelLower: "ct_other",
+          columnNames: "id",
+          container: ["e2e-other"],
+          segment: "ct_other",
+          qualify: true,
+        },
+        {
+          label: "order lines",
+          labelLower: "order lines",
+          columnNames: "id",
+          container: ["shop", "dbo"],
+          segment: "order lines",
+          qualify: false,
+        },
+      ],
+      // A stand-in for `quoteIdentifier` with MySQL capabilities: quote what is not a bare word.
+      quoteSegment: (segment) => (/^\w+$/.test(segment) ? segment : `\`${segment}\``),
+    });
+    registerSQLCompletionProvider(monaco, cache, "mysql");
+    const provider = monaco._getProvider()!;
+    const at = (line: string) =>
+      provider.provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1)).suggestions;
+    expect(at("SELECT * FROM ct").find((item) => item.label === "ct_other")!.insertText).toBe("`e2e-other`.ct_other");
+    expect(at("SELECT * FROM dbo.").find((item) => item.label === "order lines")!.insertText).toBe("`order lines`");
+  });
+
   test("the detail line states a row count only where one was measured", () => {
     const suggestions = complete("SELECT * FROM ", "postgres");
     expect(suggestions.find((item) => item.label === "orders")!.detail).toBe("Table (4 rows)");

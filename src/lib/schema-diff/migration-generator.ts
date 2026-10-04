@@ -501,10 +501,11 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
   // its key's index in the index list (PostgreSQL's `<table>_pkey`, MySQL's `PRIMARY`) creates
   // that index with the constraint, so emitting it again aborts the migration: measured on
   // PostgreSQL 18.6, `CREATE UNIQUE INDEX "ui_t_pkey"` after the CREATE TABLE is
-  // `relation "ui_t_pkey" already exists` (#1395), and MySQL refuses an index named `PRIMARY`. The index is recognised by what it is, a
-  // unique index over exactly the key's columns, because its name is the engine's own choice.
-  // A second unique index over the same columns is dropped with it, which loses nothing but
-  // a duplicate of the key.
+  // `relation "ui_t_pkey" already exists` (#1395), and MySQL refuses an index named
+  // `PRIMARY`. The index is recognised by what it is, a unique index over exactly the key's
+  // columns, because its name is the engine's own choice. The columns are compared as a set,
+  // since the PRIMARY KEY line is written in table order and `IndexDiff` carries no primary
+  // flag; so a second unique index over the same columns, in any order, is skipped with it.
   const keyColumns = new Set(table.columns.filter((c) => c.targetIsPrimary).map((c) => c.columnName));
   const backsTheKey = (idx: IndexDiff): boolean => {
     const columns = idx.targetColumns ?? [];
