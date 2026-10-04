@@ -182,6 +182,27 @@ describe("POST /api/db/transaction", () => {
     });
   }
 
+  // `JSON.stringify` writes NaN and both infinities as `null`; inside a transaction they
+  // travel as words just as on `/api/db/query`.
+  test("answers NaN and the infinities as words, not as null", async () => {
+    (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, ok: 1.5, z: null }],
+      fields: ["f", "r", "n", "ok", "z"],
+      rowCount: 1,
+      executionTime: 1,
+    });
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT * FROM floats" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ rows: unknown[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.rows).toEqual([{ f: "NaN", r: "Infinity", n: "-Infinity", ok: 1.5, z: null }]);
+  });
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 

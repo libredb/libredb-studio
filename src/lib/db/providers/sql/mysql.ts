@@ -3,7 +3,13 @@
  * Full MySQL support with connection pooling using mysql2
  */
 
-import mysql, { type Pool, type PoolConnection, type RowDataPacket, type FieldPacket } from "mysql2/promise";
+import mysql, {
+  type Pool,
+  type PoolConnection,
+  type RowDataPacket,
+  type FieldPacket,
+  type ResultSetHeader,
+} from "mysql2/promise";
 import { SQLBaseProvider } from "./sql-base";
 import { mysqlColumnTypes } from "./column-types";
 import {
@@ -438,23 +444,42 @@ interface MaintenanceReportRow extends RowDataPacket {
  * run quotes the messages alone and deduplicates them: over forty tables the OK and
  * InnoDB's "doing recreate + analyze instead" note repeat once per table and say the
  * same thing forty times.
+ *
+ * Not every MySQL-wire server sends the report. Measured 2026-10-04 through mysql2
+ * 3.24.2, TiDB v8.5.8 and Databend v1.2.925 answer `ANALYZE TABLE` with an OK packet,
+ * and OceanBase CE 4.4.2.1 answers both `ANALYZE TABLE` and `OPTIMIZE TABLE` that way,
+ * so mysql2 hands back a `ResultSetHeader` object instead of rows, and calling `.filter`
+ * on it failed the action with "rows.filter is not a function". Each of them refuses a
+ * missing table by throwing, so a header carries no failure to read: the statement ran,
+ * and the honest message is that the server said nothing more than that. What the
+ * header does carry is a warning count (TiDB's is 1, a sample-rate Note), and the
+ * message names it so the user knows where the server's words went.
  */
 function readMaintenanceReport(
   type: MaintenanceType,
-  rows: MaintenanceReportRow[],
+  answer: MaintenanceReportRow[] | ResultSetHeader,
 ): { success: boolean; message: string } {
+  const noReport = `${type.toUpperCase()} completed; the server returned no report`;
+  if (!Array.isArray(answer)) {
+    const warnings = answer.warningStatus;
+    return {
+      success: true,
+      message:
+        warnings > 0 ? `${noReport} (${warnings} warning${warnings === 1 ? "" : "s"}, see SHOW WARNINGS)` : noReport,
+    };
+  }
+  // A result set with no row leaves nothing to quote either.
+  if (answer.length === 0) {
+    return { success: true, message: noReport };
+  }
+
+  const rows = answer;
   const failures = rows.filter((row) => String(row.Msg_type).toLowerCase() === "error");
   if (failures.length > 0) {
     return {
       success: false,
       message: `${type.toUpperCase()} failed: ${unique(failures.map((row) => `${row.Table}: ${row.Msg_text}`)).join("; ")}`,
     };
-  }
-
-  // A statement that answers no row at all leaves nothing to quote; the generic
-  // sentence is then all there is to say.
-  if (rows.length === 0) {
-    return { success: true, message: `${type.toUpperCase()} completed successfully` };
   }
 
   return { success: true, message: `${type.toUpperCase()}: ${unique(rows.map((row) => row.Msg_text)).join("; ")}` };
@@ -3346,7 +3371,8 @@ export class MySQLProvider extends SQLBaseProvider {
         switch (type) {
           // The three table verbs share one shape: `<VERB> TABLE <list>`, where the
           // list is the one table the caller named or every table in the database, and
-          // the answer is a RESULT SET carrying the verdict (`readMaintenanceReport`).
+          // the answer is a RESULT SET carrying the verdict on MySQL and an OK packet on
+          // TiDB, OceanBase and Databend (`readMaintenanceReport` reads both).
           case "analyze":
           case "optimize":
           case "check": {
@@ -3364,8 +3390,11 @@ export class MySQLProvider extends SQLBaseProvider {
                 message: `${type.toUpperCase()}: no tables in ${this.config.database ?? "this database"} to run it on.`,
               };
             }
-            const [rows] = await runStatement<MaintenanceReportRow[]>(conn, `${type.toUpperCase()} TABLE ${tables}`);
-            return readMaintenanceReport(type, rows);
+            // `runStatement` types its answer as rows; on an OK-packet server it is a header.
+            const answer: MaintenanceReportRow[] | ResultSetHeader = (
+              await runStatement<MaintenanceReportRow[]>(conn, `${type.toUpperCase()} TABLE ${tables}`)
+            )[0];
+            return readMaintenanceReport(type, answer);
           }
           case "kill":
             if (!target) {

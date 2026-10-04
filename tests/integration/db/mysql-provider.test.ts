@@ -1484,12 +1484,110 @@ describe("MySQLProvider", () => {
       expect(statements.some((sql) => sql.startsWith("OPTIMIZE TABLE"))).toBe(false);
     });
 
+    // Not every MySQL-wire server answers the table verbs with a report. Measured
+    // 2026-10-04 through mysql2 3.24.2: `pingcap/tidb:v8.5.8` answers `ANALYZE TABLE big`
+    // with an OK packet (warningStatus 1, a sample-rate Note in SHOW WARNINGS, tested below),
+    // `datafuselabs/databend:v1.2.925-patch-13` does the same, and
+    // `oceanbase/oceanbase-ce:latest` (4.4.2.1) answers both `ANALYZE TABLE big` and
+    // `OPTIMIZE TABLE big` that way, so mysql2 hands back a `ResultSetHeader` object
+    // where MySQL 26.7.0 hands back rows. The row reader called `.filter` on it and the
+    // route answered 500 "rows.filter is not a function". A table the server refuses
+    // still throws on all three, so a header carries no failure to read.
+    const okPacket = { fieldCount: 0, affectedRows: 0, insertId: 0, info: "", serverStatus: 2, warningStatus: 0 };
+
+    test.each(["analyze", "optimize", "check"] as const)(
+      "%s answered with an OK packet instead of a report succeeds and says there was no report",
+      async (op) => {
+        mockExecuteFn = (sql: string) => {
+          if (sql.startsWith(`${op.toUpperCase()} TABLE`)) {
+            return Promise.resolve([okPacket, undefined]);
+          }
+          return defaultMockExecute(sql);
+        };
+
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        const result = await provider.runMaintenance(op, "big");
+
+        expect(result.success).toBe(true);
+        expect(result.message).toBe(`${op.toUpperCase()} completed; the server returned no report`);
+      },
+    );
+
+    test("the whole-database form answered with an OK packet succeeds too", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.resolve([okPacket, undefined]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe("ANALYZE completed; the server returned no report");
+    });
+
+    test.each([
+      [1, "ANALYZE completed; the server returned no report (1 warning, see SHOW WARNINGS)"],
+      [2, "ANALYZE completed; the server returned no report (2 warnings, see SHOW WARNINGS)"],
+    ])("an OK packet carrying %i warning(s) says where to read them", async (warningStatus, expected) => {
+      // TiDB v8.5.8's ANALYZE answers warningStatus 1: a sample-rate Note that only
+      // SHOW WARNINGS shows, so the message points there instead of hiding it.
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.resolve([{ ...okPacket, warningStatus }, undefined]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze", "big");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe(expected);
+    });
+
+    test("a result set with no row says there was no report", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.resolve([[], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze", "big");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe("ANALYZE completed; the server returned no report");
+    });
+
+    test("a table the server refuses with an error still fails with the engine's error", async () => {
+      // The OK-packet servers report a missing table by THROWING (TiDB v8.5.8 and
+      // OceanBase 4.4.2.1 both answer errno 1146), not with an Error row, so the
+      // engine's own message is what reaches the caller.
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.reject(
+            Object.assign(new Error("Table 'e2e.missing' doesn't exist"), { errno: 1146, code: "ER_NO_SUCH_TABLE" }),
+          );
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await expect(provider.runMaintenance("analyze", "missing")).rejects.toThrow("Table 'e2e.missing' doesn't exist");
+    });
+
     test("a statement that answers a header rather than a result set still succeeds", async () => {
-      // KILL is the one maintenance statement here that does NOT answer a result set -
-      // mysql2 hands back a `ResultSetHeader` object - so it never reaches the row reader
-      // and keeps the generic sentence. The three that do (ANALYZE/OPTIMIZE/CHECK TABLE)
-      // always answer rows, measured on 26.7.0, which is why the reader does not have to
-      // defend against a header shape it is never given.
+      // KILL never answers a result set - mysql2 hands back a `ResultSetHeader` object -
+      // so it never reaches the report reader and keeps the generic sentence.
       mockExecuteFn = (sql: string) => {
         if (sql.startsWith("KILL")) {
           return Promise.resolve([{ affectedRows: 0, warningStatus: 0 }, undefined]);

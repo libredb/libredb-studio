@@ -101,6 +101,8 @@ const DATE_OID = 1082;
 const TIMESTAMP_OID = 1114;
 const DATE_ARRAY_OID = 1182;
 const TIMESTAMP_ARRAY_OID = 1115;
+const TIMESTAMPTZ_OID = 1184;
+const TIMESTAMPTZ_ARRAY_OID = 1185;
 // Widened to `number`: `pg-types` types the OID as an enum of scalar types, and 1009 is not one.
 const TEXT_ARRAY_OID: number = 1009;
 
@@ -119,6 +121,9 @@ type TypeFormat = Parameters<typeof types.getTypeParser>[1];
  * names an instant, so there is no Date that is right for it, and the text is exact.
  *
  * `timestamptz` does name one, and stays a Date: its ISO UTC string is the same in every TZ.
+ * Its two infinities are the exception, and arrive as the engine's text: `pg-types` reads
+ * `infinity` as the NUMBER Infinity, which `JSON.stringify` writes as null, so measured on
+ * PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
  *
  * Per pool, never `types.setTypeParser`: that registry is process-wide, and a host that embeds
  * `@libredb/studio` has its own `pg` users. Only the text format is intercepted, because the
@@ -130,10 +135,27 @@ const ZONELESS_AS_TEXT: NonNullable<PgPoolConfig["types"]> = {
     if (format === "text") {
       if (oid === DATE_OID || oid === TIMESTAMP_OID) return (value: string) => value;
       if (oid === DATE_ARRAY_OID || oid === TIMESTAMP_ARRAY_OID) return types.getTypeParser(TEXT_ARRAY_OID, "text");
+      if (oid === TIMESTAMPTZ_OID) return instantOrInfinity;
+      if (oid === TIMESTAMPTZ_ARRAY_OID) {
+        return (value: string) => instantsOrInfinities(types.getTypeParser(TEXT_ARRAY_OID, "text")(value));
+      }
     }
     return types.getTypeParser(oid, format);
   },
 };
+
+const INFINITE_INSTANT = /^-?infinity$/;
+
+/** A `timestamptz` as the Date `pg-types` builds, or its text when it is one of the two infinities. */
+function instantOrInfinity(value: string): unknown {
+  return INFINITE_INSTANT.test(value) ? value : types.getTypeParser(TIMESTAMPTZ_OID, "text")(value);
+}
+
+/** A `timestamptz[]` read as `text[]` (nested for more dimensions, NULL kept), each element as above. */
+function instantsOrInfinities(element: unknown): unknown {
+  if (Array.isArray(element)) return element.map(instantsOrInfinities);
+  return typeof element === "string" ? instantOrInfinity(element) : element;
+}
 
 // ============================================================================
 // Type Definitions
