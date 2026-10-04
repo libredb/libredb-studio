@@ -87,7 +87,9 @@ The middleware (`src/proxy.ts`) gates every route: all of them require a valid `
 - `/api/db/health` — excluded from the middleware for **both** methods; `GET` is fully public and answers the same as the two above, while `POST` performs its own session check and returns JSON `401` if unauthenticated
 - `GET /api/storage/config` — storage-mode discovery (returns `{ provider, serverMode }`, no user data)
 
-Unauthenticated requests to any other (middleware-gated) route are redirected to `/login`. A few allowlisted handlers self-check instead and return JSON — e.g. `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+Without a session, or with one that no longer verifies (expired, signed with a rotated `JWT_SECRET`, tampered), the middleware answers any other API route with `401 { "error": "Authentication required" | "Session expired. Sign in again.", "code": "AUTH_REQUIRED" }`, and any other page with a redirect to `/login`. API routes used to get the redirect too, which a `fetch` follows to the sign-in page's HTML (#1420). Every route-level session check answers the same `AUTH_REQUIRED` code, which is distinct from `AUTH_ERROR` (a database refused its credentials) and `LLM_AUTH` (a model provider refused its key): those two are `401` as well, with the Studio session intact. A few allowlisted handlers self-check instead and return JSON, for example `POST /api/db/health` (`401`) and `GET /api/auth/me` (`{ "authenticated": false }`).
+
+The standalone app's browser code reacts to `AUTH_REQUIRED`, and only to it, by sending the tab to `/login?next=<the page it was on>`; signing in again, with a password, a passkey or OIDC, returns there. `next` is honoured only as an app-relative path, judged on the path it resolves to rather than the string as written (so `/..//host` and `/%2e%2e//host`, which resolve to `//host`, are refused): it must stay on this origin, must not resolve to a path starting `//` or to `/login`, holds no backslash or control character, and is at most 1024 UTF-8 bytes. The resolved form is what is used; anything else falls back to the role's landing page. One redirect per ten seconds per tab: a second refusal inside that window stays on the page as an error, so a session the server refuses while its cookie still verifies cannot loop between the editor and `/login`. An application that embeds the published `@libredb/studio` components gets no such redirect: the 401 reaches its own code unchanged, and handling sign-in stays with the host.
 `/api/mcp` is the exception: without a valid bearer token it answers 401 with `WWW-Authenticate`, never a redirect (see the [MCP API](#mcp-api) below).
 
 **Two routes are session-less without being public: `POST /api/agent/drive` and `/api/mcp`.**
@@ -218,7 +220,7 @@ A wrong password or code is `401` and is charged to the same two budgets as a fa
 
 The signed-in account's own passkeys ([PASSKEYS.md](./PASSKEYS.md)).
 Every answer of the passkey routes carries `Cache-Control: no-store`.
-`401 { "error": "Authentication required" }` without a session, and `404 { "error": "This session has no account in the registry." }` when the session's account row is missing.
+`401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }` without a session, and `404 { "error": "This session has no account in the registry." }` when the session's account row is missing.
 `200` answers one of:
 
 ```json
@@ -964,7 +966,8 @@ Milvus's provider implements `engineUser()`: the Milvus user name, the user name
 **Response (401 Unauthorized):**
 ```json
 {
-  "error": "Authentication required"
+  "error": "Authentication required",
+  "code": "AUTH_REQUIRED"
 }
 ```
 
@@ -1162,7 +1165,7 @@ engine as broken.
 | `path` empty | `400` | `{ "error": "\"path\" must name an object, and an empty path names none" }` |
 | `kind` absent, not a string, or blank | `400` | `{ "error": "\"kind\" must be a non-empty string" }` |
 | The engine refused the read: a kind it does not declare, a path shape that kind does not take, a permission error | `400` | `{ "error": "<the engine's own sentence>", "code": "QUERY_ERROR" }` |
-| No session | `401` | `{ "error": "Authentication required" }` |
+| No session | `401` | `{ "error": "Authentication required", "code": "AUTH_REQUIRED" }` |
 | Seed connection not available for the caller's role | `403` | the existing `SeedConnectionError` body |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 | Anything undeclared | `500` | `createErrorResponse`'s body |
@@ -1291,7 +1294,7 @@ answer both become `interrupted` with `committed: "unknown"` at `200`.
 | Caller mistakes decided from the DECLARATION: undeclared kind, kind not editable, `path` not a path, missing `partId`, malformed plan, a build answering both a plan and a refusal, an unacknowledged required consequence | `400` | `{ "error": "..." }` |
 | Plan token invalid, expired, digest mismatch, wrong connection fingerprint, unknown `planVersion` | `400` | `{ "error": "...", "code": "EDIT_PLAN_INVALID" }` |
 | Body above 8,388,608 bytes, or `text` above 1,000,000 characters | `413` | `{ "error": "..." }` |
-| No session | `401` | `{ "error": "Authentication required" }` |
+| No session | `401` | `{ "error": "Authentication required", "code": "AUTH_REQUIRED" }` |
 | Seed connection not available for the caller's role | `403` | the existing `SeedConnectionError` body |
 | Rate limited | `429` | `{ "error": "...", "code": "RATE_LIMITED" }` |
 | A throw BEFORE the provider call | as `createErrorResponse` maps it | inherited |
@@ -1483,7 +1486,7 @@ Three properties hold across the whole family and are not repeated per route:
 #### GET /api/agent/config
 
 Whether this server runs agents. **Authentication:** required (`401 { "error": "Authentication
-required" }` without a session). Never `500`, and never names a key's value.
+required", "code": "AUTH_REQUIRED" }` without a session). Never `500`, and never names a key's value.
 
 ```json
 // 200 — available
@@ -1834,7 +1837,7 @@ Mints a token for the signed-in user and role; it reads no body field and spends
 | Status | Body |
 |---|---|
 | 200 | `{ "token": "...", "expiresAt": "<ISO 8601>", "url": "..." }` with `Cache-Control: no-store`; the token appears in no other response |
-| 401 | `{ "error": "Authentication required" }` |
+| 401 | `{ "error": "Authentication required", "code": "AUTH_REQUIRED" }` |
 | 403 | `{ "error": "Sign in again to create a token: a token can only be created within 10 minutes of signing in." }`, with `Cache-Control: no-store`, when the session was signed in more than ten minutes ago |
 | 409 | `{ "error": "MCP tokens cannot be issued on this server", "problems": [ "..." ] }` |
 | 429 | The rate-limit body of [Error Handling](#error-handling), with `Retry-After` |
@@ -1910,7 +1913,7 @@ configuration is what failed.
 
 ### Admin API
 
-Every route here requires an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role — the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required" }`, and only a valid session with a non-admin role returns the `403` above.
+Every route here requires an **admin** role (enforced in-handler in addition to the middleware); non-admins get `403 { "error": "Unauthorized. Admin access required." }`. `GET`/`POST /api/admin/audit` check the session inline and return that same `403` whether there is no session at all or a valid session with the wrong role; the two are not distinguished. `POST /api/admin/fleet-health` goes through the shared route guard instead and distinguishes them: no session returns `401 { "error": "Authentication required", "code": "AUTH_REQUIRED" }`, and only a valid session with a non-admin role returns the `403` above.
 
 #### GET /api/admin/audit
 
@@ -2169,6 +2172,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
+| `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
 | `POOL_EXHAUSTED` | Connection pool exhausted (503) |

@@ -181,6 +181,7 @@ describe("GET /api/connections/managed", () => {
     (getSession as ReturnType<typeof mock>).mockImplementation(() => null);
     const res = await GET();
     expect(res.status).toBe(401);
+    expect((await res.json()).code).toBe("AUTH_REQUIRED");
   });
 
   it("returns empty array when config file missing", async () => {

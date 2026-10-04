@@ -1,13 +1,16 @@
 import { withBasePathEnv } from "../../helpers/base-path";
 import { describe, test, expect, mock, beforeEach } from "bun:test";
+import type { OIDCState } from "@/lib/oidc";
 
 // ─── Mock dependencies ─────────────────────────────────────────────────────
 
-const mockDecryptState = mock(async () => ({
-  code_verifier: "test-verifier",
-  state: "test-state",
-  nonce: "test-nonce",
-}));
+const mockDecryptState = mock(
+  async (): Promise<OIDCState> => ({
+    code_verifier: "test-verifier",
+    state: "test-state",
+    nonce: "test-nonce",
+  }),
+);
 
 const mockGetOIDCConfig = mock(() => ({
   issuer: "https://example.auth0.com",
@@ -121,6 +124,28 @@ describe("GET /api/auth/oidc/callback", () => {
 
     expect(mockLogin).toHaveBeenCalledWith("admin", "user@example.com");
     expect(res.headers.get("location")).toContain("/admin");
+  });
+
+  // The return path from the session-ended redirect (#1420) rode through the provider in the
+  // signed state; it is checked again here before it becomes a Location.
+  test("returns to the page the session ended on, inside the mount", async () => {
+    await withBasePathEnv("/tools/libredb", async () => {
+      mockMapOIDCRole.mockReturnValue("admin");
+      mockDecryptState.mockResolvedValueOnce({ code_verifier: "v", state: "s", nonce: "n", return_to: "/x?y=1" });
+      const res = await GET(new Request("https://studio.example/tools/libredb/api/auth/oidc/callback?code=c&state=s"));
+      expect(res.headers.get("location")).toBe("https://studio.example/tools/libredb/x?y=1");
+    });
+  });
+
+  test("an unsafe return path in the state falls back to the role's landing page", async () => {
+    mockDecryptState.mockResolvedValueOnce({
+      code_verifier: "v",
+      state: "s",
+      nonce: "n",
+      return_to: "/%2e%2e//evil.example",
+    });
+    const res = await GET(new Request("http://localhost:3000/api/auth/oidc/callback?code=c&state=s"));
+    expect(res.headers.get("location")).toBe("http://localhost:3000/");
   });
 
   test("deletes oidc-state cookie after success", async () => {

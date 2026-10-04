@@ -4497,8 +4497,8 @@ bypass.
 The proxy refuses a request on three grounds and audits two of them. `src/proxy.ts` emits
 `origin_mismatch` at `:65` and `insufficient_role` at `:156`, both through `emitAuditEvent`. The third
 is the trailing `catch` at `:173-176`: a token that fails `jwtVerify` because it is forged, tampered,
-expired or truncated falls into `logger.warn("JWT verification failed, redirecting to login")` and
-redirects. Nothing reaches the audit channel.
+expired or truncated falls into `logger.warn("JWT verification failed, refusing the session")` and
+is refused: redirected to `/login` on a page, `401` on an API path. Nothing reaches the audit channel.
 
 An operator reading `GET /api/admin/audit` sees origin and role refusals and no forged-token attempts
 at all, which is the direction the blind spot matters: those are the probes a deployment most wants

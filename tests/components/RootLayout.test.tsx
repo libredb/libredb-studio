@@ -26,6 +26,7 @@ mock.module("@/components/ui/sonner", () => ({
 // Dynamic import so mocks are registered first
 const { default: RootLayout, metadata } = await import("@/app/layout");
 const { ThemeProvider } = await import("@/components/theme-provider");
+const { SessionEndedRedirect } = await import("@/components/auth/SessionEndedRedirect");
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
@@ -129,6 +130,14 @@ describe("RootLayout", () => {
   test("mounts ThemeProvider — theme selection is standalone studio's own", () => {
     const element = RootLayout({ children: React.createElement("span") });
     expect(element.props.children.props.children.type).toBe(ThemeProvider);
+  });
+
+  // Every page of the standalone app gets the session-ended redirect (#1420); the published
+  // components never pass through this layout, so an embedding application keeps its own handling.
+  test("mounts the session-ended redirect for every page", () => {
+    const element = RootLayout({ children: React.createElement("span") });
+    const themed = React.Children.toArray(element.props.children.props.children.props.children) as React.ReactElement[];
+    expect(themed.map((child) => child.type)).toContain(SessionEndedRedirect);
   });
 
   test("renders multiple children correctly", () => {

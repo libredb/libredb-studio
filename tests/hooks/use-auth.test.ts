@@ -191,7 +191,8 @@ describe("useAuth", () => {
 
     const { result } = renderHook(() => useAuth());
 
-    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/login"));
+    // With the page it was on as the return path (#1420).
+    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/login?next=%2F"));
     expect(result.current.user).toBeNull();
     expect(result.current.isAdmin).toBe(false);
   });

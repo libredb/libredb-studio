@@ -12,6 +12,7 @@ import { MCP_PATH } from "@/lib/mcp/config";
 import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { withSecurityHeaders } from "@/lib/security/config";
+import { sessionRequiredBody } from "@/lib/api/session-ended";
 
 // Lazy-initialized to prevent module-level crash if JWT_SECRET is misconfigured.
 // A module-level throw would block ALL requests (including health check).
@@ -144,7 +145,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (!token) {
-    return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/login"), request.url)));
+    return withSecurityHeaders(signInRequired(request, pathname, "Authentication required"));
   }
 
   try {
@@ -183,9 +184,22 @@ export async function proxy(request: NextRequest) {
 
     return withSecurityHeaders(NextResponse.next());
   } catch {
-    logger.warn("JWT verification failed, redirecting to login", { route: "proxy" });
-    return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/login"), request.url)));
+    logger.warn("JWT verification failed, refusing the session", { route: "proxy" });
+    return withSecurityHeaders(signInRequired(request, pathname, "Session expired. Sign in again."));
   }
+}
+
+/**
+ * A page goes to the sign-in screen; an API call is answered 401 JSON instead (#1420). An API
+ * caller is a fetch, not a tab: it followed the redirect to /login, received the sign-in page's
+ * HTML, and every client caller then failed to parse it ("Unexpected token '<'") with nothing
+ * sending the user to sign in. The JSON carries the AUTH_REQUIRED code the browser keys on.
+ */
+function signInRequired(request: NextRequest, pathname: string, error: string): NextResponse {
+  if (pathname === "/api" || pathname.startsWith("/api/")) {
+    return NextResponse.json(sessionRequiredBody(error), { status: 401 });
+  }
+  return NextResponse.redirect(new URL(withBasePath("/login"), request.url));
 }
 
 /**

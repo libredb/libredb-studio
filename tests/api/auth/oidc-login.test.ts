@@ -116,6 +116,20 @@ describe("GET /api/auth/oidc/login", () => {
     }
   });
 
+  // The return path from the session-ended redirect (#1420) is kept in the signed state cookie,
+  // so the provider round trip cannot change it; an unsafe one is dropped here already.
+  test("keeps a safe return path in the signed state and drops an unsafe one", async () => {
+    await GET(new Request("http://localhost:3000/api/auth/oidc/login?next=%2Fadmin%3Ftab%3D1"));
+    expect(mockEncryptState.mock.calls.at(-1)).toEqual([
+      { code_verifier: "test-verifier", state: "test-state", nonce: "test-nonce", return_to: "/admin?tab=1" },
+    ] as never);
+
+    await GET(new Request("http://localhost:3000/api/auth/oidc/login?next=https%3A%2F%2Fevil.example"));
+    expect(mockEncryptState.mock.calls.at(-1)).toEqual([
+      { code_verifier: "test-verifier", state: "test-state", nonce: "test-nonce" },
+    ] as never);
+  });
+
   test("uses correct redirect URI based on request origin", async () => {
     const req = new Request("https://app.example.com/api/auth/oidc/login");
     await GET(req);

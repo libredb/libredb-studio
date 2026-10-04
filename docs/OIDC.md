@@ -353,6 +353,7 @@ The role mapping system:
 | **Provider Logout** | Logout clears both local JWT and provider session |
 | **Discovery Cache** | OIDC provider metadata cached for 5 minutes to reduce network calls |
 | **Nonce Validation** | ID token nonce validated to prevent replay attacks |
+| **Return Path** | When a session ends mid-use, an API call answers `401` `AUTH_REQUIRED` and the tab goes to `/login?next=<page>`. `Login with SSO` passes `next` to `/api/auth/oidc/login`, which keeps it in the signed state cookie; the callback lands there instead of `/` or `/admin`. Only an app-relative path is kept, judged on the path it resolves to (`/..//host` resolves to `//host` and is refused), at most 1024 UTF-8 bytes so the state cookie stays within the browser limit, and checked on the way in and again on the way out, so a crafted sign-in link cannot redirect off the deployment |
 
 > See the [Security Model](#security-model) in Part 2 for the underlying threat model and implementation detail.
 
@@ -556,7 +557,7 @@ The OIDC subsystem follows three core principles:
     │                            │ 15. Delete oidc-state cookie      │
     │                            │                                   │
     │  16. Set-Cookie: auth-token│                                   │
-    │◄── 302 → / or /admin ─────│                                    │
+    │◄── 302 → return_to, else / or /admin                           │
     │                            │                                   │
     ╞════════════════════════════════════════════════════════════════╡
     │  From here: identical to local password login                  │
@@ -630,6 +631,7 @@ interface OIDCState {
   code_verifier: string;   // PKCE random bytes (base64url)
   state: string;           // CSRF protection random
   nonce: string;           // Replay protection random
+  return_to?: string;      // App-relative page to land on after sign-in, when the session ended there
 }
 
 interface OIDCClaims {

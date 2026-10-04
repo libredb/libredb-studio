@@ -115,6 +115,21 @@ describe("LoginPage (OIDC mode)", () => {
     }
   });
 
+  test("SSO carries the return path to the OIDC login route, which keeps it in the signed state", async () => {
+    setMockSearchParams(new URLSearchParams({ next: "/admin?tab=audit" }));
+    const savedDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    const locationMock = { href: "" };
+    Object.defineProperty(window, "location", { value: locationMock, writable: true, configurable: true });
+    try {
+      const user = userEvent.setup();
+      const { getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+      await user.click(getByText("Login with SSO"));
+      expect(locationMock.href).toBe("/api/auth/oidc/login?next=%2Fadmin%3Ftab%3Daudit");
+    } finally {
+      if (savedDescriptor) Object.defineProperty(window, "location", savedDescriptor);
+    }
+  });
+
   test("renders the same derived showcase as the local login", () => {
     // The hero is outside the auth branch, so the SSO deployment must advertise the same
     // engines and the same channel count. Asserted here as well because the two forms have
