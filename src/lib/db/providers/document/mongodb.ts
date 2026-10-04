@@ -342,6 +342,41 @@ const MONGODB_LIST_DATABASES_COMMAND: Document = Object.freeze({
 });
 
 /**
+ * The same `listDatabases` command without `authorizedDatabases`, sent only when the server
+ * has refused that one field.
+ *
+ * FerretDB 2.7.0 does not know the flag. Measured: the command above is refused with code 2,
+ * `BadValue`, reading "authorizedDatabases is an unknown field", while this one is accepted
+ * and lists the databases. Without the retry the object tree on FerretDB lists nothing at
+ * all. MongoDB never takes this path, because MongoDB accepts the flag, so a role granted
+ * `read` on one database there still sees exactly its own.
+ */
+const MONGODB_LIST_DATABASES_COMMAND_WITHOUT_AUTHORIZED: Document = Object.freeze({
+  listDatabases: 1,
+  nameOnly: true,
+});
+
+/** The code a server replies with for a command field it does not accept: `BadValue`. */
+const MONGODB_BAD_VALUE_CODE = 2;
+
+/**
+ * Whether a `listDatabases` refusal is the server rejecting `authorizedDatabases` itself,
+ * and nothing else.
+ *
+ * All three must hold: it is the server's own reply (not a transport failure), it carries
+ * `BadValue`, and its sentence names the field as unknown. Any other refusal, such as code 13
+ * `Unauthorized`, is a real answer about this connection and is raised as it is rather than
+ * retried with a command that asks a different question.
+ */
+function isUnknownAuthorizedDatabasesField(error: unknown): boolean {
+  if (!isServerErrorReply(error)) return false;
+  const { code, message } = error as Error & { code?: unknown };
+  return (
+    code === MONGODB_BAD_VALUE_CODE && message.includes("authorizedDatabases") && message.includes("unknown field")
+  );
+}
+
+/**
  * How many documents one object is sampled for.
  *
  * It is the bound the DELETED flat schema reading sampled with (`find({}).limit(100)` per
@@ -1720,6 +1755,20 @@ export class MongoDBProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * Sends `listDatabases`, falling back to the form without `authorizedDatabases` only when
+   * the server refuses that field (FerretDB). See `isUnknownAuthorizedDatabasesField`.
+   */
+  private async runListDatabases(): Promise<Document> {
+    const admin = this.db!.admin();
+    try {
+      return await admin.command(MONGODB_LIST_DATABASES_COMMAND);
+    } catch (error) {
+      if (!isUnknownAuthorizedDatabasesField(error)) throw error;
+      return admin.command(MONGODB_LIST_DATABASES_COMMAND_WITHOUT_AUTHORIZED);
+    }
+  }
+
+  /**
    * The databases this connection can see, minus the server's own three.
    *
    * One level, so `parent` can only ever name a database, and nothing nests under one
@@ -1740,7 +1789,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     if (parent !== undefined && parent.length > 0) return [];
 
-    const result = await this.db!.admin().command(MONGODB_LIST_DATABASES_COMMAND);
+    const result = await this.runListDatabases();
     const sessionDatabase = this.getDatabaseName();
     const entries: Document[] = Array.isArray(result.databases) ? result.databases : [];
 

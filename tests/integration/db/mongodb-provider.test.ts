@@ -80,6 +80,24 @@ function pipelineNamespaces(pipeline: Record<string, unknown>[]): string[] {
 }
 /** The `listDatabases` command document the driver received, verbatim. */
 let lastListDatabasesCommand: Record<string, unknown> = {};
+/** Every `listDatabases` command the driver received, in order. */
+let listDatabasesCommands: Record<string, unknown>[] = [];
+/**
+ * Decides whether one `listDatabases` command is refused, and with what. `undefined` answers
+ * every command, which is how MongoDB behaves.
+ */
+let mockListDatabasesRefusal: ((cmd: Record<string, unknown>) => Error | undefined) | undefined;
+
+/** A server error reply as the driver delivers it: named `MongoServerError`, with its code. */
+const mongoServerError = (code: number, message: string): Error => {
+  const error = new Error(message) as Error & { code: number };
+  error.code = code;
+  error.name = "MongoServerError";
+  return error;
+};
+
+/** What FerretDB 2.7.0 replies to `authorizedDatabases`, as measured in #1299. */
+const FERRETDB_UNKNOWN_FIELD = "authorizedDatabases is an unknown field";
 // The URI `buildConnectionString()` composed, as the driver received it. The only
 // place the query string is observable: `MongoClient` is where it goes.
 let lastMongoUri = "";
@@ -294,6 +312,9 @@ const createMockDb = (dbName = "testdb") => ({
       if (cmd.buildInfo) return { version: "7.0.0" };
       if (cmd.listDatabases) {
         lastListDatabasesCommand = cmd;
+        listDatabasesCommands.push(cmd);
+        const refusal = mockListDatabasesRefusal?.(cmd);
+        if (refusal !== undefined) throw refusal;
         return { databases: mockDatabaseList, ok: 1 };
       }
       return {};
@@ -573,6 +594,8 @@ function resetObjectSurfaceMocks(): void {
   mongoFoundCollections = [];
   mockFindErrors = {};
   lastListDatabasesCommand = {};
+  listDatabasesCommands = [];
+  mockListDatabasesRefusal = undefined;
 }
 
 function useObjectFixture(): void {
@@ -1919,6 +1942,61 @@ describe("object surface", () => {
     // refusal instead of the databases it CAN read: measured with a role granted only
     // `read` on one database, the flag turns a refusal into that one database.
     expect(lastListDatabasesCommand).toEqual({ listDatabases: 1, nameOnly: true, authorizedDatabases: true });
+  });
+
+  test("sends listDatabases once on a server that accepts authorizedDatabases", async () => {
+    await objectProvider.listContainers();
+    expect(listDatabasesCommands).toEqual([{ listDatabases: 1, nameOnly: true, authorizedDatabases: true }]);
+  });
+
+  test("retries without authorizedDatabases when the server refuses that field (FerretDB)", async () => {
+    // FerretDB 2.7.0 refuses the flag with BadValue and accepts the command without it.
+    mockListDatabasesRefusal = (cmd) =>
+      cmd.authorizedDatabases === undefined ? undefined : mongoServerError(2, FERRETDB_UNKNOWN_FIELD);
+    const containers = await objectProvider.listContainers();
+    expect(listDatabasesCommands).toEqual([
+      { listDatabases: 1, nameOnly: true, authorizedDatabases: true },
+      { listDatabases: 1, nameOnly: true },
+    ]);
+    expect(containers.map((c) => c.name)).toContain("app");
+  });
+
+  test("raises the second refusal when the retry without authorizedDatabases is refused too", async () => {
+    mockListDatabasesRefusal = (cmd) =>
+      cmd.authorizedDatabases === undefined
+        ? mongoServerError(13, "not authorized on admin to execute command")
+        : mongoServerError(2, FERRETDB_UNKNOWN_FIELD);
+    await expect(objectProvider.listContainers()).rejects.toThrow("not authorized on admin");
+    expect(listDatabasesCommands).toEqual([
+      { listDatabases: 1, nameOnly: true, authorizedDatabases: true },
+      { listDatabases: 1, nameOnly: true },
+    ]);
+  });
+
+  test("does not retry a BadValue that is about something other than authorizedDatabases", async () => {
+    mockListDatabasesRefusal = () => mongoServerError(2, "nameOnly is an unknown field");
+    await expect(objectProvider.listContainers()).rejects.toThrow("nameOnly is an unknown field");
+    expect(listDatabasesCommands).toHaveLength(1);
+  });
+
+  test("does not retry when the refusal is not BadValue", async () => {
+    // An unauthorized role is a real answer about this connection. Dropping the flag would
+    // ask a different question rather than the same one again.
+    mockListDatabasesRefusal = () => mongoServerError(13, `not authorized: ${FERRETDB_UNKNOWN_FIELD}`);
+    await expect(objectProvider.listContainers()).rejects.toThrow("not authorized");
+    expect(listDatabasesCommands).toHaveLength(1);
+  });
+
+  test("does not retry when the failure is not the server's own reply", async () => {
+    // A transport failure is nobody answering at all, whatever its sentence says.
+    mockListDatabasesRefusal = () => {
+      const error = new Error(FERRETDB_UNKNOWN_FIELD) as Error & { code: number };
+      error.code = 2;
+      error.name = "MongoNetworkError";
+      return error;
+    };
+    await expect(objectProvider.listContainers()).rejects.toThrow(FERRETDB_UNKNOWN_FIELD);
+    expect(listDatabasesCommands).toHaveLength(1);
   });
 
   test("answers nothing under a container, because nothing nests under a database", async () => {

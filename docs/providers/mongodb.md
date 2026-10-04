@@ -447,6 +447,14 @@ role holds the cluster-wide `listDatabases` action, so a role granted only `read
 would otherwise be at the mercy of a default this provider never stated. Measured both ways — with
 the flag a root role still sees every database and a `read`-on-one role sees exactly its own.
 
+FerretDB does not know the flag. Measured on FerretDB 2.7.0, the command above is refused with code 2
+(`BadValue`), reading *authorizedDatabases is an unknown field*, while `{ listDatabases: 1, nameOnly:
+true }` is accepted. So when, and only when, the server's own reply is `BadValue` naming
+`authorizedDatabases` as an unknown field, the provider sends the command again without it, and the
+object tree on FerretDB lists its databases. MongoDB accepts the flag, so it never takes that path and
+keeps the least-privilege listing above. Any other refusal, such as code 13 `Unauthorized`, and any
+transport failure is raised as it is, without a retry.
+
 #### Where the count and the listing could drift
 
 The rule is that the **listing must contain exactly what the count counted**, and four SQL providers
