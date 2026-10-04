@@ -1535,7 +1535,7 @@ Not fixed in #1085: each remedy costs the inventory's read, which every connecti
 ### D108. One redirected listing fails the whole Elasticsearch or OpenSearch object count
 
 `countObjects` in `src/lib/db/providers/sql/search/index.ts` reads the five kinds together and turns a failed listing into that kind's `unavailable` answer, but only for the transport's own error: anything that is not a `SearchTransportError` is rethrown (`:1189`).
-Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1531`), and that throws a `ConnectionError`, outside the class the count catches.
+Since #1086 the transport refuses a 3xx through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts` (`src/lib/db/providers/sql/search/http-transport.ts:1556`), and that throws a `ConnectionError`, outside the class the count catches.
 So one listing a proxy redirects rejects the whole count with the redirect's message, where a refusal of the same listing marks only that kind and still counts the other four.
 
 Reproduced 2026-09-23 through the provider's own `countObjects`, with `fetch` replaced and the pipeline listing answering a 302 and then, as the control, a 403, from the repository root:

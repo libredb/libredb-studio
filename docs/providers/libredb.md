@@ -211,6 +211,15 @@ The tokenizer is `private tokenize()` in the provider class.
 re-serialized with `JSON.stringify(parsed, null, 2)` for readability in the grid. Non-JSON
 strings are returned as-is. This mirrors how the Redis provider handles structured values.
 
+**A value holding an integer past 2^53 is returned as stored, not pretty-printed.** `JSON.parse`
+rounds such an integer with no error, so the round trip would print a different number: measured on
+0.2.2 on 2026-10-04, a value stored as `{"n":9007199254740993}` was shown as `"n": 9007199254740992`,
+and Copy, every export and an edit-and-`put` cycle then carried the rounded digits while the file
+held the right ones. `renderValue()` therefore asks
+[`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) first, which changes the text
+exactly when such an integer is present outside a string, and returns the stored text unchanged when
+it does. Every other JSON value is pretty-printed as before.
+
 ### 3.7 Monitoring is file-stat-based
 
 Unlike Redis (`INFO`) or PostgreSQL (system catalogs), LibreDB has no server introspection API.
@@ -367,7 +376,8 @@ Rules:
 | `range` | `key`, `value` | one row per key in `[start, end)` |
 
 JSON values in the `value` column are pretty-printed with two-space indentation when they parse
-successfully. Non-JSON strings are left as-is.
+successfully. Non-JSON strings are left as-is, and so is a JSON value holding an integer past 2^53,
+which pretty-printing would round ([§3.6](#36-json-pretty-printing-for-values)).
 
 The command grammar is **unchanged** by the catalog work — only the schema *view* (the object surface)
 became catalog-aware. `get`/`put`/`delete`/`prefix`/`range` still operate on the raw kv keyspace

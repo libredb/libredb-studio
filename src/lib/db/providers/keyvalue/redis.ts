@@ -525,6 +525,42 @@ async function readKeyTypes(client: Redis, keys: readonly string[]): Promise<Rec
 }
 
 /**
+ * A count the server answered as an integer reply, or undefined when it answered anything else.
+ *
+ * The connection sets `stringNumbers`, so ioredis hands every integer reply over as its digits
+ * and `DBSIZE` answers `"42"`, not `42`. A count is far inside the safe range, so it is read back
+ * as a number here; a check for `typeof reply === "number"` would refuse every one of them.
+ */
+function integerReply(reply: unknown): number | undefined {
+  return typeof reply === "string" && /^-?\d+$/.test(reply) ? Number(reply) : undefined;
+}
+
+/**
+ * One `callBuffer` reply, decoded for display.
+ *
+ * A bulk or status string is decoded from its UTF-8 bytes, which is what `call` does. An integer
+ * reply, which `stringNumbers` hands over as its digits, becomes a number when it is exact as one
+ * and a bigint when it is not, so `INCR` on a 64-bit counter shows the server's own digits.
+ * Reading through `callBuffer` rather than `call` is what keeps the two kinds apart: under
+ * `stringNumbers`, `call` decodes both to the same text, and `(integer)` is the distinction
+ * redis-cli draws between them.
+ */
+function decodeReply(reply: unknown): unknown {
+  if (Buffer.isBuffer(reply)) return reply.toString();
+  if (typeof reply === "string") {
+    const value = Number(reply);
+    return Number.isSafeInteger(value) ? value : BigInt(reply);
+  }
+  if (Array.isArray(reply)) return reply.map(decodeReply);
+  return reply;
+}
+
+/** `JSON.stringify` for a nested reply: a bigint is written as its digits, which it cannot do itself. */
+function stringifyReply(reply: unknown): string {
+  return JSON.stringify(reply, (_key, value: unknown) => (typeof value === "bigint" ? value.toString() : value));
+}
+
+/**
  * The three columns every row of a key grouping has, DERIVED rather than read from a
  * catalog: Redis publishes no schema for a key, so these are this provider's own statement
  * about the shape a `SCAN` row comes back in. `key` is the real key name and is the primary
@@ -1127,6 +1163,11 @@ export class RedisProvider extends BaseDatabaseProvider {
       password: this.config.password || undefined,
       connectTimeout: this.queryTimeout,
       lazyConnect: true,
+      // An integer reply as its digits rather than a JS number. Measured on redis 8.10.2
+      // through ioredis 5.11.1: `INCR` on 9223372036854775806 was shown as
+      // `(integer) 9223372036854778000` without this, a counter rounded with no error. Every
+      // count this provider reads for itself goes through `integerReply`, which accepts both.
+      stringNumbers: true,
       ...(tls ? { tls } : {}),
     };
   }
@@ -1469,8 +1510,8 @@ export class RedisProvider extends BaseDatabaseProvider {
     if (refusal !== null) throw new QueryError(refusal, "redis");
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const result = await (this.client as any).call(command, ...args);
-      return this.formatResult(command, result);
+      const result = await (this.client as any).callBuffer(command, ...args);
+      return this.formatResult(command, decodeReply(result));
     } catch (error) {
       throw new QueryError(`Redis error: ${error instanceof Error ? error.message : String(error)}`, "redis");
     }
@@ -1500,13 +1541,13 @@ export class RedisProvider extends BaseDatabaseProvider {
       // Regular array result
       const rows = result.map((item, index) => ({
         index: index + 1,
-        value: typeof item === "object" ? JSON.stringify(item) : String(item),
+        value: typeof item === "object" ? stringifyReply(item) : String(item),
       }));
       return { rows, fields: ["index", "value"], rowCount: rows.length };
     }
 
     // Handle integers
-    if (typeof result === "number") {
+    if (typeof result === "number" || typeof result === "bigint") {
       return { rows: [{ result: `(integer) ${result}` }], fields: ["result"], rowCount: 1 };
     }
 
@@ -1705,8 +1746,8 @@ export class RedisProvider extends BaseDatabaseProvider {
       // than papered over: `total` is what a progress bar divides by, and a stand-in number
       // would be one nobody measured.
       const replies = await client.pipeline().dbsize().info("cluster").exec();
-      const total = replies?.[0]?.[1];
-      if (typeof total !== "number") {
+      const total = integerReply(replies?.[0]?.[1]);
+      if (total === undefined) {
         throw replies?.[0]?.[0] ?? new QueryError("Redis answered no key count for this page of the walk", "redis");
       }
       const clustered = parseClusterEnabled(replies?.[1]?.[1]);
@@ -2451,7 +2492,8 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     const info = await this.client!.info();
     const parsed = this.parseRedisInfo(info);
-    const dbsize = await this.client!.dbsize();
+    // A digit string under `stringNumbers`, whatever the method's declared type says.
+    const dbsize = integerReply(await this.client!.dbsize()) ?? 0;
 
     return {
       version: labelServerVersion(parsed),

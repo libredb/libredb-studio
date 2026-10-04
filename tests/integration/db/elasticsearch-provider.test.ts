@@ -1483,6 +1483,33 @@ describe("ElasticsearchProvider query", () => {
     expect(result.executionTime).toBeGreaterThanOrEqual(0);
   });
 
+  test("keeps a long and an unsigned_long past 2^53 exact, as their digits", async () => {
+    // Measured on 9.5.3 on 2026-10-04: the engine sends both as UNQUOTED JSON numbers,
+    // and a plain JSON.parse showed 9223372036854776000, 18446744073709552000 and
+    // 9007199254740992 in the grid, the API and every export. A value in the safe
+    // range stays a number, so an ordinary column still sorts and sums as one.
+    const provider = await connectProvider();
+    let page = 0;
+    replyFor = () => {
+      page += 1;
+      return ok(
+        page === 1
+          ? '{"columns":[{"name":"k","type":"keyword"},{"name":"lng","type":"long"},' +
+              '{"name":"ulng","type":"unsigned_long"},{"name":"small","type":"integer"},{"name":"big","type":"long"}],' +
+              '"rows":[["a",9223372036854775807,18446744073709551615,42,9007199254740993]],"cursor":"c1"}'
+          : '{"rows":[["b",-9223372036854775808,0,7,9007199254740991]]}',
+      );
+    };
+
+    const result = await provider.query("SELECT k, lng, ulng, small, big FROM types");
+
+    expect(result.rows).toEqual([
+      { k: "a", lng: "9223372036854775807", ulng: "18446744073709551615", small: 42, big: "9007199254740993" },
+      // A later page is parsed the same way, and 2^53 - 1 is still a number.
+      { k: "b", lng: "-9223372036854775808", ulng: 0, small: 7, big: 9007199254740991 },
+    ]);
+  });
+
   test("labels each column with the engine's own MAPPING type, not a SQL type name", async () => {
     // Measured: `SELECT customer, total` declares `keyword` and `double`, not VARCHAR
     // and DOUBLE. That is the vocabulary the user wrote in their own index mapping and
@@ -2541,7 +2568,7 @@ describe("object surface", () => {
 
     // The declaration against the engine's own answer, one kind each way. An alias row's
     // columns are the mapping of ONE backing index, which is what the transport takes
-    // (`search/http-transport.ts:1266`).
+    // (`search/http-transport.ts:1283`).
     const alias = await provider.describeObject(["probe_orders_alias"], "alias");
     expect(alias.columns.length).toBeGreaterThan(0);
     for (const column of alias.columns) {

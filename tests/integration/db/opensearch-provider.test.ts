@@ -1120,6 +1120,31 @@ describe("OpenSearchProvider query preparation", () => {
 // ============================================================================
 
 describe("OpenSearchProvider query", () => {
+  test("keeps a long past 2^53 exact, as its digits, on every page", async () => {
+    // Measured on 3.9.0 on 2026-10-04: `datarows` carries a `long` as an UNQUOTED JSON
+    // number, and a plain JSON.parse showed 9223372036854776000 and 9007199254740992 in
+    // the grid, the API and every export. A value in the safe range stays a number.
+    const provider = await connectProvider();
+    replyFor = (path, body) => {
+      if (!path.startsWith("/_plugins/_sql")) return defaultReply(path, body);
+      if (typeof body?.cursor === "string") {
+        return ok('{"datarows":[["b",-9223372036854775808,7,9007199254740991]],"status":200}');
+      }
+      return ok(
+        '{"schema":[{"name":"k","type":"keyword"},{"name":"lng","type":"long"},{"name":"small","type":"integer"},' +
+          '{"name":"big","type":"long"}],"cursor":"c1","total":2,' +
+          '"datarows":[["a",9223372036854775807,42,9007199254740993]],"size":1,"status":200}',
+      );
+    };
+
+    const result = await provider.query("SELECT k, lng, small, big FROM types");
+
+    expect(result.rows).toEqual([
+      { k: "a", lng: "9223372036854775807", small: 42, big: "9007199254740993" },
+      { k: "b", lng: "-9223372036854775808", small: 7, big: 9007199254740991 },
+    ]);
+  });
+
   test("reports a missing index as a query error even though the answer is a 404", async () => {
     // A status-driven mapping would have made this a ConnectionError and sent the
     // user to check a cluster that answered perfectly well; the same statement on
@@ -1425,7 +1450,7 @@ describe("object surface", () => {
 
     // The declaration against the engine's own answer, one kind each way. A data stream
     // row's columns are the mapping of its CURRENT backing index, which is what the
-    // transport takes (`search/http-transport.ts:1266`).
+    // transport takes (`search/http-transport.ts:1283`).
     const stream = await provider.describeObject(["probe_stream"], "stream");
     expect(stream.columns.length).toBeGreaterThan(0);
     for (const column of stream.columns) {

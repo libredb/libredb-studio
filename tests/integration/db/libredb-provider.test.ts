@@ -232,6 +232,24 @@ describe("LibreDBProvider — query commands", () => {
     await provider.disconnect();
   });
 
+  test("get and prefix show a JSON value holding an integer past 2^53 exactly as stored", async () => {
+    // Measured on 0.2.2 on 2026-10-04: `put k '{"n":9007199254740993}'` stores those
+    // digits, and pretty-printing through JSON.parse showed `"n": 9007199254740992`, which
+    // Copy, every export and an edit-and-put cycle then carried. The stored text is shown
+    // instead, so the digits are the file's own.
+    const stored = '{"n":9007199254740993,"m":-9223372036854775808,"note":"ok"}';
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    await provider.query(`put big:1 '${stored}'`);
+
+    const got = await provider.query("get big:1");
+    const scanned = await provider.query("prefix big:");
+
+    expect(got.rows).toEqual([{ key: "big:1", value: stored }]);
+    expect(scanned.rows).toEqual([{ key: "big:1", value: stored }]);
+    await provider.disconnect();
+  });
+
   test("get on a missing key returns zero rows", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();

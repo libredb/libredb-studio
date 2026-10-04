@@ -585,7 +585,7 @@ everything it *would* have accepted, which is more useful than anything substitu
 
 | Source | `QueryResult` field | Notes |
 |---|---|---|
-| `rows` | `rows` | Rebuilt from the positional arrays, keyed by the disambiguated column names |
+| `rows` | `rows` | Rebuilt from the positional arrays, keyed by the disambiguated column names; an integer past 2^53 arrives as its exact digits ([§5.3](#53-row-values-arrive-as-the-mappings-json)) |
 | `columns[].name` | `fields` | Declared order, made unique (`c`, `c (2)`); `[]` when the answer described no columns |
 | — | `rowCount` | `rows.length`. There is no second number: no statement here mutates, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by this process**. Neither the body nor the headers carry any timing, so there is no server number to prefer |
@@ -601,13 +601,28 @@ which is the argument [druid.md](./druid.md) makes about its own warnings.
 
 ### 5.3 Row values arrive as the mapping's JSON
 
-No value rewriting happens anywhere in this provider. A `date` field comes back as the engine's own
-string, a `double` as a JSON number, and an object field is not selectable at all
-([§5.4](#54-dialect-traps-a-user-will-hit)). There is no 64-bit-integer rewrite of the kind
-`druid/http-transport.ts` needs, because nothing measured on this endpoint returns an integer outside
-the safe range — a `long` field is a JSON number, and the only counts this provider reads from `_cat`
-arrive as strings and are parsed explicitly
-([http-transport.ts:450](../../src/lib/db/providers/sql/search/http-transport.ts)).
+A `date` field comes back as the engine's own string, a `double` as a JSON number, and an object
+field is not selectable at all ([§5.4](#54-dialect-traps-a-user-will-hit)).
+
+**One rewrite does happen, the 64-bit-integer one `druid/http-transport.ts` needs.** This endpoint
+does return integers outside the safe range: a `long` and an `unsigned_long` are **unquoted** JSON
+numbers in `rows`, and `JSON.parse` rounds one past 2^53 with no error. Measured on 9.5.3 on 2026-10-04, over an index holding one document:
+
+| Mapping | Stored | Shown before this rewrite |
+|---|---|---|
+| `long` | `9223372036854775807` | `9223372036854776000` |
+| `long` | `9007199254740993` | `9007199254740992` |
+| `unsigned_long` | `18446744073709551615` | `18446744073709552000` |
+
+in the grid, the API and every export alike. The SQL answer and each cursor page therefore go through
+[`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) before they are parsed
+(`parseRowsJson` in
+[`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts)), so such a value
+reaches the grid as its exact digits, a string, the way Druid's and Trino's transports hand one over.
+An integer inside the safe range, and every float, stays a number, so an ordinary column still sorts
+as one. The REST reads (mappings, listings, object definitions) are parsed as before: the counts
+this provider reads from `_cat` arrive as strings and are parsed explicitly, and the object source
+still re-spells a long past 2^53 ([Object source](#object-source-789), D61).
 
 ### 5.4 Dialect traps a user will hit
 
@@ -1002,7 +1017,7 @@ Those same three kinds declare `hasColumns: true` (#789), which is what gives an
 in the object tree; a `pipeline` and a `template` declare nothing and stay leaves, so no column read
 is ever issued for them. An `alias` row and a `data stream` row show the mapping of **one** backing
 index: the transport takes the first entry of a `_mapping` payload keyed by concrete index name
-(`src/lib/db/providers/sql/search/http-transport.ts:1266`), so an alias spanning two indices shows
+(`src/lib/db/providers/sql/search/http-transport.ts:1283`), so an alias spanning two indices shows
 whichever the cluster answered first, with nothing on screen to say the other is missing.
 
 #### `describeObjects`, the bulk column read (#789)

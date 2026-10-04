@@ -535,7 +535,7 @@ error message, which is more useful than anything substituted here
 
 | Source | `QueryResult` field | Notes |
 |---|---|---|
-| `datarows` | `rows` | Rebuilt from the positional arrays, keyed by the declared names |
+| `datarows` | `rows` | Rebuilt from the positional arrays, keyed by the declared names; an integer past 2^53 arrives as its exact digits (see below) |
 | `schema[].alias ?? schema[].name` | `fields` | Declared order; the **alias wins** ([§3.4](#34-the-success-envelope-schemadatarows-a-separate-alias-and-a-count)) |
 | — | `rowCount` | `rows.length`. There is no second number: no statement here reaches a document, so a mutation count could only ever be zero |
 | the measured exchange | `executionTime` | Rounded milliseconds, **measured by this process**. Neither the body nor the headers carry any timing |
@@ -576,7 +576,18 @@ works on both ([§6](#6-schema-introspection)). A statement the user types thems
 exactly as this engine serves it — an object cell simply arrives as a JSON object in the grid, with the
 mapping type (`object`, `nested`) as its label.
 
-No value rewriting happens anywhere in this provider.
+One value rewrite happens in this provider, and only for row values. A `long` arrives in `datarows`
+as an **unquoted** JSON number, and `JSON.parse` rounds one past 2^53 with no error: measured on
+3.9.0 on 2026-10-04, `9223372036854775807` and `9007199254740993` were shown as
+`9223372036854776000` and `9007199254740992` in the grid, the API and every export. The SQL answer and
+each cursor page therefore go through
+[`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) before they are parsed
+(`parseRowsJson` in
+[`http-transport.ts`](../../src/lib/db/providers/sql/search/http-transport.ts)), so such a value
+reaches the grid as its exact digits, a string, the way Druid's and Trino's transports hand one over.
+An integer inside the safe range, and every float, stays a number. The REST reads (mappings,
+listings, object definitions) are parsed as before, which is why the object source still re-spells a
+long past 2^53 (D61).
 
 ### 5.4 Dialect traps a user will hit
 
@@ -971,7 +982,7 @@ Those same three kinds declare `hasColumns: true` (#789), which is what gives an
 in the object tree; a `pipeline` and a `template` declare nothing and stay leaves, so no column read
 is ever issued for them. An `alias` row and a `data stream` row show the mapping of **one** backing
 index: the transport takes the first entry of a `_mapping` payload keyed by concrete index name
-(`src/lib/db/providers/sql/search/http-transport.ts:1266`), so an alias spanning two indices shows
+(`src/lib/db/providers/sql/search/http-transport.ts:1283`), so an alias spanning two indices shows
 whichever the cluster answered first, with nothing on screen to say the other is missing.
 
 #### `describeObjects`, the bulk column read (#789)

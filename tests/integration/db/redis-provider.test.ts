@@ -529,7 +529,40 @@ mock.module("ioredis", () => {
     }
 
     async dbsize() {
-      return 42;
+      return this.integerReply(42);
+    }
+
+    /**
+     * An integer reply as ioredis hands it over: a JS number by default, and its digit
+     * string under `stringNumbers`, which the provider sets so a 64-bit counter is exact.
+     * Measured on redis 8.10.2 through ioredis 5.11.1: `INCR` on 9223372036854775806 answers
+     * 9223372036854778000 by default and "9223372036854775807" under the option. Modelled
+     * here so a provider reading a count with `typeof x === "number"` fails as it would live.
+     */
+    private integerReply(value: number | bigint): number | string {
+      const options = (this._config ?? {}) as Record<string, unknown>;
+      return options.stringNumbers === true ? String(value) : Number(value);
+    }
+
+    /**
+     * A canned reply on its way through the driver: strings become Buffers for `callBuffer`
+     * and stay strings for `call`, integers become what {@link integerReply} says, and a bigint
+     * in a canned reply is how a test spells an integer past 2^53.
+     */
+    private encodeReply(value: unknown, asBuffers: boolean): unknown {
+      if (typeof value === "string") return asBuffers ? Buffer.from(value) : value;
+      if (typeof value === "number" || typeof value === "bigint") return this.integerReply(value);
+      if (Array.isArray(value)) return value.map((item) => this.encodeReply(item, asBuffers));
+      return value;
+    }
+
+    /** ioredis's `callBuffer`: the reply before any decoding, bulk and status strings as Buffers. */
+    async callBuffer(command: string, ...args: string[]) {
+      return this.encodeReply(await this.answer(command, ...args), true);
+    }
+
+    async call(command: string, ...args: string[]) {
+      return this.encodeReply(await this.answer(command, ...args), false);
     }
 
     async scan(cursor: string | number, ...args: (string | number)[]): Promise<[string, string[]]> {
@@ -594,7 +627,7 @@ mock.module("ioredis", () => {
           return Promise.all(
             commands.map(async ({ name, args }): Promise<[Error | null, unknown]> => {
               if (mode === "error") return [new Error("ERR pipeline command failed"), null];
-              if (name === "DBSIZE") return [null, 42];
+              if (name === "DBSIZE") return [null, this.integerReply(42)];
               if (name === "INFO") return [null, clusterInfoReply];
               return [null, await this.type(String(args[0]))];
             }),
@@ -609,7 +642,8 @@ mock.module("ioredis", () => {
       return "OK";
     }
 
-    async call(command: string, ...args: string[]) {
+    /** The server's canned answer to one command, before the driver decodes it. */
+    private async answer(command: string, ...args: string[]): Promise<unknown> {
       const cmd = command.toUpperCase();
       capturedCalls.push({ command: cmd, args });
       // Simulate a Redis-side error (e.g. unknown command / wrong arity)
@@ -2075,6 +2109,75 @@ describe("RedisProvider", () => {
     test("DBSIZE returns integer key count", async () => {
       const result = await provider.query(JSON.stringify({ command: "DBSIZE", args: [] }));
       expect(result.rows[0].result).toBe("(integer) 42");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Integer replies past 2^53
+  // --------------------------------------------------------------------------
+
+  describe("integer replies past 2^53", () => {
+    /** Answer `command` with `reply` for one test, the way a live server would. */
+    const answering = async (command: string, reply: unknown, run: () => Promise<void>) => {
+      mockCallResults[command] = reply;
+      try {
+        await run();
+      } finally {
+        delete mockCallResults[command];
+      }
+    };
+
+    beforeEach(async () => {
+      pagePipelineMode = "ok";
+      clusterInfoReply = MOCK_PLAIN_CLUSTER_INFO;
+      await provider.connect();
+    });
+
+    // Measured on redis 8.10.2 through ioredis 5.11.1 on 2026-10-04: by default the driver
+    // parses an integer reply into a JS number, so `INCR` on 9223372036854775806 showed
+    // `(integer) 9223372036854778000`. Under `stringNumbers` it hands over the digits.
+    test("asks ioredis for integer replies as digit strings", () => {
+      expect(capturedRedisOptions[capturedRedisOptions.length - 1]).toMatchObject({ stringNumbers: true });
+    });
+
+    test("shows INCR's 64-bit result exactly", async () => {
+      await answering("INCR", BigInt("9223372036854775807"), async () => {
+        const result = await provider.query("INCR big:int");
+        expect(result.rows).toEqual([{ result: "(integer) 9223372036854775807" }]);
+      });
+    });
+
+    test("shows 2^53 + 1 and a negative 64-bit integer exactly", async () => {
+      await answering("INCRBY", BigInt("9007199254740993"), async () => {
+        expect((await provider.query("INCRBY big2 0")).rows).toEqual([{ result: "(integer) 9007199254740993" }]);
+      });
+      await answering("DECRBY", -BigInt("9223372036854775808"), async () => {
+        expect((await provider.query("DECRBY big3 1")).rows).toEqual([{ result: "(integer) -9223372036854775808" }]);
+      });
+    });
+
+    test("keeps an integer exact inside an array reply and a nested one", async () => {
+      // `EVAL "return {1, 9007199254740993, {2, 9223372036854775807}}" 0` answers this shape:
+      // an array of integers and a nested array. A nested value is shown as JSON, where the
+      // safe integer stays a number and the unsafe ones are their digits.
+      await answering("EVAL", [1, BigInt("9007199254740993"), [2, BigInt("9223372036854775807"), "x"]], async () => {
+        const result = await provider.query('EVAL "return 1" 0');
+        expect(result.rows).toEqual([
+          { index: 1, value: "1" },
+          { index: 2, value: "9007199254740993" },
+          { index: 3, value: '[2,"9223372036854775807","x"]' },
+        ]);
+      });
+    });
+
+    test("still reads a small integer reply as an ordinary count", async () => {
+      // The counts the provider reads for itself arrive as digit strings too now, and still
+      // reach the overview and the key-space page as numbers.
+      const overview = await provider.getOverview();
+      const page = await provider.scanKeysPage({ cursor: "0", count: 100 });
+
+      expect(overview.tableCount).toBe(42);
+      expect(page.total).toBe(42);
     });
   });
 

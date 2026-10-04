@@ -573,7 +573,9 @@ the load-bearing part; a naive digit-run rewrite corrupts `"id: 9007199254740993
 Either way the number reaches the UI as an exact string, which is what the `pg` driver already does
 for `int8`. The generalisable lesson: check the widest integer type your engine supports against
 `Number.MAX_SAFE_INTEGER` before trusting `JSON.parse`, and expect to write the fix yourself when the
-server offers no switch.
+server offers no switch. Check the exact decimal type too: ClickHouse's 64-bit setting does not cover
+`Decimal`, which needs `output_format_json_quote_decimals=1` as well, and a fraction cannot be rescued
+from the text afterwards, because nothing in it tells a lossy decimal from a float printed in full.
 
 **The response envelope does not always describe the rows.** Couchbase's `signature` is `"*"` for
 `SELECT *`, and `{ id, "*" }` for a wildcard mixed with named projections. Taking those keys
