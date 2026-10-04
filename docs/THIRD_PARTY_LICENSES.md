@@ -16,7 +16,7 @@ MIT.
 The db2-node npm tarball ships no LICENSE file and no notices for the crates compiled into its addons, so those notices travel in [`THIRD_PARTY_NOTICES.txt`](../THIRD_PARTY_NOTICES.txt) at the repository root.
 Every Docker image copies it into `/app`, and the standalone payload carries it at its root, so every tarball, package and desktop bundle built from the payload carries it too.
 It holds the db2-node MIT text and, for each crate, the license text it ships: the MIT text where the crate offers MIT among its choices, and every license file otherwise.
-`scripts/generate-db2-node-notices.sh` writes it from the upstream `Cargo.lock` at the 1.0.24 gitHead (d14431ae), with the crate set Cargo links into the addon for the eight targets the package ships; it is never edited by hand.
+`scripts/generate-db2-node-notices.sh` writes it from the upstream `Cargo.lock` at the 1.0.25 gitHead (ae5730e1), with the crate set Cargo links into the addon for the eight targets the package ships; it is never edited by hand.
 `decnumber-sys` vendors IBM's decNumber C library, which is where the ICU terms come from.
 Apache-2.0 section 4(d) would require carrying any NOTICE file an Apache-licensed crate ships; none of the 62 does, and the generator fails if one starts to.
 The CycloneDX SBOM the release workflow publishes is built from the npm dependency graph and cannot see these crates, so this file and the notices file are the only places they are declared.
