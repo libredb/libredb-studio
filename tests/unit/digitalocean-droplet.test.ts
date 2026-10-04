@@ -13,12 +13,18 @@
  */
 import { describe, expect, test } from "bun:test";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
+import { MISSING_POSIX_FILE_MODES, missingPosixShell, posixShell, testIf } from "../helpers/posix-tools";
 
 const DROPLET = path.join(__dirname, "../../deploy/digitalocean/droplet");
 const read = (relative: string): string => fs.readFileSync(path.join(DROPLET, relative), "utf8");
 
 const firstBoot = read("files/var/lib/cloud/scripts/per-instance/99-libredb-first-boot.sh");
+const unit = read("files/etc/systemd/system/libredb-studio.service");
+const configure = read("scripts/02-configure.sh");
+const template = read("template.pkr.hcl");
+const motd = read("files/etc/update-motd.d/99-libredb-studio");
 
 /**
  * The script with its full-line comments stripped. The comment above the heredoc
@@ -100,5 +106,121 @@ describe("DigitalOcean Droplet first boot", () => {
     for (const line of envFile.split("\n").filter((l) => l.trim() !== "")) {
       expect(line).toMatch(/^[A-Z_][A-Z0-9_]*=/);
     }
+  });
+});
+
+/**
+ * The optional DigitalOcean Managed Database (marketplace-partners README, section 5). The
+ * helper's own behaviour is executed in digitalocean-dbaas-seed.test.ts; these hold the wiring
+ * around it, where a break is just as silent: a seed file Studio never sees because the mount
+ * and SEED_CONFIG_PATH disagree, or a helper the image cannot execute.
+ */
+describe("DigitalOcean Droplet managed database wiring", () => {
+  test("the seed file first boot writes is the one the container is pointed at", () => {
+    const seedFile = /^SEED_FILE=(\S+)$/m.exec(code)?.[1];
+    const mount = /-v (\S+):(\S+):ro/.exec(unit);
+    const configPath = /SEED_CONFIG_PATH=(\S+?)\\n/.exec(code)?.[1];
+    expect(seedFile).toBeDefined();
+    expect(mount).not.toBeNull();
+    expect(path.posix.dirname(seedFile!)).toBe(mount![1]);
+    expect(configPath).toBe(path.posix.join(mount![2], path.posix.basename(seedFile!)));
+  });
+
+  test("without the credentials file nothing is added to the environment", () => {
+    // The helper runs only under the file test, and the extra env lines are written only
+    // when it succeeded, so a Droplet created without a database boots exactly as before.
+    const guardAt = code.indexOf('if [ -f "$DBAAS_CREDENTIALS" ]; then');
+    const helperAt = code.indexOf("/usr/local/sbin/libredb-do-dbaas-seed");
+    expect(guardAt).toBeGreaterThan(0);
+    expect(helperAt).toBeGreaterThan(guardAt);
+    const appendAt = code.indexOf('if [ -n "$DBAAS_ENV" ]; then');
+    expect(appendAt).toBeGreaterThan(code.indexOf(OPEN));
+    expect(code.indexOf("SEED_CONFIG_PATH=")).toBeGreaterThan(appendAt);
+    expect(envFile).not.toContain("SEED_CONFIG_PATH");
+  });
+
+  test("the password lines are appended inside the umask, before the mode fix and the move", () => {
+    const umaskAt = code.indexOf("umask 077");
+    const appendAt = code.indexOf("printf '%s\\n' \"$DBAAS_ENV\" >> /etc/libredb-studio.env.tmp");
+    const closeAt = code.indexOf(")", appendAt);
+    expect(appendAt).toBeGreaterThan(umaskAt);
+    expect(code.slice(umaskAt, appendAt)).not.toMatch(/^\)/m);
+    expect(closeAt).toBeLessThan(code.indexOf("chmod 600 /etc/libredb-studio.env.tmp"));
+  });
+
+  test("every run starts from a clean seed and status, so an old claim cannot survive", () => {
+    // per-instance runs again on a Droplet created from a customer's own snapshot. If the
+    // credentials file is gone by then, the guard below skips the helper, and a seed file
+    // and a "connected" status left from the first instance would make the MOTD promise a
+    // database Studio no longer loads.
+    const cleanAt = code.indexOf('rm -f "$SEED_FILE" "$DBAAS_STATUS"');
+    expect(cleanAt).toBeGreaterThan(0);
+    expect(cleanAt).toBeLessThan(code.indexOf('if [ -f "$DBAAS_CREDENTIALS" ]; then'));
+    expect(/^DBAAS_STATUS=(\S+)$/m.exec(code)?.[1]).toBe("/var/lib/libredb-studio/dbaas.status");
+    expect(motd).toContain("DBAAS_STATUS=/var/lib/libredb-studio/dbaas.status");
+  });
+
+  test("the seed file is handed to the container group, never to everyone", () => {
+    expect(code).toContain('chown root:libredb-studio "$SEED_FILE"');
+    expect(code).toContain('chmod 640 "$SEED_FILE"');
+    expect(configure).toContain("install -d -m 0750 -o root -g libredb-studio /etc/libredb-studio/seed");
+  });
+
+  test("the container's group id is reserved by name on the host", () => {
+    // The image runs the app as nextjs:nodejs, gid 1001. On the host that id has no name, so
+    // the second human login adduser creates would get group 1001 and read the seed
+    // directory. Reserving it first makes adduser pick another id, and ls shows a name.
+    const groupAt = configure.indexOf("groupadd --system --gid 1001 libredb-studio");
+    expect(groupAt).toBeGreaterThan(0);
+    expect(groupAt).toBeLessThan(configure.indexOf("install -d -m 0750 -o root -g libredb-studio"));
+  });
+
+  test("the image ships the helper and can execute it", () => {
+    expect(template).toMatch(/source\s*=\s*"files\/usr\/"/);
+    expect(configure).toContain("chmod +x /usr/local/sbin/libredb-do-dbaas-seed");
+    expect(fs.existsSync(path.join(DROPLET, "files/usr/local/sbin/libredb-do-dbaas-seed"))).toBe(true);
+  });
+});
+
+describe("DigitalOcean Droplet MOTD", () => {
+  const SHELL = posixShell("bash");
+  const CANNOT_RUN = missingPosixShell("bash") ?? MISSING_POSIX_FILE_MODES;
+
+  /** The MOTD as pam_motd runs it, against a status file in a fixture and a curl that fails. */
+  function render(status: string | null): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "do-motd-"));
+    try {
+      const statusPath = path.join(dir, "dbaas.status");
+      if (status !== null) fs.writeFileSync(statusPath, status);
+      const hook = path.join(dir, "99-libredb-studio");
+      fs.writeFileSync(hook, motd.split("/var/lib/libredb-studio/dbaas.status").join(statusPath));
+      fs.writeFileSync(path.join(dir, "curl"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+      const run = Bun.spawnSync([SHELL!, hook], {
+        env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH}` },
+      });
+      expect(run.exitCode).toBe(0);
+      return new TextDecoder().decode(run.stdout);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  testIf(CANNOT_RUN, "says nothing about a database when none was created", () => {
+    expect(render(null)).not.toContain("Database:");
+  });
+
+  testIf(CANNOT_RUN, "names the connection the admin will find in the sidebar", () => {
+    const out = render(
+      "DBAAS=connected\nDBAAS_CONNECTION=DigitalOcean Managed PostgreSQL: database defaultdb, user doadmin\n",
+    );
+    expect(out).toContain("admin role only");
+    expect(out).toContain("DigitalOcean Managed PostgreSQL: database defaultdb, user doadmin");
+  });
+
+  testIf(CANNOT_RUN, "says plainly when the database was not added, and why", () => {
+    const out = render('DBAAS=error\nDBAAS_DETAIL=db_protocol "mongodb" is not an engine this image connects\n');
+    expect(out).toContain("NOT added to Studio");
+    expect(out).toContain('db_protocol "mongodb"');
+    expect(out).toContain("/root/.digitalocean_dbaas_credentials");
   });
 });

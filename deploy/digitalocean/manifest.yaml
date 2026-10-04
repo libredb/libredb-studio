@@ -13,3 +13,9 @@ pricing: free
 health_check: "GET http://localhost:3000/api/db/health"
 port: 3000
 support_email: yusuf.gundogdu@sekoya.tech
+# Vendor Portal managed-database checkboxes. Tick only engines proven on a real
+# cluster (README.md, "Managed Database"); the image maps any other protocol to
+# a MOTD error rather than a connection.
+managed_databases:
+  - postgresql
+  - mysql

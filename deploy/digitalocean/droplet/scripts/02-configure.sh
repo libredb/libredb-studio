@@ -19,6 +19,24 @@ chmod +x /etc/update-motd.d/99-libredb-studio
 # droplets
 chmod +x /var/lib/cloud/scripts/per-instance/99-libredb-first-boot.sh
 
+# The first-boot script runs this helper by path when DigitalOcean created a
+# Managed Database with the Droplet. The repository stores it 0644, like every
+# file here, so the exec bit is set in the image or the call fails.
+chmod +x /usr/local/sbin/libredb-do-dbaas-seed
+
+# The container runs the app as nextjs:nodejs, gid 1001, which has no name on
+# the host. Left unnamed, the second login adduser creates later would get
+# group 1001 and could read the seed directory below. Reserving the id by name
+# makes adduser pick another one. The build Droplet is a fresh Ubuntu image, so
+# an existing group 1001 is a surprise and fails the build here.
+groupadd --system --gid 1001 libredb-studio
+
+# Mounted read-only into the container at /app/seed. It stays empty unless first
+# boot finds a Managed Database.
+install -d -m 0750 -o root -g libredb-studio /etc/libredb-studio/seed
+# The first-boot result the MOTD reads. It never holds a password.
+install -d -m 0755 /var/lib/libredb-studio
+
 mkdir -p /app/data
 chmod 750 /app/data
 

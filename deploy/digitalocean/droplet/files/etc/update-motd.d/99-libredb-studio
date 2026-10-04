@@ -2,6 +2,9 @@
 # Public IPv4 from the DO metadata service; hostname -I as fallback (its
 # first address may be a private/VPC one)
 IP=$(curl -fsm 2 http://169.254.169.254/metadata/v1/interfaces/public/0/ipv4/address 2>/dev/null || hostname -I | awk '{print $1}')
+# Written once by the first-boot script, and only when DigitalOcean created a
+# Managed Database together with this Droplet. It holds no password.
+DBAAS_STATUS=/var/lib/libredb-studio/dbaas.status
 cat <<EOF
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   LibreDB Studio
@@ -11,5 +14,19 @@ cat <<EOF
   Admin:    admin@libredb.org
   Password: (see /etc/libredb-studio.env)
   Docs:     https://github.com/libredb/libredb-studio
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EOF
+if [ -r "$DBAAS_STATUS" ]; then
+  case "$(sed -n 's/^DBAAS=//p' "$DBAAS_STATUS")" in
+    connected)
+      echo "  Database: in the Studio sidebar (admin role only)"
+      sed -n 's/^DBAAS_CONNECTION=/            /p' "$DBAAS_STATUS"
+      echo "            A new cluster can take a few minutes to accept connections."
+      ;;
+    error)
+      echo "  Database: NOT added to Studio"
+      sed -n 's/^DBAAS_DETAIL=/            /p' "$DBAAS_STATUS"
+      echo "            Credentials: /root/.digitalocean_dbaas_credentials"
+      ;;
+  esac
+fi
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
