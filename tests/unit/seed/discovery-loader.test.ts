@@ -204,7 +204,7 @@ describe("discovery-loader", () => {
 
       expect(status.state).toBe("error");
       expect(status.error?.code).toBe("invalid_export");
-      expect(status.message).toContain("The export file could not be read (");
+      expect(status.message).toBe("The export file could not be read (not a regular file)");
       expect(await getDiscoveredConnections(deps())).toEqual([]);
     });
 

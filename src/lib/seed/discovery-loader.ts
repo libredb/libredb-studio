@@ -165,7 +165,8 @@ async function recompute(path: string, at: number, previous: Snapshot | null, de
       raw = await (deps.readFile ?? readExportFile)(path);
     } catch (err) {
       if (err instanceof ExportFileTooLarge) return failed(at, "invalid_export", err.message);
-      const code = (err as NodeJS.ErrnoException).code;
+      // A path that is not a regular file reads as a read failure, with its reason where an errno code would stand.
+      const code = err instanceof ExportFileNotRegular ? err.message : (err as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
         return {
           readAt: at,
@@ -268,6 +269,14 @@ class ExportFileTooLarge extends Error {
   }
 }
 
+/** An export path that names a directory or another file that is not a regular one, refused before any read. */
+class ExportFileNotRegular extends Error {
+  constructor() {
+    super("not a regular file");
+    this.name = "ExportFileNotRegular";
+  }
+}
+
 /**
  * Reads the export file through one handle after checking its size, so a SEED_DISCOVERY_PATH that
  * names a log or a dump is refused instead of read whole into memory on every recompute. A short read
@@ -276,7 +285,11 @@ class ExportFileTooLarge extends Error {
 async function readExportFile(path: string): Promise<string> {
   const handle = await open(path, "r");
   try {
-    const { size } = await handle.stat();
+    const stats = await handle.stat();
+    // A directory reports size 0 on Windows and on some filesystems, and a read of 0 bytes never reaches
+    // the OS, so it would come back as empty text instead of EISDIR. The type is checked first instead.
+    if (!stats.isFile()) throw new ExportFileNotRegular();
+    const { size } = stats;
     if (size > DISCOVERY_FILE_MAX_BYTES) throw new ExportFileTooLarge(size);
     const buffer = Buffer.alloc(size);
     const { bytesRead } = await handle.read(buffer, 0, size, 0);
