@@ -8,19 +8,24 @@
  * rather than a reader — `SCAN` can only answer a cursor, so the only way to be fast on a keystroke
  * is to hold what the walk has seen and rearrange it locally.
  *
- * WHAT IS DRAWN IS A SAMPLE, and it says so. `Scanned n/m` is the walk's progress against the
- * server's own key count, a folder's number is how many keys the walk found under it, and a prefix
- * whose keys have not arrived yet does not appear at all. The alternative — presenting a sample as
- * a catalog — is the defect this panel exists to avoid.
+ * WHAT IS DRAWN IS A SAMPLE, and it says so. `Scanned n/m` is the walk's progress against the count
+ * the declaration's `totalScope` names: the server's own key count on Redis, and on etcd the exact
+ * count of the range the walk covers. An engine that publishes no count declares `none`, and the line is
+ * `Scanned n` alone. A folder's number is how many keys the walk found under it, and
+ * a prefix whose keys have not arrived yet does not appear at all. The alternative, presenting a
+ * sample as a catalog, is the defect this panel exists to avoid.
  *
- * A FOLDER IS A NAME, NOT A THING. `app:*` is a row this client drew because two keys begin with
- * those bytes; nothing on the server can be asked about it. That is why a folder is not clickable
- * into a query the way a table is, and why the row says `shape` rather than claiming an object.
+ * A FOLDER IS A NAME, NOT A THING. `app:*`, or `apisix/*` under a `/` separator, is a row this client
+ * drew because two keys begin with those bytes; nothing on the server can be asked about it. That is
+ * why a folder is not clickable into a query the way a table is, and why the row says `shape` rather
+ * than claiming an object.
  *
- * THE ROOT OF THE TREE IS A DATABASE, WHICH IS THE ONE THING ABOVE A KEY THAT REALLY EXISTS. A key
- * space belongs to a numbered database, the walk takes that number, and the reader picks it from the
- * engine's own container list — so the tree is drawn under that row rather than floating free, and
- * everything below it is the arrangement described above.
+ * THE ROOT OF THE TREE IS A DATABASE WHERE THE ENGINE DECLARES ONE, which is the one thing above a
+ * key that really exists. A Redis key space belongs to a numbered database, the walk takes that
+ * number, and the reader picks it from the engine's own container list, so the tree is drawn under
+ * that row rather than floating free. An engine whose connection is one key space (etcd) declares no
+ * such level: its tree starts at the keys' first segments, and a key that begins with the separator
+ * hangs under the separator's own root row (spec 4.6).
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -37,15 +42,17 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { DatabaseConnection } from "@/lib/types";
-import type { ContainerLevelSpec, KeyScanCapability } from "@/lib/db/types";
+import { keyScanShape, type ContainerLevelSpec, type KeyScanCapability } from "@/lib/db/types";
 import {
   buildKeyTree,
   filterKeyTree,
   flattenKeyTree,
-  KEY_SEPARATOR,
+  keyName,
+  keyRowNames,
   keyTreeWindow,
   KEY_ROW_HEIGHT,
   pathKey,
+  sentPattern,
   type KeyTreeNode,
   type KeyTreeRow,
 } from "./tree";
@@ -86,6 +93,10 @@ export interface KeyBrowserProps {
    * run the read where the key actually is; `null` is the engine's own session database, which is
    * nothing to override and the call the shell has always taken.
    *
+   * AN ENGINE THAT DECLARES A KEY KIND HAS NO TYPE TO SEND, and the shell opens that kind's Source tab
+   * for the key instead of a generated read (spec 4.6); the panel hands over the same full name either
+   * way.
+   *
    * Absent means nobody is listening, and the rows are then not clickable: a row that looks
    * actionable and does nothing is worse than one that plainly is not.
    */
@@ -101,7 +112,10 @@ export interface KeyBrowserProps {
  * so a caller could never ask again, and the panel could never tell an ask from its own state.
  */
 export interface KeyPatternRequest {
-  /** The `MATCH` pattern the row named, ready to send. */
+  /**
+   * The pattern the row named, in the walk's declared shape and ready to send: a `MATCH` glob under
+   * `glob`, and the literal prefix every walked key begins with under `prefix` (spec 4.6).
+   */
   readonly pattern: string;
   /**
    * The container the row lives in, when the row names one.
@@ -190,6 +204,17 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     }
   }
 
+  /**
+   * The walk's shape, read once through the one helper (spec 3.4). Every text below that names a
+   * separator or a pattern is derived from it, so a `glob` declaration draws today's panel byte for
+   * byte and a `prefix` one draws etcd's.
+   */
+  const shape = useMemo(() => keyScanShape(capability), [capability]);
+  const separator = shape.separator;
+  const prefixed = shape.pattern === "prefix";
+  /** What the box sends for the text in it: the text under `glob`, the text as a prefix under `prefix`. */
+  const sent = sentPattern(pattern, shape);
+
   const {
     names,
     answered: databasesAnswered,
@@ -245,6 +270,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     scanningAll,
     exhausted,
     stoppedBy,
+    skipped,
     error,
     nodeCursors,
     nodeLoading,
@@ -254,7 +280,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     loadMoreUnder,
     stop,
     reset,
-  } = useKeyScan({ connection, capability, pattern, database });
+  } = useKeyScan({ connection, capability, pattern: sent, database });
 
   /**
    * Whether the tree is holding as much as this panel takes.
@@ -305,12 +331,14 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    */
   const openKey = useCallback(
     (node: KeyTreeNode) => {
-      const name = node.path.join(KEY_SEPARATOR);
-      // `database` is the walked database as a number, or undefined while nothing was chosen — which
-      // the shell reads as "the engine's own", exactly as an absent `database` does on the wire.
+      // The FULL name, the one join every reader uses (spec 4.6): a key that begins with the separator
+      // keeps it, because its first segment is empty and the join puts it back.
+      const name = keyName(node.path, shape);
+      // `database` is the walked database as a number, or undefined while nothing was chosen, which the
+      // shell reads as "the engine's own", exactly as an absent `database` does on the wire.
       onOpenKey?.(name, types.get(name) ?? null, database ?? null);
     },
-    [database, onOpenKey, types],
+    [database, onOpenKey, shape, types],
   );
 
   const openPath = useCallback(
@@ -328,9 +356,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
     [setOpen],
   );
 
-  const tree = useMemo(() => buildKeyTree(keys), [keys]);
+  const tree = useMemo(() => buildKeyTree(keys, shape), [keys, shape]);
   const filtering = term.trim() !== "";
-  const visible = useMemo(() => filterKeyTree(tree, term), [tree, term]);
+  const visible = useMemo(() => filterKeyTree(tree, term, shape), [tree, term, shape]);
   // While a filter is on, every surviving folder is open: a match two levels down that stayed
   // collapsed would look like no match at all, which is the one answer a filter must never give.
   const canLoadMore = useCallback(
@@ -408,17 +436,28 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    * WHAT THE TWO NUMBERS OF THE PROGRESS LINE ARE, because they are not the same kind of number and
    * the obvious wording says they are.
    *
-   * The denominator is the server's own `DBSIZE`: EVERY key the database holds, whatever pattern is
-   * in hand. The numerator is what the walk has been HANDED, and a `MATCH` narrows that to the keys
-   * that passed it — so with a pattern on, the fraction is not a walk position at all. Redis walks
-   * the whole table and filters; a walk that has finished with `user:*` reports `137` because 137 keys
-   * match, and "Scanned 137/1531" invites a reader to wait for a walk that is already over.
+   * On Redis the denominator is the server's own `DBSIZE`: EVERY key the database holds, whatever
+   * pattern is in hand. The numerator is what the walk has been HANDED, and a `MATCH` narrows that to
+   * the keys that passed it, so with a pattern on, the fraction is not a walk position at all. Redis
+   * walks the whole table and filters; a walk that has finished with `user:*` reports `137` because
+   * 137 keys match, and "Scanned 137/1531" invites a reader to wait for a walk that is already over.
+   * So the word follows the question: a plain walk is Scanned, a pattern is Matched.
    *
-   * So the word follows the question: a plain walk is Scanned, a pattern is Matched. The tooltip says
-   * what both numbers are, since neither word explains the pair on its own.
+   * UNDER A `walk` SCOPE THE PAIR IS A FRACTION WHATEVER THE PREFIX (spec 4.6). The denominator is the
+   * exact count of the keys this walk covers, the prefix's range or the whole key space, and a prefix
+   * walk is a position in an ordered range rather than a filtered pass, so the word stays Scanned. The
+   * tooltip says what both numbers are, since neither word explains the pair on its own.
+   *
+   * UNDER `none` THERE IS NO DENOMINATOR (Keys panel totals). The engine publishes no key count and its
+   * pages pin no revision, so the provider answers a total of 0 that nothing reads: the line is the
+   * numerator alone, the word stays Scanned whatever the prefix, and the tooltip says that no total is
+   * shown and why.
    */
-  const progressPrefix = pattern === "" ? "Scanned" : "Matched";
-  const progressSuffix = total === null ? "" : pattern === "" ? `/${total}` : ` of ${total}`;
+  const walkScoped = shape.totalScope === "walk";
+  // An engine that publishes no key count (`"none"`): the line is the numerator alone, and `total` is not read.
+  const uncounted = shape.totalScope === "none";
+  const progressPrefix = walkScoped || uncounted || pattern === "" ? "Scanned" : "Matched";
+  const progressSuffix = total === null || uncounted ? "" : walkScoped || pattern === "" ? `/${total}` : ` of ${total}`;
   /*
    * THE NUMERATOR NEVER READS ABOVE THE PANEL'S OWN BUDGET, and that is the whole point of clamping a
    * number that is otherwise honest: `scanned` counts what the server HANDED over, and a page is
@@ -439,9 +478,15 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    * and "not clustered" would be a claim from a refusal.
    */
   const nodeScoped = clustered === true;
-  const countScope = nodeScoped
-    ? "out of every key this NODE holds (this server is clustered: SCAN and DBSIZE are per node)"
-    : "out of every key this database holds";
+  const countScope = uncounted
+    ? "keys read so far: this engine publishes no key count, so no total is shown"
+    : walkScoped
+      ? sent === ""
+        ? "out of every key this connection may read"
+        : `out of the keys under ${sent} this connection may read`
+      : nodeScoped
+        ? "out of every key this NODE holds (this server is clustered: SCAN and DBSIZE are per node)"
+        : "out of every key this database holds";
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="key-browser">
@@ -449,8 +494,18 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
         <Input
           value={pattern}
           onChange={(event) => setPattern(event.target.value)}
-          placeholder="Match pattern, e.g. app:cache:*"
-          aria-label="Match pattern"
+          placeholder={
+            prefixed
+              ? `Key prefix, e.g. ${separator}app${separator}config${separator}`
+              : `Match pattern, e.g. app${separator}cache${separator}*`
+          }
+          aria-label={prefixed ? "Key prefix" : "Match pattern"}
+          // A `*` typed into a prefix is data, and the box says so where a reader looks (spec 4.6).
+          title={
+            prefixed
+              ? `Walks the keys that begin with exactly this text. A * is part of the prefix, except in a trailing ${separator}*, which is read as the folder it names.`
+              : undefined
+          }
           className="h-7 min-w-0 flex-1 font-mono text-xs"
         />
         {/*
@@ -554,7 +609,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
               a path names a KEY (`queue:jobs:failed:2026:09:23`). Both are answered — see
               `filterKeyTree` — and the tooltip is where that is stated rather than guessed at.
             */
-            title="Narrows the keys already loaded, without asking the server. Matches any part of a key's full name, or one of its `:`-separated segments."
+            title={`Narrows the keys already loaded, without asking the server. Matches any part of a key's full name, or one of its \`${separator}\`-separated segments.`}
             className="h-7 text-xs"
           />
         </div>
@@ -609,14 +664,22 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
           `Scan more` quietly refused because a tree that is full cannot be given more. */}
       {heldFull && (
         <p className="px-1 pb-2 text-[10px] leading-relaxed text-warning" data-testid="key-browser-held">
-          Holding {HELD_KEY_LIMIT.toLocaleString("en-US")} keys, which is this panel&apos;s limit. Narrow the pattern to
-          walk a smaller key space.
+          {`Holding ${HELD_KEY_LIMIT.toLocaleString("en-US")} keys, which is this panel's limit. Narrow the ${prefixed ? "prefix" : "pattern"} to walk a smaller key space.`}
         </p>
       )}
 
       {stoppedBy !== null && (
         <p className="px-1 pb-2 text-[10px] leading-relaxed text-warning" data-testid="key-browser-stopped">
           {stoppedBy}
+        </p>
+      )}
+
+      {/* THE KEYS A PAGE LEFT OUT, counted rather than drawn (spec 4.6): a key that is not UTF-8 text has
+          no name a row could carry, because one decoded with replacement characters would address a
+          different key. The reason is the provider's own words. */}
+      {skipped !== null && (
+        <p className="px-1 pb-2 text-[10px] leading-relaxed text-warning" data-testid="key-browser-skipped">
+          {`${skipped.count.toLocaleString("en-US")} key${skipped.count === 1 ? "" : "s"} left out of this walk: ${skipped.reason}`}
         </p>
       )}
 
@@ -672,9 +735,9 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
             };
             {
               /*
-            THE DATABASE THE KEYS ARE IN, drawn as the tree's root because that is what it is: a key
-            space belongs to one numbered database, and a tree that began at `app:*` would leave the
-            reader to guess which one they were looking at.
+            THE DATABASE THE KEYS ARE IN, drawn as the tree's root because that is what it is: on an
+            engine that declares a level, a key space belongs to one numbered database, and a tree that
+            began at its first folder would leave the reader to guess which one they were looking at.
 
             It carries the SERVER'S OWN count (`DBSIZE`, which travels with every page) rather than the
             sample's, and it stands down to nothing until a page has answered — the one slot both kinds
@@ -697,6 +760,8 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
+                    // A held key would toggle once per auto-repeat, for the reason the key row states.
+                    if (event.repeat) return;
                     setDatabaseOpen((wasOpen) => !wasOpen);
                   }}
                   onFocus={focus}
@@ -721,7 +786,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                     }
                     className="ml-auto shrink-0 pl-2 text-[10px] tabular-nums text-muted-foreground"
                   >
-                    {total === null ? "" : total.toLocaleString("en-US")}
+                    {total === null || uncounted ? "" : total.toLocaleString("en-US")}
                   </span>
                 </div>
               );
@@ -738,12 +803,17 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   disabled={loading}
                   onClick={() => void loadMoreUnder(row.path)}
                   /*
-                   * THE ROW SAYS WHAT A PRESS IS WORTH BEFORE IT IS PRESSED. `MATCH` is applied per
-                   * batch and is not indexed, and the keys that come back are then deduplicated, so
-                   * one press can legitimately add nothing at all — a fact that has to be on the row
-                   * rather than discovered by pressing it repeatedly.
+                   * THE ROW SAYS WHAT A PRESS IS WORTH BEFORE IT IS PRESSED, in the declared shape.
+                   * Under `glob`, `MATCH` is applied per batch and is not indexed; under `prefix`, a
+                   * page reads the range the walk above already reads. Either way the keys that come
+                   * back are then deduplicated, so one press can legitimately add nothing at all, a
+                   * fact that has to be on the row rather than discovered by pressing it repeatedly.
                    */
-                  title={`Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded.`}
+                  title={
+                    prefixed
+                      ? "Ask the server for the next page of the keys under this prefix. The walk above reads the same range in the same order, so a page can hold only keys already loaded."
+                      : "Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded."
+                  }
                   // One level deeper than the folder it belongs to, so it reads as following the
                   // children above it rather than as one of them.
                   onFocus={focus}
@@ -783,7 +853,10 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
             const { node, depth, folder } = row;
             const key = pathKey(node.path);
             const isOpen = filtering || open.has(key);
-            const name = node.path.join(KEY_SEPARATOR);
+            // The FULL name, the one join every reader uses, and the three names the row gives its node,
+            // all in the declared separator (spec 4.6).
+            const name = keyName(node.path, shape);
+            const names = keyRowNames(node, folder, shape);
             /*
              * A NODE CAN BE TWO THINGS AT ONCE, and this is the row where that shows: `user:42` is
              * a key AND a prefix of `user:42:profile`, so it has a value to read and children to
@@ -809,20 +882,17 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                 aria-posinset={row.posInSet}
                 onFocus={focus}
                 tabIndex={0}
-                // The FULL name, which is what a key is identified by, and the `:*` form beside it
-                // when the row is a prefix too - because a reader needs to know both, and the label
-                // can only say one.
-                title={
-                  folder && node.isKey
-                    ? `${name} is a key of this database and a prefix: ${name}:*`
-                    : folder
-                      ? `${name}:*`
-                      : name
-                }
+                // The FULL name, which is what a key is identified by, and the folder form beside it
+                // when the row is a prefix too, because a reader needs to know both and the label can
+                // only say one: `keyRowNames` words both in the declared separator.
+                title={names.title}
                 onClick={activate}
                 onKeyDown={(event) => {
                   if (event.key !== "Enter" && event.key !== " ") return;
                   event.preventDefault();
+                  // Every auto-repeat of a held key is another keydown, and without this one long
+                  // press opened a tab per repeat. Prevented all the same, so it never scrolls.
+                  if (event.repeat) return;
                   activate();
                 }}
                 // The project's own row recipe, plus the database row above this one, so a key two
@@ -850,7 +920,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                   <button
                     type="button"
                     data-testid="key-browser-twisty"
-                    aria-label={`${isOpen ? "Collapse" : "Expand"} ${name}`}
+                    aria-label={`${isOpen ? "Collapse" : "Expand"} ${names.toggle}`}
                     tabIndex={-1}
                     onClick={(event) => {
                       event.stopPropagation();
@@ -876,7 +946,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                 )}
                 {/* A row that is a key says the KEY's name, because that is what activating it
                       addresses; a row that is only a prefix says the prefix it stands for. */}
-                <span className="truncate font-mono text-xs">{folder && !node.isKey ? `${node.segment}:*` : name}</span>
+                <span className="truncate font-mono text-xs">{names.label}</span>
                 {/*
                     A FOLDER COUNTS THE KEYS THE WALK HOLDS UNDER IT, and a leaf carries no number.
 

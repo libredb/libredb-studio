@@ -46,6 +46,12 @@ export interface LLMStreamOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Ends the request when it aborts: the wait for the first byte, the stream after it, and any retry
+   * not yet sent. A caller that bounds how long it waits for a model passes one, because a request
+   * the caller has stopped waiting for would otherwise keep running against the endpoint.
+   */
+  signal?: AbortSignal;
 }
 
 // ============================================================================

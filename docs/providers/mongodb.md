@@ -96,6 +96,37 @@ Every statement the product writes for a collection carries the key: the tree cl
 All five read it through `jsonCommandAddress()` in [`query-generators.ts`](../../src/lib/query-generators.ts), which takes the segment the declaration assigns to the `schema` level rather than `path[0]` (standing ruling 5g) and refuses a path that does not match the declared levels.
 Before #843 every one of them named the collection alone, so a collection outside the connected database read, profiled and was written as the connected database's same-named collection.
 
+#### Extended JSON in the query
+
+The statement is read as [MongoDB Extended JSON](https://www.mongodb.com/docs/manual/reference/mongodb-extended-json/), not as plain JSON, so `filter`, `pipeline`, `update` and `documents` can carry the values plain JSON has no syntax for, in every operation alike:
+
+```json
+{ "collection": "users", "operation": "find", "filter": {"_id": {"$oid": "650000000000000000000001"}} }
+{ "collection": "events", "operation": "find", "filter": {"created": {"$gte": {"$date": "2020-01-01T00:00:00Z"}}} }
+{ "collection": "events", "operation": "insertOne", "documents": [{"when": {"$date": "2025-01-01T00:00:00Z"}}] }
+{ "collection": "users", "operation": "updateOne", "filter": {"_id": {"$oid": "650000000000000000000001"}}, "update": {"$set": {"seen": {"$date": 1735689600000}}} }
+```
+
+Before this, plain `JSON.parse` read the statement, and a document the grid shows could not be addressed by its `_id`: measured on MongoDB 8.2.12 (2026-10-03), the string `_id` matched 0 documents, `{"$oid": ...}` failed `unknown operator: $oid`, a `$date` range matched nothing, and an insert stored `when: { '$date': '2025-01-01T00:00:00Z' }` as a subdocument.
+
+**How it is read.** `parseExtendedJson()` reads the text with plain `JSON.parse` and walks it. An object whose ONLY key is one of the wrappers below is handed to the driver's own `BSON.EJSON.parse` (no extra dependency) and replaced with the value it names; every other object is kept as written.
+`EJSON.parse` is not run over the whole text because it replaces an object with a value as soon as any of its keys is one it knows, and drops the rest in silence: `{"name": {"$regex": "^a", "$nin": ["admin"]}}` would reach the server as `{"name": /^a/}`, so a `deleteMany` with it would delete `admin` too.
+
+- **The wrappers recognised**, each alone in its object: `$oid`, `$date`, `$numberInt`, `$numberLong`, `$numberDouble`, `$numberDecimal`, `$binary` (the canonical `{"base64": ..., "subType": ...}` form), `$uuid`, `$regularExpression`, `$timestamp`, `$minKey` and `$maxKey`.
+  Both forms are accepted: relaxed (`{"$date": "2025-01-01T00:00:00Z"}`, `{"$date": 1735689600000}`) and canonical (`{"$date": {"$numberLong": "1735689600000"}}`).
+- **Not recognised, kept as literal subdocuments as before:** `$code`/`$scope`, `$symbol`, `$dbPointer`, a DBRef (`{"$ref", "$id", "$db"}`) and `$undefined`.
+- **The legacy `{"$binary": "<base64>", "$type": "00"}` form is refused**, because `$type` shares the object with `$binary`. Use `{"$binary": {"base64": ..., "subType": ...}}` for binary data.
+- **A wrapper must be alone in its object.** `{"$date": "...", "$lt": 5}` is a `QueryError` naming the path and the extra keys; to compare against a value, nest it: `{"$lt": {"$date": "..."}}`.
+  The flip side: a stored subdocument that literally has a key such as `$oid` or `$date` can no longer be matched by equality, because the same object now names a value.
+- **Query operators are untouched**, the legacy `{"$regex": "^a", "$options": "i"}` form included, and `$regex` beside `$nin`/`$ne` keeps every key.
+- **A plain number is unchanged.** A number outside a wrapper stays the number `JSON.parse` read, so the driver writes it as before (int32 when it fits, a double otherwise) and `options.limit` stays a number.
+- **`$numberLong` is exact within the 64-bit range.** It becomes a bigint, written as a 64-bit integer, so `{"$numberLong": "9007199254740993"}` is not rounded to `...992`. A value outside the range (`"9223372036854775808"`) is a `QueryError`; the parser would otherwise wrap it to a negative number.
+- **`$numberDouble` stays a double**, `{"$numberDouble": "5"}` included: it alone is read in canonical mode.
+- **A malformed wrapper is a `QueryError` carrying its path and the parser's reason** (`Invalid Extended JSON in the query at "filter._id": input must be a 24 character hex string, ...`), and a `$date` that names no instant (`{"$date": "next tuesday"}`) is refused the same way, because the driver would otherwise write it as 1970-01-01 in silence.
+- **Results are unchanged** except for an echo of a typed `_id`: what comes back still passes through `serializeDocument()` ([§3.2](#32-bson-serialization-for-the-grid)), which now also renders a bigint as a number when it is exact and as its digits past 2^53, and a `Double` as a number. Only a write's `insertedId`/`insertedIds` can hold either, since the driver reads neither back; a bigint used to make the response fail after the write had committed.
+
+FerretDB serves this same provider and parses the same way; the BSON values reach it over the same wire protocol.
+
 `distinct` is the one operation with a key of its own: `field`, the driver's own parameter name, and
 it is **required**. The example above answers one row per category, shaped `{ "category": <value> }`.
 A missing or non-string `field` is a `QueryError` naming the key it wanted — it used to read the
@@ -122,7 +153,9 @@ normalises BSON types so documents render in the JSON grid: `ObjectId` → strin
 string, `Date` → ISO-8601, `Binary` → `<Binary: N bytes>` (placeholder, not the raw bytes), and
 nested objects/arrays are walked recursively. **Only these types are special-cased** — other BSON
 types (`Long`, `Timestamp`, `UUID`, `RegExp`, `Code`, `DBRef`) fall through as generic objects and
-may render poorly ([Known limitations](#13-known-limitations--future-work)).
+may render poorly ([Known limitations](#13-known-limitations--future-work)). A bigint or a `Double`
+is reached only by a write echoing a typed `_id` the statement sent, and renders as a number (a
+bigint past 2^53 as its digits) ([§3.1](#extended-json-in-the-query)).
 
 ### 3.3 Sampling-based schema inference, nested to three levels
 
@@ -138,6 +171,17 @@ Caveats baked into this approach:
   at `shipping: object` did not name it: a plan run on 2026-08-22 grouped by `$shipping.region`, a
   path the database does not have, and MongoDB answers that with one null group rather than an
   error — so the plan read as runnable and was silently wrong.
+- **A projection built from this list names only the outermost paths.** The list holds a
+  subdocument beside its own children, and MongoDB refuses a projection or `$project` that names
+  both: `Path collision at address.city remaining portion city` (measured on `mongo:8.2.12`, where
+  Generate Query and the profiler both failed on every collection with a subdocument).
+  `outermostFieldPaths()` in [`query-generators.ts`](../../src/lib/query-generators.ts) drops every
+  path whose ancestor is listed, so `address`, `address.city` and `address.geo.lat` project as
+  `{ "address": 1 }`; `addressBook` is not a child of `address`. Generate Query (shown as Generate
+  Find, `generateSelectQuery`) and the profiler's `$project` (`/api/db/profile`) both go through
+  it, and the profiler reads a dotted column by walking the sampled document, so `address.city` is
+  profiled from its real values rather than as absent. A top-level key that literally contains a
+  dot is walked the same way, as a nested path, so it profiles as absent.
 - **Arrays are named and left closed.** `items.sku` addresses one value *per array entry*, so it
   does not mean on an array what the same syntax means on a subdocument; listing it in a flat field
   list would invite exactly that confusion. Date/ObjectId/Binary/Decimal128 are scalars here and
@@ -155,11 +199,10 @@ A `find` with no explicit `options.limit` is capped at **100** documents
 `options` to the cursor** (no `limit`/`skip`) and has no default cap, so a pipeline without a
 `$limit` stage can return an unbounded result set.
 
-`prepareQuery()` does **not** modify the query (it injects no limit — the JSON is passed through
-unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 100`, and the
-`/api/db/query` route uses that returned `limit`/`wasLimited` for pagination metadata
-(`hasMore = rows.length === prepared.limit`). The `unlimited` option is **not** honoured — see
-[Known limitations](#13-known-limitations--future-work).
+`prepareQuery()` does **not** modify the query (it injects no limit, and the JSON is passed through unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 100` and `wasLimited: false`, and the `/api/db/query` route builds its pagination metadata from them.
+The route computes `hasMore = prepared.wasLimited && rows.length === prepared.limit`, so every MongoDB result answers `hasMore: false` and `wasLimited: false`, and the provider declares `supportsResultPagination: false`, so no Load More is offered.
+Measured 2026-09-27 on MongoDB 8.3 through the route: a `find` over 150 documents returned 100 rows with `hasMore: false` and `wasLimited: false`, so a result the 100 cap cut carries no "limited" badge.
+The `unlimited` option is **not** honoured; see [Known limitations](#13-known-limitations--future-work).
 
 ---
 
@@ -249,7 +292,11 @@ The paste box now reads the URI's own TLS options, and maps them by the rule sta
 | `tls=false` / `ssl=false` | `disable` |
 | `mongodb+srv://` with no TLS parameter | `verify-system` — SRV implies TLS in the driver itself |
 | `tlsInsecure=true` / `tlsAllowInvalidCertificates=true` alongside TLS | `require` — both turn `rejectUnauthorized` off |
+| `tlsCAFile=<path>` alongside TLS | `verify-ca` — the chain is pinned to that CA, and the paste banner points at the CA field for its contents; the two relaxing options above still win |
 | a non-boolean value (`tls=maybe`) | nothing; the paste banner quotes the parameter |
+
+`tlsCAFile` stays in the URI, and the driver reads that path on the server when it connects, so in a container the console's `tlsCAFile=global-bundle.pem` fails with `ENOENT` (#842).
+A certificate pasted into the CA field wins over it: the driver loads the file only when no `ca` option is set (`options.ca ??=` in mongodb 7.6.0's `mongo_client.js`).
 
 `tls=true` was deliberately **ignored** before this: the only non-`disable` mode that needed no PEM
 was `require`, i.e. `rejectUnauthorized: false`, and because the options object is a second channel
@@ -280,6 +327,15 @@ before the mode reached the driver `require` failed the same way `disable` does.
 every returned document passes through `serializeDocument()`. There is no `prepareQuery` limit
 injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 (`supportsExplain: false`).
+
+**The result's `fields` (the grid columns, and the columns the CSV, SQL INSERT and DDL exports
+write) are the union of the returned documents' keys, first seen first**
+([`result-fields.ts`](../../src/lib/db/utils/result-fields.ts)). Documents of one collection need
+not share a shape; until 2026-10 the columns were the first document's keys only, so measured on
+mongo 8.2.12 a `find` over two differently shaped documents hid every key only the second one
+carried from the grid and from those exports (the JSON export kept them). A uniform result still
+answers exactly the first document's keys in their order. The union covers top-level keys only:
+a subdocument stays one column.
 
 **`options` handling differs per operation** (a real source of surprise — see
 [Known limitations](#13-known-limitations--future-work)):
@@ -443,6 +499,14 @@ flag is load-bearing rather than tidy: the server's default for it depends on wh
 role holds the cluster-wide `listDatabases` action, so a role granted only `read` on one database
 would otherwise be at the mercy of a default this provider never stated. Measured both ways — with
 the flag a root role still sees every database and a `read`-on-one role sees exactly its own.
+
+FerretDB does not know the flag. Measured on FerretDB 2.7.0, the command above is refused with code 2
+(`BadValue`), reading *authorizedDatabases is an unknown field*, while `{ listDatabases: 1, nameOnly:
+true }` is accepted. So when, and only when, the server's own reply is `BadValue` naming
+`authorizedDatabases` as an unknown field, the provider sends the command again without it, and the
+object tree on FerretDB lists its databases. MongoDB accepts the flag, so it never takes that path and
+keeps the least-privilege listing above. Any other refusal, such as code 13 `Unauthorized`, and any
+transport failure is raised as it is, without a retry.
 
 #### Where the count and the listing could drift
 
@@ -913,8 +977,14 @@ something was measured:
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
+`runMaintenance(type, target?, container?)` ([`mongodb.ts`](../../src/lib/db/providers/document/mongodb.ts))
 maps the generic operations onto MongoDB admin commands:
+
+A `container` is a DATABASE name (#772). The provider is bound to one database and no admin command
+can retarget mid-command, so the bound name is accepted and any OTHER name is refused with
+`bound to the database "<name>"` rather than quietly acted on against the wrong one. The comparison
+uses `getDatabaseName()`, the name `connect()` opened - a connection-string connection sets no
+`config.database`, and comparing with that alone refused the bound database itself.
 
 | Type | MongoDB action |
 |------|----------------|
@@ -972,6 +1042,7 @@ request here.
 | `defaultPort` | `27017` |
 | `schemaRefreshPattern` | `"operation"\s*:\s*"(insert\|delete\|update)` |
 | `containerLevels` | one level, `{ id: 'schema', label: 'Database' }` — the object surface's container ([§6](#the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | `collection` (relation, `acceptsRowWrites`) and `view` (relation). No `index`, no routine kind, no `timeseries` kind; each absence is measured in [§6](#what-is-not-declared-and-why-each-absence-is-a-measurement) |
 
 `schemaRefreshPattern` matches write operations in the JSON query so the UI refreshes collections
@@ -1009,6 +1080,7 @@ MongoDB-specific branches:
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
 | Missing `collection`/`operation`, or invalid JSON | `QueryError` (with a format example) |
+| A malformed Extended JSON wrapper (`$oid` not 24 hex digits, a `$date` that names no instant, a `$numberLong` outside 64 bits) or a wrapper sharing its object with another key | `QueryError` carrying the path and the reason ([§3.1](#extended-json-in-the-query)) |
 | Missing `documents`/`update` for a write op | `QueryError` |
 | Authentication failure (message contains *authentication*) | `AuthenticationError` |
 | Other driver errors | generic `QueryError` / `DatabaseError` with the original message |
@@ -1033,7 +1105,8 @@ serialization, schema inference, monitoring, and maintenance.
 Validation, connect/disconnect, capabilities, labels, `prepareQuery`, every `query` operation
 (find/aggregate/count/distinct/insert/update/delete), column inference, health, maintenance,
 overview, performance, slow queries, active sessions, table/index/storage stats, **BSON
-serialization** (ObjectId/Binary/Decimal128/Date/nested), `getMonitoringData`, and **every `ssl.mode`
+serialization** (ObjectId/Binary/Decimal128/Date/nested), **Extended JSON input** (the BSON values
+every operation hands the driver, asserted on the arguments the mocked collection receives), `getMonitoringData`, and **every `ssl.mode`
 branch** asserted against the options object the `MongoClient` constructor received.
 
 ### The object-surface fixture
@@ -1150,9 +1223,8 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
   not an authenticated user. *Future:* map from `op.effectiveUsers`/`op.users` (MongoDB 5.0+).
 - **`getIndexStats().indexType` only distinguishes `text` vs `btree`** — `hashed`, geospatial
   (`2dsphere`/`2d`), wildcard (`$**`), and clustered indexes are all reported as `btree`.
-- **The `unlimited` query option is ignored.** `prepareQuery()` always returns `limit:
-  options.limit || 100`; combined with the route's `hasMore = rows.length === prepared.limit`, an
-  "unlimited" request can report an incorrect `hasMore`.
+- **The `unlimited` query option is ignored, and a `find` the 100 cap cut is not marked.** `prepareQuery()` always returns `limit: options.limit || 100` with `wasLimited: false`, so an "unlimited" `find` is still capped at 100 documents.
+  The route then answers `hasMore: false` and `wasLimited: false`, so the result strip shows no "limited" badge for a result the cap cut ([§3.4](#34-find-is-capped-at-100-aggregate-is-not)).
 - **A folder's columns are SAMPLED, and the sample is bounded per collection.** `describeObjects`
   reads a whole container-and-kind folder in one `$unionWith` chain rather than one call per
   collection, chunked at `SAMPLE_CHUNK_SIZE = 100` collections per pipeline so a wide folder cannot
@@ -1172,4 +1244,4 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md) · query format also in [`CLAUDE.md`](../../CLAUDE.md)
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [Apache Trino](./trino.md) · [Redis](./redis.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [Trino](./trino.md) · [Redis](./redis.md)

@@ -1,0 +1,649 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:18:21.698Z",
+    "database": "neo4j"
+  },
+  "statement": "MATCH (a)-[r:`MEMBER_OF`]->(b) RETURN a, r, b LIMIT 100",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "a",
+      "r",
+      "b"
+    ],
+    "rows": [
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:34",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "go",
+              "kubernetes"
+            ],
+            "name": "Ayse Yilmaz",
+            "active": true,
+            "age": 34
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:0",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:34",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2019-03-01",
+            "name": "Platform"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:35",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "java",
+              "kafka"
+            ],
+            "name": "Mehmet Demir",
+            "active": true,
+            "age": 41
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:1",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:35",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "properties": {
+            "role": "lead",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2020-07-15",
+            "name": "Payments"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:36",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "python"
+            ],
+            "name": "Zeynep Kaya",
+            "active": false,
+            "age": 29
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:2",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:36",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2021-01-04",
+            "name": "Search"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:37",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "rust",
+              "postgres"
+            ],
+            "name": "Emre Çelik",
+            "active": true,
+            "age": 38
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:3",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:37",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2019-03-01",
+            "name": "Platform"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:38",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [],
+            "name": "Elif Şahin",
+            "active": true,
+            "age": 27
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:4",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:38",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2022-11-30",
+            "name": "Data"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:39",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "scala",
+              "spark"
+            ],
+            "name": "Jonas Berg",
+            "active": true,
+            "age": 45
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:5",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:39",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "properties": {
+            "role": "lead",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2022-11-30",
+            "name": "Data"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:40",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "typescript"
+            ],
+            "name": "Ana Souza",
+            "active": true,
+            "age": 31
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:6",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:40",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2020-07-15",
+            "name": "Payments"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:41",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "c",
+              "linux"
+            ],
+            "name": "Kenji Sato",
+            "active": false,
+            "age": 36
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:7",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:41",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2019-03-01",
+            "name": "Platform"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:42",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "sql",
+              "dbt"
+            ],
+            "name": "Lena Fischer",
+            "active": true,
+            "age": 33
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:8",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:42",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2022-11-30",
+            "name": "Data"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:43",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "elixir"
+            ],
+            "name": "Omar Haddad",
+            "active": true,
+            "age": 40
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:9",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:43",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "properties": {
+            "role": "lead",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2021-01-04",
+            "name": "Search"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:34",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "go",
+              "kubernetes"
+            ],
+            "name": "Ayse Yilmaz",
+            "active": true,
+            "age": 34
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:10",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:34",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2021-01-04",
+            "name": "Search"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:37",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "rust",
+              "postgres"
+            ],
+            "name": "Emre Çelik",
+            "active": true,
+            "age": 38
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:11",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:37",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2022-11-30",
+            "name": "Data"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:40",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "typescript"
+            ],
+            "name": "Ana Souza",
+            "active": true,
+            "age": 31
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:12",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:40",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2019-03-01",
+            "name": "Platform"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:42",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "sql",
+              "dbt"
+            ],
+            "name": "Lena Fischer",
+            "active": true,
+            "age": 33
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:13",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:42",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "properties": {
+            "role": "engineer",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2021-01-04",
+            "name": "Search"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:39",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "scala",
+              "spark"
+            ],
+            "name": "Jonas Berg",
+            "active": true,
+            "age": 45
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:14",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:39",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "properties": {
+            "role": "lead",
+            "since": "2023-01-01"
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "labels": [
+            "Team"
+          ],
+          "properties": {
+            "founded": "2020-07-15",
+            "name": "Payments"
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:55",
+          "labels": [
+            "Back`tick"
+          ],
+          "properties": {
+            "name": "another"
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:38",
+          "type": "MEMBER_OF",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:55",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:53",
+          "properties": {}
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:53",
+          "labels": [
+            "Weird Label"
+          ],
+          "properties": {
+            "name": "second",
+            "rank": 2
+          }
+        }
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

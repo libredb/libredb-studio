@@ -14,7 +14,9 @@
   <b>日本語</b> ·
   <a href="README_es.md">Español</a> ·
   <a href="README_ur.md">اردو</a> ·
-  <a href="README_hi.md">हिन्दी</a>
+  <a href="README_hi.md">हिन्दी</a> ·
+  <a href="README_pt.md">Português (Brasil)</a> ·
+  <a href="README_ru.md">Русский</a>
 </p>
 
 <p align="center">
@@ -23,7 +25,7 @@
   ·
   <a href="https://wiki.postgresql.org/wiki/PostgreSQL_Clients#LibreDB_Studio">PostgreSQL Clients</a>
   ·
-  <a href="https://www.postgresql.org/download/products/1/">Software Catalogue</a>
+  <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
 </p>
@@ -35,9 +37,12 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>、
   <a href="https://www.dragonflydb.io/docs/integrations/libredb-studio">DragonflyDB</a>、
-  <a href="https://opensearch.org/community-projects/">OpenSearch</a>、
+  <a href="https://opensearch.org/community-projects/#:~:text=LibreDB%20Studio">OpenSearch</a>、
   <a href="https://duckdb.org/docs/preview/guides/sql_editors/libredb_studio">DuckDB</a>、
-  <a href="https://docs.starrocks.io/docs/integrations/IDE_integrations/LibreDB_Studio/">StarRocks</a>
+  <a href="https://docs.starrocks.io/docs/integrations/IDE_integrations/LibreDB_Studio/">StarRocks</a>、
+  <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>、
+  <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
+  <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
   の公式ドキュメントにも掲載
 </p>
 
@@ -96,9 +101,9 @@ LibreDB Studioは逆向きです。**データをツールのところへ持っ�
 
 ## 主な機能
 
-### 17のエンジン、1つのインターフェース
+### 26のエンジン、1つのインターフェース
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra · Prometheus
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia
 
 スキーマエクスプローラ、ER図、スキーマ差分、モニタリングは全SQLエンジンで共通です。MongoDBとRedisはSQLエンジンではないため、ER図とスキーマ差分はありません。Druid、Elasticsearch、OpenSearch、TrinoはこのビルドがパースできるURI形式を持たないためhostとportで設定する二重の例外で、生成されるマイグレーションもDDLを出力せず制約を明示します（Couchbaseのスキーマレスなコレクションも同様）。検索クラスタのER図は箱だけで線がありません。インデックスは外部キーを宣言せず、エンジンのモデルにも宣言できる外部キーが存在しないためです。
 
@@ -107,6 +112,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **PostgreSQL** | `pg` | フルSQL IDE、EXPLAIN、トランザクション、クエリキャンセル（`pg_cancel_backend`） |
 | **MySQL** | `mysql2` | フルSQL IDE、EXPLAIN、トランザクション、クエリキャンセル（`KILL QUERY`） |
 | **Oracle** | `oracledb`（Thinモード） | フルSQL IDE、`FETCH FIRST N ROWS`、`V$`監視ビュー、`ANALYZE TABLE`、`ALTER INDEX REBUILD`、トランザクション |
+| **Db2 LUW** | `db2-node`（RustのDRDAクライアント、ネイティブN-APIアドオン、IBMクライアント不要） | Db2 for Linux, UNIX and Windows向けSQL IDE、テーブル・ビュー・マテリアライズ照会表・別名・シーケンス・モジュール・ルーチン・トリガーのスキーマブラウザ、保存された定義、`FETCH FIRST` / `OFFSET`ページング、テーブル単位のRUNSTATSとREORG。ドライバーはTLSなしではパスワードを平文で送るため、明示的に無効化しない限りTLS必須。一部の型（非ASCIIテキスト、2^53を超えるBIGINT、BOOLEAN、XML、LOB）を誤読するため、インライン編集・インポート・EXPLAIN・トランザクション・キャンセルは無効。既知の問題は[`docs/providers/db2.md`](docs/providers/db2.md) |
 | **SQL Server** | `mssql` (tedious) | フルSQL IDE、`TOP N` / `OFFSET FETCH`、`sys.dm_*` DMV、`UPDATE STATISTICS`、`DBCC CHECKDB`、トランザクション、Azure SQL自動判別 |
 | **SQLite** | `bun:sqlite` / `node:sqlite`（実行時選択） | フルSQL IDE、ファイル型・インメモリ型 |
 | **libSQL** | ドライバなし、HTTPのみ（Hranaプロトコル、`POST /v2/pipeline`、8080） | フルSQL IDE。自前運用のlibSQLサーバー（`sqld`）とTurso Cloudの両方に同じtype-idで接続します。ネットワーク越しのSQLite方言で、`dbstat`による実測のテーブル・インデックスサイズが読めます。認証情報はパスワードではなくauthトークンです。メンテナンスはReindexと整合性チェックのみ。`VACUUM`、`ANALYZE`、`PRAGMA optimize`はサーバー側が拒否します |
@@ -117,12 +123,20 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **Apache Druid** | ドライバなし、HTTPのみ（`POST /druid/v2/sql`） | 読み取り専用SQL IDE、ネイティブクエリのEXPLAINツリー、`INFORMATION_SCHEMA`、`sys.*`監視 |
 | **Elasticsearch** | ドライバなし、HTTPのみ（`POST /_sql?format=json`、9200） | 読み取り専用SQL IDE、mappingベースのインデックス／フィールドエクスプローラ、クラスタヘルスとインデックスごとのドキュメント数・ストアサイズ。EXPLAINなし、メンテナンス操作なし、スロークエリ／セッションパネルなし。Elasticsearch SQLには`OFFSET`もないため、2ページ目以降は取得できません |
 | **OpenSearch** | ドライバなし、HTTPのみ（`POST /_plugins/_sql`、9200） | Elasticsearchと同じproviderモジュールによる、同じ読み取り専用SQL IDEとエクスプローラ。こちらは`LIMIT n OFFSET m`が使えるため、ページングも使えます |
-| **Apache Trino** | ドライバなし、HTTPのみ（クライアントプロトコル、`POST /v1/statement`、8080） | 設定済みの全カタログに対するフルSQL IDE、接続がピン留めしたカタログの`information_schema`スキーマツリー、`system.runtime`と`jmx`による監視、`SHOW STATS`による実際の行数、クエリキャンセルと`kill_query`メンテナンス。Trinoはクエリエンジンであり自身は何も保存しないため、主キー・外部キー・インデックスをどこにも宣言しません（ER図は箱だけで線がなく、インライン行編集は無効、サイズ系パネルはカタログ名を示します）。失敗したステートメントもHTTP 200で返り、認証を無効にしたクラスタでも平文HTTP上のパスワードは拒否されます |
+| **Trino** | ドライバなし、HTTPのみ（クライアントプロトコル、`POST /v1/statement`、8080） | 設定済みの全カタログに対するフルSQL IDE、接続がピン留めしたカタログの`information_schema`スキーマツリー、`system.runtime`と`jmx`による監視、`SHOW STATS`による実際の行数、クエリキャンセルと`kill_query`メンテナンス。Trinoはクエリエンジンであり自身は何も保存しないため、主キー・外部キー・インデックスをどこにも宣言しません（ER図は箱だけで線がなく、インライン行編集は無効、サイズ系パネルはカタログ名を示します）。失敗したステートメントもHTTP 200で返り、認証を無効にしたクラスタでも平文HTTP上のパスワードは拒否されます |
 | **Apache Cassandra** | `cassandra-driver`（純JavaScript、ネイティブモジュールなし） | ネイティブプロトコル（9042）上のCQL IDE、パーティションキーとクラスタリングキーを明示するキースペースブラウザ、`system_views`によるオーバービュー・稼働時間・実行中ステートメント。接続には**`localDataCenter`が必須**です（ドライバがこれなしでは接続を拒否します）。EXPLAINはありません（CQLの文法にキーワードが存在しません）。クエリキャンセルもありません（プロトコルにキャンセルフレームがありません）。メンテナンス操作もありません（コンパクション・修復・フラッシュはいずれも`nodetool`のJMX操作です）。そして**行数もサイズも表示しません**：Cassandraが公開するのはフラッシュ済みファイルからのパーティション推定値（500行のクラスタリングテーブルで143と測定）と整数メビバイト（19,476バイトのテーブルで`1 MiB`）だけであり、誤った数値を出すより何も出さない方を選んでいます |
 | **Prometheus** | ドライバなし、HTTPのみ（Prometheus HTTP API、9090） | テキストをそのままサーバーに送るPromQLエディタ、結果はグリッドとチャートタブに表示（`rate(x[5m])[1h:1m]` のようなステップ付きサブクエリはタイムスタンプを横軸とする線グラフになります。タブは最初の系列だけを表示し、Y-Axisメニューから系列を追加すると1系列につき1本の線が描かれ、同時に描かれるのは最大8本で、それを超えると「Showing first 8 of N series」と表示されます。ただし、チャートは欠けたサンプルと数値の中の `NaN`・`Inf` を0として描くため、スクレイプのタイミングがターゲットごとに異なる生の範囲クエリでは偽のゼロが描かれます）、ラベル名をカラム・メタデータをソースとするメトリクスブラウザ、ルールグループと記録ルール・アラートルール（発火中のアラートはツリーに表示）、スクレイププールとターゲット（ダウンしたターゲットはツリーに表示）、ヘルス・バージョン・稼働時間・TSDB統計。設計上読み取り専用です：管理APIもremote writeも呼ばず、EXPLAINもなく（パース用エンドポイントは実験的なため）、メンテナンス操作もありません。平文HTTP上の認証情報は拒否されずに送信されるため、管理下にないネットワークを越える場合はTLSを有効にしてください |
+| **Apache Kafka** | `@platformatic/kafka`（純粋なTypeScript、9092） | トピックをパーティション、オフセット、タイムスタンプ、最古のオフセット、または最新のメッセージから読むJSONの読み取りリクエスト。キー、値、ヘッダーはJSON、テキスト、base64としてデコードされ、Confluent形式の値はスキーマIDで表示されます。パーティションとデフォルト以外の設定を持つトピックブラウザ（オフラインまたはレプリカ不足のトピックはツリーに表示）、両プロトコルのコンシューマーグループとパーティションごとのラグ、brokerとその設定、ヘルス・トピック数・ディスク上のサイズ。構造上読み取り専用です：producer送信、オフセットのコミット、コンシューマーグループへの参加、トピックの作成は行いません。独自CAとクライアント証明書によるTLS、SASL PLAINとSCRAMはTLS上のみ。brokerには各brokerが広告するアドレスで接続するため、SSHトンネルは使えません |
+| **etcd** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、2379） | エディタでetcdctlのサブセット（`get`、`put`、`del`、`txn`、リース、上限付きの`watch`、メンバー、アラーム、ユーザーとロール）。ツリーにはキープレフィックスのグループ、キーパネルにはすべてのキー。キーの値はリビジョンを条件とする1つのトランザクションで編集されます。管理者向けにコンパクション、デフラグ、アラーム解除があり、いずれも接続名の入力で確認します。Kubernetesのプレフィックスや`compact_rev_key`への書き込みはすべて拒否され、KubernetesのSecretとprotobufまたは暗号化された値は表示されません。独自CAによるTLS、クライアント証明書（Common Nameがetcdユーザー）、TLS上のみのパスワード認証。SSHトンネル。シードで宣言する読み取り専用モード |
+| **Neo4j** | `neo4j-driver-lite`（純粋なJavaScript、Bolt、7687） | Neo4j 5.26 LTSに対する読み取り専用のCypherエディタ（1回の実行で1ステートメント）。ツリーにはノードラベルとリレーションシップタイプ（プロパティを列として）、インデックスと制約。ノード、リレーションシップ、パスはタグ付きJSONセルとしてグリッドに表示され、64ビット整数と日時の値は正確に保たれます。Communityが提供する監視パネル。すべてのステートメントはトークン単位の読み取りポリシー、`EXPLAIN`によるサーバー自身の分類（許可されたSHOW形式はこれを省略）、READセッションを通るため、書き込みは3つの層をすべて破る必要があります。EXPLAIN・PROFILEビュー、メンテナンス、エージェント実行、MCPの`run_read_query`はありません。独自CAによるTLS、SSHトンネル。接続文字列なし |
+| **Milvus** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、19530） | エディタでMilvus独自のREST v2リクエスト（1つのJSONボディを持つ`POST /v2/vectordb/<ルート>`）による読み取り、正確な件数、すべてのベクトル型でのベクトル検索（BM25とハイブリッド検索を含む）。ツリーにはデータベースとコレクション、そのフィールド、パーティション、インデックス、ロード状態。次元付きのベクトルセルと値全体のコピー。管理者向けのLoadとRelease（プレビューと確認付き）。Studioはデータを書き込まず、サーバーが別のサービスを呼び出すリクエストを拒否し、デフォルトの`root`パスワードを警告します。独自CAとクライアント証明書によるTLS。パスワードはTLS上、ループバック、またはSSHトンネル経由のみ。シードで宣言する読み取り専用モード |
+| **Qdrant** | なし、HTTP（QdrantのREST API、6333） | エディタでQdrant独自のRESTリクエスト（1つのJSONボディを持つ`メソッド /パス`）、17の読み取りルート：ポイントの取得、スクロール、正確な件数、ファセット、そして密・疎・マルチベクトルに対するクエリ、バッチ、グループ化クエリ（ローカルBM25モデルを含む）。ツリーにはコレクションとそのベクトル、payloadインデックス、payloadキーのサンプル表示。次元付きのベクトルセルと値全体のコピー。Studioは何も書き込まず、ローカルBM25以外の推論入力をすべて拒否し、有効期限のないJWTや管理権限を持つJWTを警告します。独自CAとクライアント証明書によるTLS。キーはTLS上、ループバック、またはSSHトンネル経由のみ。シードで宣言する読み取り専用モード |
+| **InfluxDB (InfluxQL)** | なし、HTTP（InfluxDBのv1 API、8086） | エディタで読み取り専用のInfluxQL。v1 `/query` API経由でInfluxDB 1.x、2.x、3を対象に、1回の実行につき`SELECT`、`SHOW`、`EXPLAIN`のいずれか1文。ツリーにはデータベースとmeasurement、measurementのタグとフィールドを列として表示。2^53を超える整数とナノ秒のタイムスタンプはグリッドで正確なまま。接続の設定にかかわらず読み取り専用：1.xと2.xでは`DROP DATABASE`の手前にあるのはStudio自身の読み取りポリシーだけなので、それ以外の文はリクエストの前にすべて拒否し、書き込みエンドポイントには一切届きません。ユーザーとパスワード、またはパスワード欄にトークン。ループバックでもトンネル経由でもないホストへ平文HTTPで送る資格情報は、接続が同意しない限り拒否。InfluxDB 3サーバーの`_internal`は読みません |
+| **InfluxDB 3 (SQL)** | なし、HTTP（InfluxDB 3のSQL API、8181） | エディタで読み取り専用のSQL。InfluxDB 3 CoreとEnterpriseが対象。ツリーには接続先データベースのテーブルとその列。接続の設定にかかわらず読み取り専用：ルート表は書き込み、トークン、キャッシュ、プラグインのエンドポイントに届かず、設定のエンドポイントで届くのはデータベース一覧のGETだけで、読み取りキーワードで始まらない文はリクエストの前に拒否し、さらにサーバーのプランナーがあらゆる書き込みを拒否します。トークンのみでユーザー名なし。ループバックでもトンネル経由でもないホストへ平文HTTPで送るトークンは、接続が同意しない限り拒否。1.xや2.xのサーバーに向けるとInfluxDB (InfluxQL)を選ぶよう案内します |
+| **Oxia** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、6648） | 読み取り専用の`oxia client`コマンド（`get`、`list`、`range-scan`）。ツリーにはシャード、キーパネルにはすべてのキー |
 | **Redis** | `ioredis` | コマンドエディタ、キーブラウザ、INFOベースの監視 |
 
-> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteとDuckDBも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Prometheusです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
+> **トランスポート層のセキュリティはエンジンごとではなく横断的な機能です。** SSHトンネルはproviderが接続する前に張られ、接続先はローカルのエンドポイントに書き換えられます。つまりエンジンに依存せず、hostとportが設定された接続であれば適用されます。ただしKafkaの接続はトンネルを拒否します。Kafkaクライアントは各brokerにそのbrokerが広告するアドレスで接続し、1つのアドレスだけを転送するトンネルはそのアドレスを運べないためです。接続文字列で入力した接続（MongoDB、Couchbase、ClickHouseで選択できます）はhostもportも持たないためトンネルされません。SQLiteとDuckDBも同様です。SSL/TLSパネルが実際に効くのはPostgreSQL、MySQL、SQL Server、Couchbase、ClickHouse、Druid、Elasticsearch、OpenSearch、Trino、Prometheus、Apache Kafkaです。Trinoでは任意ではなく必須に近い意味を持ちます。コーディネータが平文HTTP上のパスワードを拒否するためです。Oracle、MongoDB、Redisはこの設定を無視するため、この3つで暗号化されるかどうかはダイアログの選択ではなく接続文字列の内容次第になります。
 
 > RedisがこのSQL指向のインターフェースに乗るのは規約によるものです。`getSchema()` はブロッキングしない `SCAN`（**`KEYS *` は使いません**）でキーのプレフィックスを「テーブル」としてまとめ、ヘルスとメトリクスは `INFO`、スロークエリとセッションは `SLOWLOG GET` / `CLIENT LIST` から取得します。
 

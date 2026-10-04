@@ -1,7 +1,8 @@
-import { describe, test, expect } from "bun:test";
+import { beforeAll, describe, test, expect } from "bun:test";
 import {
   generateTableQuery,
   generateSelectQuery,
+  outermostFieldPaths,
   shouldRefreshSchema,
   quoteIdentifier,
   quoteObjectPath,
@@ -11,6 +12,34 @@ import * as generators from "@/lib/query-generators";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
+import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
+import { KAFKA_TOPIC_COLUMNS } from "@/lib/db/providers/stream/kafka/objects";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { type EtcdCommand, type EtcdParseLimits, parseEtcdCommand } from "@/lib/db/providers/keyvalue/etcd/commands";
+import { ETCD_READ_BOUNDS } from "@/lib/db/providers/keyvalue/etcd/execute";
+import { assessCommand } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { declaredLevels } from "@/lib/db/object-kinds";
+import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
+import { type GraphKindId, graphObjectSegment } from "@/lib/db/graph/objects";
+import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
+import { parseConsole } from "@/lib/db/console/parser";
+import { toJsonText } from "@/lib/db/console/tagged-json";
+import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
+import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
+import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
+import { parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
+import { oxiaSelectQuery, oxiaTableQuery } from "@/lib/db/providers/keyvalue/oxia/generators";
+import { QDRANT_CONSOLE, QDRANT_ROUTES } from "@/lib/db/providers/vector/qdrant/routes";
+import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
+import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
+import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { influxqlSelectQuery, influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
+import { InfluxqlQuoteError } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
+import { offersSchemaDiagram } from "@/lib/db/types";
 
 // ============================================================================
 // Helpers
@@ -40,6 +69,61 @@ const sampleColumns: ColumnSchema[] = [
 // ============================================================================
 // generateTableQuery
 // ============================================================================
+
+describe("generateTableQuery with a declared preview projection (#786)", () => {
+  // A projection shaped like Db2's, written here so the generator's rule is pinned on its own.
+  const projected = makeCaps({
+    defaultPort: 50000,
+    identifierQuoting: "double",
+    previewProjection: {
+      rules: [
+        { type: "^BIGINT$", expression: "VARCHAR({column})" },
+        { type: "^(CLOB|BLOB)\\(", expression: null },
+        { type: "^XML$", expression: null },
+      ],
+      omittedNote: "The driver cannot read these types.",
+      unprojectedNote: "The column list is not loaded, so every column is read as it is.",
+    },
+  });
+  const columns: ColumnSchema[] = [
+    { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+    { name: "C_BIG", type: "BIGINT", nullable: true, isPrimary: false },
+    { name: "C_CLOB", type: "CLOB(1048576)", nullable: true, isPrimary: false },
+    { name: 'odd"name', type: "XML", nullable: true, isPrimary: false },
+  ];
+
+  test("names every column, reads each through its rule, and says which were left out", () => {
+    expect(generateTableQuery(["APP", "ALLTYPES"], projected, columns)).toBe(
+      '-- Not read by this preview: "C_CLOB" CLOB(1048576), "odd\\"name" XML. The driver cannot read these types.\n' +
+        'SELECT "ID", VARCHAR("C_BIG") AS "C_BIG" FROM "APP"."ALLTYPES";',
+    );
+  });
+
+  test("a table whose every column reads as it is carries no comment", () => {
+    expect(generateTableQuery(["APP", "T"], projected, [columns[0]])).toBe('SELECT "ID" FROM "APP"."T";');
+  });
+
+  test("with no column list it reads every column, under the unprojected note", () => {
+    expect(generateTableQuery(["APP", "T"], projected)).toBe(
+      '-- The column list is not loaded, so every column is read as it is.\nSELECT * FROM "APP"."T";',
+    );
+    expect(generateTableQuery(["APP", "T"], projected, [])).toBe(
+      '-- The column list is not loaded, so every column is read as it is.\nSELECT * FROM "APP"."T";',
+    );
+  });
+
+  // The list IS loaded here, so the unprojected note would be false, and `SELECT *` would read
+  // exactly the columns the declaration says the driver cannot. The comment is the whole preview.
+  test("a table whose every column is left out names them and reads nothing", () => {
+    expect(generateTableQuery(["APP", "T"], projected, [columns[2], columns[3]])).toBe(
+      '-- Not read by this preview: "C_CLOB" CLOB(1048576), "odd\\"name" XML. The driver cannot read these types.',
+    );
+  });
+
+  test("an engine that declares no projection still previews with SELECT *", () => {
+    expect(generateTableQuery(["users"], makeCaps(), columns)).toBe("SELECT * FROM users;");
+  });
+});
 
 describe("generateTableQuery", () => {
   test("SQL (postgres/mysql/sqlite) carries no row bound of its own", () => {
@@ -254,6 +338,27 @@ describe("generateSelectQuery — LibreDB dialect", () => {
   });
 });
 
+describe("outermostFieldPaths", () => {
+  test("drops every path whose ancestor is listed, at any depth and in any order", () => {
+    expect(outermostFieldPaths(["address.geo.lat", "address.city", "_id", "address", "address.geo"])).toEqual([
+      "_id",
+      "address",
+    ]);
+  });
+
+  test("a shared prefix that is not a whole segment is not an ancestor", () => {
+    expect(outermostFieldPaths(["address", "addressBook", "address2.city"])).toEqual([
+      "address",
+      "addressBook",
+      "address2.city",
+    ]);
+  });
+
+  test("children whose subdocument is not listed are kept, and duplicates collapse", () => {
+    expect(outermostFieldPaths(["geo.lat", "geo.lng", "name", "name"])).toEqual(["geo.lat", "geo.lng", "name"]);
+  });
+});
+
 // ============================================================================
 // generateSelectQuery
 // ============================================================================
@@ -278,6 +383,19 @@ describe("generateSelectQuery", () => {
     expect(parsed.options.projection.id).toBe(1);
     expect(parsed.options.projection.name).toBe(1);
     expect(parsed.options.limit).toBe(100);
+  });
+
+  test("JSON (MongoDB) never projects a subdocument beside one of its own paths", () => {
+    // Inference lists a subdocument and its dotted children side by side, and MongoDB refuses
+    // a projection that names both: `Path collision at address.city remaining portion city`
+    // (measured on mongo:8.2.12). The subdocument already returns every child.
+    const nested = ["_id", "address", "address.city", "address.geo", "address.geo.lat", "addressBook", "name"].map(
+      (name) => ({ name, type: "string", nullable: true, isPrimary: name === "_id" }),
+    );
+    const parsed = JSON.parse(
+      generateSelectQuery(["people"], nested, makeCaps({ queryLanguage: "json", defaultPort: null })),
+    );
+    expect(parsed.options.projection).toEqual({ _id: 1, address: 1, addressBook: 1, name: 1 });
   });
 
   test("Oracle uses FETCH FIRST 100 ROWS ONLY", () => {
@@ -571,6 +689,140 @@ describe("Trino (declared capabilities, port 8080) generation", () => {
     // port would produce a statement no Trino coordinator can parse.
     expect(quoteIdentifier("Weird", trinoCaps)).not.toContain("`");
     expect(generateSelectQuery(["nation"], sampleColumns, trinoCaps)).not.toContain("`");
+  });
+});
+
+// ============================================================================
+// The "double-always" declaration, which InfluxDB 3 makes: the "double" arm above
+// leaves a plain lowercase name bare and lets a `$` through bare, and the InfluxDB 3
+// read policy refuses a bare `$`, so a generated Count of a table named `a$b` was
+// refused by Studio itself. This arm quotes every name.
+// ============================================================================
+
+describe('identifierQuoting "double-always"', () => {
+  const alwaysCaps = makeCaps({ defaultPort: 8181, identifierQuoting: "double-always", statementTerminator: "none" });
+
+  test("quoteIdentifier quotes every name, the plain lowercase ones the double arm leaves bare included", () => {
+    expect(quoteIdentifier("home", alwaysCaps)).toBe('"home"');
+    expect(quoteIdentifier("time", alwaysCaps)).toBe('"time"');
+    expect(quoteIdentifier("a$b", alwaysCaps)).toBe('"a$b"');
+    expect(quoteIdentifier("Home", alwaysCaps)).toBe('"Home"');
+  });
+
+  test("quoteIdentifier doubles an embedded double quote so it cannot terminate its quoting", () => {
+    expect(quoteIdentifier('a"b', alwaysCaps)).toBe('"a""b"');
+  });
+
+  test("the object path and the Count text name each segment quoted", () => {
+    expect(quoteObjectPath(["home"], alwaysCaps)).toBe('"home"');
+    expect(generators.generateCountQuery(["a$b"], alwaysCaps)).toBe('SELECT COUNT(*) AS row_count\nFROM "a$b"');
+  });
+});
+
+// ============================================================================
+// previewTimeWindow (InfluxDB spec 6.6, I20): a preview that reads a recent window,
+// newest first, driven by the capability and never by the type-id. The window here
+// is the one InfluxDB 3 declares, written out so the generator's rule is pinned on
+// its own; `sql-provider.test.ts` pins the provider's declaration against the same text.
+// ============================================================================
+
+describe("previewTimeWindow", () => {
+  const windowed = makeCaps({
+    defaultPort: 8181,
+    identifierQuoting: "double-always",
+    statementTerminator: "none",
+    previewTimeWindow: {
+      column: "time",
+      since: "now() - INTERVAL '1 hour'",
+      note: "Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.",
+      examples: [
+        "A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'",
+        "One row per minute: SELECT date_bin(INTERVAL '1 minute', \"time\") AS minute, avg({column}) FROM {table} WHERE \"time\" >= now() - INTERVAL '1 hour' GROUP BY 1 ORDER BY 1",
+        "Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
+      ],
+    },
+  });
+  const homeColumns: ColumnSchema[] = [
+    { name: "time", type: "time", nullable: false, isPrimary: false },
+    { name: "room", type: "tag", nullable: true, isPrimary: false },
+    { name: "co", type: "integer", nullable: true, isPrimary: false },
+    { name: "temp", type: "float", nullable: true, isPrimary: false },
+  ];
+  const PREVIEW =
+    "-- Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.\n" +
+    'SELECT * FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC';
+
+  test("the table query is the spec 6.6 preview, with no LIMIT in the text", () => {
+    expect(generateTableQuery(["home"], windowed)).toBe(PREVIEW);
+    expect(generateTableQuery(["home"], windowed, homeColumns)).toBe(PREVIEW);
+    expect(generateTableQuery(["home"], windowed)).not.toContain("LIMIT");
+  });
+
+  test("the select query adds the example lines, naming the first float or integer column", () => {
+    const temp: ColumnSchema[] = [homeColumns[0], homeColumns[1], homeColumns[3], homeColumns[2]];
+    expect(generateSelectQuery(["home"], temp, windowed)).toBe(
+      `${PREVIEW}\n` +
+        "-- A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'\n" +
+        '-- One row per minute: SELECT date_bin(INTERVAL \'1 minute\', "time") AS minute, avg("temp") FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' GROUP BY 1 ORDER BY 1\n' +
+        "-- Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
+    );
+    expect(generateSelectQuery(["home"], homeColumns, windowed)).toContain('avg("co")');
+    expect(generateSelectQuery(["home"], homeColumns, windowed)).not.toContain("LIMIT");
+  });
+
+  test('with no numeric column the example names "value"', () => {
+    expect(generateSelectQuery(["home"], [homeColumns[0], homeColumns[1]], windowed)).toContain('avg("value")');
+    expect(generateSelectQuery(["home"], [], windowed)).toContain('avg("value")');
+  });
+
+  test("a table name that needs quotes is quoted with its quote doubled, in the statement and the example", () => {
+    const text = generateSelectQuery(['we"ird name;x'], [], windowed);
+    expect(text.split("\n")[1]).toBe(
+      'SELECT * FROM "we""ird name;x" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC',
+    );
+    expect(text).toContain('FROM "we""ird name;x" WHERE');
+  });
+
+  test("a name holding a line break cannot end an example's comment line early", () => {
+    const text = generateSelectQuery(
+      ["a\nb"],
+      [{ name: "x\ry", type: "float", nullable: true, isPrimary: false }],
+      windowed,
+    );
+    const lines = text.split("\n");
+    // The statement keeps the name as written, inside its quotes; every example line stays one comment line.
+    expect(lines[1]).toBe('SELECT * FROM "a');
+    expect(lines.slice(3).every((line) => line.startsWith("-- "))).toBe(true);
+    expect(lines.slice(3)).toHaveLength(3);
+    expect(text).toContain('avg("x y") FROM "a b"');
+  });
+
+  test("a replacement pattern in a name is the name, never the matched placeholder", () => {
+    const text = generateSelectQuery(
+      ["a$&b"],
+      [{ name: "$'", type: "integer", nullable: true, isPrimary: false }],
+      windowed,
+    );
+    expect(text).toContain('avg("$\'") FROM "a$&b" WHERE');
+  });
+
+  test("the window column goes through quoteIdentifier", () => {
+    const declared = makeCaps({
+      identifierQuoting: "double-always",
+      statementTerminator: "none",
+      previewTimeWindow: { column: "ts", since: "now() - INTERVAL '1 hour'", note: "n", examples: [] },
+    });
+    expect(generateTableQuery(["t"], declared)).toBe(
+      '-- n\nSELECT * FROM "t" WHERE "ts" >= now() - INTERVAL \'1 hour\' ORDER BY "ts" DESC',
+    );
+    expect(generateSelectQuery(["t"], [], declared)).toBe(generateTableQuery(["t"], declared));
+  });
+
+  test("a capability set without previewTimeWindow is unchanged", () => {
+    expect(generateTableQuery(["users"], makeCaps())).toBe("SELECT * FROM users;");
+    expect(generateSelectQuery(["users"], sampleColumns, makeCaps())).toBe(
+      "SELECT\n  id,\n  name\nFROM users\nWHERE 1=1\nLIMIT 100;",
+    );
   });
 });
 
@@ -1141,6 +1393,38 @@ describe("the generated statement addresses an object by its path", () => {
     expect(out).toBe('SELECT\n  "id",\n  "name"\nFROM APP.APP_CUSTOMERS\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY');
   });
 
+  // --- D. Db2 (#786): no generator arm, the declaration is the whole story ----
+
+  // Read off the provider's own declaration rather than a fixture, so a change to it moves these.
+  // Both statements were run through db2-node on Db2 LUW 12.1.0.0 against `APP.CUSTOMERS` (with its
+  // own upper-case `ID` and `NAME`): a trailing `;` and `LIMIT n` are both accepted, so no
+  // terminator or limit arm is needed.
+  const db2Caps = db2Capabilities(makeCaps());
+
+  test("Db2 quotes an upper-case name, and previews through its declared projection", () => {
+    const columns: ColumnSchema[] = [
+      { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+      { name: "NAME", type: "VARCHAR(40)", nullable: true, isPrimary: false },
+      { name: "NOTES", type: "CLOB(1048576)", nullable: true, isPrimary: false },
+    ];
+    expect(generateTableQuery(["APP", "CUSTOMERS"], db2Caps, columns)).toBe(
+      `-- Not read by this preview: "NOTES" CLOB(1048576). ${db2Caps.previewProjection?.omittedNote}\n` +
+        'SELECT "ID", "NAME" FROM "APP"."CUSTOMERS";',
+    );
+  });
+
+  test("Db2 with no column list loaded reads every column under its unprojected note", () => {
+    expect(generateTableQuery(["APP", "CUSTOMERS"], db2Caps)).toBe(
+      `-- ${db2Caps.previewProjection?.unprojectedNote}\nSELECT * FROM "APP"."CUSTOMERS";`,
+    );
+  });
+
+  test("Generate Query on Db2 bounds with LIMIT", () => {
+    expect(generateSelectQuery(["APP", "CUSTOMERS"], sampleColumns, db2Caps)).toBe(
+      'SELECT\n  id,\n  name\nFROM "APP"."CUSTOMERS"\nWHERE 1=1\nLIMIT 100;',
+    );
+  });
+
   // --- an address with no segments is refused rather than spelled ----------
 
   test("an empty address is refused by both generators", () => {
@@ -1318,6 +1602,460 @@ describe("PromQL tree click (#1085)", () => {
   });
 });
 
+// ============================================================================
+// Kafka (#1088): a topic click is a JSON read request, never a MongoDB document
+// ============================================================================
+
+/** The capabilities #1088 section 6.2 gives Kafka, varied from the SQL helper only where it says. */
+const kafkaCaps = makeCaps({
+  queryLanguage: "json",
+  queryDialect: "kafka",
+  defaultPort: 9092,
+  statementTerminator: "none",
+  supportsExplain: false,
+  supportsExternalQueryLimiting: false,
+  supportsCreateTable: false,
+  supportsInlineRowEdit: false,
+  supportsMaintenance: false,
+  supportsConnectionString: false,
+  containerLevels: [],
+});
+
+describe("Kafka tree click (#1088)", () => {
+  test("a tree click on a topic reads its latest 50 messages, as one JSON read request", () => {
+    const text = generateTableQuery(["orders"], kafkaCaps);
+    expect(text).toBe(JSON.stringify({ topic: "orders", from: "latest", limit: 50 }, null, 2));
+    expect(JSON.parse(text)).toEqual({ topic: "orders", from: "latest", limit: 50 });
+    expect(text).not.toContain('"collection"');
+    // The control: the same path on a JSON engine with no dialect is the MongoDB `find` a Kafka
+    // connection would have been sent without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateTableQuery(["orders"], mongodb))).toMatchObject({
+      collection: "orders",
+      operation: "find",
+    });
+  });
+
+  test.each([
+    ["a quote", 'or"ders'],
+    ["a backslash", "or\\ders"],
+    ["a line feed", "or\nders"],
+    ["a key-shaped name", '"},{"topic":"other'],
+    ["an Object.prototype member", "__proto__"],
+  ])("a topic named with %s is written through JSON.stringify and reads back unchanged", (_label, topic) => {
+    const text = generateTableQuery([topic], kafkaCaps);
+    const request = JSON.parse(text) as Record<string, unknown>;
+    expect(Object.keys(request)).toEqual(["topic", "from", "limit"]);
+    expect(request.topic).toBe(topic);
+    expect(text).toBe(JSON.stringify({ topic, from: "latest", limit: 50 }, null, 2));
+  });
+
+  test("the topic's own segment is read, and no column reaches the text", () => {
+    // A topic row's path is one segment (no container level), and the generator reads the object's
+    // own segment whatever it is handed, as the other JSON arms do.
+    expect(JSON.parse(generateTableQuery(["app", "orders"], kafkaCaps, sampleColumns))).toEqual({
+      topic: "orders",
+      from: "latest",
+      limit: 50,
+    });
+  });
+
+  test("the click's text is a request the provider's own parser reads as is", () => {
+    // The click auto-executes, so "runs as is" is the provider's parser reading the exact text,
+    // not a claim: the latest 50 messages of the topic, across every partition.
+    expect(parseReadRequest(generateTableQuery(["orders"], kafkaCaps), DEFAULT_QUERY_LIMIT)).toEqual({
+      topic: "orders",
+      from: { kind: "latest" },
+      limit: 50,
+    });
+  });
+});
+
+describe("Kafka Generate Read Request (#1088)", () => {
+  test("opens ONE read request, partition 0 from its earliest offset, which the provider's parser reads as is", () => {
+    const text = generateSelectQuery(["orders"], [], kafkaCaps);
+    // One object, because the tab's whole buffer is sent as one read request (`handleGenerateSelect`
+    // in src/hooks/use-tab-manager.ts) and JSON has no comments to hold alternatives. Not offset 0:
+    // retention moves a partition's earliest offset past 0 on almost every production topic, and an
+    // offset below it is refused as out of range (tests/unit/lib/kafka-generated-read.test.ts).
+    expect(text).toBe(JSON.stringify({ topic: "orders", partition: 0, from: "earliest", limit: 50 }, null, 2));
+    expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT)).toEqual({
+      topic: "orders",
+      partition: 0,
+      from: { kind: "earliest" },
+      limit: 50,
+    });
+    // The control: the same call on a JSON engine with no dialect is the MongoDB `find` a Kafka
+    // connection would have been handed without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateSelectQuery(["orders"], [], mongodb))).toMatchObject({
+      collection: "orders",
+      operation: "find",
+    });
+  });
+
+  test.each([
+    ["a quote", 'or"ders'],
+    ["a backslash", "or\\ders"],
+    ["a line feed", "or\nders"],
+    ["a key-shaped name", '"},{"topic":"other'],
+    ["an Object.prototype member", "__proto__"],
+  ])("a topic named with %s is written through JSON.stringify and reads back unchanged", (_label, topic) => {
+    const text = generateSelectQuery([topic], [], kafkaCaps);
+    const request = JSON.parse(text) as Record<string, unknown>;
+    expect(Object.keys(request)).toEqual(["topic", "partition", "from", "limit"]);
+    expect(request.topic).toBe(topic);
+    expect(text).toBe(JSON.stringify({ topic, partition: 0, from: "earliest", limit: 50 }, null, 2));
+  });
+
+  test("the topic's columns never reach the text: they are fields a message comes back with, not request keys", () => {
+    // The MongoDB arm projects the columns it is handed, and a `projection` key is one the read
+    // request's parser refuses; the topic's own fixed columns are what the tree hands over here.
+    const text = generateSelectQuery(["orders"], KAFKA_TOPIC_COLUMNS, kafkaCaps);
+    expect(text).toBe(generateSelectQuery(["orders"], [], kafkaCaps));
+    expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT).topic).toBe("orders");
+  });
+
+  test("the topic's own segment is read, whatever path it is handed", () => {
+    expect(JSON.parse(generateSelectQuery(["app", "orders"], sampleColumns, kafkaCaps))).toEqual({
+      topic: "orders",
+      partition: 0,
+      from: "earliest",
+      limit: 50,
+    });
+  });
+});
+
+/**
+ * The two quoting helpers on a Kafka connection answer the JSON arm's spelling, the name as it is,
+ * pinned rather than given an arm of their own (#1088, section 3.3): no caller that a Kafka
+ * connection reaches sends what they answer to the broker. `POST /api/db/profile` refuses the
+ * dialect before its SQL branch (tests/api/db/profile.test.ts), both row menus withhold Generate
+ * Test Data on a topic (tests/unit/components/object-tree-row-actions.test.ts,
+ * tests/components/schema-explorer/TableItem.test.tsx), and the import dialog offers no topic as a
+ * target, since it offers only kinds that declare row writes and no Kafka kind declares them
+ * (tests/unit/db/kafka/objects.test.ts).
+ */
+describe("quoteIdentifier and quoteObjectPath on a Kafka path (#1088)", () => {
+  test("answer a topic's name as it is, where the SQL arm would quote it", () => {
+    expect(quoteIdentifier("orders", kafkaCaps)).toBe("orders");
+    expect(quoteObjectPath(["orders"], kafkaCaps)).toBe("orders");
+    // A legal topic name, of Kafka's own characters, that the SQL arm quotes.
+    expect(quoteIdentifier("Orders.v2-eu", kafkaCaps)).toBe("Orders.v2-eu");
+    expect(quoteObjectPath(["Orders.v2-eu"], kafkaCaps)).toBe("Orders.v2-eu");
+    // The control: the same names on the SQL helper are quoted, so the answers above are the JSON arm's.
+    expect(quoteIdentifier("Orders.v2-eu", makeCaps())).toBe('"Orders.v2-eu"');
+    expect(quoteObjectPath(["Orders.v2-eu"], makeCaps())).toBe('"Orders.v2-eu"');
+  });
+});
+
+// ============================================================================
+// etcd (#1089): the tree click reads the group
+// ============================================================================
+
+/** The real provider's declaration: its constructor validates and opens nothing (#1089 3.1). */
+const etcdCaps = new EtcdProvider(CENSUS_CONNECTION.etcd).getCapabilities();
+
+/** The bounds the provider parses a command under (keyvalue/etcd/index.ts `parseLimits`), at a 30 s query timeout. */
+const ETCD_PARSE_LIMITS: EtcdParseLimits = {
+  maxLimit: DEFAULT_QUERY_LIMIT,
+  txnRangeLimit: ETCD_READ_BOUNDS.firstPageSize,
+  maxCommandTimeoutMs: 30_000,
+  maxWatchWindowMs: 30_000 - ETCD_READ_BOUNDS.watchMarginMs,
+};
+
+/** The command the provider's own parser reads from `text`, which is what the provider runs (#1089 5.1). */
+function etcdCommand(text: string): EtcdCommand {
+  const parsed = parseEtcdCommand(text, ETCD_PARSE_LIMITS);
+  if (!parsed.ok) throw new Error(`the provider refuses ${JSON.stringify(text)}: ${parsed.refusal.message}`);
+  return parsed.parsed.command;
+}
+
+const etcdBytes = (text: string): Uint8Array => new TextEncoder().encode(text);
+
+describe("etcd tree click (#1089)", () => {
+  test("a click on a group reads 50 keys of its prefix, as one get the provider's parser reads as is", () => {
+    const text = generateTableQuery(["/app/config/*"], etcdCaps);
+    expect(text).toBe("get /app/config/ --prefix --limit=50");
+    const command = etcdCommand(text);
+    expect(command).toMatchObject({ kind: "get", key: etcdBytes("/app/config/"), prefix: true, limit: 50 });
+    expect(assessCommand(command).class).toBe("read");
+    // The control: the same path on a JSON engine with no dialect is the MongoDB `find` an etcd connection
+    // would have been sent without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateTableQuery(["/app/config/*"], mongodb))).toMatchObject({ operation: "find" });
+  });
+
+  test("only a name that ends in /* loses its star; any other segment is the prefix as it stands", () => {
+    expect(generateTableQuery(["orders"], etcdCaps)).toBe("get orders --prefix --limit=50");
+    expect(generateTableQuery(["/app/*x"], etcdCaps)).toBe("get '/app/*x' --prefix --limit=50");
+    // A star that does not follow a "/" is part of the prefix, quoted, and never read as a glob.
+    expect(generateTableQuery(["orders*"], etcdCaps)).toBe("get 'orders*' --prefix --limit=50");
+    expect(generateTableQuery(["/app/"], etcdCaps)).toBe("get /app/ --prefix --limit=50");
+    // The object's own segment, whatever path it is handed, as the other key-value arms read it.
+    expect(generateTableQuery(["app", "/orders/*"], etcdCaps)).toBe("get /orders/ --prefix --limit=50");
+  });
+
+  test.each([
+    ["a space", "/my app/", "get '/my app/' --prefix --limit=50"],
+    ["a single quote", "/it's/", "get '/it'\\''s/' --prefix --limit=50"],
+    ["a double quote", '/say "hi"/', `get '/say "hi"/' --prefix --limit=50`],
+    ["a line feed", "/a\nb/", "get '/a\nb/' --prefix --limit=50"],
+    ["a #", "/a#b/", "get '/a#b/' --prefix --limit=50"],
+    ["a $", "/$HOME/", "get '/$HOME/' --prefix --limit=50"],
+  ])(
+    "a prefix holding %s is quoted by the command line's rule and reads back as the same bytes",
+    (_label, prefix, expected) => {
+      const text = generateTableQuery([`${prefix}*`], etcdCaps);
+      expect(text).toBe(expected);
+      expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes(prefix), prefix: true, limit: 50 });
+    },
+  );
+
+  test("a prefix that begins with - is written after --, with the flags before it", () => {
+    const text = generateTableQuery(["-app/*"], etcdCaps);
+    expect(text).toBe("get --prefix --limit=50 -- -app/");
+    expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes("-app/"), prefix: true, limit: 50 });
+  });
+
+  test("a prefix holding a carriage return is read through a txn, whose Go quoting spells it, with no --limit", () => {
+    const text = generateTableQuery(["/a\rb/*"], etcdCaps);
+    // The command line has no spelling for a carriage return: the editor ends a line at it (lexer.ts quoteWord).
+    expect(text).toBe('txn\n\nget "/a\\rb/" --prefix\n\n');
+    const command = etcdCommand(text);
+    expect(command).toMatchObject({ kind: "txn", compares: [], failure: [] });
+    const success = command.kind === "txn" ? command.success : [];
+    expect(success).toHaveLength(1);
+    expect(success[0]).toMatchObject({ kind: "get", key: etcdBytes("/a\rb/"), prefix: true, fromKey: false });
+    expect(success[0]?.kind === "get" ? success[0].limit : "not a get").toBeUndefined();
+    expect(assessCommand(command).class).toBe("read");
+  });
+});
+
+describe("etcd tree click on a group this connection reads in part (#1089 4.7)", () => {
+  test("reads the first piece the listing names, and writes each further piece as a commented read", () => {
+    const readRanges = [{ key: "/config/a" }, { prefix: "/config/b/" }, { start: "/config/c", end: "/config/e" }];
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], { readRanges });
+    expect(text).toBe(
+      [
+        "get /config/a --limit=50",
+        "",
+        "# get /config/b/ --prefix --limit=50",
+        "",
+        "# get /config/c /config/e --limit=50",
+      ].join("\n"),
+    );
+    // What runs is the first piece alone: the other pieces are comment lines.
+    expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes("/config/a"), prefix: false, limit: 50 });
+    // The control: the same group with no pieces reads its whole prefix.
+    expect(generateTableQuery(["/config/*"], etcdCaps, [], {})).toBe("get /config/ --prefix --limit=50");
+  });
+
+  test("a piece that begins with - is written after --, and one holding a carriage return through a txn", () => {
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], {
+      readRanges: [{ start: "-a", end: "-b" }, { key: "/config/a\rb" }],
+    });
+    expect(text).toBe(["get --limit=50 -- -a -b", "", "# txn", "#", '# get "/config/a\\rb"', "#", "#"].join("\n"));
+    expect(etcdCommand(text)).toMatchObject({ kind: "get", key: etcdBytes("-a"), rangeEnd: etcdBytes("-b") });
+  });
+
+  test("a first piece holding a carriage return is a closed txn, so the commented piece below it stays a comment", () => {
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], {
+      readRanges: [{ prefix: "/config/a\r/" }, { key: "/config/b" }],
+    });
+    expect(text).toBe(["txn", "", 'get "/config/a\\r/" --prefix', "", "", "# get /config/b --limit=50"].join("\n"));
+    const command = etcdCommand(text);
+    expect(command.kind === "txn" ? [command.success.length, command.failure.length] : []).toEqual([1, 0]);
+  });
+
+  test("a group whose every readable piece is bounded by a key that is not UTF-8 text gets a note and no read", () => {
+    const text = generateTableQuery(["/config/*"], etcdCaps, [], { readRanges: [] });
+    expect(text).toBe(
+      '# No read is written for "/config/*": each part of it this connection may read starts or ends at a key that is not UTF-8 text.',
+    );
+    expect(text.split("\n").every((line) => line.startsWith("#"))).toBe(true);
+  });
+
+  /**
+   * JSON quoting, which names the group in the note, keeps a line or paragraph separator raw, and Monaco offers to
+   * remove either from the text the moment it lands, after which the note would name another group; so the note
+   * writes each as its escape, as the forms' Go quoting does (#1089 6.4).
+   */
+  test.each([
+    ["a line separator", "/ls\u2028here/*", '"/ls\\u2028here/*"'],
+    ["a paragraph separator", "/ps\u2029here/*", '"/ps\\u2029here/*"'],
+    ["a carriage return", "/cr\rhere/*", '"/cr\\rhere/*"'],
+  ])(
+    "the note for such a group whose name holds %s spells it as an escape, in the click and Generate Command",
+    (_label, group, quoted) => {
+      const note = `# No read is written for ${quoted}: each part of it this connection may read starts or ends at a key that is not UTF-8 text.`;
+      expect(generateTableQuery([group], etcdCaps, [], { readRanges: [] })).toBe(note);
+      expect(generateSelectQuery([group], [], etcdCaps, { readRanges: [], readOnly: true })).toBe(note);
+      const generated = generateSelectQuery([group], [], etcdCaps, { readRanges: [] });
+      expect(generated.split("\n")[0]).toBe(note);
+      expect(generated).not.toMatch(/[\r\u2028\u2029]/);
+      // The quoted name reads back as the group's own.
+      expect(JSON.parse(quoted)).toBe(group);
+    },
+  );
+});
+
+describe("etcd Generate Command (#1089 6.4)", () => {
+  test("opens the click's read on its first line and every other form as a comment below it", () => {
+    const text = generateSelectQuery(["/app/config/*"], [], etcdCaps);
+    expect(text).toBe(
+      [
+        "get /app/config/ --prefix --limit=50",
+        "",
+        "# put /app/config/example value",
+        "",
+        "# del /app/config/example",
+        "",
+        "# watch /app/config/ --prefix",
+        "",
+        "# txn",
+        '# create("/app/config/example") = "0"',
+        "#",
+        "# put /app/config/example value",
+        "#",
+        "# get /app/config/example",
+      ].join("\n"),
+    );
+    // Running the whole buffer runs the read, so a write needs an edit first.
+    const command = etcdCommand(text);
+    expect(command).toMatchObject({ kind: "get", key: etcdBytes("/app/config/"), prefix: true, limit: 50 });
+    expect(assessCommand(command).class).toBe("read");
+    // The control: the same call on a JSON engine with no dialect is the MongoDB `find` an etcd connection
+    // would have been handed without the arm, so the text above is the arm's own.
+    const mongodb = makeCaps({ queryLanguage: "json", containerLevels: [] });
+    expect(JSON.parse(generateSelectQuery(["/app/config/*"], [], mongodb))).toMatchObject({ operation: "find" });
+  });
+
+  test("a group's columns never reach the text: they are the fixed shape of a get row", () => {
+    expect(generateSelectQuery(["/app/config/*"], sampleColumns, etcdCaps)).toBe(
+      generateSelectQuery(["/app/config/*"], [], etcdCaps),
+    );
+  });
+
+  test("on a read-only connection it writes the click's read alone, with its pieces, and no other form (E6)", () => {
+    const scope = { readRanges: [{ key: "/config/a" }, { prefix: "/config/b/" }], readOnly: true };
+    const text = generateSelectQuery(["/config/*"], [], etcdCaps, scope);
+    expect(text).toBe(generateTableQuery(["/config/*"], etcdCaps, [], scope));
+    expect(text).toBe(["get /config/a --limit=50", "", "# get /config/b/ --prefix --limit=50"].join("\n"));
+    // The control: the same group on a read-write connection carries the other forms.
+    expect(generateSelectQuery(["/config/*"], [], etcdCaps, { ...scope, readOnly: false })).toContain(
+      "# put /config/example value",
+    );
+    expect(generateSelectQuery(["/config/*"], [], etcdCaps, { readOnly: true })).toBe(
+      "get /config/ --prefix --limit=50",
+    );
+  });
+
+  test("for a user who is not root, the first line reads the readable piece and the forms follow the pieces", () => {
+    const text = generateSelectQuery(["/config/*"], [], etcdCaps, {
+      readRanges: [{ key: "/config/a" }, { prefix: "/config/b/" }],
+    });
+    expect(text.split("\n").slice(0, 5)).toEqual([
+      "get /config/a --limit=50",
+      "",
+      "# get /config/b/ --prefix --limit=50",
+      "",
+      "# put /config/example value",
+    ]);
+  });
+
+  test("a prefix that begins with - writes no watch, which no spelling of it parses, and puts its keys after --", () => {
+    const text = generateSelectQuery(["-app/*"], [], etcdCaps);
+    expect(text).toBe(
+      [
+        "get --prefix --limit=50 -- -app/",
+        "",
+        "# put -- -app/example value",
+        "",
+        "# del -- -app/example",
+        "",
+        "# txn",
+        '# create("-app/example") = "0"',
+        "#",
+        "# put -- -app/example value",
+        "#",
+        "# get -- -app/example",
+      ].join("\n"),
+    );
+    expect(text).not.toContain("watch");
+  });
+
+  test("a prefix holding a carriage return reads through a txn and writes the txn template alone among the forms", () => {
+    const text = generateSelectQuery(["/a\rb/*"], [], etcdCaps);
+    expect(text).toBe(
+      [
+        "txn",
+        "",
+        'get "/a\\rb/" --prefix',
+        "",
+        "",
+        "# txn",
+        '# create("/a\\rb/example") = "0"',
+        "#",
+        '# put "/a\\rb/example" value',
+        "#",
+        '# get "/a\\rb/example"',
+      ].join("\n"),
+    );
+  });
+
+  test("a group with no piece to read writes the note, then the other forms, on a read-write connection", () => {
+    const text = generateSelectQuery(["/config/*"], [], etcdCaps, { readRanges: [] });
+    expect(text.split("\n")[0]).toStartWith("# No read is written for");
+    expect(text).toContain("# put /config/example value");
+  });
+});
+
+/**
+ * The optional last argument is read by the etcd arms alone (#1089, section 3.3; R12 UX-10 and CIC-10): every
+ * other shipped engine's text is the same with it and without it, from each provider's own declaration.
+ */
+describe("the generator scope moves no other engine's text (#1089)", () => {
+  const scope = { readRanges: [{ key: "k" }, { prefix: "p/" }], readOnly: true };
+  test.each(SHIPPED_DATABASE_TYPES.filter((type) => type !== "etcd"))("%s", async (type) => {
+    const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+    const path = [...declaredLevels(capabilities).map((level) => `${level.id}_0`), "orders"];
+    expect(generateTableQuery(path, capabilities, sampleColumns, scope)).toBe(
+      generateTableQuery(path, capabilities, sampleColumns),
+    );
+    expect(generateSelectQuery(path, sampleColumns, capabilities, scope)).toBe(
+      generateSelectQuery(path, sampleColumns, capabilities),
+    );
+  });
+
+  test("the census covers every shipped engine but etcd, whose text the scope does move", () => {
+    expect(SHIPPED_DATABASE_TYPES).toContain("etcd");
+    expect(generateTableQuery(["/config/*"], etcdCaps, [], scope)).not.toBe(
+      generateTableQuery(["/config/*"], etcdCaps),
+    );
+  });
+});
+
+/**
+ * The helpers with no etcd arm, on an etcd connection (#1089, section 3.3), pinned rather than given one: each
+ * answers the JSON arm's spelling, the name as it is, and no caller an etcd connection reaches sends what they
+ * answer to etcd. `POST /api/db/profile` refuses the dialect before its SQL branch (tests/api/db/profile.test.ts),
+ * both row menus withhold Generate Test Data and Count on a group, and no etcd kind declares row writes, so the
+ * import dialog offers none. `generateCountQuery` answers `null` before its JSON arm, because `offersCountQuery`
+ * refuses a declared dialect (the `etcd` row of tests/unit/lib/table-count.test.ts).
+ */
+describe("quoteIdentifier, quoteObjectPath and generateCountQuery on an etcd path (#1089)", () => {
+  test("answer a group's name as it is, where the SQL arm would quote it, and write no count", () => {
+    expect(quoteIdentifier("/app/config/*", etcdCaps)).toBe("/app/config/*");
+    // An etcd path is one segment, the group, so the join is the group itself (R-13).
+    expect(quoteObjectPath(["/app/config/*"], etcdCaps)).toBe("/app/config/*");
+    expect(generators.generateCountQuery(["/app/config/*"], etcdCaps)).toBeNull();
+    // The control: the SQL helper quotes the same name, so the answers above are the JSON arm's.
+    expect(quoteIdentifier("/app/config/*", makeCaps())).toBe('"/app/config/*"');
+    expect(quoteObjectPath(["/app/config/*"], makeCaps())).toBe('"/app/config/*"');
+  });
+});
+
 /**
  * The lines of a PromQL text the engine evaluates. PromQL reads `#` as a comment to the end of
  * the line, and every comment these generators write is a whole line of its own, so what is left
@@ -1412,7 +2150,9 @@ describe("PromQL Generate Query (#1085)", () => {
  * tests/unit/components/object-tree-row-actions.test.ts), which Prometheus does not: its whole
  * capability object is pinned in tests/unit/db/prometheus/provider.test.ts. `jsonCommandAddress` is
  * read only inside a `queryLanguage === "json"` arm: the three generators' own, the profiler's after
- * the language refusal above, and Generate Test Data's, which no metric row offers. An export added later has
+ * the language refusal above, and Generate Test Data's, which no metric row offers. `outermostFieldPaths`
+ * reduces MongoDB field paths for a projection and is read in the same two `json` places: the select
+ * generator's arm and the profiler's MongoDB branch. An export added later has
  * no classification, so this list fails until somebody writes one for it.
  */
 describe("the module's exports, for a PromQL connection (#1085)", () => {
@@ -1424,9 +2164,246 @@ describe("the module's exports, for a PromQL connection (#1085)", () => {
       "generateTableQuery",
       "jsonCommandAddress",
       "objectSegment",
+      "outermostFieldPaths",
       "quoteIdentifier",
       "quoteObjectPath",
       "shouldRefreshSchema",
     ]);
+  });
+});
+
+// ============================================================================
+// Cypher (Neo4j spec 6.5, SR5): a tree click writes a bounded Cypher read
+// ============================================================================
+
+/** The real provider's declaration: its constructor validates and opens nothing. */
+const neo4jCaps = new Neo4jProvider(CENSUS_CONNECTION.neo4j).getCapabilities();
+const graphPath = (kind: GraphKindId, name: string): string[] => ["neo4j", graphObjectSegment(kind, name)];
+
+describe("Cypher tree click and Generate Query (Neo4j spec 6.5)", () => {
+  test("a node label's click reads a bounded sample of its nodes, and never writes SQL", () => {
+    const text = generateTableQuery(graphPath("label", "Person"), neo4jCaps, sampleColumns);
+    expect(text).toBe("MATCH (n:`Person`) RETURN n LIMIT 100");
+    expect(text.startsWith("SELECT")).toBe(false);
+    // The control: the same path on an SQL declaration is the SELECT this arm keeps a graph tab from.
+    expect(generateTableQuery(graphPath("label", "Person"), makeCaps()).startsWith("SELECT")).toBe(true);
+  });
+
+  test("a relationship type's click reads its relationships with their ends", () => {
+    expect(generateTableQuery(graphPath("relationship_type", "ACTED_IN"), neo4jCaps)).toBe(
+      "MATCH (a)-[r:`ACTED_IN`]->(b) RETURN a, r, b LIMIT 100",
+    );
+  });
+
+  test("a label and a relationship type of one name are read as what they are (SR5)", () => {
+    expect(generateTableQuery(graphPath("label", "KNOWS"), neo4jCaps)).toBe("MATCH (n:`KNOWS`) RETURN n LIMIT 100");
+    expect(generateTableQuery(graphPath("relationship_type", "KNOWS"), neo4jCaps)).toBe(
+      "MATCH (a)-[r:`KNOWS`]->(b) RETURN a, r, b LIMIT 100",
+    );
+  });
+
+  test("a name with a space, a backtick or non-ASCII letters generates a read the read policy allows (Review focus 2)", () => {
+    for (const name of ["Weird Label", "Back`tick", "Şehir", "set"]) {
+      for (const kind of ["label", "relationship_type"] as const) {
+        const text = generateTableQuery(graphPath(kind, name), neo4jCaps);
+        expect({ name, kind, allowed: checkCypherRead(text, NEO4J_POLICY_PROFILE).allowed }).toEqual({
+          name,
+          kind,
+          allowed: true,
+        });
+      }
+    }
+  });
+
+  test("an index or a constraint has no generator in v1, so neither writes a statement (SR5)", () => {
+    expect(generateTableQuery(graphPath("index", "person_name"), neo4jCaps)).toBe("");
+    expect(generateTableQuery(graphPath("constraint", "person_key"), neo4jCaps)).toBe("");
+    expect(generateSelectQuery(graphPath("index", "person_name"), [], neo4jCaps)).toBe("");
+  });
+
+  test("Generate Query writes the click's read, the columns not spelled, and Count writes nothing", () => {
+    for (const path of [graphPath("label", "Person"), graphPath("relationship_type", "ACTED_IN")]) {
+      expect(generateSelectQuery(path, sampleColumns, neo4jCaps)).toBe(generateTableQuery(path, neo4jCaps));
+    }
+    expect(generators.generateCountQuery(graphPath("label", "Person"), neo4jCaps)).toBeNull();
+  });
+
+  test("quoteIdentifier writes a Cypher name in backticks, a backtick doubled", () => {
+    expect(quoteIdentifier("Person", neo4jCaps)).toBe("`Person`");
+    expect(quoteIdentifier("Back`tick", neo4jCaps)).toBe("`Back``tick`");
+  });
+});
+
+// Milvus (vector-family spec 5.7): both generators read the DIALECT_GENERATORS record, which writes the provider's own
+// browser-safe text, and every output is a request the real console parser accepts.
+describe("generateTableQuery and generateSelectQuery: Milvus", () => {
+  const milvusCaps = makeCaps({ queryLanguage: "json", queryDialect: "milvus", supportsExplain: false });
+  const path = ["default", "docs_int64"];
+  const columns: ColumnSchema[] = [
+    { name: "id", type: "Int64", nullable: false, isPrimary: true },
+    { name: "seq", type: "Int64", nullable: false, isPrimary: false },
+    { name: "vec", type: "FloatVector(8)", nullable: false, isPrimary: false },
+    { name: "title", type: "VarChar(256)", nullable: false, isPrimary: false },
+  ];
+
+  test("the tree click on a Milvus collection writes the entities/query request, never a MongoDB find", () => {
+    const text = generateTableQuery(path, milvusCaps, columns);
+    expect(text).toBe(milvusTableQuery(path));
+    const request = parseConsole(MILVUS_CONSOLE, MILVUS_ROUTES, text);
+    expect(request.route.template).toBe("entities/query");
+    expect(JSON.parse(toJsonText(request.body))).toEqual({
+      dbName: "default",
+      collectionName: "docs_int64",
+      filter: "",
+      limit: 100,
+    });
+  });
+
+  test("Generate Command on a Milvus collection writes a runnable search over its first dense vector field", () => {
+    const text = generateSelectQuery(path, columns, milvusCaps);
+    expect(text).toBe(milvusSelectQuery(path, columns));
+    const request = parseConsole(MILVUS_CONSOLE, MILVUS_ROUTES, text);
+    expect(request.route.template).toBe("entities/search");
+    const body = JSON.parse(toJsonText(request.body)) as Record<string, unknown>;
+    expect([body.dbName, body.collectionName, body.annsField, (body.data as number[][])[0].length]).toEqual([
+      "default",
+      "docs_int64",
+      "vec",
+      8,
+    ]);
+  });
+});
+
+// Qdrant (vector-family spec 6.7): both generators read the DIALECT_GENERATORS record, which writes the provider's own
+// browser-safe text, and every output is a request the real console parser accepts.
+describe("generateTableQuery and generateSelectQuery: Qdrant", () => {
+  const qdrantCaps = makeCaps({ queryLanguage: "json", queryDialect: "qdrant", supportsExplain: false });
+  const path = ["plain"];
+  const columns: ColumnSchema[] = [
+    { name: "id", type: "uint64 or UUID", nullable: false, isPrimary: true },
+    { name: "vector", type: "Dense(4, float32, Dot)", nullable: true, isPrimary: false },
+    { name: "city", type: "keyword", nullable: true, isPrimary: false },
+  ];
+
+  test("the tree click on a Qdrant collection writes the scroll request, never a MongoDB find", () => {
+    const text = generateTableQuery(path, qdrantCaps, columns);
+    expect(text).toBe(qdrantTableQuery(path));
+    const request = parseConsole(QDRANT_CONSOLE, QDRANT_ROUTES, text);
+    expect([request.route.method, request.route.template, request.params.collection_name]).toEqual([
+      "POST",
+      "collections/{collection_name}/points/scroll",
+      "plain",
+    ]);
+    expect(JSON.parse(toJsonText(request.body))).toEqual({ limit: 100, with_payload: true, with_vector: false });
+  });
+
+  test("Generate Command on a Qdrant collection writes a runnable query over its first dense vector", () => {
+    const text = generateSelectQuery(path, columns, qdrantCaps);
+    expect(text).toBe(qdrantSelectQuery(path, columns));
+    const request = parseConsole(QDRANT_CONSOLE, QDRANT_ROUTES, text);
+    expect(request.route.template).toBe("collections/{collection_name}/points/query");
+    const body = JSON.parse(toJsonText(request.body)) as Record<string, unknown>;
+    expect([(body.query as number[]).length, body.limit, body.using]).toEqual([4, 10, undefined]);
+  });
+});
+
+// InfluxQL (InfluxDB spec 6.6, 6.7): the arms read the browser-safe InfluxQL generators and quoter, so a tree click
+// and Generate Query write the text the provider's read policy allows, the measurement source `"db".."m"`.
+describe("the influxql arms", () => {
+  const path = ["home", "home"];
+  const columns: ColumnSchema[] = [
+    { name: "time", type: "time", nullable: false, isPrimary: false },
+    { name: "room", type: "tag", nullable: true, isPrimary: false },
+    { name: "temp", type: "float", nullable: true, isPrimary: false },
+  ];
+  let influxCaps: ProviderCapabilities;
+
+  beforeAll(async () => {
+    influxCaps = (await createDatabaseProvider(CENSUS_CONNECTION.influxdb)).getCapabilities();
+  });
+
+  test("the InfluxDB (InfluxQL) provider declares the influxql language these arms read", () => {
+    expect(influxCaps.queryLanguage).toBe("influxql");
+  });
+
+  test("quoteIdentifier always double-quotes, with the InfluxQL escapes", () => {
+    expect(quoteIdentifier("temp", influxCaps)).toBe('"temp"');
+    expect(quoteIdentifier('we"ird name;x', influxCaps)).toBe('"we\\"ird name;x"');
+    expect(() => quoteIdentifier("bad\u0001name", influxCaps)).toThrow(InfluxqlQuoteError);
+  });
+
+  test('quoteObjectPath writes a [database, measurement] path as the source "db".."m"', () => {
+    expect(quoteObjectPath(path, influxCaps)).toBe('"home".."home"');
+    expect(quoteObjectPath(["home", 'we"ird name;x'], influxCaps)).toBe('"home".."we\\"ird name;x"');
+    expect(() => quoteObjectPath(["home"], influxCaps)).toThrow(RangeError);
+    expect(() => quoteObjectPath(["home", "rp", "m"], influxCaps)).toThrow(RangeError);
+  });
+
+  test("quoteObjectPath writes no object as the empty string, as every other dialect does", () => {
+    // A modal that is mounted before an object is chosen renders with the empty path (StudioModals);
+    // a throw there took the whole Studio down for every influxdb connection.
+    expect(quoteObjectPath([], influxCaps)).toBe("");
+    expect(quoteObjectPath([], makeCaps())).toBe("");
+  });
+
+  test("a tree click writes the windowed preview of the InfluxQL generator, which the read policy allows", () => {
+    const text = generateTableQuery(path, influxCaps, columns);
+    expect(text).toBe(influxqlTableQuery(path));
+    expect(text).toBe(
+      "-- Newest points of the last hour, LIMIT 50 per series. No row means no point is newer: widen 1h below.\n" +
+        'SELECT * FROM "home".."home" WHERE time > now() - 1h ORDER BY time DESC LIMIT 50',
+    );
+    expect(evaluateInfluxql(text).allowed).toBe(true);
+  });
+
+  test("Generate Query writes the preview with its example lines, from the described columns", () => {
+    const text = generateSelectQuery(path, columns, influxCaps);
+    expect(text).toBe(influxqlSelectQuery(path, columns));
+    expect(text).toContain('SELECT mean("temp") FROM "home".."home"');
+    expect(text).toContain('WITH KEY = "room"');
+    expect(evaluateInfluxql(text).allowed).toBe(true);
+  });
+
+  test("a path that is not [database, measurement] is refused, never spelled", () => {
+    expect(() => generateTableQuery(["home"], influxCaps)).toThrow(RangeError);
+    expect(() => generateSelectQuery(["a", "b", "c"], columns, influxCaps)).toThrow(RangeError);
+  });
+
+  test("Count stays gated, and the schema diagram is not offered for influxql", () => {
+    expect(generators.generateCountQuery(path, influxCaps)).toBeNull();
+    expect(offersSchemaDiagram(influxCaps)).toBe(false);
+    // The control: the language the diagram line above it reads, and SQL, keep their answers.
+    expect(offersSchemaDiagram(makeCaps({ queryLanguage: "cypher" }))).toBe(false);
+    expect(offersSchemaDiagram(makeCaps())).toBe(true);
+  });
+});
+
+// Oxia (SB2-4.5): both generators read the DIALECT_GENERATORS record, which writes the provider's own browser-safe
+// text, every output a command the provider's parser accepts, and no count statement.
+describe("generateTableQuery and generateSelectQuery: Oxia", () => {
+  const oxiaCaps = makeCaps({ queryLanguage: "json", queryDialect: "oxia", supportsExplain: false });
+  const path = ["/admin/policies"];
+
+  test("the click on an Oxia key writes get, never a MongoDB find", () => {
+    const text = generateTableQuery(path, oxiaCaps, []);
+    expect(text).toBe(oxiaTableQuery(path));
+    expect(text).toBe("get /admin/policies");
+    const parsed = parseOxiaCommand(text, {});
+    expect(parsed.ok && parsed.parsed.command).toEqual({
+      kind: "get",
+      key: "/admin/policies",
+      comparison: "equal",
+      hex: false,
+    });
+  });
+
+  test("Generate Command writes the get, with the prefix forms as comments", () => {
+    const text = generateSelectQuery(path, [], oxiaCaps);
+    expect(text).toBe(oxiaSelectQuery(path));
+    expect(parseOxiaCommand(text, {}).ok).toBe(true);
+  });
+
+  test("offers no count statement", () => {
+    expect(generators.generateCountQuery(path, oxiaCaps)).toBeNull();
   });
 });

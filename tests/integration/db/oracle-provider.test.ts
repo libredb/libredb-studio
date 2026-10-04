@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes } from "@/lib/export/binary";
+import { buildResultExport } from "@/lib/export/result-export";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 
@@ -72,6 +73,12 @@ const DB_TYPE_RAW: oracledb.DbType = { num: 23, name: "DB_TYPE_RAW" };
 // The two INTERVAL identities, as the driver numbers them (measured: 2016 and 2015).
 const DB_TYPE_INTERVAL_YM: oracledb.DbType = { num: 2016, name: "DB_TYPE_INTERVAL_YM" };
 const DB_TYPE_INTERVAL_DS: oracledb.DbType = { num: 2015, name: "DB_TYPE_INTERVAL_DS" };
+// The four datetime identities (oracledb/lib/types.js: 2011 to 2014). The two zoned ones
+// are here as controls: #1131 converts DATE and TIMESTAMP and must not touch them.
+const DB_TYPE_DATE: oracledb.DbType = { num: 2011, name: "DB_TYPE_DATE" };
+const DB_TYPE_TIMESTAMP: oracledb.DbType = { num: 2012, name: "DB_TYPE_TIMESTAMP" };
+const DB_TYPE_TIMESTAMP_TZ: oracledb.DbType = { num: 2013, name: "DB_TYPE_TIMESTAMP_TZ" };
+const DB_TYPE_TIMESTAMP_LTZ: oracledb.DbType = { num: 2014, name: "DB_TYPE_TIMESTAMP_LTZ" };
 const STRING = 2001;
 const BUFFER = 2005;
 
@@ -85,6 +92,10 @@ mock.module("oracledb", () => {
     DB_TYPE_RAW,
     DB_TYPE_INTERVAL_YM,
     DB_TYPE_INTERVAL_DS,
+    DB_TYPE_DATE,
+    DB_TYPE_TIMESTAMP,
+    DB_TYPE_TIMESTAMP_TZ,
+    DB_TYPE_TIMESTAMP_LTZ,
     STRING,
     BUFFER,
     initOracleClient: mockInitOracleClientFn,
@@ -107,8 +118,201 @@ const { OracleProvider } = await import("@/lib/db/providers/sql/oracle");
 // Default mock execute implementation
 // ---------------------------------------------------------------------------
 
+/**
+ * `ALL_TAB_COLUMNS` type columns for the mocked column rows. The provider builds a column's
+ * declaration from all of them (#1139), so a row with `DATA_TYPE` alone is a row this
+ * provider's reads never receive.
+ */
+const NUMBER_BARE = {
+  DATA_TYPE: "NUMBER",
+  DATA_LENGTH: 22,
+  DATA_PRECISION: null,
+  DATA_SCALE: null,
+  CHAR_LENGTH: 0,
+  CHAR_USED: null,
+};
+const NUMBER_10 = {
+  DATA_TYPE: "NUMBER",
+  DATA_LENGTH: 22,
+  DATA_PRECISION: 10,
+  DATA_SCALE: 0,
+  CHAR_LENGTH: 0,
+  CHAR_USED: null,
+};
+const NUMBER_12_2 = {
+  DATA_TYPE: "NUMBER",
+  DATA_LENGTH: 22,
+  DATA_PRECISION: 12,
+  DATA_SCALE: 2,
+  CHAR_LENGTH: 0,
+  CHAR_USED: null,
+};
+const VARCHAR2_100 = {
+  DATA_TYPE: "VARCHAR2",
+  DATA_LENGTH: 100,
+  DATA_PRECISION: null,
+  DATA_SCALE: null,
+  CHAR_LENGTH: 100,
+  CHAR_USED: "B",
+};
+const VARCHAR2_200 = {
+  DATA_TYPE: "VARCHAR2",
+  DATA_LENGTH: 200,
+  DATA_PRECISION: null,
+  DATA_SCALE: null,
+  CHAR_LENGTH: 200,
+  CHAR_USED: "B",
+};
+const DATE_ROW = {
+  DATA_TYPE: "DATE",
+  DATA_LENGTH: 7,
+  DATA_PRECISION: null,
+  DATA_SCALE: null,
+  CHAR_LENGTH: 0,
+  CHAR_USED: null,
+};
+
+/**
+ * The columns `USER_SEGMENTS` has, as `ALL_TAB_COLUMNS` lists them for `SYS.USER_SEGMENTS` on
+ * Oracle AI Database 26ai Free 23.26.3.0.0 (measured 2026-10-04). There is no `TABLE_NAME`
+ * among them: a segment is named for its object (`SEGMENT_NAME`), and which table owns an
+ * index or LOB segment is a fact of `USER_INDEXES` / `USER_LOBS`, not of this view.
+ */
+const USER_SEGMENTS_COLUMNS = new Set([
+  "SEGMENT_NAME",
+  "PARTITION_NAME",
+  "SEGMENT_TYPE",
+  "SEGMENT_SUBTYPE",
+  "TABLESPACE_NAME",
+  "BYTES",
+  "BLOCKS",
+  "EXTENTS",
+  "INITIAL_EXTENT",
+  "NEXT_EXTENT",
+  "MIN_EXTENTS",
+  "MAX_EXTENTS",
+  "MAX_SIZE",
+  "RETENTION",
+  "MINRETENTION",
+  "PCT_INCREASE",
+  "FREELISTS",
+  "FREELIST_GROUPS",
+  "BUFFER_POOL",
+  "FLASH_CACHE",
+  "CELL_FLASH_CACHE",
+  "INMEMORY",
+  "INMEMORY_PRIORITY",
+  "INMEMORY_DISTRIBUTE",
+  "INMEMORY_DUPLICATE",
+  "INMEMORY_COMPRESSION",
+  "CELLMEMORY",
+]);
+
+const SQL_WORDS = new Set([
+  "AS",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "DISTINCT",
+  "NULL",
+  "AND",
+  "OR",
+  "WHERE",
+  "GROUP",
+  "ORDER",
+  "ON",
+  "UNION",
+  "JOIN",
+  "LEFT",
+]);
+
+/**
+ * The column a statement reads from `USER_SEGMENTS` that the view does not have, or
+ * `undefined`. It reads the two shapes the provider writes: an aliased join
+ * (`USER_SEGMENTS s` then `s.<col>`) and an unaliased select list (`SELECT <cols> FROM
+ * USER_SEGMENTS`). For the unaliased shape it checks the select list only, not the WHERE
+ * or GROUP BY clauses. This is what the mock below answers ORA-00904 for, the way the engine
+ * does: before it, the mock answered whatever it was sent, which is how
+ * `SELECT TABLE_NAME ... FROM USER_SEGMENTS` shipped and emptied the Tables panel.
+ */
+function userSegmentsUnknownColumn(sql: string): string | undefined {
+  const upper = sql.toUpperCase();
+  for (const match of upper.matchAll(/USER_SEGMENTS\s+([A-Z_][A-Z0-9_]*)/g)) {
+    const alias = match[1];
+    if (SQL_WORDS.has(alias)) continue;
+    for (const ref of upper.matchAll(new RegExp(`\\b${alias}\\.([A-Z_][A-Z0-9_$#]*)`, "g"))) {
+      if (!USER_SEGMENTS_COLUMNS.has(ref[1])) return ref[1];
+    }
+  }
+  for (const match of upper.matchAll(/SELECT\s+((?:(?!SELECT)[\s\S])*?)\s+FROM\s+USER_SEGMENTS\b/g)) {
+    const list = match[1].replace(/\bAS\s+"?[A-Z_][A-Z0-9_]*"?/g, " ");
+    for (const ident of list.matchAll(/\b([A-Z_][A-Z0-9_$#]*)\b(?!\s*\()/g)) {
+      if (!SQL_WORDS.has(ident[1]) && !USER_SEGMENTS_COLUMNS.has(ident[1])) return ident[1];
+    }
+  }
+  return undefined;
+}
+
 function defaultExecute(sql: string) {
   const upper = sql.toUpperCase();
+
+  const unknownColumn = userSegmentsUnknownColumn(sql);
+  if (unknownColumn !== undefined) throw new Error(`ORA-00904: "${unknownColumn}": invalid identifier`);
+
+  // Table stats (for getTableStats). Matched before the USER_SEGMENTS answers below, which
+  // used to catch this statement first and hand it a database-size row instead.
+  if (upper.includes("USER_TABLES") && upper.includes("TABLE_SIZE_BYTES") && upper.includes("INDEX_SIZE_BYTES")) {
+    return {
+      rows: [
+        {
+          OWNER: "TEST_USER",
+          TABLE_NAME: "USERS",
+          ROW_COUNT: 100,
+          TABLE_SIZE_BYTES: 65536,
+          INDEX_SIZE_BYTES: 16384,
+          LAST_ANALYZED: "2026-02-14T00:00:00Z",
+        },
+        {
+          OWNER: "TEST_USER",
+          TABLE_NAME: "ORDERS",
+          ROW_COUNT: 500,
+          TABLE_SIZE_BYTES: 131072,
+          INDEX_SIZE_BYTES: 32768,
+          LAST_ANALYZED: "2026-02-14T00:00:00Z",
+        },
+      ],
+      metaData: [{ name: "TABLE_NAME" }, { name: "ROW_COUNT" }],
+    };
+  }
+
+  // Index stats (for getIndexStats, has INDEX_SIZE_BYTES). Also ahead of the USER_SEGMENTS answers.
+  if (upper.includes("ALL_INDEXES") && upper.includes("INDEX_SIZE_BYTES")) {
+    return {
+      rows: [
+        {
+          TABLE_NAME: "USERS",
+          INDEX_NAME: "IDX_USERS_PK",
+          INDEX_TYPE: "NORMAL",
+          UNIQUENESS: "UNIQUE",
+          INDEX_SIZE_BYTES: 16384,
+          LEAF_BLOCKS: 10,
+          DISTINCT_KEYS: 100,
+        },
+        {
+          TABLE_NAME: "USERS",
+          INDEX_NAME: "IDX_USERS_NAME",
+          INDEX_TYPE: "NORMAL",
+          UNIQUENESS: "NONUNIQUE",
+          INDEX_SIZE_BYTES: 8192,
+          LEAF_BLOCKS: 5,
+          DISTINCT_KEYS: 95,
+        },
+      ],
+      metaData: [{ name: "TABLE_NAME" }, { name: "INDEX_NAME" }],
+    };
+  }
 
   // V$VERSION (for getOverview version)
   if (upper.includes("V$VERSION") && upper.includes("BANNER")) {
@@ -262,29 +466,6 @@ function defaultExecute(sql: string) {
     };
   }
 
-  // ALL_TABLES with table stats (for getTableStats — has USER_SEGMENTS join)
-  if (upper.includes("ALL_TABLES") && upper.includes("TABLE_SIZE_BYTES") && upper.includes("INDEX_SIZE_BYTES")) {
-    return {
-      rows: [
-        {
-          TABLE_NAME: "USERS",
-          ROW_COUNT: 100,
-          TABLE_SIZE_BYTES: 65536,
-          INDEX_SIZE_BYTES: 16384,
-          LAST_ANALYZED: "2026-02-14T00:00:00Z",
-        },
-        {
-          TABLE_NAME: "ORDERS",
-          ROW_COUNT: 500,
-          TABLE_SIZE_BYTES: 131072,
-          INDEX_SIZE_BYTES: 32768,
-          LAST_ANALYZED: "2026-02-14T00:00:00Z",
-        },
-      ],
-      metaData: [{ name: "TABLE_NAME" }, { name: "ROW_COUNT" }],
-    };
-  }
-
   if (upper.includes("ALL_TABLES")) {
     return {
       rows: [
@@ -301,7 +482,7 @@ function defaultExecute(sql: string) {
         {
           TABLE_NAME: "USERS",
           COLUMN_NAME: "ID",
-          DATA_TYPE: "NUMBER",
+          ...NUMBER_BARE,
           NULLABLE: "N",
           DATA_DEFAULT: null,
           COLUMN_ID: 1,
@@ -309,7 +490,7 @@ function defaultExecute(sql: string) {
         {
           TABLE_NAME: "USERS",
           COLUMN_NAME: "NAME",
-          DATA_TYPE: "VARCHAR2",
+          ...VARCHAR2_100,
           NULLABLE: "Y",
           DATA_DEFAULT: null,
           COLUMN_ID: 2,
@@ -317,7 +498,7 @@ function defaultExecute(sql: string) {
         {
           TABLE_NAME: "ORDERS",
           COLUMN_NAME: "ID",
-          DATA_TYPE: "NUMBER",
+          ...NUMBER_BARE,
           NULLABLE: "N",
           DATA_DEFAULT: null,
           COLUMN_ID: 1,
@@ -338,33 +519,6 @@ function defaultExecute(sql: string) {
     return {
       rows: [{ TABLE_NAME: "ORDERS", COLUMN_NAME: "USER_ID", REF_TABLE: "USERS", REF_COLUMN: "ID" }],
       metaData: [{ name: "TABLE_NAME" }, { name: "COLUMN_NAME" }, { name: "REF_TABLE" }, { name: "REF_COLUMN" }],
-    };
-  }
-
-  // Index stats (for getIndexStats — has INDEX_SIZE_BYTES)
-  if (upper.includes("ALL_INDEXES") && upper.includes("INDEX_SIZE_BYTES")) {
-    return {
-      rows: [
-        {
-          TABLE_NAME: "USERS",
-          INDEX_NAME: "IDX_USERS_PK",
-          INDEX_TYPE: "NORMAL",
-          UNIQUENESS: "UNIQUE",
-          INDEX_SIZE_BYTES: 16384,
-          LEAF_BLOCKS: 10,
-          DISTINCT_KEYS: 100,
-        },
-        {
-          TABLE_NAME: "USERS",
-          INDEX_NAME: "IDX_USERS_NAME",
-          INDEX_TYPE: "NORMAL",
-          UNIQUENESS: "NONUNIQUE",
-          INDEX_SIZE_BYTES: 8192,
-          LEAF_BLOCKS: 5,
-          DISTINCT_KEYS: 95,
-        },
-      ],
-      metaData: [{ name: "TABLE_NAME" }, { name: "INDEX_NAME" }],
     };
   }
 
@@ -1068,6 +1222,178 @@ describe("OracleProvider", () => {
         expect(result.rows).toBe(rows);
       });
     });
+
+    // DATE and TIMESTAMP columns (#1131). Neither type holds a zone, and oracledb, in
+    // Thin and Thick mode alike, builds the `Date` for both by reading the stored wall
+    // clock as LOCAL time of the Node process (`makeDate(useLocal)` in
+    // oracledb/lib/util.js). Every row path then serialised it as ISO UTC, so the value
+    // moved with the server's TZ: measured on Oracle Free, `DATE '2026-09-01'` arrived as
+    // `2026-08-31T21:00:00.000Z` under TZ=Europe/Istanbul. The Docker image runs in UTC
+    // and hid it; `npx @libredb/studio` on a laptop anywhere else did not.
+    describe("DATE and TIMESTAMP columns (#1131)", () => {
+      type Converter = (value: unknown) => unknown;
+      type Handler = (meta: { dbType: unknown; name: string }) => { converter?: Converter } | undefined;
+
+      const ZONES = ["UTC", "Europe/Istanbul", "America/Los_Angeles"] as const;
+
+      /** Runs `read` with the process held at `zone`, where `npx @libredb/studio` would run. */
+      async function inZone<T>(zone: string, read: () => Promise<T>): Promise<T> {
+        const runnerZone = process.env.TZ;
+        process.env.TZ = zone;
+        try {
+          return await read();
+        } finally {
+          if (runnerZone === undefined) delete process.env.TZ;
+          else process.env.TZ = runnerZone;
+        }
+      }
+
+      /** The `Date` oracledb builds for a DATE or TIMESTAMP: the stored fields, read as local time. */
+      function driverDate(year: number, month: number, day: number, hour = 0, minute = 0, second = 0, ms = 0) {
+        return new Date(year, month - 1, day, hour, minute, second, ms);
+      }
+
+      const meta = [
+        { name: "D", dbType: DB_TYPE_DATE, dbTypeName: "DATE" },
+        { name: "TS", dbType: DB_TYPE_TIMESTAMP, dbTypeName: "TIMESTAMP" },
+        { name: "TTZ", dbType: DB_TYPE_TIMESTAMP_TZ, dbTypeName: "TIMESTAMP WITH TIME ZONE" },
+      ];
+
+      /**
+       * An execute() that does what the driver does with the per-call handler: it asks the
+       * handler about every column and puts each value through the converter it answers.
+       * The mock's other answers skip that step, so without this no test would see a
+       * converter's output reach a row.
+       */
+      function driverExecute(rows: Record<string, unknown>[]) {
+        return async (_sql: string, _params?: unknown[], opts?: unknown) => {
+          const handler = (opts as { fetchTypeHandler?: Handler }).fetchTypeHandler;
+          const converters = meta.map((column) => handler?.(column)?.converter);
+          return {
+            rows: rows.map((row) =>
+              Object.fromEntries(
+                meta.map((column, index) => {
+                  const convert = converters[index];
+                  return [column.name, convert ? convert(row[column.name]) : row[column.name]];
+                }),
+              ),
+            ),
+            metaData: meta,
+          };
+        };
+      }
+
+      function convert(dbType: oracledb.DbType, value: unknown): unknown {
+        const answer = (lastExecuteOpts.fetchTypeHandler as Handler)({ dbType, name: "C" });
+        expect(answer?.converter).toBeTypeOf("function");
+        return answer!.converter!(value);
+      }
+
+      beforeEach(async () => {
+        await provider.connect();
+      });
+
+      test("a DATE and a TIMESTAMP read as the stored wall clock in every server zone", async () => {
+        for (const zone of ZONES) {
+          // oxlint-disable-next-line no-await-in-loop -- TZ is process-wide, so the zones run one after another.
+          const overWire = await inZone(zone, async () => {
+            mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30) }]);
+            const result = await provider.query("SELECT d, ts FROM tz_probe");
+            return JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+          });
+          expect({ zone, D: overWire[0].D, TS: overWire[0].TS }).toEqual({
+            zone,
+            D: "2026-09-01 00:00:00",
+            TS: "2026-09-01 10:30:00",
+          });
+        }
+      });
+
+      // The two zoned types name an instant, and the driver hands over that instant: its
+      // ISO form is the same in every TZ, so it is the control that must NOT be converted.
+      test("TIMESTAMP WITH TIME ZONE and WITH LOCAL TIME ZONE stay instants", async () => {
+        const instant = new Date("2026-09-01T07:30:00.000Z");
+        mockExecuteFn = driverExecute([{ D: null, TS: null, TTZ: instant }]);
+        const result = await provider.query("SELECT d, ts, ttz FROM tz_probe");
+        expect((result.rows[0] as Record<string, unknown>).TTZ).toBe(instant);
+
+        const handler = lastExecuteOpts.fetchTypeHandler as Handler;
+        expect(handler({ dbType: DB_TYPE_TIMESTAMP_TZ, name: "TTZ" })).toBeUndefined();
+        expect(handler({ dbType: DB_TYPE_TIMESTAMP_LTZ, name: "TLTZ" })).toBeUndefined();
+      });
+
+      test("a DATE keeps its time of day, and has no fraction to carry", async () => {
+        await provider.query("SELECT d FROM tz_probe");
+        expect(convert(DB_TYPE_DATE, driverDate(2026, 8, 24, 10, 11, 12))).toBe("2026-08-24 10:11:12");
+      });
+
+      // A `Date` holds milliseconds and the driver drops the rest of a TIMESTAMP(6)'s digits
+      // before any code here runs. What is left is spelled the way the engine prints a
+      // fraction, with no trailing zeros, and a whole second carries none at all.
+      test("a TIMESTAMP keeps the fraction the driver left it, and a whole second carries none", async () => {
+        await provider.query("SELECT ts FROM tz_probe");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30, 0, 345))).toBe("2026-09-01 10:30:00.345");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30, 0, 500))).toBe("2026-09-01 10:30:00.5");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30, 0, 6))).toBe("2026-09-01 10:30:00.006");
+        expect(convert(DB_TYPE_TIMESTAMP, driverDate(2026, 9, 1, 10, 30))).toBe("2026-09-01 10:30:00");
+      });
+
+      // Oracle stores years from 4712 BC, and the driver hands a BC year over as a
+      // negative one. `TO_CHAR(d, 'SYYYY-MM-DD')` prints 44 BC as `-0044-03-15`.
+      test("every field is padded, and a BC year keeps one leading sign", async () => {
+        await provider.query("SELECT d FROM tz_probe");
+        expect(convert(DB_TYPE_DATE, driverDate(999, 1, 2, 3, 4, 5))).toBe("0999-01-02 03:04:05");
+        expect(convert(DB_TYPE_DATE, driverDate(-44, 3, 15))).toBe("-0044-03-15 00:00:00");
+      });
+
+      test("a NULL stays null", async () => {
+        await provider.query("SELECT d, ts FROM tz_probe");
+        expect(convert(DB_TYPE_DATE, null)).toBeNull();
+        expect(convert(DB_TYPE_TIMESTAMP, null)).toBeNull();
+      });
+
+      // The export picks TO_DATE or TO_TIMESTAMP from the declared type, so the text
+      // must arrive beside a declaration that still names the Oracle type.
+      test("the declared column types are unchanged", async () => {
+        mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30), TTZ: null }]);
+        const result = await provider.query("SELECT d, ts, ttz FROM tz_probe");
+        expect(result.columnTypes).toEqual({ D: "DATE", TS: "TIMESTAMP", TTZ: "TIMESTAMP WITH TIME ZONE" });
+      });
+
+      // The two halves of #1131 have to agree: what the provider reads is what the export
+      // is handed, over HTTP as JSON, and the INSERT it writes must name the stored values.
+      // Before, this row was written back as 2026-08-31 21:00:00 under Istanbul.
+      test("a SQL INSERT export of the read writes the stored values back", async () => {
+        const file = await inZone("Europe/Istanbul", async () => {
+          mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30), TTZ: null }]);
+          const result = await provider.query("SELECT d, ts, ttz FROM tz_probe");
+          const rows = JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+          return buildResultExport("sql-insert", {
+            rows,
+            fields: result.fields,
+            tabName: "tz_probe",
+            dialect: "oracle",
+            columnTypes: result.columnTypes,
+          });
+        });
+        expect(file.content).toBe(
+          `INSERT INTO tz_probe ("D", "TS", "TTZ") VALUES (` +
+            `TO_DATE('2026-09-01 00:00:00', 'YYYY-MM-DD HH24:MI:SS'), ` +
+            `TO_TIMESTAMP('2026-09-01 10:30:00', 'YYYY-MM-DD HH24:MI:SS'), NULL);`,
+        );
+      });
+
+      test("queryInTransaction() converts the same way", async () => {
+        await provider.beginTransaction();
+        await inZone("Europe/Istanbul", async () => {
+          mockExecuteFn = driverExecute([{ D: driverDate(2026, 9, 1), TS: driverDate(2026, 9, 1, 10, 30) }]);
+          const result = await provider.queryInTransaction("SELECT d, ts FROM tz_probe");
+          const row = result.rows[0] as Record<string, unknown>;
+          expect([row.D, row.TS]).toEqual(["2026-09-01 00:00:00", "2026-09-01 10:30:00"]);
+        });
+        await provider.rollbackTransaction();
+      });
+    });
   });
 
   // =========================================================================
@@ -1087,6 +1413,22 @@ describe("OracleProvider", () => {
         kill: { label: "Kill Session", perEntity: false, global: false },
       });
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
+    });
+
+    test("declares the DDL and the blocks Oracle can commit inside, so SANDBOX refuses them", () => {
+      // "Oracle Database implicitly commits the current transaction before and after every
+      // DDL statement": a ROLLBACK after one answers success and undoes nothing.
+      const implicit = provider.getCapabilities().implicitCommitStatements;
+
+      expect(implicit).toContain("CREATE");
+      expect(implicit).toContain("TRUNCATE");
+      expect(implicit).not.toContain("INSERT");
+      // A PL/SQL block may commit through EXECUTE IMMEDIATE or a procedure, and nothing here
+      // reads the transaction state back to notice, so blocks are declared too.
+      expect(implicit).toContain("BEGIN");
+      expect(implicit).toContain("DECLARE");
+      // Session and system control are not DDL and commit nothing.
+      expect(provider.getCapabilities().implicitCommitExceptions).toEqual(["ALTER SESSION", "ALTER SYSTEM"]);
     });
 
     test("the vacuum label names the index rebuild, and the surfaces send that", () => {
@@ -1549,6 +1891,67 @@ describe("OracleProvider", () => {
       expect(captured).toContain('ALTER INDEX "SYS_C008646" REBUILD');
       expect(captured).toContain('ALTER INDEX "U9_PROBE_NAME_IX" REBUILD');
       expect(captured.some((sql) => sql.includes('ALTER INDEX "U9_PROBE" REBUILD'))).toBe(false);
+    });
+
+    // #1091 review: with an owner the index list comes from `ALL_INDEXES`, which answers for
+    // any schema - but a bare `ALTER INDEX "X" REBUILD` rebuilds in the CONNECTED user's
+    // schema, which is not the schema the list was read from. The rebuild names the owner.
+    test("optimize with an owner rebuilds in THAT schema rather than the connected one", async () => {
+      const captured: string[] = [];
+      let indexQueryBinds: unknown;
+      mockExecuteFn = async (sql: string, binds?: unknown) => {
+        captured.push(sql);
+        const upper = sql.toUpperCase();
+        if (upper.includes("ALL_INDEXES") && upper.includes("TABLE_NAME =")) {
+          indexQueryBinds = binds;
+          return {
+            rows: [{ INDEX_NAME: "IDX_RPT_CITY" }],
+            metaData: [{ name: "INDEX_NAME" }],
+          };
+        }
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("optimize", "RPT_CUSTOMERS", "REPORTING");
+
+      expect(result.success).toBe(true);
+      // Both arguments are bound: owner first, then the table name.
+      expect(indexQueryBinds).toEqual(["REPORTING", "RPT_CUSTOMERS"]);
+      expect(captured).toContain('ALTER INDEX "REPORTING"."IDX_RPT_CITY" REBUILD');
+      // The unqualified spelling is what rebuilt in the wrong schema; it must not appear.
+      expect(captured.some((sql) => sql.includes('ALTER INDEX "IDX_RPT_CITY" REBUILD'))).toBe(false);
+    });
+
+    test("analyze with an owner gathers statistics FOR that owner", async () => {
+      let capturedSql = "";
+      mockExecuteFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze", "RPT_CUSTOMERS", "REPORTING");
+
+      expect(result.success).toBe(true);
+      // The owner is an inline-escaped literal because DBMS_STATS takes no binds; `USER`
+      // would mean the connected user, which is the wrong schema here.
+      expect(capturedSql).toContain("GATHER_TABLE_STATS('REPORTING', 'RPT_CUSTOMERS')");
+      expect(capturedSql).not.toContain("GATHER_TABLE_STATS(USER");
+    });
+
+    test("without an owner the owner position stays USER", async () => {
+      let capturedSql = "";
+      mockExecuteFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("analyze", "USERS");
+
+      // The bare-name reading is unchanged: the connected user is the owner.
+      expect(capturedSql).toContain("GATHER_TABLE_STATS(USER, 'USERS')");
     });
 
     test("optimize on a table with no rebuildable index succeeds having rebuilt nothing", async () => {
@@ -2379,36 +2782,112 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("getTableStats()", () => {
-    test("returns table stats from ALL_TABLES/DBA_SEGMENTS", async () => {
+    test("maps one row per table the schema owns, sizes and last analyze included", async () => {
       await provider.connect();
       const stats = await provider.getTableStats();
 
-      expect(Array.isArray(stats)).toBe(true);
-      expect(stats.length).toBeGreaterThan(0);
-
-      const first = stats[0];
-      expect(typeof first.schemaName).toBe("string");
-      expect(typeof first.tableName).toBe("string");
-      expect(typeof first.rowCount).toBe("number");
-      expect(typeof first.tableSize).toBe("string");
-      expect(typeof first.tableSizeBytes).toBe("number");
-      expect(typeof first.indexSize).toBe("string");
-      expect(typeof first.totalSize).toBe("string");
-      expect(typeof first.totalSizeBytes).toBe("number");
+      expect(stats.map((t) => t.tableName)).toEqual(["USERS", "ORDERS"]);
+      expect(stats[0]).toEqual({
+        schemaName: "TEST_USER",
+        tableName: "USERS",
+        rowCount: 100,
+        tableSize: "64 KB",
+        tableSizeBytes: 65536,
+        indexSize: "16 KB",
+        indexSizeBytes: 16384,
+        totalSize: "80 KB",
+        totalSizeBytes: 81920,
+        lastAnalyze: new Date("2026-02-14T00:00:00Z"),
+      });
     });
 
-    test("returns empty array when the stats query fails", async () => {
+    // The defect this guards: the statement selected TABLE_NAME from USER_SEGMENTS, the
+    // engine answered ORA-00904, and an empty catch turned that into "no tables".
+    test("reads no column USER_SEGMENTS does not have", async () => {
+      const captured: string[] = [];
       mockExecuteFn = async (sql: string) => {
-        if (sql.toUpperCase().includes("ALL_TABLES")) {
-          throw new Error("ORA-00942: table or view does not exist");
+        captured.push(sql);
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.getTableStats();
+      await provider.getIndexStats();
+
+      const statsSql = captured.filter((sql) => sql.toUpperCase().includes("USER_SEGMENTS"));
+      expect(statsSql).toHaveLength(2);
+      for (const sql of statsSql) expect(userSegmentsUnknownColumn(sql)).toBeUndefined();
+    });
+
+    test("the column guard refuses the statement that shipped in 0.17.0", () => {
+      const shipped = `SELECT t.TABLE_NAME, NVL(s.BYTES, 0) AS TABLE_SIZE_BYTES
+         FROM ALL_TABLES t
+         LEFT JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = t.TABLE_NAME AND s.SEGMENT_TYPE = 'TABLE'
+         LEFT JOIN (
+           SELECT TABLE_NAME, SUM(BYTES) AS BYTES
+           FROM USER_SEGMENTS
+           WHERE SEGMENT_TYPE = 'INDEX'
+           GROUP BY TABLE_NAME
+         ) idx_size ON idx_size.TABLE_NAME = t.TABLE_NAME`;
+      expect(userSegmentsUnknownColumn(shipped)).toBe("TABLE_NAME");
+      expect(userSegmentsUnknownColumn("SELECT s.TABLE_NAME FROM USER_SEGMENTS s")).toBe("TABLE_NAME");
+      expect(userSegmentsUnknownColumn("SELECT SUM(BYTES) AS TOTAL FROM USER_SEGMENTS")).toBeUndefined();
+    });
+
+    // Table size is everything that stores the table's rows: its own segments (one per
+    // partition), its LOB segments and their LOB indexes, and an index-organized table's
+    // top index. Index size is the indexes built on it. Every join keeps a segment to its
+    // own kind, because an index may share its name with a table.
+    test("sizes a table from its partitions, LOBs and index-organized storage", async () => {
+      let captured = "";
+      let binds: unknown[] | undefined;
+      mockExecuteFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("TABLE_SIZE_BYTES")) {
+          captured = sql;
+          binds = params;
         }
         return defaultExecute(sql);
       };
 
       await provider.connect();
-      const stats = await provider.getTableStats();
+      await provider.getTableStats();
 
-      expect(stats).toEqual([]);
+      // No placeholder, so no bind: oracledb refuses a surplus bind value (NJS-098).
+      expect(captured).not.toContain(":1");
+      expect(binds).toEqual([]);
+
+      expect(captured).toContain("FROM USER_TABLES t");
+      expect(captured).toContain("FROM USER_LOBS");
+      expect(captured).toContain("FROM USER_INDEXES");
+      expect(captured).toContain("INDEX_TYPE IN ('LOB', 'IOT - TOP')");
+      expect(captured).toContain("INSTR(s.SEGMENT_TYPE, o.KIND) > 0");
+      expect(captured).toContain("t.DROPPED = 'NO'");
+      expect(captured).toContain("WHERE TABLE_OWNER = USER");
+      expect(captured).toContain("SELECT USER AS OWNER");
+    });
+
+    test("rejects with the engine's sentence when the stats read fails", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.includes("TABLE_SIZE_BYTES")) throw new Error('ORA-00904: "TABLE_NAME": invalid identifier');
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await expect(provider.getTableStats()).rejects.toThrow("ORA-00904");
+    });
+
+    test("a refused stats read reaches the monitoring payload as a refusal, not as no tables", async () => {
+      mockExecuteFn = async (sql: string) => {
+        if (sql.includes("TABLE_SIZE_BYTES")) throw new Error('ORA-00904: "TABLE_NAME": invalid identifier');
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      const data = await provider.getMonitoringData();
+
+      expect(data.tables).toBeUndefined();
+      expect(data.errors?.tables).toBe('ORA-00904: "TABLE_NAME": invalid identifier');
+      expect(data.overview).toBeDefined();
     });
   });
 
@@ -2417,27 +2896,43 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("getIndexStats()", () => {
-    test("returns index stats", async () => {
+    test("maps each index with its columns and size", async () => {
       await provider.connect();
       const stats = await provider.getIndexStats();
 
-      expect(Array.isArray(stats)).toBe(true);
-      expect(stats.length).toBeGreaterThan(0);
-
-      const first = stats[0];
-      expect(typeof first.schemaName).toBe("string");
-      expect(typeof first.tableName).toBe("string");
-      expect(typeof first.indexName).toBe("string");
-      expect(typeof first.indexType).toBe("string");
-      expect(Array.isArray(first.columns)).toBe(true);
-      expect(typeof first.isUnique).toBe("boolean");
-      expect(typeof first.isPrimary).toBe("boolean");
-      expect(typeof first.indexSize).toBe("string");
-      expect(typeof first.indexSizeBytes).toBe("number");
-      expect(typeof first.scans).toBe("number");
+      expect(stats).toHaveLength(2);
+      expect(stats[0]).toEqual({
+        schemaName: "TEST_USER",
+        tableName: "USERS",
+        indexName: "IDX_USERS_PK",
+        indexType: "NORMAL",
+        columns: ["ID"],
+        isUnique: true,
+        isPrimary: false,
+        indexSize: "16 KB",
+        indexSizeBytes: 16384,
+        scans: 0,
+      });
+      expect(stats[1].isUnique).toBe(false);
     });
 
-    test("returns empty array when the index query fails", async () => {
+    // A partitioned index is one segment per partition, typed INDEX PARTITION, so a join
+    // on SEGMENT_TYPE = 'INDEX' sized it 0 B. The segments are summed per index.
+    test("sums every segment of an index, partitions included", async () => {
+      let captured = "";
+      mockExecuteFn = async (sql: string) => {
+        if (sql.includes("INDEX_SIZE_BYTES")) captured = sql;
+        return defaultExecute(sql);
+      };
+
+      await provider.connect();
+      await provider.getIndexStats();
+
+      expect(captured).toContain("INSTR(SEGMENT_TYPE, 'INDEX') > 0");
+      expect(captured).toContain("GROUP BY SEGMENT_NAME");
+    });
+
+    test("rejects with the engine's sentence when the index read fails", async () => {
       mockExecuteFn = async (sql: string) => {
         if (sql.toUpperCase().includes("ALL_INDEXES")) {
           throw new Error("ORA-00942: table or view does not exist");
@@ -2446,9 +2941,7 @@ describe("OracleProvider", () => {
       };
 
       await provider.connect();
-      const stats = await provider.getIndexStats();
-
-      expect(stats).toEqual([]);
+      await expect(provider.getIndexStats()).rejects.toThrow("ORA-00942");
     });
   });
 
@@ -2757,7 +3250,7 @@ describe("object surface", () => {
       .sort();
     // All nine, because DBMS_METADATA.GET_DDL answers every one of them and the translation
     // table this provider already ships names a metadata type for each. `sql` and NOT
-    // `plsql`: measured, `plsql` is not among the 89 language ids monaco-editor 0.56.0
+    // `plsql`: measured, `plsql` is not among the 89 language ids monaco-editor 0.57.0
     // registers, and an unregistered id degrades to plain text silently (#789).
     expect(declared).toEqual([
       ["function", "sql"],
@@ -2990,13 +3483,12 @@ describe("object surface", () => {
         if (sql.includes("SELECT d.NAME FROM described d")) return { rows: described.map((NAME) => ({ NAME })) };
         if (sql.includes("ALL_TAB_COLUMNS")) {
           return {
-            rows: described.map((NAME) => ({
-              OBJECT_NAME: NAME,
-              COLUMN_NAME: "ID",
-              DATA_TYPE: "NUMBER",
-              NULLABLE: "N",
-              DATA_DEFAULT: null,
-            })),
+            rows: described.map((NAME) =>
+              Object.assign({ OBJECT_NAME: NAME, COLUMN_NAME: "ID" }, NUMBER_BARE, {
+                NULLABLE: "N",
+                DATA_DEFAULT: null,
+              }),
+            ),
           };
         }
         return { rows: [] };
@@ -3032,14 +3524,13 @@ describe("object surface", () => {
       }
       if (sql.includes("ALL_TAB_COLUMNS")) {
         return {
-          rows: ["APP_ORDERS", "APP_CUSTOMERS"].map((TABLE_NAME) => ({
-            TABLE_NAME,
-            COLUMN_NAME: "ID",
-            DATA_TYPE: "NUMBER",
-            NULLABLE: "N",
-            DATA_DEFAULT: null,
-            COLUMN_ID: 1,
-          })),
+          rows: ["APP_ORDERS", "APP_CUSTOMERS"].map((TABLE_NAME) =>
+            Object.assign({ TABLE_NAME, COLUMN_NAME: "ID" }, NUMBER_BARE, {
+              NULLABLE: "N",
+              DATA_DEFAULT: null,
+              COLUMN_ID: 1,
+            }),
+          ),
         };
       }
       if (sql.includes("CONSTRAINT_TYPE = 'P'")) {
@@ -3186,7 +3677,7 @@ describe("Oracle object listing and detail", () => {
     const bound: unknown[][] = [];
     mockExecuteFn = async (_sql: string, params?: unknown[]) => {
       bound.push(params ?? []);
-      return { rows: [{ NAME: "REPORT_DAILY", STATUS: "VALID", COLUMN_NAME: "REPORT_DAY", DATA_TYPE: "DATE" }] };
+      return { rows: [{ NAME: "REPORT_DAILY", STATUS: "VALID", COLUMN_NAME: "REPORT_DAY", ...DATE_ROW }] };
     };
     const provider = makeProvider({ user: "app" });
     await provider.connect();
@@ -3527,9 +4018,9 @@ describe("Oracle object listing and detail", () => {
       if (sql.includes("ALL_TAB_COLUMNS")) {
         return {
           rows: [
-            { COLUMN_NAME: "ID", DATA_TYPE: "NUMBER", NULLABLE: "N", DATA_DEFAULT: null },
-            { COLUMN_NAME: "TOTAL", DATA_TYPE: "NUMBER", NULLABLE: "Y", DATA_DEFAULT: "0 " },
-            { COLUMN_NAME: "NOTE", DATA_TYPE: "VARCHAR2", NULLABLE: "Y", DATA_DEFAULT: null },
+            { COLUMN_NAME: "ID", ...NUMBER_10, NULLABLE: "N", DATA_DEFAULT: null },
+            { COLUMN_NAME: "TOTAL", ...NUMBER_12_2, NULLABLE: "Y", DATA_DEFAULT: "0 " },
+            { COLUMN_NAME: "NOTE", ...VARCHAR2_200, NULLABLE: "Y", DATA_DEFAULT: null },
           ],
         };
       }
@@ -3559,10 +4050,17 @@ describe("Oracle object listing and detail", () => {
     const detail = await provider.describeObject(["REPORTING", "REPORT_DAILY"], "table");
     expect(detail.path).toEqual(["REPORTING", "REPORT_DAILY"]);
     expect(detail.columns).toEqual([
-      { name: "ID", type: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined },
+      { name: "ID", type: "NUMBER(10)", baseType: "NUMBER", nullable: false, isPrimary: true, defaultValue: undefined },
       // DATA_DEFAULT is a LONG carrying the source text with its trailing whitespace.
-      { name: "TOTAL", type: "NUMBER", nullable: true, isPrimary: false, defaultValue: "0" },
-      { name: "NOTE", type: "VARCHAR2", nullable: true, isPrimary: false, defaultValue: undefined },
+      { name: "TOTAL", type: "NUMBER(12,2)", baseType: "NUMBER", nullable: true, isPrimary: false, defaultValue: "0" },
+      {
+        name: "NOTE",
+        type: "VARCHAR2(200 BYTE)",
+        baseType: "VARCHAR2",
+        nullable: true,
+        isPrimary: false,
+        defaultValue: undefined,
+      },
     ]);
     expect(detail.indexes).toEqual([
       { name: "REPORT_DAILY_PK", columns: ["ID"], unique: true },
@@ -3618,7 +4116,7 @@ describe("Oracle object listing and detail", () => {
   test("a view and a materialized view describe from the same column dictionary a table does", async () => {
     mockExecuteFn = async (sql: string) => {
       if (!sql.includes("ALL_TAB_COLUMNS")) return { rows: [] };
-      return { rows: [{ COLUMN_NAME: "ID", DATA_TYPE: "NUMBER", NULLABLE: "Y", DATA_DEFAULT: null }] };
+      return { rows: [{ COLUMN_NAME: "ID", ...NUMBER_BARE, NULLABLE: "Y", DATA_DEFAULT: null }] };
     };
     const provider = makeProvider({ user: "app" });
     await provider.connect();
@@ -3641,7 +4139,7 @@ describe("Oracle object listing and detail", () => {
     // second says nothing on screen. Checked against the answer rather than transcribed.
     mockExecuteFn = async (sql: string) => {
       if (!sql.includes("ALL_TAB_COLUMNS")) return { rows: [] };
-      return { rows: [{ COLUMN_NAME: "ID", DATA_TYPE: "NUMBER", NULLABLE: "Y", DATA_DEFAULT: null }] };
+      return { rows: [{ COLUMN_NAME: "ID", ...NUMBER_BARE, NULLABLE: "Y", DATA_DEFAULT: null }] };
     };
     const provider = makeProvider({ user: "app" });
     await provider.connect();
@@ -3729,14 +4227,14 @@ describe("Oracle bulk column read", () => {
             {
               OBJECT_NAME: "APP_ORDERS",
               COLUMN_NAME: "ID",
-              DATA_TYPE: "NUMBER",
+              ...NUMBER_BARE,
               NULLABLE: "N",
               DATA_DEFAULT: null,
             },
             {
               OBJECT_NAME: "APP_ORDERS",
               COLUMN_NAME: "TOTAL",
-              DATA_TYPE: "NUMBER",
+              ...NUMBER_BARE,
               NULLABLE: "Y",
               DATA_DEFAULT: "0 ",
             },
@@ -3857,8 +4355,8 @@ describe("Oracle bulk column read", () => {
       if (sql.includes("ALL_TAB_COLUMNS")) {
         return {
           rows: [
-            { COLUMN_NAME: "ID", DATA_TYPE: "NUMBER", NULLABLE: "N", DATA_DEFAULT: null },
-            { COLUMN_NAME: "TOTAL", DATA_TYPE: "NUMBER", NULLABLE: "Y", DATA_DEFAULT: "0 " },
+            { COLUMN_NAME: "ID", ...NUMBER_BARE, NULLABLE: "N", DATA_DEFAULT: null },
+            { COLUMN_NAME: "TOTAL", ...NUMBER_BARE, NULLABLE: "Y", DATA_DEFAULT: "0 " },
           ],
         };
       }
@@ -4123,6 +4621,639 @@ describe("Oracle bulk column read", () => {
     const batch = await provider.describeObjects(["APP"], "table");
 
     expect(batch.details.map((detail) => detail.path)).toEqual(listed.map((object) => object.path));
+    await provider.disconnect();
+  });
+});
+
+/**
+ * #1139: a column's `type` is its declaration, built from the length, precision and scale
+ * columns of `ALL_TAB_COLUMNS`, and `baseType` is `DATA_TYPE` beside it where the two differ.
+ *
+ * Every row below is the dictionary row Oracle Database 21c XE answers for the column of
+ * `APP.COLUMN_TYPES` (`docker/oracle-init/01-object-fixture.sql`) with the same name, so the
+ * doubles answer what the engine answers. `tests/live/oracle-column-type.ts` replays the
+ * declarations at that server.
+ */
+describe("Oracle column type declaration (#1139)", () => {
+  beforeEach(() => {
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  type Dictionary = {
+    DATA_TYPE: string;
+    DATA_LENGTH: number;
+    DATA_PRECISION: number | null;
+    DATA_SCALE: number | null;
+    CHAR_LENGTH: number;
+    CHAR_USED: "B" | "C" | null;
+  };
+  const cases: Array<{ name: string; row: Dictionary; type: string; baseType?: string }> = [
+    {
+      name: "C_VARCHAR2",
+      row: {
+        DATA_TYPE: "VARCHAR2",
+        DATA_LENGTH: 20,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 20,
+        CHAR_USED: "B",
+      },
+      type: "VARCHAR2(20 BYTE)",
+      baseType: "VARCHAR2",
+    },
+    {
+      name: "C_VARCHAR2_CHAR",
+      row: {
+        DATA_TYPE: "VARCHAR2",
+        DATA_LENGTH: 80,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 20,
+        CHAR_USED: "C",
+      },
+      type: "VARCHAR2(20 CHAR)",
+      baseType: "VARCHAR2",
+    },
+    {
+      name: "C_NVARCHAR2",
+      row: {
+        DATA_TYPE: "NVARCHAR2",
+        DATA_LENGTH: 20,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 10,
+        CHAR_USED: "C",
+      },
+      type: "NVARCHAR2(10)",
+      baseType: "NVARCHAR2",
+    },
+    {
+      name: "C_CHAR",
+      row: {
+        DATA_TYPE: "CHAR",
+        DATA_LENGTH: 2,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 2,
+        CHAR_USED: "B",
+      },
+      type: "CHAR(2 BYTE)",
+      baseType: "CHAR",
+    },
+    {
+      name: "C_CHAR_CHAR",
+      row: {
+        DATA_TYPE: "CHAR",
+        DATA_LENGTH: 12,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 3,
+        CHAR_USED: "C",
+      },
+      type: "CHAR(3 CHAR)",
+      baseType: "CHAR",
+    },
+    {
+      name: "C_NCHAR",
+      row: {
+        DATA_TYPE: "NCHAR",
+        DATA_LENGTH: 6,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 3,
+        CHAR_USED: "C",
+      },
+      type: "NCHAR(3)",
+      baseType: "NCHAR",
+    },
+    {
+      name: "C_RAW",
+      row: {
+        DATA_TYPE: "RAW",
+        DATA_LENGTH: 16,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "RAW(16)",
+      baseType: "RAW",
+    },
+    {
+      name: "C_NUMBER",
+      row: {
+        DATA_TYPE: "NUMBER",
+        DATA_LENGTH: 22,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "NUMBER",
+    },
+    {
+      name: "C_NUMBER_P",
+      row: { DATA_TYPE: "NUMBER", DATA_LENGTH: 22, DATA_PRECISION: 10, DATA_SCALE: 0, CHAR_LENGTH: 0, CHAR_USED: null },
+      type: "NUMBER(10)",
+      baseType: "NUMBER",
+    },
+    {
+      name: "C_NUMBER_PS",
+      row: { DATA_TYPE: "NUMBER", DATA_LENGTH: 22, DATA_PRECISION: 12, DATA_SCALE: 2, CHAR_LENGTH: 0, CHAR_USED: null },
+      type: "NUMBER(12,2)",
+      baseType: "NUMBER",
+    },
+    {
+      name: "C_NUMBER_STAR",
+      row: {
+        DATA_TYPE: "NUMBER",
+        DATA_LENGTH: 22,
+        DATA_PRECISION: null,
+        DATA_SCALE: 2,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "NUMBER(*,2)",
+      baseType: "NUMBER",
+    },
+    {
+      name: "C_NUMBER_NEG",
+      row: { DATA_TYPE: "NUMBER", DATA_LENGTH: 22, DATA_PRECISION: 5, DATA_SCALE: -2, CHAR_LENGTH: 0, CHAR_USED: null },
+      type: "NUMBER(5,-2)",
+      baseType: "NUMBER",
+    },
+    {
+      // INTEGER is NUMBER(*,0) to the dictionary, and that is the declaration that recreates it.
+      name: "C_INTEGER",
+      row: {
+        DATA_TYPE: "NUMBER",
+        DATA_LENGTH: 22,
+        DATA_PRECISION: null,
+        DATA_SCALE: 0,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "NUMBER(*,0)",
+      baseType: "NUMBER",
+    },
+    {
+      name: "C_FLOAT",
+      row: {
+        DATA_TYPE: "FLOAT",
+        DATA_LENGTH: 22,
+        DATA_PRECISION: 10,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "FLOAT(10)",
+      baseType: "FLOAT",
+    },
+    {
+      name: "C_FLOAT_DEFAULT",
+      row: {
+        DATA_TYPE: "FLOAT",
+        DATA_LENGTH: 22,
+        DATA_PRECISION: 126,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "FLOAT(126)",
+      baseType: "FLOAT",
+    },
+    {
+      // DATA_TYPE already carries the fractional precision, so it is the declaration.
+      name: "C_TIMESTAMP",
+      row: {
+        DATA_TYPE: "TIMESTAMP(3)",
+        DATA_LENGTH: 11,
+        DATA_PRECISION: null,
+        DATA_SCALE: 3,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "TIMESTAMP(3)",
+    },
+    {
+      name: "C_INTERVAL",
+      row: {
+        DATA_TYPE: "INTERVAL DAY(3) TO SECOND(2)",
+        DATA_LENGTH: 11,
+        DATA_PRECISION: 3,
+        DATA_SCALE: 2,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "INTERVAL DAY(3) TO SECOND(2)",
+    },
+    {
+      name: "C_DATE",
+      row: {
+        DATA_TYPE: "DATE",
+        DATA_LENGTH: 7,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "DATE",
+    },
+    {
+      name: "C_CLOB",
+      row: {
+        DATA_TYPE: "CLOB",
+        DATA_LENGTH: 4000,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "CLOB",
+    },
+    {
+      // #1209: DATA_TYPE leaves out the size, and a bare UROWID is created with DATA_LENGTH 4000.
+      name: "C_UROWID",
+      row: {
+        DATA_TYPE: "UROWID",
+        DATA_LENGTH: 100,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "UROWID(100)",
+      baseType: "UROWID",
+    },
+    {
+      name: "C_UROWID_DEFAULT",
+      row: {
+        DATA_TYPE: "UROWID",
+        DATA_LENGTH: 4000,
+        DATA_PRECISION: null,
+        DATA_SCALE: null,
+        CHAR_LENGTH: 0,
+        CHAR_USED: null,
+      },
+      type: "UROWID(4000)",
+      baseType: "UROWID",
+    },
+  ];
+
+  const expected = cases.map(({ name, type, baseType }) => ({
+    name,
+    type,
+    ...(baseType === undefined ? {} : { baseType }),
+    nullable: true,
+    isPrimary: false,
+    defaultValue: undefined,
+  }));
+
+  function columnRows(objectName?: string): Record<string, unknown>[] {
+    return cases.map(({ name, row }) =>
+      Object.assign(objectName === undefined ? {} : { OBJECT_NAME: objectName }, { COLUMN_NAME: name }, row, {
+        NULLABLE: "Y",
+        DATA_DEFAULT: null,
+      }),
+    );
+  }
+
+  test("describeObject() reports every column as declared, with DATA_TYPE as baseType where the two differ", async () => {
+    mockExecuteFn = async (sql: string) => (sql.includes("ALL_TAB_COLUMNS") ? { rows: columnRows() } : { rows: [] });
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const detail = await provider.describeObject(["APP", "COLUMN_TYPES"], "table");
+    expect(detail.columns).toEqual(expected);
+    // `toEqual` treats an undefined property as absent, and the rule is that it IS absent.
+    for (const name of ["C_NUMBER", "C_TIMESTAMP", "C_INTERVAL", "C_DATE", "C_CLOB"]) {
+      expect(Object.hasOwn(detail.columns.find((column) => column.name === name)!, "baseType")).toBe(false);
+    }
+    await provider.disconnect();
+  });
+
+  test("describeObjects() reports the same declarations", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("WITH described AS")) return { rows: [] };
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "COLUMN_TYPES" }] };
+      if (sql.includes("ALL_TAB_COLUMNS")) return { rows: columnRows("COLUMN_TYPES") };
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.details).toHaveLength(1);
+    expect(batch.details[0].columns).toEqual(expected);
+    await provider.disconnect();
+  });
+
+  test("both reads select the dictionary columns the declaration is built from", async () => {
+    const columnReads: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      if (sql.includes("ALL_TAB_COLUMNS")) columnReads.push(sql);
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "COLUMN_TYPES" }] };
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    await provider.describeObject(["APP", "COLUMN_TYPES"], "table");
+    await provider.describeObjects(["APP"], "table");
+    expect(columnReads).toHaveLength(2);
+    for (const sql of columnReads) {
+      for (const column of [
+        "DATA_TYPE",
+        "DATA_LENGTH",
+        "DATA_PRECISION",
+        "DATA_SCALE",
+        "CHAR_LENGTH",
+        "CHAR_USED",
+        "VECTOR_INFO",
+      ]) {
+        expect(sql).toContain(column);
+      }
+    }
+    await provider.disconnect();
+  });
+});
+
+/**
+ * #1209: a vector column's declaration is `ALL_TAB_COLUMNS.VECTOR_INFO`.
+ *
+ * Every row below is the dictionary row Oracle AI Database 26ai Free 23.26.3 answers for the
+ * column `tests/live/oracle-column-type.ts` creates with the same name. Each `VECTOR_INFO`
+ * spelling, replayed on that server, creates a column with the same `VECTOR_INFO`. A bare
+ * `VECTOR` creates `VECTOR(*,*,DENSE)` whatever the declaration was.
+ */
+describe("Oracle vector column declaration (#1209)", () => {
+  beforeEach(() => {
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  const cases: Array<{ name: string; charLength: number; vectorInfo: string }> = [
+    { name: "V_DEFAULT", charLength: 0, vectorInfo: "VECTOR(*,*,DENSE)" },
+    { name: "V_3_FLOAT32", charLength: 3, vectorInfo: "VECTOR(3,FLOAT32,DENSE)" },
+    { name: "V_ANY_FLOAT64", charLength: 0, vectorInfo: "VECTOR(*,FLOAT64,DENSE)" },
+    { name: "V_16_BINARY", charLength: 16, vectorInfo: "VECTOR(16,BINARY,DENSE)" },
+    { name: "V_SPARSE", charLength: 100, vectorInfo: "VECTOR(100,FLOAT32,SPARSE)" },
+  ];
+
+  function columnRows(objectName?: string): Record<string, unknown>[] {
+    const rows: Record<string, unknown>[] = cases.map(({ name, charLength, vectorInfo }) => ({
+      COLUMN_NAME: name,
+      DATA_TYPE: "VECTOR",
+      DATA_LENGTH: 8200,
+      DATA_PRECISION: null,
+      DATA_SCALE: null,
+      CHAR_LENGTH: charLength,
+      CHAR_USED: null,
+      VECTOR_INFO: vectorInfo,
+      NULLABLE: "Y",
+      DATA_DEFAULT: null,
+    }));
+    // A column of another type on the same server: VECTOR_INFO is null there.
+    rows.push({
+      COLUMN_NAME: "C_UROWID",
+      DATA_TYPE: "UROWID",
+      DATA_LENGTH: 100,
+      DATA_PRECISION: null,
+      DATA_SCALE: null,
+      CHAR_LENGTH: 0,
+      CHAR_USED: null,
+      VECTOR_INFO: null,
+      NULLABLE: "Y",
+      DATA_DEFAULT: null,
+    });
+    return objectName === undefined ? rows : rows.map((row) => Object.assign({ OBJECT_NAME: objectName }, row));
+  }
+
+  const expected = [
+    ...cases.map(({ name, vectorInfo }) => ({
+      name,
+      type: vectorInfo,
+      baseType: "VECTOR",
+      nullable: true,
+      isPrimary: false,
+      defaultValue: undefined,
+    })),
+    {
+      name: "C_UROWID",
+      type: "UROWID(100)",
+      baseType: "UROWID",
+      nullable: true,
+      isPrimary: false,
+      defaultValue: undefined,
+    },
+  ];
+
+  test("describeObject() reports VECTOR_INFO as the type, with VECTOR as baseType", async () => {
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      return sql.includes("ALL_TAB_COLUMNS") ? { rows: columnRows() } : { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    expect((await provider.describeObject(["APP", "LIBREDB_VECTOR_PROBE"], "table")).columns).toEqual(expected);
+    // One column read, not a refused one and a retry.
+    expect(asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"))).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("describeObjects() reports the same declarations", async () => {
+    mockExecuteFn = async (sql: string) => {
+      if (!sql.includes("WITH described AS")) return { rows: [] };
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "LIBREDB_VECTOR_PROBE" }] };
+      if (sql.includes("ALL_TAB_COLUMNS")) return { rows: columnRows("LIBREDB_VECTOR_PROBE") };
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.details).toHaveLength(1);
+    expect(batch.details[0].columns).toEqual(expected);
+    await provider.disconnect();
+  });
+});
+
+/**
+ * #1209, on a server whose `ALL_TAB_COLUMNS` has no `VECTOR_INFO`.
+ *
+ * The refusals are the ones Oracle Database 21c XE 21.3 answers, measured: the single read names
+ * the column bare, and the bulk read names it through the `c` alias.
+ */
+describe("Oracle column reads without VECTOR_INFO (#1209)", () => {
+  beforeEach(() => {
+    mockConnCloseFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+  });
+
+  const URowId100 = {
+    DATA_TYPE: "UROWID",
+    DATA_LENGTH: 100,
+    DATA_PRECISION: null,
+    DATA_SCALE: null,
+    CHAR_LENGTH: 0,
+    CHAR_USED: null,
+    NULLABLE: "Y",
+    DATA_DEFAULT: null,
+  };
+
+  /** A 21c double: every statement that names VECTOR_INFO is refused the way 21c refuses it. */
+  function server21c(asked: string[]) {
+    return async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("c.VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "C"."VECTOR_INFO": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "VECTOR_INFO": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "COLUMN_TYPES" }] };
+      if (sql.includes("WITH described AS") && sql.includes("ALL_TAB_COLUMNS")) {
+        return { rows: [{ OBJECT_NAME: "COLUMN_TYPES", COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      }
+      if (sql.includes("ALL_TAB_COLUMNS")) return { rows: [{ COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      return { rows: [] };
+    };
+  }
+
+  const expected = [
+    {
+      name: "C_UROWID",
+      type: "UROWID(100)",
+      baseType: "UROWID",
+      nullable: true,
+      isPrimary: false,
+      defaultValue: undefined,
+    },
+  ];
+
+  test("describeObject() answers, and one refused read is all the server pays", async () => {
+    const asked: string[] = [];
+    mockExecuteFn = server21c(asked);
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    expect((await provider.describeObject(["APP", "COLUMN_TYPES"], "table")).columns).toEqual(expected);
+    const columnReads = asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"));
+    expect(columnReads).toHaveLength(2);
+    expect(columnReads[0]).toContain("VECTOR_INFO");
+    expect(columnReads[1]).not.toContain("VECTOR_INFO");
+
+    // The provider remembers the refusal, so neither read asks for the column again.
+    asked.length = 0;
+    expect((await provider.describeObject(["APP", "COLUMN_TYPES"], "table")).columns).toEqual(expected);
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.details[0].columns).toEqual(expected);
+    expect(asked.filter((sql) => sql.includes("VECTOR_INFO"))).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("describeObjects() answers when it is the first read to meet the refusal", async () => {
+    const asked: string[] = [];
+    mockExecuteFn = server21c(asked);
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const batch = await provider.describeObjects(["APP"], "table");
+    expect(batch.details[0].columns).toEqual(expected);
+    const columnReads = asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"));
+    expect(columnReads).toHaveLength(2);
+    expect(columnReads[0]).toContain("c.VECTOR_INFO");
+    expect(columnReads[1]).not.toContain("VECTOR_INFO");
+
+    asked.length = 0;
+    await provider.describeObject(["APP", "COLUMN_TYPES"], "table");
+    expect(asked.filter((sql) => sql.includes("VECTOR_INFO"))).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("an ORA-00904 that does not name VECTOR_INFO is raised, with no retry", async () => {
+    // The retry repairs nothing when the missing column is one the fallback keeps. The
+    // statement WITHOUT VECTOR_INFO answers here, which is the control: without the retry
+    // guard, the read would succeed.
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "CHAR_USED": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("ALL_TAB_COLUMNS")) return { rows: [{ COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    await expect(provider.describeObject(["APP", "COLUMN_TYPES"], "table")).rejects.toThrow(
+      /"CHAR_USED": invalid identifier/,
+    );
+    expect(asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"))).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("describeObjects() raises an ORA-00904 that does not name VECTOR_INFO, with no retry", async () => {
+    // The same rule through the bulk read, which names its columns through the `c` alias.
+    // The statement WITHOUT VECTOR_INFO answers here too, which is the control.
+    const asked: string[] = [];
+    mockExecuteFn = async (sql: string) => {
+      asked.push(sql);
+      if (sql.includes("c.VECTOR_INFO")) {
+        throw Object.assign(new Error('ORA-00904: "C"."CHAR_USED": invalid identifier'), { errorNum: 904 });
+      }
+      if (sql.includes("SELECT d.NAME FROM described d")) return { rows: [{ NAME: "COLUMN_TYPES" }] };
+      if (sql.includes("ALL_TAB_COLUMNS")) {
+        return { rows: [{ OBJECT_NAME: "COLUMN_TYPES", COLUMN_NAME: "C_UROWID", ...URowId100 }] };
+      }
+      return { rows: [] };
+    };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    await expect(provider.describeObjects(["APP"], "table")).rejects.toThrow(/"C"."CHAR_USED": invalid identifier/);
+    expect(asked.filter((sql) => sql.includes("ALL_TAB_COLUMNS"))).toHaveLength(1);
+    await provider.disconnect();
+  });
+
+  test("a VECTOR row without VECTOR_INFO keeps DATA_TYPE", async () => {
+    // Not a state a measured server produces, because 21c has no VECTOR type. The rule still
+    // has to say something, and DATA_TYPE is what the provider reported before #1209.
+    mockExecuteFn = async (sql: string) =>
+      sql.includes("ALL_TAB_COLUMNS")
+        ? {
+            rows: [
+              {
+                COLUMN_NAME: "V",
+                DATA_TYPE: "VECTOR",
+                DATA_LENGTH: 0,
+                DATA_PRECISION: null,
+                DATA_SCALE: null,
+                CHAR_LENGTH: 0,
+                CHAR_USED: null,
+                VECTOR_INFO: null,
+                NULLABLE: "Y",
+                DATA_DEFAULT: null,
+              },
+            ],
+          }
+        : { rows: [] };
+    const provider = new OracleProvider({ ...baseConfig, user: "app" });
+    await provider.connect();
+
+    const [column] = (await provider.describeObject(["APP", "T"], "table")).columns;
+    expect(column.type).toBe("VECTOR");
+    expect(Object.hasOwn(column, "baseType")).toBe(false);
     await provider.disconnect();
   });
 });

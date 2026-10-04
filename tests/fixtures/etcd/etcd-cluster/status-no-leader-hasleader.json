@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "service": "etcd-cluster",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "4743283766027114114",
+    "memberId": "14609290428206289688",
+    "date": "2026-10-01T10:54:00.627Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "Maintenance/Status",
+    "surface": "status of member 1 with members 2 and 3 stopped, with hasleader",
+    "request": {},
+    "match": {},
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "14 UNAVAILABLE: etcdserver: no leader",
+    "code": 14,
+    "details": "etcdserver: no leader"
+  }
+}

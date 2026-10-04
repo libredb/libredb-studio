@@ -6,6 +6,7 @@ import React from "react";
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
 import { OverviewTab } from "@/components/monitoring/tabs/OverviewTab";
+import { flattenTree } from "@/components/object-tree/flatten";
 import { storage } from "@/lib/storage";
 import type { MonitoringData } from "@/lib/db/types";
 import type { TimeSeriesPoint } from "@/lib/time-series-buffer";
@@ -468,5 +469,84 @@ describe("Quick Stats publishes no cap-bounded figure as a count", () => {
     const total =
       Number(getByTestId("quick-stat-active").textContent) + Number(getByTestId("quick-stat-idle").textContent);
     expect(total).toBe(50);
+  });
+});
+
+// etcd spec 7.1 and 4.7: `tableCount` is a required number, so a provider whose count covers
+// only part of the engine, as etcd's does for a user who is not root, says so in
+// `tableCountSampledFrom`. The card then draws the floor the object tree draws for a sampled
+// folder, in the same words: `N+`, and "At least N: counted from <sentence>".
+describe("the Tables card of a count that is a floor", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const SCOPE = "the ranges etcd user reader may read: /app/ (prefix), /config/a";
+
+  const floorOf = (tableCount: number, tableCountSampledFrom: string): MonitoringData => {
+    const base = makeData();
+    return { ...base, overview: { ...base.overview, tableCount, tableCountSampledFrom } } as MonitoringData;
+  };
+
+  const tablesCard = (getByText: (text: string) => HTMLElement) =>
+    getByText("Tables").closest('[data-slot="card"]') as HTMLElement;
+
+  test("renders N+ and says what the count was taken from", () => {
+    const { getByText, getByTestId, queryByText } = render(<OverviewTab data={floorOf(7, SCOPE)} loading={false} />);
+
+    expect(queryByText("7+")).not.toBeNull();
+    expect(queryByText("7")).toBeNull();
+    expect(getByTestId("overview-table-count-scope").textContent).toBe(`At least 7: counted from ${SCOPE}`);
+    expect(tablesCard(getByText).textContent).toBe(`Tables7+At least 7: counted from ${SCOPE}61 indexes`);
+  });
+
+  test("writes a floor of a thousand or more as the tree's floor badge writes it, digits grouped", () => {
+    // The tree's own badge and title for the same sampled count, so the two surfaces are compared
+    // with each other rather than each with a copy of the other's format.
+    const [folder] = flattenTree({
+      kinds: [{ id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" }],
+      containerDepth: 0,
+      containers: [],
+      expanded: new Set<string>(),
+      counts: { "": { prefix: { count: 401_440, sampledFrom: SCOPE } } },
+      objects: {},
+      details: {},
+      readsColumns: true,
+    });
+    const { badge, badgeTitle } = folder;
+    if (badge === undefined || badgeTitle === undefined) throw new Error("the tree drew no floor for a sampled count");
+    expect(badge).toBe("401,440+");
+
+    const { getByText, getByTestId } = render(<OverviewTab data={floorOf(401_440, SCOPE)} loading={false} />);
+
+    expect(getByTestId("overview-table-count-scope").textContent).toBe(badgeTitle);
+    expect(tablesCard(getByText).textContent).toBe(`Tables${badge}${badgeTitle}61 indexes`);
+  });
+
+  test("marks the floor on the field's presence, as the tree does, so an empty sentence is still a floor", () => {
+    // `isCountSampled` asks for the FIELD and not for a filled one, and so does this card: a
+    // provider that sets the field is saying the number is not the whole count, and drawing it
+    // as exact would repeat the claim the field exists to withdraw.
+    const { queryByText } = render(<OverviewTab data={floorOf(7, "")} loading={false} />);
+
+    expect(queryByText("7+")).not.toBeNull();
+  });
+
+  test("an overview without the field renders the card exactly as it always has", () => {
+    const { getByText, queryByTestId } = render(<OverviewTab data={makeData()} loading={false} />);
+
+    expect(tablesCard(getByText).textContent).toBe("Tables2461 indexes");
+    expect(queryByTestId("overview-table-count-scope")).toBeNull();
+  });
+
+  test("an overview without the field writes a count of a thousand or more in raw digits, as it always has", () => {
+    // The digit grouping is the floor's alone. Below 1,000 a grouped count and a raw one are the same
+    // text, so only a count this size shows that every other provider's card still renders as before.
+    const base = makeData();
+    const data = { ...base, overview: { ...base.overview, tableCount: 401_440 } } as MonitoringData;
+    const { getByText, queryByTestId } = render(<OverviewTab data={data} loading={false} />);
+
+    expect(tablesCard(getByText).textContent).toBe("Tables40144061 indexes");
+    expect(queryByTestId("overview-table-count-scope")).toBeNull();
   });
 });

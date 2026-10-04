@@ -6,6 +6,8 @@
 > design, architecture, usage, and tests. If you are reading the code, extending Couchbase support,
 > or authoring a new provider, start here.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |
@@ -554,11 +556,25 @@ operator — and a statement ending in a `#` run is returned unbounded rather th
 
 | Source field | `QueryResult` field | Notes |
 |--------------|---------------------|-------|
-| result rows | `rows` | JSON objects exactly as the cluster returned them |
+| result rows | `rows` | JSON objects exactly as the cluster returned them, except that an integer past 2^53 arrives as its exact digits (see below) |
 | signature | `fields` | `null` for a wildcard signature, in which case columns are the union of the keys the rows carry, first seen first |
 | — | `rowCount` | `rows.length`, or the mutation count when a statement returned no rows |
 | metrics `executionTime` | `executionTime` | The cluster's own time (excludes network latency); falls back to the measured wall clock when the cluster reported none |
 | `warnings` | `warnings` | The notices the cluster attached to a statement it completed, each carrying its message and the cluster's own code **when it reported one** — an entry with no code arrives without one rather than with a substituted `0`, which is itself a legal code. **Absent** when the cluster reported no warnings at all — never an empty array, so the result UI decides from the field's presence alone (issue #273) |
+
+**An integer past 2^53 is handed over as its digits.** The query service sends a document's number
+as the **unquoted** literal it was stored as, and `JSON.parse` rounds one past 2^53 with no error:
+measured on 8.0.2 CE on 2026-10-04, a document `{"big":9007199254740993}` read through
+`SELECT d.big ... WHERE META(d).id = "h1"` was shown as `9007199254740992` in the grid, the API and
+every export. Every body the transport reads therefore goes through
+[`quoteUnsafeIntegers`](../../src/lib/db/utils/json-integers.ts) before it is parsed
+(`parseJsonBody` in
+[`http-transport.ts`](../../src/lib/db/providers/document/couchbase/http-transport.ts)), so such a
+value reaches the grid as a string holding its exact digits, at any depth of the document, the way
+Druid's transport hands one over. An integer inside the safe range, and every float, stays a number,
+and the pass is string-aware, so digits inside a string value are never touched. The counts and
+sizes this provider reads from the REST API all sit far inside the safe range, so none of them
+changed type.
 
 ### 5.3 `USE KEYS` reads a document with no index at all
 
@@ -671,6 +687,9 @@ provider in [`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)
 | `collection` | relation | `[bucket, scope, collection]` | `system:keyspaces` |
 | `function` | routine | `[bucket, scope, function]` | `system:functions`, and the only kind here declaring `hasSource` ([§6b](#6b-object-source-789)) |
 | `index` | config, `attachedTo: collection` | `[bucket, scope, collection, index]` | `system:indexes` |
+
+A bucket alone is a real address as well as a bucket and a scope, and the declaration states it as `containerPathShapes: "prefixes"` ([§9](#9-capabilities--labels)).
+A bucket-level container carries no scope, and that is absent rather than `_default`, because `_default` is a real scope holding real collections.
 
 A collection declares `acceptsRowWrites: true`. That is the per-kind fact and it is deliberately
 separate from the engine-wide `supportsInlineRowEdit: false` this provider also declares: the
@@ -1111,13 +1130,20 @@ edge one. Omitted, the same panels render `N/A` / "Not measured" and score the c
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)`
+`runMaintenance(type, target?, container?)`
 ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)). All three operations
 **require** a target.
 
+A `container` is the row's `schemaName` (#772), and the keyspace it addresses is decided from it:
+the bucket's own name (the only Tables row this provider has, `getTableStats()`) means the
+bucket's default collection, so the row's Analyze button addresses `` `bucket`.`_default`.`_default` ``
+rather than a scope that does not exist; any other container is the SCOPE the collection sits in,
+used as one instead of being parsed back out of the display name. Without a container the
+display-name rule stands: `scope.collection`, or the default scope for a bare name.
+
 | Type | Couchbase action | Notes |
 |------|------------------|-------|
-| `analyze` | `UPDATE STATISTICS FOR <keyspace> INDEX ALL` | **Enterprise Edition only.** A Community cluster answers "'Update Statistics' is an enterprise level feature." — returned verbatim as a failed result, not swallowed or reworded |
+| `analyze` | `UPDATE STATISTICS FOR <keyspace> INDEX ALL` | **Enterprise Edition only.** A Community cluster answers "'Update Statistics' is an enterprise level feature.", returned verbatim as a failed result, not swallowed or reworded. The success reply names the same keyspace the statement addressed (``Updated statistics for `travel`.`inventory`.`hotel` ``), so a row whose target is the bucket cannot report as if the bucket itself had been touched (#1091 review) |
 | `reindex` | `BUILD INDEX ON <keyspace>(...)` over the keyspace's deferred indexes | Reports "No deferred indexes on X" when there are none |
 | `kill` | `DELETE FROM system:active_requests WHERE requestId = $1` | Target is the request id shown in active sessions |
 
@@ -1176,6 +1202,9 @@ stays absent, and that card never renders either.
 | `maintenanceOperations` | `['analyze', 'reindex', 'kill']` |
 | `supportsConnectionString` | `true` |
 | `defaultPort` | `8091` |
+| `containerLevels` | two levels, `catalog` labelled Bucket then `schema` labelled Scope ([§6a.1](#6a1-what-is-declared)) |
+| `containerPathShapes` | `prefixes`: `[bucket]` and `[bucket, scope]` both address a container, because a bucket alone is a real address ([§6a.1](#6a1-what-is-declared)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `objectKinds` | `collection`, `function`, `index` ([§6a](#6a-the-object-surface-789)) |
 | `schemaRefreshPattern` | `\b(CREATE\|DROP\|ALTER)\s+(COLLECTION\|SCOPE\|INDEX)\b` |
 
 `supportsCreateTable: false` is deliberate: `CreateTableModal` builds `CREATE TABLE` from a column
@@ -1281,8 +1310,8 @@ read with both of its refusal branches and both of its derivation pins ([§6b](#
 
 ```bash
 # Just this provider
-bun test tests/integration/db/couchbase-provider.test.ts
-bun test tests/unit/db/couchbase
+bun tests/run-tests.ts tests/integration/db/couchbase-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/couchbase
 
 # Full isolated suite (CI-equivalent)
 bun run test
@@ -1436,4 +1465,4 @@ Everything else:
 - USE clause (`USE KEYS`): <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/hints.html>
 - INFER: <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/infer.html>
 - EXPLAIN: <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/explain.html>
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Apache Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

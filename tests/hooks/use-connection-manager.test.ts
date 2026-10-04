@@ -12,7 +12,8 @@ import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
 import { rowWritableObjects } from "@/lib/db/detailed-object";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import type { ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
+import { SAMPLED_MARKER } from "../fixtures/sampled-schema";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -61,7 +62,13 @@ const providerMeta = (objectKinds: unknown = PG_OBJECT_KINDS) => ({
   json: { capabilities: { queryLanguage: "sql", containerLevels: [{ id: "schema" }], objectKinds }, labels: {} },
 });
 
-type InventoryObject = { name: string; kind: string; path: string[]; rowCount?: number };
+type InventoryObject = {
+  name: string;
+  kind: string;
+  path: string[];
+  rowCount?: number;
+  readRanges?: readonly ObjectReadRange[];
+};
 
 /** The two tables every schema test below reads, as the object surface answers them. */
 const OBJECTS: InventoryObject[] = [
@@ -444,6 +451,54 @@ describe("useConnectionManager", () => {
       await result.current.fetchSchema(makeConnection());
     });
 
+    expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
+  });
+
+  /**
+   * etcd spec 3.4 and E13: a group's readable ranges are the connection's own grants, and a piece
+   * can be a single key. The schema keeps them, because the two generators read them off the
+   * schema entry, and `schemaContext` is what the AI panels post to the model, so it is the same
+   * JSON with the ranges left out.
+   */
+  test("schemaContext leaves out the readable ranges the schema itself keeps", async () => {
+    const ranges: readonly ObjectReadRange[] = [
+      { key: "grant-key-a" },
+      { prefix: "grant-prefix-b/" },
+      { start: "grant-start-c", end: "grant-end-d" },
+    ];
+    mockGlobalFetch(catalogRoutes([{ ...OBJECTS[0], readRanges: ranges }, OBJECTS[1]]));
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema[0]?.readRanges).toEqual(ranges);
+    expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
+    expect(result.current.schemaContext).not.toContain("grant-");
+  });
+
+  /**
+   * A column the provider only inferred from sampled data stays in `schema`, which the human
+   * views read, and never reaches `schemaContext`, which the AI panels send to a model.
+   */
+  test("schemaContext leaves out a column the engine only inferred from sampled data", async () => {
+    const sampled = { name: SAMPLED_MARKER, type: "text", nullable: true, isPrimary: false, provenance: "sampled" };
+    const details = [{ ...DETAILS[0], columns: [...DETAILS[0].columns, sampled] }, DETAILS[1]];
+    mockGlobalFetch({
+      "/api/db/provider-meta": providerMeta(),
+      "/api/db/objects/inventory": inventoryRoute(OBJECTS, [], {}, PG_OBJECT_KINDS, details),
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await act(async () => {
+      await result.current.fetchSchema(makeConnection());
+    });
+
+    expect(result.current.schema[0]?.columns.map((column) => column.name)).toContain(SAMPLED_MARKER);
+    expect(result.current.schemaContext).not.toContain(SAMPLED_MARKER);
     expect(result.current.schemaContext).toBe(JSON.stringify(joined()));
   });
 
@@ -1295,8 +1350,8 @@ describe("deferring the object scan", () => {
 // mutation that removes the tagging turns them red.
 //
 // The inventory fake below answers the way the ROUTE answers, kinds filter included, rather
-// than replaying one fixed list. `resolveKinds` (`src/lib/api/object-route.ts:227`) returns
-// EVERY declared kind when the body names none, so a fake that ignored the field would be
+// than replaying one fixed list. `resolveKinds` in `src/lib/api/object-route.ts` returns
+// EVERY enumerable kind when the body names none, so a fake that ignored the field would be
 // green for a request that asks for all seven kinds and for one that asks for three, which
 // is exactly the difference the fix round exists to make.
 describe("the object inventory the explorer reads", () => {

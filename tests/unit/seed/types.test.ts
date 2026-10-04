@@ -1,6 +1,7 @@
 import { describe, it, expect } from "bun:test";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
+import { MCP_EXPOSABLE, READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
+import { refuseMcpWhereNotOffered, SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
 
 describe("SeedConnectionSchema", () => {
   const validConn = {
@@ -34,6 +35,24 @@ describe("SeedConnectionSchema", () => {
     const result = SeedConnectionSchema.safeParse(validConn);
     expect(result.success).toBe(true);
     expect(result.data?.skipObjectScan).toBeUndefined();
+  });
+
+  /**
+   * The MCP opt-in (#246), pinned for the reason the no-scan choice is: zod strips an undeclared
+   * key, so without the field a seed file's opt-in would validate and vanish.
+   */
+  it("carries a connection's MCP opt-in through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...validConn, mcp: true });
+    expect(result.success).toBe(true);
+    expect(result.data?.mcp).toBe(true);
+  });
+
+  it("leaves the MCP opt-in absent when the seed does not make one", () => {
+    expect(SeedConnectionSchema.safeParse(validConn).data?.mcp).toBeUndefined();
+  });
+
+  it("refuses an MCP opt-in that is not a boolean", () => {
+    expect(SeedConnectionSchema.safeParse({ ...validConn, mcp: "yes" }).success).toBe(false);
   });
 
   it("rejects invalid id format (uppercase)", () => {
@@ -94,6 +113,7 @@ describe("SeedConnectionSchema", () => {
       "mongodb",
       "redis",
       "oracle",
+      "db2",
       "mssql",
       "libredb",
       "couchbase",
@@ -323,3 +343,491 @@ describe("SeedConnectionSchema: Trino's schema", () => {
     expect(result.success).toBe(false);
   });
 });
+
+describe("SeedDefaultsSchema and the MCP opt-in", () => {
+  it("refuses mcp in defaults, naming the per-connection rule, because a default would opt in every later connection", () => {
+    const result = SeedDefaultsSchema.safeParse({ managed: true, mcp: true });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual([
+      "mcp is set per connection and never in defaults: add mcp: true to each seed connection an MCP client may use",
+    ]);
+  });
+
+  it("accepts defaults without it", () => {
+    expect(SeedDefaultsSchema.safeParse({ managed: true }).success).toBe(true);
+  });
+});
+
+/**
+ * The MCP opt-in on an engine MCP is not offered for (#1089): refused at load, read from
+ * `MCP_EXPOSABLE` and never from a type-id. The rule is pinned here through `refuseMcpWhereNotOffered`
+ * handed a copy of the record that answers false for another shipped type, the way `offersReadOnlyToggle`
+ * is handed its engine's answer, so no case depends on which engine the record refuses; etcd, the one
+ * shipped engine it refuses, is pinned through the wired `SeedConfigSchema` in the describe "SeedConfigSchema:
+ * MCP is not offered for etcd (#1089 E12)" below.
+ */
+describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)", () => {
+  const connection = { id: "cluster", name: "Cluster", host: "cluster.internal", roles: ["*"] };
+  const notOffered = (type: string) =>
+    `mcp is not offered for ${type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`;
+  const refusingOnly = (type: "kafka" | "redis") =>
+    SeedConnectionSchema.superRefine(refuseMcpWhereNotOffered({ ...MCP_EXPOSABLE, [type]: false }));
+
+  it("accepts mcp: true on every shipped engine the record offers MCP for", () => {
+    const offered = SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type]);
+    // Vacuity, by name: an empty population would refuse nothing and pass.
+    expect(offered).toContain("postgres");
+    const refused = offered.filter(
+      (type) => SeedConnectionSchema.safeParse({ ...connection, type, mcp: true }).data?.mcp !== true,
+    );
+    expect(refused).toEqual([]);
+  });
+
+  it.each(["kafka", "redis"] as const)(
+    "refuses mcp: true on %s where the record answers false, naming the type and the field",
+    (type) => {
+      const result = refusingOnly(type).safeParse({ ...connection, type, mcp: true });
+      expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+        ["mcp", notOffered(type)],
+      ]);
+    },
+  );
+
+  it("accepts mcp: false, and no mcp at all, on an engine the record answers false for", () => {
+    expect(refusingOnly("kafka").safeParse({ ...connection, type: "kafka", mcp: false }).success).toBe(true);
+    expect(refusingOnly("kafka").safeParse({ ...connection, type: "kafka" }).success).toBe(true);
+  });
+
+  it("refuses only the engine the record answers false for", () => {
+    expect(refusingOnly("kafka").safeParse({ ...connection, type: "postgres", mcp: true }).success).toBe(true);
+  });
+});
+
+describe("SeedConnectionSchema: Db2's consent to a cleartext password (#786)", () => {
+  const db2 = {
+    id: "warehouse",
+    name: "Warehouse",
+    type: "db2",
+    host: "db2.internal",
+    port: 50000,
+    database: "TESTDB",
+    user: "db2inst1",
+    password: "secret",
+    roles: ["*"],
+  };
+
+  // zod strips an undeclared key, so the consent would validate and vanish, and the provider would
+  // then refuse a connection whose seed file did set it.
+  it("carries the consent through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, allowInsecureAuth: true });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.allowInsecureAuth).toBe(true);
+  });
+
+  it("rejects a consent that is not a boolean, naming the field", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, allowInsecureAuth: "yes" });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["allowInsecureAuth"]);
+  });
+
+  // The schema has no type gate on this field: `db2` is only a valid seed to carry it.
+  it("dataServers survives parsing (zod strips an undeclared key)", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, dataServers: "a.internal:6648" });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.dataServers).toBe("a.internal:6648");
+  });
+
+  it("rejects a dataServers that is not a string, naming the field", () => {
+    const result = SeedConnectionSchema.safeParse({ ...db2, dataServers: 6648 });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([["dataServers"]]);
+  });
+});
+
+describe("SeedConnectionSchema: Kafka's SASL mechanism", () => {
+  const kafka = {
+    id: "events",
+    name: "Events",
+    type: "kafka",
+    host: "broker.internal",
+    port: 9092,
+    user: "reader",
+    password: "reader-password",
+    ssl: { mode: "verify-full" },
+    roles: ["*"],
+  };
+
+  /**
+   * The silent half zod has (#765): an undeclared key is STRIPPED, so a seeded SCRAM connection
+   * would validate, lose its mechanism, and reach the provider as a user and password with no
+   * mechanism to send them by. Nothing fails at compile time here, so it is pinned at run time.
+   */
+  it.each(["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"])("carries the %s mechanism through validation", (mechanism) => {
+    const result = SeedConnectionSchema.safeParse({ ...kafka, saslMechanism: mechanism });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.saslMechanism).toBe(mechanism);
+  });
+
+  it("leaves the mechanism absent when the seed names none", () => {
+    const result = SeedConnectionSchema.safeParse({ ...kafka, user: undefined, password: undefined });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.saslMechanism).toBeUndefined();
+  });
+
+  it.each([
+    ["a mechanism the provider does not implement", "OAUTHBEARER"],
+    ["a mechanism spelled in the wrong case", "scram-sha-512"],
+    ["an empty mechanism", ""],
+  ])("rejects %s, naming the field", (_label, mechanism) => {
+    const result = SeedConnectionSchema.safeParse({ ...kafka, saslMechanism: mechanism });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["saslMechanism"]);
+  });
+
+  it("rejects an environment reference, because the field takes a literal mechanism name", () => {
+    // A mechanism names no credential and no address, so it is not one of the fields a `${ENV}`
+    // or `${vault:...}` reference is resolved in, and the file is validated before anything is.
+    const result = SeedConnectionSchema.safeParse({ ...kafka, saslMechanism: "${KAFKA_MECHANISM}" });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["saslMechanism"]);
+  });
+});
+
+/**
+ * The read-only mode (#1089). Declared for the reason skipObjectScan is (zod strips an undeclared
+ * key, and a seed file's mode would validate and vanish, leaving a connection that writes), accepted
+ * only on an engine whose provider enforces it, never a reference, never a default, and only on a
+ * managed seed.
+ */
+describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
+  const validConn = {
+    id: "test-pg",
+    name: "Test PG",
+    type: "postgres",
+    host: "localhost",
+    port: 5432,
+    roles: ["admin"],
+  };
+
+  /** The load's refusal of `readOnly: true` on an engine whose provider does not enforce it. */
+  const unenforced = (type: string) =>
+    `readOnly is not offered for ${type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`;
+
+  it("carries readOnly: false through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...validConn, readOnly: false });
+    expect(result.success).toBe(true);
+    expect(result.data?.readOnly).toBe(false);
+  });
+
+  it("leaves the mode absent when the seed does not set it", () => {
+    const result = SeedConnectionSchema.safeParse(validConn);
+    expect(result.success).toBe(true);
+    expect(result.data?.readOnly).toBeUndefined();
+  });
+
+  it("refuses readOnly: true on every engine whose provider does not enforce it, naming the type and the field", () => {
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
+    // Vacuity, by name: an empty population would refuse nothing and pass.
+    expect(refusing).toContain("postgres");
+    for (const type of refusing) {
+      const result = SeedConnectionSchema.safeParse({ ...validConn, type, readOnly: true });
+      expect({ type, issues: result.error?.issues.map((issue) => [issue.path.join("."), issue.message]) }).toEqual({
+        type,
+        issues: [["readOnly", unenforced(type)]],
+      });
+    }
+  });
+
+  it.each([
+    ["the string true", "true"],
+    ["an environment reference", "${SEED_READ_ONLY}"],
+    ["null", null],
+  ])(
+    "refuses %s, naming the field, because the mode is a literal boolean that nothing resolves",
+    (_label, readOnly) => {
+      const result = SeedConnectionSchema.safeParse({ ...validConn, readOnly });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["readOnly"]);
+    },
+  );
+});
+
+describe("SeedDefaultsSchema and the read-only mode (#1089)", () => {
+  it.each([true, false])("refuses readOnly: %p in defaults, naming the per-connection rule", (readOnly) => {
+    // A default is merged only after the file is parsed, past the refusal of an engine whose provider
+    // does not enforce the mode, so a merged default would reach engines that ignore it.
+    const result = SeedDefaultsSchema.safeParse({ managed: true, readOnly });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+      [
+        "readOnly",
+        "readOnly is set per connection and never in defaults: add readOnly: true to each seed connection that must refuse writes",
+      ],
+    ]);
+  });
+});
+
+describe("SeedConfigSchema: a read-only seed must be managed (#1089)", () => {
+  const connection = { id: "cluster", name: "Cluster", type: "postgres", host: "h", roles: ["*"] };
+  const issuesOf = (config: unknown) => {
+    const result = SeedConfigSchema.safeParse(config);
+    return result.success ? [] : result.error.issues.map((issue) => [issue.path.join("."), issue.message]);
+  };
+  const why =
+    "an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.";
+  const onConnection = `readOnly: true needs a managed connection, and this one has managed: false: ${why}`;
+  const fromDefaults = `readOnly: true needs a managed connection, and this one has managed: false from defaults.managed: ${why}`;
+  // This describe's engine, postgres, does not enforce the mode, so each read-only case also carries the
+  // engine's own refusal first; the managed rule is the second issue, and its absence is the assertion where
+  // the seed is managed. The same cases over etcd, which enforces it, are in the describe
+  // "SeedConfigSchema: a read-only etcd seed (#1089 E6)" below.
+  const enginePostgres =
+    "readOnly is not offered for postgres: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.";
+
+  it("refuses readOnly: true beside managed: false, naming both fields", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...connection, readOnly: true, managed: false }] })).toEqual([
+      ["connections.0.readOnly", enginePostgres],
+      ["connections.0.readOnly", onConnection],
+    ]);
+  });
+
+  it("refuses it when managed: false comes from defaults.managed, and names defaults.managed", () => {
+    expect(
+      issuesOf({ version: "1", defaults: { managed: false }, connections: [{ ...connection, readOnly: true }] }),
+    ).toEqual([
+      ["connections.0.readOnly", enginePostgres],
+      ["connections.0.readOnly", fromDefaults],
+    ]);
+  });
+
+  it("takes the connection's own managed: true over defaults.managed: false, the precedence of the merge", () => {
+    expect(
+      issuesOf({
+        version: "1",
+        defaults: { managed: false },
+        connections: [{ ...connection, readOnly: true, managed: true }],
+      }),
+    ).toEqual([["connections.0.readOnly", enginePostgres]]);
+  });
+
+  it("reads a seed that sets neither as managed, the default the mapper applies", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...connection, readOnly: true }] })).toEqual([
+      ["connections.0.readOnly", enginePostgres],
+    ]);
+  });
+
+  it("names the connection the refusal belongs to by its index", () => {
+    expect(
+      issuesOf({
+        version: "1",
+        connections: [
+          { ...connection, id: "first", managed: false },
+          { ...connection, id: "second", readOnly: true, managed: false },
+        ],
+      }),
+    ).toEqual([
+      ["connections.1.readOnly", enginePostgres],
+      ["connections.1.readOnly", onConnection],
+    ]);
+  });
+
+  it("asks nothing of a seed that is not read-only, managed or not", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...connection, managed: false }] })).toEqual([]);
+    expect(issuesOf({ version: "1", connections: [{ ...connection, readOnly: false, managed: false }] })).toEqual([]);
+  });
+});
+
+/**
+ * The cases of the read-only rules that need an engine whose provider enforces the mode (#1089 E6), which no
+ * engine did until etcd: each seed is refused by the managed rule alone, as one issue, or loads.
+ */
+describe("SeedConfigSchema: a read-only etcd seed (#1089 E6)", () => {
+  const etcd = { id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"] };
+  const issuesOf = (config: unknown) => {
+    const result = SeedConfigSchema.safeParse(config);
+    return result.success ? [] : result.error.issues.map((issue) => [issue.path.join("."), issue.message]);
+  };
+  const why =
+    "an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.";
+
+  it("refuses readOnly: true beside managed: false, as the one managed issue", () => {
+    expect(issuesOf({ version: "1", connections: [{ ...etcd, readOnly: true, managed: false }] })).toEqual([
+      ["connections.0.readOnly", `readOnly: true needs a managed connection, and this one has managed: false: ${why}`],
+    ]);
+  });
+
+  it("refuses it when managed: false comes from defaults.managed, naming defaults.managed", () => {
+    expect(
+      issuesOf({ version: "1", defaults: { managed: false }, connections: [{ ...etcd, readOnly: true }] }),
+    ).toEqual([
+      [
+        "connections.0.readOnly",
+        `readOnly: true needs a managed connection, and this one has managed: false from defaults.managed: ${why}`,
+      ],
+    ]);
+  });
+
+  it("loads readOnly: true with managed: true over defaults.managed: false, and with neither set", () => {
+    expect(
+      issuesOf({
+        version: "1",
+        defaults: { managed: false },
+        connections: [{ ...etcd, readOnly: true, managed: true }],
+      }),
+    ).toEqual([]);
+    expect(issuesOf({ version: "1", connections: [{ ...etcd, readOnly: true }] })).toEqual([]);
+  });
+
+  it("refuses a string readOnly on an etcd seed, naming the field", () => {
+    const result = SeedConnectionSchema.safeParse({ ...etcd, readOnly: "true" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["readOnly"]);
+  });
+
+  it("carries readOnly: true on an etcd seed through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...etcd, readOnly: true });
+    expect(result.success).toBe(true);
+    expect(result.data?.readOnly).toBe(true);
+  });
+});
+
+describe("SeedConfigSchema: MCP is not offered for etcd (#1089 E12)", () => {
+  const etcd = { id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"] };
+
+  it("refuses an etcd seed with mcp: true, with an issue on mcp that names etcd", () => {
+    const result = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: true }] });
+    expect(result.success).toBe(false);
+    const issues = result.error?.issues ?? [];
+    expect(issues.map((issue) => issue.path.join("."))).toEqual(["connections.0.mcp"]);
+    expect(issues[0]?.message).toContain("etcd");
+    expect(issues[0]?.message).toContain("MCP");
+  });
+
+  it("parses an etcd seed that says nothing of mcp, and one with mcp: false", () => {
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [etcd] }).success).toBe(true);
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: false }] }).success).toBe(true);
+  });
+});
+
+describe("SeedConnectionSchema: an oxia seed (SB2-10, SB3-5.6)", () => {
+  const oxia = { id: "metadata", name: "Metadata", type: "oxia", host: "oxia.internal", port: 6648, roles: ["*"] };
+
+  it("accepts the oxia type", () => {
+    expect(SeedConnectionSchema.safeParse(oxia).success).toBe(true);
+  });
+
+  it("refuses an oxia seed with mcp: true, with the issue at mcp naming oxia", () => {
+    const result = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...oxia, mcp: true }] });
+    expect(result.success).toBe(false);
+    const issues = result.error?.issues ?? [];
+    expect(issues.map((issue) => issue.path)).toEqual([["connections", 0, "mcp"]]);
+    expect(issues[0]?.message).toBe(
+      "mcp is not offered for oxia: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+    );
+  });
+
+  it("accepts readOnly: true on an oxia seed, with no token", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [{ ...oxia, readOnly: true, managed: true }],
+    });
+    expect(result.success).toBe(true);
+  });
+});
+
+describe("SeedConnectionSchema: a milvus seed (vector-family spec 5.2)", () => {
+  const milvus = { id: "vectors", name: "Vectors", type: "milvus", host: "milvus.internal", roles: ["*"] };
+
+  it("accepts the milvus type", () => {
+    expect(SeedConnectionSchema.safeParse(milvus).success).toBe(true);
+  });
+
+  it("loads a managed read-only milvus seed with a credential of its own", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [
+        { ...milvus, user: "reader", password: "${MILVUS_READER_PASSWORD}", readOnly: true, managed: true },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("loads a milvus seed with mcp: true, since MCP is offered for Milvus (vector-family E17)", () => {
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...milvus, mcp: true }] }).success).toBe(true);
+  });
+});
+
+describe("SeedConnectionSchema: a qdrant seed", () => {
+  const qdrant = { id: "vectors", name: "Vectors", type: "qdrant", host: "qdrant.internal", roles: ["*"] };
+
+  it("accepts the qdrant type, with no user and no database", () => {
+    expect(SeedConnectionSchema.safeParse(qdrant).success).toBe(true);
+  });
+
+  it("loads a managed read-only qdrant seed holding a key reference", () => {
+    const result = SeedConfigSchema.safeParse({
+      version: "1",
+      connections: [{ ...qdrant, password: "${QDRANT_READ_ONLY_KEY}", readOnly: true, managed: true }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("loads a qdrant seed with mcp: true, since MCP is offered for Qdrant (vector-family spec 4.4)", () => {
+    expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...qdrant, mcp: true }] }).success).toBe(true);
+  });
+});
+
+// The same five cases for each InfluxDB type: the type loads, a managed read-only seed with a secret reference
+// loads, a read-only seed with no secret is refused with the type's no-secret sentence, and mcp and
+// allowInsecureAuth both load.
+for (const { type, secret } of [
+  { type: "influxdb", secret: "${INFLUX_READER_PASSWORD}" },
+  { type: "influxdb3", secret: "${INFLUXDB3_TOKEN}" },
+] as const) {
+  describe(`SeedConnectionSchema: an ${type} seed`, () => {
+    const seed = { id: "metrics", name: "Metrics", type, host: "influx.internal", roles: ["*"] };
+
+    it(`accepts the ${type} type`, () => {
+      expect(SeedConnectionSchema.safeParse(seed).success).toBe(true);
+    });
+
+    it(`loads a managed read-only ${type} seed holding a secret reference`, () => {
+      const result = SeedConfigSchema.safeParse({
+        version: "1",
+        connections: [{ ...seed, user: "reader", password: secret, readOnly: true, managed: true }],
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it(`refuses a read-only ${type} seed with no secret, naming the no-secret warning`, () => {
+      const result = SeedConfigSchema.safeParse({
+        version: "1",
+        connections: [{ ...seed, readOnly: true, managed: true }],
+      });
+      expect(result.success).toBe(false);
+      const issues = result.error?.issues ?? [];
+      expect(issues.map((issue) => issue.path.join("."))).toEqual(["connections.0.password"]);
+      const warning = CREDENTIAL_WARNINGS[type]?.find((entry) => entry.kind === "no-secret");
+      expect(warning).toBeDefined();
+      expect(issues[0]?.message).toContain(warning?.message ?? "");
+    });
+
+    it(`loads an ${type} seed with mcp: true`, () => {
+      expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...seed, mcp: true }] }).success).toBe(true);
+    });
+
+    it(`loads an ${type} seed with allowInsecureAuth: true`, () => {
+      const result = SeedConnectionSchema.safeParse({ ...seed, allowInsecureAuth: true });
+      expect(result.success).toBe(true);
+      expect(result.data?.allowInsecureAuth).toBe(true);
+    });
+  });
+}

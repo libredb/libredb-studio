@@ -5,6 +5,8 @@
 > This is the first provider to declare a `queryLanguage` of its own, `promql` beside `sql` and `json`: the editor sends PromQL to the server unchanged.
 > This document is the single reference for the Prometheus provider: design, architecture, usage and tests.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |
@@ -120,8 +122,9 @@ Each message names the path and the status, and offers the sources such an answe
 
 **Three documents lack a member Prometheus sends, and are read without it.**
 Each of those members only describes its object, so the provider reads the document without it and puts nothing in its place, while a member that identifies or classifies an object stays required (`transport.ts`).
-The TSDB status holds VictoriaMetrics' own statistics (`totalSeries`, `totalLabelValuePairs`, `seriesCountByMetricName` and four more) and no `headStats`, and its ranked list is ten entries long whatever `limit` it is sent: `limit=3` and `limit=50` each answered ten.
-The Tables tab reads only that list, so it lists ten metrics where Prometheus lists fifty, which its caption, "The metrics with the most head series, at most 50", allows, and each of the ten series counts matched Prometheus's for the same metric.
+The TSDB status holds VictoriaMetrics' own statistics (`totalSeries`, `totalLabelValuePairs`, `seriesCountByMetricName` and four more) and no `headStats`, and it cuts its ranked lists at `topN`, not `limit`: `limit=3` and `limit=50` each answered its default ten, and `limit=50&topN=50` answered fifty (measured 2026-09-27, `tsdb-status-50-topn.json`).
+The provider sends the cut under both names, and Prometheus ignores `topN`: its four ranked lists read the same with it and without it.
+So the Tables tab lists up to fifty metrics here, as on Prometheus, and 49 of the fifty series counts matched Prometheus's for the same metric; `prometheus_engine_query_duration_seconds` read 9 series here and 12 there.
 A metadata entry carries `type` and `help` and no `unit`, so a metric's Source tab shows the family, its type and its help and no unit, where Prometheus sends `"unit": ""`.
 A target carries no `scrapeInterval` and no `scrapeTimeout`, and keeps them as `__scrape_interval__` and `__scrape_timeout__` among its discovered labels, so the Targets folder lists all five targets and a target's Source tab leaves the two members out, while its discovered labels show both.
 
@@ -453,7 +456,7 @@ The reported execution time leaves the wait out on purpose, so it measures the s
 `cancelQuery(queryId)` aborts that query's request.
 Prometheus derives the evaluation context from the HTTP request and checks it at fixed points during evaluation, so an abort ends the evaluation at the next checkpoint.
 That was observed on the live server before the method was added (M1): the `prometheus_engine_queries` gauge fell back once the request was aborted, and the aborted query's own query-log line recorded it as canceled.
-Both the cancel route and the query route detect cancellation by presence (`"cancelQuery" in provider`), which is why the method exists only because that measurement held.
+Both the cancel route and the query route detect cancellation by presence (`supportsQueryCancel` in `src/lib/db/query-cancel.ts`), which is why the method exists only because that measurement held.
 
 ### 5.6 EXPLAIN
 
@@ -529,7 +532,7 @@ Each is pinned by a unit test in `tests/unit/db/prometheus/http-transport.test.t
 | Targets | `GET /api/v1/targets?state=active[&scrapePool]` |
 | Health | `GET /-/healthy`, `GET /-/ready`; `GET /health` only after a 404 from `/-/healthy` |
 | Build, runtime, flags | `GET /api/v1/status/buildinfo`, `/api/v1/status/runtimeinfo`, `/api/v1/status/flags` |
-| TSDB | `GET /api/v1/status/tsdb?limit` |
+| TSDB | `GET /api/v1/status/tsdb?limit&topN`, both the same cut: Prometheus reads `limit`, VictoriaMetrics `topN` |
 
 ### 6.2 Object source (#789)
 
@@ -566,7 +569,7 @@ Each surface reads the HTTP API only, and a surface that cannot give an honest n
 | `getHealth()` | `/-/healthy` and `/-/ready`, then `buildinfo` | Driven by the answers, never by identifying the product: `/health` is tried only after a 404 from `/-/healthy`; the first probe answering neither 200 nor a `/-/healthy` 404 that the `/health` probe superseded is named with its path and status, and ends the read before `buildinfo` is sent; a 401 or 403 is an `AuthenticationError` |
 | `getOverview()` | `buildinfo` (version), `runtimeinfo` (`startTime` and `serverTime`: uptime is the server's own clock minus its start time), `status/flags` (`web.max-connections`, a real `maxConnections`), `status/tsdb` (the metric count, M2) | `databaseSize` is "N/A" with `databaseSizeBytes` absent, because the API does not measure it; `tableCount` is the metric count and `indexCount` is 0; a server clock behind its start time reads the uptime "N/A"; a full label list that omits `__name__` refuses the overview with a `QueryError` rather than report a count it did not measure |
 | `getPerformanceMetrics()` | none | `cacheHitRatio` is absent and the panel renders unavailable |
-| `getTableStats()` | `/api/v1/status/tsdb?limit=`, `seriesCountByMetricName` | Real series counts for the top `TSDB_TOP_METRICS` (`50`) metrics by head series, with the size "N/A" beside the 0 the required `totalSizeBytes` carries (`docs/BACKLOG.md` D105); the provider's `tableStatsCaption`, "The metrics with the most head series, at most 50", heads the Tables tab, which then counts the rows as listed, under "Listed" rather than "Tables", and answers a search that matches none of them with "No listed table matches the search."; the caption heads the admin Operations list the same way, which then titles the rows "Listed (N)" rather than "Tables (N)" and answers a filter that matches none of them with "No listed table matches the filter."; it heads the agent's table-stats reading too, which hands a model that 0 as each row's `totalSizeBytes`; the endpoint truncates silently and refuses a `limit` above 10,000; a schema filter naming any schema but the empty one answers `[]` without a read |
+| `getTableStats()` | `/api/v1/status/tsdb?limit=&topN=`, `seriesCountByMetricName` | Real series counts for the top `TSDB_TOP_METRICS` (`50`) metrics by head series, with the size "N/A" beside the 0 the required `totalSizeBytes` carries (`docs/BACKLOG.md` D105); the provider's `tableStatsCaption`, "The metrics with the most head series, at most 50", heads the Tables tab, which then counts the rows as listed, under "Listed" rather than "Tables", and answers a search that matches none of them with "No listed table matches the search."; the caption heads the admin Operations list the same way, which then titles the rows "Listed (N)" rather than "Tables (N)" and answers a filter that matches none of them with "No listed table matches the filter."; it heads the agent's table-stats reading too, which hands a model that 0 as each row's `totalSizeBytes`; the endpoint truncates silently and refuses a `limit` above 10,000; a schema filter naming any schema but the empty one answers `[]` without a read |
 | `getStorageStats()` | `status/tsdb` `headStats` (series, chunks, min and max time), `runtimeinfo.storageRetention` | One row named `Head block: N series, M chunks`, with the head span and the retention as its location, and "no samples" as the span of an empty head; size "N/A" with `sizeBytes` 0, because the type requires a number (`docs/BACKLOG.md` D105); a TSDB status with no head statistics, the one VictoriaMetrics answers, is refused with a `QueryError` saying "The server reports no head block statistics: its TSDB status carries none, so the storage row has no series count, chunk count or sample span to show", because an empty list or a row of zeros would claim a measurement the server never sent |
 | `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty-state sentences from `getLabels()` saying Prometheus publishes no query log and no session list over its HTTP API |
 | `getIndexStats()` | none | `[]`: a Prometheus TSDB has no secondary index object to describe |

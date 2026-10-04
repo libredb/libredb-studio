@@ -81,7 +81,8 @@ SQLite driver by runtime:
   big-integer flag is `safeIntegers` on bun and `readBigInts` on node,
   [§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions); the declared column types
   are `columnNames` + `declaredTypes` on bun and one `columns()` on node,
-  [§5](#declared-column-types)), so results and error mapping are the same under both runtimes.
+  [§5](#declared-column-types); whether a statement returns rows is `columnNames.length` on bun and
+  `columns().length` on node, [§3.3](#33-read-vs-write-dispatch)), so results and error mapping are the same under both runtimes.
 - **Why not `better-sqlite3`?** Bun refuses to load it outright, and its native binding must match
   the installing runtime's ABI (a bun-installed binding fails under Node). The built-in drivers
   need no native dependency at all. (`better-sqlite3` remains the *storage-layer* driver.)
@@ -172,7 +173,8 @@ directories are created on connect.
 — FK enforcement on, WAL for better
 concurrency, NORMAL sync for a speed/durability balance. The agent read-only profile runs a
 different open sequence entirely — `journal_mode = WAL` is itself a write and fails on a read-only
-handle ([§12.1](#121-where-the-boundary-is)).
+handle ([§12.1](#121-where-the-boundary-is)). So does an existing file this process cannot write
+([§3.7](#37-a-database-file-this-process-cannot-write)).
 
 `disconnect()` closes with `close(true)`, and the argument is load-bearing. Bare `close()` on
 `bun:sqlite` is `sqlite3_close_v2`: with any statement still unfinalized the connection becomes a
@@ -201,14 +203,33 @@ used to leave the handle held, so the user could not delete or move the file the
 
 ### 3.3 Read vs write dispatch
 
-`query()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) branches on
-`isReadOnlyQuery(sql)` (inherited): reads use `stmt.all()` and return rows; writes use `stmt.run()`
-and return `{ changes }`. `rowCount = rows.length || changes`. Both drivers are **synchronous** —
-the provider wraps them in the async signature but there is no real concurrency or cancellation.
+`query()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) prepares the statement and
+branches on `stmt.returnsRows()`: a statement with result columns uses `stmt.all()` and returns rows;
+one without uses `stmt.run()` and returns `{ changes }`. `rowCount = rows.length || changes`. Both
+drivers are **synchronous**: the provider wraps them in the async signature but there is no real
+concurrency or cancellation.
 
-The inherited predicate reads the statement's first keyword past any leading comment
-(`src/lib/sql/leading-keyword.ts`), so an annotated `SELECT` takes the read branch. It previously
-took the **write** branch and returned an empty result with `changes: 0` for a query that has rows.
+`returnsRows()` is SQLite's own answer, the prepared statement's result column count
+(`sqlite3_column_count`), read before the statement runs: bun:sqlite publishes it as
+`columnNames`, node:sqlite as `columns()`, and the driver bridge
+([`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts)) republishes both as one
+method. So the branch does not depend on how the statement is spelled:
+
+| Statement | Branch | Result |
+|---|---|---|
+| `SELECT ...`, `WITH ... SELECT`, `WITH RECURSIVE ...`, `VALUES (1), (2)`, `EXPLAIN ...`, `PRAGMA journal_mode` | `all()` | the rows |
+| `INSERT` / `UPDATE` / `DELETE ... RETURNING ...` | `all()` | the returned rows, and the write is applied; `rowCount` is the number of rows returned |
+| plain `INSERT` / `UPDATE` / `DELETE` (CTE-led ones included), DDL, `BEGIN`, `PRAGMA user_version = 3` | `run()` | no rows, `rowCount` from `changes` |
+
+The router used to be the inherited `isReadOnlyQuery(sql)`, a leading-keyword set of `SELECT`,
+`SHOW`, `DESCRIBE`, `EXPLAIN` and `PRAGMA`. Measured 2026-10-03 on node:sqlite (SQLite 3.50.4), a
+CTE, a bare `VALUES` list and an `INSERT ... RETURNING` all took the `run()` branch, which steps the
+statement and drops its rows: the editor showed "Query returned no data" with the connection's
+previous change count as `rowCount`, and the RETURNING insert landed with its row lost.
+
+A statement with no result columns answers `rowCount` from the driver's `changes`, which SQLite does
+not reset for a statement that changes no row: on node:sqlite a DDL statement or a value-setting
+`PRAGMA` reports the previous write's count (D139 in [`docs/BACKLOG.md`](../BACKLOG.md)).
 
 ### 3.4 No transactions API, no cancellation, no pool
 
@@ -221,6 +242,24 @@ Since #464 the client can see that: `supportsTransactions: false`
 SANDBOX toggle from the editor toolbar here. Before that flag existed the only gate was
 `isTransactionProvider(provider)` inside the route — a runtime shape check the browser cannot read —
 so the controls rendered on every connection and the route answered HTTP 400.
+
+Since #1364 the same holds for Cancel. `/api/db/provider-meta` reports `supportsQueryCancel: false`
+here, read off the provider by the check the cancel route makes, and the provider declares
+`blocksServerWhileRunning: true`. On an engine that cannot cancel, the editor's control reads "Stop
+waiting" and only ends the editor's wait; here even that is withheld, because the server answers
+nothing else until the statement ends, so the control is shown disabled with the reason on hover.
+Before #1364 the button was live, the route answered 400 "Query cancellation is not supported for
+this database type", and the editor said "Query Cancelled" anyway.
+
+**A long statement blocks the whole server, and nothing can stop it.** Both drivers run the
+statement synchronously on the server's only JavaScript thread, and neither exposes
+`sqlite3_interrupt` or a progress handler (checked on Node 24.11, whose `DatabaseSync` offers
+`setAuthorizer` but neither of the two, and Bun 1.4.2). So no cancel and no deadline can reach a
+running statement: the query timeout is checked after it returns. Measured on 2026-10-03 with
+node:sqlite (SQLite 3.50.4): a 300M-row recursive CTE kept running after Cancel, and `/api/health`
+answered after 69.7 s instead of the usual 6 ms, so every user of the instance waited with it. Moving
+SQLite execution to a worker thread that can be terminated is recorded as D227 in
+[`docs/BACKLOG.md`](../BACKLOG.md).
 
 ### 3.5 `endOpenQueryTransaction()` — a transaction a statement left open
 
@@ -334,6 +373,31 @@ ordinary textual key still matches as text, `'007'` included (measured: both mat
 `text`). A value written through THIS provider into a no-affinity column is stored as an integer and
 round-trips consistently.
 
+### 3.7 A database file this process cannot write
+
+A read-only Docker mount (`:ro`), or a file owned by another user, cannot take the [§3.2](#32-pragmas-on-connect) sequence: `journal_mode = WAL` is a write, and WAL keeps its `-wal` and `-shm` files beside the database.
+Before this, such a file could not be opened at all, and health, inventory and counts all failed with "attempt to write a readonly database".
+
+So `connect()` first asks the filesystem, through `access(W_OK)`, whether it may write an existing file and its directory.
+When either answer is `EACCES`, `EPERM` or `EROFS`, it opens the file with SQLite's own read-only open: no `create`, no `journal_mode = WAL`, no `synchronous`, only `foreign_keys = ON`.
+It logs that decision once, at info, with the path.
+Any other answer from `access()` is raised as a `ConnectionError`, not read as read-only.
+A missing file, `:memory:` and a writable file keep the §3.2 sequence exactly.
+
+Reads, health, the object surface and counts work as on any file.
+A write is refused by SQLite itself, and `query()` raises it as a `QueryError` that names the file and why: "SQLite database `<path>` is open read-only because this process cannot write the file or its directory: attempt to write a readonly database".
+`query_only` is not set: this is the editor, and the file's permissions are the boundary, not the agent profile of [§12](#12-agent-read-only-execution-profile-328).
+
+A file already in WAL journal mode, with no `-shm` file beside it, still cannot be opened when its directory is unwritable: SQLite reads one only with a `-shm` file beside it, and has nowhere to make one (measured on `bun:sqlite` and `node:sqlite`, 2026-09-26).
+That includes any file this editor has written, because §3.2 leaves the file in WAL mode.
+`connect()` then fails with a `ConnectionError` that says so and names the two ways out: run `PRAGMA journal_mode = DELETE` on the file where it is writable, or make its directory writable.
+SQLite's own words for that refusal differ by build: the library bundled on Linux answers the file alone with "attempt to write a readonly database", Apple's libsqlite3 on macOS answers "unable to open database file", and so does Linux when a `-wal` is left beside the file with no `-shm` (measured on the macos-latest runner and on Linux, 2026-09-26).
+So the reason is not read from those words but from the file's header, where bytes 18 and 19 are 2 in WAL mode, and SQLite's words follow it.
+A file this process cannot even read gets SQLite's words alone.
+
+Both drivers take the same path.
+The tests use a real file with mode 0444 in a directory with mode 0555, and are skipped as root, where modes restrict nothing, and on Windows, which enforces no directory mode; the Linux CI job runs as an ordinary user and covers them.
+
 ---
 
 ## 4. Connection
@@ -445,6 +509,16 @@ way, so the longer reading can only ever cost a bound — and, where the doubled
 real closer so the run never terminates (`SELECT [a]] FROM t`), a confirmation prompt as well, since
 #297 asks about text the reader cannot resolve. Both are on statements the server refuses, and both are
 pinned by tests rather than left to be discovered.
+
+The third grammar fact is about what a statement IS (#1312): `CREATE [TEMP | TEMPORARY] TRIGGER … BEGIN
+… END` holds a `;` after every statement of its body, and the editor's statement reader keeps the
+whole trigger as one statement, closing it at the `END` that matches its `BEGIN` (a `CASE … END`
+inside the body is counted, so it does not close it early). A bare `BEGIN` stays the statement that
+opens a transaction. Measured before this through node:sqlite 3.50.4: the trigger was cut at its
+inner `;`, the run answered `incomplete input`, and in a longer script every statement after the
+trigger was skipped. One shape is not modelled: an unquoted, unqualified column named `end` inside the body reads as
+the body's `END` and closes it early, so write it quoted (`"end"`).
+
 `EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
 
 ### Declared column types
@@ -495,6 +569,30 @@ A 64-bit id is where the two features meet: it leaves as the decimal string
 [§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions) prints, and it is still
 declared `INTEGER`, so the export writes an `INTEGER` column rather than the `TEXT` a value-shaped
 guess would produce.
+
+### BLOB values
+
+Both drivers read a `BLOB` as a plain `Uint8Array`, and the rows reach the browser through
+`JSON.stringify`, which writes one as an object keyed by index. Measured before the fix:
+`x'DEADBEEF00FF'` reached the grid as `{"0":222,"1":173,"2":190,"3":239,"4":0,"5":255}` and `x''` as
+`{}`, and "Export as SQL INSERT" wrote that object as quoted text, so replaying the file replaced the
+bytes with a string.
+
+The same seam in [`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts) that converts a
+64-bit integer ([§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions)) now hands
+every `BLOB` cell back as a `Buffer` over the same memory. A `Buffer` is a `Uint8Array`, so nothing
+in-process changes, and it serializes to `{"type":"Buffer","data":[...]}`, the form `asBytes` in
+[`binary.ts`](../../src/lib/export/binary.ts) reads and a PostgreSQL `bytea` already arrives in. So
+the grid, the row detail and the CSV show `\xdeadbeef00ff`, and the SQL export writes
+`X'deadbeef00ff'` (`X''` for an empty blob). Measured 2026-10-04 under both drivers (bun:sqlite on
+Bun 1.4.2 in the tests, node:sqlite on Node 24.11.0 behind `next start`): the exported INSERTs, run
+into a fresh `BLOB` table, read back in the `sqlite3` 3.53.4 CLI with identical `hex()`, `length()`
+and `typeof()` = `blob`, `0x00` and `0xFF` included.
+
+The JSON export, Copy Row as JSON and the row detail's Copy JSON write the same `\xdeadbeef00ff`
+string the CSV does, through `binaryCellsAsHex` in [`json.ts`](../../src/lib/export/json.ts), rather
+than the `Buffer` form the response carries (#1381); that is the same for every engine whose driver
+hands back bytes.
 
 ---
 
@@ -1045,8 +1143,10 @@ that very measurement, which is the mistake `|| 0` was making.
 
 ## 8. Maintenance
 
-`runMaintenance(type, target?)` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
-and `reindex` targets are quoted via `escapeIdentifier()`:
+`runMaintenance(type, target?, container?)` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)); `analyze`
+and `reindex` targets are quoted via `escapeIdentifier()`. A `container` is deliberately ignored
+(#772): SQLite resolves a bare name against the attached database it was opened on, always `main`
+for this provider, and the file has no second namespace to name.
 
 | Type | Action |
 |------|--------|
@@ -1106,6 +1206,7 @@ answers with nothing both while it is in flight and when it failed.
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
 | `supportsTransactions` | **`false`** — SQLite HAS `BEGIN`, but this provider holds no session across two requests, so `POST /api/db/transaction` refuses the call. The flag describes the provider's surface, not the engine, and the trio and SANDBOX toggle are withheld rather than offered and then failed (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; `PRAGMA foreign_key_list` reads them whether or not enforcement is on |
+| `blocksServerWhileRunning` | **`true`**: both drivers run a statement synchronously on the server's one thread, so the editor disables Cancel here instead of offering "Stop waiting" ([§3.4](#34-no-transactions-api-no-cancellation-no-pool), #1364) |
 | `singleWriterFile` | **absent (not `true`)** — SQLite is a file engine and is *not* single-writer at OPEN. Measured 2026-08-25 on `bun:sqlite`: a second `new Database(path, { readwrite: true })` on a WAL file this process already holds both opens and writes, because SQLite takes its file locks per transaction. LibreDB declares the flag and SQLite must not: the whole point of the agent profile here is a SECOND, `readonly: true` handle on the same file ([§12.1](#121-where-the-boundary-is)), and declaring it would have made the factory hand the agent the writable one instead |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'check']` |
@@ -1113,6 +1214,7 @@ answers with nothing both while it is in flight and when it failed.
 | `defaultPort` | `null` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | **`[]`** — SQLite has no container level at all, which `containerDepth()` reads as 0 ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: with no container level, only the empty path `[]` addresses a container, so any segment is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | `table`, `view`, `index`, `trigger` — no routine kind of any spelling ([§6.1](#61-the-object-surface-789)) |
 
 ### Labels
@@ -1144,7 +1246,8 @@ sends no target, so `runMaintenance('reindex')` here runs a bare `REINDEX`
 ## 10. Error handling
 
 SQLite uses the shared `mapDatabaseError()` ([errors.ts](../../src/lib/db/errors.ts)) with **no**
-SQLite-specific branches:
+SQLite-specific branches; the provider names the read-only file cases itself
+([§3.7](#37-a-database-file-this-process-cannot-write)):
 
 | Situation | Error |
 |-----------|-------|
@@ -1152,6 +1255,9 @@ SQLite-specific branches:
 | NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed") |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
 | Open failure | `ConnectionError` |
+| Write check on an existing file fails with anything but `EACCES` / `EPERM` / `EROFS` | `ConnectionError` with the filesystem's message |
+| WAL-mode file in a directory this process cannot write | `ConnectionError` naming WAL and the two ways out |
+| Write statement on a file opened read-only because it is not writable | `QueryError` ("SQLite database `<path>` is open read-only because …") |
 | Statement errors whose message matches a heuristic (e.g. *syntax error*, *no such column*) | `QueryError` |
 | Other engine errors | generic `QueryError` / `DatabaseError` with the original message |
 
@@ -1448,4 +1554,4 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 - Storage-layer SQLite (the *other* SQLite — `better-sqlite3`): [`src/lib/storage/providers/sqlite.ts`](../../src/lib/storage/providers/sqlite.ts)
 - Tests: [`tests/integration/db/sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [Apache Trino](./trino.md) · [Redis](./redis.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [Trino](./trino.md) · [Redis](./redis.md)

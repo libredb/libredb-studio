@@ -1,9 +1,9 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting seventeen engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL and Prometheus
+description: Web-based SQL IDE for cloud-native teams supporting twenty-six engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3 and Oxia
 type: application
-version: 0.1.68
-appVersion: "0.16.2"
+version: 0.1.77
+appVersion: "0.17.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -42,11 +42,42 @@ keywords:
   # and `promql` is what an evaluator looking for a PromQL client types.
   - prometheus
   - promql
+  # One keyword only, like duckdb above: `kafka` is the type-id and also the word an evaluator
+  # looking for a Kafka client types, so there is no second spelling to catch.
+  - kafka
+  # One keyword only, like kafka above: `etcd` is the type-id and the word an evaluator looking
+  # for an etcd client types, so there is no second spelling to catch.
+  - etcd
+  # Two keywords, like the libsql pair above: `db2` is the type-id, and `ibm-db2` is what an
+  # evaluator who searches by vendor types, since the product is IBM Db2.
+  - db2
+  - ibm-db2
+  # Two keywords, like the prometheus pair above: `neo4j` is the type-id and the product, and
+  # `cypher` is what an evaluator looking for a Cypher client types.
+  - neo4j
+  - cypher
   # A relative, not a provider: VictoriaMetrics answers the Prometheus HTTP API and connects as
   # `prometheus` at the tier its gate-4 probe measured (docs/providers/README.md). The first
   # wire-compatible relative given a keyword, because an evaluator looking for a VictoriaMetrics
   # client types that name and not the driver's.
   - victoriametrics
+  # A relative of `kafka`, as VictoriaMetrics is of `prometheus`: Redpanda answers the Kafka
+  # protocol and connects as `kafka` at the tier its live read-only check measured
+  # (docs/providers/README.md), and an evaluator looking for a Redpanda client types that name.
+  - redpanda
+  # One keyword each, like kafka above: `milvus` and `qdrant` are the type-ids and the words an
+  # evaluator looking for a Milvus or Qdrant client types, so there is no second spelling to catch.
+  - milvus
+  - qdrant
+  # Three keywords, like the prometheus pair above with one more: `influxdb` and `influxdb3` are
+  # the two type-ids and the products, and `influxql` is what an evaluator looking for an
+  # InfluxQL client types.
+  - influxdb
+  - influxql
+  - influxdb3
+  # One keyword, like kafka above: `oxia` is the type-id and the word an evaluator looking for an
+  # Oxia client types, so there is no second spelling to catch.
+  - oxia
   - web-ide
 maintainers:
   - name: cevheri
@@ -129,10 +160,34 @@ annotations:
   # privately as GHSA-3wh2-8x78-jfw4 and scored 8.8. An operator running shared or seeded
   # connections should read it before deciding whether to upgrade; no chart template or value
   # moves, so the upgrade is the image.
-  artifacthub.io/containsSecurityUpdates: "true"
+  # True: 0.1.71 tracks app release 0.17.0, which carries two security fixes in the image. The
+  # managed seed route removed only password and connectionString, so the Elasticsearch API key
+  # pair and ssl.clientKey of a managed seed reached every signed-in user its roles admitted; and
+  # the HTTP transports built their URLs from unvalidated host and port values and followed
+  # redirects, while Trino followed any nextUri a coordinator sent with the connection's
+  # credential attached. An operator running managed seeds or HTTP-family engines should read
+  # both; no chart template or value moves for either, so the upgrade is the image.
+  # False: 0.1.72 adds one value, config.passkeyOrigin, and changes no behaviour on its
+  # own - unset (the default) writes no PASSKEY_ORIGIN, so every existing install renders
+  # exactly as before. Set, it is written to PASSKEY_ORIGIN, the public origin passkey
+  # sign-in (#785) is bound to. That needs an application image that includes passkey
+  # sign-in, and appVersion 0.17.0 does not read the variable, so the value acts only once
+  # an application release moves appVersion. Unlike the 0.1.52 precedent, which exposed a
+  # setting the image already read, this one exposes a setting ahead of the image.
+  # False: 0.1.73 changes chart metadata only, naming etcd in the description, the keywords and
+  # the README; no template, value or default moves.
+  # False: 0.1.74 changes chart metadata only, naming Neo4j in the description, the keywords and
+  # the README; no template, value or default moves.
+  # False: 0.1.75 changes chart metadata only, naming Db2 LUW in the description, the keywords and
+  # the README; no template, value or default moves.
+  # False: 0.1.76 changes chart metadata only, naming Milvus, Qdrant and InfluxDB in the
+  # description, the keywords and the README; no template, value or default moves.
+  # False: 0.1.77 changes chart metadata only, naming Oxia in the description, the keywords and
+  # the README; no template, value or default moves.
+  artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:0.16.2
+      image: ghcr.io/libredb/libredb-studio:0.17.0
       platforms:
         - linux/amd64
         - linux/arm64
@@ -144,14 +199,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Chart metadata only: names one more engine, Prometheus, in the description, the keywords and the README, and adds a keyword for VictoriaMetrics, which connects through it. The appVersion stays 0.16.2, and the deployed image is the same one 0.1.67 installs, which has no Prometheus provider; the provider arrives with the next application release. No template, value or default moves in this chart version"
-    - "A connection id sent by the caller no longer selects a cached database provider. Any signed-in account that named another session's connection id was handed that session's already-open provider, with its credentials, and could disconnect it; the cache key is now derived from the stored connection, the server it resolves to and a digest of its credentials. Reported privately as GHSA-3wh2-8x78-jfw4 and scored 8.8"
-    - "A seed connection sent inline that claims a seed id is now resolved through the same role filter as a seed id sent on its own, so a role that may not reach a seed connection can no longer reach it by naming it inline"
-    - "Schema diff reads a column default as SQL text and compares it by presence, so a default of 0, an empty string or false is no longer dropped as absent; a MariaDB default is read as its value rather than as the expression text, measured against live servers. ClickHouse MATERIALIZED, ALIAS and EPHEMERAL columns are emitted without a DEFAULT clause, which no engine accepts on them"
-    - "Elasticsearch connections authenticate with an API key pair as well as with a username and password, sent as the Authorization ApiKey scheme Elasticsearch publishes. OpenSearch is unchanged: nothing has measured whether its security plugin accepts the same scheme, so the form does not offer the fields there"
-    - "Query results page from the stats strip. The preview cap now travels as an execution option instead of being written into the SQL, so a LIMIT a user typed is a hard bound that is never paged past, while a capped preview can be read beyond its first page"
-    - "The example compose files publish their PostgreSQL and Vault containers on the loopback interface only, so a demo brought up on a host with a public address no longer exposes them to the network"
-    - "Track app release 0.16.2 (appVersion bump; default image tag follows)"
+    - "The application image gains the Oxia provider; no template, value or default moves, and it acts once an application release moves appVersion."
 dependencies:
   - name: postgresql
     version: "16.x.x"

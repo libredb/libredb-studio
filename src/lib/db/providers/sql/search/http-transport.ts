@@ -70,7 +70,9 @@
 
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import {
   type SearchClusterHealth,
   type SearchDialectId,
@@ -616,6 +618,24 @@ function parseJson(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+/**
+ * `parseJson` for a body that carries row VALUES: the SQL answer and each of its
+ * cursor pages.
+ *
+ * Both products send a `long` and an `unsigned_long` as UNQUOTED JSON numbers, and
+ * measured on Elasticsearch 9.5.3 and OpenSearch 3.9.0 a plain parse showed
+ * 9223372036854775807 as 9223372036854776000 and 9007199254740993 as
+ * 9007199254740992, in the grid and in every export, with no error. Quoted first,
+ * such a value arrives as its exact digits, the way Druid's and Trino's transports
+ * hand one over; a value in the safe range stays a number.
+ *
+ * Only the row bodies: an object definition is shown as re-serialised JSON
+ * (D61), where turning a number into a string would change what the text says.
+ */
+function parseRowsJson(text: string): unknown {
+  return parseJson(quoteUnsafeIntegers(text));
 }
 
 /** A field the payload reported as usable text, or null when it reported none. */
@@ -1182,6 +1202,8 @@ export class SearchHttpTransport implements SearchTransport {
           query: sql,
           ...(this.spec.fieldMultiValueLeniency ? { field_multi_value_leniency: true } : {}),
         }),
+        undefined,
+        parseRowsJson,
       ),
     );
     if (first === null) throw unreadableBody(this.spec, "a SQL result");
@@ -1191,7 +1213,7 @@ export class SearchHttpTransport implements SearchTransport {
     let pages = 1;
 
     while (cursor !== null && cursor !== "" && pages < MAX_PAGES) {
-      const next = asRecord(await this.request(url, signal, JSON.stringify({ cursor })));
+      const next = asRecord(await this.request(url, signal, JSON.stringify({ cursor }), undefined, parseRowsJson));
       if (next === null) throw unreadableBody(this.spec, "a SQL result page");
 
       // The column declaration is page one's; `result.fieldNames` is what the rows
@@ -1503,11 +1525,13 @@ export class SearchHttpTransport implements SearchTransport {
      * see {@link AbsenceRule} and {@link HTTP_NOT_FOUND}.
      */
     absence?: AbsenceRule,
+    /** How a successful body is read; {@link parseRowsJson} for the bodies that carry row values. */
+    parse: (text: string) => unknown = parseJson,
   ): Promise<unknown> {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(url, {
+      response = await httpTransportFetch(url, {
         method: body === undefined ? "GET" : "POST",
         headers: {
           // Sent on GETs too: harmless, and it keeps one header block for one
@@ -1523,6 +1547,7 @@ export class SearchHttpTransport implements SearchTransport {
       });
       text = await response.text();
     } catch (error) {
+      if (error instanceof DatabaseConfigError) throw error;
       // A refused socket, an unresolvable host, an abort and a truncated body all
       // arrive here, and all have to leave as the seam's own error type.
       throw requestFailure(this.spec, error, signal);
@@ -1539,6 +1564,6 @@ export class SearchHttpTransport implements SearchTransport {
     }
     if (!response.ok) throw responseFailure(this.spec, response.status, text);
 
-    return parseJson(text);
+    return parse(text);
   }
 }

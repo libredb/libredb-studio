@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T12:30:30.813Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/docs",
+    "request": {
+      "method": "GET",
+      "path": "/collections/docs",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 1536,
+    "body": "{\"result\":{\"status\":\"green\",\"optimizer_status\":\"ok\",\"indexed_vectors_count\":2000,\"points_count\":2000,\"segments_count\":2,\"config\":{\"params\":{\"vectors\":{\"colbert\":{\"size\":16,\"distance\":\"Dot\",\"multivector_config\":{\"comparator\":\"max_sim\"}},\"image\":{\"size\":64,\"distance\":\"Euclid\"},\"text\":{\"size\":384,\"distance\":\"Cosine\"}},\"shard_number\":1,\"replication_factor\":1,\"write_consistency_factor\":1,\"on_disk_payload\":true,\"sparse_vectors\":{\"keywords\":{\"modifier\":\"idf\"}}},\"hnsw_config\":{\"m\":16,\"ef_construct\":100,\"full_scan_threshold\":10000,\"max_indexing_threads\":0,\"on_disk\":false},\"optimizer_config\":{\"deleted_threshold\":0.2,\"vacuum_min_vector_number\":1000,\"default_segment_number\":0,\"max_segment_size\":null,\"memmap_threshold\":null,\"indexing_threshold\":10000,\"flush_interval_sec\":5,\"max_optimization_threads\":null,\"prevent_unoptimized\":null},\"wal_config\":{\"wal_capacity_mb\":32,\"wal_segments_ahead\":0,\"wal_retain_closed\":1},\"quantization_config\":null},\"payload_schema\":{\"active\":{\"data_type\":\"bool\",\"points\":2000},\"price\":{\"data_type\":\"float\",\"points\":2000},\"created_at\":{\"data_type\":\"datetime\",\"points\":2000},\"seq\":{\"data_type\":\"integer\",\"points\":2000},\"location\":{\"data_type\":\"geo\",\"points\":2000},\"category\":{\"data_type\":\"keyword\",\"points\":2000},\"tags\":{\"data_type\":\"keyword\",\"points\":2000},\"ref_uuid\":{\"data_type\":\"uuid\",\"points\":2000},\"body\":{\"data_type\":\"text\",\"points\":2000},\"big_int\":{\"data_type\":\"integer\",\"points\":2000},\"meta.owner.team\":{\"data_type\":\"keyword\",\"points\":2000}},\"update_queue\":{\"length\":0}},\"status\":\"ok\",\"time\":0.000234171}"
+  }
+}

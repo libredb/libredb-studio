@@ -1,0 +1,22 @@
+post_install() {
+  cat <<'EOF'
+
+==> LibreDB Studio is installed but not running.
+    Start it:               systemctl enable --now libredb-studio
+    First-run admin login:  journalctl -u libredb-studio
+                            (the generated admin password is printed once)
+    State and credentials:  /var/lib/libredb-studio
+    Configuration:          /etc/libredb-studio/env
+
+    The service listens on 127.0.0.1:3000 only. To expose it, set
+    HOSTNAME=0.0.0.0 in /etc/libredb-studio/env, or put a reverse proxy in
+    front of it.
+
+EOF
+}
+
+post_upgrade() {
+  if systemctl is-active --quiet libredb-studio.service 2>/dev/null; then
+    echo '==> Restart the service to run the new version: systemctl restart libredb-studio'
+  fi
+}

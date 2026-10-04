@@ -1,0 +1,1280 @@
+{
+  "$generated": {
+    "by": "tests/live/qdrant-openapi.ts",
+    "source": "github.com/qdrant/qdrant docs/redoc/master/openapi.json at tag v1.19.1",
+    "sha256": "eb3e5d71ba74e1d99124ca1a77d563bbfa47084f04a13ef9b197e339f5a4ce0a",
+    "localModelSource": "github.com/qdrant/qdrant src/common/inference/local_model.rs at tag v1.19.1",
+    "localModelSha256": "ae34fad41bbea91df7f8fd6d552e9c664073a60ba60771cf24ade7862c59fe74"
+  },
+  "operations": {
+    "root": {
+      "method": "GET",
+      "path": "/",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    },
+    "get_collections": {
+      "method": "GET",
+      "path": "/collections",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    },
+    "get_collection": {
+      "method": "GET",
+      "path": "/collections/{collection_name}",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    },
+    "collection_exists": {
+      "method": "GET",
+      "path": "/collections/{collection_name}/exists",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    },
+    "get_collections_aliases": {
+      "method": "GET",
+      "path": "/aliases",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    },
+    "get_collection_aliases": {
+      "method": "GET",
+      "path": "/collections/{collection_name}/aliases",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    },
+    "get_points": {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": "PointRequest",
+      "required": [
+        "ids"
+      ]
+    },
+    "get_point": {
+      "method": "GET",
+      "path": "/collections/{collection_name}/points/{id}",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": null,
+      "required": []
+    },
+    "scroll_points": {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/scroll",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": "ScrollRequest",
+      "required": []
+    },
+    "count_points": {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/count",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": "CountRequest",
+      "required": []
+    },
+    "query_points": {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": "QueryRequest",
+      "required": []
+    },
+    "query_batch_points": {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/batch",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": "QueryRequestBatch",
+      "required": [
+        "searches"
+      ]
+    },
+    "query_points_groups": {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/groups",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": "QueryGroupsRequest",
+      "required": [
+        "group_by"
+      ]
+    },
+    "facet": {
+      "method": "POST",
+      "path": "/collections/{collection_name}/facet",
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "bodySchema": "FacetRequest",
+      "required": [
+        "key"
+      ]
+    },
+    "get_optimizations": {
+      "method": "GET",
+      "path": "/collections/{collection_name}/optimizations",
+      "query": [
+        "with",
+        "completed_limit"
+      ],
+      "bodySchema": null,
+      "required": []
+    },
+    "list_snapshots": {
+      "method": "GET",
+      "path": "/collections/{collection_name}/snapshots",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    },
+    "collection_cluster_info": {
+      "method": "GET",
+      "path": "/collections/{collection_name}/cluster",
+      "query": [],
+      "bodySchema": null,
+      "required": []
+    }
+  },
+  "objects": {
+    "AbsExpression": {
+      "keys": [
+        "abs"
+      ],
+      "required": [
+        "abs"
+      ]
+    },
+    "AcornSearchParams": {
+      "keys": [
+        "enable",
+        "max_selectivity"
+      ],
+      "required": []
+    },
+    "AcoshExpression": {
+      "keys": [
+        "acosh"
+      ],
+      "required": [
+        "acosh"
+      ]
+    },
+    "Bm25Config": {
+      "keys": [
+        "k",
+        "b",
+        "avg_len",
+        "tokenizer",
+        "language",
+        "lowercase",
+        "ascii_folding",
+        "stopwords",
+        "stemmer",
+        "min_token_len",
+        "max_token_len"
+      ],
+      "required": []
+    },
+    "ContextPair": {
+      "keys": [
+        "positive",
+        "negative"
+      ],
+      "required": [
+        "negative",
+        "positive"
+      ]
+    },
+    "ContextQuery": {
+      "keys": [
+        "context"
+      ],
+      "required": [
+        "context"
+      ]
+    },
+    "CountRequest": {
+      "keys": [
+        "shard_key",
+        "filter",
+        "exact"
+      ],
+      "required": []
+    },
+    "DatetimeExpression": {
+      "keys": [
+        "datetime"
+      ],
+      "required": [
+        "datetime"
+      ]
+    },
+    "DatetimeKeyExpression": {
+      "keys": [
+        "datetime_key"
+      ],
+      "required": [
+        "datetime_key"
+      ]
+    },
+    "DatetimeRange": {
+      "keys": [
+        "lt",
+        "gt",
+        "gte",
+        "lte"
+      ],
+      "required": []
+    },
+    "DecayParamsExpression": {
+      "keys": [
+        "x",
+        "target",
+        "scale",
+        "midpoint"
+      ],
+      "required": [
+        "x"
+      ]
+    },
+    "DisabledStemmerParams": {
+      "keys": [
+        "type"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+    "DiscoverInput": {
+      "keys": [
+        "target",
+        "context"
+      ],
+      "required": [
+        "context",
+        "target"
+      ]
+    },
+    "DiscoverQuery": {
+      "keys": [
+        "discover"
+      ],
+      "required": [
+        "discover"
+      ]
+    },
+    "DivExpression": {
+      "keys": [
+        "div"
+      ],
+      "required": [
+        "div"
+      ]
+    },
+    "DivParams": {
+      "keys": [
+        "left",
+        "right",
+        "by_zero_default"
+      ],
+      "required": [
+        "left",
+        "right"
+      ]
+    },
+    "Document": {
+      "keys": [
+        "text",
+        "model",
+        "options"
+      ],
+      "required": [
+        "model",
+        "text"
+      ]
+    },
+    "ExpDecayExpression": {
+      "keys": [
+        "exp_decay"
+      ],
+      "required": [
+        "exp_decay"
+      ]
+    },
+    "ExpExpression": {
+      "keys": [
+        "exp"
+      ],
+      "required": [
+        "exp"
+      ]
+    },
+    "FacetRequest": {
+      "keys": [
+        "shard_key",
+        "key",
+        "limit",
+        "filter",
+        "exact"
+      ],
+      "required": [
+        "key"
+      ]
+    },
+    "FeedbackItem": {
+      "keys": [
+        "example",
+        "score"
+      ],
+      "required": [
+        "example",
+        "score"
+      ]
+    },
+    "FieldCondition": {
+      "keys": [
+        "key",
+        "match",
+        "range",
+        "geo_bounding_box",
+        "geo_radius",
+        "geo_polygon",
+        "values_count",
+        "is_empty",
+        "is_null"
+      ],
+      "required": [
+        "key"
+      ]
+    },
+    "Filter": {
+      "keys": [
+        "should",
+        "min_should",
+        "must",
+        "must_not"
+      ],
+      "required": []
+    },
+    "FormulaQuery": {
+      "keys": [
+        "formula",
+        "defaults"
+      ],
+      "required": [
+        "formula"
+      ]
+    },
+    "FusionQuery": {
+      "keys": [
+        "fusion"
+      ],
+      "required": [
+        "fusion"
+      ]
+    },
+    "GaussDecayExpression": {
+      "keys": [
+        "gauss_decay"
+      ],
+      "required": [
+        "gauss_decay"
+      ]
+    },
+    "GeoBoundingBox": {
+      "keys": [
+        "top_left",
+        "bottom_right"
+      ],
+      "required": [
+        "bottom_right",
+        "top_left"
+      ]
+    },
+    "GeoDistance": {
+      "keys": [
+        "geo_distance"
+      ],
+      "required": [
+        "geo_distance"
+      ]
+    },
+    "GeoDistanceParams": {
+      "keys": [
+        "origin",
+        "to"
+      ],
+      "required": [
+        "origin",
+        "to"
+      ]
+    },
+    "GeoLineString": {
+      "keys": [
+        "points"
+      ],
+      "required": [
+        "points"
+      ]
+    },
+    "GeoPoint": {
+      "keys": [
+        "lon",
+        "lat"
+      ],
+      "required": [
+        "lat",
+        "lon"
+      ]
+    },
+    "GeoPolygon": {
+      "keys": [
+        "exterior",
+        "interiors"
+      ],
+      "required": [
+        "exterior"
+      ]
+    },
+    "GeoRadius": {
+      "keys": [
+        "center",
+        "radius"
+      ],
+      "required": [
+        "center",
+        "radius"
+      ]
+    },
+    "HasIdCondition": {
+      "keys": [
+        "has_id"
+      ],
+      "required": [
+        "has_id"
+      ]
+    },
+    "HasVectorCondition": {
+      "keys": [
+        "has_vector"
+      ],
+      "required": [
+        "has_vector"
+      ]
+    },
+    "IdfCorpusParams": {
+      "keys": [
+        "corpus"
+      ],
+      "required": [
+        "corpus"
+      ]
+    },
+    "Image": {
+      "keys": [
+        "image",
+        "model",
+        "options"
+      ],
+      "required": [
+        "image",
+        "model"
+      ]
+    },
+    "InferenceObject": {
+      "keys": [
+        "object",
+        "model",
+        "options"
+      ],
+      "required": [
+        "model",
+        "object"
+      ]
+    },
+    "IsEmptyCondition": {
+      "keys": [
+        "is_empty"
+      ],
+      "required": [
+        "is_empty"
+      ]
+    },
+    "IsNullCondition": {
+      "keys": [
+        "is_null"
+      ],
+      "required": [
+        "is_null"
+      ]
+    },
+    "LinDecayExpression": {
+      "keys": [
+        "lin_decay"
+      ],
+      "required": [
+        "lin_decay"
+      ]
+    },
+    "LnExpression": {
+      "keys": [
+        "ln"
+      ],
+      "required": [
+        "ln"
+      ]
+    },
+    "Log10Expression": {
+      "keys": [
+        "log10"
+      ],
+      "required": [
+        "log10"
+      ]
+    },
+    "LookupLocation": {
+      "keys": [
+        "collection",
+        "vector",
+        "shard_key"
+      ],
+      "required": [
+        "collection"
+      ]
+    },
+    "MatchAny": {
+      "keys": [
+        "any"
+      ],
+      "required": [
+        "any"
+      ]
+    },
+    "MatchExcept": {
+      "keys": [
+        "except"
+      ],
+      "required": [
+        "except"
+      ]
+    },
+    "MatchPhrase": {
+      "keys": [
+        "phrase"
+      ],
+      "required": [
+        "phrase"
+      ]
+    },
+    "MatchPrefix": {
+      "keys": [
+        "prefix"
+      ],
+      "required": [
+        "prefix"
+      ]
+    },
+    "MatchText": {
+      "keys": [
+        "text"
+      ],
+      "required": [
+        "text"
+      ]
+    },
+    "MatchTextAny": {
+      "keys": [
+        "text_any"
+      ],
+      "required": [
+        "text_any"
+      ]
+    },
+    "MatchValue": {
+      "keys": [
+        "value"
+      ],
+      "required": [
+        "value"
+      ]
+    },
+    "MaxExpression": {
+      "keys": [
+        "max"
+      ],
+      "required": [
+        "max"
+      ]
+    },
+    "MinExpression": {
+      "keys": [
+        "min"
+      ],
+      "required": [
+        "min"
+      ]
+    },
+    "MinShould": {
+      "keys": [
+        "conditions",
+        "min_count"
+      ],
+      "required": [
+        "conditions",
+        "min_count"
+      ]
+    },
+    "Mmr": {
+      "keys": [
+        "diversity",
+        "candidates_limit"
+      ],
+      "required": []
+    },
+    "MultExpression": {
+      "keys": [
+        "mult"
+      ],
+      "required": [
+        "mult"
+      ]
+    },
+    "NaiveFeedbackStrategy": {
+      "keys": [
+        "naive"
+      ],
+      "required": [
+        "naive"
+      ]
+    },
+    "NaiveFeedbackStrategyParams": {
+      "keys": [
+        "a",
+        "b",
+        "c"
+      ],
+      "required": [
+        "a",
+        "b",
+        "c"
+      ]
+    },
+    "NearestQuery": {
+      "keys": [
+        "nearest",
+        "mmr"
+      ],
+      "required": [
+        "nearest"
+      ]
+    },
+    "NegExpression": {
+      "keys": [
+        "neg"
+      ],
+      "required": [
+        "neg"
+      ]
+    },
+    "Nested": {
+      "keys": [
+        "key",
+        "filter"
+      ],
+      "required": [
+        "filter",
+        "key"
+      ]
+    },
+    "NestedCondition": {
+      "keys": [
+        "nested"
+      ],
+      "required": [
+        "nested"
+      ]
+    },
+    "OrderBy": {
+      "keys": [
+        "key",
+        "direction",
+        "start_from"
+      ],
+      "required": [
+        "key"
+      ]
+    },
+    "OrderByQuery": {
+      "keys": [
+        "order_by"
+      ],
+      "required": [
+        "order_by"
+      ]
+    },
+    "PayloadField": {
+      "keys": [
+        "key"
+      ],
+      "required": [
+        "key"
+      ]
+    },
+    "PayloadSelectorExclude": {
+      "keys": [
+        "exclude"
+      ],
+      "required": [
+        "exclude"
+      ]
+    },
+    "PayloadSelectorInclude": {
+      "keys": [
+        "include"
+      ],
+      "required": [
+        "include"
+      ]
+    },
+    "PointRequest": {
+      "keys": [
+        "shard_key",
+        "ids",
+        "with_payload",
+        "with_vector"
+      ],
+      "required": [
+        "ids"
+      ]
+    },
+    "PowExpression": {
+      "keys": [
+        "pow"
+      ],
+      "required": [
+        "pow"
+      ]
+    },
+    "PowParams": {
+      "keys": [
+        "base",
+        "exponent"
+      ],
+      "required": [
+        "base",
+        "exponent"
+      ]
+    },
+    "Prefetch": {
+      "keys": [
+        "prefetch",
+        "query",
+        "using",
+        "filter",
+        "params",
+        "score_threshold",
+        "limit",
+        "lookup_from"
+      ],
+      "required": []
+    },
+    "QuantizationSearchParams": {
+      "keys": [
+        "ignore",
+        "rescore",
+        "oversampling"
+      ],
+      "required": []
+    },
+    "QueryGroupsRequest": {
+      "keys": [
+        "shard_key",
+        "prefetch",
+        "query",
+        "using",
+        "filter",
+        "params",
+        "score_threshold",
+        "with_vector",
+        "with_payload",
+        "lookup_from",
+        "group_by",
+        "group_size",
+        "limit",
+        "with_lookup"
+      ],
+      "required": [
+        "group_by"
+      ]
+    },
+    "QueryRequest": {
+      "keys": [
+        "shard_key",
+        "prefetch",
+        "query",
+        "using",
+        "filter",
+        "params",
+        "score_threshold",
+        "limit",
+        "offset",
+        "with_vector",
+        "with_payload",
+        "lookup_from"
+      ],
+      "required": []
+    },
+    "QueryRequestBatch": {
+      "keys": [
+        "searches"
+      ],
+      "required": [
+        "searches"
+      ]
+    },
+    "Range": {
+      "keys": [
+        "lt",
+        "gt",
+        "gte",
+        "lte"
+      ],
+      "required": []
+    },
+    "RecommendInput": {
+      "keys": [
+        "positive",
+        "negative",
+        "strategy"
+      ],
+      "required": []
+    },
+    "RecommendQuery": {
+      "keys": [
+        "recommend"
+      ],
+      "required": [
+        "recommend"
+      ]
+    },
+    "RelevanceFeedbackInput": {
+      "keys": [
+        "target",
+        "feedback",
+        "strategy"
+      ],
+      "required": [
+        "feedback",
+        "strategy",
+        "target"
+      ]
+    },
+    "RelevanceFeedbackQuery": {
+      "keys": [
+        "relevance_feedback"
+      ],
+      "required": [
+        "relevance_feedback"
+      ]
+    },
+    "Rrf": {
+      "keys": [
+        "k",
+        "weights"
+      ],
+      "required": []
+    },
+    "RrfQuery": {
+      "keys": [
+        "rrf"
+      ],
+      "required": [
+        "rrf"
+      ]
+    },
+    "SampleQuery": {
+      "keys": [
+        "sample"
+      ],
+      "required": [
+        "sample"
+      ]
+    },
+    "ScrollRequest": {
+      "keys": [
+        "shard_key",
+        "offset",
+        "limit",
+        "filter",
+        "with_payload",
+        "with_vector",
+        "order_by"
+      ],
+      "required": []
+    },
+    "SearchParams": {
+      "keys": [
+        "hnsw_ef",
+        "exact",
+        "quantization",
+        "indexed_only",
+        "acorn",
+        "idf"
+      ],
+      "required": []
+    },
+    "ShardKeyWithFallback": {
+      "keys": [
+        "target",
+        "fallback"
+      ],
+      "required": [
+        "fallback",
+        "target"
+      ]
+    },
+    "Slice": {
+      "keys": [
+        "total",
+        "index"
+      ],
+      "required": [
+        "index",
+        "total"
+      ]
+    },
+    "SliceCondition": {
+      "keys": [
+        "slice"
+      ],
+      "required": [
+        "slice"
+      ]
+    },
+    "SnowballParams": {
+      "keys": [
+        "type",
+        "language"
+      ],
+      "required": [
+        "language",
+        "type"
+      ]
+    },
+    "SparseVector": {
+      "keys": [
+        "indices",
+        "values"
+      ],
+      "required": [
+        "indices",
+        "values"
+      ]
+    },
+    "SqrtExpression": {
+      "keys": [
+        "sqrt"
+      ],
+      "required": [
+        "sqrt"
+      ]
+    },
+    "StopwordsSet": {
+      "keys": [
+        "languages",
+        "custom"
+      ],
+      "required": []
+    },
+    "SumExpression": {
+      "keys": [
+        "sum"
+      ],
+      "required": [
+        "sum"
+      ]
+    },
+    "ValuesCount": {
+      "keys": [
+        "lt",
+        "gt",
+        "gte",
+        "lte"
+      ],
+      "required": []
+    },
+    "WithLookup": {
+      "keys": [
+        "collection",
+        "with_payload",
+        "with_vectors"
+      ],
+      "required": [
+        "collection"
+      ]
+    }
+  },
+  "unions": {
+    "AnyVariants": [
+      "array of string",
+      "array of integer (int64)"
+    ],
+    "Condition": [
+      "FieldCondition",
+      "IsEmptyCondition",
+      "IsNullCondition",
+      "HasIdCondition",
+      "HasVectorCondition",
+      "SliceCondition",
+      "NestedCondition",
+      "Filter"
+    ],
+    "ContextInput": [
+      "ContextPair",
+      "array of ContextPair",
+      "null"
+    ],
+    "DocumentOptions": [
+      "object",
+      "Bm25Config"
+    ],
+    "Expression": [
+      "number (float)",
+      "string",
+      "Condition",
+      "GeoDistance",
+      "DatetimeExpression",
+      "DatetimeKeyExpression",
+      "MultExpression",
+      "SumExpression",
+      "MaxExpression",
+      "MinExpression",
+      "NegExpression",
+      "AbsExpression",
+      "DivExpression",
+      "SqrtExpression",
+      "PowExpression",
+      "ExpExpression",
+      "Log10Expression",
+      "LnExpression",
+      "AcoshExpression",
+      "LinDecayExpression",
+      "ExpDecayExpression",
+      "GaussDecayExpression"
+    ],
+    "ExtendedPointId": [
+      "integer (uint64)",
+      "string (uuid)"
+    ],
+    "FeedbackStrategy": [
+      "NaiveFeedbackStrategy"
+    ],
+    "IdfParams": [
+      "IdfScope",
+      "IdfCorpusParams"
+    ],
+    "Match": [
+      "MatchValue",
+      "MatchText",
+      "MatchTextAny",
+      "MatchPhrase",
+      "MatchPrefix",
+      "MatchAny",
+      "MatchExcept"
+    ],
+    "OrderByInterface": [
+      "string",
+      "OrderBy"
+    ],
+    "PayloadSelector": [
+      "PayloadSelectorInclude",
+      "PayloadSelectorExclude"
+    ],
+    "Query": [
+      "NearestQuery",
+      "RecommendQuery",
+      "DiscoverQuery",
+      "ContextQuery",
+      "OrderByQuery",
+      "FusionQuery",
+      "RrfQuery",
+      "FormulaQuery",
+      "SampleQuery",
+      "RelevanceFeedbackQuery"
+    ],
+    "QueryInterface": [
+      "VectorInput",
+      "Query"
+    ],
+    "RangeInterface": [
+      "Range",
+      "DatetimeRange"
+    ],
+    "ShardKey": [
+      "string",
+      "integer (uint64)"
+    ],
+    "ShardKeySelector": [
+      "ShardKey",
+      "array of ShardKey",
+      "ShardKeyWithFallback"
+    ],
+    "StartFrom": [
+      "integer (int64)",
+      "number (double)",
+      "string (date-time)"
+    ],
+    "StemmingAlgorithm": [
+      "SnowballParams",
+      "DisabledStemmerParams"
+    ],
+    "StopwordsInterface": [
+      "Language",
+      "StopwordsSet"
+    ],
+    "ValueVariants": [
+      "string",
+      "integer (int64)",
+      "boolean"
+    ],
+    "VectorInput": [
+      "array of number (float)",
+      "SparseVector",
+      "array of array of number (float)",
+      "ExtendedPointId",
+      "Document",
+      "Image",
+      "InferenceObject"
+    ],
+    "WithLookupInterface": [
+      "string",
+      "WithLookup"
+    ],
+    "WithPayloadInterface": [
+      "boolean",
+      "array of string",
+      "PayloadSelector"
+    ],
+    "WithVector": [
+      "boolean",
+      "array of string"
+    ]
+  },
+  "enums": {
+    "Direction": [
+      "asc",
+      "desc"
+    ],
+    "Fusion": [
+      "rrf",
+      "dbsf"
+    ],
+    "IdfScope": [
+      "global"
+    ],
+    "Language": [
+      "arabic",
+      "azerbaijani",
+      "basque",
+      "bengali",
+      "catalan",
+      "chinese",
+      "danish",
+      "dutch",
+      "english",
+      "finnish",
+      "french",
+      "german",
+      "greek",
+      "hebrew",
+      "hinglish",
+      "hungarian",
+      "indonesian",
+      "italian",
+      "japanese",
+      "kazakh",
+      "nepali",
+      "norwegian",
+      "portuguese",
+      "romanian",
+      "russian",
+      "slovene",
+      "spanish",
+      "swedish",
+      "tajik",
+      "turkish"
+    ],
+    "NoStemmer": [
+      "none"
+    ],
+    "RecommendStrategy": [
+      "average_vector",
+      "best_score",
+      "sum_scores"
+    ],
+    "Sample": [
+      "random"
+    ],
+    "Snowball": [
+      "snowball"
+    ],
+    "SnowballLanguage": [
+      "arabic",
+      "armenian",
+      "danish",
+      "dutch",
+      "english",
+      "finnish",
+      "french",
+      "german",
+      "greek",
+      "hungarian",
+      "italian",
+      "norwegian",
+      "portuguese",
+      "romanian",
+      "russian",
+      "spanish",
+      "swedish",
+      "tamil",
+      "turkish"
+    ],
+    "TokenizerType": [
+      "prefix",
+      "whitespace",
+      "word",
+      "multilingual"
+    ]
+  },
+  "localModels": [
+    "qdrant/bm25",
+    "bm25"
+  ]
+}

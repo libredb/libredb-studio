@@ -2,7 +2,12 @@ import "../setup-dom";
 import React from "react";
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
-import { mockRouterPush, mockRouterRefresh } from "../helpers/mock-navigation";
+import {
+  mockRouterPush,
+  mockRouterRefresh,
+  resetMockSearchParams,
+  setMockSearchParams,
+} from "../helpers/mock-navigation";
 import { mockToastSuccess, mockToastError } from "../helpers/mock-sonner";
 import { mock } from "bun:test";
 import { listShowcaseDatabases } from "@/lib/db-showcase";
@@ -17,6 +22,15 @@ import { EXTERNAL_DATABASE_TYPES, SHIPPED_DATABASE_TYPES, WIRE_COMPATIBLE_ENGINE
 // sonner and next/navigation are mocked via preload
 // lucide-react resolves fine natively — no mock needed
 
+// happy-dom has no WebAuthn, so the route test decides here whether this page could use a passkey.
+// The page counts as open at PAGE_ORIGIN, so only an offer for that origin can show the button.
+const PAGE_ORIGIN = "https://studio.example.com";
+let passkeysUsable = false;
+mock.module("@/lib/passkey/client", () => ({
+  passkeysUsableHere: (origin: string) => passkeysUsable && origin === PAGE_ORIGIN,
+  signInWithPasskey: () => Promise.resolve({ ok: false, message: null }),
+}));
+
 const { default: LoginForm } = await import("@/app/login/login-form");
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -25,7 +39,7 @@ import userEvent from "@testing-library/user-event";
 
 function renderLogin() {
   const user = userEvent.setup();
-  const result = render(<LoginForm authProvider="local" />);
+  const result = render(<LoginForm authProvider="local" passkey={null} />);
   const form = result.container.querySelector("form")!;
   const emailInput = result.container.querySelector('input[type="email"]')! as HTMLInputElement;
   const passwordInput = result.container.querySelector('input[type="password"]')! as HTMLInputElement;
@@ -125,6 +139,42 @@ describe("LoginPage", () => {
       expect(mockRouterPush).toHaveBeenCalledWith("/");
     });
     expect(mockToastSuccess).toHaveBeenCalledWith("Welcome back, user!");
+  });
+
+  // The session-ended redirect sends the user here with ?next= (#1420): signing in returns them to
+  // the page they were on rather than the role's default.
+  test("returns to the page the session ended on", async () => {
+    setMockSearchParams(new URLSearchParams({ next: "/settings/authenticator?x=1" }));
+    try {
+      globalThis.fetch = mock(() =>
+        Promise.resolve(new Response(JSON.stringify({ success: true, role: "admin" }))),
+      ) as never;
+      const { form, emailInput, passwordInput, user } = renderLogin();
+      await user.type(emailInput, "admin@libredb.org");
+      await user.type(passwordInput, "LibreDB.2026");
+      fireEvent.submit(form);
+
+      await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/settings/authenticator?x=1"));
+    } finally {
+      resetMockSearchParams();
+    }
+  });
+
+  test("ignores a return path that would leave the application", async () => {
+    setMockSearchParams(new URLSearchParams({ next: "//evil.example/" }));
+    try {
+      globalThis.fetch = mock(() =>
+        Promise.resolve(new Response(JSON.stringify({ success: true, role: "user" }))),
+      ) as never;
+      const { form, emailInput, passwordInput, user } = renderLogin();
+      await user.type(emailInput, "user@libredb.org");
+      await user.type(passwordInput, "LibreDB.2026");
+      fireEvent.submit(form);
+
+      await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/"));
+    } finally {
+      resetMockSearchParams();
+    }
   });
 
   test("shows error toast on failed login", async () => {
@@ -233,6 +283,39 @@ describe("LoginPage route (app/login/page)", () => {
     expect(container.querySelector("form")).not.toBeNull();
   });
 
+  async function passkeyButtonFor(origin: string | undefined): Promise<HTMLElement | null> {
+    const savedStorage = process.env.STORAGE_PROVIDER;
+    const savedOrigin = process.env.PASSKEY_ORIGIN;
+    delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    process.env.STORAGE_PROVIDER = "sqlite";
+    if (origin === undefined) delete process.env.PASSKEY_ORIGIN;
+    else process.env.PASSKEY_ORIGIN = origin;
+    passkeysUsable = true;
+    try {
+      const { default: LoginPageRoute } = await import("@/app/login/page");
+      const { findByRole, queryByRole } = render(<LoginPageRoute />);
+      // The email field renders on the same pass as the button, so the form has settled once it exists.
+      await findByRole("textbox", { name: /email/i });
+      return queryByRole("button", { name: "Use a passkey" });
+    } finally {
+      passkeysUsable = false;
+      if (savedStorage === undefined) delete process.env.STORAGE_PROVIDER;
+      else process.env.STORAGE_PROVIDER = savedStorage;
+      if (savedOrigin === undefined) delete process.env.PASSKEY_ORIGIN;
+      else process.env.PASSKEY_ORIGIN = savedOrigin;
+    }
+  }
+
+  test("the page passes the passkey offer from the server configuration", async () => {
+    expect(await passkeyButtonFor(PAGE_ORIGIN)).not.toBeNull();
+  });
+
+  test("the page shows no passkey button without an offer, or with an offer for another origin", async () => {
+    expect(await passkeyButtonFor(undefined)).toBeNull();
+    cleanup();
+    expect(await passkeyButtonFor("https://other.example.com")).toBeNull();
+  });
+
   test("renders the SSO login when NEXT_PUBLIC_AUTH_PROVIDER is oidc", async () => {
     process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
     const { default: LoginPageRoute } = await import("@/app/login/page");
@@ -249,7 +332,7 @@ describe("LoginPage showcase (issue #425)", () => {
   });
 
   function renderShowcase() {
-    return render(<LoginForm authProvider="local" />);
+    return render(<LoginForm authProvider="local" passkey={null} />);
   }
 
   test("renders every configured engine label on both surfaces", () => {

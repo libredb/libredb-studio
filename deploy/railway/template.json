@@ -1,14 +1,14 @@
 {
   "$comment": "Reviewable serialization of the LibreDB Studio Railway template. Railway does not ingest this file directly — the marketplace template is built in Railway's template editor (Workspace -> Templates -> New Template, at https://railway.com/workspace/templates). This file is the single source of truth for what to enter there (see PUBLISH.md) and what a future API automation would consume. Mirrors deploy/caprover/libredb-studio.yml.",
   "name": "LibreDB Studio",
-  "description": "Open-source web-based SQL IDE. Query seventeen engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra & Prometheus - from your browser, with optional read-only AI on your own model key.",
+  "description": "Open-source web-based SQL IDE. Query twenty-six engines - PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant & Oxia - from your browser, with optional read-only AI on your own model key.",
   "tags": ["database", "sql", "ide", "postgres", "mysql", "mongodb", "redis"],
   "services": [
     {
       "name": "libredb-studio",
       "icon": "https://raw.githubusercontent.com/libredb/libredb-studio/main/deploy/railway/libredb-studio.png",
       "source": {
-        "image": "ghcr.io/libredb/libredb-studio:0.16.2"
+        "image": "ghcr.io/libredb/libredb-studio:0.17.0"
       },
       "networking": {
         "public": true,

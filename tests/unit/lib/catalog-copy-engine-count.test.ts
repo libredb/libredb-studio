@@ -1,7 +1,7 @@
 /**
  * The accuracy gate for the engine COUNT in outward-facing catalog copy (#518).
  *
- * Thirteen files outside `src/` name the engine set by hand, and until this test nothing
+ * Fifteen files outside `src/` name the engine set by hand, and until this test nothing
  * counted them: `scripts/readme-check.mjs` locates the engine table in the three
  * READMEs and `chart:check` pins a version across files, but a storefront listing was
  * only ever corrected by somebody noticing. Measured on the DuckDB registration branch,
@@ -29,7 +29,7 @@ import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 const REPO_ROOT = join(import.meta.dir, "../../..");
 
 /**
- * The thirteen files that publish the engine set outward. Each is copy somebody else's
+ * The fifteen files that publish the engine set outward. Each is copy somebody else's
  * catalog renders, so nobody in this repo reads it again once it is submitted.
  *
  * `deploy/rancher/app-readme.md` is the one that is not itself the submitted artifact: the
@@ -42,7 +42,9 @@ const REPO_ROOT = join(import.meta.dir, "../../..");
  * accuracy-gate blockquote and its outstanding-corrections table exist to NAME stale
  * numerals (including a quote of the count the LIVE listing still publishes), so a
  * count check over the whole file would fail on the note that warns about the count.
- * The same slice is used by `tests/unit/marketplace-copy.test.ts`.
+ * The same slice is used by `tests/unit/marketplace-copy.test.ts`. `packaging/aur/PKGBUILD` is cut to
+ * its `pkgdesc` line, because the rest of the file is build script; its `.SRCINFO` is generated
+ * from it by `makepkg --printsrcinfo` and follows it.
  */
 const COPY_FILES: ReadonlyArray<{ path: string; from?: string; to?: string }> = [
   { path: "packaging/linux/nfpm.yaml" },
@@ -58,6 +60,8 @@ const COPY_FILES: ReadonlyArray<{ path: string; from?: string; to?: string }> = 
   { path: "deploy/rancher/CATALOG_LISTING.md", from: "## Short description", to: "## Outstanding corrections" },
   { path: "deploy/rancher/app-readme.md" },
   { path: "deploy/rancher/pcsc-listing.html" },
+  { path: "packaging/aur/PKGBUILD", from: "pkgdesc=", to: "\narch=" },
+  { path: "deploy/digitalocean/assets/description-long.md" },
 ];
 
 const NUMERAL_WORDS: Record<string, number> = {
@@ -81,6 +85,13 @@ const NUMERAL_WORDS: Record<string, number> = {
   eighteen: 18,
   nineteen: 19,
   twenty: 20,
+  "twenty-one": 21,
+  "twenty-two": 22,
+  "twenty-three": 23,
+  "twenty-four": 24,
+  "twenty-five": 25,
+  "twenty-six": 26,
+  "twenty-seven": 27,
 };
 
 /**
@@ -90,6 +101,17 @@ const NUMERAL_WORDS: Record<string, number> = {
  */
 const ENGINE_COUNT_RE = new RegExp(
   `\\b(\\d{1,3}|${Object.keys(NUMERAL_WORDS).join("|")})\\s+(?:database\\s+)?engines\\b`,
+  "gi",
+);
+
+/**
+ * The relative form, "PostgreSQL, MySQL, MongoDB, Redis and N more engines": the claim is
+ * the engines named in front of it plus N. The form above never reads it, because "more"
+ * stands between the numeral and the noun, and the DigitalOcean listing kept "fifteen
+ * more" for a release after the twentieth engine landed.
+ */
+const RELATIVE_ENGINE_COUNT_RE = new RegExp(
+  `\\b(\\d{1,3}|${Object.keys(NUMERAL_WORDS).join("|")})\\s+more\\s+(?:database\\s+)?engines\\b`,
   "gi",
 );
 
@@ -141,6 +163,16 @@ function withoutMarkup(text: string): string {
   return stripped;
 }
 
+/** The sentence (or bullet, or block) up to `offset`: what a relative numeral adds to. */
+function leadSegment(text: string, offset: number): string {
+  const before = text.slice(0, offset);
+  let start = 0;
+  for (const end of before.matchAll(new RegExp(SEGMENT_END_RE.source, "g"))) {
+    start = (end.index ?? 0) + end[0].length;
+  }
+  return before.slice(start);
+}
+
 function listSegment(text: string, offset: number): string {
   const rest = text.slice(offset);
   const end = SEGMENT_END_RE.exec(rest);
@@ -169,6 +201,16 @@ function engineCountProblems(text: string, label: string): string[] {
     if (named.length !== expected) {
       const missing = ENGINE_NAMES.filter(({ name }) => !segment.includes(name)).map(({ type }) => type);
       problems.push(`${label}: the list after "${match[0]}" names ${named.length}, missing ${missing.join(", ")}`);
+    }
+  }
+
+  for (const match of text.matchAll(RELATIVE_ENGINE_COUNT_RE)) {
+    const written = match[1].toLowerCase();
+    const more = NUMERAL_WORDS[written] ?? Number(written);
+    const lead = leadSegment(text, match.index ?? 0);
+    const named = ENGINE_NAMES.filter(({ name }) => lead.includes(name)).length;
+    if (named + more !== expected) {
+      problems.push(`${label}: "${named} named and ${match[0]}" publishes ${named + more}, and there are ${expected}`);
     }
   }
 
@@ -201,7 +243,7 @@ describe("outward-facing catalog copy counts the engines the registry ships", ()
       );
     });
 
-    // Thirteen numerals and eight counted lists on this revision - the two AWS
+    // Sixteen numerals and eight counted lists on this revision - the two AWS
     // listing files abridge, so they add numerals without adding counted lists.
     expect(segments.length).toBeGreaterThanOrEqual(8);
     const counted = segments.filter(
@@ -253,8 +295,25 @@ describe("the gate fails the copy it exists to catch", () => {
   });
 
   test("an English numeral is read as well as a digit", () => {
+    // The word for the current count is looked up, not written here, so this fixture does
+    // not go stale with the copy it guards.
+    const word = Object.keys(NUMERAL_WORDS).find((key) => NUMERAL_WORDS[key] === expected);
+    expect(word).toBeDefined();
+    const capitalized = `${word?.charAt(0).toUpperCase()}${word?.slice(1)}`;
+
     expect(engineCountProblems("Query fourteen engines from your browser.", "fixture")).toHaveLength(1);
-    expect(engineCountProblems(`Seventeen database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
+    expect(engineCountProblems(`${capitalized} database engines in one IDE: ${fullList}`, "fixture")).toEqual([]);
+  });
+
+  test("a hyphenated numeral is read whole, not as its first word", () => {
+    // "twenty-one engines" must publish 21. Read as "twenty" it would pass on the day the
+    // count is twenty and the copy is one ahead.
+    expect(engineCountProblems("Query twenty-one engines from your browser.", "fixture")).toEqual(
+      expected === 21 ? [] : [`fixture: "twenty-one engines" publishes 21, and there are ${expected}`],
+    );
+    expect(engineCountProblems("Query Twenty-Five database engines.", "fixture")).toEqual(
+      expected === 25 ? [] : [`fixture: "Twenty-Five database engines" publishes 25, and there are ${expected}`],
+    );
   });
 
   test("a deliberately abridged list is checked on its numeral only", () => {
@@ -266,6 +325,20 @@ describe("the gate fails the copy it exists to catch", () => {
     expect(
       engineCountProblems(`Connect to ${expected} engines, from PostgreSQL and MySQL to Apache Cassandra.`, "fixture"),
     ).toEqual([]);
+  });
+
+  test("a relative numeral is counted with the engines named before it", () => {
+    // "PostgreSQL, MySQL, MongoDB, Redis and N more engines" claims 4 + N. The DigitalOcean
+    // listing published "and fifteen more" for a release after the twentieth engine
+    // landed, because the walk read only the "N engines" form.
+    const lead = "connect to PostgreSQL, MySQL, MongoDB, Redis and";
+    const rightWord = Object.keys(NUMERAL_WORDS).find((key) => NUMERAL_WORDS[key] === expected - 4);
+    expect(rightWord).toBeDefined();
+
+    expect(engineCountProblems(`${lead} ${rightWord} more engines, write queries.`, "fixture")).toEqual([]);
+    expect(engineCountProblems(`${lead} ${expected - 5} more engines, write queries.`, "fixture")).toEqual([
+      `fixture: "4 named and ${expected - 5} more engines" publishes ${expected - 1}, and there are ${expected}`,
+    ]);
   });
 
   test("a numeral qualifying a narrower noun is not a claim about the set", () => {

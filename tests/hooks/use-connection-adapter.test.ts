@@ -7,6 +7,7 @@ import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
 import type { WorkspaceConnection, WorkspaceObjectReader } from "@/workspace/types";
 import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
+import { SAMPLED_MARKER } from "../fixtures/sampled-schema";
 
 // ── Test Data ───────────────────────────────────────────────────────────────
 
@@ -142,6 +143,59 @@ describe("useConnectionAdapter", () => {
 
     // Verify loading is done
     expect(result.current.isLoadingSchema).toBe(false);
+  });
+
+  /**
+   * etcd spec 3.4 and E13, on the embedded shell: a host's object may carry the readable ranges of
+   * a user who is not root, and a piece can be a single key. The schema keeps the host's array for
+   * the two generators, and `schemaContext`, which the AI panels post to the model, leaves it out.
+   */
+  test("schemaContext leaves out the readable ranges the schema keeps as the host gave them", async () => {
+    const ranges = [
+      { key: "grant-key-a" },
+      { prefix: "grant-prefix-b/" },
+      { start: "grant-start-c", end: "grant-end-d" },
+    ];
+    const [users, orders] = makeSchema();
+    const onSchemaFetch = mock(() => Promise.resolve([{ ...users, readRanges: ranges }, orders]));
+    const connections = [makeWorkspaceConnection({ id: "c1" })];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    await act(async () => {
+      await result.current.fetchSchema(result.current.connections[0]);
+    });
+
+    expect(result.current.schema[0]?.readRanges).toBe(ranges);
+    expect(result.current.schemaContext).toBe(JSON.stringify(makeSchema()));
+    expect(result.current.schemaContext).not.toContain("grant-");
+  });
+
+  /** The workspace's `schemaContext` drops a sampled column, and its `schema` keeps it. */
+  test("schemaContext leaves out a column the engine only inferred from sampled data", async () => {
+    const [users, orders] = makeSchema();
+    const sampled = {
+      name: SAMPLED_MARKER,
+      type: "text",
+      nullable: true,
+      isPrimary: false,
+      provenance: "sampled" as const,
+    };
+    const onSchemaFetch = mock(() => Promise.resolve([{ ...users, columns: [...users.columns, sampled] }, orders]));
+    const connections = [makeWorkspaceConnection({ id: "c1" })];
+
+    const { result } = renderHook(() =>
+      useConnectionAdapter({ connections, onSchemaFetch, onObjectsFetch: noObjectReads }),
+    );
+
+    await act(async () => {
+      await result.current.fetchSchema(result.current.connections[0]);
+    });
+
+    expect(result.current.schema[0]?.columns.map((column) => column.name)).toContain(SAMPLED_MARKER);
+    expect(result.current.schemaContext).toBe(JSON.stringify(makeSchema()));
   });
 
   // ── fetchSchema sets isLoadingSchema during fetch ───────────────────────

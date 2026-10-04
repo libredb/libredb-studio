@@ -34,6 +34,7 @@ import {
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
 import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
+import { buildResultExport } from "@/lib/export/result-export";
 import { countLibSQLObjects, type LibSQLObjectReader } from "@/lib/db/providers/sql/libsql/objects";
 import type { DatabaseConnection, DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
 import { readFileSync } from "node:fs";
@@ -478,6 +479,41 @@ describe("LibSQLProvider query", () => {
     await provider.disconnect();
   });
 
+  test("hands a BLOB to the wire as bytes, and the SQL export writes it back as X'..'", async () => {
+    // Measured against sqld 0.24.33 on 2026-10-04: `x'DEADBEEF00FF'` answers
+    // `{"type":"blob","base64":"3q2+7wD/"}` and `x''` answers base64 "". Before the
+    // transport decoded to a Buffer, the grid received `{"0":222,...}` and the SQL export
+    // wrote that object as quoted text.
+    server = () =>
+      result(
+        [
+          ["bin", "BLOB"],
+          ["empty", "BLOB"],
+        ],
+        [
+          [
+            { type: "blob", base64: "3q2+7wD/" },
+            { type: "blob", base64: "" },
+          ],
+        ],
+      );
+    const provider = await connected();
+
+    const read = await provider.query("SELECT bin, empty FROM t_types");
+    const wire = JSON.parse(JSON.stringify(read.rows)) as Record<string, unknown>[];
+    expect(wire).toEqual([
+      { bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] }, empty: { type: "Buffer", data: [] } },
+    ]);
+    const exported = buildResultExport("sql-insert", {
+      rows: wire,
+      fields: read.fields,
+      tabName: "t",
+      dialect: "libsql",
+    });
+    expect(exported.content).toBe(`INSERT INTO t ("bin", "empty") VALUES (X'deadbeef00ff', X'');`);
+    await provider.disconnect();
+  });
+
   test("still binds an ordinary key that happens to be all digits as text", async () => {
     const provider = await connected();
 
@@ -618,8 +654,11 @@ describe("LibSQLProvider runMaintenance", () => {
 
     expect(await provider.runMaintenance("reindex")).toMatchObject({ success: true });
     expect(await provider.runMaintenance("reindex", "probe_customers")).toMatchObject({ success: true });
+    // #772: a container is ignored - the connection resolves names against its one
+    // attached database, exactly as sqlite.ts does.
+    expect(await provider.runMaintenance("reindex", "probe_customers", "main")).toMatchObject({ success: true });
 
-    expect(sentStatements()).toEqual(["REINDEX", 'REINDEX "probe_customers"']);
+    expect(sentStatements()).toEqual(["REINDEX", 'REINDEX "probe_customers"', 'REINDEX "probe_customers"']);
     await provider.disconnect();
   });
 
@@ -1791,9 +1830,9 @@ describe("LibSQLProvider object surface (#789)", () => {
     // on nothing, and a kind answering columns without declaring it hides them behind a
     // leaf row. Both directions are asserted against this engine's own answer rather
     // than against the role, which happens to coincide here and does not elsewhere:
-    // `describeLibSQLObject` gates on `spec.role !== "relation"`
-    // (src/lib/db/providers/sql/libsql/objects.ts:785), while a MariaDB sequence is
-    // declared `config` and still has columns.
+    // `describeLibSQLObject` in src/lib/db/providers/sql/libsql/objects.ts gates on
+    // `spec.role !== "relation"`, while a MariaDB sequence is declared `config` and still
+    // has columns.
     objects = await connectedWithObjects();
     const kinds = objects.getCapabilities().objectKinds ?? [];
 

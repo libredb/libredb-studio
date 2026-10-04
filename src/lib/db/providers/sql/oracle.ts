@@ -41,10 +41,12 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
 } from "../../object-kinds";
@@ -63,6 +65,18 @@ import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
+/**
+ * Oracle's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const ORACLE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "oracle",
+  label: "An Oracle",
+  shapeNames: "label",
+};
+
 // ============================================================================
 // SQL Statements
 // ============================================================================
@@ -70,6 +84,38 @@ import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from
 // stays stable (repo pattern, see the SCHEMA_*_SQL consts in mssql.ts).
 
 // Shared by getHealth() and getPerformanceMetrics().
+/**
+ * What Oracle can commit inside the held transaction. Its DDL commits before and after every
+ * statement ("Oracle Database implicitly commits the current transaction before and after every
+ * DDL statement", SQL Language Reference, "Types of SQL Statements"). A PL/SQL block or a
+ * `CALL` may commit too, through `EXECUTE IMMEDIATE` or a procedure's own `COMMIT`, and this
+ * provider reads no transaction state back from the server to notice afterwards, so SANDBOX
+ * refuses those as well rather than promise a rollback it cannot check.
+ */
+const ORACLE_IMPLICIT_COMMIT_STATEMENTS: readonly string[] = [
+  "ALTER",
+  "ANALYZE",
+  "ASSOCIATE",
+  "AUDIT",
+  "BEGIN",
+  "CALL",
+  "COMMENT",
+  "CREATE",
+  "DECLARE",
+  "DISASSOCIATE",
+  "DROP",
+  "FLASHBACK",
+  "GRANT",
+  "NOAUDIT",
+  "PURGE",
+  "RENAME",
+  "REVOKE",
+  "TRUNCATE",
+];
+
+/** `ALTER SESSION` and `ALTER SYSTEM` are session and system control, not DDL, and commit nothing. */
+const ORACLE_IMPLICIT_COMMIT_EXCEPTIONS: readonly string[] = ["ALTER SESSION", "ALTER SYSTEM"];
+
 const CACHE_HIT_RATIO_SQL = `SELECT ROUND(
             (1 - (SUM(DECODE(NAME, 'physical reads', VALUE, 0)) /
                   NULLIF(SUM(DECODE(NAME, 'db block gets', VALUE, 0)) + SUM(DECODE(NAME, 'consistent gets', VALUE, 0)), 0)
@@ -129,27 +175,76 @@ const ACTIVE_SESSIONS_BODY_SQL = `SELECT * FROM (
           ORDER BY CASE s.STATUS WHEN 'ACTIVE' THEN 0 ELSE 1 END, s.LOGON_TIME DESC
         )`;
 
-const TABLE_STATS_SQL = `SELECT t.TABLE_NAME,
+/**
+ * One row per table the connected user owns, with its rows, its storage and its indexes.
+ *
+ * `USER_SEGMENTS` names a segment for its object (`SEGMENT_NAME`) and has no `TABLE_NAME`
+ * column: which table an index or a LOB belongs to is a fact of `USER_INDEXES` and
+ * `USER_LOBS`. The statement this replaced selected `TABLE_NAME` from it, the engine
+ * answered `ORA-00904: "TABLE_NAME": invalid identifier` (measured on Oracle AI Database
+ * 26ai Free 23.26.3.0.0, 2026-10-04), and the Tables panel and every per-table
+ * maintenance control read "no tables" on every Oracle connection.
+ *
+ * So `o` lists every segment a table owns, and which half it counts toward:
+ *  - TABLE: the table's own segments, one per partition or subpartition; its LOB
+ *    segments; its LOB indexes; and an index-organized table's top index, which is
+ *    where that table's rows are stored. Table size is everything holding the rows.
+ *  - INDEX: every other index built on the table.
+ * Each join keeps a segment to its own kind (`INSTR(SEGMENT_TYPE, KIND)`: `TABLE` matches
+ * TABLE / TABLE PARTITION / TABLE SUBPARTITION, `LOB` the LOB segment kinds, `INDEX` the
+ * index kinds and LOBINDEX), because an index lives in a different namespace from a
+ * table and may carry the same name as one.
+ *
+ * `DROPPED = 'NO'` leaves out a recycle-bin table wherever the dictionary lists one: a
+ * `BIN$` name is no target for a maintenance operation. `NUM_ROWS` and `LAST_ANALYZED` are the optimizer statistics,
+ * so a table never analyzed reads 0 rows and no last analyze until Gather Statistics runs.
+ *
+ * `USER_INDEXES` also lists an index the user owns on ANOTHER schema's table, keyed by that
+ * table's bare name, so `TABLE_OWNER = USER` keeps it off a same-named table of this one.
+ * `OWNER` is `USER`, the account these views answer for. It is not the configured login
+ * name upper-cased: a proxy login (`app[report]`) or a quoted lower-case user differ from it.
+ */
+const TABLE_STATS_SQL = `SELECT USER AS OWNER, t.TABLE_NAME,
                 NVL(t.NUM_ROWS, 0) AS ROW_COUNT,
-                NVL(s.BYTES, 0) AS TABLE_SIZE_BYTES,
-                NVL(idx_size.BYTES, 0) AS INDEX_SIZE_BYTES,
+                NVL(sz.TABLE_BYTES, 0) AS TABLE_SIZE_BYTES,
+                NVL(sz.INDEX_BYTES, 0) AS INDEX_SIZE_BYTES,
                 t.LAST_ANALYZED
-         FROM ALL_TABLES t
-         LEFT JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = t.TABLE_NAME AND s.SEGMENT_TYPE = 'TABLE'
+         FROM USER_TABLES t
          LEFT JOIN (
-           SELECT TABLE_NAME, SUM(BYTES) AS BYTES
-           FROM USER_SEGMENTS
-           WHERE SEGMENT_TYPE = 'INDEX'
-           GROUP BY TABLE_NAME
-         ) idx_size ON idx_size.TABLE_NAME = t.TABLE_NAME
-         WHERE t.OWNER = :1
-         ORDER BY NVL(s.BYTES, 0) DESC`;
+           SELECT o.TABLE_NAME,
+                  SUM(CASE WHEN o.PART = 'TABLE' THEN s.BYTES END) AS TABLE_BYTES,
+                  SUM(CASE WHEN o.PART = 'INDEX' THEN s.BYTES END) AS INDEX_BYTES
+           FROM (
+             SELECT TABLE_NAME, TABLE_NAME AS SEGMENT_NAME, 'TABLE' AS KIND, 'TABLE' AS PART FROM USER_TABLES
+             UNION ALL
+             SELECT TABLE_NAME, SEGMENT_NAME, 'LOB', 'TABLE' FROM USER_LOBS
+             UNION ALL
+             SELECT TABLE_NAME, INDEX_NAME, 'INDEX',
+                    CASE WHEN INDEX_TYPE IN ('LOB', 'IOT - TOP') THEN 'TABLE' ELSE 'INDEX' END
+             FROM USER_INDEXES
+             WHERE TABLE_OWNER = USER
+           ) o
+           JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = o.SEGMENT_NAME AND INSTR(s.SEGMENT_TYPE, o.KIND) > 0
+           GROUP BY o.TABLE_NAME
+         ) sz ON sz.TABLE_NAME = t.TABLE_NAME
+         WHERE t.DROPPED = 'NO'
+         ORDER BY NVL(sz.TABLE_BYTES, 0) + NVL(sz.INDEX_BYTES, 0) DESC, t.TABLE_NAME`;
 
+/**
+ * Each index with its size. A partitioned index is one segment per partition, typed
+ * INDEX PARTITION, so the segments are summed per index name: a join on
+ * `SEGMENT_TYPE = 'INDEX'` alone sized every partitioned index 0 B.
+ */
 const INDEX_STATS_SQL = `SELECT ai.TABLE_NAME, ai.INDEX_NAME, ai.INDEX_TYPE, ai.UNIQUENESS,
                 NVL(us.BYTES, 0) AS INDEX_SIZE_BYTES,
                 ai.LEAF_BLOCKS, ai.DISTINCT_KEYS
          FROM ALL_INDEXES ai
-         LEFT JOIN USER_SEGMENTS us ON us.SEGMENT_NAME = ai.INDEX_NAME AND us.SEGMENT_TYPE = 'INDEX'
+         LEFT JOIN (
+           SELECT SEGMENT_NAME, SUM(BYTES) AS BYTES
+           FROM USER_SEGMENTS
+           WHERE INSTR(SEGMENT_TYPE, 'INDEX') > 0
+           GROUP BY SEGMENT_NAME
+         ) us ON us.SEGMENT_NAME = ai.INDEX_NAME
          WHERE ai.OWNER = :1
          ORDER BY NVL(us.BYTES, 0) DESC`;
 
@@ -195,6 +290,26 @@ const SCHEMA_NORMAL_INDEXES_SQL = `SELECT INDEX_NAME FROM USER_INDEXES WHERE IND
  * "Rebuild Indexes" to have done.
  */
 const TABLE_IS_KNOWN_SQL = `SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME = :tableName`;
+
+// ============================================================================
+// Owner-aware twins (#772)
+// ----------------------------------------------------------------------------
+// The `USER_*` views above answer for the CONNECTED user only, which is why a table
+// owned by anyone else read as "this schema owns no TABLE named ...". `ALL_*` carries
+// an OWNER column, so the same questions are asked with the owner bound. Kept as
+// separate statements rather than adding an `OR :owner IS NULL` to the originals: a
+// predicate that switches off is a predicate the optimizer cannot plan around, and the
+// two call shapes want different proofs.
+// ============================================================================
+const OWNED_TABLE_INDEXES_SQL = `SELECT INDEX_NAME
+           FROM ALL_INDEXES
+           WHERE OWNER = :owner AND TABLE_NAME = :tableName AND INDEX_TYPE = 'NORMAL'`;
+
+const OWNED_SCHEMA_NORMAL_INDEXES_SQL = `SELECT INDEX_NAME
+           FROM ALL_INDEXES
+           WHERE OWNER = :owner AND INDEX_TYPE = 'NORMAL'`;
+
+const OWNED_TABLE_IS_KNOWN_SQL = `SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER = :owner AND TABLE_NAME = :tableName`;
 
 // ============================================================================
 // Object surface SQL (#789)
@@ -253,7 +368,7 @@ const PACKAGE_BODY_OBJECT_TYPE = { dictionary: "PACKAGE BODY", metadata: "PACKAG
  * no "declares nothing" list for this provider, and the integration suite asserts that
  * emptiness in both directions so a tenth kind cannot quietly gain a Source tab.
  *
- * `sql` and NOT `plsql`. MEASURED on the installed monaco-editor 0.56.0: `plsql` is not
+ * `sql` and NOT `plsql`. MEASURED on the installed monaco-editor 0.57.0: `plsql` is not
  * among the 89 language ids the bundle registers, and an unregistered id degrades to plain
  * text SILENTLY, with no throw and nothing observable. A PL/SQL body therefore renders under
  * the SQL grammar, which highlights the DML and misses `IS`/`BEGIN`/`EXCEPTION`. That is a
@@ -439,11 +554,19 @@ const LIST_TRIGGERS_SQL = `SELECT o.OBJECT_NAME AS NAME, t.TABLE_NAME AS PARENT,
 // what makes that true.
 // ----------------------------------------------------------------------------
 
-/** Columns. Answers for a table, a view and a materialized view's container alike. */
-const OBJECT_COLUMNS_SQL = `SELECT COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT
+/**
+ * Columns. Answers for a table, a view and a materialized view's container alike.
+ *
+ * `vectorInfo` adds `VECTOR_INFO`, which only a server with the `VECTOR` type has (#1209). See
+ * `OracleProvider.readColumns()` for how a server without it is read.
+ */
+function objectColumnsSql(vectorInfo: boolean): string {
+  return `SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, DATA_PRECISION, DATA_SCALE, CHAR_LENGTH, CHAR_USED,${vectorInfo ? " VECTOR_INFO," : ""}
+                NULLABLE, DATA_DEFAULT
          FROM ALL_TAB_COLUMNS
          WHERE OWNER = :1 AND TABLE_NAME = :2
          ORDER BY COLUMN_ID`;
+}
 
 const OBJECT_PRIMARY_KEY_SQL = `SELECT acc.COLUMN_NAME
          FROM ALL_CONSTRAINTS ac
@@ -831,18 +954,21 @@ function bulkTargetSql(kind: string, bounded: boolean): string {
  * Nothing here caps a column list. An unreported bound is the defect
  * `ObjectDetailBatch.truncated` exists to prevent; what is bounded here is the number of
  * OBJECTS, by the caller, and it is reported.
+ *
+ * `columns` takes the flag `objectColumnsSql()` takes, for the same reason.
  */
 function bulkDetailSql(
   kind: string,
   bounded: boolean,
-): { columns: string; primaryKey: string; foreignKeys: string; indexes: string } {
+): { columns: (vectorInfo: boolean) => string; primaryKey: string; foreignKeys: string; indexes: string } {
   const described = describedSql(kind, bounded);
   // The next free placeholder after the target's own, which is what the owner's second
   // appearance has to use: see the note on `describedSql()` above.
   const owner = bounded ? ":4" : ":3";
   return {
-    columns: `${described}
-         SELECT d.NAME AS OBJECT_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT
+    columns: (vectorInfo) => `${described}
+         SELECT d.NAME AS OBJECT_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.DATA_LENGTH, c.DATA_PRECISION, c.DATA_SCALE,
+                c.CHAR_LENGTH, c.CHAR_USED,${vectorInfo ? " c.VECTOR_INFO," : ""} c.NULLABLE, c.DATA_DEFAULT
          FROM described d
          JOIN ALL_TAB_COLUMNS c ON c.OWNER = ${owner} AND c.TABLE_NAME = d.NAME
          ORDER BY d.NAME, c.COLUMN_ID`,
@@ -936,14 +1062,7 @@ function notableStatus(status: string): { status?: string } {
  * `CREATE USER "app"` is legal, so upper-casing here would make that owner unreachable.
  */
 function containerOwner(capabilities: ProviderCapabilities, container: readonly string[]): string {
-  const levels = declaredLevels(capabilities);
-  if (container.length !== levels.length) {
-    throw new QueryError(
-      `An Oracle container path is [${levels.map((level) => level.label.toLowerCase()).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
-      "oracle",
-    );
-  }
+  assertContainerPathShape(capabilities, container, ORACLE_CONTAINER_PATH_ENGINE);
   return ownerSegment(capabilities, container);
 }
 
@@ -1132,13 +1251,18 @@ interface DetailRows {
  */
 function objectDetailFromRows(path: readonly string[], owner: string, rows: DetailRows): ObjectDetail {
   const primaryKey = new Set(rows.primaryKey.map((row) => String(row.COLUMN_NAME)));
-  const columns: ColumnSchema[] = rows.columns.map((row) => ({
-    name: String(row.COLUMN_NAME),
-    type: String(row.DATA_TYPE),
-    nullable: String(row.NULLABLE) === "Y",
-    isPrimary: primaryKey.has(String(row.COLUMN_NAME)),
-    defaultValue: measuredDefault(row.DATA_DEFAULT),
-  }));
+  const columns: ColumnSchema[] = rows.columns.map((row) => {
+    const dataType = String(row.DATA_TYPE);
+    const type = declaredType(row);
+    return {
+      name: String(row.COLUMN_NAME),
+      type,
+      ...(type === dataType ? {} : { baseType: dataType }),
+      nullable: String(row.NULLABLE) === "Y",
+      isPrimary: primaryKey.has(String(row.COLUMN_NAME)),
+      defaultValue: measuredDefault(row.DATA_DEFAULT),
+    };
+  });
 
   // One entry per index, its columns in COLUMN_POSITION order, which is the order both
   // statements return them in.
@@ -1182,6 +1306,65 @@ function byObjectName<T extends BulkRow>(rows: readonly T[]): Map<string, T[]> {
 function isMissingOracleMaintainedError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.message.includes("ORA-00904") && error.message.includes("ORACLE_MAINTAINED");
+}
+
+/**
+ * Whether `ALL_TAB_COLUMNS` has no `VECTOR_INFO` column on this server (#1209).
+ *
+ * The column came with the `VECTOR` type. Measured: Oracle AI Database 26ai Free 23.26.3 has it,
+ * as a `VARCHAR2`, and on Oracle Database 21c XE 21.3 the single read answers `ORA-00904: "VECTOR_INFO": invalid
+ * identifier` and the bulk read answers `ORA-00904: "C"."VECTOR_INFO": invalid identifier`. Keyed
+ * on the column name as well as on ORA-00904, for the reason `isMissingOracleMaintainedError()`
+ * gives.
+ */
+function isMissingVectorInfoError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes("ORA-00904") && error.message.includes("VECTOR_INFO");
+}
+
+/**
+ * A column's type as a `CREATE TABLE` writes it, built from one `ALL_TAB_COLUMNS` row (#1139).
+ *
+ * `DATA_TYPE` alone has no length, precision or scale. A bare `VARCHAR2`, `NVARCHAR2` or `RAW`
+ * is ORA-00906, and a bare `CHAR` or `NUMBER` creates a different column without an error.
+ *
+ * `BYTE` is written although `DBMS_METADATA.GET_DDL` leaves it out: under
+ * `NLS_LENGTH_SEMANTICS = CHAR` a bare `VARCHAR2(20)` is created with character semantics.
+ * `NUMBER` with a null precision and scale stays bare, which is also what a computed view
+ * column such as `COUNT(*)` reports. The `TIMESTAMP` and `INTERVAL` types already carry
+ * their precision in `DATA_TYPE`, so they are returned as they are.
+ *
+ * `UROWID` and `VECTOR` also carry a size that `DATA_TYPE` leaves out (#1209). A bare `UROWID`
+ * is created with `DATA_LENGTH` 4000, and a bare `VECTOR` with any dimension count and any
+ * format, so both are accepted and create a different column. `VECTOR_INFO` is the whole
+ * declaration of a vector column. A row without it, from a server that has no such column,
+ * keeps `DATA_TYPE`.
+ */
+function declaredType(row: Record<string, unknown>): string {
+  const dataType = String(row.DATA_TYPE);
+  const precision = row.DATA_PRECISION ?? null;
+  const scale = row.DATA_SCALE ?? null;
+  switch (dataType) {
+    case "VARCHAR2":
+    case "CHAR":
+      return `${dataType}(${String(row.CHAR_LENGTH)} ${row.CHAR_USED === "C" ? "CHAR" : "BYTE"})`;
+    case "NVARCHAR2":
+    case "NCHAR":
+      return `${dataType}(${String(row.CHAR_LENGTH)})`;
+    case "RAW":
+      return `RAW(${String(row.DATA_LENGTH)})`;
+    case "NUMBER":
+      if (precision === null) return scale === null ? "NUMBER" : `NUMBER(*,${String(scale)})`;
+      return Number(scale) === 0 ? `NUMBER(${String(precision)})` : `NUMBER(${String(precision)},${String(scale)})`;
+    case "FLOAT":
+      return `FLOAT(${String(precision)})`;
+    case "UROWID":
+      return `UROWID(${String(row.DATA_LENGTH)})`;
+    case "VECTOR":
+      return typeof row.VECTOR_INFO === "string" ? row.VECTOR_INFO : dataType;
+    default:
+      return dataType;
+  }
 }
 
 /** `ALL_TAB_COLUMNS.DATA_DEFAULT` is a LONG holding source text, trailing spaces included. */
@@ -1332,6 +1515,54 @@ const normalizeIntervals = (
   });
 };
 
+/**
+ * A DATE or a TIMESTAMP (without time zone) as the engine's own wall clock (#1131):
+ * `2026-09-01 10:30:00`, and `2026-09-01 10:30:00.345` when the value has a fraction.
+ *
+ * Neither type holds a zone, so there is no `Date` that is right for one. oracledb, in Thin
+ * and Thick mode alike, builds the `Date` by reading the stored fields as LOCAL time of the
+ * Node process (`makeDate(useLocal)` in oracledb/lib/util.js), and every row path then
+ * serialised it as ISO UTC, so the value moved with the server's TZ. Measured in #1131 on
+ * Oracle Free through this provider: `DATE '2026-09-01'` arrived as
+ * `2026-08-31T21:00:00.000Z` under TZ=Europe/Istanbul, the previous day, and the SQL INSERT
+ * export of that row over HTTP was refused on replay (ORA-01861).
+ *
+ * The LOCAL getters are the inverse of what the driver did, so they give back the stored
+ * fields in every zone. Asking the driver for a string does not: in Thin mode a fetch type
+ * of `oracledb.STRING` for these types is that same `Date` put through `toString()`
+ * (oracledb/lib/impl/resultset.js), and the session's NLS formats are never consulted.
+ *
+ * What the `Date` lost before this runs stays lost: digits past the millisecond, a wall
+ * clock inside the Node zone's spring-forward gap (it exists in the table but not in that
+ * zone, so the driver's `Date` is an hour later), and a year below 100, which the `Date`
+ * constructor reads as 19xx.
+ */
+const formatZonelessDate = (value: Date, withFraction: boolean): string => {
+  const year = value.getFullYear();
+  const day = `${year < 0 ? "-" : ""}${String(Math.abs(year)).padStart(4, "0")}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`;
+  const clock = `${pad2(value.getHours())}:${pad2(value.getMinutes())}:${pad2(value.getSeconds())}`;
+  const fraction = withFraction ? String(value.getMilliseconds()).padStart(3, "0").replace(/0+$/, "") : "";
+  return `${day} ${clock}${fraction === "" ? "" : `.${fraction}`}`;
+};
+
+/**
+ * The per-call handler of the two row paths, `query()` and `queryInTransaction()`: the LOB
+ * mapping, plus DATE and TIMESTAMP read as their wall clock (`formatZonelessDate`).
+ *
+ * A converter rather than a fetch type, because the fetch type is `Date.toString()`. The
+ * two zoned types are left alone: each names an instant, the driver hands over that
+ * instant, and its ISO form is the same in every TZ.
+ */
+const rowFetchTypeHandler: oracledb.FetchTypeHandler = (metaData) => {
+  if (metaData.dbType === oracledb.DB_TYPE_DATE || metaData.dbType === oracledb.DB_TYPE_TIMESTAMP) {
+    const withFraction = metaData.dbType === oracledb.DB_TYPE_TIMESTAMP;
+    // The driver calls a converter for every value, a NULL as `null`, so anything that is
+    // not a `Date` is handed on as it came.
+    return { converter: (value) => (value instanceof Date ? formatZonelessDate(value, withFraction) : value) };
+  }
+  return lobFetchTypeHandler(metaData);
+};
+
 // ============================================================================
 // Oracle Provider
 // ============================================================================
@@ -1352,6 +1583,10 @@ export class OracleProvider extends SQLBaseProvider {
 
   // Track running connections for cancellation
   private runningConns = new Map<string, oracledb.Connection>();
+
+  // False once this server answered that `ALL_TAB_COLUMNS` has no `VECTOR_INFO` (#1209).
+  // See `readColumns()`.
+  private vectorInfo = true;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
@@ -1404,6 +1639,10 @@ export class OracleProvider extends SQLBaseProvider {
       supportsResultPagination: true,
       // Oracle is always in a transaction; the held connection commits or rolls back.
       supportsTransactions: true,
+      // Oracle commits before and after every DDL statement, and a PL/SQL block may commit,
+      // so SANDBOX refuses them instead of reporting a rollback that undid nothing.
+      implicitCommitStatements: ORACLE_IMPLICIT_COMMIT_STATEMENTS,
+      implicitCommitExceptions: ORACLE_IMPLICIT_COMMIT_EXCEPTIONS,
       maintenanceOperations: ["analyze", "optimize", "kill"],
       // `optimize` now takes a TABLE and rebuilds that table's own indexes, which is
       // what SQL Server's identically worded control has always done. It used to take
@@ -1420,6 +1659,9 @@ export class OracleProvider extends SQLBaseProvider {
       // pool is opened against one service and nothing in the product can switch the
       // pluggable database on a live connection.
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       // Nine kinds, all nine answered by `ALL_OBJECTS.OBJECT_TYPE` (#789).
       //
       // No `index` kind, deliberately. Oracle's own dictionary models an index as an
@@ -1715,7 +1957,7 @@ export class OracleProvider extends SQLBaseProvider {
           const res = await conn.execute(sql, bindParams, {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: true,
-            fetchTypeHandler: lobFetchTypeHandler,
+            fetchTypeHandler: rowFetchTypeHandler,
           });
 
           return res;
@@ -1843,7 +2085,7 @@ export class OracleProvider extends SQLBaseProvider {
           return await this.txConn!.execute(sql, params || [], {
             outFormat: oracledb.OUT_FORMAT_OBJECT,
             autoCommit: false,
-            fetchTypeHandler: lobFetchTypeHandler,
+            fetchTypeHandler: rowFetchTypeHandler,
           });
         } catch (error) {
           throw mapDatabaseError(error, "oracle", sql);
@@ -1869,6 +2111,36 @@ export class OracleProvider extends SQLBaseProvider {
     } catch (error) {
       throw mapDatabaseError(error, "oracle", sql);
     }
+  }
+
+  /**
+   * One of the two column reads, with `VECTOR_INFO` where this server has it (#1209).
+   *
+   * The column came with the `VECTOR` type, and a server before 23ai refuses a read that
+   * names it with ORA-00904. That refusal is retried without the column, the same repair
+   * `listContainers()` makes for `ORACLE_MAINTAINED`. The provider also remembers it, so a
+   * server without the column pays for ONE refused read for this provider instance, and every
+   * later describe asks for the columns it has. A vector read there keeps `DATA_TYPE`, which
+   * is what this provider reported before #1209. On the servers measured that costs nothing:
+   * 21c has neither the column nor the type.
+   */
+  private async readColumns(
+    conn: oracledb.Connection,
+    statement: (vectorInfo: boolean) => string,
+    binds: unknown[],
+  ): Promise<Record<string, unknown>[]> {
+    if (this.vectorInfo) {
+      try {
+        return ((await this.runObjectQuery(conn, statement(true), binds)).rows ?? []) as Record<string, unknown>[];
+      } catch (error) {
+        // `runObjectQuery()` has already mapped the error, and the mapped error keeps Oracle's text.
+        if (!isMissingVectorInfoError(error)) throw error;
+        // Set 'vectorInfo' false only when actual isMissingVectorInfoError is thrown, else throw
+        // To be handled by the caller
+        this.vectorInfo = false;
+      }
+    }
+    return ((await this.runObjectQuery(conn, statement(false), binds)).rows ?? []) as Record<string, unknown>[];
   }
 
   /**
@@ -2040,10 +2312,7 @@ export class OracleProvider extends SQLBaseProvider {
     const binds = [owner, path[path.length - 1]];
     const conn = await this.pool!.getConnection();
     try {
-      const columns = ((await this.runObjectQuery(conn, OBJECT_COLUMNS_SQL, binds)).rows ?? []) as Record<
-        string,
-        unknown
-      >[];
+      const columns = await this.readColumns(conn, objectColumnsSql, binds);
       const primaryKey = ((await this.runObjectQuery(conn, OBJECT_PRIMARY_KEY_SQL, binds)).rows ?? []) as Record<
         string,
         unknown
@@ -2132,7 +2401,9 @@ export class OracleProvider extends SQLBaseProvider {
         byObjectName(
           ((await this.runObjectQuery(conn, sql, detailBinds)).rows ?? []) as (BulkRow & Record<string, unknown>)[],
         );
-      const columns = await read(statements.columns);
+      const columns = byObjectName(
+        (await this.readColumns(conn, statements.columns, detailBinds)) as (BulkRow & Record<string, unknown>)[],
+      );
       const primaryKey = await read(statements.primaryKey);
       const foreignKeys = await read(statements.foreignKeys);
       const indexes = await read(statements.indexes);
@@ -2440,7 +2711,7 @@ export class OracleProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
@@ -2449,16 +2720,23 @@ export class OracleProvider extends SQLBaseProvider {
         conn = await this.pool!.getConnection();
         let sql = "";
 
+        // What stands in the owner position of the DBMS_STATS calls: the connected user
+        // when the caller named no container, else the container as a quoted literal.
+        // `USER` is a keyword rather than a string, so it is NOT quoted.
+        const ownerArg = container ? `'${container.replace(/'/g, "''")}'` : "USER";
+
         switch (type) {
           case "analyze":
-            if (target) {
-              sql = `BEGIN DBMS_STATS.GATHER_TABLE_STATS(USER, '${target.replace(/'/g, "''")}'); END;`;
-            } else {
-              sql = `BEGIN DBMS_STATS.GATHER_SCHEMA_STATS(USER); END;`;
-            }
+            // `USER` is the connected user, so an owner named by the caller is passed
+            // through instead. Both arguments are inline-escaped literals because
+            // DBMS_STATS takes no binds for them, and an owner is upper-cased the way the
+            // data dictionary stores it unless the caller quoted the identifier.
+            sql = target
+              ? `BEGIN DBMS_STATS.GATHER_TABLE_STATS(${ownerArg}, '${target.replace(/'/g, "''")}'); END;`
+              : `BEGIN DBMS_STATS.GATHER_SCHEMA_STATS(${ownerArg}); END;`;
             break;
           case "optimize":
-            return await this.rebuildIndexes(conn, target);
+            return await this.rebuildIndexes(conn, target, container);
           case "kill":
             if (!target) {
               throw new QueryError("Target SID,SERIAL# is required for kill operation", "oracle");
@@ -2522,17 +2800,26 @@ export class OracleProvider extends SQLBaseProvider {
   private async rebuildIndexes(
     conn: oracledb.Connection,
     target?: string,
+    owner?: string,
   ): Promise<{ success: boolean; message: string }> {
     // The table name is a bind here, unlike the inline-escaped literals elsewhere in
-    // runMaintenance: this one sits in a WHERE clause, which does take a bind.
-    const indexes = target
-      ? await conn.execute(TABLE_INDEXES_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
-      : await conn.execute(SCHEMA_NORMAL_INDEXES_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+    // runMaintenance: this one sits in a WHERE clause, which does take a bind. An owner
+    // switches the question to the `ALL_*` catalogs, which answer for any schema rather
+    // than the connected one.
+    const indexes = owner
+      ? target
+        ? await conn.execute(OWNED_TABLE_INDEXES_SQL, [owner, target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+        : await conn.execute(OWNED_SCHEMA_NORMAL_INDEXES_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+      : target
+        ? await conn.execute(TABLE_INDEXES_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+        : await conn.execute(SCHEMA_NORMAL_INDEXES_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
     const rows = (indexes.rows || []) as Record<string, unknown>[];
 
     if (target && rows.length === 0) {
-      const known = await conn.execute(TABLE_IS_KNOWN_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+      const known = owner
+        ? await conn.execute(OWNED_TABLE_IS_KNOWN_SQL, [owner, target], { outFormat: oracledb.OUT_FORMAT_OBJECT })
+        : await conn.execute(TABLE_IS_KNOWN_SQL, [target], { outFormat: oracledb.OUT_FORMAT_OBJECT });
       if (((known.rows || []) as unknown[]).length === 0) {
         return {
           success: false,
@@ -2543,7 +2830,7 @@ export class OracleProvider extends SQLBaseProvider {
           // too, and blaming only the spelling would misdirect a caller who spelled it
           // right. `USER_TABLES` does hold a materialized view's container table, so that
           // case reaches the rebuild rather than this branch.
-          message: `OPTIMIZE failed: this schema owns no TABLE named ${target}. A view or a synonym has no index to rebuild, and an unquoted name is folded to upper case, so a lower-case spelling will not match the catalog.`,
+          message: `OPTIMIZE failed: ${owner ? `the schema "${owner}"` : "this schema"} owns no TABLE named ${target}. A view or a synonym has no index to rebuild, and an unquoted name is folded to upper case, so a lower-case spelling will not match the catalog.`,
         };
       }
     }
@@ -2556,8 +2843,13 @@ export class OracleProvider extends SQLBaseProvider {
     // and this reported success in 14 ms.
     let firstFailure: string | undefined;
     for (const row of rows) {
+      // With an owner this list came from `ALL_INDEXES`, which answers for any schema, so the
+      // rebuild names that owner too: a bare `ALTER INDEX` rebuilds in the CONNECTED schema,
+      // which is not the schema the indexes were read from (#1091 review).
+      const indexName = `"${String(row.INDEX_NAME).replace(/"/g, '""')}"`;
+      const qualified = owner ? `"${owner.replace(/"/g, '""')}".${indexName}` : indexName;
       try {
-        await conn.execute(`ALTER INDEX "${String(row.INDEX_NAME).replace(/"/g, '""')}" REBUILD`);
+        await conn.execute(`ALTER INDEX ${qualified} REBUILD`);
         rebuilt++;
       } catch (error) {
         // One index failing is still a completed run (an offline tablespace or an unusable
@@ -2857,15 +3149,16 @@ export class OracleProvider extends SQLBaseProvider {
     let conn: oracledb.Connection | undefined;
     try {
       conn = await this.pool!.getConnection();
-      const owner = this.config.user?.toUpperCase() || "";
 
-      const res = await conn.execute(TABLE_STATS_SQL, [owner], { outFormat: oracledb.OUT_FORMAT_OBJECT });
+      // The `USER_*` views answer for the connected user and take no owner bind: binding
+      // one the statement has no placeholder for is NJS-098.
+      const res = await conn.execute(TABLE_STATS_SQL, [], { outFormat: oracledb.OUT_FORMAT_OBJECT });
 
       return ((res.rows || []) as Record<string, unknown>[]).map((r) => {
         const tableSizeBytes = Number(r.TABLE_SIZE_BYTES || 0);
         const indexSizeBytes = Number(r.INDEX_SIZE_BYTES || 0);
         return {
-          schemaName: owner,
+          schemaName: String(r.OWNER),
           tableName: String(r.TABLE_NAME || ""),
           rowCount: Number(r.ROW_COUNT || 0),
           tableSize: formatBytes(tableSizeBytes),
@@ -2877,8 +3170,6 @@ export class OracleProvider extends SQLBaseProvider {
           lastAnalyze: r.LAST_ANALYZED ? new Date(String(r.LAST_ANALYZED)) : undefined,
         };
       });
-    } catch {
-      return [];
     } finally {
       if (conn) await conn.close();
     }
@@ -2920,8 +3211,6 @@ export class OracleProvider extends SQLBaseProvider {
           scans: 0,
         };
       });
-    } catch {
-      return [];
     } finally {
       if (conn) await conn.close();
     }

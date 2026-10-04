@@ -32,6 +32,8 @@
  */
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { isSQLiteInt64Digits } from "../sqlite-int64";
 import {
@@ -161,10 +163,23 @@ function decodeInteger(raw: unknown): number | string | null {
   return Number.isSafeInteger(parsed) ? parsed : raw;
 }
 
-/** Base64 as bytes. Blobs are the one SQLite type JSON cannot carry directly. */
+/**
+ * Base64 as bytes. Blobs are the one SQLite type JSON cannot carry directly.
+ *
+ * A `Buffer`, not a plain `Uint8Array`, because the rows leave through
+ * `JSON.stringify` on their way to the browser: a plain `Uint8Array` is written as an
+ * object keyed by index (`{"0":222,"1":173,...}`), which the grid showed as JSON and
+ * the SQL export wrote back as quoted text. A `Buffer` IS a `Uint8Array`, and it
+ * serializes to `{"type":"Buffer","data":[...]}`, the form `asBytes` in
+ * `src/lib/export/binary.ts` reads. The SQLite driver seam makes the same choice.
+ *
+ * A small decoded value is a slice of Node's shared Buffer pool, so its `.buffer` is
+ * that pool: a consumer that reaches past the view must honour `byteOffset` and
+ * `byteLength`, or copy the bytes out first.
+ */
 function decodeBlob(raw: unknown): Uint8Array | null {
   if (typeof raw !== "string") return null;
-  return Uint8Array.from(Buffer.from(raw, "base64"));
+  return Buffer.from(raw, "base64");
 }
 
 /**
@@ -440,7 +455,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
 
   public async serverVersion(): Promise<string | null> {
     try {
-      const response = await fetch(endpointUrl(this.origin, VERSION_PATH), {
+      const response = await httpTransportFetch(endpointUrl(this.origin, VERSION_PATH), {
         method: "GET",
         headers: this.headers(),
         // Not followed, like every other request: a 3xx is one more "no version".
@@ -449,7 +464,8 @@ export class LibSQLHranaTransport implements LibSQLTransport {
       if (!response.ok) return null;
       const text = (await response.text()).trim();
       return text === "" ? null : text;
-    } catch {
+    } catch (error) {
+      if (error instanceof DatabaseConfigError) throw error;
       // A deployment without the route, and a deployment that could not be
       // reached at all, are both "no version to show" for this call. The version
       // panel's connection has already been established by the time it runs, so a
@@ -473,7 +489,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     const url = endpointUrl(this.origin, path);
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await httpTransportFetch(url, {
         method: "POST",
         headers: this.headers(),
         body,
@@ -485,6 +501,7 @@ export class LibSQLHranaTransport implements LibSQLTransport {
         signal: timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs),
       });
     } catch (cause) {
+      if (cause instanceof DatabaseConfigError) throw cause;
       const reason = cause instanceof Error ? cause.message : String(cause);
       throw new LibSQLTransportError(`libSQL request failed: ${reason}`, 0);
     }

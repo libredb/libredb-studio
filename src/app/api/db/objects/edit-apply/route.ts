@@ -3,7 +3,7 @@ import {
   ObjectRouteError,
   handleObjectRequest,
   optionalStringArray,
-  readBoundedJson,
+  readObjectRouteBody,
   requireString,
 } from "@/lib/api/object-route";
 import { isObjectEditOutcomeShape, isObjectEditPlanShape } from "@/lib/api/object-edit-wire";
@@ -42,18 +42,19 @@ const ROUTE = "api/db/objects/edit-apply";
  * and is NOT wrapped in a try/catch, so any audit-sink failure propagates and the apply never
  * happens: the path fails closed on an unauditable write rather than performing it silently. That
  * is `src/lib/db/operations/execution.ts:11-20`'s rule for the agent path, applied here for the
- * same reason. The OUTCOME event is emitted after and IS wrapped, which is
- * `src/app/api/db/maintenance/route.ts:108-131`'s rule and its stated reason: the engine has
+ * same reason. The OUTCOME event is emitted after and IS wrapped, which is the rule of the
+ * completed-run audit row in `POST` of `src/app/api/db/maintenance/route.ts`, and its stated
+ * reason: the engine has
  * already acted, and a broken sink must never turn a completed apply into a 500 that invites a
  * retry that would be a SECOND DDL.
  *
  * WHAT AN EVENT MAY NEVER CARRY: the statement, the command payload, the reader's text, the
  * pre-image, the engine's message, the engine's code, the revision token, the plan token, or any
- * other part of the plan. `src/lib/audit.ts:456-461` forbids SQL text, request bodies and raw
- * `Error.message` by name, `AuditReason` is closed precisely so no path can put a driver string
- * into a record, and `MAX_AUDIT_FIELD_LENGTH` is 254, so an unvalidated string would be TRUNCATED
- * rather than refused. What the two events carry instead is the object address, the kind, the part,
- * the resolved strategy and one correlation id, which is `plan.planId`.
+ * other part of the plan. `emitAuditEvent`'s docblock in `src/lib/audit.ts` forbids SQL text,
+ * request bodies and raw `Error.message` by name, `AuditReason` is closed precisely so no path can
+ * put a driver string into a record, and `MAX_AUDIT_FIELD_LENGTH` is 254, so an unvalidated string
+ * would be TRUNCATED rather than refused. What the two events carry instead is the object address,
+ * the kind, the part, the resolved strategy and one correlation id, which is `plan.planId`.
  *
  * `target` IS `plan.path.join("/")`, which is design 5.5's own spelling and is used here unchanged,
  * with its limit named rather than discovered: it is a FOURTH spelling of a path key in a
@@ -187,7 +188,7 @@ export async function POST(req: NextRequest) {
 
       return outcome;
     },
-    { readBody: (request) => readBoundedJson(request, EDIT_BODY_BYTE_LIMIT) },
+    { readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
   );
 }
 

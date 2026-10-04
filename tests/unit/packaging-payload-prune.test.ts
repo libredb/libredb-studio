@@ -51,6 +51,13 @@ const KEEP_FILES = [
   "data/.gitkeep",
   "LICENSE",
   "README.md",
+  // The notices for the crates compiled into db2-node's addons (#786); the
+  // payload script copies it in after this prune, and a later prune run over
+  // the same payload must not take it out again.
+  "THIRD_PARTY_NOTICES.txt",
+  // The traced Db2 driver: an addon at a package root, the shape a root-level
+  // prune glob could hit.
+  "node_modules/db2-node/db2-node.linux-x64-gnu.node",
 ];
 
 /** Directories on the deny-list (planted with one file each; the prune
@@ -75,6 +82,9 @@ const EXTRA_DIRS = [
   "logs",
   "loop",
   "packaging",
+  // The agent-failure study: paper sources and Python scripts. Tracing it in made
+  // namcap demand a python dependency for the AUR package (#971).
+  "research",
   "scripts",
   "snap",
   "snap-payload",

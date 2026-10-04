@@ -1,0 +1,31 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant-mtls",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:15:08.062Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections to localhost with admin-key, the CA and the client certificate",
+    "op": "get_collections",
+    "credential": "admin-key",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/collections",
+      "headers": {
+        "api-key": "<api-key>"
+      },
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 59,
+    "body": "{\"result\":{\"collections\":[]},\"status\":\"ok\",\"time\":7.317e-6}"
+  }
+}

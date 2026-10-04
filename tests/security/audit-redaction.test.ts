@@ -23,9 +23,12 @@ const ALLOWED_KEYS = new Set([
   "reason",
   "ip",
   "connection",
+  "container",
+  "engine_user",
   "duration_ms",
   "bucket",
   "correlation_id",
+  "passkey",
 ]);
 
 function captureLine(emit: () => void): Record<string, unknown> {
@@ -95,6 +98,107 @@ describe("emitAuditEvent", () => {
     }
     expect(line.event).toBe("agent_operation");
     expect(String(line.correlation_id).length).toBe(254);
+  });
+
+  test("carries the container a maintenance call addressed, so two schemas cannot log alike", () => {
+    // #1091 review: `app.orders` and `public.orders` used to record identically, because the
+    // event carried only `target`. The container is what tells the two apart in the one channel
+    // an operator reconstructs a maintenance operation from.
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "maintenance",
+        action: "VACUUM",
+        target: "orders",
+        container: "app",
+        user: "admin",
+        result: "success",
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(line.container).toBe("app");
+    expect(line.route).toBe("orders");
+  });
+
+  test("omits the container entirely for an event that does not set one", () => {
+    // The field is optional on the line the way `reason` and `bucket` are: a whole-database
+    // request, or any event that never had a container, must not grow a null.
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "failure",
+        reason: "bad_credentials",
+      }),
+    );
+
+    expect(Object.hasOwn(line, "container")).toBe(false);
+  });
+
+  test("carries a passkey event's internal id under the same key allowlist and bound", () => {
+    // The passkey id is Studio's own row id, never the WebAuthn credential ID, but it is still a
+    // string field, so it gets the same allowlist and the same MAX_AUDIT_FIELD_LENGTH bound.
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "account",
+        action: "passkey_add",
+        target: "a@b.c",
+        user: "a@b.c",
+        result: "success",
+        reason: "account_changed",
+        passkey: "p".repeat(10_000),
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(String(line.passkey).length).toBe(254);
+  });
+
+  test("omits passkey entirely for an event that does not set one", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "login_failure",
+        action: "login",
+        target: "POST /api/auth/login",
+        user: "admin@libredb.org",
+        result: "failure",
+        reason: "bad_credentials",
+      }),
+    );
+
+    expect(Object.hasOwn(line, "passkey")).toBe(false);
+  });
+
+  test("records each passkey reason as a closed value", () => {
+    const reasons = [
+      "passkey_ceremony_invalid",
+      "passkey_origin_mismatch",
+      "passkey_unknown",
+      "passkey_rejected",
+      "passkey_counter",
+      "passkey_replayed",
+      "passkey_account_unavailable",
+      "passkey_duplicate",
+    ] as const;
+    for (const reason of reasons) {
+      const line = captureLine(() =>
+        emitAuditEvent({
+          type: "login_failure",
+          action: "login",
+          target: "POST /api/auth/passkey/sign-in",
+          user: "anonymous",
+          result: "failure",
+          reason,
+        }),
+      );
+      expect(line.reason).toBe(reason);
+    }
   });
 
   test("cannot be made to forge a second log line through the actor field", () => {
@@ -616,5 +720,50 @@ describe("emitAuditEvent", () => {
     );
 
     expect("duration_ms" in line).toBe(false);
+  });
+});
+
+describe("the engine principal on the audit line (spec 3.11)", () => {
+  test("a maintenance row that names its engine principal prints engine_user, under the key allowlist", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "maintenance",
+        action: "COMPACT",
+        target: "orders",
+        container: "app",
+        engineUser: "app_maintainer",
+        user: "admin",
+        result: "success",
+      }),
+    );
+
+    for (const key of Object.keys(line)) {
+      expect({ key, allowed: ALLOWED_KEYS.has(key) }).toEqual({ key, allowed: true });
+    }
+    expect(line.engine_user).toBe("app_maintainer");
+    expect(line.container).toBe("app");
+  });
+
+  test("a row that names no engine principal prints no engine_user key", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({ type: "maintenance", action: "VACUUM", target: "orders", user: "admin", result: "success" }),
+    );
+
+    expect(Object.hasOwn(line, "engine_user")).toBe(false);
+  });
+
+  test("engine_user is held to the bound every other field is held to", () => {
+    const line = captureLine(() =>
+      emitAuditEvent({
+        type: "maintenance",
+        action: "COMPACT",
+        target: "orders",
+        engineUser: "u".repeat(10_000),
+        user: "admin",
+        result: "success",
+      }),
+    );
+
+    expect(String(line.engine_user).length).toBe(254);
   });
 });

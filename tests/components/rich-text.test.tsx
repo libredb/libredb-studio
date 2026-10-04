@@ -152,6 +152,7 @@ describe("renderProse code hand-off to the editor", () => {
       "mongodb",
       "redis",
       "oracle",
+      "db2",
       "mssql",
       "libredb",
       "couchbase",
@@ -159,9 +160,15 @@ describe("renderProse code hand-off to the editor", () => {
       "druid",
       "trino",
       "prometheus",
+      "kafka",
+      "etcd",
+      "influxdb",
+      "influxdb3",
+      "oxia",
     ] satisfies DatabaseType[];
 
-    for (const engine of engines) {
+    // `influxql` is an alias rather than a type-id, so it rides beside the list instead of in it.
+    for (const engine of [...engines, "influxql"]) {
       const onApplySql = mock((_sql: string) => {});
       const { getByTestId, unmount } = render(
         <div>{renderProse(`${FENCE}${engine}\nSELECT 1;\n${FENCE}`, { onApplySql })}</div>,

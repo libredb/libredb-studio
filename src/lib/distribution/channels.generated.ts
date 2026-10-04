@@ -48,6 +48,7 @@ export const LIVE_CHANNELS: readonly ShowcaseChannel[] = [
   { id: "aws-marketplace", label: "AWS Marketplace", group: "paas" },
   { id: "winget", label: "winget", group: "packages" },
   { id: "chocolatey", label: "Chocolatey", group: "packages" },
+  { id: "scoop", label: "Scoop", group: "packages" },
   { id: "flatpark", label: "FlatPark (Flatpak)", group: "packages" },
   { id: "appimagehub", label: "AppImageHub", group: "packages" },
 ];

@@ -1,0 +1,526 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:18:21.674Z",
+    "database": "neo4j"
+  },
+  "statement": "MATCH (a)-[r:`DEPENDS_ON`]->(b) RETURN a, r, b LIMIT 100",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "a",
+      "r",
+      "b"
+    ],
+    "rows": [
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "gateway",
+            "uptime": 99.95
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:23",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "properties": {
+            "critical": true
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "auth",
+            "uptime": 99.99
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "checkout",
+            "uptime": 99.5
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:24",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:46",
+          "properties": {
+            "critical": true
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:46",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "ledger",
+            "uptime": 99.9
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "checkout",
+            "uptime": 99.5
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:25",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "properties": {
+            "critical": true
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "auth",
+            "uptime": 99.99
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:46",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "ledger",
+            "uptime": 99.9
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:26",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:46",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "properties": {
+            "critical": true
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "auth",
+            "uptime": 99.99
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "auth",
+            "uptime": 99.99
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:27",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "properties": {
+            "critical": false
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "checkout",
+            "uptime": 99.5
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:49",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "query",
+            "uptime": 99.1
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:28",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:49",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:48",
+          "properties": {
+            "critical": true
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:48",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "indexer",
+            "uptime": 98.7
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "gateway",
+            "uptime": 99.95
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:29",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:49",
+          "properties": {
+            "critical": false
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:49",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "query",
+            "uptime": 99.1
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:48",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "indexer",
+            "uptime": 98.7
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:30",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:48",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:50",
+          "properties": {
+            "critical": false
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:50",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 3,
+            "id": "warehouse",
+            "uptime": 97
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:50",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 3,
+            "id": "warehouse",
+            "uptime": 97
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:31",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:50",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:46",
+          "properties": {
+            "critical": false
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:46",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "ledger",
+            "uptime": 99.9
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "gateway",
+            "uptime": 99.95
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:32",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "properties": {
+            "critical": true
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:47",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "checkout",
+            "uptime": 99.5
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:49",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "query",
+            "uptime": 99.1
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:33",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:49",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "properties": {
+            "critical": true
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "auth",
+            "uptime": 99.99
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:48",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 2,
+            "id": "indexer",
+            "uptime": 98.7
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:34",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:48",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "properties": {
+            "critical": false
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:45",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "auth",
+            "uptime": 99.99
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:52",
+          "labels": [
+            "Weird Label"
+          ],
+          "properties": {
+            "name": "with a space",
+            "rank": 1
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:35",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:52",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "properties": {
+            "critical": false
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "gateway",
+            "uptime": 99.95
+          }
+        }
+      },
+      {
+        "a": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:54",
+          "labels": [
+            "Back`tick"
+          ],
+          "properties": {
+            "name": "with a backtick"
+          }
+        },
+        "r": {
+          "~graph": "relationship",
+          "elementId": "5:13eea926-330c-43fa-b582-42d3ab6a3a11:36",
+          "type": "DEPENDS_ON",
+          "startNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:54",
+          "endNodeElementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "properties": {
+            "critical": false
+          }
+        },
+        "b": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:44",
+          "labels": [
+            "Service"
+          ],
+          "properties": {
+            "tier": 1,
+            "id": "gateway",
+            "uptime": 99.95
+          }
+        }
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

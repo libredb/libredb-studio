@@ -1,0 +1,201 @@
+{
+  "$derived": {
+    "by": "tests/live/vector-evidence-derive.ts",
+    "from": "manifest.json"
+  },
+  "fields": {
+    "docs": [
+      {
+        "name": "text",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 384,
+        "metric": "cosine",
+        "nativeMetric": "Cosine",
+        "indexKind": "hnsw",
+        "nativeType": "float32(384)"
+      },
+      {
+        "name": "image",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 64,
+        "metric": "euclidean",
+        "nativeMetric": "Euclid",
+        "indexKind": "hnsw",
+        "nativeType": "float32(64)"
+      },
+      {
+        "name": "colbert",
+        "kind": "multi",
+        "dtype": "float32",
+        "dimension": 16,
+        "metric": "dot",
+        "nativeMetric": "Dot",
+        "indexKind": "hnsw",
+        "nativeType": "float32(16) multivector"
+      },
+      {
+        "name": "keywords",
+        "kind": "sparse",
+        "dtype": "float32",
+        "dimension": null,
+        "metric": "dot",
+        "nativeMetric": null,
+        "indexKind": "opaque",
+        "nativeType": "sparse float32"
+      }
+    ],
+    "edge_values": [
+      {
+        "name": "f16",
+        "kind": "dense",
+        "dtype": "float16",
+        "dimension": 4,
+        "metric": "euclidean",
+        "nativeMetric": "Euclid",
+        "indexKind": "hnsw",
+        "nativeType": "float16(4)"
+      },
+      {
+        "name": "u8",
+        "kind": "dense",
+        "dtype": "uint8",
+        "dimension": 4,
+        "metric": "euclidean",
+        "nativeMetric": "Euclid",
+        "indexKind": "hnsw",
+        "nativeType": "uint8(4)"
+      },
+      {
+        "name": "f32",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "euclidean",
+        "nativeMetric": "Euclid",
+        "indexKind": "hnsw",
+        "nativeType": "float32(4)"
+      },
+      {
+        "name": "multi",
+        "kind": "multi",
+        "dtype": "float32",
+        "dimension": 2,
+        "metric": "dot",
+        "nativeMetric": "Dot",
+        "indexKind": "hnsw",
+        "nativeType": "float32(2) multivector"
+      },
+      {
+        "name": "sp",
+        "kind": "sparse",
+        "dtype": "float32",
+        "dimension": null,
+        "metric": "dot",
+        "nativeMetric": null,
+        "indexKind": "opaque",
+        "nativeType": "sparse float32"
+      }
+    ],
+    "empty_novec": [],
+    "payload_spread": [
+      {
+        "name": "",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "dot",
+        "nativeMetric": "Dot",
+        "indexKind": "hnsw",
+        "nativeType": "float32(4)"
+      }
+    ],
+    "plain": [
+      {
+        "name": "",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "dot",
+        "nativeMetric": "Dot",
+        "indexKind": "hnsw",
+        "nativeType": "float32(4)"
+      }
+    ],
+    "scratch": [
+      {
+        "name": "",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 8,
+        "metric": "cosine",
+        "nativeMetric": "Cosine",
+        "indexKind": "hnsw",
+        "nativeType": "float32(8)"
+      },
+      {
+        "name": "sp",
+        "kind": "sparse",
+        "dtype": "float32",
+        "dimension": null,
+        "metric": "dot",
+        "nativeMetric": null,
+        "indexKind": "opaque",
+        "nativeType": "sparse float32"
+      }
+    ],
+    "small_dtypes": [
+      {
+        "name": "f16",
+        "kind": "dense",
+        "dtype": "float16",
+        "dimension": 8,
+        "metric": "cosine",
+        "nativeMetric": "Cosine",
+        "indexKind": "hnsw",
+        "nativeType": "float16(8)"
+      },
+      {
+        "name": "u8",
+        "kind": "dense",
+        "dtype": "uint8",
+        "dimension": 8,
+        "metric": "euclidean",
+        "nativeMetric": "Euclid",
+        "indexKind": "hnsw",
+        "nativeType": "uint8(8)"
+      },
+      {
+        "name": "t4",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 64,
+        "metric": "cosine",
+        "nativeMetric": "Cosine",
+        "indexKind": "hnsw",
+        "nativeType": "turbo4(64)"
+      },
+      {
+        "name": "manhattan",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "manhattan",
+        "nativeMetric": "Manhattan",
+        "indexKind": "hnsw",
+        "nativeType": "float32(4)"
+      },
+      {
+        "name": "sp_u8",
+        "kind": "sparse",
+        "dtype": "uint8",
+        "dimension": null,
+        "metric": "dot",
+        "nativeMetric": null,
+        "indexKind": "opaque",
+        "nativeType": "sparse uint8"
+      }
+    ]
+  }
+}

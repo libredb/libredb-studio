@@ -2,12 +2,13 @@
  * The one file in this provider that knows `cassandra-driver` exists
  * (issue #424, Phase 4).
  *
- * `cassandra-driver` 4.9.0 is pure JavaScript - no `binding.gyp`, no `.node`, no
+ * `cassandra-driver` 4.10.0 is pure JavaScript - no `binding.gyp`, no `.node`, no
  * postinstall - so unlike `oracledb` or `better-sqlite3` it adds no native module
- * to any distribution channel. It was exercised under bun 1.3.14 before this
- * provider was written: three sessions, 2500 concurrent prepared inserts, a
- * 400-statement batch, `eachRow` auto-paging 500 rows and `stream()` over 2000.
- * The historical bun segfault reports do not reproduce on this version.
+ * to any distribution channel. It was exercised under bun 1.3.14 on 4.9.0, whose
+ * `lib/` 4.10.0 ships byte-identical, before this provider was written: three
+ * sessions, 2500 concurrent prepared inserts, a 400-statement batch, `eachRow`
+ * auto-paging 500 rows and `stream()` over 2000. The historical bun segfault
+ * reports do not reproduce on this version.
  *
  * It DOES `require('kerberos')` inside a try/catch as an optional dependency, so
  * the package is listed in `serverExternalPackages` (next.config.ts) and in tsup's

@@ -15,7 +15,7 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  * Reproduced against the real sqlite driver before this existed, in
  * `tests/isolated/factory.test.ts` ("getOrCreateProvider cache isolation").
  *
- * So the key still carries the id, but the id is no longer the WHOLE of it. Three parts, framed
+ * So the key still carries the id, but the id is no longer the WHOLE of it. Four parts, framed
  * together so none can be forged on its own:
  *
  * - `connection.id`, which keeps the cache's existing per-record behaviour: two stored records
@@ -34,6 +34,12 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *   a different identity, but not `password`, because rotating a secret does not change which
  *   server you reach. For a CACHE key it must: a caller who sends the wrong password may not be
  *   handed a pool someone opened with the right one.
+ * - The read-only mode (#1089), spelled `read-only` for `readOnly: true` and `read-write` for
+ *   everything else, so `false` and an absent value are one mode and share a pool. A provider opened
+ *   read-only refuses every write, so a read-write caller handed its entry would have its writes
+ *   refused, and a read-only caller handed a read-write entry would have them sent. It is not in
+ *   `credentialDigest` or the fingerprint, whose rules are as whom a connection authenticates and
+ *   which server it reaches, and the mode changes neither.
  *
  * WHY THE ID IS SAFE IN THE KEY. Reaching a cached entry now costs the victim's id AND their
  * server AND their credentials. The first is guessable and the second is often public; the third
@@ -59,9 +65,10 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  */
 export async function providerCacheKey(connection: DatabaseConnection & WithTunnelFarEnd): Promise<string> {
   const [server, credentials] = await Promise.all([connectionFingerprint(connection), credentialDigest(connection)]);
+  const mode = connection.readOnly === true ? "read-only" : "read-write";
   // Length-framed like the two digests it joins: an id ending in a digit must not be able to
   // answer the same key as a shorter id followed by a longer fingerprint.
-  return [connection.id, server, credentials].map((value) => `${value.length}:${value}`).join("");
+  return [connection.id, server, credentials, mode].map((value) => `${value.length}:${value}`).join("");
 }
 
 /**
@@ -83,6 +90,16 @@ export async function providerCacheKey(connection: DatabaseConnection & WithTunn
  * - `ssl` decides both what the client PRESENTS (`clientCert`, `clientKey`, which are an
  *   authentication method on their own under PostgreSQL's `cert` auth) and what it TRUSTS
  *   (`mode`, `caCert`, `rejectUnauthorized`).
+ * - `saslMechanism` decides which stored credential the broker checks the password against,
+ *   because Kafka keeps a SCRAM credential per mechanism (#1088), so the same user and password
+ *   under another mechanism are another principal's secret. Nothing asks for it here: this list is
+ *   hand-kept and no compiler walks `DatabaseConnection` for it, and without it two connections
+ *   differing only in the mechanism would share one cached provider.
+ * - `allowInsecureAuth` decides whether a Db2 or InfluxDB provider sends its secret with no TLS (#786,
+ *   InfluxDB spec I7), and whether an Oxia provider sends its token without TLS, so a connection whose
+ *   consent was taken back must not be handed a provider opened under it.
+ * - `dataServers` decides which hosts receive the token (O6), so a connection whose list changed must
+ *   not be handed a provider whose policy admitted other hosts.
  * - The tunnel's SECRETS and `hostKeyFingerprint`. Its ROUTE is deliberately absent: `tunnelRoute`
  *   frames the four route values inside the fingerprint already, and this is the half that file
  *   explicitly leaves out as "a credential, not a route".
@@ -99,6 +116,9 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     ssl?.clientCert ?? "",
     ssl?.clientKey ?? "",
     ssl === undefined ? "" : String(ssl.rejectUnauthorized ?? ""),
+    connection.saslMechanism ?? "",
+    connection.allowInsecureAuth === true ? "insecure-auth" : "",
+    connection.dataServers ?? "",
     tunnel?.authMethod ?? "",
     tunnel?.password ?? "",
     tunnel?.privateKey ?? "",

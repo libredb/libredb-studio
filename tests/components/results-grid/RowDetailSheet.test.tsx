@@ -441,6 +441,23 @@ describe("results-grid/RowDetailSheet", () => {
     expect(parsed).toEqual(row);
   });
 
+  // The sheet shows a binary field as `\x` hex, and Copy JSON used to copy the Buffer
+  // form beside it, one number per byte (#1381).
+  test("Copy JSON writes a binary field as the hex the sheet shows", () => {
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 7, payload: { type: "Buffer", data: [0xde, 0xad, 0x00, 0xff] } }}
+        fields={["id", "payload"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({ id: 7, payload: "\\xdead00ff" });
+  });
+
   // ── Layout on a wide window (#800) ────────────────────────────────────────
 
   describe("layout", () => {
@@ -495,6 +512,84 @@ describe("results-grid/RowDetailSheet", () => {
       // Same parent, and that parent lays its children out in a row.
       expect(value.parentElement).toBe(label.parentElement);
       expect((label.parentElement!.getAttribute("class") ?? "").split(/\s+/)).toContain("flex");
+    });
+  });
+
+  test("a declared vector field shows its header line over the whole value, and its copy button copies the value alone", () => {
+    const { container } = render(
+      <RowDetailSheet
+        row={{ id: 1, embedding: [1, 0.5, 0] }}
+        fields={["id", "embedding"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        vectorColumns={{ embedding: { kind: "dense", dtype: "float32", dimension: 3 } }}
+      />,
+    );
+    expect(container.textContent).toContain("dense float32, 3 dims\n[1.0,0.5,0.0]");
+    const copyButtons = Array.from(container.querySelectorAll("button")).filter(
+      (b) => !b.textContent?.includes("Copy JSON") && !b.textContent?.includes("Copied"),
+    );
+    fireEvent.click(copyButtons[1]!);
+    expect(String(writeText.mock.calls[0]?.[0])).toBe("[1.0,0.5,0.0]");
+  });
+
+  test("without the declaration the same field is the JSON block it was", () => {
+    const { container } = render(
+      <RowDetailSheet
+        row={{ id: 1, embedding: [1, 0.5, 0] }}
+        fields={["id", "embedding"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+      />,
+    );
+    expect(container.textContent).toContain(JSON.stringify([1, 0.5, 0], null, 2));
+  });
+
+  test("a masked vector field shows and copies its mask", () => {
+    const sensitiveColumns = new Map<string, unknown>([["embedding", { type: "custom" }]]);
+    const { container, queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 1, embedding: [1, 0.5, 0] }}
+        fields={["id", "embedding"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+        vectorColumns={{ embedding: { kind: "dense", dtype: "float32", dimension: 3 } }}
+      />,
+    );
+    expect(queryByText("***MASKED***")).not.toBeNull();
+    const copyButtons = Array.from(container.querySelectorAll("button")).filter(
+      (b) => !b.textContent?.includes("Copy JSON") && !b.textContent?.includes("Copied"),
+    );
+    fireEvent.click(copyButtons[1]!);
+    expect(String(writeText.mock.calls[0]?.[0])).toBe("***MASKED***");
+  });
+
+  test("Copy JSON under masking writes an unmasked vector field as its value, not its header line", () => {
+    const sensitiveColumns = new Map<string, unknown>([["email", { type: "email" }]]);
+    const { queryByText } = render(
+      <RowDetailSheet
+        row={{ id: 1, email: "alice@example.com", embedding: [1, 0.5, 0] }}
+        fields={["id", "email", "embedding"]}
+        isOpen
+        onClose={mock(() => {})}
+        rowIndex={0}
+        maskingActive
+        sensitiveColumns={sensitiveColumns as never}
+        vectorColumns={{ embedding: { kind: "dense", dtype: "float32", dimension: 3 } }}
+      />,
+    );
+
+    fireEvent.click(queryByText("Copy JSON")!);
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(writeText.mock.calls[0]?.[0]))).toEqual({
+      id: "1",
+      email: "***MASKED***",
+      embedding: "[1.0,0.5,0.0]",
     });
   });
 });

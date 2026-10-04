@@ -160,21 +160,24 @@ type ResultFieldClass = "payload" | "summary";
  * it. Total over `QueryResult`, so a new result field must be classified before
  * it compiles.
  *
+ * `resultSets` is payload: every set of a multi-result batch, rows and all (#1312).
  * `explainPlan` is payload: a plan tree is the output of the operation that
  * produced it and can be arbitrarily large. `warnings` is not — engine notices
  * are bounded diagnostics, and run state already carries engine text in a
  * database-error refusal, so refusing them here would be inconsistent as well as
- * costly. `fields`, `columnTypes` and `pagination` describe shape, not rows.
+ * costly. `fields`, `columnTypes`, `vectorColumns` and `pagination` describe shape, not rows.
  */
 const QUERY_RESULT_FIELDS: Record<keyof QueryResult, ResultFieldClass> = {
   rows: "payload",
   explainPlan: "payload",
+  resultSets: "payload",
   fields: "summary",
   rowCount: "summary",
   executionTime: "summary",
   pagination: "summary",
   warnings: "summary",
   columnTypes: "summary",
+  vectorColumns: "summary",
 };
 
 /**

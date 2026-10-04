@@ -1,0 +1,50 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "7L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:58:40.194Z",
+  "surface": "admin.describeConfigs({ resources: [{ resourceType: BROKER, resourceName: \"1\" }] }) as reader (no ACL)"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Describing configs failed.",
+  "code": "PLT_KFK_MULTIPLE",
+  "class": "MultipleErrors",
+  "errors": [
+   {
+    "message": "Received response with error while executing API DescribeConfigs(v4)",
+    "code": "PLT_KFK_RESPONSE",
+    "response": {
+     "throttleTimeMs": 0,
+     "results": [
+      {
+       "errorCode": 31,
+       "errorMessage": "Cluster authorization failed.",
+       "resourceType": 4,
+       "resourceName": "1",
+       "configs": []
+      }
+     ]
+    },
+    "class": "ResponseError",
+    "errors": [
+     {
+      "message": "Cluster authorization failed.",
+      "code": "PLT_KFK_PROTOCOL",
+      "apiId": "CLUSTER_AUTHORIZATION_FAILED",
+      "apiCode": 31,
+      "serverErrorMessage": "Cluster authorization failed.",
+      "canRetry": false,
+      "hasStaleMetadata": false,
+      "needsRejoin": false,
+      "producerFenced": false,
+      "rebalanceInProgress": false,
+      "unknownMemberId": false,
+      "path": "/results/0",
+      "class": "ProtocolError"
+     }
+    ]
+   }
+  ]
+ }
+}

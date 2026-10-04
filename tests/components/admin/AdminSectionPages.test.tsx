@@ -18,10 +18,15 @@ mock.module("@/components/admin/tabs/AuditTab", () => ({
   AuditTab: () => React.createElement("div", { "data-testid": "audit-tab" }, "AuditTab"),
 }));
 
+mock.module("@/components/admin/tabs/AccountsTab", () => ({
+  AccountsTab: () => React.createElement("div", { "data-testid": "accounts-tab" }, "AccountsTab"),
+}));
+
 const { default: AdminOperationsPage } = await import("@/app/admin/operations/page");
 const { default: AdminMonitoringPage } = await import("@/app/admin/monitoring/page");
 const { default: AdminSecurityPage } = await import("@/app/admin/security/page");
 const { default: AdminAuditPage } = await import("@/app/admin/audit/page");
+const { default: AdminAccountsPage } = await import("@/app/admin/accounts/page");
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { cleanup, render } from "@testing-library/react";
@@ -53,5 +58,11 @@ describe("Admin section pages", () => {
     const { getByTestId } = render(<AdminAuditPage />);
     expect(getByTestId("admin-content-audit")).not.toBeNull();
     expect(getByTestId("audit-tab")).not.toBeNull();
+  });
+
+  test("accounts page renders AccountsTab", () => {
+    const { getByTestId } = render(<AdminAccountsPage />);
+    expect(getByTestId("admin-content-accounts")).not.toBeNull();
+    expect(getByTestId("accounts-tab")).not.toBeNull();
   });
 });

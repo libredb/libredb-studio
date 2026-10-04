@@ -211,6 +211,24 @@ The tokenizer is `private tokenize()` in the provider class.
 re-serialized with `JSON.stringify(parsed, null, 2)` for readability in the grid. Non-JSON
 strings are returned as-is. This mirrors how the Redis provider handles structured values.
 
+**A value holding a number the round trip would change is returned as stored, not pretty-printed.**
+`JSON.parse` rounds such a number with no error, so the round trip would print a different one.
+Measured on 0.2.2 on 2026-10-04:
+
+| Stored | Pretty-printed through `JSON.parse` |
+|---|---|
+| `{"n":9007199254740993}` | `"n": 9007199254740992` |
+| `{"amount":12345678901234567890.12}` | `"amount": 12345678901234567000` |
+| `{"ratio":0.1234567890123456789}` | `"ratio": 0.12345678901234568` |
+| `{"huge":1e400}` | `"huge": null` |
+
+Copy, every export and an edit-and-`put` cycle then carried the changed value while the file held the
+right one. `renderValue()` therefore asks
+[`carriesLossyNumber`](../../src/lib/db/utils/json-integers.ts) first, which compares every number
+literal outside a string with its own `JSON.stringify(JSON.parse(literal))`, and returns the stored
+text unchanged when any of them differs. A spelling the trip would merely change, such as `1.0`,
+keeps the stored text too. Every other JSON value is pretty-printed as before.
+
 ### 3.7 Monitoring is file-stat-based
 
 Unlike Redis (`INFO`) or PostgreSQL (system catalogs), LibreDB has no server introspection API.
@@ -367,7 +385,8 @@ Rules:
 | `range` | `key`, `value` | one row per key in `[start, end)` |
 
 JSON values in the `value` column are pretty-printed with two-space indentation when they parse
-successfully. Non-JSON strings are left as-is.
+successfully. Non-JSON strings are left as-is, and so is a JSON value holding a number that
+pretty-printing would round or re-spell ([§3.6](#36-json-pretty-printing-for-values)).
 
 The command grammar is **unchanged** by the catalog work — only the schema *view* (the object surface)
 became catalog-aware. `get`/`put`/`delete`/`prefix`/`range` still operate on the raw kv keyspace
@@ -1023,6 +1042,8 @@ for a second reason: the rows are derived groupings, see 5.3.
 | `supportsConnectionString` | `false` |
 | `defaultPort` | `null` |
 | `schemaRefreshPattern` | `\\b(put\|delete)\\b` |
+| `containerPathShapes` | `exact`: the declaration names no container level (`containerLevels` is absent), so only the empty path `[]` addresses a container and any segment is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
+| `objectKinds` | `table`, `collection`, `keyspace` ([§6.1](#61-the-object-surface-789)) |
 
 `schemaRefreshPattern` tells the UI which executed commands should trigger a schema (key-pattern)
 refresh — `put` and `delete` both add or remove keys.

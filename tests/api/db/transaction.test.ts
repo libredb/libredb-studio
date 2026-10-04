@@ -17,14 +17,16 @@ import {
   isAuthenticationError,
   isRetryableError,
   mapDatabaseError,
+  NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
+import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
 
 // ─── Create mock provider with transaction methods ──────────────────────────
 const baseMockProvider = createMockProvider();
 
 const mockTxProvider = {
   ...baseMockProvider,
-  beginTransaction: mock(async () => {}),
+  beginTransaction: mock(async (_options?: BeginTransactionOptions): Promise<BeginTransactionResult | void> => {}),
   commitTransaction: mock(async () => {}),
   rollbackTransaction: mock(async () => {}),
   isInTransaction: mock(() => true),
@@ -150,6 +152,57 @@ describe("POST /api/db/transaction", () => {
     }));
   });
 
+  for (const [count, providerLimited, expectedLimited] of [
+    [2, false, false],
+    [50, false, true],
+    [2, true, true],
+  ] as const) {
+    test(`reports a ${count}-row page with provider cut=${providerLimited} accurately`, async () => {
+      (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
+        rows: Array.from({ length: count }, (_, i) => ({ id: i + 1 })),
+        fields: ["id"],
+        rowCount: count,
+        executionTime: 1,
+        pagination: { limit: 50, offset: 0, hasMore: false, totalReturned: count, wasLimited: providerLimited },
+      });
+      const req = createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: { connection: validConnection, action: "query", sql: "SELECT * FROM users" },
+      });
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ pagination: unknown }>(res);
+      expect(res.status).toBe(200);
+      expect(data.pagination).toEqual({
+        limit: 50,
+        offset: 0,
+        hasMore: count === 50,
+        totalReturned: count,
+        wasLimited: expectedLimited,
+      });
+    });
+  }
+
+  // `JSON.stringify` writes NaN and both infinities as `null`; inside a transaction they
+  // travel as words just as on `/api/db/query`.
+  test("answers NaN and the infinities as words, not as null", async () => {
+    (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, ok: 1.5, z: null }],
+      fields: ["f", "r", "n", "ok", "z"],
+      rowCount: 1,
+      executionTime: 1,
+    });
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT * FROM floats" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ rows: unknown[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.rows).toEqual([{ f: "NaN", r: "Infinity", n: "-Infinity", ok: 1.5, z: null }]);
+  });
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 
@@ -178,6 +231,41 @@ describe("POST /api/db/transaction", () => {
     expect(data.status).toBe("active");
     expect(data.message).toBe("Transaction started");
     expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(1);
+    // A manual BEGIN does not ask for a reported state, and a provider that says nothing
+    // about the state is answered with `null`, not with a claim either way.
+    expect(mockTxProvider.beginTransaction.mock.calls[0]?.[0]).toEqual({ requireReportedState: false });
+    expect((data as { stateReported?: unknown }).stateReported).toBeNull();
+  });
+
+  test("begin carries what the provider learned about the server's transaction state", async () => {
+    mockTxProvider.beginTransaction.mockImplementation(async () => ({ stateReported: false }));
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "begin" },
+    });
+
+    const data = await parseResponseJSON<{ stateReported: boolean | null }>(await POST(req as never));
+    expect(data.stateReported).toBe(false);
+  });
+
+  test("SANDBOX's begin asks the provider for a reported state", async () => {
+    // Only a literal `true` asks: the flag refuses work, so nothing truthy-but-odd turns it on.
+    for (const [requireReportedState, expected] of [
+      [true, true],
+      ["yes", false],
+    ] as const) {
+      mockTxProvider.beginTransaction.mockClear();
+      const req = createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: {
+          connection: { ...validConnection, id: `sandbox-flag-${expected}` },
+          action: "begin",
+          requireReportedState,
+        },
+      });
+      expect((await POST(req as never)).status).toBe(200);
+      expect(mockTxProvider.beginTransaction.mock.calls[0]?.[0]).toEqual({ requireReportedState: expected });
+    }
   });
 
   test("commit action returns status committed", async () => {
@@ -210,6 +298,28 @@ describe("POST /api/db/transaction", () => {
     expect(mockTxProvider.rollbackTransaction).toHaveBeenCalledTimes(1);
   });
 
+  test("query action sends no copy of a multi-result text's every set (#1312)", async () => {
+    (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ a: 1 }],
+      fields: ["a"],
+      rowCount: 1,
+      executionTime: 1,
+      resultSets: [
+        { rows: [{ a: 1 }], fields: ["a"] },
+        { rows: [{ b: 2 }], fields: ["b"] },
+      ],
+    });
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT 1 AS a; SELECT 2 AS b" },
+    });
+
+    const data = await parseResponseJSON<Record<string, unknown>>(await POST(req as never));
+
+    expect(data.rows).toEqual([{ a: 1 }]);
+    expect(Object.hasOwn(data, "resultSets")).toBe(false);
+  });
+
   test("query action with sql returns result with pagination", async () => {
     const req = createMockRequest("/api/db/transaction", {
       method: "POST",
@@ -230,7 +340,7 @@ describe("POST /api/db/transaction", () => {
     expect(data.rows).toBeDefined();
     expect(data.fields).toBeDefined();
     expect(data.pagination).toBeDefined();
-    expect(data.pagination.wasLimited).toBeDefined();
+    expect(data.pagination.wasLimited).toBe(false);
   });
 
   /**
@@ -632,6 +742,40 @@ describe("POST /api/db/transaction", () => {
     openableProvider();
     asSession("bob", "admin");
     expect((await call("d72-failed-begin", { action: "begin" })).status).toBe(200);
+  });
+
+  test("a statement that ended the transaction is reported, and the connection is handed back", async () => {
+    // The provider ends its session when the server says the statement committed (MySQL DDL,
+    // a typed COMMIT). The caller is told, instead of being left to ask for a ROLLBACK that
+    // would answer success and undo nothing.
+    const provider = openableProvider();
+    mockTxProvider.queryInTransaction.mockImplementationOnce(async () => {
+      provider.expire();
+      return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+    });
+
+    asSession("alice");
+    await call("sandbox-ddl", { action: "begin" });
+    const res = await call("sandbox-ddl", { action: "query", sql: "CREATE TABLE t (id INT)" });
+
+    expect(res.status).toBe(200);
+    expect((await parseResponseJSON<{ inTransaction: boolean }>(res)).inTransaction).toBe(false);
+
+    // The record went with the transaction: another session may begin at once.
+    asSession("bob", "admin");
+    expect((await call("sandbox-ddl", { action: "begin" })).status).toBe(200);
+  });
+
+  test("a begin the server opened no transaction for answers 400 with the reason", async () => {
+    mockTxProvider.beginTransaction.mockImplementation(async () => {
+      throw new QueryError(NO_TRANSACTION_OPENED, "postgres");
+    });
+
+    const res = await call("no-tx-engine", { action: "begin" });
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe(NO_TRANSACTION_OPENED);
   });
 
   test("DatabaseError returns 500", async () => {

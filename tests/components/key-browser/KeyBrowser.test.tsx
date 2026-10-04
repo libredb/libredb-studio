@@ -10,7 +10,7 @@ import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../
 import { KeyBrowser, type KeyPatternRequest } from "@/components/key-browser";
 import { KEY_ROW_HEIGHT } from "@/components/key-browser/tree";
 import { HELD_KEY_LIMIT, SCAN_ALL_MAX_KEYS } from "@/components/key-browser/use-key-scan";
-import type { ContainerLevelSpec } from "@/lib/db/types";
+import type { ContainerLevelSpec, KeyScanCapability, KeyScanPage } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -600,6 +600,24 @@ describe("KeyBrowser", () => {
       expect(opened).toHaveLength(2);
     });
 
+    test("a held key activates once, and its repeats are still swallowed", async () => {
+      // Every auto-repeat of a held Enter or Space arrives as another keydown, so without the
+      // guard one long press opened a tab per repeat.
+      const opened: Array<[string, string | null]> = [];
+      mockGlobalFetch({ "/api/db/keys/scan": page(["app:env"], "0", 1, { "app:env": "string" }) });
+      renderBrowser(CAPABILITY, (key, type) => opened.push([key, type]));
+      await waitFor(() => {
+        expect(rows()).toEqual(["app:*@0"]);
+      });
+      fireEvent.click(screen.getByText("app:*"));
+
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: " " })).toBe(false);
+      // `false` is a keydown whose default was prevented, so a repeat never scrolls the list.
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: " ", repeat: true })).toBe(false);
+      expect(fireEvent.keyDown(screen.getByText("app:env"), { key: "Enter", repeat: true })).toBe(false);
+      expect(opened).toEqual([["app:env", "string"]]);
+    });
+
     test("is not actionable when nobody is listening", async () => {
       const fetchMock = mockGlobalFetch({
         "/api/db/keys/scan": page(["app:env"], "0", 1, { "app:env": "string" }),
@@ -937,6 +955,26 @@ describe("KeyBrowser", () => {
       fireEvent.keyDown(screen.getByTestId("key-browser-database"), { key: "Enter" });
       expect(rows()).toEqual(["0@0", "app:*@1"]);
       expect(fetchMock.mock.calls.length).toBe(before);
+    });
+
+    test("a held key toggles the database row once, and its repeats are swallowed", async () => {
+      mockGlobalFetch(redisRoutes(page(["app:env"], "0", 1531)));
+      renderLevel();
+      await waitFor(() => {
+        expect(rows()).toEqual(["0@0", "app:*@1"]);
+      });
+      const database = () => screen.getByTestId("key-browser-database");
+
+      // The press itself toggles: the control.
+      expect(fireEvent.keyDown(database(), { key: "Enter" })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      // Each auto-repeat is another keydown, prevented all the same, and none toggles the row back.
+      // Checked after each one, because two unguarded toggles would land back where they began.
+      expect(fireEvent.keyDown(database(), { key: "Enter", repeat: true })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      expect(fireEvent.keyDown(database(), { key: " ", repeat: true })).toBe(false);
+      expect(database().getAttribute("aria-expanded")).toBe("false");
+      expect(rows()).toEqual(["0@0"]);
     });
 
     test("says so and keeps walking when the database list cannot be read", async () => {
@@ -1327,5 +1365,433 @@ describe("KeyBrowser", () => {
     expect(rows().length).toBe(18);
     expect(rows()[0]).toBe("0@0");
     expect(screen.getByTestId("key-browser-database")).toBeDefined();
+  });
+});
+
+/**
+ * The panel in a declared shape (spec 3.4, 4.6): an engine that walks a byte-ordered key space under
+ * `/`, reads a literal prefix, counts the walk's own range and leaves out a key it cannot name. The
+ * Redis tests above declare no shape and are the other half of the rule: every text here is derived
+ * from the declaration, and a `glob` one answers today's strings byte for byte.
+ */
+describe("a panel in a declared shape", () => {
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  const ETCD_SCAN: KeyScanCapability = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "walk",
+  };
+  const REASON = "a key that is not UTF-8 text has no name a row could carry; a typed get shows it in base64.";
+
+  /**
+   * An etcd-shaped route: every key under the prefix the body names, in one page, with the walk's own
+   * count as its total. Every body it was sent is kept, so a test can read the prefix it asked for.
+   */
+  function prefixRoute(keys: readonly string[], extra: Partial<KeyScanPage> = {}) {
+    const seen: Array<Record<string, unknown>> = [];
+    const handler = async (req: Request): Promise<MockFetchResponse> => {
+      const body = (await req.json()) as Record<string, unknown>;
+      seen.push(body);
+      const prefix = typeof body.pattern === "string" ? body.pattern : "";
+      const under = keys.filter((key) => key.startsWith(prefix));
+      return { json: { keys: under, cursor: "0", total: under.length, types: {}, ...extra } };
+    };
+    return { handler, seen };
+  }
+
+  /** Open every folder the panel draws, one twisty at a time, the way a reader would. */
+  function openEveryFolder(): void {
+    // Bounded, so a twisty that did not open fails this test instead of spinning it.
+    for (let pass = 0; pass < 100; pass += 1) {
+      const closed = screen
+        .queryAllByTestId("key-browser-twisty")
+        .find((twisty) => twisty.getAttribute("aria-label")?.startsWith("Expand "));
+      if (closed === undefined) return;
+      fireEvent.click(closed);
+    }
+    throw new Error("a folder of the key tree did not open");
+  }
+
+  /** The row whose label is exactly `label`, or undefined. */
+  function rowLabelled(label: string): HTMLElement | undefined {
+    return screen.queryAllByRole("treeitem").find((row) => row.querySelector("span.truncate")?.textContent === label);
+  }
+
+  test("draws a key that starts with the separator under the / root row, beside a key that has none", async () => {
+    const route = prefixRoute(["/apisix/routes/1", "/feature-flag", "k3s/x", "plain"]);
+    const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0", "k3s/*@0", "plain@0"]);
+    });
+    const root = rowLabelled("/*") as HTMLElement;
+    // The root row is named, titled and announced: none of the three is the empty string.
+    expect(root.getAttribute("title")).toBe("/*");
+    expect(within(root).getByTestId("key-browser-twisty").getAttribute("aria-label")).toBe("Expand /");
+    // No container level is declared, so the panel reads no container list and draws no database row.
+    expect(fetchMock.mock.calls.every((call) => String(call[0]).includes("/api/db/keys/scan"))).toBe(true);
+
+    fireEvent.click(screen.getByText("/*"));
+    expect(rows()).toEqual(["/*@0", "apisix/*@1", "/feature-flag@1", "k3s/*@0", "plain@0"]);
+  });
+
+  test("Review Focus 1: every straining key is drawn, named and handed over as its stored string", async () => {
+    const keys = [
+      "/a//b",
+      "/app/",
+      "/app/cfg",
+      "/",
+      "/sp ace/k",
+      "/q'uo\"te/k",
+      "/nl\nx/k",
+      "/#h/k",
+      "/$d/k",
+      "/-lead/k",
+      "-top",
+      "plain",
+    ];
+    const opened: string[] = [];
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(keys, { skipped: { count: 1, reason: REASON } }).handler });
+    renderBrowser(ETCD_SCAN, (key) => opened.push(key));
+    await waitFor(() => {
+      expect(rows()).toContain("/*@0");
+    });
+
+    openEveryFolder();
+
+    // No row is nameless, untitled or announced with an empty name, and none carries a replacement
+    // character: the key no path can carry was left out by the page and is only counted.
+    for (const row of screen.queryAllByRole("treeitem")) {
+      const label = row.querySelector("span.truncate")?.textContent ?? "";
+      expect(label).not.toBe("");
+      expect(row.getAttribute("title") ?? "").not.toBe("");
+      expect(`${label}${row.getAttribute("title")}`).not.toContain("�");
+    }
+    for (const twisty of screen.queryAllByTestId("key-browser-twisty")) {
+      expect(twisty.getAttribute("aria-label")).toMatch(/^Collapse [\s\S]+$/);
+    }
+    expect(screen.getByTestId("key-browser-skipped").textContent).toBe(`1 key left out of this walk: ${REASON}`);
+
+    // Every key is one row labelled with its full name, and activating it hands over exactly that name.
+    for (const key of keys) {
+      const row = rowLabelled(key);
+      expect({ key, drawn: row !== undefined }).toEqual({ key, drawn: true });
+      fireEvent.click(row as HTMLElement);
+    }
+    expect(opened).toEqual(keys);
+  });
+
+  test("walks the prefix a reader types, with its trailing star dropped, and nothing past it", async () => {
+    const route = prefixRoute(["/app/a", "/app/b", "/apple/x"]);
+    mockGlobalFetch({ "/api/db/keys/scan": route.handler });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+
+    fireEvent.change(screen.getByLabelText("Key prefix"), { target: { value: "/app/*" } });
+
+    await waitFor(() => {
+      expect(progress()).toBe("Scanned 2/2");
+    });
+    expect(route.seen.map((body) => body.pattern ?? "")).toEqual(["", "/app/"]);
+    // The scope sentence names the prefix the walk read, not the text in the box.
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(
+      "out of the keys under /app/ this connection may read",
+    );
+    fireEvent.click(screen.getByText("/*"));
+    fireEvent.click(screen.getByText("app/*"));
+    // `/apple/x` begins with `/app` and not with `/app/`: a prefix that lost its separator would have
+    // walked it, and the box keeps the separator for exactly that reason.
+    expect(rows()).toEqual(["/*@0", "app/*@1", "/app/a@2", "/app/b@2"]);
+  });
+
+  test("says Scanned against the walk's own count whatever the prefix, and names what the connection may read", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a", "/app/b", "/cfg/x"]).handler });
+    const { rerender } = render(<KeyBrowser connection={CONNECTION} capability={ETCD_SCAN} />);
+    await waitFor(() => {
+      expect(progress()).toBe("Scanned 3/3");
+    });
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(
+      "out of every key this connection may read",
+    );
+
+    // A prefix is a position in an ordered range and not a filtered pass, so the word stays and the
+    // pair stays a fraction: the scope sentence is what moves.
+    rerender(<KeyBrowser connection={CONNECTION} capability={ETCD_SCAN} request={{ pattern: "/app/" }} />);
+    await waitFor(() => {
+      expect(progress()).toBe("Scanned 2/2");
+    });
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(
+      "out of the keys under /app/ this connection may read",
+    );
+  });
+
+  const UNCOUNTED_SCAN: KeyScanCapability = { ...ETCD_SCAN, totalScope: "none" };
+  const NO_TOTAL = "keys read so far: this engine publishes no key count, so no total is shown";
+
+  test("says Scanned with no total, and why, on an engine that publishes no key count", async () => {
+    // The provider answers 0 under "none", and the panel does not read it.
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a", "/app/b", "/cfg/x"], { total: 0 }).handler });
+    const { rerender } = render(<KeyBrowser connection={CONNECTION} capability={UNCOUNTED_SCAN} />);
+    await waitFor(() => {
+      expect(progress()).toBe("Scanned 3");
+    });
+    expect(progress()).not.toContain("/");
+    expect(progress()).not.toContain(" of ");
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(NO_TOTAL);
+
+    // A prefix keeps the word and still draws no denominator.
+    rerender(<KeyBrowser connection={CONNECTION} capability={UNCOUNTED_SCAN} request={{ pattern: "/app/" }} />);
+    await waitFor(() => {
+      expect(progress()).toBe("Scanned 2");
+    });
+    expect(screen.getByTestId("key-browser-progress").getAttribute("title")).toBe(NO_TOTAL);
+  });
+
+  test("draws no count on the database row of an engine that publishes none", async () => {
+    // No shipped engine declares both a database level and "none"; the row's cell is still held to the scope.
+    mockGlobalFetch({
+      "/api/db/keys/scan": { json: { keys: ["app:env"], cursor: "0", total: 0, types: {} } },
+      "/api/db/objects/containers": { json: DATABASES },
+    });
+    render(
+      <KeyBrowser
+        connection={CONNECTION}
+        capability={{ defaultCount: 500, maxCount: 1000, totalScope: "none" }}
+        databaseLevel={LEVEL}
+      />,
+    );
+    await waitFor(() => {
+      expect(rows()).toEqual(["0@0", "app:*@1"]);
+    });
+    expect(screen.getByTestId("key-browser-database-total").textContent).toBe("");
+    expect(progress()).toBe("Scanned 1");
+  });
+
+  test("words the box, its hint and the filter in the declared shape", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a"]).handler });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+
+    const box = screen.getByLabelText("Key prefix");
+    expect(box.getAttribute("placeholder")).toBe("Key prefix, e.g. /app/config/");
+    // A `*` typed into the box is data, and its hint says so.
+    expect(box.getAttribute("title")).toContain("A * is part of the prefix");
+    expect(screen.queryByLabelText("Match pattern")).toBeNull();
+    expect(screen.getByLabelText("Filter the keys found").getAttribute("title")).toContain("`/`-separated segments");
+  });
+
+  test("keeps Redis's words when the declaration names no shape", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": page(["app:env"], "0") });
+    renderBrowser();
+    await waitFor(() => {
+      expect(rows()).toEqual(["app:*@0"]);
+    });
+
+    const box = screen.getByLabelText("Match pattern");
+    expect(box.getAttribute("placeholder")).toBe("Match pattern, e.g. app:cache:*");
+    // No hint on a glob box, as before the shape existed.
+    expect(box.getAttribute("title")).toBeNull();
+    expect(screen.getByLabelText("Filter the keys found").getAttribute("title")).toBe(
+      "Narrows the keys already loaded, without asking the server. Matches any part of a key's full name, or one of its `:`-separated segments.",
+    );
+  });
+
+  test("keeps Redis's Load more title when the declaration names no shape", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": page(["app:env", "app:x"], "7") });
+    renderBrowser();
+    await waitFor(() => {
+      expect(rows()).toEqual(["app:*@0"]);
+    });
+
+    fireEvent.click(screen.getByText("app:*"));
+
+    // Byte for byte the title the panel drew before the shape existed: a `SCAN` page is a batch of
+    // buckets, and the prefix wording says the walk reads one ordered range, which is false here.
+    expect(screen.getAllByTestId("key-browser-load-more")[0].getAttribute("title")).toBe(
+      "Ask the server for one more page under this prefix. It answers a batch of buckets rather than a listing, so a page can hold only keys already loaded.",
+    );
+  });
+
+  test("finds a full key, a prefix and a key with no leading separator in the filter", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/apisix/routes/1", "/apisix/plugins", "k3s/x"]).handler });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0", "k3s/*@0"]);
+    });
+
+    fireEvent.change(screen.getByLabelText("Filter the keys found"), { target: { value: "/apisix/routes/1" } });
+    expect(rows()).toEqual(["/*@0", "apisix/*@1", "routes/*@2", "/apisix/routes/1@3"]);
+
+    fireEvent.change(screen.getByLabelText("Filter the keys found"), { target: { value: "/apisix/" } });
+    expect(rows()).toEqual(["/*@0", "apisix/*@1", "routes/*@2", "/apisix/routes/1@3", "/apisix/plugins@2"]);
+
+    fireEvent.change(screen.getByLabelText("Filter the keys found"), { target: { value: "k3s/x" } });
+    expect(rows()).toEqual(["k3s/*@0", "k3s/x@1"]);
+  });
+
+  test("says what a prefix's Load more reads", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": { json: { keys: ["/app/a"], cursor: "k:L2FwcC9h:3:9", total: 9, types: {} } },
+    });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+
+    fireEvent.click(screen.getByText("/*"));
+
+    expect(screen.getAllByTestId("key-browser-load-more")[0].getAttribute("title")).toContain(
+      "the next page of the keys under this prefix",
+    );
+  });
+
+  test("asks the Load more under a folder named by a star for that folder's own range", async () => {
+    // The walk's first page does not end it, so an open folder offers Load more; the scoped page does.
+    const seen: Array<Record<string, unknown>> = [];
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) => {
+        const body = (await req.json()) as Record<string, unknown>;
+        seen.push(body);
+        return body.pattern === undefined
+          ? { json: { keys: ["/a/*/x", "/a/b/1"], cursor: "k:L2EvYi8x:3:9", total: 9, types: {} } }
+          : { json: { keys: ["/a/*/y"], cursor: "0", total: 2, types: {} } };
+      },
+    });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+    fireEvent.click(screen.getByText("/*"));
+    fireEvent.click(screen.getByText("a/*"));
+    fireEvent.click(screen.getByText("*/*"));
+    expect(rows()).toEqual(["/*@0", "a/*@1", "*/*@2", "/a/*/x@3", "b/*@2"]);
+
+    // The first Load more row in the tree is the one under `*/*`, the deepest open folder.
+    fireEvent.click(screen.getAllByTestId("key-browser-load-more")[0]);
+
+    await waitFor(() => {
+      expect(rows()).toContain("/a/*/y@3");
+    });
+    // Under a prefix declaration a `*` in a key is a byte: the press reads `/a/*/`, the folder's own
+    // range, and not `/a/`, the range of the folder above it.
+    expect(seen.at(-1)).toMatchObject({ pattern: "/a/*/", cursor: "0" });
+  });
+
+  test("names the prefix in the held-limit sentence", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": {
+        json: {
+          keys: Array.from({ length: HELD_KEY_LIMIT + 1 }, (_, index) => `/bulk/${index % 3}/${index}`),
+          cursor: "k:L2J1bGs:4:12000",
+          total: 12_000,
+          types: {},
+        },
+      },
+    });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-held").textContent).toContain(
+        "Narrow the prefix to walk a smaller key space.",
+      );
+    });
+  });
+
+  test("keeps Redis's held-limit sentence when the declaration names no shape", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": page(
+        Array.from({ length: HELD_KEY_LIMIT + 1 }, (_, index) => `bulk:${index % 3}:${index}`),
+        "7",
+        12_000,
+      ),
+    });
+    renderBrowser();
+
+    // Byte for byte the sentence the panel drew before the shape existed.
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-held").textContent).toBe(
+        "Holding 10,000 keys, which is this panel's limit. Narrow the pattern to walk a smaller key space.",
+      );
+    });
+  });
+
+  test("counts the keys the walk left out in one line, with the count's thousands marked", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": prefixRoute(["/app/a"], { skipped: { count: 1234, reason: REASON } }).handler,
+    });
+    renderBrowser(ETCD_SCAN);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("key-browser-skipped").textContent).toBe(`1,234 keys left out of this walk: ${REASON}`);
+    });
+  });
+
+  test("reads a row's type by the key's full name in the declared separator", async () => {
+    // etcd describes no types, but the panel's contract is the engine's: a page's type map is keyed by
+    // the key's full name, and a row looks its own up by the same join its activation hands over.
+    mockGlobalFetch({
+      "/api/db/keys/scan": prefixRoute(["/app/cfg", "/app/x/y"], { types: { "/app/cfg": "text", "/app/x/y": "json" } })
+        .handler,
+    });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+
+    fireEvent.click(screen.getByText("/*"));
+    fireEvent.click(screen.getByText("app/*"));
+    fireEvent.click(screen.getByText("x/*"));
+
+    expect(typesByRow()).toEqual({ "/*": "", "app/*": "", "x/*": "", "/app/x/y": "json", "/app/cfg": "text" });
+  });
+
+  test("titles a row that is both a key and a prefix in the declared separator", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app", "/app/cfg"]).handler });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+
+    fireEvent.click(screen.getByText("/*"));
+
+    // `/app` is a key and the prefix of `/app/cfg`. The row is labelled with the key's full name, and
+    // its title says the prefix beside it with the declared folder mark, `/*`, never Redis's `:*`.
+    expect(rows()).toEqual(["/*@0", "/app@1"]);
+    expect(rowLabelled("/app")?.getAttribute("title")).toBe("/app is a key of this database and a prefix: /app/*");
+  });
+
+  test("draws no skipped line for a walk whose pages left nothing out", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": prefixRoute(["/app/a"]).handler });
+    renderBrowser(ETCD_SCAN);
+    await waitFor(() => {
+      expect(rows()).toEqual(["/*@0"]);
+    });
+
+    expect(screen.queryByTestId("key-browser-skipped")).toBeNull();
+  });
+
+  test("gives Redis's own root row a name its twisty announces, and finds a key by its leading colon", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": page([":foo", "bar"], "0", 2) });
+    renderBrowser();
+    await waitFor(() => {
+      expect(rows()).toEqual([":*@0", "bar@0"]);
+    });
+    const root = rowLabelled(":*") as HTMLElement;
+    expect(root.getAttribute("title")).toBe(":*");
+    expect(within(root).getByTestId("key-browser-twisty").getAttribute("aria-label")).toBe("Expand :");
+
+    fireEvent.change(screen.getByLabelText("Filter the keys found"), { target: { value: ":foo" } });
+    expect(rows()).toEqual([":*@0", ":foo@1"]);
   });
 });

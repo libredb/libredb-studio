@@ -14,16 +14,18 @@
   <a href="README_ja.md">日本語</a> ·
   <a href="README_es.md">Español</a> ·
   <b>اردو</b> ·
-  <a href="README_hi.md">हिन्दी</a>
+  <a href="README_hi.md">हिन्दी</a> ·
+  <a href="README_pt.md">Português (Brasil)</a> ·
+  <a href="README_ru.md">Русский</a>
 </p>
 
 <p align="center" dir="rtl">
-  PostgreSQL project میں درج شدہ:
+  PostgreSQL project میں شامل:
   <a href="https://www.postgresql.org/about/news/libredb-studio-an-open-source-self-hosted-sql-ide-for-postgresql-in-the-browser-3368/">News</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/PostgreSQL_Clients#LibreDB_Studio">PostgreSQL Clients</a>
   ·
-  <a href="https://www.postgresql.org/download/products/1/">Software Catalogue</a>
+  <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
 </p>
@@ -36,10 +38,13 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>،
   <a href="https://docs.yugabyte.com/stable/integrations/tools/libredb-studio/">YugabyteDB</a>،
   <a href="https://www.dragonflydb.io/docs/integrations/libredb-studio">DragonflyDB</a>،
-  <a href="https://opensearch.org/community-projects/">OpenSearch</a>،
-  <a href="https://duckdb.org/docs/preview/guides/sql_editors/libredb_studio">DuckDB</a>
+  <a href="https://opensearch.org/community-projects/#:~:text=LibreDB%20Studio">OpenSearch</a>،
+  <a href="https://duckdb.org/docs/preview/guides/sql_editors/libredb_studio">DuckDB</a>،
+  <a href="https://docs.starrocks.io/docs/integrations/IDE_integrations/LibreDB_Studio/">StarRocks</a>،
+  <a href="https://aiven.io/docs/products/postgresql/howto/connect-libredb-studio">Aiven for PostgreSQL</a>،
+  <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>
   اور
-  <a href="https://docs.starrocks.io/docs/integrations/IDE_integrations/LibreDB_Studio/">StarRocks</a>
+  <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
   کی سرکاری دستاویزات میں بھی درج ہے
 </p>
 
@@ -54,7 +59,7 @@
   <a href="https://artifacthub.io/packages/helm/libredb-studio/libredb-studio"><img src="https://img.shields.io/endpoint?url=https://artifacthub.io/badge/repository/libredb-studio" alt="Artifact Hub"></a>
 </p>
 
-> <span dir="rtl">یہ اردو README کمیونٹی کا ترجمہ ہے اور انگریزی نسخے سے پیچھے ہو سکتا ہے۔ فرق کی صورت میں [انگریزی نسخہ](README.md) معتبر ہے۔</span>
+> <span dir="rtl">یہ اردو README کمیونٹی کا ترجمہ ہے اور انگریزی نسخے سے پیچھے ہو سکتا ہے۔ فرق کی صورت میں [انگریزی نسخہ](README.md) درست ہے۔</span>
 
 <div dir="rtl" align="right">
 
@@ -78,17 +83,17 @@ npx @libredb/studio
 
 > <span dir="rtl">اگر browser localhost یا HTTPS سے نہیں کھلتا (مثلاً مقامی network پر `http://192.168.x.x:3000`)، تو `AUTH_COOKIE_SECURE=false` شامل کرنا ہوگا۔ ورنہ health check تو کامیاب ہو جاتا ہے، لیکن login خاموشی سے ناکام ہو کر بار بار login screen پر واپس لے آتا ہے۔</span>
 
-<span dir="rtl">کیا آپ کو Helm، Homebrew، Snap، winget یا deb/rpm چاہیے؟ نیچے [تنصیب](#تنصیب) ملاحظہ کریں۔</span>
+<span dir="rtl">کیا آپ کو Helm، Homebrew، Snap، winget یا deb/rpm چاہیے؟ نیچے [انسٹالیشن](#انسٹالیشن) دیکھیں۔</span>
 
 ## <span dir="rtl">ایک اور database tool کیوں؟</span>
 
 <span dir="rtl">آپ managed platform پر Postgres بناتے ہیں اور وہ چالیس سیکنڈ میں تیار ہو جاتا ہے۔</span>
 
-<span dir="rtl">پھر آپ دیکھنا چاہتے ہیں کہ اس کے اندر کیا ہے۔ اس کے لیے یا تو آپ internet پر ایک port کھولتے ہیں، یا desktop client نصب کر کے SSH tunnel بناتے ہیں، یا ہار مان کر command line پر واپس آ جاتے ہیں۔ database کو چالیس سیکنڈ لگے؛ اس میں جھانکنے کا راستہ بنانے میں پوری شام گزر گئی۔</span>
+<span dir="rtl">پھر آپ دیکھنا چاہتے ہیں کہ اس کے اندر کیا ہے۔ اس کے لیے یا تو آپ internet پر ایک port کھولتے ہیں، یا desktop client نصب کر کے SSH tunnel بناتے ہیں، یا ہار مان کر command line پر واپس آ جاتے ہیں۔ database کو چالیس سیکنڈ لگے؛ اس میں access کرنے کا طریقہ بنانے میں پوری شام گزر گئی۔</span>
 
-<span dir="rtl">اب اسے scale پر تصور کریں۔ application Postgres استعمال کرتی ہے، documents Mongo میں ہیں، cache Redis میں ہے، اور events ClickHouse میں ہیں۔ چار databases، چار clients، اور credentials کے چار مجموعے۔ پیر کو کوئی نیا شخص آتا ہے تو اپنی پہلی code line لکھنے سے پہلے اسے معلوم کرنا پڑتا ہے کہ کون سا data کہاں ہے، wiki اور تین private chats میں connection strings ڈھونڈنی پڑتی ہیں، VPN access کا انتظار کرنا پڑتا ہے، اور ہر engine کے لیے الگ tool نصب کرنا پڑتا ہے۔</span>
+<span dir="rtl">اب اسے scale پر سوچیں۔ application Postgres استعمال کرتی ہے، documents Mongo میں ہیں، cache Redis میں ہے، اور events ClickHouse میں ہیں۔ چار databases، چار clients، اور credentials کے چار مجموعے۔ پیر کو کوئی نیا شخص آتا ہے تو اپنی پہلی code line لکھنے سے پہلے اسے معلوم کرنا پڑتا ہے کہ کون سا data کہاں ہے، wiki اور تین private chats میں connection strings ڈھونڈنی پڑتی ہیں، VPN access کا انتظار کرنا پڑتا ہے، اور ہر engine کے لیے الگ tool نصب کرنا پڑتا ہے۔</span>
 
-<span dir="rtl">**Databases پہلے ہی منتقل ہو چکے ہیں۔** وہ Kubernetes، managed clouds اور customer VPCs میں چلے گئے ہیں جن تک bastion کے ذریعے ہی پہنچا جا سکتا ہے۔ **لیکن انہیں پڑھنے کے tools ان کے ساتھ منتقل نہیں ہوئے۔** وہ اب بھی desktop applications ہیں: بھاری، per-seat license والے، استعمال سے پہلے install ہونے والے، اور اس مفروضے پر بنے ہوئے کہ آپ کے پاس صرف ایک database، ایک laptop اور ایک ایسا شخص ہے جو کبھی device تبدیل نہیں کرتا۔</span>
+<span dir="rtl">**Databases پہلے ہی منتقل ہو چکے ہیں۔** وہ Kubernetes، managed clouds اور customer VPCs میں چلے گئے ہیں جن تک bastion کے ذریعے ہی پہنچا جا سکتا ہے۔ **لیکن انہیں پڑھنے کے tools ان کے ساتھ منتقل نہیں ہوئے۔** وہ اب بھی desktop applications ہیں: بھاری، per-seat license والے، استعمال سے پہلے install ہونے والے، اور اس  سوچ کے ساتھ بنے ہوئے کہ آپ کے پاس صرف ایک database، ایک laptop اور ایک ایسا شخص ہے جو کبھی device تبدیل نہیں کرتا۔</span>
 
 <span dir="rtl">LibreDB Studio اس کے برعکس راستہ اختیار کرتا ہے: **tool کو data کے پاس لے جایا جاتا ہے، data کو tool کے پاس نہیں۔**</span>
 
@@ -106,11 +111,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">سترہ engines، ایک interface</span>
+### <span dir="rtl">چھبیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Apache Trino · Apache Cassandra · Prometheus
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia
 
 <div dir="rtl" align="right">
 
@@ -123,6 +128,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **PostgreSQL** | `pg` | <span dir="rtl">مکمل SQL IDE، EXPLAIN execution plans، transactions، query cancellation (`pg_cancel_backend`)</span> |
 | **MySQL** | `mysql2` | <span dir="rtl">مکمل SQL IDE، EXPLAIN، transactions، query cancellation (`KILL QUERY`)</span> |
 | **Oracle** | <span dir="rtl">`oracledb` (Thin موڈ)</span> | <span dir="rtl">مکمل SQL IDE، `FETCH FIRST N ROWS` کے ساتھ pagination، `V$` monitoring views، `ANALYZE TABLE`، `ALTER INDEX REBUILD`، transactions</span> |
+| **Db2 LUW** | <span dir="rtl">`db2-node` (Rust میں لکھا DRDA client، native N-API addon، IBM client کے بغیر)</span> | <span dir="rtl">Db2 for Linux, UNIX and Windows کے لیے SQL IDE: tables، views، materialized query tables، aliases، sequences، modules، routines اور triggers کا schema browser، محفوظ definitions، `FETCH FIRST` / `OFFSET` pagination، ہر table پر RUNSTATS اور REORG۔ TLS لازمی ہے جب تک آپ جان بوجھ کر اسے بند نہ کریں، کیونکہ اس کے بغیر driver password کو cleartext میں بھیجتا ہے۔ Driver کچھ types غلط پڑھتا ہے (non-ASCII text، 2^53 سے بڑا BIGINT، BOOLEAN، XML، LOBs)، اس لیے inline editing، import، EXPLAIN، transactions اور cancel بند ہیں؛ معلوم مسائل [`docs/providers/db2.md`](docs/providers/db2.md) میں ہیں</span> |
 | **SQL Server** | <span dir="rtl">`mssql` (tedious)</span> | <span dir="rtl">مکمل SQL IDE، `TOP N` / `OFFSET FETCH` کے ساتھ pagination، `sys.dm_*` DMV، `UPDATE STATISTICS`، `DBCC CHECKDB`، transactions، Azure SQL کی خودکار شناخت</span> |
 | **SQLite** | <span dir="rtl">`bun:sqlite` / `node:sqlite` (runtime کے مطابق)</span> | <span dir="rtl">file یا memory میں مکمل SQL IDE</span> |
 | **libSQL** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (Hrana protocol، `POST /v2/pipeline`، port 8080)</span> | <span dir="rtl">مکمل SQL IDE۔ یہی type-id آپ کے اپنے libSQL server (`sqld`) اور Turso Cloud، دونوں سے connect کرتا ہے۔ یہ network پر SQLite dialect ہے، اور `dbstat` کے ساتھ tables اور indexes کا اصل size bytes میں دیتا ہے۔ credential password نہیں بلکہ auth token ہے۔ صرف دو maintenance operations ہیں، Reindex اور integrity check: server `VACUUM`، `ANALYZE` اور `PRAGMA optimize` کو رد کرتا ہے</span> |
@@ -133,14 +139,22 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 | **Apache Druid** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (`POST /druid/v2/sql`)</span> | <span dir="rtl">read-only SQL IDE، native query کا EXPLAIN tree، `INFORMATION_SCHEMA` سے introspection، `sys.*` کے ساتھ monitoring</span> |
 | **Elasticsearch** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (`POST /_sql?format=json`، port 9200)</span> | <span dir="rtl">read-only SQL IDE، mapping پر مبنی indexes اور fields explorer، cluster health، اور ہر index کے لیے document count اور size۔ EXPLAIN نہیں، maintenance operations نہیں، اور slow queries یا sessions panels بھی نہیں۔ Elasticsearch SQL میں `OFFSET` بھی نہیں، اس لیے results کا دوسرا page نہیں مانگا جا سکتا</span> |
 | **OpenSearch** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (`POST /_plugins/_sql`، port 9200)</span> | <span dir="rtl">Elasticsearch والا ہی provider module، وہی read-only IDE اور وہی explorer۔ یہاں `LIMIT n OFFSET m` کام کرتا ہے، اس لیے pagination دستیاب ہے</span> |
-| **Apache Trino** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (client protocol، `POST /v1/statement`، port 8080)</span> | <span dir="rtl">تمام configured catalogs پر مکمل SQL IDE، connection میں مقرر catalog کے `information_schema` کے ذریعے schema tree، `system.runtime` اور `jmx` سے monitoring، `SHOW STATS` سے اصل row counts، query cancellation اور `kill_query` کے ساتھ maintenance۔ Trino query engine ہے اور data store نہیں کرتا، اس لیے کہیں بھی primary keys، foreign keys یا indexes declare نہیں کرتا: ER diagram میں lines کے بغیر boxes ہوتے ہیں، inline editing بند رہتی ہے، اور capacity panel مصنوعی size بنانے کے بجائے catalogs دکھاتا ہے۔ ناکام statements بھی HTTP 200 کے ساتھ واپس آتی ہیں؛ اور cluster میں authentication بند ہو تب بھی plain HTTP پر password رد کر دیا جاتا ہے</span> |
-| **Apache Cassandra** | <span dir="rtl">`cassandra-driver` (خالص JavaScript، native modules کے بغیر)</span> | <span dir="rtl">native protocol (port 9042) پر CQL IDE، partition اور clustering keys نشان زد keyspaces explorer، `system_views` سے summary، uptime اور چلتی ہوئی statements۔ Connection کے لیے **`localDataCenter` لازمی ہے**: اس کے بغیر driver connect کرنے سے انکار کر دیتا ہے۔ EXPLAIN نہیں (CQL grammar میں یہ keyword موجود ہی نہیں)، query cancellation نہیں (protocol میں cancel frame نہیں) اور maintenance operations نہیں (compaction، repair اور flush، `nodetool` کے JMX operations ہیں)۔ اور **یہ کوئی row count یا size نہیں دکھاتا**: Cassandra صرف disk پر پہلے سے لکھی files سے partitions کا تخمینہ (500 rows کی table کو 143 پڑھا گیا) اور MiB میں integers (19,476 bytes کی table کو `1 MiB` پڑھا جاتا ہے) دے سکتا ہے، اس لیے غلط number دکھانے کے بجائے ہم کچھ نہیں دکھاتے</span> |
+| **Trino** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (client protocol، `POST /v1/statement`، port 8080)</span> | <span dir="rtl">تمام configured catalogs پر مکمل SQL IDE، connection میں مقرر catalog کے `information_schema` کے ذریعے schema tree، `system.runtime` اور `jmx` سے monitoring، `SHOW STATS` سے اصل row counts، query cancellation اور `kill_query` کے ساتھ maintenance۔ Trino query engine ہے اور data store نہیں کرتا، اس لیے کہیں بھی primary keys، foreign keys یا indexes declare نہیں کرتا: ER diagram میں lines کے بغیر boxes ہوتے ہیں، inline editing بند رہتی ہے، اور capacity panel مصنوعی size بنانے کے بجائے catalogs دکھاتا ہے۔ ناکام statements بھی HTTP 200 کے ساتھ واپس آتی ہیں؛ اور cluster میں authentication بند ہو تب بھی plain HTTP پر password رد کر دیا جاتا ہے</span> |
+| **Apache Cassandra** | <span dir="rtl">`cassandra-driver` (خالص JavaScript، native modules کے بغیر)</span> | <span dir="rtl">native protocol (port 9042) پر CQL IDE، partition اور clustering keys نشان زد keyspaces explorer، `system_views` سے summary، uptime اور چلتی ہوئی statements۔ Connection کے لیے **`localDataCenter` لازمی ہے**: اس کے بغیر driver connect کرنے سے انکار کر دیتا ہے۔ EXPLAIN نہیں (CQL grammar میں یہ keyword موجود ہی نہیں)، query cancellation نہیں (protocol میں cancel frame نہیں) اور maintenance operations نہیں (compaction، repair اور flush، `nodetool` کے JMX operations ہیں)۔ اور **یہ کوئی row count یا size نہیں دکھاتا**: Cassandra صرف disk پر پہلے سے لکھی files سے partitions کا اندازہ (500 rows کی table کو 143 پڑھا گیا) اور MiB میں integers (19,476 bytes کی table کو `1 MiB` پڑھا جاتا ہے) دے سکتا ہے، اس لیے غلط number دکھانے کے بجائے ہم کچھ نہیں دکھاتے</span> |
 | **Prometheus** | <span dir="rtl">کوئی مخصوص driver نہیں؛ براہِ راست HTTP (Prometheus HTTP API، port 9090)</span> | <span dir="rtl">PromQL editor جو text کو بغیر تبدیلی server تک بھیجتا ہے، نتائج grid اور chart tab میں (`rate(x[5m])[1h:1m]` جیسی step والی subquery timestamps پر lines کی صورت میں chart ہوتی ہے: tab پہلی series سے کھلتا ہے، Y-Axis menu سے مزید series شامل کی جا سکتی ہیں، ہر series کی ایک line، اور ایک وقت میں زیادہ سے زیادہ آٹھ lines بنتی ہیں، اس سے آگے chart "Showing first 8 of N series" دکھاتا ہے؛ لیکن chart کسی missing sample کو، اور numbers کے درمیان `NaN` یا `Inf` کو، 0 پر دکھاتا ہے، اس لیے الگ الگ وقت پر scrape ہونے والے targets کی raw range query جھوٹے صفر دکھاتی ہے)، metrics explorer جس میں label names columns اور metadata source ہیں، rule groups اور recording و alerting rules (firing alert tree میں نشان زد)، scrape pools اور targets (down target tree میں نشان زد)، اور health، version، uptime اور TSDB statistics۔ Design کے لحاظ سے صرف پڑھنے کے لیے: admin API یا remote write استعمال نہیں ہوتے، EXPLAIN نہیں (parse endpoint ابھی experimental ہے) اور maintenance operations نہیں۔ Plain HTTP پر credential رد نہیں ہوتا بلکہ بھیج دیا جاتا ہے، اس لیے جس network پر آپ کا اختیار نہ ہو وہاں TLS فعال کریں</span> |
+| **Apache Kafka** | <span dir="rtl">`@platformatic/kafka` (pure TypeScript، port 9092)</span> | <span dir="rtl">JSON read request جو topic کو partition، offset یا timestamp سے، سب سے پرانے offset سے یا تازہ ترین messages پڑھتی ہے؛ keys، values اور headers JSON، text یا base64 میں decode ہوتے ہیں اور Confluent format والی value اپنے schema id سے نشان زد ہوتی ہے؛ topic browser میں partitions اور non-default configs (offline یا under-replicated topic نشان زد)، دونوں protocols کے consumer groups اور ہر partition کا lag، brokers اور ان کے configs، اور health، topic count اور disk size۔ ساخت کے لحاظ سے صرف پڑھنے کے لیے: نہ produce، نہ offset commit، نہ consumer group میں شمولیت، نہ topic بنانا۔ Custom CA اور client certificates کے ساتھ TLS، اور SASL PLAIN یا SCRAM صرف TLS پر؛ SSH tunnel نہیں، کیونکہ brokers تک ان کے advertised addresses پر پہنچا جاتا ہے</span> |
+| **etcd** | <span dir="rtl">`@grpc/grpc-js` (pure JavaScript، gRPC، port 2379)</span> | <span dir="rtl">Editor میں etcdctl کا subset (`get`، `put`، `del`، `txn`، leases، محدود `watch`، members، alarms، users اور roles)؛ tree میں key-prefix groups اور Keys panel میں ہر key؛ کسی key کی value اس کی revision سے guarded ایک transaction میں edit ہوتی ہے؛ admins کے لیے compaction، defragmentation اور alarm disarm، ہر ایک connection کا نام type کر کے confirm ہوتا ہے۔ Kubernetes prefix یا `compact_rev_key` پر ہر write refuse ہوتا ہے، اور Kubernetes secrets اور protobuf یا encrypted values کبھی نہیں دکھتیں۔ Custom CA کے ساتھ TLS، client certificates (ان کا Common Name etcd user) اور password sign-in صرف TLS پر؛ SSH tunnel؛ seed میں اعلان کردہ read-only mode</span> |
+| **Neo4j** | <span dir="rtl">`neo4j-driver-lite` (pure JavaScript، Bolt، port 7687)</span> | <span dir="rtl">Neo4j 5.26 LTS کے لیے editor میں read-only Cypher، ہر run میں ایک statement؛ tree میں node labels اور relationship types (ان کی properties بطور columns)، indexes اور constraints؛ grid میں nodes، relationships اور paths بطور tagged JSON cells، 64-bit integers اور temporal values بغیر precision کھوئے؛ Community کے فراہم کردہ monitoring panels۔ ہر statement پہلے اپنے tokens پر read policy سے، پھر `EXPLAIN` کے ذریعے server کی اپنی classification سے (جسے allowlisted SHOW form چھوڑ دیتا ہے) گزرتا ہے اور READ session میں چلتا ہے، اس لیے کسی write کو تینوں layers توڑنی ہوں گی۔ EXPLAIN یا PROFILE view، maintenance، agent execution اور MCP `run_read_query` نہیں؛ Custom CA کے ساتھ TLS اور SSH tunnel؛ connection string نہیں</span> |
+| **Milvus** | <span dir="rtl">`@grpc/grpc-js` (pure JavaScript، gRPC، port 19530)</span> | <span dir="rtl">Editor میں Milvus کی اپنی REST v2 requests (ایک JSON body کے ساتھ `POST /v2/vectordb/<route>`) سے reads، exact counts اور ہر vector type پر vector search، BM25 اور hybrid search سمیت؛ tree میں databases اور collections، ان کے fields، partitions، indexes اور load state؛ dimension کے ساتھ vector cells اور پوری value کی copy؛ admins کے لیے preview اور confirmation کے ساتھ Load اور Release۔ Studio کوئی data نہیں لکھتا، server سے کسی دوسری service کو call کروانے والی requests refuse کرتا ہے، اور default `root` password پر warning دیتا ہے۔ Custom CA اور client certificates کے ساتھ TLS؛ password صرف TLS پر، loopback پر یا SSH tunnel سے؛ seed میں اعلان کردہ read-only mode</span> |
+| **Qdrant** | <span dir="rtl">کوئی نہیں، HTTP (Qdrant کا REST API، port 6333)</span> | <span dir="rtl">Editor میں Qdrant کی اپنی REST requests (ایک JSON body کے ساتھ `METHOD /path`)، سترہ read routes: points پڑھنا، scroll، exact counts، facets، اور dense، sparse اور multivector data پر queries، batches اور grouped queries، local BM25 model سمیت؛ tree میں collections، ان کے vectors، payload indexes اور payload keys کا sampled view؛ dimension کے ساتھ vector cells اور پوری value کی copy۔ Studio کچھ نہیں لکھتا، local BM25 کے سوا ہر inference input refuse کرتا ہے، اور بغیر expiry یا manage access والے JWT پر warning دیتا ہے۔ Custom CA اور client certificates کے ساتھ TLS؛ key صرف TLS پر، loopback پر یا SSH tunnel سے؛ seed میں اعلان کردہ read-only mode</span> |
+| **InfluxDB (InfluxQL)** | <span dir="rtl">کوئی نہیں، HTTP (InfluxDB کا v1 API، port 8086)</span> | <span dir="rtl">Editor میں read-only InfluxQL، v1 `/query` API پر InfluxDB 1.x، 2.x اور 3 کے لیے، ہر run میں ایک `SELECT`، `SHOW` یا `EXPLAIN`؛ tree میں databases اور measurements، ہر measurement کے tags اور fields اس کے columns کے طور پر، اور grid میں 2^53 سے بڑے integers اور nanosecond timestamps بالکل درست۔ Connection میں کچھ بھی لکھا ہو، read-only: 1.x اور 2.x پر `DROP DATABASE` سے پہلے Studio کی اپنی read policy ہی واحد رکاوٹ ہے، اس لیے ہر دوسرا statement کسی بھی request سے پہلے refuse ہوتا ہے، اور کوئی write endpoint نہیں چھوا جاتا۔ User اور password، یا password field میں token؛ plain HTTP پر ایسے host کو credential، جو نہ loopback ہے نہ tunnel سے، تب تک refuse ہوتا ہے جب تک connection رضامندی نہ دے؛ InfluxDB 3 server پر `_internal` کبھی نہیں پڑھا جاتا</span> |
+| **InfluxDB 3 (SQL)** | <span dir="rtl">کوئی نہیں، HTTP (InfluxDB 3 کا SQL API، port 8181)</span> | <span dir="rtl">Editor میں read-only SQL، InfluxDB 3 Core اور Enterprise کے لیے؛ tree میں connection کے database کی tables، ان کے columns کے ساتھ۔ Connection میں کچھ بھی لکھا ہو، read-only: route table کسی write، token، cache یا plugin endpoint تک نہیں پہنچتی، اور configure endpoints میں سے صرف database listing تک، ایک GET، جو statement read keyword سے شروع نہیں ہوتا وہ کسی بھی request سے پہلے refuse ہوتا ہے، اور اس کے اوپر server کا planner ہر write refuse کرتا ہے۔ ایک token، کوئی user نام نہیں؛ plain HTTP پر ایسے host کو token، جو نہ loopback ہے نہ tunnel سے، تب تک refuse ہوتا ہے جب تک connection رضامندی نہ دے؛ 1.x یا 2.x server پر لگانے سے InfluxDB (InfluxQL) چننے کو کہتا ہے</span> |
+| **Oxia** | <span dir="rtl">`@grpc/grpc-js` (pure JavaScript، gRPC، port 6648)</span> | <span dir="rtl">Read-only `oxia client` commands (`get`، `list`، `range-scan`)، tree میں shards اور Keys panel میں ہر key</span> |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
 <div dir="rtl" align="right">
 
-> <span dir="rtl">**Transport security cross-cutting ہے، engine پر منحصر نہیں۔** SSH tunnel provider کے connection کھولنے سے پہلے قائم ہوتا ہے، اور connection کو local endpoint کی طرف rewrite کر دیتا ہے: اسی لیے یہ engine پر منحصر نہیں اور host اور port کے ساتھ configured ہر connection پر لاگو ہوتا ہے۔ Connection string سے بھری جانے والی connections (MongoDB، Couchbase اور ClickHouse میں ممکن) میں host یا port نہیں ہوتا، اس لیے وہ tunnel سے نہیں گزرتیں؛ SQLite اور DuckDB میں بھی دونوں نہیں ہوتے۔ SSL/TLS panel فی الحال PostgreSQL، MySQL، SQL Server، Couchbase، ClickHouse، Druid، Elasticsearch، OpenSearch، Trino اور Prometheus پر اثر انداز ہوتا ہے؛ Trino میں یہ اختیاری نہیں کیونکہ coordinator plain HTTP پر passwords رد کرتا ہے۔ Oracle، MongoDB اور Redis اس option کو نظر انداز کرتے ہیں، اس لیے ان تینوں کا traffic encrypted ہو گا یا نہیں، اس کا انحصار connection string پر ہے، dialog کے انتخاب پر نہیں۔</span>
+> <span dir="rtl">**Transport security cross-cutting ہے، engine پر منحصر نہیں۔** SSH tunnel provider کے connection کھولنے سے پہلے قائم ہوتا ہے، اور connection کو local endpoint کی طرف rewrite کر دیتا ہے: اسی لیے یہ engine پر منحصر نہیں اور host اور port کے ساتھ configured ہر connection پر لاگو ہوتا ہے، سوائے Kafka connection کے، جو tunnel رد کرتی ہے کیونکہ Kafka client ہر broker تک اس کے advertised address پر پہنچتا ہے، جسے ایک address forward کرنے والا tunnel نہیں لے جا سکتا۔ Connection string سے بھری جانے والی connections (MongoDB، Couchbase اور ClickHouse میں ممکن) میں host یا port نہیں ہوتا، اس لیے وہ tunnel سے نہیں گزرتیں؛ SQLite اور DuckDB میں بھی دونوں نہیں ہوتے۔ SSL/TLS panel فی الحال PostgreSQL، MySQL، SQL Server، Couchbase، ClickHouse، Druid، Elasticsearch، OpenSearch، Trino، Prometheus اور Apache Kafka پر اثر انداز ہوتا ہے؛ Trino میں یہ اختیاری نہیں کیونکہ coordinator plain HTTP پر passwords رد کرتا ہے۔ Oracle، MongoDB اور Redis اس option کو نظر انداز کرتے ہیں، اس لیے ان تینوں کا traffic encrypted ہو گا یا نہیں، اس کا انحصار connection string پر ہے، dialog کے انتخاب پر نہیں۔</span>
 
 > <span dir="rtl">SQL کے لیے بنے interface میں Redis کو لانے کی بنیاد ایک convention ہے۔ `getSchema()` `SCAN` سے key prefixes کو "tables" میں گروپ کرتا ہے، جو block نہیں کرتا (**کبھی بھی `KEYS *` نہیں**)؛ health اور metrics `INFO` سے، جبکہ slow queries اور sessions `SLOWLOG GET` اور `CLIENT LIST` سے آتی ہیں۔</span>
 
@@ -167,7 +181,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 <li><span dir="rtl"><strong><span dir="ltr">Query security analysis</span></strong>: destructive statements (DELETE، DROP، TRUNCATE) کے لیے execution سے پہلے risk evaluation۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">Query explanation</span></strong>: EXPLAIN plans کو سادہ زبان میں، optimization suggestions کے ساتھ۔</span></li>
 <li><span dir="rtl"><strong><span dir="ltr">Schema knowledge</span></strong>: connected database کا schema context کے طور پر بھیجا جاتا ہے، اس لیے explanation آپ کی اپنی tables اور columns کے نام لیتی ہے۔</span></li>
-<li><span dir="rtl"><strong><span dir="ltr">Data profiler summary</span></strong>: profiler کی فی-column statistics کی summary۔ اس context میں ہر column کے <code dir="ltr">min</code> اور <code dir="ltr">max</code> شامل ہیں، جو آپ کے data کی حقیقی values ہیں؛ <a href="docs/AGENT_DATA_FLOW.md">Agent Data Flow</a> ملاحظہ کریں۔</span></li>
+<li><span dir="rtl"><strong><span dir="ltr">Data profiler summary</span></strong>: profiler کی فی-column statistics کی summary۔ اس context میں ہر column کے <code dir="ltr">min</code> اور <code dir="ltr">max</code> شامل ہیں، جو آپ کے data کی حقیقی values ہیں؛ <a href="docs/AGENT_DATA_FLOW.md">Agent Data Flow</a> دیکھیں۔</span></li>
 </ul>
 
 ### <span dir="rtl"><span dir="ltr">Data management</span></span>
@@ -210,7 +224,7 @@ PostgreSQL · MySQL · Oracle · SQL Server · SQLite · libSQL · DuckDB · Mon
 <li><span dir="rtl"><strong><span dir="ltr">Audit log</span></strong>: organization میں چلنے والی ہر query کی مکمل history۔</span></li>
 </ul>
 
-## <span dir="rtl">تنصیب</span>
+## <span dir="rtl">انسٹالیشن</span>
 
 </div>
 
@@ -285,7 +299,7 @@ bun run test:coverage  # coverage report
 
 <span dir="rtl">Issues اور pull requests خوش آئند ہیں۔ آغاز [CONTRIBUTING.md](CONTRIBUTING.md) سے کریں۔</span>
 
-<span dir="rtl">Database engine شامل کرنے کے لیے [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) ملاحظہ کریں۔ Code، documentation اور tests ایک ہی pull request میں ساتھ چلتے ہیں۔</span>
+<span dir="rtl">Database engine شامل کرنے کے لیے [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) دیکھیں۔ Code، documentation اور tests ایک ہی pull request میں ساتھ چلتے ہیں۔</span>
 
 ## <span dir="rtl">لائسنس</span>
 

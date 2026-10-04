@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant-tls",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:15:08.038Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET / to 127.0.0.1 with none, the CA",
+    "op": "root",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 112,
+    "body": "{\"title\":\"qdrant - vector search engine\",\"version\":\"1.19.1\",\"commit\":\"6ab21cac18ebb6f4ae29102c7f8f5cc11affd5de\"}"
+  }
+}

@@ -1,13 +1,13 @@
 "use client";
 
 import { appFetch, withBasePath } from "@/lib/config/base-path";
-import { Suspense, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { ExternalLink, KeyRound, Lock, Mail, ShieldCheck, Shield } from "lucide-react";
+import { ExternalLink, Fingerprint, KeyRound, Lock, Mail, ShieldCheck, Shield } from "lucide-react";
 import { toast } from "sonner";
 import LibreDBLogo from "@/components/libredb-logo";
 import { CommunitySection } from "@/components/community-section";
@@ -16,6 +16,9 @@ import { DatabaseShowcase } from "@/components/login/database-showcase";
 import { HeroProof, HERO_CLAIMS } from "@/components/login/hero-proof";
 import { WireCompatibleLine } from "@/components/login/wire-compatible-line";
 import type { AuditReason } from "@/lib/audit";
+import type { PasskeySignInOffer } from "@/lib/passkey/api-types";
+import { passkeysUsableHere, signInWithPasskey } from "@/lib/passkey/client";
+import { RETURN_PATH_PARAM, safeReturnPath } from "@/lib/api/session-ended";
 
 /**
  * The agent half of the mobile summary. Pulled from `HERO_CLAIMS` rather than retyped, so
@@ -42,7 +45,21 @@ function oidcErrorMessage(code: string): string {
   }
 }
 
-function LoginFormInner({ authProvider }: { authProvider: string }) {
+const noSubscription = () => () => {};
+
+interface LoginFormProps {
+  authProvider: string;
+  /** The server's passkey offer, or null when passkeys are not ready for this deployment. */
+  passkey: PasskeySignInOffer | null;
+}
+
+/**
+ * No Suspense boundary wraps this form. The page renders on every request (`force-dynamic`), where `useSearchParams`
+ * reads the request on the server without suspending, so a boundary bought nothing; and React outlined its large
+ * content into a hidden segment that a script moves into place, which on a loaded CI runner left the hidden copy beside
+ * the form the client had drawn, two `input#email` (Functional Smoke, run 37022597426).
+ */
+export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
   const isOIDC = authProvider === "oidc";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -54,9 +71,25 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
    */
   const [mfaRequired, setMfaRequired] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  /**
+   * The server snapshot is false, so the server render and the first client render match; the
+   * client snapshot then asks this browser, which alone knows whether it has WebAuthn and sits on
+   * the configured origin. Neither changes while the page is open, hence no subscription.
+   */
+  const passkeyShown = useSyncExternalStore(
+    noSubscription,
+    () => passkey !== null && passkeysUsableHere(passkey.origin),
+    () => false,
+  );
   const router = useRouter();
   const searchParams = useSearchParams();
   const oidcError = searchParams.get("error");
+  /**
+   * Where the user was when their session ended (#1420), set by the session-ended redirect. Read
+   * through safeReturnPath, so a crafted sign-in link cannot send anyone off this application.
+   */
+  const returnPath = safeReturnPath(searchParams.get(RETURN_PATH_PARAM));
+  const landingFor = (role: string) => returnPath ?? (role === "admin" ? "/admin" : "/");
 
   /**
    * Editing either credential drops the second-factor step. Without this, changing the email
@@ -95,7 +128,7 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
 
       if (data.success) {
         toast.success(`Welcome back, ${data.role}!`);
-        router.push(data.role === "admin" ? "/admin" : "/");
+        router.push(landingFor(data.role));
         router.refresh();
       } else if (data.mfaRequired) {
         // The first prompt needs no toast - the code field appearing IS the message, and an error
@@ -115,6 +148,26 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
       }
     } catch {
       toast.error("An error occurred. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  /**
+   * A failed or cancelled passkey only says so: it never submits the password form or tries any
+   * other method, so falling back stays the user's own choice.
+   */
+  const handlePasskeySignIn = async () => {
+    setIsLoading(true);
+    try {
+      const result = await signInWithPasskey();
+      if (result.ok) {
+        toast.success(`Welcome back, ${result.role}!`);
+        router.push(landingFor(result.role));
+        router.refresh();
+      } else if (result.message !== null) {
+        toast.error(result.message);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -151,8 +204,15 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         {/* Right edge separator */}
         <div className="absolute right-0 top-0 bottom-0 w-px bg-fill-strong" />
 
-        {/* Content */}
-        <div className="relative z-10 flex flex-col p-12 w-full overflow-y-auto">
+        {/*
+          Content. 40px above and below rather than the 48px at the sides: the column's height is
+          the hero's budget at 1366x768 and 1280x800 (#541, pinned by e2e/login.spec.ts). The
+          twenty-second showcase entry (#786) wrapped the engine list into a fourth row at 1366x768
+          and scrolled the page by 7px; no column gap that still separates the entries keeps it at
+          three rows with room for one more, so the 16px comes from the padding instead and both
+          sizes fit the four rows, with 9 and 25px to spare.
+        */}
+        <div className="relative z-10 flex flex-col px-12 py-10 w-full overflow-y-auto">
           {/* Top: Logo */}
           <a
             href="https://libredb.org"
@@ -289,7 +349,12 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                     className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all gap-2"
                     onClick={() => {
                       setIsLoading(true);
-                      window.location.href = withBasePath("/api/auth/oidc/login");
+                      // The return path rides through the provider in the signed state cookie.
+                      window.location.href = withBasePath(
+                        returnPath === null
+                          ? "/api/auth/oidc/login"
+                          : `/api/auth/oidc/login?${RETURN_PATH_PARAM}=${encodeURIComponent(returnPath)}`,
+                      );
                     }}
                     disabled={isLoading}
                   >
@@ -398,6 +463,25 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
                       {isLoading ? "Authenticating..." : mfaRequired ? "Verify code" : "Sign in"}
                     </Button>
                   </form>
+                  {passkeyShown && !mfaRequired && (
+                    <>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        <div className="h-px flex-1 bg-border" />
+                        <span>or</span>
+                        <div className="h-px flex-1 bg-border" />
+                      </div>
+                      {/* The name must not contain "sign in": E2E tests locate the password submit by it. */}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full h-11 gap-2"
+                        onClick={handlePasskeySignIn}
+                        disabled={isLoading}
+                      >
+                        <Fingerprint className="h-4 w-4" /> Use a passkey
+                      </Button>
+                    </>
+                  )}
                 </>
               )}
             </CardContent>
@@ -436,13 +520,5 @@ function LoginFormInner({ authProvider }: { authProvider: string }) {
         </div>
       </div>
     </div>
-  );
-}
-
-export default function LoginForm({ authProvider }: { authProvider: string }) {
-  return (
-    <Suspense>
-      <LoginFormInner authProvider={authProvider} />
-    </Suspense>
   );
 }

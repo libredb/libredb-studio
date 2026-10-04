@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VisualExplain, type ExplainPlanResult } from "@/components/VisualExplain";
+import { schemaContextOf } from "@/lib/db/detailed-object";
+import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 
 let originalFetch: typeof globalThis.fetch;
 
@@ -866,6 +868,63 @@ describe("VisualExplain", () => {
 });
 
 // ============================================================================
+// An estimated PostgreSQL plan (`EXPLAIN (FORMAT JSON)`, nothing executed)
+// ============================================================================
+
+/**
+ * The background plan beside every run is an estimate since #1311: the ANALYZE form
+ * ran the user's statement a second time. Such a plan carries `Plan Rows` and
+ * `Total Cost` and no `Actual *` field at all, so the panel must not read it as a run
+ * that returned zero rows in zero time.
+ */
+describe("VisualExplain with an estimated plan", () => {
+  // The shape `EXPLAIN (FORMAT JSON)` answers on PostgreSQL 18: no Actual fields, no
+  // Execution Time, no buffer counts.
+  const estimatedPlan: ExplainPlanResult[] = [
+    {
+      Plan: {
+        "Node Type": "Seq Scan",
+        "Relation Name": "events",
+        "Plan Rows": 250000,
+        "Total Cost": 4831.5,
+        Plans: [{ "Node Type": "Index Scan", "Relation Name": "users", "Plan Rows": 1, "Total Cost": 8.3 }],
+      },
+    },
+  ];
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("the header says the plan was not executed and shows the planned rows", () => {
+    const { queryByText, queryAllByText } = render(<VisualExplain plan={estimatedPlan} />);
+    expect(queryByText("not executed")).not.toBeNull();
+    expect(queryByText("execution")).toBeNull();
+    expect(queryAllByText("~250.0K").length).toBeGreaterThan(0);
+  });
+
+  test("plan nodes show planned rows and cost, never zero rows in zero time", () => {
+    const { queryByText, queryAllByText } = render(<VisualExplain plan={estimatedPlan} />);
+    fireEvent.click(queryByText("tree")!);
+    expect(queryAllByText("~250.0K rows").length).toBeGreaterThan(0);
+    expect(queryAllByText("cost 4.8K").length).toBeGreaterThan(0);
+    expect(queryAllByText("0 rows")).toHaveLength(0);
+    expect(queryAllByText("0μs")).toHaveLength(0);
+  });
+
+  test("a large planned sequential scan is still flagged, from the planner's row count", () => {
+    const { queryByText } = render(<VisualExplain plan={estimatedPlan} />);
+    expect(queryByText("Sequential Scan")).not.toBeNull();
+    expect(queryByText(/Full table scan on "events" \(250\.0K rows\)/)).not.toBeNull();
+  });
+
+  test("the Execution insight says the plan was not executed", () => {
+    const { queryAllByText } = render(<VisualExplain plan={estimatedPlan} />);
+    expect(queryAllByText("Not executed").length).toBeGreaterThan(0);
+  });
+});
+
+// ============================================================================
 // Tree render model (sqlite-queryplan and other tagged-tree strategies)
 // ============================================================================
 
@@ -1126,5 +1185,41 @@ describe("tree render model (sqlite-queryplan)", () => {
   test("tagged postgres-json input with an empty plan falls back to the empty state", () => {
     const { getByText } = render(<VisualExplain plan={{ kind: "postgres-json", plan: [] }} />);
     expect(getByText("No execution plan")).toBeTruthy();
+  });
+});
+
+describe("VisualExplain and a column the engine only inferred from sampled data", () => {
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+
+  test("the AI explanation request carries no byte of it", async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = mockFetchStream("## Analysis") as unknown as typeof fetch;
+    const { queryByText } = render(
+      <VisualExplain
+        plan={samplePlan}
+        query="SELECT * FROM articles"
+        databaseType="postgres"
+        schemaContext={schemaContextOf(sampledSchema)}
+      />,
+    );
+    fireEvent.click(queryByText("AI Explain")!);
+    await user.click(queryByText("Analyze with AI")!);
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalled();
+    });
+    const [url, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("/api/ai/explain");
+    expect(String(init.body)).toContain("category");
+    expect(String(init.body)).not.toContain(SAMPLED_MARKER);
   });
 });

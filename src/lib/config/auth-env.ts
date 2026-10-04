@@ -68,3 +68,18 @@ export function getJwtSecret(options: JwtSecretOptions = {}): Uint8Array {
 
   return new TextEncoder().encode(secret);
 }
+
+/**
+ * A signing key derived from JWT_SECRET for one purpose: HMAC-SHA256(secret, label).
+ *
+ * A token signed with it can neither pass as a session nor be minted from one, because the session key is the raw
+ * secret. Web Crypto, so it runs in the proxy and in a route alike; derived on every call, because a cached key
+ * would outlive a rotated secret. `options` are passed to `getJwtSecret`.
+ */
+export async function derivedSigningKey(label: string, options: JwtSecretOptions = {}): Promise<Uint8Array> {
+  // Copied into its own buffer: `BufferSource` requires an `ArrayBuffer`, and a Uint8Array's backing store is typed
+  // as possibly shared.
+  const raw = getJwtSecret(options).slice().buffer as ArrayBuffer;
+  const base = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", base, new TextEncoder().encode(label)));
+}

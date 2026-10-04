@@ -325,6 +325,7 @@ import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { QueryTab } from "@/lib/types";
 import { generateTableQuery } from "@/lib/query-generators";
+import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
 
 const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
 
@@ -921,6 +922,16 @@ describe("StudioWorkspace", () => {
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
   });
 
+  test("the profiler keeps masking the built-in kinds, though this shell's grid masks nothing (#1421)", () => {
+    renderWorkspace();
+
+    act(() => sidebarActions().onProfileObject?.(usersObject));
+    // The summary a host's onDescribeSchema receives held emails, passwords and tokens masked
+    // before #1421; handing the profiler the grid's no-op configuration would send them in clear.
+    expect(capturedDataProfilerProps.maskingConfig).toBe(DEFAULT_MASKING_CONFIG);
+    expect(capturedDataProfilerProps.maskingEnabled).toBe(true);
+  });
+
   test("each modal opens on the object that was CLICKED, where two containers share one label", () => {
     connAdapterOverride = { schema: [otherUsersTable, usersTable] };
     renderWorkspace();
@@ -1143,6 +1154,12 @@ describe("StudioWorkspace", () => {
     expect(capturedQueryEditorProps.language).toBe("redis");
   });
 
+  test("editor language is etcd for etcd tabs (#1089)", () => {
+    tabMgrOverride = { currentTab: { ...baseTab, type: "etcd" } };
+    renderWorkspace();
+    expect(capturedQueryEditorProps.language).toBe("etcd");
+  });
+
   // =========================================================================
   // Provider metadata wiring (#427)
   // =========================================================================
@@ -1257,6 +1274,18 @@ describe("StudioWorkspace", () => {
       connAdapterOverride = { activeConnection: promqlConnection, metadata: promqlMetadata };
       renderWorkspace();
       expect(capturedQueryEditorProps.language).toBe("promql");
+    });
+
+    test("Query 1 of a host declaring InfluxQL reaches the editor as an InfluxQL tab (InfluxDB spec 6.7)", () => {
+      // The embedded-surface rule: the standalone shell and this one retype Query 1 through the same
+      // `resolveTabType`, and only this test sees the embedded shell do it.
+      tabManagerHoldsState = true;
+      connAdapterOverride = {
+        activeConnection: { ...dbConn, type: "influxdb" as const },
+        metadata: { capabilities: { queryLanguage: "influxql" } } as unknown as ProviderMetadata,
+      };
+      renderWorkspace();
+      expect(capturedQueryEditorProps.language).toBe("influxql");
     });
 
     test("every open tab takes the type, and a list that already carries it is handed back as it is", () => {
@@ -1393,6 +1422,17 @@ describe("StudioWorkspace", () => {
     expect(result.warnings).toHaveLength(1);
     expect(result.warnings[0].type).toBe("destructive");
     expect(result.recommendation).toContain("Review this query");
+  });
+
+  test("safety dialog is handed the active connection's name, which a typed confirmation of it asks for (#1089)", () => {
+    renderWorkspace();
+    expect(capturedSafetyDialogProps.connectionName).toBe("TestPG");
+  });
+
+  test("safety dialog is handed no connection name without an active connection", () => {
+    connAdapterOverride = { activeConnection: null };
+    renderWorkspace();
+    expect(capturedSafetyDialogProps.connectionName).toBeUndefined();
   });
 
   // =========================================================================

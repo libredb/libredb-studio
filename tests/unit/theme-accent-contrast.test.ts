@@ -223,11 +223,39 @@ const HUES: ReadonlyArray<{ hue: string; light: string; lightAlt: string }> = [
 ];
 
 /**
- * The four hues where two engines share a hue and are held apart only by step, so
+ * The eleven hues where two engines share a hue and are held apart only by step, so
  * the `-alt` is a distinct IDENTITY and has to join the separation set. Pinned by
  * `tests/unit/lib/db-ui-config.test.ts`, which asserts every engine colour differs.
+ * `fuchsia` joined with Neo4j: of the hues with no identity `-alt` yet, only
+ * violet's step stands further from its nearest identity in both palettes, and
+ * violet is LibreDB's own; the closest pair of the set stays where it was.
+ * `rose` joined with Qdrant, whose own mark is a crimson: `hue-rose` is Redis's, and
+ * its `-alt` step, which theme.css already declared as an emphasis, clears every
+ * test below as an identity too.
+ * `indigo` joined with Milvus, whose own mark is a blue: `hue-blue` and `hue-sky` and
+ * both their `-alt` steps are taken, `cyan-alt` fails the light-set test below, and
+ * `indigo-alt` clears every test.
+ * `purple` joined with InfluxDB (InfluxQL): `hue-purple` is Db2's, and its `-alt` step,
+ * which theme.css already declared as an emphasis, clears every test below as an
+ * identity too. `violet` joined with InfluxDB 3 (SQL), the second InfluxDB type: of the
+ * hues with no identity `-alt` before it, tried in the order violet, pink, red, orange,
+ * amber, green, violet's was the first to clear every test below (InfluxDB spec K-D4).
+ * `orange` joined with Oxia: `hue-orange` is Couchbase's, and of the hues with no identity `-alt`, `orange-alt`
+ * leaves both minima where they were next to InfluxDB's `purple-alt` and `violet-alt`.
  */
-const IDENTITY_ALTS = ["sky", "yellow", "emerald", "teal"] as const;
+const IDENTITY_ALTS = [
+  "blue",
+  "sky",
+  "yellow",
+  "emerald",
+  "teal",
+  "fuchsia",
+  "rose",
+  "indigo",
+  "purple",
+  "violet",
+  "orange",
+] as const;
 
 /**
  * What theme.css actually declares, and what each declaration is supposed to be.

@@ -12,6 +12,9 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
+import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
 // Helper to create a minimal connection
 function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
@@ -258,6 +261,31 @@ describe("useTabManager", () => {
 
     expect(result.current.tabs).toHaveLength(1);
     // Should switch to the remaining tab (the default one)
+    expect(result.current.activeTabId).toBe("default");
+  });
+
+  // X5: the shell hands `closeTab` to the memoized tab bar and `updateCurrentTab` to the
+  // memoized mobile header, so a keystroke, which writes the query into the tabs, must not
+  // mint either of them anew. `closeTab` must still close against the tabs as they are now.
+  test("a query write keeps closeTab and updateCurrentTab, and closeTab reads the latest tabs", () => {
+    const { result } = renderHook(() => useTabManager({ activeConnection: null, metadata: null, schema: [] }));
+    act(() => {
+      result.current.addTab();
+    });
+    const closeTab = result.current.closeTab;
+    const updateCurrentTab = result.current.updateCurrentTab;
+
+    act(() => {
+      result.current.updateCurrentTab({ query: "SELECT 1" });
+    });
+    expect(result.current.closeTab).toBe(closeTab);
+    expect(result.current.updateCurrentTab).toBe(updateCurrentTab);
+
+    const secondTabId = result.current.tabs[1].id;
+    act(() => {
+      closeTab(secondTabId, { stopPropagation: () => {} } as React.MouseEvent);
+    });
+    expect(result.current.tabs.map((tab) => tab.id)).toEqual(["default"]);
     expect(result.current.activeTabId).toBe("default");
   });
 
@@ -1377,6 +1405,235 @@ describe("useTabManager on a PromQL connection (#1085)", () => {
 });
 
 // ============================================================================
+// InfluxDB: a measurement opens an influxql tab, an InfluxDB 3 table an sql tab, both time-windowed (InfluxDB spec 6.6)
+// ============================================================================
+
+describe("useTabManager on the two InfluxDB types (InfluxDB spec 6.6, 6.7)", () => {
+  // The real providers' declarations; nothing is connected, and neither constructor opens anything.
+  const influxqlProvider = new InfluxDBProvider(makeConnection({ type: "influxdb", port: 8086, database: "home" }));
+  const influxqlMetadata: ProviderMetadata = {
+    capabilities: influxqlProvider.getCapabilities(),
+    labels: influxqlProvider.getLabels(),
+  };
+  const sqlProvider = new InfluxDB3Provider(makeConnection({ type: "influxdb3", port: 8181, database: "home" }));
+  const sqlMetadata: ProviderMetadata = {
+    capabilities: sqlProvider.getCapabilities(),
+    labels: sqlProvider.getLabels(),
+  };
+
+  // A hostile measurement name, as the tree lists it under its database.
+  const hostile = 'we"ird name;x';
+  const measurementSchema: DetailedObject[] = [
+    {
+      name: hostile,
+      kind: "measurement",
+      path: ["home", hostile],
+      columns: [
+        { name: "room", type: "tag", nullable: true, isPrimary: false },
+        { name: "temp", type: "float", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+  const tableSchema: DetailedObject[] = [
+    {
+      name: "cpu",
+      kind: "table",
+      path: ["cpu"],
+      columns: [
+        { name: "time", type: "timestamp", nullable: false, isPrimary: false },
+        { name: "usage", type: "float", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("a new tab on an InfluxDB (InfluxQL) connection is an influxql tab, and on InfluxDB 3 an sql tab", () => {
+    const influxql = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: influxqlMetadata, schema: measurementSchema }),
+    );
+    act(() => influxql.result.current.addTab());
+    expect(influxql.result.current.tabs[1].type).toBe("influxql");
+
+    localStorage.clear();
+    const sql = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: sqlMetadata, schema: tableSchema }),
+    );
+    act(() => sql.result.current.addTab());
+    expect(sql.result.current.tabs[1].type).toBe("sql");
+  });
+
+  test("a tree click on a hostile measurement opens an influxql tab whose text the read policy allows", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: influxqlMetadata, schema: measurementSchema }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["home", hostile], executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.name).toBe(hostile);
+    expect(newTab.type).toBe("influxql");
+    expect(newTab.query).toContain(
+      'SELECT * FROM "home".."we\\"ird name;x" WHERE time > now() - 1h ORDER BY time DESC',
+    );
+    expect(evaluateInfluxql(newTab.query)).toMatchObject({ allowed: true });
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(executeFn).toHaveBeenCalledWith(newTab.query, newTab.id, false, { limit: PREVIEW_PAGE_SIZE });
+        resolve();
+      }, 150);
+    });
+  });
+
+  test("Generate Query on a measurement opens an influxql tab with its example lines as comments", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: influxqlMetadata, schema: measurementSchema }),
+    );
+
+    act(() => {
+      result.current.handleGenerateSelect(["home", hostile]);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe("influxql");
+    expect(newTab.query).toContain('mean("temp")');
+    expect(newTab.query).not.toContain("LIMIT 100");
+    expect(evaluateInfluxql(newTab.query)).toMatchObject({ allowed: true });
+  });
+
+  test("a tree click on an InfluxDB 3 table opens an sql tab on the newest hour, newest first, unqualified", () => {
+    const executeFn = mock(() => {});
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection(), metadata: sqlMetadata, schema: tableSchema }),
+    );
+
+    act(() => {
+      result.current.handleTableClick(["cpu"], executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.type).toBe("sql");
+    expect(newTab.query).toContain(
+      'SELECT * FROM "cpu" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC',
+    );
+    expect(newTab.query).not.toContain("home");
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(executeFn).toHaveBeenCalledWith(newTab.query, newTab.id, false, { limit: PREVIEW_PAGE_SIZE });
+        resolve();
+      }, 150);
+    });
+  });
+});
+
+// ============================================================================
+// etcd: a group's readable pieces and the connection's mode reach the generators (#1089 6.4)
+// ============================================================================
+
+describe("useTabManager on an etcd connection (#1089)", () => {
+  // The real provider's declaration; nothing is connected, and its constructor opens nothing (#1089 3.1).
+  const etcdProvider = new EtcdProvider(makeConnection({ type: "etcd", port: 2379, database: undefined }));
+  const etcdMetadata: ProviderMetadata = {
+    capabilities: etcdProvider.getCapabilities(),
+    labels: etcdProvider.getLabels(),
+  };
+
+  // A group a reader who is not root may read only part of, as the tree lists it: its pieces ride on the entry.
+  const etcdSchema: DetailedObject[] = [
+    {
+      name: "/config/*",
+      kind: "prefix",
+      path: ["/config/*"],
+      columns: [{ name: "key", type: "bytes", nullable: false, isPrimary: true }],
+      indexes: [],
+      readRanges: [{ key: "/config/a" }, { prefix: "/config/b/" }],
+    },
+    { name: "/app/*", kind: "prefix", path: ["/app/*"], columns: [], indexes: [] },
+  ];
+
+  const hookFor = (connection: DatabaseConnection) =>
+    renderHook(() => useTabManager({ activeConnection: connection, metadata: etcdMetadata, schema: etcdSchema }));
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("a tree click reads the first piece this connection may read, and runs it with the preview option", () => {
+    const executeFn = mock(() => {});
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379 }));
+
+    act(() => {
+      result.current.handleTableClick(["/config/*"], executeFn);
+    });
+
+    const newTab = result.current.tabs[1];
+    expect(newTab.name).toBe("/config/*");
+    expect(newTab.query).toBe(["get /config/a --limit=50", "", "# get /config/b/ --prefix --limit=50"].join("\n"));
+
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(executeFn).toHaveBeenCalledWith(newTab.query, newTab.id, false, { limit: PREVIEW_PAGE_SIZE });
+        resolve();
+      }, 150);
+    });
+  });
+
+  test("a group this connection reads whole is read whole", () => {
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379 }));
+
+    act(() => {
+      result.current.handleTableClick(
+        ["/app/*"],
+        mock(() => {}),
+      );
+    });
+
+    expect(result.current.tabs[1].query).toBe("get /app/ --prefix --limit=50");
+  });
+
+  test("Generate Command writes the read and, on a read-write connection, the other forms below it", () => {
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379 }));
+
+    act(() => {
+      result.current.handleGenerateSelect(["/config/*"]);
+    });
+
+    const query = result.current.tabs[1].query;
+    expect(result.current.tabs[1].name).toBe("Query: /config/*");
+    expect(query.split("\n")[0]).toBe("get /config/a --limit=50");
+    expect(query).toContain("# get /config/b/ --prefix --limit=50");
+    expect(query).toContain("# put /config/example value");
+  });
+
+  test("Generate Command on a read-only connection writes the read alone (#1089 E6)", () => {
+    const { result } = hookFor(makeConnection({ type: "etcd", port: 2379, readOnly: true }));
+
+    act(() => {
+      result.current.handleGenerateSelect(["/config/*"]);
+    });
+    act(() => {
+      result.current.handleTableClick(
+        ["/config/*"],
+        mock(() => {}),
+      );
+    });
+
+    // The click's read and its pieces, and nothing that writes: the same text the click opens.
+    expect(result.current.tabs[1].query).toBe(result.current.tabs[2].query);
+    expect(result.current.tabs[1].query).not.toContain("put ");
+  });
+});
+
+// ============================================================================
 // The click path is addressed by PATH (#789, Task 30)
 // ============================================================================
 
@@ -2064,5 +2321,147 @@ describe("useTabManager carries the walked database", () => {
     // shell would branch on, and a key holding `undefined` is a field somebody has to remember
     // to test for. The control is the tab beside it, which never had one either.
     expect(result.current.tabs.some((tab) => "databaseOverride" in tab)).toBe(false);
+  });
+});
+
+// ─── A second activation of the same object focuses its tab ───
+
+describe("useTabManager reuses an object's unedited data tab", () => {
+  /** Long enough for the deferred run `handleTableClick` schedules. */
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  function renderManager(schema: DetailedObject[] = testSchema) {
+    return renderHook(() => useTabManager({ activeConnection: makeConnection(), metadata: defaultMetadata, schema }));
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("two activations of the same object give one data tab, focused, run once", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const opened = result.current.activeTabId;
+    // Away and back, so the second activation has something to focus.
+    act(() => result.current.setActiveTabId("default"));
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.name)).toEqual(["Query 1", "users"]);
+    expect(result.current.activeTabId).toBe(opened);
+    expect(executeFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("a matched tab whose last run failed is focused and run again, in that tab", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const opened = result.current.activeTabId;
+    await settle();
+    // The shape a failed run leaves: no rows, and the reason in their place.
+    act(() => result.current.updateTabById(opened, { runError: "connection reset" }));
+    act(() => result.current.setActiveTabId("default"));
+    executeFn.mockClear();
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.name)).toEqual(["Query 1", "users"]);
+    expect(result.current.activeTabId).toBe(opened);
+    expect(executeFn).toHaveBeenCalledTimes(1);
+    const query = result.current.tabs[1].query;
+    expect(executeFn).toHaveBeenCalledWith(query, opened, false, { limit: PREVIEW_PAGE_SIZE });
+  });
+
+  test("a tab opened on one connection is not reused on another holding the same path", async () => {
+    const executeFn = mock(() => {});
+    const { result, rerender } = renderHook(
+      ({ connectionId }: { connectionId: string }) =>
+        useTabManager({
+          activeConnection: makeConnection({ id: connectionId }),
+          metadata: defaultMetadata,
+          schema: testSchema,
+        }),
+      { initialProps: { connectionId: "conn-a" } },
+    );
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const onA = result.current.activeTabId;
+    // Same connection: the control, reused.
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    expect(result.current.activeTabId).toBe(onA);
+    expect(result.current.tabs).toHaveLength(2);
+
+    rerender({ connectionId: "conn-b" });
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.activeTabId).not.toBe(onA);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("a different object opens its own tab", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    act(() => result.current.handleTableClick(["orders"], executeFn));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.name)).toEqual(["Query 1", "users", "orders"]);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("a tab whose query the user edited is never captured", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    const edited = result.current.activeTabId;
+    act(() => result.current.updateTabById(edited, { query: "SELECT id FROM users WHERE id > 10;" }));
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(result.current.activeTabId).not.toBe(edited);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+    // The edit is the reader's work, and it is left exactly as they wrote it.
+    expect(result.current.tabs.find((t) => t.id === edited)?.query).toBe("SELECT id FROM users WHERE id > 10;");
+  });
+
+  test("the same key in another numbered database is another tab", async () => {
+    const executeFn = mock(() => {});
+    const { result } = renderManager([]);
+    const type = [{ name: "type", type: "string", nullable: false, isPrimary: false }];
+
+    act(() => result.current.handleTableClick(["report:daily"], executeFn, type, 3));
+    act(() => result.current.handleTableClick(["report:daily"], executeFn, type, 4));
+    act(() => result.current.handleTableClick(["report:daily"], executeFn, type, 3));
+    await settle();
+
+    expect(result.current.tabs.map((t) => t.databaseOverride)).toEqual([undefined, 3, 4]);
+    expect(result.current.activeTabId).toBe(result.current.tabs[1].id);
+    expect(executeFn).toHaveBeenCalledTimes(2);
+  });
+
+  test("a tab with the same name and query but no recorded origin is not captured", async () => {
+    // The shape a tab restored from storage has: its origin is never persisted.
+    const executeFn = mock(() => {});
+    const { result } = renderManager();
+
+    act(() =>
+      result.current.setTabs((prev) => [
+        ...prev,
+        { id: "restored", name: "users", query: "SELECT * FROM users;", result: null, isExecuting: false, type: "sql" },
+      ]),
+    );
+    act(() => result.current.handleTableClick(["users"], executeFn));
+    await settle();
+
+    expect(result.current.tabs).toHaveLength(3);
+    expect(executeFn).toHaveBeenCalledTimes(1);
   });
 });

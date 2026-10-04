@@ -175,8 +175,16 @@ let queryHttpCode = 200;
 let deferredIndexRows: Record<string, unknown>[] = [];
 let networkFailure: Error | null = null;
 
+/**
+ * A body sent as these exact bytes rather than through `JSON.stringify`, which
+ * cannot write the unquoted integer past 2^53 a live cluster sends.
+ */
+class RawBody {
+  constructor(readonly text: string) {}
+}
+
 function jsonResponse(payload: unknown, httpCode: number): Response {
-  return new Response(JSON.stringify(payload), {
+  return new Response(payload instanceof RawBody ? payload.text : JSON.stringify(payload), {
     status: httpCode,
     headers: { "content-type": "application/json" },
   });
@@ -309,6 +317,7 @@ describe("CouchbaseProvider metadata", () => {
       defaultPort: 8091,
       // The object surface (#789); asserted field by field in the object-surface block.
       containerLevels: COUCHBASE_CONTAINER_LEVELS,
+      containerPathShapes: "prefixes",
       objectKinds: COUCHBASE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER)\\s+(COLLECTION|SCOPE|INDEX)\\b",
     });
@@ -459,6 +468,33 @@ describe("CouchbaseProvider query", () => {
     expect(result.executionTime).toBe(1);
   });
 
+  test("keeps an integer past 2^53 exact, as its digits, at any depth", async () => {
+    // Measured on 8.0.2 CE on 2026-10-04: the query service sends a document's
+    // 9007199254740993 as that UNQUOTED number, and a plain JSON.parse showed
+    // 9007199254740992 in the grid, the API and every export. A value in the safe
+    // range, and the metrics the provider reads itself, stay numbers.
+    const provider = await connectProvider();
+    queryHandler = () =>
+      new RawBody(
+        '{"requestID":"req-1","signature":{"big":"number","max":"number","small":"number","d":"object"},' +
+          '"results":[{"big":9007199254740993,"max":9223372036854775807,"small":42,' +
+          '"d":{"big":-9007199254740993,"note":"id 9007199254740993"}}],"status":"success",' +
+          '"metrics":{"elapsedTime":"2.5ms","executionTime":"1.234ms","resultCount":1,"mutationCount":0}}',
+      );
+
+    const result = await provider.query('SELECT d.big FROM `travel`.`inventory`.`hotel` AS d WHERE META(d).id = "h1"');
+
+    expect(result.rows).toEqual([
+      {
+        big: "9007199254740993",
+        max: "9223372036854775807",
+        small: 42,
+        d: { big: "-9007199254740993", note: "id 9007199254740993" },
+      },
+    ]);
+    expect(result.rowCount).toBe(1);
+  });
+
   test("derives fields from the rows when the projection is a wildcard", async () => {
     const provider = await connectProvider();
     queryHandler = () => queryPayload([{ hotel: { city: "Bursa" } }, { hotel: {}, __id: "hotel::2" }]);
@@ -470,7 +506,7 @@ describe("CouchbaseProvider query", () => {
 
   test("wraps SELECT RAW scalars so the grid gets one honest column", async () => {
     // SELECT RAW / SELECT VALUE return bare scalars, not objects. Handing those
-    // through unchanged makes deriveFields call Object.keys on a string, which
+    // through unchanged makes the column union call Object.keys on a string, which
     // yields one column per character index.
     const provider = await connectProvider();
     queryHandler = () => queryPayload(["Grand Plaza", "Seaside Inn"] as unknown as Record<string, unknown>[]);
@@ -916,6 +952,81 @@ describe("CouchbaseProvider maintenance", () => {
     expect(bodyOf("UPDATE STATISTICS").statement).toBe("UPDATE STATISTICS FOR `travel`.`inventory`.`hotel` INDEX ALL");
   });
 
+  test("the analyze reply names the keyspace that was touched, not the bare target", async () => {
+    // The statement addresses three segments, so a reply naming only the target could report
+    // `travel` - the BUCKET - after touching only its default collection (#1091 review).
+    const provider = await connectProvider();
+
+    const result = await provider.runMaintenance("analyze", "inventory.hotel");
+
+    expect(result.message).toBe("Updated statistics for `travel`.`inventory`.`hotel`");
+  });
+
+  test("analyze addresses `_default`.`_default` when the bucket row sends its bucket as the container", async () => {
+    // The only Tables row this provider has is the bucket-level one, whose `schemaName` AND
+    // `tableName` are both the bucket (`getTableStats()`). Reading the container as a scope
+    // built `travel`.`travel`.`travel`, which is no keyspace at all; what that row addresses
+    // is the default collection, the placement `resolveKeyspaceOf()` gives it (#1091 review).
+    const provider = await connectProvider();
+
+    const result = await provider.runMaintenance("analyze", BUCKET, BUCKET);
+
+    expect(result.success).toBe(true);
+    expect(bodyOf("UPDATE STATISTICS").statement).toBe(
+      "UPDATE STATISTICS FOR `travel`.`_default`.`_default` INDEX ALL",
+    );
+  });
+
+  test("any other container is used as the scope rather than parsed out of the name", async () => {
+    const provider = await connectProvider();
+
+    const result = await provider.runMaintenance("analyze", "hotel", "inventory");
+
+    expect(result.success).toBe(true);
+    expect(bodyOf("UPDATE STATISTICS").statement).toBe("UPDATE STATISTICS FOR `travel`.`inventory`.`hotel` INDEX ALL");
+  });
+
+  test("the bucket as a container places a bare collection in the default scope", async () => {
+    // The flattening rule: a bare collection name IS a `_default` scope collection
+    // (`keyspaceDisplayName`), so a container that adds no scope keeps that reading.
+    const provider = await connectProvider();
+
+    const result = await provider.runMaintenance("analyze", "hotel", BUCKET);
+
+    expect(result.success).toBe(true);
+    expect(bodyOf("UPDATE STATISTICS").statement).toBe("UPDATE STATISTICS FOR `travel`.`_default`.`hotel` INDEX ALL");
+  });
+
+  test("a bare target with no container keeps the `_default` scope reading", async () => {
+    const provider = await connectProvider();
+
+    await provider.runMaintenance("analyze", "hotel");
+
+    expect(bodyOf("UPDATE STATISTICS").statement).toBe("UPDATE STATISTICS FOR `travel`.`_default`.`hotel` INDEX ALL");
+  });
+
+  test("quotes a container and a target that carry a backtick", async () => {
+    const provider = await connectProvider();
+
+    const result = await provider.runMaintenance("analyze", "hot`el", "inv`entory");
+
+    expect(result.success).toBe(true);
+    expect(bodyOf("UPDATE STATISTICS").statement).toBe(
+      "UPDATE STATISTICS FOR `travel`.`inv``entory`.`hot``el` INDEX ALL",
+    );
+  });
+
+  test("reindex resolves the bucket row's deferred indexes at the default collection", async () => {
+    const provider = await connectProvider();
+    deferredIndexRows = [{ index_name: "idx_city" }];
+
+    const result = await provider.runMaintenance("reindex", BUCKET, BUCKET);
+
+    expect(result.success).toBe(true);
+    expect(bodyOf("BUILD INDEX").statement).toBe("BUILD INDEX ON `travel`.`_default`.`_default`(`idx_city`)");
+    expect(bodyOf("deferred").args).toEqual(["travel", "_default", "_default"]);
+  });
+
   test("analyze surfaces the Community Edition rejection verbatim", async () => {
     const provider = await connectProvider();
     queryHandler = () => errorPayload(3230, "'Update Statistics' is an enterprise level feature.");
@@ -1288,6 +1399,19 @@ describe("CouchbaseProvider object surface (#789)", () => {
     expect(await objectProvider.listContainers([BUCKET])).toEqual([
       { path: [BUCKET, "_default"], name: "_default", level: 1, isSessionDefault: true },
       { path: [BUCKET, "inventory"], name: "inventory", level: 1, isSessionDefault: false },
+    ]);
+  });
+
+  test("reads a parent as a tree cursor, so a bucket lists its scopes when only exact addresses are declared", async () => {
+    // `containerPathShapes` governs the paths an object read ADDRESSES. A listing parent is
+    // not one: `[bucket]` is where the tree is, so an address check would refuse it here.
+    spyOn(objectProvider, "getCapabilities").mockReturnValue({
+      ...objectProvider.getCapabilities(),
+      containerPathShapes: "exact",
+    });
+    expect((await objectProvider.listContainers([BUCKET])).map((container) => container.path)).toEqual([
+      [BUCKET, "_default"],
+      [BUCKET, "inventory"],
     ]);
   });
 

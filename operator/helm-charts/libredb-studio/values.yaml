@@ -148,11 +148,32 @@ config:
   # `false` means session cookies travel in cleartext - keep it to trusted
   # networks. `true` is accepted and explicit, and forces the flag on.
   #
+  # The flag covers the session cookie and the two passkey ceremony cookies,
+  # passkey-registration and passkey-sign-in, alike.
+  #
   # A YAML boolean (or `--set config.authCookieSecure=false`), not a string: the
   # value is rendered as a quoted string for the ConfigMap, so no --set-string is
   # needed, and the app's other spellings ("on"/"off"/"0"/"1") are rejected here
   # by values.schema.json rather than silently mis-read.
   authCookieSecure: null
+  # -- The public address people open Studio at, written to PASSKEY_ORIGIN when
+  # set: scheme, host and port only, with no path, so no config.basePath either,
+  # such as https://studio.example.com. Empty (the default) writes nothing and
+  # passkey sign-in stays off.
+  #
+  # Passkeys also need config.storageProvider sqlite or postgres (a browser-local
+  # store has no account registry to keep them in) and authProvider local (an
+  # identity provider manages its own passkeys); NOTES.txt warns when either is
+  # missing. Browsers offer passkeys only over https, or on http://localhost.
+  # The app validates the value at startup and says what is wrong with it.
+  # Passkeys belong to the host name, so changing it means every user registers
+  # their passkeys again.
+  #
+  # This needs an application image that includes passkey sign-in (#785):
+  # appVersion 0.17.0, which this chart version pins, does not read
+  # PASSKEY_ORIGIN, so the value acts only once an application release moves
+  # appVersion or image.tag names such an image. Guide: docs/PASSKEYS.md.
+  passkeyOrigin: ""
   # -- Storage provider: "local" (browser), "sqlite" (file), or "postgres" (database)
   storageProvider: "local"
   # -- SQLite database file path (when storageProvider=sqlite)
@@ -242,6 +263,33 @@ agent:
     existingConfigMap: ""
     # -- Key within the ConfigMap that holds the document
     configMapKey: "model-tuning.json"
+
+# =============================================================================
+# MCP server (#246)
+# =============================================================================
+# An AI client of the user's own (Claude Code, Codex, Cursor, VS Code, Gemini CLI)
+# reads schemas and runs bounded read-only SQL at /api/mcp, with a token each user
+# mints on the settings screen. The endpoint stays disabled, and nothing below is
+# written, until enabled is true. An image built before the MCP server shipped
+# ignores all four variables. Guide, client configuration and limits: docs/MCP.md.
+mcp:
+  # -- Serve /api/mcp. false (the default) writes no LIBREDB_MCP_* variable, and the
+  # endpoint answers an authenticated request with 404. true writes all four
+  # variables below as strings and requires url and tokenLabel: the render fails
+  # without them.
+  enabled: false
+  # -- The address MCP clients use, which every token is bound to: an absolute
+  # http(s) URL ending in /api/mcp, with config.basePath when one is set, and no
+  # user name, password, query or fragment, such as
+  # https://studio.example.com/api/mcp
+  url: ""
+  # -- Any non-empty value. The token signing key is derived from the JWT secret
+  # under it, so changing it revokes every MCP token at once, which is the only
+  # revocation there is. To offboard a person, stop them signing in, then change
+  # it once ten minutes have passed, since minting needs a sign-in that recent.
+  tokenLabel: ""
+  # -- How many days a minted token stays valid, from 1 to 365.
+  tokenTtlDays: 30
 
 # =============================================================================
 # Persistence — PVC for SQLite storage mode

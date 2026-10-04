@@ -58,7 +58,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|clickhouse|druid|elasticsearch|opensearch|trino|cassandra|prometheus|kafka|etcd|neo4j|milvus|qdrant|influxdb|influxdb3|oxia
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -68,7 +68,7 @@ connections:
     group: "Data Team"        # Group label in sidebar
     color: "#10B981"          # Hex color for environment badge
     roles: ["admin"]          # Who can see this connection
-    managed: true             # Read-only in UI (default from `defaults`)
+    managed: true             # Admin-controlled: not editable in the UI (default from `defaults`)
     ssl:
       mode: require
       rejectUnauthorized: true
@@ -76,6 +76,7 @@ connections:
     # instanceName: "MSSQL$"  # SQL Server only
     # localDataCenter: "datacenter1"  # Cassandra only - REQUIRED there
     # authSource: "admin"     # MongoDB only - the database the user was created in
+    # saslMechanism: SCRAM-SHA-512  # Kafka only - PLAIN|SCRAM-SHA-256|SCRAM-SHA-512, a literal name
 
   - id: "dev-mysql"
     name: "Dev MySQL"
@@ -148,6 +149,58 @@ connections:
     # password alone is sent as a bearer token, for a token-guarded proxy. Over plain
     # HTTP either one is readable on the wire, so set `ssl` for a server across a
     # network you do not control.
+
+  - id: "metrics-influx"
+    name: "InfluxDB Metrics"
+    type: influxdb
+    host: "${INFLUX_HOST}"
+    port: 8086                # The v1 /query API of 1.x and 2.x; a 3.x server answers it on 8181
+    database: telegraf        # Optional: a statement that names its database reads that one
+    user: "reader"            # A 1.x user granted READ on the database
+    password: "${INFLUX_READER_PASSWORD}"
+    ssl:
+      mode: verify-full
+    roles: ["*"]
+    environment: production
+    managed: true
+    readOnly: true
+    # On 2.x leave `user` out and put a read token for the bucket in `password`:
+    # a password with no user is sent as a token. Without TLS to a host that is not
+    # loopback the connection is refused unless it sets `allowInsecureAuth: true`.
+    # No `connectionString`: http:// and https:// already parse as ClickHouse.
+
+  - id: "metrics-influx3"
+    name: "InfluxDB 3 Metrics"
+    type: influxdb3
+    host: "${INFLUXDB3_HOST}"
+    port: 8181
+    database: telegraf        # One connection reads one database
+    password: "${INFLUXDB3_TOKEN}"   # Sent as a bearer token; this type takes no `user`
+    ssl:
+      mode: verify-full
+    roles: ["*"]
+    environment: production
+    managed: true
+    readOnly: true
+    # On InfluxDB 3 Core every token is an admin token, so read-only is a property
+    # of what Studio sends, never of the token.
+
+  - id: "events-kafka"
+    name: "Kafka Events"
+    type: kafka
+    host: "${KAFKA_HOST}"      # One bootstrap broker; the client learns the rest from it
+    port: 9093
+    saslMechanism: SCRAM-SHA-512   # A literal: PLAIN, SCRAM-SHA-256 or SCRAM-SHA-512
+    user: "${KAFKA_USER}"
+    password: "${KAFKA_PASSWORD}"
+    roles: ["*"]
+    environment: production
+    ssl:
+      mode: verify-full        # SASL over plaintext is refused, and verify-full keeps the
+                               # credentials to brokers the CA vouches for
+    # No `database`: one connection is one cluster, so there is nothing to select.
+    # No `connectionString` and no `sshTunnel`: a Kafka client reaches every broker at
+    # the address the broker advertises, which a tunnel to one address does not carry.
 ```
 
 ### Field Reference
@@ -155,23 +208,29 @@ connections:
 | Field | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `version` | Yes | — | Must be `"1"` |
-| `defaults` | No | — | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged |
+| `defaults` | No | - | Supplies `managed`, `environment` and `ssl` where a connection omits them. No other field is merged, and `mcp` and `readOnly` are refused here (see [MCP opt-in](#mcp-opt-in)) |
 | `defaults.managed` | No | `true` | Default managed state |
 | `defaults.environment` | No | — | Default environment label |
 | `defaults.ssl` | No | — | Default SSL config |
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | — | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `qdrant`, `influxdb`, `influxdb3`, `oxia` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**) |
 | `connections[].schema` | No | — | Trino session schema, used to resolve unqualified table names inside the configured catalog |
 | `connections[].user` | No | — | Username |
 | `connections[].password` | No | — | Password (use `${ENV_VAR}` syntax) |
+| `connections[].apiKeyId` | No | - | Elasticsearch only (#708): the API key's id, paired with `apiKeySecret` and preferred over `user` and `password` when both are set; every other engine refuses the pair when the file loads. Resolved like `password` |
+| `connections[].apiKeySecret` | No | - | Elasticsearch only (#708): the API key's secret, paired with `apiKeyId`; use `${ENV_VAR}` syntax |
+| `connections[].ssl.caCert` | No | absent | The CA certificate as PEM, or a `${ENV_VAR}` or `${vault:...}` reference that resolves to it, so a Kubernetes Secret can carry it into the environment ([providers/etcd.md](providers/etcd.md), section 12) |
+| `connections[].ssl.clientCert` | No | absent | The client certificate as PEM, or a reference, resolved like `password` |
+| `connections[].ssl.clientKey` | No | absent | The client key as PEM, or a reference; an unset reference skips the connection naming `ssl.clientKey`. Never inline a private key in a ConfigMap |
 | `connections[].connectionString` | No | — | Full connection string (use `${ENV_VAR}`). Druid and Trino have no URI form this build parses — those connections need `host` and are addressed by host and port only |
 | `connections[].roles` | Yes | — | Access control: `["*"]`, `["admin"]`, `["user"]`, `["admin", "user"]` |
-| `connections[].managed` | No | from defaults | `true` = read-only, `false` = editable copy |
+| `connections[].managed` | No | from defaults | `true` = admin-controlled: not editable in the UI, its secrets stay on the server; `false` = an editable copy for the user |
+| `connections[].readOnly` | No | absent | `true` refuses every write, value edit and maintenance operation on the connection, on an engine whose provider enforces it (etcd, Neo4j, Milvus, Qdrant, InfluxDB (InfluxQL), InfluxDB 3 (SQL) and Oxia); every other engine refuses `readOnly: true` when the file loads, naming the type and the field. Refused with `managed` false, on the connection or through `defaults.managed`, because an editable copy carries the credentials into the browser. A literal boolean: a `${ENV}` reference is refused |
 | `connections[].environment` | No | from defaults | Environment badge |
 | `connections[].group` | No | — | Group label |
 | `connections[].color` | No | — | Hex color for badge (e.g., `#10B981`) |
@@ -179,7 +238,103 @@ connections:
 | `connections[].serviceName` | No | — | Oracle service name |
 | `connections[].instanceName` | No | — | SQL Server instance name |
 | `connections[].localDataCenter` | No¹ | — | Cassandra local data centre (`datacenter1`). ¹Optional in the schema because no other engine has it, and **required by the Cassandra provider**: the driver refuses to connect without one |
+| `connections[].saslMechanism` | No | - | Kafka: `PLAIN`, `SCRAM-SHA-256` or `SCRAM-SHA-512`, absent meaning none; `user` and `password` are sent only with a mechanism, and only over TLS. It takes a literal name: it is neither a credential nor an address, so a `${ENV}` or `${vault:...}` reference in it is refused when the file loads, naming the field, because the file is validated before any reference is resolved |
+| `connections[].allowInsecureAuth` | No | absent | Db2, both InfluxDB types and Oxia (#786): `true` accepts that a connection with no TLS sends its password to the server in cleartext, which the Db2 provider otherwise refuses when the connection opens ([providers/db2.md](providers/db2.md)), and that an InfluxDB connection sends its password or token without TLS to a host that is not loopback, which both InfluxDB providers otherwise refuse before any socket ([providers/influxdb.md](providers/influxdb.md), [providers/influxdb3.md](providers/influxdb3.md)), and that an Oxia connection sends its token in cleartext, which the Oxia provider otherwise refuses when the connection opens ([providers/oxia.md](providers/oxia.md), section 4.6, where a token to this machine or through an SSH tunnel needs no tick). Set `ssl` instead wherever the server offers TLS. Every other engine ignores it. A literal boolean: a `${ENV}` reference fails the whole file |
+| `connections[].dataServers` | No | absent | Oxia only: the public addresses of a cluster's data servers, as `host:port` entries separated by commas or whitespace, at most 64. Exact entries only, never a pattern. A `${ENV}` or `${vault:...}` reference is resolved, as in `host`. Not a secret: it is listed with the connection, and the token it receives is not. Refused together with an SSH tunnel |
 | `connections[].authSource` | No | — | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An etcd or Oxia connection refuses `mcp: true` when the file loads: MCP is not offered for it |
+
+### MCP opt-in
+
+An MCP client reaches a connection only when its entry says `mcp: true`, and only when the connection's `roles` admit the role the client's token carries.
+The opt-in is per connection: `defaults.mcp` is refused, because a default would opt in every connection the file later gains.
+The built-in sample connections never carry it, so they are never visible to an MCP client.
+A value that is not a boolean fails the whole file, as any invalid field does: `GET /api/connections/managed` then answers 500 with its named reason, and every MCP tool answers that the connection configuration could not be read.
+With no seed file, or with no entry that opts in for the token's role, `list_connections` answers an empty list.
+
+### A read-only cluster for everyone
+
+`readOnly: true` makes a connection refuse every write, value edit and maintenance operation before any request, on an engine whose provider keeps the mode.
+etcd's, Neo4j's, Milvus's, Qdrant's, both InfluxDB types' and Oxia's do today ([providers/etcd.md](providers/etcd.md), section 3.4, the Neo4j recipe below, [providers/milvus.md](providers/milvus.md) and [providers/qdrant.md](providers/qdrant.md), section 3.4 of each, the InfluxDB recipes above, and [providers/oxia.md](providers/oxia.md), section 3.5), and on every other engine the file is refused at load, with a sentence naming the type and the field.
+The recipe is two seeds of one cluster: one every role reaches, read-only, and one for the people who may write.
+
+```yaml
+version: "1"
+connections:
+  - id: "cluster-read"
+    name: "Cluster"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    user: "reader"
+    password: "${ETCD_READER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${ETCD_CA}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+  - id: "cluster-write"
+    name: "Cluster (write)"
+    type: etcd
+    host: etcd.internal
+    port: 2379
+    user: "writer"
+    password: "${ETCD_WRITER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${ETCD_CA}"
+    roles: ["admin"]
+    managed: true
+```
+
+`managed: true` is written out on both, although it is the default, because a connection's own value overrides a file-wide `defaults.managed: false`.
+The load refuses `readOnly: true` on a connection that is not managed: an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose `readOnly` can be cleared.
+`readOnly` is set per connection and never in `defaults`, which the load refuses, so a later connection in the file never inherits it.
+The mode is a boundary only where etcd authenticates the client with a secret only the seeds hold, a password or a client certificate: on an etcd that authenticates nobody, a `user` who knows the address can reach it with a connection of their own.
+A read-only connection shows a Read-only marker beside its name in the sidebar and in the editor header.
+
+A connection type can declare credentials that would make a read-only seed a promise nobody keeps: a published default user and password, or, where the engine accepts a connection with no secret, no password at all.
+Milvus declares both: its documented default `root` pair, and no password ([providers/milvus.md](providers/milvus.md), section 4.2).
+A Milvus seed's read-only mode is a boundary only when the server has authorization enabled, which is not Milvus's default.
+Qdrant declares the second: a read-only Qdrant seed with no key is refused, because a Qdrant server without a key accepts any key or none ([providers/qdrant.md](providers/qdrant.md), section 4.2).
+Give a read-only Qdrant seed the server's read-only key or a read-scoped JWT, through a reference such as `password: "${QDRANT_READ_ONLY_KEY}"`.
+Both InfluxDB types declare the second too: an InfluxDB 1.x server with authentication off, its default, and an InfluxDB 3 server started with `--without-auth` accept any credential or none, so a read-only InfluxDB seed with no password or token is refused.
+Give a read-only `influxdb` seed a 1.x user granted READ, or a 2.x read token for the bucket, through a reference such as `password: "${INFLUX_READER_PASSWORD}"`, and a read-only `influxdb3` seed a token through a reference such as `password: "${INFLUXDB3_TOKEN}"`.
+On a type that does, the seed loader refuses a `readOnly: true` connection whose credential matches, in two stages: load refuses what the file shows; resolution refuses the rest.
+At load, a literal `user` and `password` that match, or an absent or empty `password`, fail the whole file with an error that names the connection and the `password` field and never repeats the value.
+An absent or empty `password` fails the file whatever the `user` holds, a reference included.
+A `${ENV}` or `${vault:...}` reference cannot be read at load, so a pair with a reference in either field passes there; once it resolves, the type's provider refuses the connection before anything is dialled if the resolved credential matches or is empty.
+A value shaped like `${...}` that the resolver does not resolve, such as `${lower}`, is a literal and is checked as one.
+An empty `user` with a password of the form `user:password` is read as that pair, so a token that carries a default credential is refused too.
+
+### A read-only Neo4j graph
+
+A Neo4j connection is read-only whatever `readOnly` says, because its provider refuses every write before it is sent ([providers/neo4j.md](providers/neo4j.md), section 3.1), so `readOnly: true` loads on a managed Neo4j seed and states what the connection does.
+One seed every role reaches is enough, and `mcp: true` lets an MCP client list the connection and inspect its schema; `run_read_query` does not serve Neo4j.
+
+```yaml
+version: "1"
+connections:
+  - id: "graph"
+    name: "Graph"
+    type: neo4j
+    host: neo4j.internal
+    port: 7687
+    database: neo4j
+    user: "reader"
+    password: "${NEO4J_READER_PASSWORD}"
+    ssl:
+      mode: verify-full
+      caCert: "${NEO4J_CA}"
+    roles: ["*"]
+    managed: true
+    readOnly: true
+    mcp: true
+```
+
+Leave `database` out to read the user's home database; another database is another connection.
+`verify-full` and `verify-ca` both check the host name, and through an SSH tunnel a verifying mode is refused, so use `require` with verification off there ([providers/neo4j.md](providers/neo4j.md), section 4.5).
 
 ---
 
@@ -192,7 +347,7 @@ connections:
   - id: "prod-db"
     password: "${PROD_DB_PASSWORD}"        # Resolved from process.env at runtime
     connectionString: "${MONGO_URI}"       # Also works for connection strings
-    user: "${DB_USER}"                     # Any field can use ${} syntax
+    user: "${DB_USER}"                     # Any resolvable field below can use ${} syntax
 ```
 
 **How it works:**
@@ -201,7 +356,7 @@ connections:
 3. If an env var is undefined, that connection is **skipped** (others continue working)
 4. Plaintext passwords trigger a warning log (but still work)
 
-**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`
+**Resolvable fields:** `password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, and the TLS material under `ssl`: `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey`.
 
 ### Vault References
 
@@ -218,7 +373,8 @@ The part before `#` is the KV v2 path (`<mount>/data/<name>`) and the part after
 
 **Quote the value.** YAML reads an unquoted `#` as the start of a comment, so `password: ${vault:secret/data/prod/postgres#password}` sets the password to the literal text `${vault:secret/data/prod/postgres` and drops the key. The quotes above are not optional.
 
-Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`). A reference with no `#key` fails when the connection is opened.
+Whole-value match only, exactly like `${ENV_VAR}`: no partial interpolation, no concatenation, and the same resolvable fields (`password`, `connectionString`, `user`, `host`, `database`, `apiKeyId`, `apiKeySecret`, `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey`).
+A reference with no `#key` fails when the connection is opened.
 
 A Vault reference is read lazily, one connection at a time:
 
@@ -239,6 +395,7 @@ Vault credentials come from the environment, never from the seed file — a seed
 | `VAULT_TOKEN` | — | Static token. Takes precedence over `VAULT_ROLE` when both are set |
 | `VAULT_ROLE` | — | Kubernetes auth role, used when `VAULT_TOKEN` is unset. The login token's lease is tracked and refreshed before it lapses |
 | `VAULT_K8S_TOKEN_PATH` | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Projected service account token presented to the Kubernetes login |
+| `VAULT_K8S_AUTH_PATH` | `kubernetes` | Mount path of the Kubernetes auth method; the login goes to `<VAULT_ADDR>/v1/auth/<path>/login`. Set it when the method is mounted elsewhere, such as one mount per cluster on a shared Vault. Leading and trailing slashes are ignored |
 | `VAULT_NAMESPACE` | — | Vault Enterprise namespace, sent as `X-Vault-Namespace` when set |
 | `VAULT_CACHE_TTL_MS` | `60000` | How long a read secret is cached |
 
@@ -488,6 +645,10 @@ extraEnvFrom:
 | Config file not found | App runs normally, no seed connections. Warning logged. |
 | Invalid YAML/JSON | Endpoint returns 500. Error logged with details. |
 | Invalid config (Zod validation fails) | Endpoint returns a generic 500. Validation errors are logged server-side, not returned in the response body. |
+| `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
+| `readOnly: true` on a connection whose type does not enforce it, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
+| `readOnly: true` on a connection whose literal credential matches a default its type declares, or with no password where its type declares it accepts none | The whole file fails like any invalid config, and the error names the connection and `password`, never the value; a `${ENV}` or `${vault:...}` reference is checked once it resolves, and the connection is refused before anything is dialled |
+| `mcp: true` on an etcd or Oxia connection | The whole file fails like any invalid config, and the error names `mcp` and the type, `etcd` or `oxia` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged. |
 | `${vault:...}` reference, Vault unreachable / path or key missing / token refused | The connection fails with an explicit error **when it is opened**. Listing connections is unaffected, and so is every other connection. |
@@ -548,6 +709,7 @@ Standalone deployments also get automatic, code-defined seed connections (none o
 - **Sample (Employees)** — `src/lib/seed/sqlite-sample.ts` copies the vendored employees SQLite database (`seed-assets/sqlite/employee.db`, from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database) `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db); see `seed-assets/sqlite/ATTRIBUTION.md`) to `<data dir>/sample-employees.db`. Seeded **asynchronously and fail-open**: boot never waits for the copy; while it is in flight `GET /api/connections/managed` lists the seed id in `pendingSeeds` and the client polls (1s, max 30 attempts; the interval constant is inlined at build time — `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
 
 `getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`, `roles: ["*"]`), so they behave like any other unmanaged seed: editable, and if deleted they go to the dismissed list rather than reappearing.
+Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
 
 This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
 

@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.275Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/{collection_name}/points/{id} on plain",
+    "op": "get_point",
+    "credential": "none",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/collections/plain/points/1",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 143,
+    "body": "{\"result\":{\"id\":1,\"payload\":{\"n\":1,\"city\":\"Berlin\"},\"vector\":[-0.7428596,-0.0014442751,0.20299672,-0.942622]},\"status\":\"ok\",\"time\":0.000072523}"
+  }
+}

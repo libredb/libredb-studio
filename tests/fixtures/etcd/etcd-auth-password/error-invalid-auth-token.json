@@ -1,0 +1,37 @@
+{
+  "$captured": {
+    "service": "etcd-auth-password",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "9341064349964996272",
+    "memberId": "11100594549813706834",
+    "date": "2026-09-30T16:30:24.879Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "KV/Range",
+    "surface": "range: /app/cfg with reader's token 12 s after it was issued (--auth-token-ttl=10)",
+    "request": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      },
+      "limit": {
+        "$int64": "1"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      }
+    },
+    "metadata": {
+      "hasleader": "true",
+      "token": "<token>"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "16 UNAUTHENTICATED: etcdserver: invalid auth token",
+    "code": 16,
+    "details": "etcdserver: invalid auth token"
+  }
+}

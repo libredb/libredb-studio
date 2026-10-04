@@ -1,0 +1,50 @@
+{
+  "$captured": {
+    "service": "etcd-cluster",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "none",
+    "memberId": "none",
+    "date": "2026-09-30T16:30:01.229Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "KV/Txn",
+    "surface": "txn: a put through a forwarder that passes the request to member 1 and drops the connection before the answer",
+    "request": {
+      "compare": [],
+      "success": [
+        {
+          "request_put": {
+            "key": {
+              "$bytes": "L2xpYnJlZGItZXZpZGVuY2UvZHJvcHBlZA=="
+            },
+            "value": {
+              "$bytes": "eA=="
+            }
+          }
+        }
+      ],
+      "failure": []
+    },
+    "match": {
+      "success": [
+        {
+          "request_put": {
+            "key": {
+              "$bytes": "L2xpYnJlZGItZXZpZGVuY2UvZHJvcHBlZA=="
+            }
+          }
+        }
+      ]
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "14 UNAVAILABLE: Connection dropped",
+    "code": 14,
+    "details": "Connection dropped"
+  }
+}

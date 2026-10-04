@@ -1,0 +1,42 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:56.498Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "KV/Range",
+    "surface": "range: /app/cfg at the current revision plus 1000",
+    "request": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      },
+      "limit": {
+        "$int64": "1"
+      },
+      "revision": {
+        "$int64": "1080"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      },
+      "revision": {
+        "$int64": "1080"
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "11 OUT_OF_RANGE: etcdserver: mvcc: required revision is a future revision",
+    "code": 11,
+    "details": "etcdserver: mvcc: required revision is a future revision"
+  }
+}

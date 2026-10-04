@@ -20,7 +20,18 @@
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { Database as BunDatabase } from "bun:sqlite";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
@@ -44,6 +55,8 @@ import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/o
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { comparePaths } from "@/lib/db/object-path";
+import { logger } from "@/lib/logger";
+import { MISSING_POSIX_FILE_MODES, describeIf } from "../../helpers/posix-tools";
 import {
   WAREHOUSE_PLACEHOLDER,
   readFixtureStatements,
@@ -366,6 +379,239 @@ describe("connect / disconnect", () => {
     }
   });
 });
+
+// ============================================================================
+// What an open may and may not do to the filesystem and the network (#1404)
+//
+// Measured on v1.5.5 before the fix: with every option at its default, a DuckDB
+// connection pointed at a SQLite file made the engine fetch the ~34 MB `sqlite_scanner`
+// extension from extensions.duckdb.org, install it under the server user's home, attach
+// the file and checkpoint its WAL, and Studio answered "Connected successfully". A file
+// mode 0444 DuckDB database could not be opened at all ("Permission denied").
+// ============================================================================
+
+/** A file's bytes, as a digest the before/after comparisons read. */
+function digestOf(file: string): string {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+describe("a file that is not a DuckDB database is refused before the engine opens it (#1404)", () => {
+  let provider: DuckDBProvider;
+
+  afterEach(async () => {
+    if (provider?.isConnected()) await provider.disconnect();
+  });
+
+  test("a SQLite file held open by another connection is named as SQLite, and neither it nor its WAL changes", async () => {
+    const file = join(workDir, "not-duck.sqlite");
+    // Held open in WAL mode with a row past the last checkpoint, so a `-wal` sits beside
+    // the file: the shape the engine used to checkpoint into it.
+    const sqlite = new BunDatabase(file, { create: true, readwrite: true });
+    try {
+      sqlite.exec("PRAGMA journal_mode = WAL");
+      sqlite.exec("CREATE TABLE t (a INTEGER)");
+      sqlite.exec("INSERT INTO t VALUES (1)");
+      expect(existsSync(`${file}-wal`)).toBe(true);
+      const before = [digestOf(file), digestOf(`${file}-wal`)];
+
+      provider = new DuckDBProvider(makeConfig({ database: file }));
+      const refusal = await provider.connect().then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      expect(refusal).toBeInstanceOf(ConnectionError);
+      expect((refusal as Error).message).toBe(
+        `${file} is a SQLite database file, not a DuckDB database file. Open it with a SQLite connection. DuckDB did not open it, so it is unchanged.`,
+      );
+      expect(provider.isConnected()).toBe(false);
+      expect([digestOf(file), digestOf(`${file}-wal`)]).toEqual(before);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  test("any other file is refused as not a DuckDB database file, unchanged", async () => {
+    const file = join(workDir, "notes.txt");
+    writeFileSync(file, "these are not database pages\n");
+    const before = digestOf(file);
+
+    provider = new DuckDBProvider(makeConfig({ database: file }));
+
+    await expect(provider.connect()).rejects.toThrow(
+      `${file} is not a DuckDB database file: a DuckDB file carries "DUCK" at byte 8, and this one does not. DuckDB did not open it, so it is unchanged.`,
+    );
+    expect(digestOf(file)).toBe(before);
+  });
+
+  test("an empty file is refused the same way, as the engine itself would refuse it", async () => {
+    const file = join(workDir, "empty.duckdb");
+    writeFileSync(file, "");
+
+    provider = new DuckDBProvider(makeConfig({ database: file }));
+
+    await expect(provider.connect()).rejects.toThrow(/is not a DuckDB database file/);
+    expect(readFileSync(file).length).toBe(0);
+  });
+
+  test("the agent read-only profile refuses a SQLite file too", async () => {
+    const file = join(workDir, "not-duck-ro.sqlite");
+    const sqlite = new BunDatabase(file, { create: true, readwrite: true });
+    sqlite.exec("CREATE TABLE t (a INTEGER)");
+    sqlite.close();
+    const before = digestOf(file);
+
+    provider = new DuckDBProvider(makeConfig({ database: file }), {}, { readOnly: true });
+
+    await expect(provider.connect()).rejects.toThrow(/is a SQLite database file, not a DuckDB database file/);
+    expect(digestOf(file)).toBe(before);
+  });
+
+  test("a real DuckDB file still opens, on the editor handle and the read-only one", async () => {
+    const file = await seededFile("real.duckdb");
+
+    provider = new DuckDBProvider(makeConfig({ database: file }));
+    await provider.connect();
+    expect((await provider.query("SELECT count(*) AS n FROM users")).rows[0].n).toBe("2");
+    await provider.disconnect();
+
+    provider = new DuckDBProvider(makeConfig({ database: file }), {}, { readOnly: true });
+    await provider.connect();
+    expect((await provider.queryReadOnly("SELECT count(*) AS n FROM users", GENEROUS_BUDGET)).rows[0].n).toBe("2");
+  });
+
+  test("a path whose header cannot be read is left to the engine, which names its own failure", async () => {
+    // A directory opens for reading on POSIX and then refuses the read; the engine's own
+    // sentence is the right one there, not a claim about the file's format.
+    const dir = join(workDir, "a-directory.duckdb");
+    mkdirSync(dir);
+
+    provider = new DuckDBProvider(makeConfig({ database: dir }));
+    const refusal = await provider.connect().then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    expect(refusal).toBeInstanceOf(ConnectionError);
+    expect((refusal as Error).message).toStartWith(`Failed to open DuckDB database ${dir}: `);
+  });
+});
+
+describe("no extension is installed or loaded behind the user's back (#1404)", () => {
+  let provider: DuckDBProvider;
+
+  afterEach(async () => {
+    if (provider?.isConnected()) await provider.disconnect();
+  });
+
+  const EXTENSION_SETTINGS =
+    "SELECT current_setting('autoinstall_known_extensions') AS install, current_setting('autoload_known_extensions') AS load, current_setting('allow_community_extensions') AS community, current_setting('allow_unsigned_extensions') AS unsigned";
+
+  const POLICY = { install: false, load: false, community: false, unsigned: false };
+
+  test("the editor handle opens with autoinstall, autoload, community and unsigned extensions off", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
+  });
+
+  test("the read-only handle opens with all four off as well", async () => {
+    const client = await openDuckDBClient(await seededFile("ext-ro.duckdb"), { readOnly: true });
+    try {
+      expect((await client.run(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
+    } finally {
+      client.close();
+    }
+  });
+
+  test("a function from an extension that is not loaded is refused with the engine's LOAD hint, not fetched", async () => {
+    // Deterministic whether or not this machine has the extension installed: with autoload
+    // off, an installed extension is not loaded either.
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    await expect(provider.query(`SELECT * FROM sqlite_scan('${join(workDir, "x.sqlite")}', 't')`)).rejects.toThrow(
+      /LOAD sqlite_scanner/,
+    );
+  });
+
+  test("a session can still opt in with SET, which is the documented way back", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    await provider.query("SET autoload_known_extensions = true");
+    await provider.query("SET autoinstall_known_extensions = true");
+
+    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([{ ...POLICY, install: true, load: true }]);
+  });
+
+  test.each([["SET allow_community_extensions = true"], ["SET GLOBAL allow_community_extensions = true"]])(
+    "community extensions cannot be turned back on inside a session: %s",
+    async (statement) => {
+      provider = new DuckDBProvider(makeConfig());
+      await provider.connect();
+
+      await expect(provider.query(statement)).rejects.toThrow(
+        /Cannot change allow_community_extensions setting while database is running/,
+      );
+      expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
+    },
+  );
+});
+
+describeIf(
+  MISSING_POSIX_FILE_MODES ??
+    (process.getuid?.() === 0 ? "running as root: file modes do not restrict root, so nothing is unwritable" : null),
+  "a DuckDB file this process cannot write opens read-only in the editor (#1404)",
+  () => {
+    let provider: DuckDBProvider;
+
+    afterEach(async () => {
+      if (provider?.isConnected()) await provider.disconnect();
+    });
+
+    test("mode 0444: reads answer, a write is refused by the engine, and the file is unchanged", async () => {
+      const file = await seededFile("mode-0444.duckdb");
+      chmodSync(file, 0o444);
+      const before = digestOf(file);
+      const info = spyOn(logger, "info");
+      try {
+        provider = new DuckDBProvider(makeConfig({ database: file }));
+        await provider.connect();
+
+        expect((await provider.query("SELECT count(*) AS n FROM users")).rows[0].n).toBe("2");
+        await expect(provider.query("INSERT INTO users VALUES (3, 'x')")).rejects.toThrow(/read-only mode/);
+        expect(info.mock.calls.map(([message]) => String(message))).toContain(
+          `[DuckDB] Opened ${file} read-only: this process cannot write the file or its directory`,
+        );
+      } finally {
+        info.mockRestore();
+        if (provider?.isConnected()) await provider.disconnect();
+        chmodSync(file, 0o644);
+      }
+      expect(digestOf(file)).toBe(before);
+    });
+
+    test("a mode 0444 SQLite file is refused, and is not announced as opened read-only", async () => {
+      const file = join(workDir, "mode-0444.sqlite");
+      const sqlite = new BunDatabase(file, { create: true, readwrite: true });
+      sqlite.exec("CREATE TABLE t (a INTEGER)");
+      sqlite.close();
+      chmodSync(file, 0o444);
+      const info = spyOn(logger, "info");
+      try {
+        provider = new DuckDBProvider(makeConfig({ database: file }));
+
+        await expect(provider.connect()).rejects.toThrow(/is a SQLite database file/);
+        expect(info.mock.calls.map(([message]) => String(message)).filter((m) => m.includes("[DuckDB]"))).toEqual([]);
+      } finally {
+        info.mockRestore();
+        chmodSync(file, 0o644);
+      }
+    });
+  },
+);
 
 // ============================================================================
 // Query execution
@@ -820,17 +1066,17 @@ describe("runMaintenance()", () => {
   });
 
   /*
-    The other side of that default, and the reason D49 exists.
+    The other side of that default.
 
     A caller that sends a BARE name for a table living outside `main` gets `main`, and the
     engine refuses because that table is not there. The refusal is the CORRECT behaviour for
     this provider - guessing which schema the caller meant would act on a table nobody named -
     so it is pinned here rather than repaired: the repair belongs to the caller.
 
-    Measured in the browser on 2026-08-27: the Tables panel's per-row Analyze button sends
+    Measured in the browser on 2026-08-27: the Tables panel's per-row Analyze button sent
     `table.tableName` without the `table.schemaName` it renders beside it, so clicking it on the
-    `analytics.events` row produced exactly this refusal. That is a shared-component defect
-    reaching all twelve providers that implement `runMaintenance`, filed as D49.
+    `analytics.events` row produced exactly this refusal. #772 repaired the caller, which now
+    sends the schema as the container (the test below).
   */
   test("a bare target naming a table outside main is refused, and the message names the real one", async () => {
     provider = await seededMemoryProvider();
@@ -846,6 +1092,28 @@ describe("runMaintenance()", () => {
     provider = await seededMemoryProvider();
 
     await expect(provider.runMaintenance("optimize", "customers")).rejects.toThrow(/takes no target/);
+  });
+
+  // #772: `schemaName` is the schema on DuckDB exactly as it is on PostgreSQL, and a caller
+  // that sends it gets that schema directly - never a re-split of the name.
+  test("a container qualifies the target instead of the main fallback", async () => {
+    provider = await seededMemoryProvider();
+
+    await expect(provider.runMaintenance("analyze", "events", "analytics")).resolves.toMatchObject({ success: true });
+  });
+
+  test("a container is used whole even when it contains a dot", async () => {
+    provider = await seededMemoryProvider();
+    await provider.query('CREATE SCHEMA "odd.schema"');
+    await provider.query('CREATE TABLE "odd.schema".events (id BIGINT)');
+
+    await expect(provider.runMaintenance("analyze", "events", "odd.schema")).resolves.toMatchObject({ success: true });
+  });
+
+  test("a bare target with no container still falls back to main", async () => {
+    provider = await seededMemoryProvider();
+
+    await expect(provider.runMaintenance("analyze", "customers")).resolves.toMatchObject({ success: true });
   });
 
   test.each(["reindex", "check", "kill"] as const)("%s is refused with the reason it is not offered", async (type) => {
@@ -1394,7 +1662,7 @@ describe("object surface", () => {
    * docblock) this test is what refuses it until a read exists.
    *
    * All four are `sql` and not a dialect id. `plsql`, `tsql` and `cql` are not registrable
-   * ids in the installed monaco-editor 0.56.0 bundle and DuckDB has no id of its own
+   * ids in the installed monaco-editor 0.57.0 bundle and DuckDB has no id of its own
    * either, so `sql` is the honest choice rather than a compromise here: DuckDB's dialect
    * is PostgreSQL-shaped and the text the engine publishes is ordinary SQL.
    */
@@ -1604,6 +1872,24 @@ describe("DuckDB object containers, listings and detail", () => {
     const provider = await seededObjectProvider();
     try {
       expect(await provider.listContainers(["memory", "main"])).toEqual([]);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a parent is a tree cursor, so a catalog lists its schemas even when only exact addresses are declared", async () => {
+    const provider = await seededObjectProvider();
+    try {
+      // `containerPathShapes` governs the paths an object read ADDRESSES. A listing parent is
+      // not one: `[database]` is where the tree is, so an address check would refuse it here.
+      spyOn(provider, "getCapabilities").mockReturnValue({
+        ...new DuckDBProvider(makeConfig()).getCapabilities(),
+        containerPathShapes: "exact",
+      });
+      expect((await provider.listContainers(["memory"])).map((container) => container.path)).toEqual([
+        ["memory", "analytics"],
+        ["memory", "main"],
+      ]);
     } finally {
       await provider.disconnect();
     }

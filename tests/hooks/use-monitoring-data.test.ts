@@ -310,6 +310,32 @@ describe("useMonitoringData", () => {
     expect(mockToastSuccess).toHaveBeenCalled();
   });
 
+  // #772: the container travels beside the target, so a provider can act on the namespace the
+  // row named instead of guessing one from a bare name.
+  test("runMaintenance sends the container it was given", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+      "/api/db/maintenance": { ok: true, json: { success: true, message: "VACUUM completed" } },
+    });
+
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.runMaintenance("vacuum", "users", "reporting");
+    });
+
+    const maintenanceCall = fetchMock.mock.calls.find(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/maintenance"),
+    );
+    const body = JSON.parse(maintenanceCall![1]!.body as string);
+    expect(body.target).toBe("users");
+    expect(body.container).toBe("reporting");
+  });
+
   // ── a refused operation is reported as refused, not as a green tick ────────
 
   test("runMaintenance reports an HTTP 200 carrying success:false as a failure", async () => {
@@ -1008,5 +1034,83 @@ describe("useMonitoringData", () => {
     expect(result.current.data).toBeNull();
 
     globalThis.fetch = originalFetch;
+  });
+});
+
+describe("useMonitoringData previewMaintenance (spec 3.11)", () => {
+  beforeEach(() => {
+    mockToastSuccess.mockClear();
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  const PREVIEW = { summary: "Load Object reads users.", facts: [{ label: "Rows", value: "12" }] };
+
+  test("posts the operation, the object, its container and the connection, and answers the route's preview", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/maintenance/preview": { ok: true, json: { preview: PREVIEW } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+    });
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    let answered: unknown;
+    await act(async () => {
+      answered = await result.current.previewMaintenance("compact", "users", "public");
+    });
+
+    expect(answered).toEqual(PREVIEW);
+    const call = fetchMock.mock.calls.find(
+      (entry) => typeof entry[0] === "string" && entry[0].includes("/api/db/maintenance/preview"),
+    );
+    expect(JSON.parse(call![1]!.body as string)).toMatchObject({
+      type: "compact",
+      target: "users",
+      container: "public",
+      connection: { id: "mon-pg-1" },
+    });
+    // The dialog that asked shows the answer; the hook announces nothing.
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a refused preview raises the route's own sentence and shows no toast", async () => {
+    mockGlobalFetch({
+      "/api/db/maintenance/preview": { status: 400, ok: false, json: { error: "This operation has no preview" } },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+    });
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    await expect(result.current.previewMaintenance("disarm", "users")).rejects.toThrow("This operation has no preview");
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  test("a failure with no sentence raises one naming the operation", async () => {
+    mockGlobalFetch({
+      "/api/db/maintenance/preview": { status: 500, ok: false, json: {} },
+      "/api/db/monitoring": { ok: true, json: mockMonitoringResponse },
+    });
+    const { result } = renderHook(() => useMonitoringData(mockConnection));
+    await waitFor(() => {
+      expect(result.current.data).not.toBeNull();
+    });
+
+    await expect(result.current.previewMaintenance("compact", "users")).rejects.toThrow("Failed to preview compact");
+  });
+
+  test("with no connection it raises before any request", async () => {
+    const fetchMock = mockGlobalFetch({});
+    const { result } = renderHook(() => useMonitoringData(null));
+
+    await expect(result.current.previewMaintenance("compact", "users")).rejects.toThrow("No connection is selected");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

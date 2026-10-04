@@ -14,10 +14,10 @@
  * There are no timers here. A setInterval would hold the event loop open and leak one per process;
  * entries expire lazily on access instead.
  *
- * Memory bound: MAX_ENTRIES_PER_BUCKET (1000) x 5 buckets = 5000 counters total. Each counter is a
+ * Memory bound: MAX_ENTRIES_PER_BUCKET (1000) x 6 buckets = 6000 counters total. Each counter is a
  * map entry keyed by up to MAX_KEY_LENGTH (200) UTF-16 characters (~400 bytes) plus a small
  * {count, resetAt, notified} object and Map/object overhead, so the realistic bound is roughly
- * 2.5-3 MB, not a flat "100 bytes per counter" - correct this comment again if either constant
+ * 3-3.6 MB, not a flat "100 bytes per counter" - correct this comment again if either constant
  * changes. Nobody may add a second, unbounded map alongside these.
  *
  * Capacity is partitioned PER BUCKET, not shared across buckets: see pruneIfAtCapacity. A single
@@ -30,7 +30,7 @@
  * bucket can only ever evict entries already in that same bucket's own store.
  */
 
-export type RateLimitBucket = "login_client" | "login_account" | "ai" | "query" | "anon";
+export type RateLimitBucket = "login_client" | "login_account" | "passkey_client" | "ai" | "query" | "anon";
 
 export interface RateLimitDecision {
   allowed: boolean;
@@ -99,6 +99,15 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
     maxDefault: 20,
     windowDefault: 300,
   },
+  // Failed passkey sign-ins per client key. A bucket of its own: a signature cannot be guessed, so
+  // this bounds CPU, database reads and audit volume rather than guessing, and sharing
+  // login_client would let passkey retries lock an address out of password sign-in.
+  passkey_client: {
+    maxVar: "RATE_LIMIT_PASSKEY_MAX",
+    windowVar: "RATE_LIMIT_PASSKEY_WINDOW_SEC",
+    maxDefault: 10,
+    windowDefault: 300,
+  },
   // Shared by every route that reaches an LLM provider or touches an agent run, so that
   // rotating between them cannot multiply the budget. Stated as a RULE rather than a count,
   // because every count written here has been wrong: a route can join this bucket three ways
@@ -129,14 +138,23 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // for exactly that and the object half of the count moved: the previous figure was TWENTY-THREE
   // over seven object routes, and the edit surface adds two.
   //
-  // TWENTY-FIVE handlers today, and there are two ways in, which is why one grep under-counts.
-  // Directly, sixteen call sites that pass bucket: "query" to guardRoute themselves
-  // (grep -rl 'bucket: "query"' src/app/api/ answers sixteen files, one call site each, verified
-  // with grep -rc on the same list): admin/fleet-health, db/cancel, db/disconnect, db/health,
-  // db/maintenance, db/monitoring, db/multi-query, db/pool-stats, db/profile, db/provider-meta,
-  // db/query, db/test-connection, db/transaction, and the three storage routes (storage,
-  // storage/[collection], storage/migrate). Note db/health: only its POST is metered, because the
-  // GET is the container health probe and takes no connection.
+  // RE-COUNTED 2026-10-03, when db/maintenance/preview joined: the figure below had said seventeen
+  // files while the grep it cites already answered twenty-one, because admin/accounts,
+  // admin/accounts/[email], auth/passkey and auth/totp had joined without it.
+  //
+  // THIRTY-TWO route files today, and there are three ways in, which is why one grep under-counts.
+  // Directly, twenty-two route files that pass bucket: "query" to guardRoute themselves
+  // (grep -rl 'bucket: "query"' src/app/api/ answers twenty-two files; grep -c on the same list
+  // finds one call site in each but auth/passkey and auth/totp, which have one per method, two
+  // each, so twenty-four call sites): admin/accounts, admin/accounts/[email], admin/fleet-health,
+  // auth/passkey, auth/totp, db/cancel, db/disconnect, db/health, db/maintenance,
+  // db/maintenance/preview, db/monitoring, db/multi-query, db/pool-stats, db/profile,
+  // db/provider-meta, db/query, db/test-connection, db/transaction, mcp/token, and the three storage
+  // routes (storage, storage/[collection], storage/migrate). Note db/health: only its POST is
+  // metered, because the GET is the container health probe and takes no connection. mcp/token
+  // runs no query: its POST is metered here because the credential it mints reaches this workload,
+  // and its GET reads the channel status with getSession and is charged nothing, as
+  // GET /api/agent/config is in the ai bucket.
   // Indirectly, the NINE object routes under db/objects (containers, counts, list, describe,
   // search, inventory, source, edit-plan, edit-apply), which reach this bucket through
   // handleObjectRequest in object-route.ts and so carry no bucket literal of their own. Counted
@@ -144,6 +162,10 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // whole reason this second paragraph exists: those nine carry no literal to find. All nine
   // directories exist; this passage used to say seven did, because the count moved ahead of the
   // last two routes landing, and a reader who counts today gets nine.
+  // And by calling consumeRateLimit("query", ...) with no bucket literal at all, which is what
+  // POST /api/mcp does: it verifies a bearer token instead of a session, so it cannot use
+  // guardRoute, and it charges one slot per authenticated POST before reading the body, keyed on
+  // the user the token was issued to, exactly as guardRoute keys a session.
   //
   // A SLOT IS NOT A UNIT OF COST HERE EITHER, and the two new routes are the sharpest example in
   // this bucket. An edit-apply slot runs DDL against a live engine; a db/pool-stats slot reads a
@@ -151,7 +173,10 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
   // per cost class would be a configurable pair per route.
   //
   // The same workload reached through a different endpoint must not get a second budget -
-  // re-verify and correct this comment again if guardRoute grows a new call site.
+  // re-verify and correct this comment again if guardRoute or consumeRateLimit("query", ...) grows
+  // a new call site.
+  // Account administration (`/api/admin/accounts`) and TOTP enrolment (`/api/auth/totp`) share
+  // this bucket: both read and write the storage database.
   //
   // The storage family joined when AU1 moved it onto the shared 401 (2026-08-22), and that gave it
   // a limiter it never had. It belongs here rather than in a bucket of its own: under
@@ -177,6 +202,7 @@ const BUCKETS: Record<RateLimitBucket, BucketSpec> = {
 const bucketStores: Record<RateLimitBucket, Map<string, Counter>> = {
   login_client: new Map(),
   login_account: new Map(),
+  passkey_client: new Map(),
   ai: new Map(),
   query: new Map(),
   anon: new Map(),
@@ -184,11 +210,11 @@ const bucketStores: Record<RateLimitBucket, Map<string, Counter>> = {
 
 /**
  * A clamped integer from the environment. One helper rather than a branch per variable, so the
- * coverage cost of eleven configurable numbers is one small tested function.
+ * coverage cost of twelve configurable numbers is one small tested function.
  * A value of 0 for a *_MAX means unlimited; the caller decides what 0 means for its own variable.
  * Unlike the boolean flags in src/lib/security/config.ts, an out-of-range number here silently
  * falls back rather than warning: these are budget knobs, not a security posture toggle, and this
- * function backs eleven of them plus TRUSTED_PROXY_HOPS - warning here would either fire on every
+ * function backs twelve of them plus TRUSTED_PROXY_HOPS - warning here would either fire on every
  * request or need its own per-variable latch for a case that isn't a security-relevant mistake.
  */
 export function parsePositiveInt(value: string | undefined, fallback: number, max: number): number {

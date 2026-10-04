@@ -32,6 +32,7 @@ import type {
   ObjectEditPosition,
   ObjectEditPreimage,
   ObjectEditStep,
+  ObjectEditUnit,
 } from "@/lib/db/types";
 import { defineStudioThemes, STUDIO_THEME_DARK, STUDIO_THEME_LIGHT } from "@/lib/editor/monaco-theme";
 
@@ -106,6 +107,19 @@ function counted(value: number): string {
 /** The step whose bytes the diff's right side shows: the payload on the command arm. */
 function previewedStep(plan: ObjectEditPlan): ObjectEditStep {
   return plan.unit.medium === "command" ? plan.unit.payload : plan.unit.steps[0];
+}
+
+/**
+ * The command arm's one line, in the order the apply sends it: the verb, the tokens before the
+ * payload, the payload by its label and length, and the tokens after it (etcd spec 3.4, 4.5).
+ *
+ * An absent `payloadLabel` reads "library code" and an absent or empty `trailing` adds nothing,
+ * not even a space, so a unit that sets neither, which Redis's is, draws the line it always has.
+ */
+function commandSummary(unit: Extract<ObjectEditUnit, { readonly medium: "command" }>): string {
+  const summary = `${unit.name} ${unit.arguments.join(" ")} <${unit.payloadLabel ?? "library code"}, ${counted(unit.payload.text.length)} characters>`;
+  const trailing = unit.trailing ?? [];
+  return trailing.length === 0 ? summary : `${summary} ${trailing.join(" ")}`;
 }
 
 /**
@@ -328,10 +342,9 @@ function WarningRow({ testId, children }: { testId: string; children: React.Reac
  * The preview the reader approves, which is the bytes the apply sends (ruling 1a, #789 Phase 3).
  *
  * Mounted by `ObjectSourceView` and by nothing else. The shell is this repository's own Radix
- * modal, so `role="dialog"`, `aria-modal`, the focus trap, focus return and the `sr-only` close
- * label all come from `DialogContent` and none of them is hand-rolled here. `QuerySafetyDialog` is
- * the closest prior art by intent and the worst model to copy: MEASURED, it is a `fixed inset-0`
- * div with no dialog role, no `aria-modal`, no focus trap and no Escape handler.
+ * modal, so `role="dialog"`, the focus trap and the `sr-only` close label come from `DialogContent`
+ * and none of them is hand-rolled here. Radix hides the rest of the page from assistive technology
+ * with `aria-hidden` (`hideOthers` in `@radix-ui/react-dialog`), not with `aria-modal`.
  *
  * `SchemaDiff` is not reused and could not be: MEASURED, it is a structural snapshot diff over
  * `DetailedObject[]`, its vocabulary is `ColumnDiff`/`TableDiff`, it holds no text on either side
@@ -632,7 +645,7 @@ export function ApplyPreviewDialog(props: ApplyPreviewDialogProps): React.JSX.El
                 className="whitespace-pre-wrap break-words text-xs text-brand/80"
                 data-testid="object-source-apply-payload"
               >
-                {`${plan.unit.name} ${plan.unit.arguments.join(" ")} <library code, ${counted(plan.unit.payload.text.length)} characters>`}
+                {commandSummary(plan.unit)}
               </pre>
             </div>
           )}

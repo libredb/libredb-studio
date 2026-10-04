@@ -7,6 +7,8 @@
 > architecture, usage, and tests. If you are reading the code, extending Druid support, or authoring
 > a new provider over HTTP, start here.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |
@@ -867,6 +869,11 @@ both the reason and the alternative, which is more useful than anything this pro
 | header row 2 (SQL types) | `columnTypes` | Keyed by the same disambiguated names; **absent** when the payload declared no types. The native types (header row 1) deliberately do not travel — they lie for an expression ([§3.5](#35-the-sql-type-labels-the-column-because-the-native-type-lies)) |
 | `X-Druid-Response-Context.missingSegments` | `warnings` | One warning naming how many segments were unavailable, and **absent** for a whole answer or an answer that said nothing about availability ([§13](#13-known-limitations--future-work)) |
 
+**`COUNT(DISTINCT ...)` answers an estimate.** Druid documents it as an alias for
+`APPROX_COUNT_DISTINCT` while the query context's `useApproximateCountDistinct` is `true`, its default,
+and the only context key this provider sends is `timeout`. So the Data Profiler's distinct count, which
+is that aggregate, is an estimate on Druid; its null counts, MIN and MAX are exact.
+
 ### 5.3 `ARRAY` cells arrive as JSON strings
 
 Druid's `sqlStringifyArrays` query context defaults to **true**, so an array column comes back as
@@ -1603,6 +1610,7 @@ Both halves of that are real constraints, not scope cuts made lightly:
 | `defaultPort` | `8888` | The Router. `8082` (Broker) is equally valid ([§3.3](#33-router-8888-or-broker-8082--both-work-identically)) |
 | `schemaRefreshPattern` | `\b(INSERT\|REPLACE)\b` | The only statements that could change a datasource — and the native engine rejects both, so in practice a query never refreshes the schema, which is correct |
 | `containerLevels` | one `schema` level | `INFORMATION_SCHEMA.SCHEMATA` reports one catalog, always `druid`, so there is no second level to add ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact` | Only `[schema]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider directly (#1147) |
 | `objectKinds` | `datasource`, `lookup`, `system_table` | And five kinds ABSENT rather than declared and zero, because `CREATE` is not in the grammar in any form ([§6.1](#61-the-object-surface-789)) |
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts))
@@ -1725,9 +1733,9 @@ end through the registry.
 
 ```bash
 # Just this provider
-bun test tests/integration/db/druid-provider.test.ts
-bun test tests/unit/db/druid
-bun test tests/unit/lib/explain/druid-native.test.ts
+bun tests/run-tests.ts tests/integration/db/druid-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/druid
+bun tests/run-tests.ts tests/unit/lib/explain/druid-native.test.ts
 
 # Full isolated suite (CI-equivalent)
 bun run test
@@ -1985,4 +1993,4 @@ cancellation as unsupported because the provider exposes no `cancelQuery`
 - Metadata tables (`INFORMATION_SCHEMA`, `sys`): <https://druid.apache.org/docs/latest/querying/sql-metadata-tables>
 - `EXPLAIN PLAN FOR`: <https://druid.apache.org/docs/latest/querying/sql-translation>
 - Native batch ingestion: <https://druid.apache.org/docs/latest/ingestion/native-batch>
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Apache Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)

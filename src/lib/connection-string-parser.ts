@@ -44,6 +44,39 @@ export interface ParsedConnection {
    * maps below do not know: guessing there is the same defect with less information.
    */
   unmappedTLSParam?: string;
+  /**
+   * A MongoDB TLS parameter naming a file path (`tlsCAFile`, the only one reported so far,
+   * #842) rather than a value SSLMode could express, kept verbatim for the same reason
+   * `unmappedTLSParam` is.
+   *
+   * The driver reads this as a path on the machine running the server process, which in a
+   * container is not the machine the string was pasted on (measured: mongodb 7.6.0's
+   * `fs.readFile` throws ENOENT before any network traffic when the file is absent there).
+   * The parameter stays in the URI, and the form already has a place for the certificate's
+   * contents - the CA box under SSL / TLS, `ssl.caCert` in the connection config - which
+   * wins over it: the driver loads the file only when no `ca` option is set (`options.ca ??=`
+   * in mongo_client.js), so the fix is to point the user there. Kept separate from
+   * `unmappedTLSParam`: that field is documented around SSLMode's own value space, and a
+   * file path is not a value SSLMode could ever express.
+   */
+  tlsFileParam?: string;
+  /**
+   * Set when a pasted MongoDB URI's credentials segment has more than one unescaped `@`,
+   * which makes the auth/host split ambiguous: `mongodb://user:p@ss@host/db` reads as
+   * password `p`, host `ss` (#842) instead of refusing. A properly percent-encoded password
+   * (`p%40ss`) never sets this - the encoded form has exactly one literal `@`.
+   *
+   * `user`, `password` and `host` are left unset rather than populated with the wrong
+   * guess; `connectionString` still carries the original paste unchanged.
+   */
+  credentialsAmbiguous?: boolean;
+  /**
+   * The SqlClient protocol prefix of an ADO.NET `Server` that tedious cannot speak, kept as
+   * it was pasted (`np` for named pipes, `lpc` for shared memory). tedious reaches SQL
+   * Server over TCP only (#1211), so `host` and `port` are left unset rather than filled
+   * with `np:myserver`, which would only fail later as a misleading `ENOTFOUND`.
+   */
+  unsupportedServerProtocol?: string;
 }
 
 /**
@@ -83,6 +116,7 @@ export const ENGINE_URI_SCHEMES: Partial<Record<DatabaseType, string>> = {
   redis: "redis",
   oracle: "oracle",
   mssql: "mssql",
+  db2: "db2",
   couchbase: "couchbase",
   clickhouse: "clickhouse",
   libsql: "libsql",
@@ -136,6 +170,11 @@ export function parseConnectionString(input: string): ParsedConnection | null {
   // MSSQL / SQL Server
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) {
     return parseGenericURL(trimmed, "mssql", "1433");
+  }
+
+  // Db2 LUW (#786). The TLS it asks for rides in the query string, read by `readQueryTLS`.
+  if (trimmed.startsWith("db2://")) {
+    return parseGenericURL(trimmed, "db2", "50000");
   }
 
   // Couchbase — the TLS scheme is checked first, it is not a prefix of the plain one.
@@ -225,6 +264,21 @@ const MYSQL_SSL_MODE: Record<string, SSLMode> = {
 };
 
 /**
+ * Db2's `security=` keyword: `SSL` is the one value that names a TLS transport (#786). It maps to
+ * a VERIFYING mode, by D26's rule and because the Db2 provider fails closed on unverified
+ * transport: without TLS the password crosses the network in cleartext.
+ */
+const DB2_SECURITY: Record<string, SSLMode> = { ssl: "verify-system" };
+
+/** Db2's boolean `ssl=`, both ends mappable, onto the mode `security=SSL` reads as (#786). */
+const DB2_SSL: Record<string, SSLMode> = {
+  true: "verify-system",
+  "1": "verify-system",
+  false: "disable",
+  "0": "disable",
+};
+
+/**
  * One query parameter kept in the spelling it was pasted in. The lookup is
  * case-insensitive, but the banner quotes the parameter back at the user, so what it echoes
  * has to be their text and not a normalised form of it.
@@ -309,7 +363,25 @@ function readMongoTLS(uri: string): TLSIntent {
 
   if (intent.sslMode === undefined || intent.sslMode === "disable") return intent;
   const relax = params.get("tlsinsecure") ?? params.get("tlsallowinvalidcertificates");
-  return relax !== undefined && relax.value.toLowerCase() === "true" ? { sslMode: "require" } : intent;
+  if (relax !== undefined && relax.value.toLowerCase() === "true") return { sslMode: "require" };
+  // `tlsCAFile` pins the chain to a CA the URI names rather than the system store, which is
+  // `verify-ca`: the mode that shows the CA box the paste banner points at (#842).
+  return params.has("tlscafile") ? { sslMode: "verify-ca" } : intent;
+}
+
+/**
+ * MongoDB TLS parameters that name a file path rather than a value SSLMode could express.
+ * `tlsCAFile` is the only one reported so far (#842, via AWS DocumentDB's own connection
+ * string) - scoped to it rather than the driver's full file-path option set until another
+ * is actually seen.
+ */
+function readMongoTLSFileParam(uri: string): string | undefined {
+  const queryStart = uri.indexOf("?");
+  if (queryStart < 0) return undefined;
+  for (const [name, value] of new URLSearchParams(uri.slice(queryStart + 1))) {
+    if (name.toLowerCase() === "tlscafile") return `${name}=${value}`;
+  }
+  return undefined;
 }
 
 /**
@@ -341,7 +413,7 @@ function readADONetTLS(get: (key: string) => string | undefined): TLSIntent {
 /**
  * The TLS a URL carries in its QUERY STRING, for the engines that put it there.
  *
- * Only postgres, mysql and mssql are read here: for `rediss://`, `couchbases://` and
+ * Only postgres, mysql, mssql and db2 are read here: for `rediss://`, `couchbases://` and
  * ClickHouse's `http(s)://` the scheme IS the transport and already decided, and MongoDB's
  * URI is read by `readMongoTLS`, which parses it by hand because `mongodb+srv://` is not a
  * URL this function's caller can build.
@@ -376,6 +448,15 @@ function readQueryTLS(url: URL, type: DatabaseType): TLSIntent {
 
   if (type === "mssql") return readADONetTLS((key) => params.get(key)?.value);
 
+  if (type === "db2") {
+    // `security=SSL` is the keyword Db2's own CLI and JDBC drivers read; `ssl` is the boolean
+    // spelling other URLs carry. Both ask for a verifying mode: see `DB2_SECURITY`.
+    const security = params.get("security");
+    if (security) return mapTLSValue(security, DB2_SECURITY);
+    const ssl = params.get("ssl");
+    return ssl ? mapTLSValue(ssl, DB2_SSL) : {};
+  }
+
   return {};
 }
 
@@ -399,10 +480,12 @@ function withSSLMode(parsed: ParsedConnection | null, sslMode: SSLMode): ParsedC
 }
 
 function parseMongoDBString(uri: string): ParsedConnection {
+  const tlsFileParam = readMongoTLSFileParam(uri);
   const result: ParsedConnection = {
     type: "mongodb",
     connectionString: uri,
     ...readMongoTLS(uri),
+    ...(tlsFileParam ? { tlsFileParam } : {}),
   };
 
   try {
@@ -412,6 +495,21 @@ function parseMongoDBString(uri: string): ParsedConnection {
 
     // Extract database from path
     const withoutProtocol = uri.replace(/^mongodb(\+srv)?:\/\//, "");
+
+    // The authority (credentials + host) ends at the first "/" or "?", where the driver's
+    // own grammar ends it, so an "@" in an option value is not counted. More than one
+    // literal "@" in it means an unescaped reserved character in the credentials -
+    // `p@ss:w#rd@host` - makes the auth/host split ambiguous, so refuse to guess rather
+    // than mis-split it (#842). The driver refuses the same string as "Invalid connection
+    // string". Percent-encoded credentials (`p%40ss`) never trigger this: the encoded form
+    // has exactly one literal "@".
+    const authorityEnd = withoutProtocol.search(/[/?]/);
+    const authority = authorityEnd >= 0 ? withoutProtocol.slice(0, authorityEnd) : withoutProtocol;
+    if ((authority.match(/@/g) ?? []).length > 1) {
+      result.credentialsAmbiguous = true;
+      return result;
+    }
+
     const atIndex = withoutProtocol.indexOf("@");
     const afterAuth = atIndex >= 0 ? withoutProtocol.slice(atIndex + 1) : withoutProtocol;
 
@@ -503,16 +601,28 @@ function parseADONetString(input: string): ParsedConnection | null {
     });
 
     const host = params["server"] || params["data source"] || "localhost";
-    const [hostPart, portPart] = host.split(",");
+    const rest = {
+      user: params["user id"] || params["uid"] || undefined,
+      password: params["password"] || params["pwd"] || undefined,
+      database: params["database"] || params["initial catalog"] || undefined,
+      ...readADONetTLS((key) => params[key]),
+    };
+
+    // SqlClient accepts a protocol prefix on the server, and the Azure portal always
+    // writes one (`tcp:<server>.database.windows.net,1433`). tedious resolves the value
+    // as a hostname, so a kept prefix fails as ENOTFOUND. TCP is the only protocol
+    // tedious speaks: `tcp:` is dropped, `np:` and `lpc:` are reported instead of guessed.
+    const protocol = /^(tcp|np|lpc):/i.exec(host);
+    if (protocol && protocol[1].toLowerCase() !== "tcp") {
+      return { type: "mssql", unsupportedServerProtocol: protocol[1], ...rest };
+    }
+    const [hostPart, portPart] = host.slice(protocol ? protocol[0].length : 0).split(",");
 
     return {
       type: "mssql",
       host: hostPart || "localhost",
       port: portPart || "1433",
-      user: params["user id"] || params["uid"] || undefined,
-      password: params["password"] || params["pwd"] || undefined,
-      database: params["database"] || params["initial catalog"] || undefined,
-      ...readADONetTLS((key) => params[key]),
+      ...rest,
     };
   } catch {
     return null;
@@ -573,6 +683,7 @@ export function detectConnectionStringType(input: string): DatabaseType | null {
   if (trimmed.startsWith("redis://") || trimmed.startsWith("rediss://")) return "redis";
   if (trimmed.startsWith("oracle://")) return "oracle";
   if (trimmed.startsWith("mssql://") || trimmed.startsWith("sqlserver://")) return "mssql";
+  if (trimmed.startsWith("db2://")) return "db2";
   if (trimmed.startsWith("couchbase://") || trimmed.startsWith("couchbases://")) return "couchbase";
   if (trimmed.startsWith("libsql://")) return "libsql";
   if (trimmed.startsWith("clickhouse://") || trimmed.startsWith("http://") || trimmed.startsWith("https://"))

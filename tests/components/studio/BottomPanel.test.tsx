@@ -136,6 +136,23 @@ mock.module("@/components/SchemaDiff", () => ({
   },
 }));
 
+// Captured: the graph tests assert the masking inputs reach it exactly as they reach
+// the grid. Its own behaviour is tested against a headless canvas in GraphView.test.tsx.
+// A recorded exception to the graph view spec's "no mock.module() in new tests": the
+// panel gives no way to hand GraphView its injectable canvas factory, and the real one
+// needs a canvas happy-dom lacks, so the real view cannot render here. This file
+// already replaces every other lazy view the same way, and runs in its own process.
+let capturedGraphViewProps: Record<string, unknown> = {};
+
+mock.module("@/components/results-graph/GraphView", () => ({
+  GraphView: (props: Record<string, unknown>) => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const React = require("react");
+    capturedGraphViewProps = props;
+    return React.createElement("div", { "data-testid": "graphview" }, "GraphView");
+  },
+}));
+
 // ---- Mock storage so the ChartDashboardLazy saved-charts grid is controllable ----
 
 const mockGetSavedCharts = mock(() => [] as SavedChartConfig[]);
@@ -174,17 +191,26 @@ function makeSavedChart(overrides: Partial<SavedChartConfig> = {}): SavedChartCo
 }
 
 function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
+  // The panel no longer receives the whole tab (X5), so a `currentTab` override is
+  // unpacked into the granular fields the panel reads; the rest is spread untouched.
+  const { currentTab, ...rest } = overrides;
+  const tab = (currentTab ?? {}) as {
+    query?: string;
+    result?: unknown;
+    runError?: string;
+    resultQuery?: string;
+    explainPlan?: unknown;
+  };
   return {
     mode: "results" as BottomPanelMode,
     onSetMode: mock(() => {}),
-    currentTab: {
-      id: "tab-1",
-      name: "Query 1",
-      query: "SELECT 1",
-      result: null,
-      isExecuting: false,
-      type: "sql" as const,
-    },
+    result: tab.result ?? null,
+    explainPlan: tab.explainPlan,
+    // The shell hands the statement only while the explain view is open (X5); a fixture
+    // passes it regardless, since the panel reads it only in that view.
+    explainQuery: tab.query ?? "SELECT 1",
+    resultQuery: tab.resultQuery,
+    runError: tab.runError,
     schema: [],
     schemaContext: "[]",
     activeConnection: null,
@@ -212,9 +238,16 @@ function createDefaultProps(overrides: Partial<Record<string, unknown>> = {}) {
     isLoadingMore: false,
     onExportResults: mock(() => {}),
     onCopyResults: mock(() => {}),
-    ...overrides,
+    ...rest,
   };
 }
+
+const GRAPH_RESULT = {
+  rows: [{ n: { "~graph": "node", elementId: "4:a", labels: ["Person"], properties: { name: "Alice" } } }],
+  fields: ["n"],
+  rowCount: 1,
+  executionTime: 2,
+};
 
 describe("BottomPanel", () => {
   /*
@@ -225,8 +258,8 @@ describe("BottomPanel", () => {
     more importantly, stay independent of the order the tests happen to run in.
   */
   beforeAll(async () => {
-    for (const mode of ["charts", "pivot", "docs", "schemadiff", "explain"] as const) {
-      const props = createDefaultProps({ mode });
+    for (const mode of ["charts", "pivot", "docs", "schemadiff", "explain", "graph"] as const) {
+      const props = createDefaultProps({ mode, currentTab: { result: GRAPH_RESULT } });
       await act(async () => {
         render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
       });
@@ -297,6 +330,86 @@ describe("BottomPanel", () => {
     // The empty state shows "Execute a query or check history"
     const emptyText = getByText("Execute a query or check history");
     expect(emptyText).not.toBeNull();
+  });
+
+  /**
+   * A failed run shows its failure where the rows were, and in both shells: the embedded
+   * workspace mounts no Toaster, so this block is the only failure signal a host's user
+   * gets. It replaces the empty state too, which would otherwise read as "nothing ran".
+   */
+  test("a failed run renders its error in place of the grid", () => {
+    const props = createDefaultProps({
+      mode: "results",
+      currentTab: {
+        id: "tab-1",
+        name: "Query 1",
+        query: "SELEC * FROM x",
+        result: null,
+        runError: 'near "SELEC": syntax error',
+        isExecuting: false,
+        type: "sql" as const,
+      },
+    });
+    const { getByTestId, queryByTestId, queryByText } = render(
+      <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+    );
+
+    expect(getByTestId("run-failure").textContent).toContain("The query failed.");
+    expect(getByTestId("run-failure-message").textContent).toBe('near "SELEC": syntax error');
+    expect(queryByTestId("resultsgrid")).toBeNull();
+    expect(queryByText("Execute a query or check history")).toBeNull();
+    // Nothing to export: the rows that were on screen belonged to another statement.
+    expect(queryByText("Export")).toBeNull();
+  });
+
+  /**
+   * A script that stopped on a failing statement keeps the earlier statements' result AND says it
+   * stopped (#1385). With no rows to show, the grid is left out: its "The operation was
+   * successful" would contradict the failure.
+   */
+  describe("a script that stopped on a failing statement", () => {
+    const scriptTab = (rows: Record<string, unknown>[]) => ({
+      id: "tab-1",
+      name: "Query 1",
+      query: "SELECT 1 AS a; SELECT * FROM nope",
+      result: { rows, fields: ["a"], rowCount: rows.length, executionTime: 5 },
+      runError: "Statement 2 of 3 failed: unknown catalog item 'nope'\nSELECT * FROM nope",
+      isExecuting: false,
+      type: "sql" as const,
+    });
+
+    test("shows the failure above the earlier statement's rows", () => {
+      const props = createDefaultProps({ mode: "results", currentTab: scriptTab([{ a: 1 }]) });
+      const { getByTestId, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(getByTestId("script-failure").textContent).toContain("The script stopped at a failing statement.");
+      expect(getByTestId("script-failure-message").textContent).toContain("Statement 2 of 3 failed");
+      expect(getByTestId("resultsgrid")).toBeTruthy();
+      expect(queryByTestId("run-failure")).toBeNull();
+    });
+
+    test("leaves out an empty grid, so nothing says the operation was successful", () => {
+      const props = createDefaultProps({ mode: "results", currentTab: scriptTab([]) });
+      const { getByTestId, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(getByTestId("script-failure-message").textContent).toContain("unknown catalog item");
+      expect(queryByTestId("resultsgrid")).toBeNull();
+    });
+
+    test("a result without a run error shows no banner", () => {
+      const tab = { ...scriptTab([{ a: 1 }]), runError: undefined };
+      const props = createDefaultProps({ mode: "results", currentTab: tab });
+      const { queryByTestId, getByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(queryByTestId("script-failure")).toBeNull();
+      expect(getByTestId("resultsgrid")).toBeTruthy();
+    });
   });
 
   test("tab click fires onSetMode with correct mode", () => {
@@ -388,6 +501,14 @@ describe("BottomPanel", () => {
       expect(capturedResultsGridProps.supportsResultPagination).toBe(true);
     });
 
+    test("the columns the editor must not write are the provider's own (K24)", () => {
+      const refused = { type: "^(CLOB|DBCLOB|BLOB)$", reason: "not written" };
+      const props = pagedProps({ supportsResultPagination: true, inlineEditRefusedColumns: refused });
+      render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+      expect(capturedResultsGridProps.inlineEditRefusedColumns).toBe(refused);
+    });
+
     test("a provider that cannot page hands down its false, not an absent flag", () => {
       // Criterion 4. `false` and `undefined` render identically — the grid gates on
       // `=== true` — so only reading the value back tells a provider that declared it
@@ -433,6 +554,78 @@ describe("BottomPanel", () => {
       } else {
         expect(scope.textContent).toContain(shortfall);
       }
+    });
+  });
+
+  describe("the Graph tab (graph view spec)", () => {
+    const PLAIN_RESULT = { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 };
+
+    test("is offered only when the result holds a graph value", () => {
+      const plain = createDefaultProps({ currentTab: { result: PLAIN_RESULT } });
+      const { queryByText, rerender } = render(
+        <BottomPanel {...(plain as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(queryByText("Graph")).toBeNull();
+
+      const empty = createDefaultProps();
+      rerender(<BottomPanel {...(empty as React.ComponentProps<typeof BottomPanel>)} />);
+      expect(queryByText("Graph")).toBeNull();
+
+      // Found at any depth, here a node inside a list.
+      const nested = createDefaultProps({
+        currentTab: { result: { ...GRAPH_RESULT, rows: [{ n: [GRAPH_RESULT.rows[0].n] }] } },
+      });
+      rerender(<BottomPanel {...(nested as React.ComponentProps<typeof BottomPanel>)} />);
+      expect(queryByText("Graph")).not.toBeNull();
+    });
+
+    test("sits right after Results, and a click asks for the graph mode", () => {
+      const onSetMode = mock(() => {});
+      const props = createDefaultProps({ onSetMode, currentTab: { result: GRAPH_RESULT } });
+      const { getByText, getAllByRole } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(
+        getAllByRole("button")
+          .map((button) => button.textContent?.trim())
+          .slice(0, 2),
+      ).toEqual(["Results", "Graph"]);
+      fireEvent.click(getByText("Graph"));
+      expect(onSetMode).toHaveBeenCalledWith("graph");
+    });
+
+    test("draws the tab's result with the grid's own masking inputs", () => {
+      const maskingConfig = { ...createDefaultProps().maskingConfig, enabled: true };
+      const props = createDefaultProps({
+        mode: "graph",
+        currentTab: { result: GRAPH_RESULT },
+        maskingEnabled: true,
+        userRole: "user",
+        maskingConfig,
+      });
+      const { getByTestId, getByText, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(getByTestId("graphview")).not.toBeNull();
+      expect(queryByTestId("resultsgrid")).toBeNull();
+      expect(getByText("Graph").closest("button")?.className).toContain("text-hue-green");
+      expect(capturedGraphViewProps.result).toBe(GRAPH_RESULT);
+      expect(capturedGraphViewProps.maskingEnabled).toBe(true);
+      expect(capturedGraphViewProps.userRole).toBe("user");
+      expect(capturedGraphViewProps.maskingConfig).toBe(maskingConfig);
+      // The result's own export menu belongs to the grid; the graph has its own.
+      expect(queryByTestId("export-row-count")).toBeNull();
+    });
+
+    test("a graph mode left over from a graph result shows the grid for a result without one", () => {
+      const props = createDefaultProps({ mode: "graph", currentTab: { result: PLAIN_RESULT } });
+      const { getByTestId, queryByTestId, getByText } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+      expect(queryByTestId("graphview")).toBeNull();
+      expect(getByTestId("resultsgrid")).not.toBeNull();
+      expect(getByText("Results").closest("button")?.className).toContain("text-hue-blue");
+      expect(queryByTestId("export-row-count")).not.toBeNull();
     });
   });
 
@@ -786,6 +979,27 @@ describe("BottomPanel", () => {
       expect(badge.textContent).toContain("corr_9");
       expect(getByTestId("resultsgrid")).toBeTruthy();
       expect(capturedResultsGridProps.result).toEqual(ARTIFACT_RESULT);
+    });
+
+    test("a hydrated result still wins over the tab's own failed run", () => {
+      const props = hydratedProps({
+        currentTab: {
+          id: "tab-1",
+          name: "Q",
+          query: "SELEC 1",
+          result: null,
+          runError: "syntax error",
+          isExecuting: false,
+          type: "sql" as const,
+        },
+      });
+      const { getByTestId, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(getByTestId("resultsgrid")).toBeTruthy();
+      expect(capturedResultsGridProps.result).toEqual(ARTIFACT_RESULT);
+      expect(queryByTestId("run-failure")).toBeNull();
     });
 
     test("a hydrated result is read-only: nothing offers to edit it or page it", () => {

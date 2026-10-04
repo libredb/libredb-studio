@@ -1,0 +1,265 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.445Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Watch/Watch",
+    "surface": "watch: the prefix /libredb-evidence/watch/ with prev_kv, over two puts and a delete",
+    "request": {
+      "create_request": {
+        "key": {
+          "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gv"
+        },
+        "range_end": {
+          "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gw"
+        },
+        "prev_kv": true,
+        "fragment": true
+      }
+    },
+    "match": {
+      "create_request": {
+        "key": {
+          "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gv"
+        },
+        "range_end": {
+          "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gw"
+        }
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "messages": [
+      {
+        "events": [],
+        "header": {
+          "cluster_id": {
+            "$int64": "15812935348987335903"
+          },
+          "member_id": {
+            "$int64": "13653403111078390177"
+          },
+          "revision": {
+            "$int64": "74"
+          },
+          "raft_term": {
+            "$int64": "2"
+          }
+        },
+        "watch_id": {
+          "$int64": "0"
+        },
+        "created": true,
+        "canceled": false,
+        "compact_revision": {
+          "$int64": "0"
+        },
+        "cancel_reason": "",
+        "fragment": false
+      },
+      {
+        "events": [
+          {
+            "type": "PUT",
+            "kv": {
+              "key": {
+                "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gvYQ=="
+              },
+              "create_revision": {
+                "$int64": "75"
+              },
+              "mod_revision": {
+                "$int64": "75"
+              },
+              "version": {
+                "$int64": "1"
+              },
+              "value": {
+                "$bytes": "MQ=="
+              },
+              "lease": {
+                "$int64": "0"
+              }
+            },
+            "prev_kv": null
+          }
+        ],
+        "header": {
+          "cluster_id": {
+            "$int64": "15812935348987335903"
+          },
+          "member_id": {
+            "$int64": "13653403111078390177"
+          },
+          "revision": {
+            "$int64": "75"
+          },
+          "raft_term": {
+            "$int64": "2"
+          }
+        },
+        "watch_id": {
+          "$int64": "0"
+        },
+        "created": false,
+        "canceled": false,
+        "compact_revision": {
+          "$int64": "0"
+        },
+        "cancel_reason": "",
+        "fragment": false
+      },
+      {
+        "events": [
+          {
+            "type": "PUT",
+            "kv": {
+              "key": {
+                "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gvYQ=="
+              },
+              "create_revision": {
+                "$int64": "75"
+              },
+              "mod_revision": {
+                "$int64": "76"
+              },
+              "version": {
+                "$int64": "2"
+              },
+              "value": {
+                "$bytes": "Mg=="
+              },
+              "lease": {
+                "$int64": "0"
+              }
+            },
+            "prev_kv": {
+              "key": {
+                "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gvYQ=="
+              },
+              "create_revision": {
+                "$int64": "75"
+              },
+              "mod_revision": {
+                "$int64": "75"
+              },
+              "version": {
+                "$int64": "1"
+              },
+              "value": {
+                "$bytes": "MQ=="
+              },
+              "lease": {
+                "$int64": "0"
+              }
+            }
+          }
+        ],
+        "header": {
+          "cluster_id": {
+            "$int64": "15812935348987335903"
+          },
+          "member_id": {
+            "$int64": "13653403111078390177"
+          },
+          "revision": {
+            "$int64": "76"
+          },
+          "raft_term": {
+            "$int64": "2"
+          }
+        },
+        "watch_id": {
+          "$int64": "0"
+        },
+        "created": false,
+        "canceled": false,
+        "compact_revision": {
+          "$int64": "0"
+        },
+        "cancel_reason": "",
+        "fragment": false
+      },
+      {
+        "events": [
+          {
+            "type": "DELETE",
+            "kv": {
+              "key": {
+                "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gvYQ=="
+              },
+              "create_revision": {
+                "$int64": "0"
+              },
+              "mod_revision": {
+                "$int64": "77"
+              },
+              "version": {
+                "$int64": "0"
+              },
+              "value": {
+                "$bytes": ""
+              },
+              "lease": {
+                "$int64": "0"
+              }
+            },
+            "prev_kv": {
+              "key": {
+                "$bytes": "L2xpYnJlZGItZXZpZGVuY2Uvd2F0Y2gvYQ=="
+              },
+              "create_revision": {
+                "$int64": "75"
+              },
+              "mod_revision": {
+                "$int64": "76"
+              },
+              "version": {
+                "$int64": "2"
+              },
+              "value": {
+                "$bytes": "Mg=="
+              },
+              "lease": {
+                "$int64": "0"
+              }
+            }
+          }
+        ],
+        "header": {
+          "cluster_id": {
+            "$int64": "15812935348987335903"
+          },
+          "member_id": {
+            "$int64": "13653403111078390177"
+          },
+          "revision": {
+            "$int64": "77"
+          },
+          "raft_term": {
+            "$int64": "2"
+          }
+        },
+        "watch_id": {
+          "$int64": "0"
+        },
+        "created": false,
+        "canceled": false,
+        "compact_revision": {
+          "$int64": "0"
+        },
+        "cancel_reason": "",
+        "fragment": false
+      }
+    ],
+    "end": "open"
+  }
+}

@@ -235,7 +235,7 @@ describe("registerRedisLanguage", () => {
 
     // ── U10: the string state survives the line break ─────────────────────────
     //
-    // `commandBody()` treats a newline inside an open quoted argument as data —
+    // `readRedisCommandText()` treats a newline inside an open quoted argument as data:
     // `SET note "line1` / `#tag"` stores a two-line value and drops no comment
     // (docs/providers/redis.md §3.4a). The editor has to agree.
 

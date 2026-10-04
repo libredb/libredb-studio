@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T14:40:45.551Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/search, IP, docs_varchar.bf16, the vector of vc-0000",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/search",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"docs_varchar\",\"annsField\":\"bf16\",\"data\":[[0.189453125,-0.5234375,-0.412109375,-2.4375,1.796875,1.140625,-0.326171875,0.7734375]],\"outputFields\":[\"pk\"],\"limit\":3}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 154,
+    "body": "{\"code\":0,\"cost\":0,\"data\":[{\"distance\":11.6554985,\"pk\":\"vc-0000\"},{\"distance\":9.925461,\"pk\":\"vc-0490\"},{\"distance\":9.160358,\"pk\":\"vc-0488\"}],\"topks\":[3]}\n"
+  }
+}

@@ -1,5 +1,6 @@
 import { asBytes } from "@/lib/export/binary";
-import type { ValueKind } from "./types";
+import type { RenderContext, ValueKind } from "./types";
+import { isVectorCell } from "./vector";
 
 // Only JSON containers (object/array) count: strings holding bare JSON
 // primitives ("true", "123") keep their scalar rendering, and the startsWith
@@ -18,10 +19,17 @@ function parsesToJsonContainer(value: string): boolean {
 }
 
 // Classify a result value into a renderer kind by its shape, never by the
-// connection type that produced it.
-export function classifyValue(value: unknown): ValueKind {
+// connection type that produced it. A vector is the one kind a shape cannot
+// tell: `[0.1, 0.2]` is as much a JSON array as an embedding, so a value is a
+// vector only where the result declared its column one (`context.vector`) and
+// the value has that column's shape. A masked or edited cell holds text, and
+// an undeclared array keeps the JSON rendering it always had.
+export function classifyValue(value: unknown, context?: RenderContext): ValueKind {
   if (value === null || value === undefined) {
     return "null";
+  }
+  if (context?.vector !== undefined && isVectorCell(value, context.vector)) {
+    return "vector";
   }
   // Before the object branch, which would otherwise claim every binary value:
   // a `bytea`/`BLOB` cell is an object in both the shapes it arrives in.

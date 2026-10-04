@@ -35,12 +35,34 @@ import type {
   DatabaseObject,
   DatabaseProvider,
   KindCount,
+  ObjectDetailBatch,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
+import {
+  countEtcdObjects,
+  describeEtcdObjects,
+  ETCD_GROUP_CAP,
+  ETCD_OBJECT_KINDS,
+  type EtcdSurfaceContext,
+  listEtcdObjects,
+} from "@/lib/db/providers/keyvalue/etcd/objects";
+import { prefixRangeEnd } from "@/lib/db/providers/keyvalue/etcd/keys";
+import {
+  countObjects as countKafkaObjects,
+  describeObjects as describeKafkaObjects,
+  KAFKA_CONTAINER_LEVELS,
+  KAFKA_OBJECT_KINDS,
+  KAFKA_TOPIC_LIST_CAP,
+  listObjects as listKafkaObjects,
+  type ObjectsClient as KafkaObjectsClient,
+} from "@/lib/db/providers/stream/kafka/objects";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+import { SAMPLED_MARKER } from "../../../fixtures/sampled-schema";
+import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
+import { etcdWalkSpace } from "../../../helpers/etcd-walk-space";
 import type {
   ColumnSchema,
   DatabaseConnection,
@@ -1612,6 +1634,12 @@ describe("captureContextSnapshot — the object surface that says what each entr
       readonly counts?: (container: readonly string[]) => Record<string, KindCount>;
       readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
       readonly containers?: (parent?: readonly string[]) => readonly Container[];
+      /** The folder's bulk column read; absent, it answers the table and view columns of `schema`. */
+      readonly describeObjects?: (
+        container: readonly string[],
+        kind: string,
+        limit?: number,
+      ) => Promise<ObjectDetailBatch>;
       readonly omitObjectSurface?: boolean;
       readonly omitContainerListing?: boolean;
       readonly listThrows?: Error;
@@ -1640,16 +1668,22 @@ describe("captureContextSnapshot — the object surface that says what each entr
     );
 
     const provider = {
-      describeObjects: mock(async (container: readonly string[], kind: string) => ({
-        details: (options.schema ?? COLUMNS)
-          .filter((object) => (kind === "table" ? object.name.endsWith("orders") : object.name.endsWith("summary")))
-          .map((object) => ({
-            path: [...container, object.name.split(".")[object.name.split(".").length - 1]],
-            columns: object.columns,
-            indexes: object.indexes,
-            foreignKeys: object.foreignKeys ?? [],
-          })),
-      })),
+      describeObjects: mock(async (container: readonly string[], kind: string, limit?: number) =>
+        options.describeObjects !== undefined
+          ? options.describeObjects(container, kind, limit)
+          : {
+              details: (options.schema ?? COLUMNS)
+                .filter((object) =>
+                  kind === "table" ? object.name.endsWith("orders") : object.name.endsWith("summary"),
+                )
+                .map((object) => ({
+                  path: [...container, object.name.split(".")[object.name.split(".").length - 1]],
+                  columns: object.columns,
+                  indexes: object.indexes,
+                  foreignKeys: object.foreignKeys ?? [],
+                })),
+            },
+      ),
       // Carried so a catalog dialect can be driven through this harness: the composed
       // path reads through `queryReadOnly` and never asks the object surface.
       queryReadOnly: mock(async (sql: string) => answerPostgres(sql)),
@@ -1715,6 +1749,91 @@ describe("captureContextSnapshot — the object surface that says what each entr
     expect(snapshot.objects.find((object) => object.kind === "table")?.indexes).toEqual([
       { name: "orders_pkey", columns: ["id"], unique: true },
     ]);
+  });
+
+  /**
+   * The name a run copies into its statement. Shown as `home.home`, a plan on InfluxDB 1.13.1 wrote
+   * `FROM "home"."home"`, which InfluxQL reads as retention policy `home` and refuses; the source InfluxQL
+   * writes for `[database, measurement]` is `"home".."home"`, the database's default retention policy.
+   */
+  test("an InfluxQL measurement is named as an InfluxQL source, with its own name as the label", async () => {
+    const harness = objectHarness({
+      containers: () => [{ path: ["home"], name: "home", level: 0 }],
+      objects: (container, kind) => (kind === "table" ? [{ path: [...container, "home"], name: "home", kind }] : []),
+      counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+    });
+    const snapshot = await inventoryOf({
+      ...harness,
+      context: { ...harness.context, capabilities: { ...harness.context.capabilities, queryLanguage: "influxql" } },
+    });
+
+    expect(snapshot.objects.map((object) => [object.name, object.label])).toEqual([['"home".."home"', "home"]]);
+    // And the context a run is handed spells it the same way, never as the dotted segments.
+    const packed = packContextForTask(snapshot, "home");
+    expect(packed).toContain('"home".."home"');
+    expect(packed).not.toContain("home.home");
+  });
+
+  /**
+   * A column a provider only inferred from sampled data is named by the data, so the walk
+   * builds no inventory object with it, and neither the snapshot nor the context a model is handed holds it.
+   */
+  test("a column the engine only inferred from sampled data reaches neither the inventory nor the packed context", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        schema: [
+          {
+            ...COLUMNS[0],
+            columns: [
+              ...COLUMNS[0].columns,
+              { name: SAMPLED_MARKER, type: "text", nullable: true, isPrimary: false, provenance: "sampled" },
+            ],
+          },
+          COLUMNS[1],
+        ],
+      }),
+    );
+
+    expect(snapshot.objects.find((object) => object.kind === "table")?.columns).toEqual([
+      { name: "id", type: "integer", nullable: false, isPrimary: true },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain(SAMPLED_MARKER);
+    expect(packContextForTask(snapshot, "orders")).not.toContain(SAMPLED_MARKER);
+  });
+
+  /**
+   * A group's readable ranges (etcd spec 3.4, 4.7, E13). They are the connection's own grants and
+   * a piece can be a single key, so they travel with the listed object for the two browser-side
+   * generators alone: the walk builds each inventory object from the fields it names, and neither
+   * the inventory nor the snapshot a run is grounded on carries a range.
+   */
+  test("a listed object's readable ranges reach neither the inventory nor the snapshot", async () => {
+    const snapshot = await inventoryOf(
+      objectHarness({
+        counts: () => ({ table: { count: 1 }, view: { count: 0 }, function: { count: 0 } }),
+        objects: (container, kind) =>
+          kind === "table"
+            ? [
+                {
+                  path: [...container, "orders"],
+                  name: "orders",
+                  kind,
+                  readRanges: [
+                    { key: "grant-key-a" },
+                    { prefix: "grant-prefix-b/" },
+                    { start: "grant-start-c", end: "grant-end-d" },
+                  ],
+                },
+              ]
+            : [],
+      }),
+    );
+
+    // The control: the object itself was captured, so the absence below is the field's.
+    const orders = snapshot.objects.find((object) => object.kind === "table");
+    if (orders === undefined) throw new Error("the walk captured no table to inspect");
+    expect(Object.hasOwn(orders, "readRanges")).toBe(false);
+    expect(JSON.stringify(snapshot)).not.toContain("grant-");
   });
 
   test("the kinds the engine declared travel with the inventory, so a renderer can name them", async () => {
@@ -1788,6 +1907,94 @@ describe("captureContextSnapshot — the object surface that says what each entr
   });
 
   /**
+   * A kind only the Keys panel enumerates is never walked (#1089 3.4, E13): the walk reads
+   * `enumerableKinds`, so no listing is sent for it, it is not among the inventory's kinds, and no key
+   * name reaches plan mode's prompt, even from a provider that counted it.
+   */
+  test("a kind the Keys panel enumerates is never listed and never named among the kinds", async () => {
+    const harness = objectHarness({
+      containerLevels: [],
+      kinds: [
+        { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+        {
+          id: "key",
+          role: "config",
+          label: "Key",
+          labelPlural: "Keys",
+          enumeratedBy: "key-browser",
+          hasSource: true,
+          sourceLanguage: "json",
+        },
+      ],
+      counts: () => ({ prefix: { count: 1 }, key: { count: 3 } }),
+      objects: (container, kind) =>
+        kind === "key"
+          ? [{ path: [...container, "/app/private-key-name"], name: "/app/private-key-name", kind }]
+          : [{ path: [...container, "/app/*"], name: "/app/*", kind }],
+      describeObjects: async () => ({ details: [] }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["/app/*"]);
+    expect(snapshot.kinds?.map((kind) => kind.id)).toEqual(["prefix"]);
+    expect(JSON.stringify(snapshot)).not.toContain("private-key-name");
+  });
+
+  /**
+   * A kind whose count and listing are ONE read (#1089 4.7, R13 A5), which etcd's leases, users and
+   * roles are, and which a user who is not root cannot list at all. Its refused count IS a refused
+   * listing, so the walk sends no listing for it, which would only meet the same refusal and lose the
+   * whole capture, and carries the provider's sentence on the kind instead.
+   */
+  test("a kind whose count is its listing and whose count was refused is not listed, and carries the sentence", async () => {
+    const refusal = "Listing users needs the etcd root role, which reader does not hold (etcd: permission denied)";
+    const harness = objectHarness({
+      containerLevels: [],
+      kinds: [
+        { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+        { id: "user", role: "config", label: "User", labelPlural: "Users", countIsListing: true },
+      ],
+      counts: () => ({ prefix: { count: 1 }, user: { unavailable: refusal } }),
+      objects: (container, kind) => {
+        if (kind === "user") throw new QueryError("etcdserver: permission denied", "redis");
+        return [{ path: [...container, "/app/*"], name: "/app/*", kind }];
+      },
+      describeObjects: async () => ({ details: [] }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["prefix"]);
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["/app/*"]);
+    expect(snapshot.kinds).toEqual([
+      { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+      { id: "user", role: "config", label: "User", labelPlural: "Users", unavailable: refusal },
+    ]);
+  });
+
+  /**
+   * The exception is the refused count only: a kind that declares `countIsListing` and was counted is
+   * listed exactly as any other kind is.
+   */
+  test("a kind whose count is its listing and was counted is listed like any other", async () => {
+    const harness = objectHarness({
+      containerLevels: [],
+      kinds: [{ id: "user", role: "config", label: "User", labelPlural: "Users", countIsListing: true }],
+      counts: () => ({ user: { count: 1 } }),
+      objects: (container, kind) => [{ path: [...container, "root"], name: "root", kind }],
+      describeObjects: async () => ({ details: [] }),
+    });
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["user"]);
+    expect(snapshot.objects.map((object) => object.name)).toEqual(["root"]);
+    expect(snapshot.kinds?.[0]?.unavailable).toBeUndefined();
+  });
+
+  /**
    * Ruling 5g, in this module: the walk down to the containers is derived from
    * `containerDepth()` and never from a hardcoded level count. A two-level engine has to
    * reach the BIND — the second `listContainers` call, with the parent path — or the test
@@ -1827,6 +2034,256 @@ describe("captureContextSnapshot — the object surface that says what each entr
 
     expect(harness.countObjects.mock.calls).toEqual([[[]]]);
     expect(snapshot.objects.find((object) => object.kind === "table")?.path).toEqual(["orders"]);
+  });
+
+  /**
+   * KM1 of the Kafka provider (#1088, spec 4.3 and 11). Its topic listing is capped at 2,000
+   * names, and past the cap its bulk read reports the cap as `truncated`, as the contract
+   * requires. This walk stops at the first truncated batch, so past the cap plan mode grounds
+   * topics and nothing else: a stated limit, not one the declaration order can fix without
+   * reordering the tree. Both arms run through the real walk over the Kafka module's own
+   * declaration, counts, listings and bulk reads, since no live fixture reaches 2,000 topics.
+   */
+  async function kafkaHarness(topicCount: number): Promise<ObjectHarness> {
+    const names = Array.from({ length: topicCount }, (_unused, index) => `topic_${String(index).padStart(5, "0")}`);
+    const unread = async (): Promise<never> => {
+      throw new Error("the inventory walk reads no offsets, configs or group descriptions");
+    };
+    const client: KafkaObjectsClient = {
+      listTopics: async () => names,
+      metadata: async (topics) => ({
+        clusterId: "c",
+        controllerId: 1,
+        brokers: [
+          { nodeId: 1, host: "b1", port: 9092, rack: null },
+          { nodeId: 2, host: "b2", port: 9092, rack: null },
+        ],
+        topics: (topics ?? names).map((name) => ({ name, id: name, partitions: [] })),
+      }),
+      listGroups: async () => [{ groupId: "billing", state: "Stable", groupType: "classic", protocolType: "consumer" }],
+      offsets: unread,
+      topicConfigs: unread,
+      brokerConfigs: unread,
+      describeGroup: unread,
+      committedOffsets: unread,
+    };
+    const counts = await countKafkaObjects(client, []);
+    const listed = new Map(
+      await Promise.all(
+        KAFKA_OBJECT_KINDS.map(async (kind) => [kind.id, await listKafkaObjects(client, [], kind.id)] as const),
+      ),
+    );
+    return objectHarness({
+      kinds: KAFKA_OBJECT_KINDS,
+      containerLevels: KAFKA_CONTAINER_LEVELS,
+      counts: () => counts,
+      objects: (_container, kind) => listed.get(kind) ?? [],
+      describeObjects: (container, kind, limit) => describeKafkaObjects(client, container, kind, limit),
+    });
+  }
+
+  test("Kafka past its topic cap: the walk grounds topics only and says why, in the provider's sentence", async () => {
+    const harness = await kafkaHarness(KAFKA_TOPIC_LIST_CAP + 1);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.objects).toHaveLength(KAFKA_TOPIC_LIST_CAP);
+    expect(new Set(snapshot.objects.map((object) => object.kind))).toEqual(new Set(["topic"]));
+    expect(snapshot.truncated).toEqual({
+      limit: KAFKA_TOPIC_LIST_CAP,
+      reason: "the listing is one topic listing capped at 2,000 names",
+    });
+    expect(snapshot.kinds?.find((kind) => kind.id === "topic")?.sampledFrom).toBe(
+      "one topic listing capped at 2,000 names",
+    );
+    // The walk stopped at the topic folder: the groups and brokers were counted but never listed.
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["topic"]);
+  });
+
+  test("Kafka below its topic cap: the walk also grounds the consumer groups and the brokers", async () => {
+    const harness = await kafkaHarness(7);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.truncated).toBeUndefined();
+    const byKind = Object.groupBy(snapshot.objects, (object) => object.kind ?? "");
+    expect(byKind.topic).toHaveLength(7);
+    expect(byKind.consumer_group?.map((object) => object.name)).toEqual(["billing"]);
+    // Addressed by node id, labelled with host and port.
+    expect(byKind.broker?.map((object) => [object.name, object.label])).toEqual([
+      ["1", "1 b1:9092"],
+      ["2", "2 b2:9092"],
+    ]);
+    expect(snapshot.objects.find((object) => object.kind === "topic")?.columns.map((column) => column.name)).toEqual([
+      "partition",
+      "offset",
+      "timestamp",
+      "key",
+      "key_encoding",
+      "value",
+      "value_encoding",
+      "headers",
+    ]);
+  });
+
+  /**
+   * etcd's key-prefix walk (#1089 spec 4.3, KE1, E13). Past its group cap the prefix listing holds the
+   * first G groups and says it is a floor through the kind's `sampledFrom`, while its bulk read marks
+   * no batch truncated, so this walk goes on to the members, leases, users and roles (R12 CIC-3). Both
+   * arms run through the real walk over the etcd module's own declaration, counts, listings and bulk
+   * reads, over the shared fake client and an in-memory key space, since no live fixture reaches G.
+   */
+  function etcdSurface(over: Partial<EtcdSurfaceContext> = {}): EtcdSurfaceContext {
+    return {
+      readable: { kind: "all" },
+      writable: { kind: "all" },
+      signal: new AbortController().signal,
+      now: () => 0,
+      errors: {
+        host: "etcd.test",
+        port: 2379,
+        runtimeReportsTlsCause: true,
+        receiveCapBytes: 8 * 1024 * 1024,
+        timeoutMs: 60_000,
+      },
+      ...over,
+    };
+  }
+
+  async function etcdHarness(keys: readonly string[], context: EtcdSurfaceContext): Promise<ObjectHarness> {
+    const header = { clusterId: "1", memberId: "10276657743932975437", revision: "100", raftTerm: "3" };
+    const client = createFakeEtcdClient({
+      range: etcdWalkSpace(keys).range,
+      memberList: async () => ({
+        header,
+        members: [
+          {
+            id: "10276657743932975437",
+            name: "etcd-1",
+            peerUrls: ["https://10.0.0.1:2380"],
+            clientUrls: ["https://10.0.0.1:2379"],
+            isLearner: false,
+          },
+        ],
+      }),
+      alarmList: async () => [],
+      leaseLeases: async () => ({ header, ids: ["7587863092875085000"] }),
+      userList: async () => ["root"],
+      roleList: async () => ["root"],
+    });
+    const counts = await countEtcdObjects(client, context);
+    const listed = new Map(
+      await Promise.all(
+        ["prefix", "member", "lease", "user", "role"].map(
+          async (kind) => [kind, await listEtcdObjects(client, context, kind)] as const,
+        ),
+      ),
+    );
+    return objectHarness({
+      kinds: ETCD_OBJECT_KINDS,
+      containerLevels: [],
+      derivedGroupings: true,
+      counts: () => counts,
+      objects: (_container, kind) => listed.get(kind) ?? [],
+      describeObjects: async (_container, kind, limit) => describeEtcdObjects(kind, listed.get(kind) ?? [], limit),
+    });
+  }
+
+  test("etcd past its group cap: the walk grounds the groups read with the floor note, and the members, leases, users and roles", async () => {
+    const keys = Array.from(
+      { length: ETCD_GROUP_CAP + 1 },
+      (_unused, index) => `/g/${String(index).padStart(5, "0")}/k`,
+    );
+    const harness = await etcdHarness(keys, etcdSurface());
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.truncated).toBeUndefined();
+    const byKind = Object.groupBy(snapshot.objects, (object) => object.kind ?? "");
+    expect(byKind.prefix).toHaveLength(ETCD_GROUP_CAP);
+    expect(byKind.member?.map((object) => object.name)).toEqual(["8e9e05c52164694d"]);
+    expect(byKind.lease?.map((object) => object.name)).toEqual(["694d8147df1dc4c8"]);
+    expect(byKind.user?.map((object) => object.name)).toEqual(["root"]);
+    expect(byKind.role?.map((object) => object.name)).toEqual(["root"]);
+    const floor = `one key-prefix walk capped at ${ETCD_GROUP_CAP.toLocaleString("en-US")} groups`;
+    expect(snapshot.kinds?.find((kind) => kind.id === "prefix")?.sampledFrom).toBe(floor);
+    // Plan mode carries the floor note (plan Review Focus 4).
+    expect(packContextForTask(snapshot, "Which routes does the gateway serve?")).toContain(
+      `they were counted from ${floor}.`,
+    );
+    // E13: the capture names groups, never a key.
+    expect(JSON.stringify(snapshot)).not.toContain("/g/00000/k");
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual([
+      "prefix",
+      "member",
+      "lease",
+      "user",
+      "role",
+    ]);
+  });
+
+  test("etcd as a reader granted one key: the capture names the key's group and the scope, and never the key (spec E13)", async () => {
+    const context = etcdSurface({
+      readable: { kind: "ranges", ranges: [{ key: new TextEncoder().encode("/config/a") }] },
+      writable: { kind: "ranges", ranges: [] },
+      principal: { name: "reader", via: "password" },
+    });
+    const harness = await etcdHarness(["/config/a", "/config/b", "/app/x/y"], context);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(snapshot.objects.filter((object) => object.kind === "prefix").map((object) => object.name)).toEqual([
+      "/config/*",
+    ]);
+    expect(snapshot.kinds?.find((kind) => kind.id === "prefix")?.sampledFrom).toBe(
+      "the 1 range etcd user reader may read",
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("/config/a");
+  });
+
+  /**
+   * The etcd-auth reader of Task 27 (#1089 spec 4.7, E13): granted the prefix /app/ and the one key
+   * /config/a, it reads /app/a/* and /app/x/* whole and /config/* only in part, and etcd refuses a read
+   * of the whole of /config/*. Plan mode drafted `get /config/ --prefix` in 2 of 2 runs, because the
+   * inventory listed /config/* exactly as it listed the groups read whole. The group read in part is
+   * marked by its name, which E13 allows, and never by the ranges, which name the key.
+   */
+  test("etcd as a reader granted a prefix and one key of another group: the group read in part is marked, by name only", async () => {
+    const utf8 = (text: string) => new TextEncoder().encode(text);
+    const context = etcdSurface({
+      readable: {
+        kind: "ranges",
+        ranges: [{ key: utf8("/app/"), rangeEnd: prefixRangeEnd(utf8("/app/")) }, { key: utf8("/config/a") }],
+      },
+      writable: { kind: "ranges", ranges: [] },
+      principal: { name: "reader", via: "password" },
+    });
+    const harness = await etcdHarness(["/app/a/1", "/app/x/1", "/config/a", "/config/b"], context);
+
+    const snapshot = await inventoryOf(harness);
+
+    expect(
+      snapshot.objects
+        .filter((object) => object.kind === "prefix")
+        .map((object) => [object.name, Object.hasOwn(object, "partlyReadable")]),
+    ).toEqual([
+      ["/app/a/*", false],
+      ["/app/x/*", false],
+      ["/config/*", true],
+    ]);
+    const note =
+      "Each object marked partly readable below may be read by this connection only in part: a read of the whole object is refused, so do not draft or run one, and say that the object is only partly readable for this connection.";
+    const packed = packContextForTask(snapshot, "What keys and values are in the configuration group?");
+    expect(packed).toContain(note);
+    expect(packed).toContain("\n/config/* (Key Prefix) (partly readable): ");
+    expect(packed).toContain("\n/app/a/* (Key Prefix): ");
+    expect(packed).toContain("\n/app/x/* (Key Prefix): ");
+    const operations = packOperationsInventory(snapshot);
+    expect(operations).toContain(note);
+    expect(operations).toContain('\n"/config/*" (Key Prefix) (partly readable): ');
+    expect(operations).toContain('\n"/app/a/*" (Key Prefix): ');
+    // E13: the mark names the group and never the key the grant reads.
+    for (const text of [JSON.stringify(snapshot), packed, operations]) expect(text).not.toContain("/config/a");
   });
 
   test("more container and kind pairs than the read may issue is reported as truncated too", async () => {
@@ -2570,6 +3027,63 @@ describe("an inventory that knows what its objects ARE", () => {
     expect(bounded).not.toContain("the first 1,000 keys of one SCAN walk");
   });
 
+  /**
+   * An object this connection may read only in part carries a mark (#1089 4.7), and the note that says
+   * what the mark means is about the marked lines below it, so it is gated on what was rendered, as the
+   * kind notes are.
+   */
+  test("the partial-read note is emitted only where a marked object is rendered", () => {
+    const marked = kinded({
+      objects: [
+        { path: ["app", "orders"], name: "app.orders", kind: "table", columns: [], indexes: [], foreignKeys: [] },
+        {
+          path: ["app", "order_summary"],
+          name: "app.order_summary",
+          kind: "view",
+          columns: [],
+          indexes: [],
+          foreignKeys: [],
+          partlyReadable: true,
+        },
+      ],
+    });
+
+    const whole = packContextForTask(marked, "orders");
+    expect(whole).toContain("\napp.order_summary (View) (partly readable): ");
+    expect(whole).toContain("Each object marked partly readable below");
+
+    // Bounded so that only the objective's own row fits: the marked view is omitted, and the note goes with it.
+    const bounded = packContextForTask(marked, "orders", { maxChars: whole.length - 40 });
+    expect(bounded).toContain("\napp.orders (Table): ");
+    expect(bounded).not.toContain("app.order_summary");
+    expect(bounded).not.toContain("partly readable");
+
+    // The control: an inventory with nothing marked says nothing about it.
+    expect(packContextForTask(kinded(), "orders")).not.toContain("partly readable");
+  });
+
+  /**
+   * A kind the walk could not read at all (#1089 4.7, R13 A5). Its note is the one note NOT gated on
+   * what was rendered, because a kind whose listing was refused has nothing below it by construction,
+   * and an absence the model is not told about is read as an absence in the database.
+   */
+  test("a kind that could not be read is named with its sentence, whether or not anything is shown", () => {
+    const refusal = "Listing users needs the etcd root role, which reader does not hold (etcd: permission denied)";
+    const refused = kinded({
+      kinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+        { id: "user", role: "config", label: "User", labelPlural: "Users", unavailable: refusal },
+      ],
+    });
+    const note = `The Users could not be read: ${refusal}. Do not read their absence below as an absence in the database.`;
+
+    expect(packContextForTask(refused, "summarise the orders")).toContain(note);
+    expect(packContextForTask({ ...refused, objects: [] }, "summarise the orders")).toContain(note);
+    expect(packOperationsInventory(refused)).toContain(note);
+    expect(packContextForTask(kinded(), "summarise the orders")).not.toContain("could not be read");
+  });
+
   test("the operations packing names the kinds and the incompleteness too", () => {
     const packed = packOperationsInventory(
       kinded({ truncated: { limit: 1000, reason: "container and kind pair limit reached" } }),
@@ -2977,6 +3491,7 @@ describe("the identity a held inventory is filed under", () => {
     // The case B45 describes, and the one an id-keyed hold could not see: same record,
     // same id, different database.
     expect(repointed({ database: "staging" })).not.toBe(connectionIdentity(CONNECTION));
+    expect(repointed({ dataServers: "a.internal:6648" })).not.toBe(connectionIdentity(CONNECTION));
     expect(repointed({ schema: "tiny" })).not.toBe(connectionIdentity(CONNECTION));
   });
 

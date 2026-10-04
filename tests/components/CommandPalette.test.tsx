@@ -289,6 +289,16 @@ describe("CommandPalette", () => {
     expect(queryByText("Schema Diagram (ERD)")).toBeNull();
   });
 
+  test("Schema Diagram is hidden on a connection declaring Cypher (SR20)", () => {
+    const capabilities = { queryLanguage: "cypher", objectKinds: [] } as unknown as ProviderCapabilities;
+    const props = createDefaultProps({ activeConnection: mockPostgresConnection, capabilities });
+    const { queryByText } = render(<CommandPalette {...props} />);
+
+    fireEvent.keyDown(document, { key: "k", code: "KeyK", metaKey: true });
+
+    expect(queryByText("Schema Diagram (ERD)")).toBeNull();
+  });
+
   test("Schema Diagram is visible with activeConnection", () => {
     const props = createDefaultProps({ activeConnection: mockPostgresConnection });
     const { queryByText } = render(<CommandPalette {...props} />);

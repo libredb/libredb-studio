@@ -42,13 +42,16 @@
 #   update.method             ci_publish | commit | upstream_pr | manual_ui
 #   update.sla                every_release | minor_plus | major_only | on_demand
 #   update.ci_enabled         REQUIRED on, and allowed ONLY on, the switchable
-#                             channels (docker-hub-mirror, homebrew, snap,
-#                             winget, chocolatey): may release CI publish this
-#                             channel? The release workflow reads it, so turning
-#                             a channel off here is the whole switch - no secret
-#                             to delete, no workflow edit. The core release path
-#                             (github-release, docker-ghcr, npm, helm) and the
-#                             required release assets have no flag on purpose.
+#                             channels (SWITCHABLE_CHANNEL_IDS in
+#                             scripts/distribution-check.mjs): may release CI
+#                             publish this channel? The release workflow reads
+#                             it, so turning a channel off here is the whole
+#                             switch - no secret to delete, no workflow edit.
+#                             CI publishes only a live channel, so a pending
+#                             one stays off whatever its flag says. The core
+#                             release path (github-release, docker-ghcr, npm,
+#                             helm) and the required release assets have no
+#                             flag on purpose.
 #   links                     tracking_issue / first_pr / last_bump_pr (nullable
 #                             until the first post-listing bump) / catalog /
 #                             upstream_repo / docs / get (user-facing "where do I
@@ -183,7 +186,7 @@ channels:
       strategy: local_file
       files:
         - charts/libredb-studio/Chart.yaml
-      extract: 'appVersion: "(\d+\.\d+\.\d+)"'
+      extract: "appVersion:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: Enforcement lives in the required chart:check CI gate (#138); this row is visibility.
 
   - id: homebrew
@@ -206,7 +209,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/libredb/homebrew-tap/main/Formula/libredb-studio.rb
-      extract: 'version "(\d+\.\d+\.\d+)"'
+      extract: "version\\s+[\"'](\\d+\\.\\d+\\.\\d+)"
       note: Confirms the release-CI tap push actually landed.
 
   - id: snap
@@ -283,6 +286,36 @@ channels:
         manifest repacks in flatpak-smoke.yml (packaging/flatpak, dormant - see the flathub
         channel); the GUI .deb (libredb-studio-desktop_<version>_<arch>.deb, distinct from the
         headless server package) is what FlatPark pins as extra-data.
+
+  - id: aur
+    name: Arch User Repository (libredb-studio-bin)
+    short_name: AUR
+    status: pending
+    category: package-managers
+    platforms: [linux]
+    runtime: channel_supplied
+    tier: 1
+    kind: package-manager
+    update:
+      method: ci_publish
+      sla: every_release
+      ci_enabled: true
+    links:
+      tracking_issue: https://github.com/libredb/libredb-studio/issues/971
+      catalog: https://aur.archlinux.org/packages/libredb-studio-bin
+      upstream_repo: https://aur.archlinux.org/libredb-studio-bin.git
+      docs: packaging/aur/README.md
+    pin:
+      strategy: remote_file
+      url: https://aur.archlinux.org/rpc/v5/info/libredb-studio-bin
+      extract: "\"Version\":\"(\\d+\\.\\d+\\.\\d+)-\\d+\""
+      note: Pending until the AUR account exists and the first push lands (#971). The package is
+        staged in packaging/aur and repackages the standalone linux tarball. Release CI renders the
+        PKGBUILD for each tag and pushes it (the aur job in release-artifacts.yml), and it does so
+        only once this channel is live - ci_enabled alone does not start it. The AUR RPC answers
+        with one document whose Version is "<pkgver>-<pkgrel>"; the pattern keeps the pkgver, so a
+        pkgrel-only rebuild is not drift. Node is the distribution's (depends=nodejs-lts-krypton,
+        the 24.x line, for the same reason Homebrew pins node@24).
 
   # ---- Tier 2: LibreDB-owned copies and listings, bumped by hand ----------
 
@@ -425,7 +458,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/caprover/one-click-apps/master/public/v4/apps/libredb-studio.yml
-      extract: "defaultValue: '(\\d+\\.\\d+\\.\\d+)'"
+      extract: "defaultValue:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: The single CapRover row. A LibreDB-owned 3rd-party repo
         (libredb/caprover-one-click-apps) served the app while this submission was in review and was
         retired once it merged; it had its own inventory entry until that duplicated CapRover in the
@@ -508,7 +541,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/kubero-dev/kubero/main/services/libredb-studio/app.yaml
-      extract: 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)'
+      extract: "ghcr\\.io/libredb/libredb-studio\\s+tag:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
 
   - id: sealos
     name: Sealos App Store template
@@ -561,7 +594,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/truenas/apps/master/ix-dev/community/libredb-studio/ix_values.yaml
-      extract: 'ghcr\.io/libredb/libredb-studio\s+tag:\s*(\d+\.\d+\.\d+)'
+      extract: "ghcr\\.io/libredb/libredb-studio\\s+tag:\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: Merged in truenas/apps#5501 (14 Aug 2026); live in the TrueNAS SCALE community catalog. The pin
         reads the ghcr repo and tag in ix-dev/community/libredb-studio/ix_values.yaml (the maintainer-edited
         source a bump PR touches) - the container_utils_image tag is a different repository and must not be
@@ -741,6 +774,30 @@ channels:
         PRs - bundle first, then the rendered catalogs - and that second PR is only bot-created when the
         bundle version directory ships a release-config.yaml, which submit-catalogs writes.
 
+  - id: zopdev-helm-charts
+    name: ZopDev Helm Charts (helm.zop.dev, ZopDay)
+    short_name: ZopDev Helm Charts
+    status: pending
+    category: kubernetes-operators
+    platforms: [kubernetes]
+    runtime: channel_supplied
+    tier: 3
+    kind: helm-chart
+    update:
+      method: upstream_pr
+      sla: on_demand
+    links:
+      first_pr: https://github.com/zopdev/helm-charts/pull/322
+      upstream_repo: https://github.com/zopdev/helm-charts
+    pin:
+      strategy: none
+      note: PR zopdev/helm-charts#322 is open, so nothing is listed yet. It is a chart of its own in their
+        repo, not a copy of ours, suggested by the ZopDay team (#1183). On merge, flip to live, add catalog
+        https://helm.zop.dev, and add a remote_file pin on
+        https://raw.githubusercontent.com/zopdev/helm-charts/main/charts/libredb-studio/Chart.yaml with
+        extract 'appVersion:\s*"(\d+\.\d+\.\d+)"'. A bump there is appVersion plus version, a Helm 3
+        package into docs/ and a regenerated docs/index.yaml.
+
   - id: yunohost
     name: YunoHost app catalog
     short_name: YunoHost
@@ -761,7 +818,7 @@ channels:
     pin:
       strategy: remote_file
       url: https://raw.githubusercontent.com/YunoHost-Apps/libredb_studio_ynh/master/manifest.toml
-      extract: 'version = "(\d+\.\d+\.\d+)~ynh\d+"'
+      extract: "version\\s*=\\s*[\"']?(\\d+\\.\\d+\\.\\d+)"
       note: Listed by YunoHost/apps#3618, merged 2026-09-20. Unlike the other self-hosting catalogs here, the
         package installs no container; it unpacks the standalone Linux tarball under systemd and fetches its
         own Node 24 through YunoHost's `n`, which is why platforms is linux and the runtime is
@@ -1008,6 +1065,34 @@ channels:
         version is waiting on human moderation rather than that the push failed; the release run's
         job summary reports the push outcome and that version's PackageStatus. Trusted status is
         what removes the wait - docs/BACKLOG.md REL3.
+  
+  - id: scoop
+    name: Scoop Extras bucket (extras/libredb-studio)
+    short_name: Scoop
+    status: live
+    category: package-managers
+    platforms: [windows]
+    runtime: channel_supplied
+    tier: 4
+    kind: package-manager
+    update:
+      method: upstream_pr
+      sla: every_release
+    links:
+      first_pr: https://github.com/ScoopInstaller/Extras/pull/18786
+      catalog: https://github.com/ScoopInstaller/Extras/blob/master/bucket/libredb-studio.json
+      upstream_repo: https://github.com/ScoopInstaller/Extras
+      docs: docs/DISTRIBUTION.md
+    pin:
+      strategy: remote_file
+      url: https://raw.githubusercontent.com/ScoopInstaller/Extras/master/bucket/libredb-studio.json
+      extract: '"version"\s*:\s*"(\d+\.\d+\.\d+)"'
+      note: Listed since 0.16.2 (scoop install extras/libredb-studio), merged in ScoopInstaller/Extras#18786.
+        Our release CI does not publish it. The bucket's own Excavator workflow runs every four hours,
+        reads our releases.atom through the manifest's checkver regex and rewrites version, url and hash
+        itself, taking the hash from the release SHA256SUMS. A drift row for a few hours after a release
+        is that schedule. A longer one means the bump failed, most likely because a release tag or asset
+        name changed shape.
 
   - id: flathub
     name: Flathub community catalog (org.libredb.Studio)

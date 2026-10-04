@@ -3,7 +3,7 @@
 import { appFetch } from "@/lib/config/base-path";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import type { DatabaseConnection } from "@/lib/types";
-import { detailedObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { detailedObjects, schemaContextOf, type DetailedObject } from "@/lib/db/detailed-object";
 import { relationKindIds } from "@/lib/db/object-kinds";
 import type { DatabaseObject, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import { useReadGeneration } from "@/hooks/use-read-generation";
@@ -245,8 +245,12 @@ export function useConnectionManager(storageReady = false) {
    * INSERT against a view or a routine. A prompt that is 5 percent larger and says what its
    * objects are is the better trade, and the number is recorded so the next reader does not
    * have to measure it again.
+   *
+   * `schemaContextOf` rather than a bare `JSON.stringify`, for the one field a prompt may not
+   * carry: a group's `readRanges`, which can name a key (etcd spec E13). Every other byte is
+   * the same.
    */
-  const schemaContext = useMemo(() => JSON.stringify(schema), [schema]);
+  const schemaContext = useMemo(() => schemaContextOf(schema), [schema]);
 
   // Initialize connections once storage sync is ready
   useEffect(() => {

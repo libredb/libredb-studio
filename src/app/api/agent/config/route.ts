@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sessionRequiredBody } from "@/lib/api/session-ended";
 import { isThreadContextEnabled, resolveAgentAvailability } from "@/lib/agent/config";
 import { operatorTuningStatus } from "@/lib/agent/model-tuning";
 import { getSession } from "@/lib/auth";
@@ -81,7 +82,7 @@ const WITHHELD_DETAIL = "the agent is unavailable on this server; an administrat
 export async function GET() {
   const session = await getSession();
   if (!session) {
-    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+    return NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 });
   }
 
   const isAdmin = session.role === "admin";

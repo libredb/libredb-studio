@@ -4,6 +4,7 @@ import { useCallback, useState } from "react";
 import type { DatabaseConnection, QueryResult, QueryTab } from "@/lib/types";
 import type { CellChange } from "@/components/ResultsGrid";
 import { useToast } from "@/hooks/use-toast";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 import { quoteIdentifier } from "@/lib/sql/identifier";
 import { resolveUpdateTarget, selectsPlainColumn } from "@/lib/sql/update-target";
 import { positionalPlaceholder, quoteLiteral } from "@/lib/sql/values";
@@ -87,8 +88,11 @@ type KeyColumnKind = "date-time" | "float64" | "decimal" | "declared" | "undecla
  * `time` and `time with time zone` are deliberately ABSENT. `pg` and `mysql2` both hand a
  * time-of-day back as the string the engine prints (`'10:00:00'`), which is its own
  * identity and matches when sent back, so refusing one would take away a key that works.
- * A date or a timestamp is the opposite: those same two drivers hand back a JavaScript
- * `Date`, and that is the value this whole check exists for.
+ * A date or a timestamp is the opposite: mysql2 hands back a JavaScript `Date`, and so does
+ * `pg` for `timestamp with time zone`, and that is the value this whole check exists for.
+ * `pg`'s `date` and `timestamp without time zone` arrive as the engine's own text since the
+ * provider's per-pool parsers, and are still refused here: the refusal reads the declaration,
+ * which is conservative for those two rather than wrong.
  */
 const INSTANT_TYPE_NAMES: ReadonlySet<string> = new Set([
   "date",
@@ -486,7 +490,7 @@ function isSerializedDate(value: string): boolean {
  * MySQL accepted it and matched nothing — so the apply answered "some of the rows you
  * edited are no longer in the table. Run the query again" about a row that `SELECT
  * count(*)` put at one. The advice is a loop: the same query produces the same Buffer and
- * the same refusal for ever. A `timestamp` is the same defect with a different value —
+ * the same refusal for ever. A `timestamptz` is the same defect with a different value:
  * `pg` hands back a Date, which has no microseconds to hand back, and `String(date)` has
  * no fractional seconds at all.
  *
@@ -691,7 +695,12 @@ async function keyAddressesOneRow(
     return typeof key === "number" ? String(key) : quoteLiteral(String(key), dialect);
   });
   const key = quoteIdentifier(keyColumn, dialect);
-  const sql = `SELECT ${key}, COUNT(*) FROM ${table} WHERE ${key} IN (${placeholders.join(", ")}) GROUP BY ${key}`;
+  // The count gets a name of its own, quoted so its case survives an engine that folds an
+  // unquoted one (Oracle and Db2 upper-case it), and is read back by that name below. The key
+  // is `id` or ends in `_id` (`handleApplyChanges` picks no other), so it is never this name.
+  const countName = "key_rows";
+  const count = quoteIdentifier(countName, dialect);
+  const sql = `SELECT ${key}, COUNT(*) AS ${count} FROM ${table} WHERE ${key} IN (${placeholders.join(", ")}) GROUP BY ${key}`;
 
   let data: { rows?: Record<string, unknown>[]; error?: string };
   try {
@@ -718,13 +727,13 @@ async function keyAddressesOneRow(
     return { ok: false, reason: err instanceof Error ? err.message : String(err) };
   }
 
-  // `/api/db/query` answers rows as objects, always, and the name a bare `COUNT(*)` comes
-  // back under is the engine's business: `count` on PostgreSQL, `COUNT(*)` on MySQL and
-  // SQLite. So the count is read by POSITION — second value of each row, after the key —
-  // rather than by a name no dialect agrees on. PostgreSQL returns it as a STRING, which
-  // is why it goes through `Number`.
+  // `/api/db/query` answers rows as objects, so the count is read by the name the statement
+  // gave it. Not by position: a bare `COUNT(*)` is named by the engine, and Db2 names it by
+  // its position, `2`, which a JavaScript object lists BEFORE the key, so `{"2":1,"ID":2}`
+  // read the key as the count. PostgreSQL returns the count as a STRING, which is
+  // why it goes through `Number`. A row without it is `NaN`, refused just below.
   const groups = data.rows ?? [];
-  const counts = groups.map((row) => Number(Object.values(row)[1]));
+  const counts = groups.map((row) => Number(Object.hasOwn(row, countName) ? row[countName] : undefined));
   if (counts.some((count) => !Number.isFinite(count))) {
     return { ok: false, reason: "the check returned no count" };
   }
@@ -809,7 +818,10 @@ export function useInlineEditing({
     });
   }, []);
 
-  const handleApplyChanges = useCallback(async () => {
+  // One identity for the memoized BottomPanel (X5): the apply reads `currentTab`, which the
+  // shell hands in anew on every keystroke, so a `useCallback` over it re-rendered the panel
+  // once per keystroke. It is only ever called from a click, never during a render.
+  const handleApplyChanges = useStableCallback(async () => {
     if (!activeConnection || pendingChanges.length === 0) return;
 
     // A pending change addresses its row BY POSITION, so it only means anything against
@@ -1084,7 +1096,7 @@ export function useInlineEditing({
           ? `${updates(statements.length)} accepted. Run the query again to see the saved rows.`
           : `${updates(statements.length)} accepted. The results are up to date.`,
     });
-  }, [activeConnection, currentTab, pendingChanges, executeQuery, toast, transactionActive]);
+  });
 
   const handleDiscardChanges = useCallback(() => {
     setPendingChanges([]);

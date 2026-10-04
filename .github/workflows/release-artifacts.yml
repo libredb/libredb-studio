@@ -15,6 +15,9 @@ name: Release Artifacts
 # chocolatey job pushes the package to the Chocolatey community repository
 # when CHOCO_API_KEY is configured, and the winget job submits an update PR
 # to microsoft/winget-pkgs when WINGETCREATE_GITHUB_TOKEN is configured.
+# The aur job renders packaging/aur/PKGBUILD for the tag and pushes it to the
+# AUR (issue #971) when AUR_SSH_PRIVATE_KEY is configured and the aur channel
+# is live in distribution/channels.yaml.
 # The desktop-appimage job turns the linux tarballs into the two desktop
 # artifacts (Tauri v2 shell + payload sidecar, issues #232 and #241): the
 # AppImage, which users download straight from the release, and the GUI .deb the
@@ -138,6 +141,7 @@ jobs:
       snap: ${{ steps.flags.outputs.snap }}
       winget: ${{ steps.flags.outputs.winget }}
       chocolatey: ${{ steps.flags.outputs.chocolatey }}
+      aur: ${{ steps.flags.outputs.aur }}
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
@@ -321,14 +325,16 @@ jobs:
           test -f "$SMOKE_DIR/libredb-studio.exe"
           test -f "$SMOKE_DIR/node/node.exe"
           # Issue #114 constraint: the drivers must load on Windows with the
-          # BUNDLED runtime. better-sqlite3 is the ONLY native binding in
-          # the payload (the real Windows-prebuild risk) and the only one
-          # requireable from the payload root: on the win32 build Turbopack
-          # bundles the pure-JS drivers (oracledb thin mode, mssql/tedious)
-          # into the server chunks, so they carry no prebuild risk and load
-          # with the server itself (the 0.9.58 attempt proved oracledb is
-          # not in the traced node_modules here, unlike the linux build).
+          # BUNDLED runtime. The native bindings are the real Windows-prebuild
+          # risk, and these two probes require them from the payload root:
+          # better-sqlite3, and db2-node (#786), whose win32-x64-msvc addon
+          # imports VCRUNTIME140.dll. The pure-JS drivers carry no prebuild
+          # risk: on the win32 build Turbopack bundles them (oracledb thin
+          # mode, mssql/tedious) into the server chunks, so they load with the
+          # server itself (the 0.9.58 attempt proved oracledb is not in the
+          # traced node_modules here, unlike the linux build).
           (cd "$SMOKE_DIR" && ./node/node.exe -e "require('better-sqlite3')(':memory:').close(); console.log('db driver probe ok')")
+          (cd "$SMOKE_DIR" && ./node/node.exe -e "const m = require('db2-node'); if (typeof m.Client !== 'function') { throw new Error('db2-node loaded without Client'); } console.log('db2-node probe ok')")
           # Zero-config boot through the launcher: storage defaults under
           # %LOCALAPPDATA%\LibreDB\Studio, bind defaults to loopback, and
           # the first run must print generated admin credentials.
@@ -1382,7 +1388,7 @@ jobs:
             echo ""
             echo "\`Approved\` means it is installable now; anything else means it is queued for"
             echo "human moderation and \`choco install libredb-studio\` still serves the previous"
-            echo "version. See [DISTRIBUTION.md](https://github.com/libredb/libredb-studio/blob/main/docs/DISTRIBUTION.md#windows-winget--chocolatey--portable-zip)."
+            echo "version. See [DISTRIBUTION.md](https://github.com/libredb/libredb-studio/blob/main/docs/DISTRIBUTION.md#windows-winget--chocolatey--scoop--portable-zip)."
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$PUSH_OUTCOME" != "success" ]; then
             echo "::warning::choco push for ${VERSION} did not succeed (outcome: ${PUSH_OUTCOME}). A 403 here is normally the moderation queue - too many unapproved versions - and not a fault in this release, which published correctly. Push the back version by hand once the queue drains."
@@ -1471,3 +1477,122 @@ jobs:
           $url = "https://github.com/libredb/libredb-studio/releases/download/$env:VERSION/libredb-studio-standalone-$env:VERSION-win32-x64.zip"
           .\wingetcreate.exe update LibreDB.Studio --version $env:VERSION --urls "$url|x64" --submit
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  aur:
+    name: Push AUR package
+    # Renders packaging/aur/PKGBUILD for this tag and pushes it to
+    # ssh://aur@aur.archlinux.org/libredb-studio-bin.git (issue #971). Runs
+    # strictly AFTER the release is published: the PKGBUILD downloads the linux
+    # tarballs from the release URL, and makepkg below checks every digest
+    # against that download. Stable tags only, because pkgver cannot hold a
+    # hyphen. Gated on AUR_SSH_PRIVATE_KEY (the key registered on the project's
+    # AUR account) and on the aur channel, which the switchboard reports as
+    # enabled only once the channel is live - the package was staged before the
+    # account existed, and going live is the switch. See docs/DISTRIBUTION.md.
+    needs: [guard, publish-release, channels]
+    if: ${{ !contains(needs.guard.outputs.version, '-') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check AUR availability
+        id: aur
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          CI_ENABLED: ${{ needs.channels.outputs.aur }}
+        run: |
+          if [ "$CI_ENABLED" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::the aur channel is not live with update.ci_enabled true in distribution/channels.yaml (resolved '${CI_ENABLED:-<unresolved>}') - skipping the AUR push"
+          elif [ -n "$AUR_SSH_PRIVATE_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AUR_SSH_PRIVATE_KEY is not configured - skipping the AUR push"
+          fi
+
+      - name: Checkout code
+        if: steps.aur.outputs.enabled == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Download SHA256SUMS from the published release
+        if: steps.aur.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.version }}
+        run: gh release download "$TAG" --pattern SHA256SUMS --dir dist --repo "$GITHUB_REPOSITORY"
+
+      - name: Render the PKGBUILD
+        # The checkout is the tag (the guard refuses a dispatch from any other
+        # commit), and the PKGBUILD fetches packaging/linux from that tag, so
+        # hashing the checked-out files hashes what makepkg will download.
+        if: steps.aur.outputs.enabled == 'true'
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          node scripts/render-aur-pkgbuild.mjs packaging/aur/PKGBUILD dist/SHA256SUMS \
+            "$VERSION" packaging/linux pkg/aur/PKGBUILD
+          cp packaging/aur/libredb-studio-bin.install packaging/aur/LICENSE packaging/aur/REUSE.toml pkg/aur/
+
+      - name: Build and lint in an Arch container
+        # Our own work, so it stays blocking: makepkg downloads every source and
+        # checks its digest, namcap must report no error on the PKGBUILD or the
+        # package, and .SRCINFO is generated here, from the rendered PKGBUILD.
+        # The SSH key is not in this step's environment: a container that never
+        # sees it cannot leak it. Pinned by digest; pacman -Syu then brings the
+        # rolling base up to date from signed packages.
+        if: steps.aur.outputs.enabled == 'true'
+        run: |
+          docker run --rm -v "$PWD/pkg/aur:/pkg" \
+            archlinux@sha256:b21322c663be387c0ed9cbc7bbbfe18e41633ad4e7b7c77cfad45f128be20040 bash -c '
+              set -euo pipefail
+              # nodejs-lts-krypton too: namcap resolves the glibc, libgcc and
+              # libstdc++ the native addons need through the declared depends,
+              # read from the local pacman database. Without it installed,
+              # every one of them is reported as a missing-dependency error.
+              pacman -Syu --noconfirm --needed base-devel namcap nodejs-lts-krypton >/dev/null
+              useradd -m builder
+              cp -r /pkg /home/builder/aur
+              chown -R builder /home/builder/aur
+              cd /home/builder/aur
+              sudo -u builder makepkg --printsrcinfo > .SRCINFO
+              sudo -u builder makepkg --noconfirm
+              for target in PKGBUILD ./*.pkg.tar.zst; do
+                namcap "$target" | tee namcap.log
+                if grep -q " E: " namcap.log; then
+                  echo "namcap reports an error for $target" >&2
+                  exit 1
+                fi
+              done
+              cp .SRCINFO /pkg/.SRCINFO
+            '
+
+      - name: Push to the AUR
+        if: steps.aur.outputs.enabled == 'true'
+        env:
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          VERSION: ${{ needs.guard.outputs.version }}
+        run: |
+          set -euo pipefail
+          SSH_DIR="$RUNNER_TEMP/aur-ssh"
+          mkdir -m 700 "$SSH_DIR"
+          trap 'rm -rf "$SSH_DIR"' EXIT
+          (umask 077 && printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$SSH_DIR/key")
+          # The host key published on https://aur.archlinux.org, pinned:
+          # learning it on first connect would trust whoever answers.
+          echo "aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN" > "$SSH_DIR/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $SSH_DIR/key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$SSH_DIR/known_hosts"
+          AUR_DIR="$RUNNER_TEMP/aur-repo"
+          git -c init.defaultBranch=master clone ssh://aur@aur.archlinux.org/libredb-studio-bin.git "$AUR_DIR"
+          for file in PKGBUILD .SRCINFO libredb-studio-bin.install LICENSE REUSE.toml; do
+            cp "pkg/aur/$file" "$AUR_DIR/$file"
+          done
+          cd "$AUR_DIR"
+          git add PKGBUILD .SRCINFO libredb-studio-bin.install LICENSE REUSE.toml
+          if git diff --cached --quiet; then
+            echo "::notice::the AUR already carries libredb-studio-bin ${VERSION} - nothing to push"
+            exit 0
+          fi
+          git -c user.name=LibreDB -c user.email=channels@libredb.org \
+            commit -m "Update to ${VERSION}"
+          # The AUR accepts pushes to master only.
+          git push origin HEAD:master

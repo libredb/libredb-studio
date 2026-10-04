@@ -29,7 +29,7 @@ import {
 import { DatabaseConnection, SavedQuery, QueryHistoryItem } from "@/lib/types";
 import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { pathKey } from "@/lib/db/object-path";
-import type { ProviderCapabilities } from "@/lib/db/types";
+import { offersSchemaDiagram, type ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
 import { getDBIcon } from "@/lib/db-ui-config";
 
@@ -174,7 +174,8 @@ export function CommandPalette({
             <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
             <span>Monitoring</span>
           </CommandItem>
-          {activeConnection && (
+          {/* Not on a Cypher connection: its relationship types are no tables (SR20). */}
+          {activeConnection && offersSchemaDiagram(capabilities) && (
             <CommandItem onSelect={() => runAction(onShowDiagram)}>
               <Layers strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-cyan" />
               <span>Schema Diagram (ERD)</span>

@@ -7,8 +7,12 @@ import { checkOrigin } from "@/lib/api/origin-check";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { auditMcpDenial, authenticateMcpRequest } from "@/lib/mcp/bearer";
+import { MCP_PATH } from "@/lib/mcp/config";
+import { mcpOriginHostRefusal } from "@/lib/mcp/origin-policy";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { withSecurityHeaders } from "@/lib/security/config";
+import { sessionRequiredBody } from "@/lib/api/session-ended";
 
 // Lazy-initialized to prevent module-level crash if JWT_SECRET is misconfigured.
 // A module-level throw would block ALL requests (including health check).
@@ -78,6 +82,15 @@ export async function proxy(request: NextRequest) {
     return withSecurityHeaders(NextResponse.json(ORIGIN_MISMATCH_BODY, { status: 403 }));
   }
 
+  // The MCP endpoint (#246). Matched before the cookie is read, so the session cookie is never
+  // consulted on this path: an MCP client authenticates with a scoped bearer token of its own,
+  // and a browser cannot attach one on its own. The exact match keeps /api/mcp/token, which mints
+  // those tokens for a signed-in user, on the ordinary session path below. The route verifies all
+  // of this again: middleware is an optimisation, not the authorization boundary.
+  if (pathname === MCP_PATH) {
+    return withSecurityHeaders(await mcpGate(request));
+  }
+
   const token = request.cookies.get("auth-token")?.value;
 
   // If accessing /login with a valid token, redirect authenticated users
@@ -132,7 +145,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (!token) {
-    return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/login"), request.url)));
+    return withSecurityHeaders(signInRequired(request, pathname, "Authentication required"));
   }
 
   try {
@@ -171,9 +184,43 @@ export async function proxy(request: NextRequest) {
 
     return withSecurityHeaders(NextResponse.next());
   } catch {
-    logger.warn("JWT verification failed, redirecting to login", { route: "proxy" });
-    return withSecurityHeaders(NextResponse.redirect(new URL(withBasePath("/login"), request.url)));
+    logger.warn("JWT verification failed, refusing the session", { route: "proxy" });
+    return withSecurityHeaders(signInRequired(request, pathname, "Session expired. Sign in again."));
   }
+}
+
+/**
+ * A page goes to the sign-in screen; an API call is answered 401 JSON instead (#1420). An API
+ * caller is a fetch, not a tab: it followed the redirect to /login, received the sign-in page's
+ * HTML, and every client caller then failed to parse it ("Unexpected token '<'") with nothing
+ * sending the user to sign in. The JSON carries the AUTH_REQUIRED code the browser keys on.
+ */
+function signInRequired(request: NextRequest, pathname: string, error: string): NextResponse {
+  if (pathname === "/api" || pathname.startsWith("/api/")) {
+    return NextResponse.json(sessionRequiredBody(error), { status: 401 });
+  }
+  return NextResponse.redirect(new URL(withBasePath("/login"), request.url));
+}
+
+/**
+ * Origin on every method, Host on a loopback bind, then the bearer, each refusal audited by the
+ * helper the route uses too. A request that passes continues to the route, as the drive path does.
+ */
+async function mcpGate(request: NextRequest): Promise<NextResponse> {
+  const refusal = mcpOriginHostRefusal(request);
+  if (refusal !== null) {
+    auditMcpDenial(request, refusal.reason);
+    return asNextResponse(refusal.response);
+  }
+  const authentication = await authenticateMcpRequest(request);
+  if (authentication.kind === "denied") auditMcpDenial(request, authentication.reason);
+  if (authentication.kind !== "authenticated") return asNextResponse(authentication.response);
+  return NextResponse.next();
+}
+
+/** withSecurityHeaders takes a NextResponse, and the SDK's helpers answer a plain Response. */
+function asNextResponse(response: Response): NextResponse {
+  return new NextResponse(response.body, { status: response.status, headers: response.headers });
 }
 
 export const config = {
@@ -210,6 +257,11 @@ export const config = {
      * carry the CSP or HSTS.
      */
     "/((?!api/storage/config|_next/static|_next/image|.*\\..*).*)",
+    // The dot exclusion above is for static assets, and an API path is never one: this entry puts
+    // an API path with a dot back under the Origin check and the security headers. An email in
+    // /api/admin/accounts/<email> is the case that needs it. proxy() may still take such a path for
+    // a static asset and skip its login redirect; the route's own session check is the boundary.
+    "/api/(.*\\..*)",
     // The catch-all requires a slash after basePath. Next compiles this explicit
     // root matcher to also cover the bare mount path (for example /tools/libredb).
     "/",

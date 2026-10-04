@@ -2562,7 +2562,7 @@ describe("ObjectSourceView edit mode", () => {
      *     reachable population, and nothing in this file would then notice it going.
      *
      * WHAT THE UNKILLED MUTATION COSTS A READER, and it is a live population rather than a
-     * theoretical one: `src/app/api/db/objects/edit-apply/route.ts:128` refuses a plan whose
+     * theoretical one: `src/app/api/db/objects/edit-apply/route.ts:129` refuses a plan whose
      * consequence classes are not all in `acknowledged`, so a pane that dropped the tick would
      * make every Redis library of two or more functions permanently unappliable, with the reader
      * looking at a ticked box and a refusal that says they did not tick it.

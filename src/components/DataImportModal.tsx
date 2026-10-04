@@ -22,6 +22,7 @@ import type { DatabaseType } from "@/lib/types";
 import { rowWritableObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { declaredKinds } from "@/lib/db/object-kinds";
 import { quoteObjectPath } from "@/lib/query-generators";
 import { quoteLiteral } from "@/lib/sql/values";
 import type { CsvDelimiter } from "@/lib/export/csv";
@@ -176,6 +177,31 @@ function targetIdentifier(target: ImportTarget, capabilities: ProviderCapabiliti
   return capabilities === undefined ? objectPathLabel(target.path) : quoteObjectPath(target.path, capabilities);
 }
 
+/**
+ * Whether an import may create the table it writes into: only where the engine declares a create-
+ * table it can spell (#786). Only an explicit `false` withholds it: unknown capabilities keep the
+ * choice, as they keep every target in `rowWritableObjects`, because the declaration has not arrived
+ * yet rather than refused anything.
+ */
+export function offersNewTableImport(capabilities: ProviderCapabilities | undefined): boolean {
+  return capabilities?.supportsCreateTable !== false;
+}
+
+/**
+ * Why this engine takes no import at all, or null when it takes one (#786).
+ *
+ * An import writes rows into an existing object of a kind that accepts row writes, or into a table
+ * it creates. An engine that declares neither has nothing an import could write into, so the dialog
+ * refuses up front rather than walking a reader through three steps to a statement it must not run.
+ * Db2 is the engine this was written for: on db2-node 1.0.22, which misread non-ASCII text, no Db2
+ * kind accepted row writes and Db2 declared no create-table.
+ */
+export function importRefusal(capabilities: ProviderCapabilities | undefined): string | null {
+  if (capabilities === undefined || offersNewTableImport(capabilities)) return null;
+  if (declaredKinds(capabilities).some((kind) => kind.acceptsRowWrites === true)) return null;
+  return "This connection takes no imported data: its engine declares no table an import may write into and no table an import may create.";
+}
+
 export function generateImportSQL(
   parsedData: ParsedData | null,
   target: ImportTarget | null,
@@ -185,6 +211,13 @@ export function generateImportSQL(
 ): string {
   if (!parsedData) return "";
   if (target === null) return "";
+  // The generator refuses on its own as well as the dialog, so no caller can build the statements
+  // an engine declared it does not take.
+  const refusal = importRefusal(capabilities);
+  if (refusal !== null) throw new Error(refusal);
+  if (target.kind === "new" && !offersNewTableImport(capabilities)) {
+    throw new Error("This connection's engine declares no create-table, so an import cannot create its target table.");
+  }
 
   const tableName = targetIdentifier(target, capabilities);
   const createNewTable = target.kind === "new";
@@ -269,6 +302,8 @@ export function DataImportModal({
   // A view has columns and is a relation, and an INSERT into it is meaningless on most
   // engines, so only the provider's own per-kind declaration can tell the two apart (#789).
   const targets = useMemo(() => rowWritableObjects(tables, capabilities), [tables, capabilities]);
+  const refusal = importRefusal(capabilities);
+  const newTableOffered = offersNewTableImport(capabilities);
 
   const resetState = useCallback(() => {
     setStep("upload");
@@ -382,6 +417,29 @@ export function DataImportModal({
     }, 200);
   };
 
+  if (refusal !== null) {
+    return (
+      <Dialog open={isOpen} onOpenChange={handleClose}>
+        <DialogContent className="bg-surface border-hairline-strong text-fg max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload strokeWidth={1.5} className="w-5 h-5 text-brand" />
+              {"Import Data"}
+            </DialogTitle>
+          </DialogHeader>
+          <p data-testid="import-refused" className="text-xs text-fg-tertiary">
+            {refusal}
+          </p>
+          <div className="flex justify-end">
+            <Button data-testid="import-refused-close" variant="outline" size="sm" onClick={handleClose}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="bg-surface border-hairline-strong text-fg max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
@@ -399,7 +457,7 @@ export function DataImportModal({
             <React.Fragment key={s}>
               <div
                 className={cn(
-                  "flex items-center gap-1.5 text-xs font-mediumr",
+                  "flex items-center gap-1.5 text-xs font-medium",
                   step === s
                     ? "text-brand"
                     : idx < ["upload", "preview", "configure", "ready"].indexOf(step)
@@ -604,18 +662,20 @@ export function DataImportModal({
                     <Table2 strokeWidth={1.5} className="w-3.5 h-3.5 mb-1" />
                     {"Existing Table"}
                   </button>
-                  <button
-                    className={cn(
-                      "flex-1 px-3 py-2 rounded-lg border text-xs text-left transition-all",
-                      createNewTable
-                        ? "border-success-tint/40 bg-success-tint/10 text-success"
-                        : "border-hairline-strong text-fg-muted hover:bg-fill",
-                    )}
-                    onClick={() => setCreateNewTable(true)}
-                  >
-                    <FileSpreadsheet strokeWidth={1.5} className="w-3.5 h-3.5 mb-1" />
-                    {"New Table"}
-                  </button>
+                  {newTableOffered && (
+                    <button
+                      className={cn(
+                        "flex-1 px-3 py-2 rounded-lg border text-xs text-left transition-all",
+                        createNewTable
+                          ? "border-success-tint/40 bg-success-tint/10 text-success"
+                          : "border-hairline-strong text-fg-muted hover:bg-fill",
+                      )}
+                      onClick={() => setCreateNewTable(true)}
+                    >
+                      <FileSpreadsheet strokeWidth={1.5} className="w-3.5 h-3.5 mb-1" />
+                      {"New Table"}
+                    </button>
+                  )}
                 </div>
               </div>
 

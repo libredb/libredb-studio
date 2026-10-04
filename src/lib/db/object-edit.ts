@@ -198,9 +198,10 @@ export function providerRanges(step: ObjectEditStep): readonly { readonly start:
  */
 export function planExecutableLength(unit: ObjectEditUnit): number {
   if (unit.medium === "command") {
-    return (
-      unit.name.length + unit.arguments.reduce((total, token) => total + token.length, 0) + unit.payload.text.length
-    );
+    // The tokens after the payload are sent too (etcd's failure-branch read, etcd spec 4.5); the
+    // payload's label names it in the preview and is never sent, so it is not counted.
+    const tokens = [...unit.arguments, ...(unit.trailing ?? [])];
+    return unit.name.length + tokens.reduce((total, token) => total + token.length, 0) + unit.payload.text.length;
   }
   return unit.steps.reduce((total, step) => total + step.text.length, 0);
 }

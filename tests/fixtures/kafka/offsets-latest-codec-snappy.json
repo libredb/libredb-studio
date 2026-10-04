@@ -1,0 +1,21 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "consumer.listOffsets({ topics: [\"codec-snappy\"], timestamp: -1 })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "$map": [
+   [
+    "codec-snappy",
+    [
+     {
+      "$bigint": "20"
+     }
+    ]
+   ]
+  ]
+ }
+}

@@ -1,6 +1,6 @@
 import { describe, test, expect, spyOn } from "bun:test";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { maintenanceControl, offersCodeGeneration, offersColumnProfiling } from "@/lib/db/types";
+import { maintenanceControl, offersCodeGeneration, offersColumnProfiling, offersSchemaDiagram } from "@/lib/db/types";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
 import type {
   DatabaseConnection,
@@ -11,6 +11,8 @@ import type {
   ObjectDetail,
   ObjectDetailBatch,
   HealthInfo,
+  DatabaseProvider,
+  MaintenanceOperation,
   MaintenanceType,
   MaintenanceResult,
   ProviderOptions,
@@ -267,6 +269,11 @@ describe("BaseDatabaseProvider", () => {
       expect(externalImplementer.supportsInlineRowEdit).toBeUndefined();
       expect(externalImplementer.supportsTransactions).toBeUndefined();
       expect(externalImplementer.declaresForeignKeys).toBeUndefined();
+      // The conservative default for `containerPathShapes` lives in the kernel reader and never in a
+      // base declaration: absent here, so every provider that declares a value declares it itself,
+      // and one that forgets it reads as `exact` through `acceptedContainerShapes()` (#1147).
+      expect(caps.containerPathShapes).toBeUndefined();
+      expect(externalImplementer.containerPathShapes).toBeUndefined();
       // The SQL default: a relational engine HAS foreign keys whether or not a given
       // schema uses any. The six engines that have none override it, so the strong
       // claim - "no reading could ever return one here" - is always declared and
@@ -1024,6 +1031,35 @@ describe("maintenanceControl", () => {
     });
   });
 
+  test("a spec that names its kinds is offered on a row of those kinds only (#786)", () => {
+    // Db2's views are relations, and RUNSTATS on one answers SQLSTATE 428DY.
+    const db2Shaped = caps({
+      maintenanceOperations: ["analyze"],
+      maintenanceOperationSpecs: {
+        analyze: {
+          label: "Run Statistics",
+          perEntity: true,
+          global: false,
+          kinds: ["table", "materialized_query_table"],
+        },
+      },
+    });
+
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity", "table").offered).toBe(true);
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity", "materialized_query_table").offered).toBe(true);
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity", "view")).toEqual({
+      offered: false,
+      label: "Run Statistics",
+    });
+    // A caller that names no kind, the Tables and Operations tabs listing tables, is not asked.
+    expect(maintenanceControl(db2Shaped, "analyze", "perEntity").offered).toBe(true);
+    // And a spec that names none still answers for every kind.
+    const sqliteShaped = caps({
+      maintenanceOperationSpecs: { analyze: { label: "Analyze Table", perEntity: true, global: true } },
+    });
+    expect(maintenanceControl(sqliteShaped, "analyze", "perEntity", "view").offered).toBe(true);
+  });
+
   test("an operation whose target is a session id is offered in neither placement", () => {
     const withKill = caps({
       maintenanceOperations: ["kill"],
@@ -1043,6 +1079,69 @@ describe("maintenanceControl", () => {
     });
 
     expect(maintenanceControl(drifted, "vacuum", "perEntity").offered).toBe(false);
+  });
+
+  test("a spec that declares no card field answers exactly what it answered before (#1089)", () => {
+    // `toStrictEqual` and the key list, because an answer carrying `title: undefined` would be a different object
+    // to a caller that lists its keys, and no provider but etcd declares any of the three fields.
+    const sqliteShaped = caps({
+      maintenanceOperationSpecs: { vacuum: { label: "Vacuum Database", perEntity: false, global: true } },
+    });
+
+    expect(maintenanceControl(sqliteShaped, "vacuum", "global")).toStrictEqual({
+      offered: true,
+      label: "Vacuum Database",
+    });
+    expect(Object.keys(maintenanceControl(sqliteShaped, "vacuum", "perEntity"))).toEqual(["offered", "label"]);
+  });
+
+  test("a declared card's title, description and typed confirmation travel with the answer, each on its own (#1089)", () => {
+    const etcdShaped = caps({
+      maintenanceOperations: ["compact", "defragment", "disarm"],
+      maintenanceOperationSpecs: {
+        compact: {
+          label: "Compact history",
+          title: "Compact history",
+          description: "Removes every revision before the current one.",
+          perEntity: false,
+          global: true,
+          confirmation: "typed",
+        },
+        defragment: { label: "Defragment", title: "Defragment the member", perEntity: false, global: true },
+      },
+    });
+    const compactCard = {
+      label: "Compact history",
+      title: "Compact history",
+      description: "Removes every revision before the current one.",
+      confirmation: "typed" as const,
+    };
+
+    expect(maintenanceControl(etcdShaped, "compact", "global")).toStrictEqual({ offered: true, ...compactCard });
+    // The fields describe the operation's card, not a placement: the per-row answer carries them and stays refused.
+    expect(maintenanceControl(etcdShaped, "compact", "perEntity")).toStrictEqual({ offered: false, ...compactCard });
+    expect(maintenanceControl(etcdShaped, "defragment", "global")).toStrictEqual({
+      offered: true,
+      label: "Defragment",
+      title: "Defragment the member",
+    });
+    // An operation with no spec is offered under the caller's own card, as before.
+    expect(maintenanceControl(etcdShaped, "disarm", "global")).toStrictEqual({ offered: true });
+  });
+});
+
+describe("MaintenanceOperation", () => {
+  test("every operation a provider may declare can be handed to runMaintenance, etcd's three included (#1089)", () => {
+    // `POST /api/db/maintenance` hands a provider exactly what its `maintenanceOperations` declared, so the
+    // interface and the base class both take `MaintenanceOperation`. The two assignments below are the
+    // compile-time half of that, checked by `bun run typecheck`: a parameter narrowed back to `MaintenanceType`
+    // fails there. `MaintenanceType` keeps its six because `MongoDBProvider.runMaintenance` switches over
+    // exactly those, and this stub's own `runMaintenance` above takes the six as every such provider does.
+    const etcdOperations: readonly MaintenanceOperation[] = ["compact", "defragment", "disarm"];
+    const toTheInterface: readonly Parameters<DatabaseProvider["runMaintenance"]>[0][] = etcdOperations;
+    const toTheBaseClass: readonly Parameters<BaseDatabaseProvider["runMaintenance"]>[0][] = etcdOperations;
+    expect(toTheInterface).toBe(etcdOperations);
+    expect(toTheBaseClass).toBe(etcdOperations);
   });
 });
 
@@ -1068,13 +1167,29 @@ describe("offersColumnProfiling", () => {
   test("JSON in a dialect of its own is not the MongoDB document the route builds", () => {
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(false);
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "libredb" }))).toBe(false);
+    // A Kafka read request is JSON of this product's own schema (#1088), no MongoDB document either.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "kafka" }))).toBe(false);
+    // An etcd command is a line of etcdctl's (#1089), no MongoDB document either.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "json", queryDialect: "etcd" }))).toBe(false);
     // The control: the same language with the dialect removed.
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "json" }))).toBe(true);
+  });
+
+  test("Cypher is not profiled, because the route writes no Cypher (Neo4j spec 6.5)", () => {
+    // Correct as a fall-through: the gate names the two languages the route writes.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
   });
 
   test("PromQL is not profiled, because the route writes no PromQL", () => {
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "promql" }))).toBe(false);
     // The control: the same declaration in SQL.
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+  });
+
+  test("InfluxQL is not profiled, because the route writes no InfluxQL (InfluxDB spec 6.7)", () => {
+    // Correct as a fall-through: the gate names the two languages the route writes. InfluxDB 3 declares SQL and
+    // keeps Profile, which runs the route's SQL on its session database (InfluxDB spec R25).
+    expect(offersColumnProfiling(languageCaps({ queryLanguage: "influxql" }))).toBe(false);
     expect(offersColumnProfiling(languageCaps({ queryLanguage: "sql" }))).toBe(true);
   });
 
@@ -1101,8 +1216,54 @@ describe("offersCodeGeneration", () => {
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "sql" }))).toBe(true);
   });
 
+  test("Kafka is not offered it: a topic's columns are a read result's shape, which the models reject (#1088)", () => {
+    // The models type `timestamp` as a Date where a read answers an ISO string, and `value` as a
+    // record where a read answers text, base64 or a Confluent label (#1088, section 3.3).
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "kafka" }))).toBe(false);
+    // The controls: the same language with the dialect removed, and with another JSON dialect, which
+    // keeps it, so the refusal is Kafka's own arm and not the dialect rule of the profiling gate.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
+  });
+
+  test("etcd is not offered it: a key-prefix group's columns are a get row's fixed shape, no stored record (#1089)", () => {
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "etcd" }))).toBe(false);
+    // The controls: the same language with the dialect removed, and with another JSON dialect, which
+    // keeps it, so the refusal is the etcd arm and not the dialect rule of the profiling gate.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
+  });
+
+  test("Cypher is not offered it: a label's columns are sampled property keys, not a record type (Neo4j spec 6.5)", () => {
+    // Correct as a fall-through: the gate names SQL and JSON, so a language added later is not offered it.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
+  });
+
+  test("InfluxQL is not offered it: a measurement's columns are the tag and field keys its points carried (InfluxDB spec 6.7)", () => {
+    // Correct as a fall-through, as for Cypher: the gate names SQL and JSON.
+    expect(offersCodeGeneration(languageCaps({ queryLanguage: "influxql" }))).toBe(false);
+  });
+
   test("undefined capabilities are a denial, not a permission", () => {
     expect(offersCodeGeneration(undefined)).toBe(false);
     expect(offersCodeGeneration(languageCaps({ queryLanguage: "json" }))).toBe(true);
+  });
+});
+
+describe("offersSchemaDiagram", () => {
+  test("Cypher is not offered the diagram: a relationship type is no table and no column names an edge (SR20)", () => {
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "cypher" }))).toBe(false);
+  });
+
+  test("InfluxQL is not offered the diagram: a measurement declares no schema and no relation (InfluxDB spec 6.3)", () => {
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "influxql" }))).toBe(false);
+  });
+
+  test("every other language keeps it, and so does a connection whose capabilities have not answered yet", () => {
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "sql" }))).toBe(true);
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "json" }))).toBe(true);
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "json", queryDialect: "redis" }))).toBe(true);
+    expect(offersSchemaDiagram(languageCaps({ queryLanguage: "promql" }))).toBe(true);
+    expect(offersSchemaDiagram(undefined)).toBe(true);
   });
 });

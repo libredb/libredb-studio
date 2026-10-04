@@ -14,22 +14,30 @@
  * out of here masks the same three fields the component renders masked.
  */
 
-import { maskValue, type MaskingRule } from "@/lib/data-masking";
+import { maskValueByPattern, type MaskingPattern } from "@/lib/data-masking";
 import { csvRow } from "./csv";
 import { jsonText } from "./json";
 
-/** One column's statistics, as `/api/db/profile` returns them. */
+/**
+ * One column's statistics, as `/api/db/profile` returns them.
+ *
+ * A figure the engine could not produce is ABSENT rather than zero: a column the
+ * engine could not count used to report 0 % null and 0 distinct, which reads as data.
+ * `error` is set when not even the null count could be read, and `warnings` names each
+ * measure the engine refused while the others were read, with the engine's own reason.
+ */
 export interface ColumnProfile {
   name: string;
   type?: string;
   totalRows: number;
-  nullCount: number;
-  nullPercent: number;
-  distinctCount: number;
+  nullCount?: number;
+  nullPercent?: number;
+  distinctCount?: number;
   minValue?: string;
   maxValue?: string;
   sampleValues?: string[];
   error?: string;
+  warnings?: string[];
 }
 
 /** A whole profiling run for one table. */
@@ -37,7 +45,16 @@ export interface ProfileData {
   tableName: string;
   totalRows: number;
   columns: ColumnProfile[];
+  /** The columns past the route's per-profile cap, which were not profiled at all. */
+  omittedColumns?: string[];
 }
+
+/** A column as a file writes it: every field present, an unknown figure as empty. */
+type ExportedColumn = Omit<Required<ColumnProfile>, "nullCount" | "nullPercent" | "distinctCount" | "warnings"> & {
+  nullCount: number | "";
+  nullPercent: number | "";
+  distinctCount: number | "";
+};
 
 /** What separates the sample values inside their single cell. */
 const SAMPLE_SEPARATOR = " | ";
@@ -59,21 +76,23 @@ const HEADERS = [
  * `column` with its sensitive values masked and its absent ones written as empty.
  *
  * Absent stays empty rather than becoming the mask: a column with no `MIN` has
- * nothing to hide, and `maskValue` answers `NULL` for an absent value, which reads
+ * nothing to hide, and `maskValueByPattern` answers `NULL` for an absent value, which reads
  * back as a column that genuinely holds that word.
  */
-function exportedColumn(column: ColumnProfile, rule: MaskingRule | undefined): Required<ColumnProfile> {
+function exportedColumn(column: ColumnProfile, pattern: MaskingPattern | undefined): ExportedColumn {
   return {
     name: column.name,
     type: column.type || "",
     totalRows: column.totalRows,
-    nullCount: column.nullCount,
-    nullPercent: column.nullPercent,
-    distinctCount: column.distinctCount,
-    minValue: column.minValue && rule ? maskValue(column.minValue, rule) : column.minValue || "",
-    maxValue: column.maxValue && rule ? maskValue(column.maxValue, rule) : column.maxValue || "",
-    sampleValues: column.sampleValues?.map((value) => (rule ? maskValue(value, rule) : value)) || [],
-    error: column.error || "",
+    nullCount: column.nullCount ?? "",
+    nullPercent: column.nullPercent ?? "",
+    distinctCount: column.distinctCount ?? "",
+    minValue: column.minValue && pattern ? maskValueByPattern(column.minValue, pattern) : column.minValue || "",
+    maxValue: column.maxValue && pattern ? maskValueByPattern(column.maxValue, pattern) : column.maxValue || "",
+    sampleValues: column.sampleValues?.map((value) => (pattern ? maskValueByPattern(value, pattern) : value)) || [],
+    // A refused measure is written beside a whole-column failure, so the file says why a
+    // figure is empty just as the screen does.
+    error: [column.error, ...(column.warnings ?? [])].filter(Boolean).join("; "),
   };
 }
 
@@ -86,7 +105,7 @@ function exportedColumn(column: ColumnProfile, rule: MaskingRule | undefined): R
  */
 export function dataProfileText(
   profile: ProfileData,
-  sensitive: ReadonlyMap<string, MaskingRule>,
+  sensitive: ReadonlyMap<string, MaskingPattern>,
   format: "csv" | "json",
 ): string {
   const columns = profile.columns.map((column) => exportedColumn(column, sensitive.get(column.name)));

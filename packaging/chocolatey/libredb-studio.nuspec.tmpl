@@ -27,16 +27,16 @@
     <projectSourceUrl>https://github.com/libredb/libredb-studio</projectSourceUrl>
     <docsUrl>https://github.com/libredb/libredb-studio/blob/main/docs/DISTRIBUTION.md</docsUrl>
     <bugTrackerUrl>https://github.com/libredb/libredb-studio/issues</bugTrackerUrl>
-    <tags>libredb-studio database sql ide editor postgres postgresql mysql sqlite oracle mssql mongodb redis</tags>
+    <tags>libredb-studio database sql ide editor postgres postgresql mysql sqlite oracle db2 mssql mongodb redis</tags>
     <!-- No engine count in the summary or the description: nothing
          regenerates this template from the provider registry, so a number
          here is stale the day the next engine lands (issue #445). Name the
          engines instead - the description below is the exhaustive list. -->
     <summary>Web-based SQL IDE for PostgreSQL, MySQL, SQL Server, Oracle, MongoDB, Redis, ClickHouse, Cassandra, Elasticsearch and more, with AI query assistance.</summary>
     <description><![CDATA[
-LibreDB Studio is an open-source, web-based SQL IDE for cloud-native teams. It connects to PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra and Prometheus, and ships a Monaco-powered editor with AI query assistance, schema browsing, ER diagrams, charts, and import/export tooling.
+LibreDB Studio is an open-source, web-based SQL IDE for cloud-native teams. It connects to PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia, and ships a Monaco-powered editor with AI query assistance, schema browsing, ER diagrams, charts, and import/export tooling.
 
-This package installs the standalone server together with a bundled, private Node.js runtime - nothing else to install.
+This package installs the standalone server together with a bundled, private Node.js runtime, and pulls in the Microsoft Visual C++ 2015-2022 x64 redistributable (vcredist140), which the Db2 driver's native addon needs.
 
 ### Usage
 
@@ -51,6 +51,11 @@ Then browse to `localhost:3000`. The first run prints generated admin credential
 All configuration is environment-variable driven (same variables as the Docker image and the Linux packages) - see the [Distribution & Install Guide](https://github.com/libredb/libredb-studio/blob/main/docs/DISTRIBUTION.md).
 ]]></description>
     <releaseNotes>https://github.com/libredb/libredb-studio/releases/tag/{{VERSION}}</releaseNotes>
+    <!-- The Db2 driver's win32-x64-msvc addon imports VCRUNTIME140.dll (#786),
+         which a clean Windows install does not carry. -->
+    <dependencies>
+      <dependency id="vcredist140" />
+    </dependencies>
   </metadata>
   <files>
     <!-- Forward slashes on purpose: this nuspec is packed by the Mono choco

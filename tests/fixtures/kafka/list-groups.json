@@ -1,0 +1,40 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.listGroups({ types: [\"consumer\", \"classic\"] })"
+ },
+ "outcome": "pass",
+ "payload": {
+  "$map": [
+   [
+    "lag-kip848",
+    {
+     "id": "lag-kip848",
+     "state": "Empty",
+     "groupType": "consumer",
+     "protocolType": "consumer"
+    }
+   ],
+   [
+    "lag-classic",
+    {
+     "id": "lag-classic",
+     "state": "Empty",
+     "groupType": "classic",
+     "protocolType": "consumer"
+    }
+   ],
+   [
+    "lag-partial",
+    {
+     "id": "lag-partial",
+     "state": "Empty",
+     "groupType": "classic",
+     "protocolType": "consumer"
+    }
+   ]
+  ]
+ }
+}

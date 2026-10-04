@@ -8,6 +8,7 @@ let capturedFavoriteIds: unknown;
 let capturedToggleFavoriteHandler: unknown;
 let capturedConnectionOrder: unknown;
 let capturedReorderHandler: unknown;
+let capturedGroupProps: Record<string, unknown> = {};
 /** The row menu's Browse Keys item, as the tree received it from the sidebar. */
 let capturedBrowseKeys: ((object: { name: string; path: readonly string[] }) => void) | undefined;
 
@@ -19,6 +20,7 @@ mock.module("@/components/sidebar/ConnectionsList", () => ({
     capturedToggleFavoriteHandler = props.onToggleFavoriteConnection;
     capturedConnectionOrder = props.connectionOrder;
     capturedReorderHandler = props.onReorderConnections;
+    capturedGroupProps = props;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     const connections = props.connections as Array<Record<string, unknown>> | undefined;
@@ -429,6 +431,24 @@ describe("Sidebar", () => {
     expect(capturedReorderHandler).toBe(onReorderConnections);
   });
 
+  test("passes the connection groups and every group callback through to ConnectionsList (#1170)", () => {
+    const groupProps = {
+      connectionGroups: [{ id: "g1", name: "Prod", collapsed: false, connectionIds: [] }],
+      onCreateGroup: mock(() => "g1" as string | null),
+      onRenameGroup: mock(() => {}),
+      onDeleteGroup: mock(() => {}),
+      onToggleGroupCollapsed: mock(() => {}),
+      onMoveConnectionToGroup: mock(() => {}),
+    };
+    const props = createDefaultProps(groupProps);
+
+    render(<Sidebar {...props} />);
+
+    for (const [name, value] of Object.entries(groupProps)) {
+      expect(capturedGroupProps[name]).toBe(value);
+    }
+  });
+
   /**
    * The footer used to print a hardcoded "v1.2.5" while the package had long
    * moved on, so the sidebar told users a version the build never was. It now
@@ -481,6 +501,17 @@ describe("Sidebar", () => {
     const { queryByText } = render(<Sidebar {...props} />);
 
     expect(queryByText("Connected")).not.toBeNull();
+  });
+
+  test("no ERD button on a connection declaring Cypher, whose relationship types are no tables (SR20)", () => {
+    const cypher = { capabilities: { ...oneLevel, queryLanguage: "cypher" } } as unknown as ProviderMetadata;
+    const { container, unmount } = render(<Sidebar {...createDefaultProps({ metadata: cypher })} />);
+    expect(container.querySelector('[title="Show ERD Diagram"]')).toBeNull();
+    unmount();
+
+    // The control: the same connection while its capabilities have not answered keeps the button.
+    const pending = render(<Sidebar {...createDefaultProps({ metadata: null })} />);
+    expect(pending.container.querySelector('[title="Show ERD Diagram"]')).not.toBeNull();
   });
 
   test("clicking ERD button calls onShowDiagram", () => {
@@ -680,6 +711,43 @@ describe("Sidebar", () => {
     });
 
     expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("a\\[b:*");
+  });
+
+  test("hands Browse Keys the bare prefix and its separator under a prefix declaration", () => {
+    const props = createDefaultProps({
+      activeConnection: mockPostgresConnection,
+      // A walk that reads a literal prefix under `/` and declares no container level: what etcd answers.
+      metadata: {
+        capabilities: {
+          queryLanguage: "json",
+          keyScan: {
+            defaultCount: 500,
+            maxCount: 1000,
+            separator: "/",
+            cursor: "opaque",
+            pattern: "prefix",
+            totalScope: "walk",
+          },
+        },
+      } as unknown as ProviderMetadata,
+      objectActions: { onGenerateSelect: () => {} },
+    });
+    const { queryByTestId } = render(<Sidebar {...props} />);
+
+    // The group's advertised name loses only its star: the separator stays, so the walk does not also
+    // read `/apisix/routes-v2/`, and nothing is escaped, because every byte of a prefix is data.
+    act(() => {
+      capturedBrowseKeys?.({ name: "/apisix/routes/*", path: ["/apisix/routes/*"] });
+    });
+    expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("/apisix/routes/");
+    expect(queryByTestId("key-browser")?.getAttribute("data-request-database")).toBe("none");
+
+    // Review Focus 1: a prefix holding a leading `-`, a space, both quotes, `#`, `$` and a glob
+    // metacharacter is handed over as its string, with no escape.
+    act(() => {
+      capturedBrowseKeys?.({ name: "/-a b'\"#$[x]/*", path: ["/-a b'\"#$[x]/*"] });
+    });
+    expect(queryByTestId("key-browser")?.getAttribute("data-request")).toBe("/-a b'\"#$[x]/");
   });
 
   /**

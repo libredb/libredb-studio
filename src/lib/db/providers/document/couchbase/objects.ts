@@ -107,7 +107,13 @@
  */
 
 import { QueryError } from "@/lib/db/errors";
-import { assertObjectPathShape, containerDepth, type ObjectPathShapeEngine } from "@/lib/db/object-kinds";
+import {
+  assertContainerPathShape,
+  assertObjectPathShape,
+  containerDepth,
+  type ContainerPathShapeEngine,
+  type ObjectPathShapeEngine,
+} from "@/lib/db/object-kinds";
 import { comparePaths } from "@/lib/db/object-path";
 import type {
   ColumnSchema,
@@ -122,6 +128,18 @@ import type {
 import { DOCUMENT_KEY_EXPRESSION, unquoteIndexKey } from "./introspect";
 import { COUCHBASE_DEFAULT_SCOPE } from "./keyspace";
 import type { CouchbaseRow, Keyspace } from "./transport";
+
+/**
+ * Couchbase's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()` (`./index.ts`), which the object routes read too (#1147).
+ */
+const COUCHBASE_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "couchbase",
+  label: "A Couchbase",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // The declaration
@@ -157,12 +175,12 @@ export const COUCHBASE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     // collection is an ordinary `UPSERT`. See `kindAcceptsRowWrites()` in object-kinds.ts.
     acceptsRowWrites: true,
     // The ONE kind here with columns, and it is the same fact `describeObject` gates on:
-    // it answers three empty arrays for anything whose role is not `relation`
-    // (couchbase/index.ts:803-804). A collection's columns are INFERRED from a document
-    // sample rather than read from a schema, so an empty collection (error 7014) and an
-    // INFER the caller has no SELECT grant for both answer no column and no error
-    // (couchbase/introspect.ts:200-215); the tree reports that open row as having none
-    // rather than treating it as a failure.
+    // `CouchbaseProvider.describeObject` (`couchbase/index.ts`) answers three empty arrays
+    // for anything whose role is not `relation`. A collection's columns are INFERRED from a
+    // document sample rather than read from a schema, so an empty collection (error 7014)
+    // and an INFER the caller has no SELECT grant for both answer no column and no error
+    // (`inferColumns` in `couchbase/introspect.ts`); the tree reports that open row as
+    // having none rather than treating it as a failure.
     hasColumns: true,
   },
   {
@@ -178,7 +196,7 @@ export const COUCHBASE_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     // statement this product composed from the keys. The index KEYS are in
     // `describeObject`, which is where a fact the catalog does publish belongs.
     hasSource: true,
-    // SQL++, and `sql` is the closest id the installed monaco-editor 0.56.0 registers.
+    // SQL++, and `sql` is the closest id the installed monaco-editor 0.57.0 registers.
     // There is no `n1ql` and no `sqlpp` in its 89 ids, and an unregistered id degrades to
     // plain text with no throw and nothing observable.
     sourceLanguage: "sql",
@@ -393,22 +411,16 @@ function requiredSegment(
   return segment;
 }
 
-/** Every prefix of the declared levels: a bucket alone, or a bucket and a scope. */
-function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  return names.map((_, index) => names.slice(0, index + 1));
-}
-
 /**
- * The shapes above, spelled for a message: `[bucket] or [bucket, scope]`.
+ * The catalog segment of a listing parent, read as a tree CURSOR and not as an address.
  *
- * A declaration carrying no container level has no shape at all, and the empty join would
- * print "a Couchbase container path is , received []", which reads as a formatting bug
- * rather than as the fact it is.
+ * `listContainers()` takes a parent to say where in the tree to list, and the route holds a
+ * parent to the depth ceiling alone. `containerPathShapes` governs the paths an object read
+ * ADDRESSES, so running `assertContainerPathShape` here would refuse a valid `[bucket]` the
+ * moment the declaration said `exact`, while the route had already accepted it.
  */
-function shapeList(shapes: readonly string[][]): string {
-  if (shapes.length === 0) return "nothing: this declaration carries no container level";
-  return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
+export function parentCatalog(capabilities: ProviderCapabilities, parent: readonly string[]): string {
+  return requiredSegment(containerSegments(capabilities, parent), "catalog");
 }
 
 /**
@@ -424,13 +436,7 @@ export interface ContainerRead {
 }
 
 export function containerRead(capabilities: ProviderCapabilities, container: readonly string[]): ContainerRead {
-  const shapes = containerShapes(capabilities);
-  if (!shapes.some((shape) => shape.length === container.length)) {
-    throw new QueryError(
-      `A Couchbase container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
-      "couchbase",
-    );
-  }
+  assertContainerPathShape(capabilities, container, COUCHBASE_CONTAINER_PATH_ENGINE);
   const segments = containerSegments(capabilities, container);
   return { bucket: requiredSegment(segments, "catalog"), scope: segments.schema };
 }

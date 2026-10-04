@@ -15,6 +15,14 @@ const DEFAULT_PORTS: Record<string, string> = {
   mongodb: "27017",
   redis: "6379",
   couchbase: "8091",
+  kafka: "9092",
+  mssql: "1433",
+  etcd: "2379",
+  milvus: "19530",
+  qdrant: "6333",
+  influxdb: "8086",
+  influxdb3: "8181",
+  oxia: "6648",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -36,6 +44,22 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   druid: ["host", "port", "user", "password"],
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],
+  // The mechanism is a field of its own and no database is taken: under the fallback below
+  // `buildConnection` would write a `database` and never a `saslMechanism`.
+  kafka: ["host", "port", "saslMechanism", "user", "password"],
+  // No database: one connection is one cluster (#1089 6.1).
+  etcd: ["host", "port", "user", "password"],
+  // The consent to a cleartext password is a field of Db2's own (#786).
+  db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  // No User and no Database: Qdrant has neither, and the key or JWT is the password (vector-family spec 6.2).
+  qdrant: ["host", "port", "password"],
+  // The consent to a cleartext password or token is both InfluxDB types' too; InfluxDB 3 takes no user name,
+  // its token being the password (InfluxDB spec A.3).
+  influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
+  // No User: Oxia has no user name; the token is the password, the namespace the database, and a cluster's data
+  // servers and the consent to a cleartext token are fields of Oxia's own (SB3-1.5).
+  oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -55,11 +79,14 @@ mock.module("@/lib/db-ui-config", () => ({
     connectionFields: mockFields(type),
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
+  // Mirrors the real table: `kafka` is the one entry that declares `showSshTunnel: false`.
+  offersSshTunnel: (type: string) => type !== "kafka",
 }));
 
-import { useConnectionForm } from "@/hooks/use-connection-form";
+import { CONNECTION_FORM_DEFAULTS, offersReadOnlyToggle, useConnectionForm } from "@/hooks/use-connection-form";
 import { resolveAgentRunConnectionId } from "@/hooks/use-connection-payload";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 
 // =============================================================================
 // useConnectionForm Tests
@@ -113,6 +140,67 @@ describe("useConnectionForm", () => {
     });
     expect(onConnect.mock.calls[1][0].queryTimeout).toBe(120000);
     expect(result.current.queryTimeout).toBe("");
+  });
+
+  const POSTGRES_CONN: DatabaseConnection = {
+    id: "conn-base",
+    name: "Base",
+    type: "postgres",
+    host: "db.internal",
+    port: 5432,
+    database: "app",
+    user: "app",
+    createdAt: new Date(),
+  };
+
+  test("Db2's consent to a cleartext password is written only while it is ticked with no TLS, and reopens (#786)", async () => {
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const editConnection: DatabaseConnection = {
+      id: "warehouse",
+      name: "Warehouse",
+      type: "db2",
+      host: "db2.internal",
+      port: 50000,
+      user: "db2inst1",
+      password: "secret",
+      database: "TESTDB",
+      createdAt: new Date(),
+      allowInsecureAuth: true,
+    };
+    const { result, rerender } = renderHook(
+      ({ connection }) =>
+        useConnectionForm({
+          ...defaultProps,
+          editConnection: connection,
+          onConnect,
+          onTestConnection: async () => ({ success: true }),
+        }),
+      { initialProps: { connection: editConnection } },
+    );
+    expect(result.current.allowInsecureAuth).toBe(true);
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[0][0].allowInsecureAuth).toBe(true);
+
+    // A TLS mode makes the consent moot, and it is not sent.
+    act(() => result.current.setSSLMode("verify-full"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[1][0]).not.toHaveProperty("allowInsecureAuth");
+
+    // Unticked, it is cleared, and a connection that never consented reopens unticked.
+    act(() => {
+      result.current.setSSLMode("disable");
+      result.current.setAllowInsecureAuth(false);
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect.mock.calls[2][0]).not.toHaveProperty("allowInsecureAuth");
+    rerender({ connection: { ...editConnection, allowInsecureAuth: undefined } });
+    expect(result.current.allowInsecureAuth).toBe(false);
   });
 
   test("reopens a saved timeout and clearing it restores the default", async () => {
@@ -293,6 +381,394 @@ describe("useConnectionForm", () => {
     expect(result.current.type).toBe("postgres");
     expect(result.current.host).toBe("localhost");
     expect(result.current.port).toBe("5432");
+  });
+
+  /**
+   * The TLS, SSH, environment and Advanced fields are connection-scoped like the
+   * credentials above (#1125): a leftover CA certificate or client key is sent with the
+   * next connection's test and saved onto it, and a leftover tunnel routes the next
+   * connection through the previous one's bastion.
+   */
+  test("closing a new connection resets its TLS, SSH, environment and Advanced fields", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setShowSSL(true);
+      result.current.setSSLMode("verify-full");
+      result.current.setCaCert("-----BEGIN CERTIFICATE-----ca");
+      result.current.setClientCert("-----BEGIN CERTIFICATE-----client");
+      // Opaque on purpose: a "BEGIN PRIVATE KEY" literal trips the Secret Scan.
+      result.current.setClientKey("client-key-pem");
+      result.current.setShowSSH(true);
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion.example.com");
+      result.current.setSSHPort("2222");
+      result.current.setSSHUsername("tunneluser");
+      result.current.setSSHAuthMethod("privateKey");
+      result.current.setSSHPassword("tunnel-secret");
+      result.current.setSSHPrivateKey("-----BEGIN OPENSSH PRIVATE KEY-----");
+      result.current.setSSHPassphrase("key-passphrase");
+      result.current.setEnvironment("production");
+      result.current.setShowAdvanced(true);
+      result.current.setServiceName("ORCLPDB1");
+      result.current.setInstanceName("SQLEXPRESS");
+    });
+
+    rerender({ ...defaultProps, isOpen: false });
+    rerender({ ...defaultProps, isOpen: true });
+
+    expect(result.current.showSSL).toBe(false);
+    expect(result.current.sslMode).toBe("disable");
+    expect(result.current.caCert).toBe("");
+    expect(result.current.clientCert).toBe("");
+    expect(result.current.clientKey).toBe("");
+    expect(result.current.showSSH).toBe(false);
+    expect(result.current.sshEnabled).toBe(false);
+    expect(result.current.sshHost).toBe("");
+    expect(result.current.sshPort).toBe("22");
+    expect(result.current.sshUsername).toBe("");
+    expect(result.current.sshAuthMethod).toBe("password");
+    expect(result.current.sshPassword).toBe("");
+    expect(result.current.sshPrivateKey).toBe("");
+    expect(result.current.sshPassphrase).toBe("");
+    expect(result.current.environment).toBe("local");
+    expect(result.current.showAdvanced).toBe(false);
+    expect(result.current.serviceName).toBe("");
+    expect(result.current.instanceName).toBe("");
+  });
+
+  test("the next test-connection request after a closed TLS and SSH connection carries neither", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setSSLMode("verify-full");
+      result.current.setCaCert("-----BEGIN CERTIFICATE-----ca");
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion.example.com");
+      result.current.setSSHUsername("tunneluser");
+      result.current.setSSHPassword("tunnel-secret");
+    });
+
+    rerender({ ...defaultProps, isOpen: false });
+    rerender({ ...defaultProps, isOpen: true });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect("ssl" in body).toBe(false);
+    expect("sshTunnel" in body).toBe(false);
+  });
+
+  /**
+   * Every field in the defaults object is reset, not only the ones named above: the
+   * object is what the reset iterates, so a field added to it is covered here without
+   * another assertion.
+   */
+  test("closing a new connection puts every field of CONNECTION_FORM_DEFAULTS back to its default", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+    const setterFor = (key: string) =>
+      Object.entries(result.current).find(([name]) => name.toLowerCase() === `set${key}`.toLowerCase())?.[1] as
+        | ((value: unknown) => void)
+        | undefined;
+
+    const changed: Record<string, unknown> = {
+      type: "mysql",
+      port: "3306",
+      host: "db.example.com",
+      mongoConnectionMode: "connectionString",
+      sslMode: "require",
+      sshAuthMethod: "privateKey",
+      sshPort: "2222",
+      environment: "staging",
+      saslMechanism: "PLAIN",
+    };
+    act(() => {
+      for (const [key, fallback] of Object.entries(CONNECTION_FORM_DEFAULTS)) {
+        const setter = setterFor(key);
+        expect(setter).toBeDefined();
+        const value = key in changed ? changed[key] : typeof fallback === "boolean" ? !fallback : `${key}-leftover`;
+        setter?.(value);
+      }
+    });
+    for (const key of Object.keys(CONNECTION_FORM_DEFAULTS)) {
+      expect(result.current[key as keyof typeof result.current]).not.toEqual(
+        CONNECTION_FORM_DEFAULTS[key as keyof typeof CONNECTION_FORM_DEFAULTS],
+      );
+    }
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    for (const [key, value] of Object.entries(CONNECTION_FORM_DEFAULTS)) {
+      expect({ key, value: result.current[key as keyof typeof result.current] }).toEqual({ key, value });
+    }
+  });
+
+  describe("an edit target replaced by another without passing through null (#1156)", () => {
+    const securedOracle: DatabaseConnection = {
+      id: "ora-x",
+      name: "Oracle X",
+      type: "oracle",
+      host: "ora.x",
+      port: 1521,
+      serviceName: "XPDB",
+      createdAt: new Date(),
+      ssl: {
+        mode: "verify-full",
+        caCert: "-----BEGIN CERTIFICATE-----ca",
+        clientCert: "-----BEGIN CERTIFICATE-----client",
+        clientKey: "client-key-pem",
+      },
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.x",
+        port: 2222,
+        username: "tunneluser",
+        authMethod: "privateKey",
+        privateKey: "-----BEGIN OPENSSH PRIVATE KEY-----",
+        passphrase: "key-passphrase",
+      },
+    };
+    const plainPostgres: DatabaseConnection = {
+      id: "pg-y",
+      name: "Postgres Y",
+      type: "postgres",
+      host: "pg.y",
+      port: 5432,
+      createdAt: new Date(),
+    };
+
+    const expectPlainTarget = async (
+      result: { current: ReturnType<typeof useConnectionForm> },
+      onConnect: ReturnType<typeof mock>,
+    ) => {
+      expect(result.current.name).toBe("Postgres Y");
+      for (const key of [
+        "showSSL",
+        "sslMode",
+        "caCert",
+        "clientCert",
+        "clientKey",
+        "showSSH",
+        "sshEnabled",
+        "sshHost",
+        "sshPort",
+        "sshUsername",
+        "sshAuthMethod",
+        "sshPassword",
+        "sshPrivateKey",
+        "sshPassphrase",
+        "showAdvanced",
+        "serviceName",
+        "instanceName",
+        "mongoConnectionMode",
+      ] as const) {
+        expect({ key, value: result.current[key] }).toEqual({ key, value: CONNECTION_FORM_DEFAULTS[key] });
+      }
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      const saved = onConnect.mock.calls[0][0] as DatabaseConnection;
+      expect(saved.ssl).toBeUndefined();
+      expect(saved.sshTunnel).toBeUndefined();
+      expect(saved.serviceName).toBeUndefined();
+    };
+
+    test("kept across the close", async () => {
+      const onConnect = mock((_connection: DatabaseConnection) => {});
+      const props = { ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) };
+      const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+        initialProps: { ...props, isOpen: true, editConnection: securedOracle },
+      });
+      expect(result.current.sshEnabled).toBe(true);
+      rerender({ ...props, isOpen: false, editConnection: securedOracle });
+      rerender({ ...props, isOpen: true, editConnection: plainPostgres });
+
+      await expectPlainTarget(result, onConnect);
+    });
+
+    test("swapped while open", async () => {
+      const onConnect = mock((_connection: DatabaseConnection) => {});
+      const props = { ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) };
+      const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+        initialProps: { ...props, isOpen: true, editConnection: securedOracle },
+      });
+      expect(result.current.sshEnabled).toBe(true);
+      rerender({ ...props, isOpen: true, editConnection: plainPostgres });
+
+      await expectPlainTarget(result, onConnect);
+    });
+  });
+
+  /**
+   * The save path needs a reset of its own (#1155). A host that keeps the dialog open
+   * after a save never runs the close path, so the save itself has to leave the form
+   * the way a close does: every connection-scoped field from
+   * `CONNECTION_FORM_DEFAULTS`, through the same walk. The hand-kept list this
+   * replaced cleared only the credentials, so the host, TLS, SSH tunnel and
+   * environment of the connection just saved stayed in the dialog and reached the
+   * next one's test and save.
+   */
+  test("saving a new connection with the dialog left open resets the form for the next one", async () => {
+    mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    // Connection A carries the fields the old reset missed: a host, a verifying TLS
+    // mode with a CA, a tunnel with a password, and an environment.
+    act(() => {
+      result.current.setName("A");
+      result.current.setHost("db-a");
+      result.current.setSSLMode("verify-full");
+      result.current.setCaCert("-----BEGIN CERTIFICATE-----ca-a");
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion-a");
+      result.current.setSSHPassword("tunnel-secret");
+      result.current.setEnvironment("production");
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    // Not vacuous: A really was saved with all of it, so the reset below has
+    // something to clear.
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    const first = onConnect.mock.calls[0][0];
+    expect(first.name).toBe("A");
+    expect(first.ssl?.mode).toBe("verify-full");
+    expect(first.sshTunnel?.host).toBe("bastion-a");
+    expect(first.environment).toBe("production");
+
+    // The dialog stays open: `isOpen` belongs to the host, and a save is not a close.
+    // Every connection-scoped field must be back at its default, as after a close.
+    for (const [key, value] of Object.entries(CONNECTION_FORM_DEFAULTS)) {
+      expect({ key, value: result.current[key as keyof typeof result.current] }).toEqual({ key, value });
+    }
+
+    // Connection B, typed into the same still-open dialog, must not reach the host
+    // with A's certificates, tunnel or environment.
+    act(() => {
+      result.current.setName("B");
+      result.current.setHost("db-b");
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(2);
+    const second = onConnect.mock.calls[1][0];
+    expect(second.name).toBe("B");
+    expect(second.host).toBe("db-b");
+    expect(second.ssl).toBeUndefined();
+    expect(second.sshTunnel).toBeUndefined();
+    expect(second.environment).toBe("local");
+  });
+
+  /**
+   * Edit mode keeps the target's fields (#1155). The dialog is still bound to the
+   * connection just saved, so a save must not clear them: a half-cleared form would
+   * save a credential-less connection on the next click. The close path leaves an edit
+   * target's state alone for the same reason.
+   */
+  test("saving an edit with the dialog left open keeps that connection's fields", async () => {
+    const editConn: DatabaseConnection = {
+      id: "edit-kept",
+      name: "Kept",
+      type: "postgres",
+      host: "kept.example.com",
+      port: 5432,
+      user: "pgadmin",
+      password: "pgpass",
+      database: "keptdb",
+      createdAt: new Date(),
+      ssl: { mode: "verify-full", caCert: "-----BEGIN CERTIFICATE-----ca" },
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.kept",
+        port: 22,
+        username: "tunnel",
+        authMethod: "password",
+        password: "tunnel-secret",
+      },
+    };
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: editConn,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(result.current.name).toBe("Kept");
+    expect(result.current.host).toBe("kept.example.com");
+    expect(result.current.user).toBe("pgadmin");
+    expect(result.current.sslMode).toBe("verify-full");
+    expect(result.current.caCert).toContain("CERTIFICATE");
+    expect(result.current.sshEnabled).toBe(true);
+    expect(result.current.sshHost).toBe("bastion.kept");
+    expect(result.current.sshPassword).toBe("tunnel-secret");
+  });
+
+  /**
+   * The degraded-save acknowledgement belongs to the connection that was warned, not
+   * to the dialog. A host that keeps the dialog open after A's save must warn about B
+   * on its first click, the way closing the dialog does (#1155).
+   */
+  test("a new connection saved through the degraded offer does not carry the acknowledgement to the next one", async () => {
+    mockGlobalFetch({
+      "/api/db/test-connection": {
+        ok: true,
+        json: {
+          success: true,
+          degraded: true,
+          message: "Connected, but this server answered no health data: Keyspace system_views does not exist",
+        },
+      },
+    });
+    const onConnect = mock((_connection: DatabaseConnection) => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+
+    act(() => result.current.setName("A"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+
+    act(() => result.current.setName("B"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(result.current.testResult?.tone).toBe("warning");
+    expect(result.current.testResult?.message).toContain("again");
   });
 
   /**
@@ -874,6 +1350,84 @@ describe("useConnectionForm", () => {
     expect(onConnect).not.toHaveBeenCalled();
   });
 
+  test("applying a new edit target while the dialog is open withdraws the acknowledgement", async () => {
+    // #1180. A host of the published modal can swap `editConnection` without closing,
+    // because the close path is the only thing that used to withdraw the acknowledgement.
+    // The next target then inherits the previous one's warning, is saved on its FIRST
+    // click having reported nothing, and shows a banner about a connection that is no
+    // longer on screen.
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const x: DatabaseConnection = { ...POSTGRES_CONN, id: "conn-x", name: "X" };
+    const y: DatabaseConnection = { ...POSTGRES_CONN, id: "conn-y", name: "Y" };
+    const onConnect = mock(() => {});
+    const { result, rerender } = renderHook(
+      (props: { isOpen: boolean; editConnection: DatabaseConnection }) =>
+        useConnectionForm({ ...defaultProps, onConnect, isOpen: props.isOpen, editConnection: props.editConnection }),
+      { initialProps: { isOpen: true, editConnection: x } },
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.tone).toBe("warning");
+
+    // The dialog never closes, so nothing has withdrawn the acknowledgement but the
+    // target change itself.
+    act(() => {
+      rerender({ isOpen: true, editConnection: y });
+    });
+    expect(result.current.testResult).toBeNull();
+    expect(result.current.name).toBe("Y");
+
+    // Y is now warned about on its own first click, and only saves on the second.
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+    expect(result.current.testResult!.tone).toBe("warning");
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect((onConnect.mock.calls[0] as unknown as [DatabaseConnection])[0].id).toBe("conn-y");
+  });
+
+  test("a rerender that does not change the edit target does not withdraw the acknowledgement", async () => {
+    // The other side of #1180, and the reason the fix keeps the block's existing trigger
+    // rather than adding an id comparison: a rerender carrying the SAME target is not a
+    // new connection, so asking again would make the second click unreachable for every
+    // host that re-renders while the dialog is open.
+    mockGlobalFetch({ "/api/db/test-connection": { ok: true, json: DEGRADED_BODY } });
+
+    const x: DatabaseConnection = { ...POSTGRES_CONN, id: "conn-x", name: "X" };
+    const onConnect = mock(() => {});
+    const { result, rerender } = renderHook(
+      (props: { isOpen: boolean; editConnection: DatabaseConnection }) =>
+        useConnectionForm({ ...defaultProps, onConnect, isOpen: props.isOpen, editConnection: props.editConnection }),
+      { initialProps: { isOpen: true, editConnection: x } },
+    );
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).not.toHaveBeenCalled();
+
+    act(() => {
+      rerender({ isOpen: true, editConnection: x });
+    });
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    // Saved on this click, with no second warning: the acknowledgement survived.
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect((onConnect.mock.calls[0] as unknown as [DatabaseConnection])[0].id).toBe("conn-x");
+  });
+
   test("the platform adapter carries the same two facts", async () => {
     // The embedded surface passes `onTestConnection` instead of reaching the route, and
     // a fix that only reached the fetch path would leave the platform dialog refusing.
@@ -919,6 +1473,26 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult).not.toBeNull();
     expect(result.current.testResult!.tone).toBe("success");
     expect(result.current.testResult!.message).toContain("parsed successfully");
+  });
+
+  test("handlePasteConnectionString fills the Db2 fields from a db2:// URL, with ?security=SSL as verified TLS (#786)", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("db2://db2inst1:secret@db2.example.com:50001/TESTDB?security=SSL");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe("db2");
+    expect(result.current.host).toBe("db2.example.com");
+    expect(result.current.port).toBe("50001");
+    expect(result.current.user).toBe("db2inst1");
+    expect(result.current.password).toBe("secret");
+    expect(result.current.database).toBe("TESTDB");
+    expect(result.current.sslMode).toBe("verify-system");
+    expect(result.current.testResult!.tone).toBe("success");
   });
 
   test("handlePasteConnectionString keeps the TLS intent of a pasted https ClickHouse URL", () => {
@@ -1142,6 +1716,8 @@ describe("useConnectionForm", () => {
     expect(result.current.testResult).not.toBeNull();
     expect(result.current.testResult!.tone).toBe("error");
     expect(result.current.testResult!.message).toContain("Could not parse");
+    // The list of formats it names includes every scheme the parser reads, `db2://` among them (#786).
+    expect(result.current.testResult!.message).toContain("db2://");
   });
 
   // ── environment defaults to 'local' ────────────────────────────────────────
@@ -1209,6 +1785,7 @@ describe("useConnectionForm", () => {
     mysql: true,
     sqlite: true,
     oracle: true,
+    db2: true,
     mssql: true,
     mongodb: true,
     redis: true,
@@ -1226,6 +1803,14 @@ describe("useConnectionForm", () => {
     libsql: true,
     duckdb: true,
     prometheus: true,
+    kafka: true,
+    etcd: true,
+    neo4j: true,
+    milvus: true,
+    qdrant: true,
+    influxdb: true,
+    influxdb3: true,
+    oxia: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -1731,6 +2316,138 @@ describe("useConnectionForm", () => {
     expect(result.current.skipObjectScan).toBe(false);
   });
 
+  // ── The read-only mode (#1089) ─────────────────────────────────────────
+  //
+  // The reset to `CONNECTION_FORM_DEFAULTS` on close is held for this field too by the test above that
+  // walks every default: it finds `setReadOnly` by name.
+
+  test("the read-only mode starts off and is never written for an engine that does not enforce it", async () => {
+    // The factory refuses `readOnly: true` on such an engine, so a tick carried over from an engine that
+    // does enforce it would save a connection nothing can open, while its box is hidden.
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+
+    expect(result.current.readOnly).toBe(false);
+    act(() => result.current.setReadOnly(true));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("readOnly" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("editing a connection shows its saved mode, and saving it on an engine that ignores the mode writes none", async () => {
+    // Loaded as it was saved, so the box says what the record says; written only where the engine
+    // enforces it, so a stale field is cleared on save rather than refused at every open.
+    const conn: DatabaseConnection = {
+      id: "c1",
+      name: "Carried",
+      type: "postgres",
+      host: "db.internal",
+      port: 5432,
+      readOnly: true,
+      createdAt: new Date(),
+    };
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: conn,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    expect(result.current.readOnly).toBe(true);
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("readOnly" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("editing a connection that is not read-only does not inherit the last one's mode", () => {
+    // The edit block OVERWRITES, like the no-scan choice: otherwise the previously edited connection's
+    // mode is saved onto this one.
+    const guarded: DatabaseConnection = {
+      id: "c1",
+      name: "Guarded",
+      type: "postgres",
+      readOnly: true,
+      createdAt: new Date(),
+    };
+    const plain: DatabaseConnection = { id: "c2", name: "Plain", type: "postgres", createdAt: new Date() };
+
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: guarded },
+    });
+    expect(result.current.readOnly).toBe(true);
+
+    rerender({ ...defaultProps, editConnection: plain });
+    expect(result.current.readOnly).toBe(false);
+  });
+
+  test("offers no Read-only toggle on an engine whose provider does not enforce the mode", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => !READ_ONLY_ENFORCED[type]);
+    // Vacuity, by name: an empty population would offer nothing and pass.
+    expect(refusing).toContain("postgres");
+    for (const type of refusing) {
+      act(() => result.current.setType(type));
+      expect({ type, offered: result.current.readOnlyOffered }).toEqual({ type, offered: false });
+    }
+  });
+
+  test("offers the Read-only toggle on etcd, whose provider enforces the mode, and writes a tick as readOnly: true (#1089)", async () => {
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+    act(() => result.current.setType("etcd"));
+    expect(result.current.readOnlyOffered).toBe(true);
+    act(() => result.current.setReadOnly(true));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0]).toMatchObject({ type: "etcd", readOnly: true });
+  });
+
+  test("a tick left on etcd is not written after a switch to an engine that ignores the mode (#1089)", async () => {
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({ ...defaultProps, onConnect, onTestConnection: async () => ({ success: true }) }),
+    );
+    act(() => result.current.setType("etcd"));
+    act(() => result.current.setReadOnly(true));
+    act(() => result.current.setType("postgres"));
+    expect(result.current.readOnlyOffered).toBe(false);
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("readOnly" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("a copy of an etcd seed offers no Read-only toggle, since the server re-resolves the seed (#1089)", () => {
+    const seedCopy: DatabaseConnection = {
+      id: "seed:prod-etcd",
+      seedId: "prod-etcd",
+      name: "Prod etcd",
+      type: "etcd",
+      host: "etcd.internal",
+      port: 2379,
+      createdAt: new Date(0),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, editConnection: seedCopy }));
+    expect(result.current.type).toBe("etcd");
+    expect(result.current.readOnlyOffered).toBe(false);
+  });
+
   test("populates the Cassandra localDataCenter in edit mode", () => {
     const conn: DatabaseConnection = {
       id: "c1",
@@ -1904,6 +2621,287 @@ describe("useConnectionForm", () => {
     rerender({ ...defaultProps, isOpen: false });
 
     expect(result.current.authSource).toBe("");
+  });
+
+  // ── Kafka's SASL mechanism (#1088 6.1) ─────────────────────────────────
+
+  /** The JSON body of every POST the hook sent to the test-connection route, in order. */
+  const testConnectionBodies = (fetchMock: ReturnType<typeof mockGlobalFetch>): Record<string, unknown>[] =>
+    fetchMock.mock.calls
+      .filter((call) => typeof call[0] === "string" && call[0].includes("/api/db/test-connection"))
+      .map((call) => JSON.parse(call[1]!.body as string) as Record<string, unknown>);
+
+  const KAFKA_WITH_MECHANISM: DatabaseConnection = {
+    id: "k1",
+    name: "Events",
+    type: "kafka",
+    host: "broker.internal",
+    port: 9092,
+    user: "reader",
+    password: "reader-password",
+    saslMechanism: "SCRAM-SHA-512",
+    ssl: { mode: "verify-full" },
+    createdAt: new Date(),
+  };
+
+  test("a chosen SASL mechanism reaches both the tested and the saved Kafka connection", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setHost("broker.internal");
+      result.current.setPort("9092");
+      result.current.setSaslMechanism("SCRAM-SHA-512");
+      result.current.setUser("reader");
+      result.current.setPassword("reader-password");
+    });
+    expect(result.current.saslMechanism).toBe("SCRAM-SHA-512");
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const bodies = testConnectionBodies(fetchMock);
+    expect(bodies).toHaveLength(2);
+    for (const body of bodies) {
+      expect(body.type).toBe("kafka");
+      expect(body.saslMechanism).toBe("SCRAM-SHA-512");
+      // No database box: one connection is one cluster.
+      expect("database" in body).toBe(false);
+    }
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0].saslMechanism).toBe("SCRAM-SHA-512");
+  });
+
+  test("choosing None sends no mechanism at all, rather than an empty one", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setSaslMechanism("SCRAM-SHA-256");
+    });
+    act(() => {
+      result.current.setSaslMechanism("");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect(body.type).toBe("kafka");
+    expect("saslMechanism" in body).toBe(false);
+  });
+
+  test("a mechanism chosen and then left behind by a switch to another engine is not sent", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setSaslMechanism("PLAIN");
+    });
+    act(() => {
+      result.current.setType("postgres");
+    });
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect(body.type).toBe("postgres");
+    expect("saslMechanism" in body).toBe(false);
+  });
+
+  test("editing a saved SCRAM-SHA-512 connection shows and keeps its mechanism", async () => {
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: KAFKA_WITH_MECHANISM,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    expect(result.current.saslMechanism).toBe("SCRAM-SHA-512");
+
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect(onConnect.mock.calls[0][0].saslMechanism).toBe("SCRAM-SHA-512");
+  });
+
+  test("choosing None while editing clears the stored mechanism rather than preserving it", async () => {
+    // The select owns the field (`FIELD_OWNERSHIP.saslMechanism` is "edited"), so a cleared
+    // choice is saved as absent. Preserving it would keep a mechanism the user took away.
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() =>
+      useConnectionForm({
+        ...defaultProps,
+        editConnection: KAFKA_WITH_MECHANISM,
+        onConnect,
+        onTestConnection: async () => ({ success: true }),
+      }),
+    );
+
+    act(() => {
+      result.current.setSaslMechanism("");
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("saslMechanism" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("editing a Kafka connection without a mechanism does not inherit the last one", () => {
+    // The edit load OVERWRITES: a connection with no mechanism must show None, or the previously
+    // edited connection's mechanism is saved onto it.
+    const withoutMechanism: DatabaseConnection = {
+      id: "k2",
+      name: "Plaintext",
+      type: "kafka",
+      host: "broker-2.internal",
+      port: 9092,
+      createdAt: new Date(),
+    };
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, editConnection: KAFKA_WITH_MECHANISM },
+    });
+
+    expect(result.current.saslMechanism).toBe("SCRAM-SHA-512");
+
+    rerender({ ...defaultProps, editConnection: withoutMechanism });
+
+    expect(result.current.saslMechanism).toBe("");
+  });
+
+  test("closing the dialog clears the mechanism before the next new connection", () => {
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true },
+    });
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setSaslMechanism("PLAIN");
+    });
+
+    expect(result.current.saslMechanism).toBe("PLAIN");
+
+    rerender({ ...defaultProps, isOpen: false });
+
+    expect(result.current.saslMechanism).toBe("");
+  });
+
+  // ── The SSH tunnel is written only for an engine that offers one (#1088 6.1) ──
+
+  test("a tunnel switched on under PostgreSQL is not sent once the dialog is switched to Kafka", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const onConnect = mock<(connection: DatabaseConnection) => void>(() => {});
+    const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect }));
+
+    act(() => {
+      result.current.setSSHEnabled(true);
+      result.current.setSSHHost("bastion.test.com");
+      result.current.setSSHUsername("tunnel");
+      result.current.setSSHAuthMethod("password");
+      result.current.setSSHPassword("tunnelpass");
+    });
+    // The control: under PostgreSQL the same state sends its tunnel.
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    act(() => {
+      result.current.setType("kafka");
+      result.current.setHost("broker.internal");
+      result.current.setPort("9092");
+    });
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+
+    const [underPostgres, underKafka, savedUnderKafka] = testConnectionBodies(fetchMock);
+    expect(underPostgres.type).toBe("postgres");
+    expect((underPostgres.sshTunnel as { host?: string } | undefined)?.host).toBe("bastion.test.com");
+    for (const body of [underKafka, savedUnderKafka]) {
+      expect(body.type).toBe("kafka");
+      expect("sshTunnel" in body).toBe(false);
+    }
+    // The save reset (#1155) has cleared the tunnel from the dialog's state as well.
+    // The bodies above were built while it was still switched on: the write gate, not
+    // the reset, is what kept it off them.
+    expect(result.current.sshEnabled).toBe(false);
+    expect(onConnect).toHaveBeenCalledTimes(1);
+    expect("sshTunnel" in onConnect.mock.calls[0][0]).toBe(false);
+  });
+
+  test("a Kafka edit after a tunnelled one opens with the tunnel off", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/test-connection": { ok: true, json: { success: true, latency: 5 } },
+    });
+    const tunnelledPostgres: DatabaseConnection = {
+      id: "pg-ssh",
+      name: "Tunnelled PG",
+      type: "postgres",
+      host: "internal.example.com",
+      port: 5432,
+      createdAt: new Date(),
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "tunneluser",
+        authMethod: "password",
+        password: "tunnel-secret",
+      },
+    };
+    const kafkaWithoutTunnel: DatabaseConnection = {
+      id: "k3",
+      name: "Events",
+      type: "kafka",
+      host: "broker.internal",
+      port: 9092,
+      createdAt: new Date(),
+    };
+    const { result, rerender } = renderHook((props) => useConnectionForm(props), {
+      initialProps: { ...defaultProps, isOpen: true, editConnection: tunnelledPostgres },
+    });
+    rerender({ ...defaultProps, isOpen: false, editConnection: tunnelledPostgres });
+    rerender({ ...defaultProps, isOpen: true, editConnection: kafkaWithoutTunnel });
+
+    expect(result.current.type).toBe("kafka");
+    expect(result.current.sshEnabled).toBe(false);
+
+    await act(async () => {
+      await result.current.handleTestConnection();
+    });
+
+    const [body] = testConnectionBodies(fetchMock);
+    expect(body.type).toBe("kafka");
+    expect("sshTunnel" in body).toBe(false);
   });
 
   // ── buildConnection with the Elasticsearch API key pair ─────────────────
@@ -2141,6 +3139,66 @@ describe("useConnectionForm", () => {
     expect(result.current.mongoConnectionMode).toBe("connectionString");
   });
 
+  // #842: an unescaped "@" in the credentials makes the auth/host split ambiguous.
+  test("handlePasteConnectionString warns instead of guessing at ambiguous MongoDB credentials", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("mongodb://user:p@ss:w#rd@realhost/db");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.testResult!.tone).toBe("warning");
+    expect(result.current.testResult!.message).toContain("more than one unescaped");
+    // the guess is not written into the fields - they stay at the form's own defaults
+    expect(result.current.host).toBe("localhost");
+    expect(result.current.user).toBe("");
+    expect(result.current.password).toBe("");
+  });
+
+  // #1211: tedious reaches SQL Server over TCP only, so an np:/lpc: server cannot be honoured.
+  test("handlePasteConnectionString warns instead of filling host from a named-pipes server", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("Server=np:myserver;Database=mydb;");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.type).toBe("mssql");
+    expect(result.current.testResult!.tone).toBe("warning");
+    expect(result.current.testResult!.message).toContain('"np:"');
+    expect(result.current.host).toBe("localhost");
+    // The form opened on PostgreSQL; its 5432 must not survive the switch to SQL Server.
+    expect(result.current.port).toBe("1433");
+    expect(result.current.database).toBe("mydb");
+  });
+
+  // #842: AWS DocumentDB's own console gives out `tlsCAFile=global-bundle.pem`, a path on
+  // the machine that pasted it, not the one running the server process.
+  test("handlePasteConnectionString warns when a MongoDB URI carries a file-path TLS parameter", () => {
+    const { result } = renderHook(() => useConnectionForm(defaultProps));
+
+    act(() => {
+      result.current.setPasteInput("mongodb://user:pass@host:27017/db?tls=true&tlsCAFile=global-bundle.pem");
+    });
+    act(() => {
+      result.current.handlePasteConnectionString();
+    });
+
+    expect(result.current.testResult!.tone).toBe("warning");
+    expect(result.current.testResult!.message).toContain("tlsCAFile=global-bundle.pem");
+    expect(result.current.testResult!.message).toContain("CA field");
+    // the mode that shows the CA box and says to paste into it
+    expect(result.current.sslMode).toBe("verify-ca");
+    // the fields that could be read were still filled in
+    expect(result.current.host).toBe("host");
+  });
+
   // ── handlePasteConnectionString for Couchbase ──────────────────────────
 
   test("handlePasteConnectionString sets Couchbase bucket and connectionString mode", () => {
@@ -2300,5 +3358,143 @@ describe("useConnectionForm", () => {
     // Non-vacuous: the connection WAS built, and the fields libSQL does take survived.
     expect(saved.host).toBe("db.turso.io");
     expect(saved.type).toBe("libsql");
+  });
+});
+
+describe("offersReadOnlyToggle (#1089)", () => {
+  const own: DatabaseConnection = { id: "own", name: "Own", type: "postgres", createdAt: new Date(0) };
+  const seedCopy: DatabaseConnection = {
+    id: "seed:prod",
+    seedId: "prod",
+    name: "Prod",
+    type: "postgres",
+    createdAt: new Date(0),
+  };
+
+  test("offers the toggle on a new connection and on one of the user's own, where the engine enforces the mode", () => {
+    expect(offersReadOnlyToggle(true, null)).toBe(true);
+    expect(offersReadOnlyToggle(true, undefined)).toBe(true);
+    expect(offersReadOnlyToggle(true, own)).toBe(true);
+  });
+
+  test("never on a copy of a seed, whose id the server re-resolves from the operator's file", () => {
+    // The server discards the copy's fields, so a toggle there would change nothing it claims to.
+    expect(offersReadOnlyToggle(true, seedCopy)).toBe(false);
+  });
+
+  test("never where the engine does not enforce the mode", () => {
+    expect(offersReadOnlyToggle(false, null)).toBe(false);
+    expect(offersReadOnlyToggle(false, own)).toBe(false);
+  });
+});
+
+describe("the dataServers field", () => {
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    onTestConnection: async () => ({ success: true }),
+    editConnection: null as DatabaseConnection | null,
+  };
+  beforeEach(() => {
+    props.onConnect.mockClear();
+  });
+
+  test("typed text is saved as typed for a type that takes the field", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("  a.internal:6648, b.internal:6648 "));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0].dataServers).toBe("  a.internal:6648, b.internal:6648 ");
+  });
+
+  test.each(["", "   "])("an empty or blank box writes no key (%p)", async (typed) => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers(typed));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("a type that does not take the field drops it", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("a.internal:6648"));
+    act(() => result.current.setType("postgres"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("editing a connection without one shows an empty box", () => {
+    const listed: DatabaseConnection = {
+      id: "c1",
+      name: "Cluster",
+      type: "oxia",
+      host: "a.internal",
+      port: 6648,
+      dataServers: "a.internal:6648",
+      createdAt: new Date(),
+    };
+    const unlisted: DatabaseConnection = {
+      id: "c2",
+      name: "Other cluster",
+      type: "oxia",
+      host: "b.internal",
+      port: 6648,
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, editConnection: listed },
+    });
+    expect(result.current.dataServers).toBe("a.internal:6648");
+
+    rerender({ ...props, editConnection: unlisted });
+    expect(result.current.dataServers).toBe("");
+  });
+
+  test("emptying the box of an edited connection clears the list it had", async () => {
+    // The text box owns the field: a list kept from the stored connection would keep sending the
+    // token to servers the user took off it.
+    const listed: DatabaseConnection = {
+      id: "c1",
+      name: "Cluster",
+      type: "oxia",
+      host: "a.internal",
+      port: 6648,
+      dataServers: "a.internal:6648,b.internal:6648",
+      createdAt: new Date(),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...props, editConnection: listed }));
+    expect(result.current.dataServers).toBe("a.internal:6648,b.internal:6648");
+    act(() => result.current.setDataServers(""));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("closing the dialog resets it", () => {
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, isOpen: true },
+    });
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("a.internal:6648"));
+    expect(result.current.dataServers).toBe("a.internal:6648");
+
+    rerender({ ...props, isOpen: false });
+    rerender({ ...props, isOpen: true, editConnection: null });
+    expect(result.current.dataServers).toBe("");
+    expect(CONNECTION_FORM_DEFAULTS.dataServers).toBe("");
   });
 });

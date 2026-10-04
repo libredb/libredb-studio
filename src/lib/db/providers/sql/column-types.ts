@@ -458,9 +458,14 @@ export function oracleColumnTypes(
  *
  * `type` is a factory FUNCTION for some types and an object for others, and both carry
  * `declaration`, so this reads the property off either without caring which.
+ *
+ * `scale` is the fraction digit count the value's text carries. It is on `time`,
+ * `datetime2` and `datetimeoffset` and absent for `date`, and the zoneless conversion in
+ * `mssql.ts` (#1132) formats the fraction by it.
  */
 export interface MssqlColumnMetadata {
   type?: { declaration?: unknown } | (() => unknown);
+  scale?: number;
 }
 
 export function mssqlColumnTypes(

@@ -7,6 +7,7 @@ import { logger } from "@/lib/logger";
 import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import { AuthConfigError } from "@/lib/auth-errors";
+import { RETURN_PATH_PARAM, safeReturnPath } from "@/lib/api/session-ended";
 
 const ROUTE = "GET /api/auth/oidc/login";
 
@@ -46,8 +47,10 @@ export async function GET(request: Request) {
 
     // Store PKCE state in signed cookie. The Secure flag follows the same rule
     // as the session cookie: a state cookie the browser drops takes the PKCE
-    // verifier with it, and the callback fails on a missing state.
-    const stateCookie = await encryptState(state);
+    // verifier with it, and the callback fails on a missing state. The return path (#1420) rides
+    // in the same signed cookie, so the provider round trip cannot alter it.
+    const returnTo = safeReturnPath(new URL(request.url).searchParams.get(RETURN_PATH_PARAM));
+    const stateCookie = await encryptState(returnTo === null ? state : { ...state, return_to: returnTo });
     const cookieStore = await cookies();
     cookieStore.set("oidc-state", stateCookie, {
       httpOnly: true,

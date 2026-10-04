@@ -148,6 +148,75 @@ describe("parseConnectionString", () => {
     test("plain mongodb:// with no TLS parameter says nothing about TLS", () => {
       expect(parseConnectionString("mongodb://user:pass@host:27017/appdb")!.sslMode).toBeUndefined();
     });
+
+    // #842: an unescaped "@" in the password makes the auth/host split ambiguous instead
+    // of refusing - `p@ss:w#rd` read as password "p", host "ss".
+    describe("ambiguous credentials (#842)", () => {
+      test("more than one literal @ before the host is refused, not guessed at", () => {
+        const result = parseConnectionString("mongodb://user:p@ss:w#rd@realhost/db");
+        expect(result!.credentialsAmbiguous).toBe(true);
+        expect(result!.user).toBeUndefined();
+        expect(result!.password).toBeUndefined();
+        expect(result!.host).toBeUndefined();
+        // the original paste is still there for the connection-string mode to use
+        expect(result!.connectionString).toBe("mongodb://user:p@ss:w#rd@realhost/db");
+      });
+
+      test("a properly percent-encoded password never triggers it", () => {
+        const result = parseConnectionString("mongodb://user:p%40ss@host/db");
+        expect(result!.credentialsAmbiguous).toBeUndefined();
+        expect(result!.password).toBe("p@ss");
+      });
+
+      test("a normal multi-host replica set string never triggers it", () => {
+        const result = parseConnectionString("mongodb://user:pass@host1:27017,host2:27018/mydb?replicaSet=rs0");
+        expect(result!.credentialsAmbiguous).toBeUndefined();
+        expect(result!.host).toBe("host1");
+      });
+
+      test("a string with no credentials never triggers it", () => {
+        expect(parseConnectionString("mongodb://host:27017/db")!.credentialsAmbiguous).toBeUndefined();
+      });
+
+      // The driver accepts this string: its authority ends at the first "/" or "?".
+      test("an @ in an option value after a bare ? never triggers it", () => {
+        const result = parseConnectionString("mongodb://user:pass@host:27017?appName=me@laptop");
+        expect(result!.credentialsAmbiguous).toBeUndefined();
+        expect(result!.user).toBe("user");
+        expect(result!.password).toBe("pass");
+      });
+    });
+
+    // #842: AWS DocumentDB's own console gives out `tlsCAFile=global-bundle.pem`, which the
+    // driver reads as a path on the server process rather than the machine that pasted it.
+    describe("tlsCAFile (#842)", () => {
+      test("is reported rather than passed through silently", () => {
+        const result = parseConnectionString("mongodb://user:pass@host:27017/db?tls=true&tlsCAFile=global-bundle.pem");
+        expect(result!.tlsFileParam).toBe("tlsCAFile=global-bundle.pem");
+        // a CA file pins the chain to that CA rather than the system store, so the form lands
+        // on the mode whose CA box the paste banner points at
+        expect(result!.sslMode).toBe("verify-ca");
+      });
+
+      test("pins an SRV string to verify-ca as well", () => {
+        const uri = "mongodb+srv://user:pass@cluster0.example.net/db?tlsCAFile=ca.pem";
+        expect(parseConnectionString(uri)!.sslMode).toBe("verify-ca");
+      });
+
+      test("leaves a relaxed certificate check on require", () => {
+        const uri = "mongodb://user:pass@host/db?tls=true&tlsCAFile=ca.pem&tlsInsecure=true";
+        expect(parseConnectionString(uri)!.sslMode).toBe("require");
+      });
+
+      test("leaves TLS off when the URI turns it off", () => {
+        const uri = "mongodb://user:pass@host/db?tls=false&tlsCAFile=ca.pem";
+        expect(parseConnectionString(uri)!.sslMode).toBe("disable");
+      });
+
+      test("is absent for a string with no file-path TLS parameter", () => {
+        expect(parseConnectionString("mongodb://user:pass@host:27017/db?tls=true")!.tlsFileParam).toBeUndefined();
+      });
+    });
   });
 
   // ── Redis ───────────────────────────────────────────────────────────────
@@ -208,6 +277,57 @@ describe("parseConnectionString", () => {
     test("uses default port 1521 when omitted", () => {
       const result = parseConnectionString("oracle://user:pass@host/db");
       expect(result!.port).toBe("1521");
+    });
+  });
+
+  // ── Db2 LUW (#786) ──────────────────────────────────────────────────────
+
+  describe("db2:// URLs", () => {
+    test("parses a db2 URL into its fields", () => {
+      const result = parseConnectionString("db2://db2inst1:secret@db2host:50001/TESTDB");
+      expect(result).not.toBeNull();
+      expect(result!.type).toBe("db2");
+      expect(result!.host).toBe("db2host");
+      expect(result!.port).toBe("50001");
+      expect(result!.user).toBe("db2inst1");
+      expect(result!.password).toBe("secret");
+      expect(result!.database).toBe("TESTDB");
+      // A plain URL says nothing about TLS, so it leaves the form's mode alone.
+      expect(result!.sslMode).toBeUndefined();
+      expect(result!.unmappedTLSParam).toBeUndefined();
+    });
+
+    test("uses default port 50000 when omitted", () => {
+      expect(parseConnectionString("db2://user:pass@host/SAMPLE")!.port).toBe("50000");
+    });
+
+    // `verify-system`, not `require`, by D26's rule and the Db2 provider's own: without verified
+    // TLS the password can reach a server that impersonates the host, so TLS is verified unless a reader
+    // chooses otherwise in the panel. A self-hosted Db2 with a private CA then fails closed on the
+    // chain, and its CA certificate is what the panel asks for.
+    test.each(["ssl=true", "ssl=1", "ssl=TRUE", "security=SSL", "security=ssl", "Security=SSL"])(
+      "?%s asks for verified TLS",
+      (query) => {
+        const result = parseConnectionString(`db2://u:p@host:50001/TESTDB?${query}`);
+        expect(result!.sslMode).toBe("verify-system");
+        expect(result!.unmappedTLSParam).toBeUndefined();
+      },
+    );
+
+    test.each(["ssl=false", "ssl=0"])("?%s asks for plaintext", (query) => {
+      const result = parseConnectionString(`db2://u:p@host/TESTDB?${query}`);
+      expect(result!.sslMode).toBe("disable");
+    });
+
+    test("an unknown value is reported rather than guessed", () => {
+      expect(parseConnectionString("db2://u:p@host/TESTDB?ssl=maybe")!.unmappedTLSParam).toBe("ssl=maybe");
+      expect(parseConnectionString("db2://u:p@host/TESTDB?security=CLEARTEXT")!.unmappedTLSParam).toBe(
+        "security=CLEARTEXT",
+      );
+    });
+
+    test("db2 publishes its scheme", () => {
+      expect(ENGINE_URI_SCHEMES.db2).toBe("db2");
     });
   });
 
@@ -581,6 +701,42 @@ describe("parseConnectionString", () => {
       expect(result!.password).toBe("pass123");
     });
 
+    test("strips the tcp: protocol prefix the Azure portal writes in Server", () => {
+      const result = parseConnectionString(
+        "Server=tcp:myserver.database.windows.net,1433;Initial Catalog=mydb;Persist Security Info=False;User ID=myuser;Password=secret;MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;",
+      );
+      expect(result!.host).toBe("myserver.database.windows.net");
+      expect(result!.port).toBe("1433");
+      expect(result!.database).toBe("mydb");
+      expect(result!.user).toBe("myuser");
+      expect(result!.sslMode).toBe("verify-full");
+    });
+
+    test("strips the tcp: prefix case-insensitively and without a port", () => {
+      const result = parseConnectionString("Server=TCP:myserver;Database=mydb;");
+      expect(result!.host).toBe("myserver");
+      expect(result!.port).toBe("1433");
+    });
+
+    test("keeps a host that only starts with the letters tcp", () => {
+      expect(parseConnectionString("Server=tcp-gateway,1433;")!.host).toBe("tcp-gateway");
+    });
+
+    test("reports a named-pipes server instead of writing it into host", () => {
+      const result = parseConnectionString("Server=np:myserver;Database=mydb;User Id=sa;");
+      expect(result!.host).toBeUndefined();
+      expect(result!.port).toBeUndefined();
+      expect(result!.unsupportedServerProtocol).toBe("np");
+      expect(result!.database).toBe("mydb");
+      expect(result!.user).toBe("sa");
+    });
+
+    test("reports a shared-memory server, keeping the prefix as it was pasted", () => {
+      const result = parseConnectionString("Server=LPC:myserver;");
+      expect(result!.host).toBeUndefined();
+      expect(result!.unsupportedServerProtocol).toBe("LPC");
+    });
+
     test("handles Data Source alias", () => {
       const result = parseConnectionString("Data Source=db-host,1450;Database=app;");
       // "Data Source=..." starts with "Data", not "Server", so it won't match /^Server\s*=/i
@@ -625,6 +781,10 @@ describe("parseConnectionString", () => {
 // ─── detectConnectionStringType ─────────────────────────────────────────────
 
 describe("detectConnectionStringType", () => {
+  test("detects db2://", () => {
+    expect(detectConnectionStringType("db2://host")).toBe("db2");
+  });
+
   test("detects postgres://", () => {
     expect(detectConnectionStringType("postgres://host")).toBe("postgres");
   });

@@ -16,6 +16,17 @@ test.describe("Login Flow", () => {
     await expect(page.locator('button:has-text("Sign in")').first()).toBeVisible();
   });
 
+  test("the sign-in form arrives in the page's first HTML, never in a streamed segment a script moves later", async ({
+    request,
+  }) => {
+    // React outlined the form's Suspense boundary into a hidden S:0 segment that a script moves into place; on a loaded
+    // CI runner the client drew the form first and the hidden copy stayed, so the page held two input#email (Functional
+    // Smoke, run 37022597426, a strict-mode locator refused to choose).
+    const html = await (await request.get("/login")).text();
+    expect(html).not.toMatch(/<div hidden id="S:\d+">/);
+    expect(html.match(/id="email"/g)).toHaveLength(1);
+  });
+
   test("admin login redirects to /admin", async ({ page }) => {
     await page.locator('input[type="email"]').fill("admin@libredb.org");
     await page.locator('input[type="password"]').fill("test-admin");
@@ -120,11 +131,13 @@ test.describe("Login showcase", () => {
     // item carries an "(embedded)" marker after its label: the hero claims the external
     // engines only, and this is the marker that tells a reader which pill the claim leaves
     // out. The `embedded` flag comes from the same module the page renders from, so the
-    // expectation still names no engine.
+    // expectation still names no engine. Each label is escaped into the pattern, because a label
+    // such as "InfluxDB (InfluxQL)" holds parentheses that a pattern would read as a group.
     const expected = listShowcaseDatabases();
+    const literal = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     await expect(engines.getByRole("listitem")).toHaveCount(expected.length);
     await expect(engines.getByRole("listitem")).toHaveText(
-      expected.map((db) => new RegExp(`^${db.label}\\s*${db.embedded ? "\\(embedded\\)" : ""}$`)),
+      expected.map((db) => new RegExp(`^${literal(db.label)}\\s*${db.embedded ? "\\(embedded\\)" : ""}$`)),
     );
   });
 

@@ -1,5 +1,6 @@
 import type { NextResponse } from "next/server";
 import { logger } from "@/lib/logger";
+import { passkeyAvailability } from "@/lib/passkey/config";
 import { HSTS_MAX_AGE_SECONDS, securityHeaders, type SecurityHeaderOptions } from "@/lib/security/headers";
 
 /**
@@ -96,6 +97,8 @@ export function readSecurityHeaderOptions(): SecurityHeaderOptions {
     // so the plain-HTTP channels are unaffected and no decision has to be made about trusting
     // the attacker-supplied x-forwarded-proto.
     hsts: { maxAgeSeconds: HSTS_MAX_AGE_SECONDS, includeSubDomains: readHstsIncludeSubDomains() },
+    // passkey config.ts is a pure reader, so the proxy can decide this without opening storage.
+    allowWebAuthnGet: passkeyAvailability().state === "ready",
   };
 }
 

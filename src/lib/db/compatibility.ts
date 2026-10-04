@@ -42,6 +42,10 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // be it. Nothing is recorded as a relative below for that reason.
   duckdb: true,
   oracle: true,
+  // IBM Db2 LUW (#786): its own provider, doc and integration test. Db2 for z/OS and for IBM i
+  // speak the same DRDA protocol and are recorded below as relatives only once a gate-4 probe has
+  // measured each, never because the protocol answers.
+  db2: true,
   mssql: true,
   clickhouse: true,
   druid: true,
@@ -67,6 +71,34 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // the `timeseries/` family. A relative that speaks the same HTTP API is recorded below only
   // once a gate-4 probe has measured one, never because the API answers.
   prometheus: true,
+  // Apache Kafka (#1088): its own provider, doc and integration test, and the first member of the
+  // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
+  // once a gate-4 probe has measured one, never because the protocol answers.
+  kafka: true,
+  // etcd (#1089): its own provider, doc and integration test, and the second member of the `keyvalue/`
+  // family. kine and Xline speak etcd's API and are recorded below as relatives only once a gate-4
+  // probe has measured each, never because the API answers.
+  etcd: true,
+  // Neo4j (#424): its own provider, doc and integration test, and the first member of the `graph/`
+  // family. Memgraph speaks Bolt and Cypher and is recorded below as a relative only once a gate-4
+  // probe has measured it, never because the protocol answers.
+  neo4j: true,
+  // Milvus (vector-family spec 5): its own provider, doc and integration test, and the first member of the
+  // `vector/` family. Zilliz Cloud speaks the same API and is recorded nowhere until a test cluster passes gate 4.
+  milvus: true,
+  // Qdrant (vector-family spec 6): its own provider, doc and integration test, a member of the `vector/` family.
+  // Qdrant Cloud speaks the same API and is recorded nowhere until a test cluster passes gate 4 (vector-family spec 6.2).
+  qdrant: true,
+  // InfluxDB (InfluxDB spec I2): its own provider class, doc and integration test; the first of two type-ids served by
+  // `timeseries/influxdb/`, one per query language. InfluxDB Cloud, Clustered and Enterprise 1.x are claimed nowhere
+  // until a gate-4 probe measures one.
+  influxdb: true,
+  // InfluxDB 3 (InfluxDB spec I2): its own provider class, doc and integration test, sharing the connection layer of
+  // `timeseries/influxdb/` with `influxdb`. A different engine generation (Rust, Arrow, DataFusion), counted as its
+  // own engine.
+  influxdb3: true,
+  // Oxia (#424): its own provider, doc and integration test, read over its gRPC client API (DECISIONS O2).
+  oxia: true,
   libredb: true,
 });
 
@@ -103,6 +135,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // `sqlite` below, and external for the same reason.
   duckdb: true,
   oracle: true,
+  // A server the user already runs, reached over DRDA.
+  db2: true,
   mssql: true,
   clickhouse: true,
   druid: true,
@@ -115,6 +149,22 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   redis: true,
   // A server the user already runs, reached over its HTTP API.
   prometheus: true,
+  // A cluster the user already runs, reached over the Kafka protocol.
+  kafka: true,
+  // A cluster the user already runs, reached over etcd's gRPC API.
+  etcd: true,
+  // A server the user already runs, reached over Bolt.
+  neo4j: true,
+  // A server or cluster the user already runs, reached over Milvus's gRPC API.
+  milvus: true,
+  // A server or cluster the user already runs, reached over Qdrant's REST API.
+  qdrant: true,
+  // A server the user already runs, reached over InfluxDB's v1 HTTP API.
+  influxdb: true,
+  // A server the user already runs, reached over InfluxDB 3's HTTP SQL API.
+  influxdb3: true,
+  // A server or cluster the user already runs, reached over Oxia's gRPC client API.
+  oxia: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -126,8 +176,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
  *
  * Also the DENOMINATOR the outward-facing catalog copy is counted against:
  * `tests/unit/lib/catalog-copy-engine-count.test.ts` compares this length with every
- * numeral qualifying "engines" in nine storefront files, which until #D47 were only ever
- * corrected by somebody noticing.
+ * numeral qualifying "engines" in each storefront file its `COPY_FILES` lists, which until
+ * #D47 were only ever corrected by somebody noticing.
  */
 export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
   SHIPPED_DATABASE_TYPES.filter((type) => EXTERNAL[type]),
@@ -137,6 +187,121 @@ export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
 export function isExternalDatabaseType(type: DatabaseType): boolean {
   return EXTERNAL[type] === true;
 }
+
+/**
+ * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
+ * object edit and maintenance operation before any request while the connection's `readOnly` is true
+ * (#1089). The static answer `ProviderCapabilities.enforcesReadOnly` gives once a provider is built.
+ *
+ * Static because every reader decides before a provider exists: the seed schema refuses
+ * `readOnly: true` at load where this answers false, `assertReadOnlyHonoured` in
+ * `src/lib/db/factory.ts` refuses it before anything is built or dialled, and the connection form
+ * draws its toggle, and writes the field, only where this answers true. Refused rather than ignored,
+ * because a mode an engine ignores lists a connection as read-only and sends its writes.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to
+ * what that engine's provider declares, so the two cannot drift. Frozen like the records above it.
+ */
+export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
+  postgres: false,
+  mysql: false,
+  sqlite: false,
+  libsql: false,
+  duckdb: false,
+  oracle: false,
+  db2: false,
+  mssql: false,
+  clickhouse: false,
+  druid: false,
+  trino: false,
+  cassandra: false,
+  elasticsearch: false,
+  opensearch: false,
+  mongodb: false,
+  couchbase: false,
+  redis: false,
+  prometheus: false,
+  kafka: false,
+  // The first engine that keeps the mode (#1089 E6): its provider refuses every write command, value edit
+  // and maintenance operation before any request while the mode holds.
+  etcd: true,
+  // Read-only whatever the flag says: this version of the provider refuses every write before it is sent,
+  // offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.
+  neo4j: true,
+  // Its provider refuses Load and Release before any request while the mode holds, and every v1 console request is
+  // a read (vector-family E8).
+  milvus: true,
+  // Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it
+  // refuses every route that is not a read before any request (vector-family spec 4.4).
+  qdrant: true,
+  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
+  // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
+  // or `EXPLAIN` before any request; the route table reaches no write endpoint.
+  influxdb: true,
+  // Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin
+  // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and
+  // the 3.12 planner refuses every write besides.
+  influxdb3: true,
+  // Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan`
+  // and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it
+  // holds (O1).
+  oxia: true,
+  libredb: false,
+});
+
+/**
+ * Which shipped engines a seed connection may expose to MCP clients (#246): the seed schema refuses
+ * `mcp: true` at load on an engine where this answers false, naming the engine, so an opt-in the
+ * product does not honour fails the file instead of listing a connection. Static for the reason
+ * `READ_ONLY_ENFORCED` is: the seed file is validated before any provider exists.
+ *
+ * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
+ * its entry answers false, and that entry lands with the provider's registration, which the compiler
+ * forces. etcd and Oxia answer false; every other engine answers true. An exhaustive Record for the reason
+ * `EXTERNAL` gives, so a new type-id cannot join without someone answering, and frozen like the records above it.
+ */
+export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+  postgres: true,
+  mysql: true,
+  sqlite: true,
+  libsql: true,
+  duckdb: true,
+  oracle: true,
+  db2: true,
+  mssql: true,
+  clickhouse: true,
+  druid: true,
+  trino: true,
+  cassandra: true,
+  elasticsearch: true,
+  opensearch: true,
+  mongodb: true,
+  couchbase: true,
+  redis: true,
+  prometheus: true,
+  kafka: true,
+  // One of the two engines MCP is not offered for (#1089 E12; Oxia is the other): the provider implements no
+  // read-only query path, and a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  etcd: false,
+  // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
+  // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
+  neo4j: true,
+  // Offered for the two metadata tools (vector-family E17); `run_read_query` does not serve it, because the provider
+  // implements no `queryReadOnly`.
+  milvus: true,
+  // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4); `run_read_query` does not
+  // serve it, because the provider implements no `queryReadOnly`.
+  qdrant: true,
+  // Both offered for the two metadata tools (InfluxDB spec I13); `run_read_query` does not serve either, because
+  // neither provider implements `queryReadOnly`.
+  influxdb: true,
+  influxdb3: true,
+  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), so no MCP
+  // surface lists them until one is designed (BACKLOG B100).
+  oxia: false,
+  libredb: true,
+});
 
 /**
  * How much of the product works against a wire-compatible engine.
@@ -171,7 +336,8 @@ export interface WireCompatibleEngine {
  * and SingleStore from a fifth run the same day, ScyllaDB from a sixth run on
  * 2026-08-21/22, Apache Doris, Garnet and both Percona distributions from a seventh run
  * on 2026-08-26, ParadeDB, OrioleDB and Databend from an eighth on 2026-08-27, and
- * VictoriaMetrics, the first relative of the `prometheus` driver, from a ninth on 2026-09-23.
+ * VictoriaMetrics, the first relative of the `prometheus` driver, from a ninth on 2026-09-23, and
+ * Redpanda, the first relative of the `kafka` driver, from a tenth on 2026-09-25.
  * The nine MySQL-wire relatives were re-measured together on 2026-09-06 for issues
  * #573 and #574, at the wire and then in a browser against the built app, and the
  * outcome per engine is recorded in `docs/providers/mysql.md` section 5.5 for the
@@ -226,6 +392,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Materialized views are listed beside tables in the object browser, with their columns. Materialize reports them through information_schema.tables as table_type = 'MATERIALIZED VIEW' and they are what its users actually work with, so a browser that listed only BASE TABLE hid the product: revenue_by_region was invisible while the three plain tables showed.",
       "The Explain panel works. Materialize has no rule for EXPLAIN's parenthesised options at all - `(FORMAT JSON)` is refused the same way `(ANALYZE, BUFFERS, FORMAT JSON)` is, and the error names only the first token inside them - and no EXPLAIN ANALYZE either, so the grammar is measured at connect and this server gets the plain EXPLAIN, whose physical plan names the relations it reads, the join strategy and the filters it pushed down. The JSON form its docs publish is not used: it carries no relation names, only internal ids.",
       "Row counts are blank rather than zero. Materialize answers -1 from pg_class.reltuples - PostgreSQL's never-counted sentinel - for tables, views and materialized views alike, so there is no estimate to show and the browser draws no badge. It used to show 0, which read as a measurement nobody made; a table holding three rows said it held none.",
+      "In the object tree, the Functions and Procedures folders show Materialize's own sentence, column \"p.prokind\" does not exist, and do not open; every other folder in the tree counts and lists. Materialize's pg_proc has no prokind column, so it cannot say which routine is a function and which a procedure. It reports that as SQLSTATE XX000 rather than PostgreSQL's 42703, and while the object browser keyed its fallback on 42703 every folder in every schema showed that sentence and nothing could be opened. The fallback now keys on the column the refusal names, under any SQLSTATE, measured on Materialize v26.44.1 on 2026-10-04. Object search, the object inventory and the agent's inventory grounding still list the routine kinds and fail there (D226 in docs/BACKLOG.md). A source created from a load generator is listed under Tables, because Materialize's pg_class reports it as an ordinary table.",
     ],
   },
   {
@@ -569,7 +736,6 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
     probedVersion: "VictoriaMetrics v1.152.0 (advertises Prometheus 2.24.0)",
     caveats: [
       "The Overview and Storage tabs of the monitoring dashboard fail, and so does the Scrape pools folder, whose count reads unavailable: VictoriaMetrics answers /api/v1/status/runtimeinfo, /api/v1/status/flags and /api/v1/scrape_pools with HTTP 400 and the text 'unsupported path requested', and the message shown names the path and the status, with a server that does not serve the path among the causes it offers.",
-      "The Tables tab lists ten metrics where Prometheus lists up to fifty: VictoriaMetrics ignores the limit on /api/v1/status/tsdb and answers its own top ten, which the tab's caption, 'at most 50', allows, and each of the ten series counts matched Prometheus's for the same metric.",
       "A metric's Source tab shows its type and help and no unit: VictoriaMetrics' /api/v1/metadata entries carry no unit, and the provider leaves it out rather than inventing an empty one.",
       "A target's Source tab has no scrapeInterval or scrapeTimeout: VictoriaMetrics' /api/v1/targets entries carry neither, and keep them as __scrape_interval__ and __scrape_timeout__ among the discovered labels, which the tab shows.",
       "A target VictoriaMetrics has not scraped yet reads as down: VictoriaMetrics reports it with health down, no error and a last scrape of 1970-01-01T00:00:00Z, where Prometheus reports health unknown.",
@@ -577,6 +743,24 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       'A string expression such as "libredb" returns no rows: VictoriaMetrics answers it with an empty vector, where Prometheus answers a string.',
       "A subquery's points are counted back from its evaluation time, both ends of its window kept: avg_over_time(up[5m])[30m:1m] answered 31 points ending at that time, where Prometheus 3.13.3 answers 30 on whole minutes.",
       "PromQL infos and warnings do not appear beside a result: VictoriaMetrics answered rate(up[5m]) with no notice where Prometheus 3.13.3 attaches 'PromQL info: metric might not be a counter', and it sent none with any other answer measured.",
+    ],
+  },
+  {
+    // The first relative of the `kafka` driver: it answers the Kafka protocol, so the provider serves
+    // it unchanged. Probed as a single node seeded by the Kafka fixture's own scripts, through a real
+    // provider run by tests/live/kafka-read-only.ts, with Apache Kafka 4.3.1 as the baseline in the
+    // same pass (#1088 section 8). Every surface answered and the broker's state was unchanged by the
+    // run; the caveats name the figures Redpanda does not publish over the protocol, and the group
+    // type it cannot report, which is right there because it has no other kind of group.
+    name: "Redpanda",
+    via: "kafka",
+    tier: "full",
+    probedVersion: "Redpanda v26.2.2",
+    caveats: [
+      "Max connections reads 0, no limit published: Redpanda's DescribeConfigs answer for a broker holds no max.connections, and it keeps its connection limits in its cluster configuration, which the Kafka protocol does not read.",
+      "A broker's Source tab lists nine configs where Apache Kafka 4.3.1 lists 340: Redpanda answers DescribeConfigs for a broker with those nine entries only.",
+      "The Storage tab shows no usage percentage: Redpanda's DescribeLogDirs answer carries no total or usable bytes for its data directory, so only the size is shown.",
+      "Every consumer group reads as classic, which on Redpanda is always right: it answers ListGroups up to v4, which carries no group type, and it has no KIP-848 consumer group protocol at all.",
     ],
   },
 ];

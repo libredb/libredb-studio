@@ -1,9 +1,12 @@
+import { firstResultSet } from "@/lib/api/first-result-set";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
+import type { BeginTransactionOptions, BeginTransactionResult, QueryResult } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import {
   claimTransaction,
   OWNERSHIP_IDLE_MS,
@@ -13,14 +16,12 @@ import {
 } from "@/lib/api/transaction-ownership";
 
 interface TransactionProvider {
-  beginTransaction(): Promise<void>;
+  // `void` from the providers that read no transaction state when they open one.
+  beginTransaction(options?: BeginTransactionOptions): Promise<BeginTransactionResult | void>;
   commitTransaction(): Promise<void>;
   rollbackTransaction(): Promise<void>;
   isInTransaction(): boolean;
-  queryInTransaction(
-    sql: string,
-    params?: unknown[],
-  ): Promise<{ rows: Record<string, unknown>[]; fields: string[]; rowCount: number; executionTime: number }>;
+  queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult>;
 }
 
 function isTransactionProvider(provider: unknown): provider is TransactionProvider {
@@ -90,10 +91,18 @@ export async function POST(req: NextRequest) {
 
     switch (action) {
       case "begin": {
-        await provider.beginTransaction();
+        // SANDBOX sends `requireReportedState: true`: it is about to promise a rollback, so a
+        // server that never says whether a transaction is open is refused rather than trusted.
+        const opened = await provider.beginTransaction({ requireReportedState: body.requireReportedState === true });
         // After the provider, never before: a begin that throws must leave no owner behind.
         claimTransaction(connection.id, guard.session.username);
-        return NextResponse.json({ status: "active", message: "Transaction started" });
+        // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
+        // is a provider that does not say, which is not a claim either way.
+        return NextResponse.json({
+          status: "active",
+          message: "Transaction started",
+          stateReported: opened ? opened.stateReported : null,
+        });
       }
 
       case "commit": {
@@ -130,7 +139,14 @@ export async function POST(req: NextRequest) {
         const prepared = provider.prepareQuery(sql, options);
         const result = await provider.queryInTransaction(prepared.query, bound.params);
 
-        touchTransaction(connection.id);
+        // The provider ends its session when the SERVER says the statement ended the
+        // transaction: a typed COMMIT or ROLLBACK, or a statement the engine commits implicitly (MySQL
+        // DDL). Reported rather than hidden, because the caller is about to ask for a
+        // ROLLBACK that would answer success and undo nothing (SANDBOX said "Changes
+        // auto-rolled back" over a committed CREATE TABLE). The record goes with it.
+        const stillInTransaction = provider.isInTransaction();
+        if (stillInTransaction) touchTransaction(connection.id);
+        else releaseTransaction(connection.id);
 
         // THE SAME CONJUNCT AS `/api/db/query` (#816), for the same reason and on purpose.
         //
@@ -147,14 +163,16 @@ export async function POST(req: NextRequest) {
         const hasMore = prepared.wasLimited && result.rows.length === prepared.limit;
 
         return NextResponse.json({
-          ...result,
-          inTransaction: true,
+          ...firstResultSet(result),
+          // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
+          rows: rowsWithNonFiniteWords(result.rows),
+          inTransaction: stillInTransaction,
           pagination: {
             limit: prepared.limit,
             offset: prepared.offset,
             hasMore,
             totalReturned: result.rows.length,
-            wasLimited: prepared.wasLimited,
+            wasLimited: hasMore || result.pagination?.wasLimited === true,
           },
         });
       }

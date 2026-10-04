@@ -1,0 +1,890 @@
+{
+  "$generated": {
+    "by": "tests/live/vector-routes.ts",
+    "source": "github.com/qdrant/qdrant docs/redoc/master/openapi.json at tag v1.19.1",
+    "sha256": "eb3e5d71ba74e1d99124ca1a77d563bbfa47084f04a13ef9b197e339f5a4ce0a",
+    "scope": "full"
+  },
+  "engine": "qdrant",
+  "prefix": "/",
+  "routes": [
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/shards",
+      "op": "create_shard_key",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "CreateShardingKey"
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/shards",
+      "op": "list_shard_keys",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/shards/delete",
+      "op": "delete_shard_key",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "DropShardingKey"
+    },
+    {
+      "method": "GET",
+      "path": "/",
+      "op": "root",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/telemetry",
+      "op": "telemetry",
+      "params": {},
+      "query": [
+        "anonymize",
+        "details_level",
+        "per_collection",
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "op": "metrics",
+      "params": {},
+      "query": [
+        "anonymize",
+        "per_collection",
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/healthz",
+      "op": "healthz",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/livez",
+      "op": "livez",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/readyz",
+      "op": "readyz",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/issues",
+      "op": "get_issues",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/issues",
+      "op": "clear_issues",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/cluster",
+      "op": "cluster_status",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/cluster/telemetry",
+      "op": "cluster_telemetry",
+      "params": {},
+      "query": [
+        "details_level",
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/cluster/recover",
+      "op": "recover_current_peer",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/cluster/peer/{peer_id}",
+      "op": "remove_peer",
+      "params": {
+        "peer_id": "name"
+      },
+      "query": [
+        "timeout",
+        "force"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/quotas",
+      "op": "get_quotas",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "PUT",
+      "path": "/quotas",
+      "op": "update_quotas",
+      "params": {},
+      "query": [
+        "wait"
+      ],
+      "body": "optional",
+      "bodySchema": "QuotaConfig"
+    },
+    {
+      "method": "GET",
+      "path": "/collections",
+      "op": "get_collections",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}",
+      "op": "get_collection",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}",
+      "op": "create_collection",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "CreateCollection"
+    },
+    {
+      "method": "PATCH",
+      "path": "/collections/{collection_name}",
+      "op": "update_collection",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "UpdateCollection"
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/{collection_name}",
+      "op": "delete_collection",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/aliases",
+      "op": "update_aliases",
+      "params": {},
+      "query": [
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "ChangeAliasesOperation"
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/index",
+      "op": "create_field_index",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "CreateFieldIndex"
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/exists",
+      "op": "collection_exists",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/{collection_name}/index/{field_name}",
+      "op": "delete_field_index",
+      "params": {
+        "collection_name": "name",
+        "field_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/vectors/{vector_name}",
+      "op": "create_vector_name",
+      "params": {
+        "collection_name": "name",
+        "vector_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "VectorNameConfig"
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/{collection_name}/vectors/{vector_name}",
+      "op": "delete_vector_name",
+      "params": {
+        "collection_name": "name",
+        "vector_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/cluster",
+      "op": "collection_cluster_info",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/cluster",
+      "op": "update_collection_cluster",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "ClusterOperations"
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/optimizations",
+      "op": "get_optimizations",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "with",
+        "completed_limit"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/aliases",
+      "op": "get_collection_aliases",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/aliases",
+      "op": "get_collections_aliases",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/snapshots/upload",
+      "op": "recover_from_uploaded_snapshot",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "priority",
+        "checksum"
+      ],
+      "body": "optional",
+      "bodySchema": null
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/snapshots/recover",
+      "op": "recover_from_snapshot",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait"
+      ],
+      "body": "optional",
+      "bodySchema": "SnapshotRecover"
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/snapshots",
+      "op": "list_snapshots",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/snapshots",
+      "op": "create_snapshot",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/{collection_name}/snapshots/{snapshot_name}",
+      "op": "delete_snapshot",
+      "params": {
+        "collection_name": "name",
+        "snapshot_name": "name"
+      },
+      "query": [
+        "wait"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/snapshots/{snapshot_name}",
+      "op": "get_snapshot",
+      "params": {
+        "collection_name": "name",
+        "snapshot_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/snapshots",
+      "op": "list_full_snapshots",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/snapshots",
+      "op": "create_full_snapshot",
+      "params": {},
+      "query": [
+        "wait"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/snapshots/{snapshot_name}",
+      "op": "delete_full_snapshot",
+      "params": {
+        "snapshot_name": "name"
+      },
+      "query": [
+        "wait"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/snapshots/{snapshot_name}",
+      "op": "get_full_snapshot",
+      "params": {
+        "snapshot_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/shards/{shard_id}/snapshot",
+      "op": "stream_shard_snapshot",
+      "params": {
+        "collection_name": "name",
+        "shard_id": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/shards/{shard_id}/snapshots/upload",
+      "op": "recover_shard_from_uploaded_snapshot",
+      "params": {
+        "collection_name": "name",
+        "shard_id": "name"
+      },
+      "query": [
+        "wait",
+        "priority",
+        "checksum"
+      ],
+      "body": "optional",
+      "bodySchema": null
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/shards/{shard_id}/snapshots/recover",
+      "op": "recover_shard_from_snapshot",
+      "params": {
+        "collection_name": "name",
+        "shard_id": "name"
+      },
+      "query": [
+        "wait"
+      ],
+      "body": "optional",
+      "bodySchema": "ShardSnapshotRecover"
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/shards/{shard_id}/snapshots",
+      "op": "list_shard_snapshots",
+      "params": {
+        "collection_name": "name",
+        "shard_id": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/shards/{shard_id}/snapshots",
+      "op": "create_shard_snapshot",
+      "params": {
+        "collection_name": "name",
+        "shard_id": "name"
+      },
+      "query": [
+        "wait"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "DELETE",
+      "path": "/collections/{collection_name}/shards/{shard_id}/snapshots/{snapshot_name}",
+      "op": "delete_shard_snapshot",
+      "params": {
+        "collection_name": "name",
+        "shard_id": "name",
+        "snapshot_name": "name"
+      },
+      "query": [
+        "wait"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/shards/{shard_id}/snapshots/{snapshot_name}",
+      "op": "get_shard_snapshot",
+      "params": {
+        "collection_name": "name",
+        "shard_id": "name",
+        "snapshot_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/points/{id}",
+      "op": "get_point",
+      "params": {
+        "collection_name": "name",
+        "id": "point-id"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points",
+      "op": "get_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "PointRequest"
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/points",
+      "op": "upsert_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "PointInsertOperations"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/delete",
+      "op": "delete_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "PointsSelector"
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/points/vectors",
+      "op": "update_vectors",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "UpdateVectors"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/vectors/delete",
+      "op": "delete_vectors",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "DeleteVectors"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/payload",
+      "op": "set_payload",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "SetPayload"
+    },
+    {
+      "method": "PUT",
+      "path": "/collections/{collection_name}/points/payload",
+      "op": "overwrite_payload",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "SetPayload"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/payload/delete",
+      "op": "delete_payload",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "DeletePayload"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/payload/clear",
+      "op": "clear_payload",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "PointsSelector"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/batch",
+      "op": "batch_update",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "wait",
+        "ordering",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "UpdateOperations"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/scroll",
+      "op": "scroll_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "ScrollRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/count",
+      "op": "count_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "CountRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/facet",
+      "op": "facet",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "FacetRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query",
+      "op": "query_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "QueryRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/batch",
+      "op": "query_batch_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "QueryRequestBatch"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/groups",
+      "op": "query_points_groups",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "QueryGroupsRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/search/matrix/pairs",
+      "op": "search_matrix_pairs",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "SearchMatrixRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/search/matrix/offsets",
+      "op": "search_matrix_offsets",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "SearchMatrixRequest"
+    }
+  ]
+}

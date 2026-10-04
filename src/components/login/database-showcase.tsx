@@ -36,12 +36,21 @@ export function DatabaseShowcase({ variant }: DatabaseShowcaseProps) {
   return <MobileDatabases />;
 }
 
+/**
+ * The gaps are the hero's vertical budget, which has none to spare at 1280x800 and 1366x768
+ * (#541, #550, pinned by e2e/login.spec.ts). At a 20px column gap the nineteenth entry (#1088)
+ * wrapped the list into a fourth row at both sizes and scrolled the page by 4 and 19px; at 14px
+ * 1366x768 kept three rows, and the 6px row gap pays for the fourth row 1280x800 still takes.
+ * The twenty-second entry (#786) took the fourth row at 1366x768 too. The hero column's vertical
+ * padding in login-form.tsx pays for that one, because an 8px column gap bought the third row back
+ * with 38px left on it, which the next entry would have spent.
+ */
 function DesktopDatabases() {
   return (
     <ul
       aria-label="Supported databases"
       data-testid="database-showcase-desktop"
-      className="flex flex-wrap gap-x-5 gap-y-2.5 pointer-events-none select-none"
+      className="flex flex-wrap gap-x-3.5 gap-y-1.5 pointer-events-none select-none"
     >
       {listShowcaseDatabases().map((db) => {
         const Icon = db.icon;

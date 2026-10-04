@@ -1,0 +1,102 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "Query",
+    "user": "reader",
+    "surface": "Query as reader",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64",
+      "expr": "seq < 3",
+      "output_fields": [
+        "seq",
+        "title"
+      ],
+      "query_params": [
+        {
+          "key": "limit",
+          "value": "3"
+        }
+      ]
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "fields_data": [
+      {
+        "valid_data": [],
+        "type": "Int64",
+        "field_name": "seq",
+        "field_id": "101",
+        "is_dynamic": false,
+        "scalars": {
+          "long_data": {
+            "data": [
+              "0",
+              "2",
+              "1"
+            ]
+          },
+          "data": "long_data"
+        },
+        "field": "scalars"
+      },
+      {
+        "valid_data": [],
+        "type": "VarChar",
+        "field_name": "title",
+        "field_id": "103",
+        "is_dynamic": false,
+        "scalars": {
+          "string_data": {
+            "data": [
+              "doc 0000 alpha",
+              "doc 0002 gamma",
+              "doc 0001 beta"
+            ]
+          },
+          "data": "string_data"
+        },
+        "field": "scalars"
+      },
+      {
+        "valid_data": [],
+        "type": "Int64",
+        "field_name": "id",
+        "field_id": "100",
+        "is_dynamic": false,
+        "scalars": {
+          "long_data": {
+            "data": [
+              "469506719193499079",
+              "469506719193499080",
+              "469506719193500079"
+            ]
+          },
+          "data": "long_data"
+        },
+        "field": "scalars"
+      }
+    ],
+    "output_fields": [
+      "seq",
+      "title"
+    ],
+    "element_indices": [],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "collection_name": "docs_int64",
+    "session_ts": "0",
+    "primary_field_name": "id"
+  }
+}

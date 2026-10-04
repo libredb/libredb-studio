@@ -7,6 +7,7 @@ import { render, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
 import { StudioTabBar } from "@/components/studio/StudioTabBar";
+import type { StudioTabSummary } from "@/hooks/use-tab-summaries";
 import type { QueryTab } from "@/lib/types";
 
 // =============================================================================
@@ -17,14 +18,13 @@ afterEach(() => {
   cleanup();
 });
 
-function createTab(overrides: Partial<QueryTab> = {}): QueryTab {
+function createTab(overrides: Partial<StudioTabSummary> = {}): StudioTabSummary {
   return {
     id: "tab-1",
     name: "Query 1",
-    query: "SELECT 1",
-    result: null,
-    isExecuting: false,
     type: "sql",
+    isSource: false,
+    dirty: false,
     ...overrides,
   };
 }
@@ -111,6 +111,74 @@ describe("StudioTabBar", () => {
       (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
     );
     expect(icons).toEqual(["lucide-hash", "lucide-file-braces", "lucide-file-braces"]);
+  });
+
+  test("an InfluxQL tab takes the icon every non-SQL query tab takes, with no change to the ladder (InfluxDB spec A.11)", () => {
+    // Correct as is: the ladder draws `Hash` for SQL and the document braces for every other query
+    // language. An InfluxDB 3 tab is an SQL tab and keeps the SQL icon, which the first tab stands for.
+    const props = createDefaultProps({
+      tabs: [
+        createTab({ id: "tab-1", name: "cpu", type: "sql" }),
+        createTab({ id: "tab-2", name: "cpu", type: "influxql" }),
+        createTab({ id: "tab-3", name: "up", type: "promql" }),
+      ],
+    });
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+
+    const icons = getAllByRole("tab").map(
+      (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
+    );
+    expect(icons).toEqual(["lucide-hash", "lucide-file-braces", "lucide-file-braces"]);
+  });
+
+  test("a Kafka tab takes the icon every non-SQL query tab takes, the same as a MongoDB tab (#1088)", () => {
+    // Correct as is: a read request is JSON, so the tab draws the document braces a MongoDB tab
+    // draws. The SQL tab is the control that the arm is not every tab's.
+    const props = createDefaultProps({
+      tabs: [
+        createTab({ id: "tab-1", name: "Query 1", type: "sql" }),
+        createTab({ id: "tab-2", name: "orders", type: "kafka" }),
+        createTab({ id: "tab-3", name: "Query 3", type: "mongodb" }),
+      ],
+    });
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+
+    const icons = getAllByRole("tab").map(
+      (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
+    );
+    expect(icons).toEqual(["lucide-hash", "lucide-file-braces", "lucide-file-braces"]);
+  });
+
+  test("an etcd tab takes the icon every non-SQL query tab takes, and a SQL tab keeps its own (#1089)", () => {
+    // Correct as is: the last arm means "a query language that is not SQL", which an etcdctl command is.
+    const props = createDefaultProps({
+      tabs: [
+        createTab({ id: "tab-1", name: "Query 1", type: "sql" }),
+        createTab({ id: "tab-2", name: "/app/config/*", type: "etcd" }),
+      ],
+    });
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+
+    const icons = getAllByRole("tab").map(
+      (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
+    );
+    expect(icons).toEqual(["lucide-hash", "lucide-file-braces"]);
+  });
+
+  test("a Cypher tab takes the icon every non-SQL query tab takes, and a SQL tab keeps its own (Neo4j spec 6.5)", () => {
+    // Correct as is: the last arm means "a query language that is not SQL", which Cypher is.
+    const props = createDefaultProps({
+      tabs: [
+        createTab({ id: "tab-1", name: "Query 1", type: "sql" }),
+        createTab({ id: "tab-2", name: "(:Person)", type: "cypher" }),
+      ],
+    });
+    const { getAllByRole } = render(<StudioTabBar {...props} />);
+
+    const icons = getAllByRole("tab").map(
+      (tab) => [...(tab.querySelector("svg")?.classList ?? [])].find((name) => name.startsWith("lucide-")) ?? "none",
+    );
+    expect(icons).toEqual(["lucide-hash", "lucide-file-braces"]);
   });
 
   // ── Click → activate tab ──────────────────────────────────────────────
@@ -317,7 +385,9 @@ describe("StudioTabBar", () => {
     fireEvent.keyDown(input, { key: "Enter" });
 
     expect(capturedFn).not.toBeNull();
-    const result = capturedFn!([tab1, tab2]);
+    // The updater reads only `id` and `name`, so the summaries stand in for the tabs
+    // the real hook would hand it.
+    const result = capturedFn!([tab1, tab2] as unknown as QueryTab[]);
     expect(result[0].name).toBe("Renamed");
     expect(result[1].name).toBe("Query 2");
   });
@@ -341,7 +411,7 @@ describe("StudioTabBar", () => {
     fireEvent.blur(input);
 
     expect(capturedFn).not.toBeNull();
-    const result = capturedFn!([tab1]);
+    const result = capturedFn!([tab1] as unknown as QueryTab[]);
     expect(result[0].name).toBe("Blur Name");
   });
 
@@ -518,11 +588,12 @@ describe("StudioTabBar", () => {
    * user with no idea which object the mark is about.
    */
   describe("a Source tab with an unsaved edit", () => {
-    const sourceTab = (dirty: boolean | undefined): QueryTab =>
+    const sourceTab = (dirty: boolean | undefined): StudioTabSummary =>
       createTab({
         id: "source:function:app%1Forder_total",
         name: "Source: app.order_total",
-        source: { path: ["app", "order_total"], kind: "function", dirty },
+        isSource: true,
+        dirty: dirty === true,
       });
 
     test("the tab bar marks an unsaved edit, and the accessible name CONTAINS the visible label", () => {

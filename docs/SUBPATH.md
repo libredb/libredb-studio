@@ -110,6 +110,10 @@ Register the full OIDC callback URL, for example
 `https://example.com/tools/libredb/login` at your identity provider. Session and OIDC state
 cookies use `/tools/libredb` as their path, including when they are removed.
 
+The passkey ceremony cookies, `passkey-registration` and `passkey-sign-in`, use `/tools/libredb/api/auth/passkey` as their path, on set and on removal.
+`PASSKEY_ORIGIN` stays the bare origin, `https://example.com`: the prefix never belongs in it, because a passkey belongs to the host and not to a path.
+See [PASSKEYS.md](PASSKEYS.md).
+
 The default Monaco asset URL becomes `/tools/libredb/monaco/vs`. An explicit
 `NEXT_PUBLIC_MONACO_VS_PATH` override is used exactly as configured, including an external
 asset origin; do not add the prefix a second time.

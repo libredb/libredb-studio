@@ -444,3 +444,220 @@ export const PrometheusIcon: React.FC<IconProps> = ({ className, ...props }) => 
     <path d="M9 18.5h6" />
   </svg>
 );
+
+/**
+ * Apache Kafka: the node mark, reduced to its outline.
+ *
+ * The brand mark is a column of three rings, the middle one larger, with two more rings to its
+ * right joined to the middle one by a spoke each. That is what this draws, as strokes at the
+ * house weight with no fill: the offset pair of spokes is what makes it identifiable at the 14px
+ * (`w-3.5`) size the sidebar renders a DB icon at, and nothing else in this set has them.
+ */
+export const KafkaIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="8.5" cy="4" r="2" />
+    <circle cx="8.5" cy="12" r="2.75" />
+    <circle cx="8.5" cy="20" r="2" />
+    <circle cx="16.5" cy="7.5" r="2" />
+    <circle cx="16.5" cy="16.5" r="2" />
+    <path d="M8.5 6v3.25" />
+    <path d="M8.5 14.75V18" />
+    <path d="m10.9 10.65 3.86-2.17" />
+    <path d="m10.9 13.35 3.86 2.17" />
+  </svg>
+);
+
+/**
+ * etcd: the project's mark, reduced to its outline.
+ *
+ * The brand mark is a toothed ring around two eyes and a line. That is what this draws, as strokes at the
+ * house weight with no fill: the ring, four of its teeth, the eyes and the line, which is what stays
+ * identifiable at the 14px the connection list draws.
+ */
+export const EtcdIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="7.5" />
+    <path d="M12 2.5v2" />
+    <path d="M12 19.5v2" />
+    <path d="M2.5 12h2" />
+    <path d="M19.5 12h2" />
+    <circle cx="9.5" cy="10.5" r="1" />
+    <circle cx="14.5" cy="10.5" r="1" />
+    <path d="M9 14.5c2 1.25 4 1.25 6 0" />
+  </svg>
+);
+
+/**
+ * IBM Db2 LUW (#786): a database cylinder beside a "2", as strokes at the house weight with no fill,
+ * which stays readable at the 14px the connection list draws.
+ */
+export const Db2Icon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <ellipse cx="8" cy="5.5" rx="5" ry="2.2" />
+    <path d="M3 5.5v13c0 1.2 2.2 2.2 5 2.2s5-1 5-2.2v-13" />
+    <path d="M3 12c0 1.2 2.2 2.2 5 2.2s5-1 5-2.2" />
+    <path d="M16.5 10.2c0-1 .8-1.7 1.8-1.7s1.8.7 1.8 1.7c0 1.7-3.6 2.9-3.6 5.1h3.7" />
+  </svg>
+);
+
+/**
+ * Neo4j: a generic graph glyph, never the vendor's logo.
+ *
+ * Three nodes joined by three relationships, drawn as strokes at the house weight with no fill: a property
+ * graph in its plainest form, which is what Neo4j stores and what stays identifiable at the 14px the
+ * connection list draws. The edges stop at each circle's outline, so no line crosses a node.
+ */
+export const Neo4jIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="6" cy="7" r="2.5" />
+    <circle cx="18" cy="6" r="2.5" />
+    <circle cx="12" cy="18" r="2.5" />
+    <path d="M8.49 6.79 15.51 6.21" />
+    <path d="M7.2 9.19 10.8 15.81" />
+    <path d="M16.88 8.24 13.12 15.76" />
+  </svg>
+);
+
+/**
+ * Qdrant: a mark drawn for Studio, never the project's logo or any vendor asset.
+ *
+ * A query point with two distance rings around it and the neighbours the rings reach, the nearest-neighbour
+ * search a vector database answers, as strokes at the house weight with no fill, which is what stays
+ * identifiable at the 14px the connection list draws. The outer ring is open, so it reads as a radius and not
+ * as a second node.
+ */
+export const QdrantIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="1.75" />
+    <circle cx="12" cy="12" r="5.25" />
+    <path d="M3 12a9 9 0 0 1 9-9" />
+    <path d="M21 12a9 9 0 0 1-9 9" />
+    <circle cx="18.4" cy="5.6" r="1.25" />
+    <circle cx="5.6" cy="18.4" r="1.25" />
+  </svg>
+);
+
+/**
+ * InfluxDB: a mark drawn for Studio, never InfluxData's logo or any vendor asset (InfluxDB spec E19), shared by the
+ * InfluxQL and the SQL connection type.
+ *
+ * Three stacked rising strokes, the series over time a time-series database stores, at the house weight with no
+ * fill, which is what stays identifiable at the 14px the connection list draws.
+ */
+export const InfluxDBIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M3 8 8 6l4 1.5L21 3" />
+    <path d="m3 14 5-2 4 1.5L21 9" />
+    <path d="m3 20 5-2 4 1.5 9-4.5" />
+  </svg>
+);
+
+/**
+ * Milvus: a mark drawn for Studio, never the project's logo or any vendor or Attu asset (vector-family spec 10.3).
+ *
+ * A query point and its three nearest neighbours, the search a vector database answers, as strokes at the house
+ * weight with no fill, which is what stays identifiable at the 14px the connection list draws.
+ */
+export const MilvusIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <circle cx="12" cy="12" r="2.25" />
+    <circle cx="5" cy="6" r="1.75" />
+    <circle cx="19" cy="7.5" r="1.75" />
+    <circle cx="9" cy="19.5" r="1.75" />
+    <path d="M10.3 10.55 6.35 7.15" />
+    <path d="m14.15 11.3 3.15-2.65" />
+    <path d="m11.15 14.1-1.45 3.75" />
+    <path d="M3 21h3" />
+    <path d="M18 21h3" />
+  </svg>
+);
+
+/**
+ * Oxia: a mark drawn for Studio, never the project's logo (DECISIONS O16).
+ *
+ * A ring cut into three equal arcs, each ending in a short key-shaped notch pointing outward, around a small dot:
+ * the shards of one hash ring, the keys routed into them, and the namespace they share.
+ */
+export const OxiaIcon: React.FC<IconProps> = ({ className, ...props }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.5"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    {...props}
+  >
+    <path d="M13.22 5.11 A7 7 0 0 1 18.58 14.39 L21.4 15.42" />
+    <path d="M20.22 14.99 L20.7 12.91" />
+    <path d="M17.36 16.5 A7 7 0 0 1 6.64 16.5 L4.34 18.43" />
+    <path d="M5.3 17.62 L6.86 19.08" />
+    <path d="M5.42 14.39 A7 7 0 0 1 10.78 5.11 L10.26 2.15" />
+    <path d="M10.48 3.38 L8.44 4.01" />
+    <circle cx="12" cy="12" r="1.25" />
+  </svg>
+);

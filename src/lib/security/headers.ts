@@ -60,6 +60,16 @@ export interface SecurityHeaderOptions extends CspOptions {
    * environment variable) passes straight through and serializes as `max-age=NaN`.
    */
   hsts?: false | { maxAgeSeconds: number; includeSubDomains?: boolean };
+  /**
+   * Drop the `publickey-credentials-get` denial, so this document may call
+   * `navigator.credentials.get({ publicKey })` for passkey sign-in.
+   *
+   * Off by default: while the feature is denied, script injected into the document cannot request
+   * assertions for credentials scoped to a registrable parent of this host (WebAuthn 13.4.8). An
+   * OPTION rather than an environment read, like `allowEval`; `readSecurityHeaderOptions()` in
+   * config.ts decides it for this app.
+   */
+  allowWebAuthnGet?: boolean;
 }
 
 /**
@@ -74,7 +84,8 @@ export const HSTS_MAX_AGE_SECONDS = 15_552_000;
 /**
  * Permissions-Policy lists ONLY denials. An unlisted feature keeps its default allowlist ('self'),
  * which is why clipboard-read and clipboard-write must not appear here: the results grid copies to
- * the clipboard, and listing them with a narrower value is how that breaks.
+ * the clipboard, and listing them with a narrower value is how that breaks. For the same reason
+ * publickey-credentials-create stays unlisted, so passkey registration keeps its default 'self'.
  */
 const DENIED_FEATURES = [
   "accelerometer",
@@ -95,7 +106,13 @@ const DENIED_FEATURES = [
   "xr-spatial-tracking",
 ];
 
-const PERMISSIONS_POLICY = DENIED_FEATURES.map((feature) => `${feature}=()`).join(", ");
+function permissionsPolicy(options: SecurityHeaderOptions): string {
+  return DENIED_FEATURES.filter(
+    (feature) => !(options.allowWebAuthnGet === true && feature === "publickey-credentials-get"),
+  )
+    .map((feature) => `${feature}=()`)
+    .join(", ");
+}
 
 /**
  * The origin of an absolute http(s) URL, or undefined for a relative path.
@@ -208,7 +225,7 @@ export function securityHeaders(options: SecurityHeaderOptions = {}): Record<str
     // same-origin, NOT strict-origin-when-cross-origin: it leaks nothing cross-origin AND it
     // preserves the same-origin Referer that the Origin check uses as its fallback signal.
     "Referrer-Policy": "same-origin",
-    "Permissions-Policy": PERMISSIONS_POLICY,
+    "Permissions-Policy": permissionsPolicy(options),
     // Duplicates frame-ancestors 'none' deliberately, for engines that predate CSP Level 2.
     // Verified safe: zero <iframe> in src, and the desktop shell navigates rather than frames.
     "X-Frame-Options": "DENY",

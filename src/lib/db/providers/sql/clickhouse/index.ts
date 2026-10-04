@@ -32,6 +32,7 @@
  *   applied. The number the server gave is the number reported.
  */
 
+import { randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
@@ -491,6 +492,16 @@ export class ClickHouseProvider extends SQLBaseProvider {
   /** The configuration with a hand-typed connection string already resolved. */
   private readonly connection: DatabaseConnection;
 
+  /**
+   * The statements running now: the caller's id for each, and the query id it runs under
+   * on the server, which this provider makes up (a random UUID) rather than taking the
+   * caller's. ClickHouse keeps a query id unique per server USER only, so a caller-chosen id
+   * that another Studio user's run already carries, on the same ClickHouse account, would
+   * let `KILL QUERY WHERE query_id = ...` stop both. `cancelQuery` refuses an id this map does
+   * not hold, so the cancel route reaches only statements this provider started.
+   */
+  private readonly runningQueryIds = new Map<string, string>();
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
@@ -556,6 +567,9 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // absence of `acceptsRowWrites` on every one of them are all argued in
       // `./objects.ts`.
       containerLevels: CLICKHOUSE_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: CLICKHOUSE_OBJECT_KINDS,
       schemaRefreshPattern: "\\b(CREATE|DROP|ALTER|RENAME|TRUNCATE|ATTACH|DETACH)\\b",
     };
@@ -597,6 +611,32 @@ export class ClickHouseProvider extends SQLBaseProvider {
       // used to advertise (#463).
       slowQueriesEmptyState: "Query stats come from system.query_log, which records nothing while log_queries is off.",
     };
+  }
+
+  // ==========================================================================
+  // SQL dialect overrides
+  // ==========================================================================
+
+  /**
+   * A double-quoted identifier, with the BACKSLASH escaped before the quote.
+   *
+   * The inherited escaper doubles only the quote character, and on this engine a backslash
+   * inside a quoted identifier is processed as an ESCAPE - MEASURED (#789 probe 11): a table
+   * created as `"x\\"` stores `hex(name) = 785C`, exactly one trailing backslash, and a name
+   * ending in one therefore SWALLOWS its own closing quote while the parser keeps reading into
+   * whatever the name was followed by. Over a maintenance target that is statement injection
+   * rather than a quoting inconvenience (#1091 review): a container of `x\\` emitted through the
+   * inherited spelling turns the target that follows into more statement text. `objects.ts`
+   * documents the same measurement where it explains why that file's reads take no identifier
+   * position at all.
+   *
+   * The ORDER is the one `literal()` in `objects.ts` uses, and it is forced: doubling the quote
+   * first would leave the backslash that precedes the original quote looking like an escape of
+   * the quote's own doubled pair.
+   */
+  protected override escapeIdentifier(identifier: string): string {
+    const escaped = identifier.replace(/\\/g, "\\\\").replace(/"/g, '""');
+    return `"${escaped}"`;
   }
 
   /**
@@ -662,7 +702,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
 
   private describeConnectFailure(error: unknown): Error {
     const mapped = this.mapClickHouseError(error);
-    if (mapped instanceof AuthenticationError) return mapped;
+    if (mapped instanceof AuthenticationError || mapped instanceof DatabaseConfigError) return mapped;
 
     return new ConnectionError(
       `Failed to connect to ClickHouse: ${mapped.message}`,
@@ -687,7 +727,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
   // Query execution
   // ==========================================================================
 
-  public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
+  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     const transport = this.requireTransport();
     if (params !== undefined && params.length > 0) {
       // The HTTP interface binds named `{name:Type}` parameters only, so there
@@ -706,17 +746,48 @@ export class ClickHouseProvider extends SQLBaseProvider {
           // Both halves of the same promise: max_execution_time bounds the server
           // once it has accepted the statement, timeoutMs bounds everything before
           // and after that - connect, handshake, and the body still arriving.
+          const serverQueryId = queryId === undefined ? undefined : randomUUID();
+          if (queryId !== undefined && serverQueryId !== undefined) this.runningQueryIds.set(queryId, serverQueryId);
           return await transport.query(sql, {
             settings: { max_execution_time: this.deadlineSeconds() },
             timeoutMs: this.queryTimeout,
+            ...(serverQueryId !== undefined && { queryId: serverQueryId }),
           });
         } catch (error) {
           throw this.mapClickHouseError(error, sql);
+        } finally {
+          if (queryId !== undefined) this.runningQueryIds.delete(queryId);
         }
       });
 
       return toQueryResult(result, executionTime);
     });
+  }
+
+  /**
+   * Stop a statement `query()` is running under `queryId` (#1364).
+   *
+   * Aborting the HTTP request does not stop a ClickHouse statement: measured on 26.9.9.28,
+   * `system.processes` still listed it 19 s and 29 s after the editor's Cancel, until it
+   * was killed by hand. `KILL QUERY ... SYNC` answers once the statement has stopped, with
+   * one row per statement it reached (`kill_status` `finished`, measured on 26.9.9.28), and
+   * with an empty body when nothing matched because the statement had already ended. So
+   * true means stopped, and anything else, including `cant_cancel`, is false. The KILL names
+   * the server query id `query()` generated for this run, never the caller's own id.
+   */
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    const serverQueryId = this.runningQueryIds.get(queryId);
+    if (serverQueryId === undefined) return false;
+    const transport = this.requireTransport();
+    try {
+      const { rows } = await transport.query(`KILL QUERY WHERE query_id = ${literal(serverQueryId)} SYNC`, {
+        timeoutMs: this.queryTimeout,
+      });
+      return rows.some((row) => row.kill_status === "finished");
+    } catch (error) {
+      this.logError("cancelQuery", error);
+      return false;
+    }
   }
 
   /**
@@ -1059,10 +1130,10 @@ export class ClickHouseProvider extends SQLBaseProvider {
   // Maintenance
   // ==========================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     const transport = this.requireTransport();
     const { result, executionTime } = await this.measureExecution(() =>
-      this.guarded(() => this.dispatchMaintenance(transport, type, target)),
+      this.guarded(() => this.dispatchMaintenance(transport, type, target, container)),
     );
 
     return { ...result, executionTime };
@@ -1072,15 +1143,16 @@ export class ClickHouseProvider extends SQLBaseProvider {
     transport: ClickHouseTransport,
     type: MaintenanceType,
     target?: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
     switch (type) {
       case "optimize":
-        return this.optimizeTable(transport, this.requireTarget(type, target));
+        return this.optimizeTable(transport, this.requireTarget(type, target), container);
       // No target is legitimate here, unlike optimize: MaintenanceModal's global
       // Analyze button sends none, and a database's parts are as well defined as a
       // table's. Demanding one made a control the UI always offers always fail.
       case "analyze":
-        return this.describeParts(transport, target);
+        return this.describeParts(transport, target, container);
       case "kill":
         return this.cancelQueryById(transport, this.requireTarget(type, target));
     }
@@ -1100,7 +1172,13 @@ export class ClickHouseProvider extends SQLBaseProvider {
     return target;
   }
 
-  private qualify(target: string): string {
+  private qualify(target: string, container?: string): string {
+    // A caller-supplied container removes the dot ambiguity that `splitTarget` documents
+    // below: `database.table` cannot be told apart from a name that contains a dot, while a
+    // container is already the database on its own.
+    if (container) {
+      return `${this.escapeIdentifier(container)}.${this.escapeIdentifier(target)}`;
+    }
     const [database, table] = splitTarget(target, this.pinnedDatabase);
     return `${this.escapeIdentifier(database)}.${this.escapeIdentifier(table)}`;
   }
@@ -1113,8 +1191,9 @@ export class ClickHouseProvider extends SQLBaseProvider {
   private async optimizeTable(
     transport: ClickHouseTransport,
     target: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    await transport.query(`OPTIMIZE TABLE ${this.qualify(target)} FINAL`);
+    await transport.query(`OPTIMIZE TABLE ${this.qualify(target, container)} FINAL`);
     return { success: true, message: `Optimized ${target}` };
   }
 
@@ -1127,10 +1206,16 @@ export class ClickHouseProvider extends SQLBaseProvider {
   private async describeParts(
     transport: ClickHouseTransport,
     target?: string,
+    container?: string,
   ): Promise<Omit<MaintenanceResult, "executionTime">> {
-    // Without a target the scope is the whole pinned database, which is what the
-    // global Analyze button asks for.
-    const [database, table] = target ? splitTarget(target, this.pinnedDatabase) : [this.pinnedDatabase, undefined];
+    // Without a target the scope is the whole pinned database, which is what the global
+    // Analyze button asks for. A container states the database outright, so the name is not
+    // split to recover one; without a container the old reading stands.
+    const [database, table] = container
+      ? [container, target]
+      : target
+        ? splitTarget(target, this.pinnedDatabase)
+        : [this.pinnedDatabase, undefined];
     const scope = target ?? database;
     const where = table
       ? `database = ${literal(database)} AND table = ${literal(table)}`

@@ -85,7 +85,7 @@ const STATEMENT = "SELECT count(*) FROM orders";
 
 const capabilitiesFor = (
   queryLanguage: ProviderCapabilities["queryLanguage"],
-  queryDialect?: "libredb" | "redis",
+  queryDialect?: "libredb" | "redis" | "kafka" | "etcd" | "milvus" | "qdrant" | "oxia",
 ): ProviderCapabilities => ({
   queryLanguage,
   supportsExplain: false,
@@ -106,6 +106,7 @@ function planTimeline(options: {
   readonly guardApplicable?: boolean;
   readonly guardViolation?: "NON_READ_STATEMENT" | "MULTIPLE_STATEMENTS";
   readonly identifiers: Parameters<typeof draftEvent>[0]["identifiers"];
+  readonly language?: Parameters<typeof draftEvent>[0]["language"];
   readonly prose?: string;
   /** The run's grounding: another capture entry, or `null` for a run that captured nothing. */
   readonly capture?: AgentLedgerEntry | null;
@@ -129,6 +130,19 @@ function draftEvent(options: {
     | { readonly kind: "checked"; readonly unknownTables: readonly string[] }
     | { readonly kind: "no-inventory" }
     | { readonly kind: "not-applicable" };
+  /** The editor language the server recorded with the draft; absent, as a ledger written before it. */
+  readonly language?:
+    | "sql"
+    | "json"
+    | "libredb"
+    | "redis"
+    | "promql"
+    | "etcd"
+    | "graph-cypher"
+    | "milvus"
+    | "qdrant"
+    | "influxql"
+    | "oxia";
 }): AgentLedgerEntry {
   return event({
     kind: "plan-statement-drafted",
@@ -136,6 +150,7 @@ function draftEvent(options: {
     sql: options.sql ?? STATEMENT,
     dialect: "postgres",
     readOnly: options.readOnly,
+    ...(options.language === undefined ? {} : { language: options.language }),
     ...(options.guardApplicable === undefined ? {} : { guardApplicable: options.guardApplicable }),
     ...(options.guardViolation === undefined ? {} : { guardViolation: options.guardViolation }),
     identifiers: options.identifiers,
@@ -264,6 +279,229 @@ describe("AnswerCard — a plan run's statement", () => {
     expect(sqlBlock.className).not.toContain("border-hue-indigo/40");
   });
 
+  test("tints a Kafka read request as JSON, the mode its editor tab renders in (#1088)", () => {
+    // Correct as is: the request is JSON, typed in a `kafka` tab that renders in Monaco's `json`
+    // mode, so the draft takes JSON's accent. No guard here reads it, as for PromQL.
+    const kafkaDraft = planTimeline({
+      sql: '{"topic": "orders", "from": "latest", "limit": 50}',
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const kafka = render(<AnswerCard timeline={kafkaDraft} capabilities={capabilitiesFor("json", "kafka")} />);
+    const block = kafka.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("json");
+    expect(block.className).toContain("border-hue-cyan/40");
+    cleanup();
+
+    // The control: another JSON dialect keeps its own accent, so the class above is Kafka's reading
+    // and not every dialect's.
+    const redis = render(<AnswerCard timeline={kafkaDraft} capabilities={capabilitiesFor("json", "redis")} />);
+    const redisBlock = redis.getByTestId("agent-answer-statement");
+    expect(redisBlock.getAttribute("data-language")).toBe("redis");
+    expect(redisBlock.className).not.toContain("border-hue-cyan/40");
+  });
+
+  test("tints an etcd command in the etcd language its tab renders in, in an accent of its own (#1089)", () => {
+    // No guard here reads an etcdctl command either (`validatePlanStatement` declines it), so the draft
+    // is shown beside the "not checked" chip, as a PromQL one is.
+    const etcdDraft = planTimeline({
+      sql: "get /app/config/ --prefix --limit=50",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const etcd = render(<AnswerCard timeline={etcdDraft} capabilities={capabilitiesFor("json", "etcd")} />);
+    const block = etcd.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("etcd");
+    expect(block.className).toContain("border-hue-sky/40");
+    cleanup();
+
+    // The controls: SQL's blue and JSON's cyan are not it, so the class above is etcd's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+    ] as const) {
+      const other = render(<AnswerCard timeline={etcdDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-sky/40");
+      cleanup();
+    }
+  });
+
+  test("tints a Cypher read in the graph-cypher language its tab renders in, in an accent of its own (Neo4j spec 6.5)", () => {
+    // No guard here reads Cypher (`validatePlanStatement` declines it), so the draft is shown beside the
+    // "not checked" chip, as a PromQL or etcd one is.
+    const cypherDraft = planTimeline({
+      sql: "MATCH (n:`Person`) RETURN n LIMIT 100",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const cypher = render(<AnswerCard timeline={cypherDraft} capabilities={capabilitiesFor("cypher")} />);
+    const block = cypher.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("graph-cypher");
+    expect(block.className).toContain("border-hue-purple/40");
+    cleanup();
+
+    // The ledger's recorded language reaches the same accent when the rail has no capabilities.
+    const recorded = render(
+      <AnswerCard
+        timeline={planTimeline({
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "graph-cypher",
+        })}
+      />,
+    );
+    expect(recorded.getByTestId("agent-answer-statement").className).toContain("border-hue-purple/40");
+    cleanup();
+
+    // The controls: every other language's accent is not it, so the class above is Cypher's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["promql", undefined],
+      ["json", "redis"],
+      ["json", "libredb"],
+      ["json", "etcd"],
+    ] as const) {
+      const other = render(<AnswerCard timeline={cypherDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-purple/40");
+      cleanup();
+    }
+  });
+
+  test("tints a Milvus request in the milvus language its tab renders in, in an accent of its own (vector-family spec 5.7)", () => {
+    // No guard here reads a Milvus request either, so the draft is shown beside the "not checked" chip.
+    const milvusDraft = planTimeline({
+      sql: 'POST /v2/vectordb/entities/query\n{"collectionName": "docs_int64", "filter": "seq > 1", "limit": 5}',
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const milvus = render(<AnswerCard timeline={milvusDraft} capabilities={capabilitiesFor("json", "milvus")} />);
+    const block = milvus.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("milvus");
+    expect(block.className).toContain("border-hue-teal/40");
+    cleanup();
+
+    // The controls: SQL's blue, JSON's cyan, etcd's sky and Qdrant's pink are not it, so the class above is Milvus's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["json", "etcd"],
+      ["json", "qdrant"],
+    ] as const) {
+      const other = render(<AnswerCard timeline={milvusDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-teal/40");
+      cleanup();
+    }
+  });
+
+  test("tints a Qdrant request in the qdrant language its tab renders in, in an accent of its own (vector-family spec 6.7)", () => {
+    // No guard here reads a Qdrant request (`validatePlanStatement` declines it), so the draft is shown beside the
+    // "not checked" chip, as a PromQL or etcd one is.
+    const qdrantDraft = planTimeline({
+      sql: 'POST /collections/docs/points/scroll\n{"limit": 5, "with_payload": true}',
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const qdrant = render(<AnswerCard timeline={qdrantDraft} capabilities={capabilitiesFor("json", "qdrant")} />);
+    const block = qdrant.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("qdrant");
+    expect(block.className).toContain("border-hue-pink/40");
+    cleanup();
+
+    // The controls: SQL's blue, JSON's cyan and etcd's sky are not it, so the class above is Qdrant's own.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["json", "etcd"],
+    ] as const) {
+      const other = render(<AnswerCard timeline={qdrantDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-pink/40");
+      cleanup();
+    }
+  });
+
+  test("tints an InfluxQL read in the influxql language its tab renders in, in green (InfluxDB spec I12, R11)", () => {
+    // No guard here reads InfluxQL (`validatePlanStatement` declines it), so the draft always stands beside the amber
+    // "not checked" chip and never beside emerald's `checked` one, which is why green, emerald's neighbour, is safe.
+    // Read from the language the server recorded, as the rail renders the card with no capabilities.
+    const influxqlDraft = (
+      language: "influxql" | "sql" | "promql" | "graph-cypher" | "etcd" | "milvus" | "qdrant" | "oxia",
+    ) =>
+      planTimeline({
+        sql: 'SELECT "temp" FROM "home" WHERE time > now() - 1h ORDER BY time DESC',
+        readOnly: false,
+        guardApplicable: false,
+        identifiers: { kind: "not-applicable" },
+        language,
+      });
+    const influxql = render(<AnswerCard timeline={influxqlDraft("influxql")} />);
+    const block = influxql.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("influxql");
+    expect(block.className).toContain("border-hue-green/40");
+    cleanup();
+
+    // The controls: every other recorded language's accent is not it, so the class above is InfluxQL's own.
+    for (const language of ["sql", "promql", "graph-cypher", "etcd", "milvus", "qdrant", "oxia"] as const) {
+      const other = render(<AnswerCard timeline={influxqlDraft(language)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-green/40");
+      cleanup();
+    }
+  });
+
+  test("tints an Oxia command in the oxia language its tab renders in, in purple's -alt step (SB3-3.3)", () => {
+    // No guard here reads an Oxia command, so the draft is shown beside the "not checked" chip, as a Qdrant one is.
+    const oxiaDraft = planTimeline({
+      sql: "list --prefix /admin/policies/ --limit 50",
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    const oxia = render(<AnswerCard timeline={oxiaDraft} capabilities={capabilitiesFor("json", "oxia")} />);
+    const block = oxia.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("oxia");
+    expect(block.className).toContain("border-hue-purple-alt/40");
+    cleanup();
+
+    // The ledger's own record of the language tints it the same way when no capabilities are at hand.
+    const recorded = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: "get /admin/policies/public",
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "oxia",
+        })}
+      />,
+    );
+    expect(recorded.getByTestId("agent-answer-statement").className).toContain("border-hue-purple-alt/40");
+    cleanup();
+
+    // The controls: no other language's block carries it, Cypher's purple base and InfluxQL's green included.
+    for (const [language, dialect] of [
+      ["sql", undefined],
+      ["json", undefined],
+      ["promql", undefined],
+      ["cypher", undefined],
+      ["json", "redis"],
+      ["json", "libredb"],
+      ["json", "etcd"],
+      ["json", "milvus"],
+      ["json", "qdrant"],
+      ["influxql", undefined],
+    ] as const) {
+      const other = render(<AnswerCard timeline={oxiaDraft} capabilities={capabilitiesFor(language, dialect)} />);
+      expect(other.getByTestId("agent-answer-statement").className).not.toContain("border-hue-purple-alt/40");
+      cleanup();
+    }
+  });
+
   test("with no capabilities to hand, the guard's reach decides the language rather than a default of SQL", () => {
     const read = render(<AnswerCard timeline={checkedTimeline()} />);
     expect(read.getByTestId("agent-answer-statement").getAttribute("data-language")).toBe("sql");
@@ -276,6 +514,42 @@ describe("AnswerCard — a plan run's statement", () => {
       />,
     );
     expect(unexamined.getByTestId("agent-answer-statement").getAttribute("data-language")).toBe("unknown");
+  });
+
+  test("with no capabilities to hand, the language the server recorded with the draft tints it (#1089)", () => {
+    // How the rail renders the card: no capabilities, so before the server recorded the language
+    // every etcd draft was "unknown" and the sky accent never rendered in the product (Task 27).
+    const etcd = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: "get /app/config/ --prefix --limit=50",
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "etcd",
+        })}
+      />,
+    );
+    const block = etcd.getByTestId("agent-answer-statement");
+    expect(block.getAttribute("data-language")).toBe("etcd");
+    expect(block.className).toContain("border-hue-sky/40");
+    cleanup();
+
+    // The control: another recorded language takes its own accent, so the reading is the record's.
+    const promql = render(
+      <AnswerCard
+        timeline={planTimeline({
+          sql: "rate(http_requests_total[5m])",
+          readOnly: false,
+          guardApplicable: false,
+          identifiers: { kind: "not-applicable" },
+          language: "promql",
+        })}
+      />,
+    );
+    const promqlBlock = promql.getByTestId("agent-answer-statement");
+    expect(promqlBlock.getAttribute("data-language")).toBe("promql");
+    expect(promqlBlock.className).toContain("border-hue-indigo/40");
   });
 
   test("keeps the accessible name the guard's marks travel in", () => {

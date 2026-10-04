@@ -52,7 +52,7 @@
  * PROFILE is the one that has no kind-level
  * declaration behind it - profiling needs an ADDRESSABLE object, while every other relation
  * action here needs only a pattern - so it reads the same engine-wide flag the flat menu
- * read. Exactly two providers set it, `keyvalue/redis.ts` and `embedded/libredb.ts`, and it
+ * read. Exactly three providers set it, `keyvalue/redis.ts`, `keyvalue/etcd/index.ts` and `embedded/libredb.ts`, and it
  * is read `=== true` here for the reason its own docblock gives: absent means ordinary
  * objects. Standing ruling 4 against #789 Tasks 20 and 23.
  */
@@ -68,10 +68,12 @@ import {
   Search,
   Trash2,
   WandSparkles,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 import { findKind, kindAcceptsRowWrites, kindHasSource } from "@/lib/db/object-kinds";
 import {
+  declaredEntityOperations,
   maintenanceControl,
   offersCodeGeneration,
   offersColumnProfiling,
@@ -230,7 +232,9 @@ function objectActions(
 
   const maintenance = handlers.onOpenMaintenance;
   if (isRelation && maintenance !== undefined) {
-    const analyze = maintenanceControl(capabilities, "analyze", "perEntity");
+    // The row's KIND is asked as well: an operation may run on some relation kinds and not
+    // others, Db2's RUNSTATS refusing a view (#786).
+    const analyze = maintenanceControl(capabilities, "analyze", "perEntity", kind.id);
     if (analyze.offered) {
       actions.push({
         id: "maintenance-analyze",
@@ -242,12 +246,22 @@ function objectActions(
     // The redirect, not the literal `vacuum`: four providers point that wording at an
     // operation that is not a vacuum, and the page this item opens follows the same
     // redirect, so reading the literal here would withhold an item the destination has.
-    const vacuum = maintenanceControl(capabilities, labels?.vacuumActionOperation ?? "vacuum", "perEntity");
+    const vacuum = maintenanceControl(capabilities, labels?.vacuumActionOperation ?? "vacuum", "perEntity", kind.id);
     if (vacuum.offered) {
       actions.push({
         id: "maintenance-vacuum",
         label: vacuum.label ?? labels?.vacuumAction ?? `Vacuum ${kind.label}`,
         icon: Trash2,
+        run: () => maintenance(object),
+      });
+    }
+    // Every declared operation outside `MaintenanceType` that runs on one object, in declaration order and in the
+    // provider's words (spec 3.11). Each opens the same page on the same row as the two items above.
+    for (const operation of declaredEntityOperations(capabilities, kind.id)) {
+      actions.push({
+        id: `maintenance-${operation.type}`,
+        label: operation.label,
+        icon: Wrench,
         run: () => maintenance(object),
       });
     }
@@ -319,6 +333,11 @@ function objectActions(
  * folder is a relation folder that declares no row writes, and an item there would open a
  * modal that cannot produce a view.
  *
+ * And the engine's own `supportsCreateTable`, the flag the flat explorer already reads: a kind
+ * that takes row writes says nothing about whether `CreateTableModal` has a dialect for the
+ * engine. Db2 is the case that showed it, with writable tables and no dialect row, where the
+ * item opened the form on PostgreSQL DDL.
+ *
  * `supportsInlineRowEdit` deliberately does NOT gate this one: that flag is the results
  * grid's inline editor, and the three engines that declare it false still create tables.
  */
@@ -328,6 +347,12 @@ function folderActions(
   handlers: TreeRowActionHandlers,
 ): readonly TreeRowAction[] {
   const create = handlers.onCreateObject;
-  if (create === undefined || kind.role !== "relation" || !kindAcceptsRowWrites(capabilities, kind.id)) return [];
+  if (
+    create === undefined ||
+    !capabilities.supportsCreateTable ||
+    kind.role !== "relation" ||
+    !kindAcceptsRowWrites(capabilities, kind.id)
+  )
+    return [];
   return [{ id: "create", label: `Create ${kind.label}`, icon: Plus, run: create }];
 }

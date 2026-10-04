@@ -1,6 +1,14 @@
 import { describe, test, expect, afterEach, spyOn } from "bun:test";
+import { createHmac } from "node:crypto";
 import { AuthConfigError } from "@/lib/auth-errors";
-import { getJwtSecret, JWT_SECRET_MISSING_MESSAGE, JWT_SECRET_TOO_SHORT_MESSAGE } from "@/lib/config/auth-env";
+import { SignJWT } from "jose";
+import { verifyJWT } from "@/lib/auth";
+import {
+  derivedSigningKey,
+  getJwtSecret,
+  JWT_SECRET_MISSING_MESSAGE,
+  JWT_SECRET_TOO_SHORT_MESSAGE,
+} from "@/lib/config/auth-env";
 
 // getJwtSecret is stateless (no memoization), so every test sees a fresh read of
 // process.env. Consumers (auth.ts, proxy.ts) layer their own lazy caches on top.
@@ -76,5 +84,55 @@ describe("config/auth-env getJwtSecret", () => {
     expect(() => getJwtSecret({ missingMessage: "custom missing-secret message" })).toThrow(
       "custom missing-secret message",
     );
+  });
+});
+
+describe("config/auth-env derivedSigningKey", () => {
+  const origSecret = process.env.JWT_SECRET;
+
+  afterEach(() => {
+    if (origSecret === undefined) delete (process.env as Record<string, string>).JWT_SECRET;
+    else process.env.JWT_SECRET = origSecret;
+  });
+
+  test("a derived key differs from the raw secret and differs per label", async () => {
+    process.env.JWT_SECRET = "a-valid-secret-that-is-32-chars!";
+    const a = await derivedSigningKey("a");
+    const b = await derivedSigningKey("b");
+
+    expect(a.length).toBe(32);
+    expect(b.length).toBe(32);
+    expect(Buffer.from(a).equals(Buffer.from(b))).toBe(false);
+    expect(Buffer.from(a).equals(Buffer.from(getJwtSecret()))).toBe(false);
+    expect(Buffer.from(await derivedSigningKey("a")).equals(Buffer.from(a))).toBe(true);
+  });
+
+  test("a derived key is HMAC-SHA256 of the label under JWT_SECRET", async () => {
+    // The derivation is fixed, not just deterministic: moving an existing key onto it must keep its tokens valid.
+    const secret = "a-valid-secret-that-is-32-chars!";
+    process.env.JWT_SECRET = secret;
+    for (const label of ["libredb.passkey.ceremony.v1", "a"]) {
+      const expected = createHmac("sha256", secret).update(label).digest();
+      // oxlint-disable-next-line no-await-in-loop -- two labels, checked in turn.
+      expect(Buffer.from(await derivedSigningKey(label)).equals(expected)).toBe(true);
+    }
+  });
+
+  test("a derived key honours the JWT_SECRET options and refuses a missing secret without the fallback", async () => {
+    delete (process.env as Record<string, string>).JWT_SECRET;
+    await expect(
+      derivedSigningKey("a", { allowDevFallback: false, missingMessage: "custom missing-secret message" }),
+    ).rejects.toThrow("custom missing-secret message");
+  });
+
+  test("a token signed with a derived key does not verify as a session", async () => {
+    process.env.JWT_SECRET = "a-valid-secret-that-is-32-chars!";
+    const token = await new SignJWT({ role: "admin", username: "admin" })
+      .setProtectedHeader({ alg: "HS256" })
+      .setIssuedAt()
+      .setExpirationTime("1h")
+      .sign(await derivedSigningKey("libredb.passkey.ceremony.v1"));
+
+    expect(await verifyJWT(token)).toBeNull();
   });
 });

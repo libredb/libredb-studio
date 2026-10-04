@@ -1,0 +1,31 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant-auth",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.325Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/plain with jwt-global-manage",
+    "op": "get_collection",
+    "credential": "jwt-global-manage",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/collections/plain",
+      "headers": {
+        "api-key": "<token>"
+      },
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 830,
+    "body": "{\"result\":{\"status\":\"green\",\"optimizer_status\":\"ok\",\"indexed_vectors_count\":0,\"points_count\":300,\"segments_count\":2,\"config\":{\"params\":{\"vectors\":{\"size\":4,\"distance\":\"Dot\"},\"shard_number\":1,\"replication_factor\":1,\"write_consistency_factor\":1,\"on_disk_payload\":true},\"hnsw_config\":{\"m\":16,\"ef_construct\":100,\"full_scan_threshold\":10000,\"max_indexing_threads\":0,\"on_disk\":false},\"optimizer_config\":{\"deleted_threshold\":0.2,\"vacuum_min_vector_number\":1000,\"default_segment_number\":0,\"max_segment_size\":null,\"memmap_threshold\":null,\"indexing_threshold\":10000,\"flush_interval_sec\":5,\"max_optimization_threads\":null,\"prevent_unoptimized\":null},\"wal_config\":{\"wal_capacity_mb\":32,\"wal_segments_ahead\":0,\"wal_retain_closed\":1},\"quantization_config\":null},\"payload_schema\":{},\"update_queue\":{\"length\":0}},\"status\":\"ok\",\"time\":0.000068301}"
+  }
+}

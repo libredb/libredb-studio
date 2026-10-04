@@ -1345,7 +1345,10 @@ describe("monitoring", () => {
     expect(stats.map((stat) => [stat.tableName, stat.rowCount])).toEqual(
       TSDB_TOP.data.seriesCountByMetricName.map((stat) => [stat.name, stat.value]),
     );
-    expect(requestsTo("/api/v1/status/tsdb").at(-1)?.url.searchParams.get("limit")).toBe(String(TSDB_TOP_METRICS));
+    const sent = requestsTo("/api/v1/status/tsdb").at(-1)?.url.searchParams;
+    expect(sent?.get("limit")).toBe(String(TSDB_TOP_METRICS));
+    // VictoriaMetrics reads its cut from topN and ignores limit; Prometheus ignores topN.
+    expect(sent?.get("topN")).toBe(String(TSDB_TOP_METRICS));
     await provider.disconnect();
   });
 
@@ -1411,7 +1414,12 @@ function vmCaptureName(request: Sent): string | undefined {
       if (searchParams.get("state") !== "active") return undefined;
       return pool === null ? "targets-active" : pool === "studio-twin" ? "targets-one-pool" : undefined;
     case "GET /api/v1/status/tsdb":
-      return searchParams.get("limit") === String(TSDB_TOP_METRICS) ? "tsdb-status-50" : undefined;
+      // Only the read that names the cut both ways is answered: VictoriaMetrics cuts at topN, and a read
+      // with limit alone gets its default ten, which `tsdb-status-50` recorded.
+      return searchParams.get("limit") === String(TSDB_TOP_METRICS) &&
+        searchParams.get("topN") === String(TSDB_TOP_METRICS)
+        ? "tsdb-status-50-topn"
+        : undefined;
     default:
       return undefined;
   }
@@ -1444,10 +1452,13 @@ describe("a relative whose answers leave descriptions out, end to end (VictoriaM
   });
 
   test("the Tables tab lists the server's series counts by metric, from a TSDB status with no head statistics", async () => {
-    const tsdb = captureVmBody<Envelope<TsdbData & { readonly headStats?: unknown }>>("tsdb-status-50");
+    const tsdb = captureVmBody<Envelope<TsdbData & { readonly headStats?: unknown }>>("tsdb-status-50-topn");
     // The control: the server ranked its metrics, and sent no head block statistics beside them.
     expect(tsdb.data.seriesCountByMetricName.length).toBeGreaterThan(0);
     expect(tsdb.data.headStats).toBeUndefined();
+    // topN is what lifts the cut: with limit alone the same server answered its default ten.
+    expect(captureVmBody<Envelope<TsdbData>>("tsdb-status-50").data.seriesCountByMetricName).toHaveLength(10);
+    expect(tsdb.data.seriesCountByMetricName).toHaveLength(TSDB_TOP_METRICS);
     const provider = await connected();
 
     const stats = await provider.getTableStats();

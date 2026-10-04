@@ -86,7 +86,7 @@ RUN bun install --frozen-lockfile
 # step most sensitive to the toolchain, and pinning it keeps this file's output
 # a function of the lockfile rather than of Alpine's current package index.
 # The RUNTIME below is a different Node on purpose - see that stage.
-FROM node:26.9.0-alpine3.23 AS builder
+FROM node:26.10.0-alpine3.23 AS builder
 WORKDIR /usr/src/app
 RUN apk add --no-cache bash
 COPY --from=deps /usr/src/app/node_modules ./node_modules
@@ -119,6 +119,12 @@ RUN node scripts/copy-monaco.mjs && npx next build
 # the fix: 4.7 MB of a 55 MB image, and the published Debian image carries the
 # same duplication today.
 #
+# db2-node (#786) stays, as every engine but DuckDB does. It is one package
+# with all eight prebuilt addons at its root, traced into the standalone tree by
+# its static require literals and copied by no explicit COPY, so that tree is
+# pruned to the musl addon for $ARCH (about 2.4 MB compressed) and the builder's
+# own copy, which never reaches the runner, goes whole.
+#
 # `test` lines, not decoration: a glob that deleted the payload this image
 # actually loads would otherwise surface as a provider failure long after the
 # build went green.
@@ -131,6 +137,10 @@ RUN set -eux; \
     ARCH="$(node -p 'process.arch')"; \
     find node_modules/better-sqlite3/prebuilds -maxdepth 1 -type f -name '*.node' ! -name "linuxmusl-${ARCH}.node" -delete; \
     rm -rf .next/standalone/node_modules/better-sqlite3 .next/standalone/node_modules/@libredb; \
+    find .next/standalone/node_modules/db2-node -maxdepth 1 -type f -name 'db2-node.*.node' ! -name "db2-node.linux-${ARCH}-musl.node" -delete; \
+    rm -rf node_modules/db2-node; \
+    test -f ".next/standalone/node_modules/db2-node/db2-node.linux-${ARCH}-musl.node"; \
+    test "$(find .next/standalone/node_modules/db2-node -name '*.node' | wc -l)" -eq 1; \
     rm -rf public/screenshots .next/standalone/public/screenshots; \
     bash scripts/lib/prune-standalone-payload.sh .next/standalone; \
     test -f "node_modules/better-sqlite3/prebuilds/linuxmusl-${ARCH}.node"; \
@@ -166,7 +176,7 @@ RUN set -eux; \
 # su-exec (20 KB, main) rather than gosu (3 MB, community), exposed under the
 # name the shared docker-entrypoint.sh calls: identical CLI for the
 # `gosu user:group cmd` form, one entrypoint serving all three variants.
-FROM alpine:3.23 AS runner
+FROM alpine:3.24 AS runner
 WORKDIR /app
 
 RUN set -eux; \
@@ -193,6 +203,14 @@ COPY --chown=nextjs:nodejs --from=builder /usr/src/app/.next/static ./.next/stat
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/@libredb/libredb ./node_modules/@libredb/libredb
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/seed-assets ./seed-assets
+# Notices for the Rust crates compiled into db2-node's addons, which its npm
+# tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
+COPY --chown=nextjs:nodejs --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt
+
+# The db2-node load probe belongs here and not in the builder: this runtime is
+# Alpine's own nodejs, not the builder's node image, and the x64 musl addon
+# NEEDS libgcc_s.so.1, which only a require under this runtime proves present.
+RUN node -e "require('/app/node_modules/db2-node')"
 
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY docker/bind-address.mjs /usr/local/lib/libredb-studio/bind-address.mjs

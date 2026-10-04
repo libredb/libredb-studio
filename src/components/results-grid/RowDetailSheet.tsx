@@ -8,8 +8,11 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { type MaskingPattern, maskValueByPattern } from "@/lib/data-masking";
 import { writeToClipboard } from "@/components/copy-button";
+import { binaryCellsAsHex, jsonText } from "@/lib/export/json";
+import type { VectorColumn } from "@/lib/db/vector/types";
 import { classifyValue } from "./renderers/classify";
 import { getRenderer } from "./renderers/registry";
+import { renderContextFor } from "./utils";
 
 export interface RowDetailSheetProps {
   row: Record<string, unknown>;
@@ -20,6 +23,8 @@ export interface RowDetailSheetProps {
   maskingActive?: boolean;
   sensitiveColumns?: Map<string, MaskingPattern>;
   allowReveal?: boolean;
+  /** The result's vector columns (`QueryResult.vectorColumns`), so a field of one shows its header and whole value. */
+  vectorColumns?: Readonly<Record<string, VectorColumn>>;
 }
 
 export function RowDetailSheet({
@@ -31,6 +36,7 @@ export function RowDetailSheet({
   maskingActive,
   sensitiveColumns,
   allowReveal,
+  vectorColumns,
 }: RowDetailSheetProps) {
   /**
    * Which copy just ran, and whether it actually happened (B43). A bare field name
@@ -69,10 +75,11 @@ export function RowDetailSheet({
           isMasked: true,
         };
       }
-      const detail = getRenderer(classifyValue(value)).renderDetail(value);
+      const context = renderContextFor(vectorColumns, field);
+      const detail = getRenderer(classifyValue(value, context)).renderDetail(value, context);
       return { ...detail, isMasked: false };
     },
-    [maskingActive, sensitiveColumns, revealedFields],
+    [maskingActive, sensitiveColumns, revealedFields, vectorColumns],
   );
 
   /** The outcome is reported only once the write has one, never alongside starting it. */
@@ -83,9 +90,20 @@ export function RowDetailSheet({
     });
   };
 
+  /**
+   * What a copy of one field writes: the mask when the field is masked, otherwise the renderer's copy form where it
+   * has one, because a vector's detail is a header line over the value and only the value is search data. Every
+   * other kind copies the detail text, as it always did.
+   */
+  const copyTextOf = (field: string, value: unknown): string => {
+    const shown = getDisplayValue(field, value);
+    if (shown.isMasked) return shown.text;
+    const context = renderContextFor(vectorColumns, field);
+    return getRenderer(classifyValue(value, context)).renderCopy?.(value, context) ?? shown.text;
+  };
+
   const copyValue = (field: string, value: unknown) => {
-    const { text } = getDisplayValue(field, value);
-    copyAndReport(field, text);
+    copyAndReport(field, copyTextOf(field, value));
   };
 
   const copyAllAsJson = () => {
@@ -93,12 +111,13 @@ export function RowDetailSheet({
     if (maskingActive && sensitiveColumns && sensitiveColumns.size > 0) {
       const maskedRow: Record<string, unknown> = {};
       for (const field of fields) {
-        const { text } = getDisplayValue(field, row[field]);
-        maskedRow[field] = text;
+        maskedRow[field] = copyTextOf(field, row[field]);
       }
       copyAndReport("__all__", JSON.stringify(maskedRow, null, 2));
     } else {
-      copyAndReport("__all__", JSON.stringify(row, null, 2));
+      // The masked branch above copies each field's display text, which is already the
+      // hex for a binary field; this one has to say so itself (#1381).
+      copyAndReport("__all__", jsonText(binaryCellsAsHex(row), 2));
     }
   };
 

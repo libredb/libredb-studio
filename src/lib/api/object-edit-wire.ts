@@ -131,8 +131,28 @@ function isBoundedText(value: unknown): value is string {
   return typeof value === "string" && value.length <= SOURCE_CHARACTER_LIMIT;
 }
 
+/**
+ * An array in which every SLOT holds a bounded string: a hole holds nothing, so it is refused.
+ *
+ * NOT `value.every(isBoundedText)`, which is what this was: `Array.prototype.every` skips a hole,
+ * so `["get", <hole>, "/app/cfg"]` passed, while `planExecutableLength` spreads the same arrays and
+ * reads the hole as `undefined`. MEASURED at e7674ec8: the three predicates that read a unit then
+ * threw a TypeError instead of answering, and `POST /api/db/objects/edit-plan` answered 500 in
+ * place of its 400. JSON cannot express a hole, so the population is an answer built in memory: a
+ * provider's `buildObjectEdit`, which that route narrows here, or a library caller.
+ *
+ * `for...of` because it reads the elements the spread reads, so this check and that measure cannot
+ * disagree about what the array holds, and because it stops at the first slot that is not a
+ * string: `Array.from(value).every(...)` is as correct, and MEASURED it took 194 ms to copy a
+ * 10,000,000-slot array, two elements and the rest holes, before refusing it, where this loop took
+ * 0.003 ms.
+ */
 function isStringArray(value: unknown): boolean {
-  return Array.isArray(value) && value.every(isBoundedText);
+  if (!Array.isArray(value)) return false;
+  for (const element of value) {
+    if (!isBoundedText(element)) return false;
+  }
+  return true;
 }
 
 /** A 0-based UTF-16 offset into the user's part text: an integer, never negative, never a NaN. */
@@ -272,10 +292,10 @@ function isStep(value: unknown): boolean {
  * (D80).
  *
  * `planExecutableLength` rather than a sum written out here, so the two cannot drift: the command
- * arm counts the name and the argument tokens as well as the payload, and a second copy of that
- * arithmetic would be a second answer to one question. The cast is safe at this call site and
- * nowhere else: every field the function reads has just been proved a string or an array of them
- * by the arm above it.
+ * arm counts the name, the argument tokens and the trailing tokens as well as the payload, and a
+ * second copy of that arithmetic would be a second answer to one question. The cast is safe at this
+ * call site and nowhere else: every field the function reads has just been proved a string or an
+ * array of them by the arm above it.
  *
  * WHY `EDIT_BODY_BYTE_LIMIT` AND NOT `EDIT_PLAN_EXECUTABLE_LIMIT`, which is the constant whose own
  * docblock names this exact quantity. Both edit routes call this predicate FIRST and measure the
@@ -294,7 +314,7 @@ function isStep(value: unknown): boolean {
  * WHAT IT IS AND IS NOT, because an earlier form of this docblock claimed a live uncounted seam and
  * that claim is FALSE in this tree. Every one of the four call sites has a tighter count in front
  * of it, so this predicate cannot answer `false` today:
- * - `edit-apply/route.ts` reads the body through `readBoundedJson` at `EDIT_BODY_BYTE_LIMIT` BYTES
+ * - `edit-apply/route.ts` reads the body through `readObjectRouteBody` at `EDIT_BODY_BYTE_LIMIT` BYTES
  *   before the parse, and the unit is a fragment of that body;
  * - `edit-plan/route.ts` narrows a plan a provider built from text already bounded at
  *   `EDIT_CHARACTER_LIMIT`, and measures the same unit against `EDIT_PLAN_EXECUTABLE_LIMIT` on the
@@ -333,10 +353,16 @@ export function isObjectEditUnitShape(value: unknown): boolean {
     return isWithinTheExecutableBound(value);
   }
   if (value.medium === "command") {
-    if (!hasExactKeys(value, ["medium", "name", "arguments", "payload"])) return false;
+    if (!hasExactKeys(value, ["medium", "name", "arguments", "payload"], ["trailing", "payloadLabel"])) return false;
     if (!isBoundedString(value.name)) return false;
     if (!isStringArray(value.arguments)) return false;
     if (!isStep(value.payload)) return false;
+    // The two optional fields etcd's value edit sets (etcd spec 3.4, 4.5), each held to the rule of
+    // the field it sits beside: the tokens after the payload to the tokens before it, and the label
+    // that names the payload in the preview to the verb. A key present with no value is refused,
+    // as every optional field in this module is, because the key is the claim.
+    if (Object.hasOwn(value, "trailing") && !isStringArray(value.trailing)) return false;
+    if (Object.hasOwn(value, "payloadLabel") && !isBoundedString(value.payloadLabel)) return false;
     return isWithinTheExecutableBound(value);
   }
   return false;

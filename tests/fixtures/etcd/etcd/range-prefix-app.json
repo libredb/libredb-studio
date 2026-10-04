@@ -1,0 +1,118 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.375Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: the prefix /app/, limit 500",
+    "request": {
+      "key": {
+        "$bytes": "L2FwcC8="
+      },
+      "range_end": {
+        "$bytes": "L2FwcDA="
+      },
+      "limit": {
+        "$int64": "500"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2FwcC8="
+      },
+      "range_end": {
+        "$bytes": "L2FwcDA="
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L2FwcC9hL2I="
+        },
+        "create_revision": {
+          "$int64": "13"
+        },
+        "mod_revision": {
+          "$int64": "13"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "bmVzdGVk"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2FwcC9jZmc="
+        },
+        "create_revision": {
+          "$int64": "12"
+        },
+        "mod_revision": {
+          "$int64": "12"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "eyJtb2RlIjoiYmx1ZSJ9"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2FwcC94L3k="
+        },
+        "create_revision": {
+          "$int64": "14"
+        },
+        "mod_revision": {
+          "$int64": "14"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "ZGVlcGVy"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "67"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "3"
+    }
+  }
+}

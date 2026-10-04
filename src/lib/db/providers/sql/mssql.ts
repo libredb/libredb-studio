@@ -5,7 +5,7 @@
 
 import mssql from "mssql";
 import { SQLBaseProvider } from "./sql-base";
-import { mssqlColumnTypes } from "./column-types";
+import { type MssqlColumnMetadata, mssqlColumnTypes } from "./column-types";
 import {
   type DatabaseConnection,
   type QueryResult,
@@ -44,8 +44,10 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   requireSourceKind,
@@ -66,6 +68,18 @@ import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
+
+/**
+ * SQL Server's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const MSSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "mssql",
+  label: "A SQL Server",
+  shapeNames: "label",
+};
 
 /**
  * `SELECT ... ` with `TOP n` spliced in where T-SQL wants it, or `null` when this
@@ -425,7 +439,7 @@ const TRIGGER_KIND = "trigger";
  * stopped highlighting.
  *
  * `sql` and NOT `tsql`. MEASURED in #789: `tsql` is not among the 89 language ids the
- * installed monaco-editor 0.56.0 bundle registers, and neither are `plsql` and `cql`, so
+ * installed monaco-editor 0.57.0 bundle registers, and neither are `plsql` and `cql`, so
  * the one id in the bundle that highlights this dialect is the generic one. T-SQL keywords
  * the generic grammar does not know (`OUTER APPLY`, `MERGE ... OUTPUT`) render as plain
  * identifiers, which is a compromise `docs/providers/mssql.md` records rather than hides.
@@ -1019,28 +1033,7 @@ function requiredSegment(
   return segment;
 }
 
-/**
- * The container paths this engine accepts, outermost first, as segment NAMES.
- *
- * Every prefix of the declared levels, which on a two-level engine means a database alone
- * or a database and a schema. Both are real containers here: the tree only ever draws
- * folders at the deepest level (`src/components/object-tree/flatten.ts`), but
- * `assertContainerDepth` in `src/lib/api/object-route.ts` admits any path down to the
- * declared depth and `assertObjectSurface` reads counts at the OUTER one, so a database
- * holding twelve tables across three schemas is a question with a true answer rather than
- * a caller mistake.
- *
- * The names in the message are the declared LABELS, which is the engine's own word for a
- * person reading a refusal; the code addresses the same segments by `ContainerLevelSpec.id`
- * through `containerSegments()`. The depth behind both is `containerDepth()`, so the check
- * and the sentence it raises cannot disagree.
- */
-function containerShapes(capabilities: ProviderCapabilities): readonly string[][] {
-  const names = declaredLevels(capabilities).map((level) => level.label.toLowerCase());
-  return names.map((_, index) => names.slice(0, index + 1));
-}
-
-/** The shapes above, spelled for a message: `[database] or [database, schema]`. */
+/** A kind's path shapes, spelled for the message in `objectAddress()`. */
 function shapeList(shapes: readonly string[][]): string {
   return shapes.map((shape) => `[${shape.join(", ")}]`).join(" or ");
 }
@@ -1056,13 +1049,7 @@ function containerTarget(
   capabilities: ProviderCapabilities,
   container: readonly string[],
 ): Partial<Record<ContainerLevelSpec["id"], string>> {
-  const shapes = containerShapes(capabilities);
-  if (!shapes.some((shape) => shape.length === container.length)) {
-    throw new QueryError(
-      `A SQL Server container path is ${shapeList(shapes)}, received ${JSON.stringify(container)}`,
-      "mssql",
-    );
-  }
+  assertContainerPathShape(capabilities, container, MSSQL_CONTAINER_PATH_ENGINE);
   return containerSegments(capabilities, container);
 }
 
@@ -1478,6 +1465,81 @@ function byObjectId<T extends BulkRow>(rows: readonly T[]): Map<number, T[]> {
   return grouped;
 }
 
+/**
+ * The declarations whose `Date` is NOT the honest shape of the value (#1132).
+ *
+ * `time` is a time-of-day on an invented 1970-01-01, `date` a calendar day at UTC midnight
+ * and `datetime2` a wall-clock reading with no zone, so an ISO instant reports a moment
+ * none of them holds - and the format cuts a `time(7)` from seven digits to three.
+ * `datetimeoffset` is deliberately absent: it IS an instant, so its ISO shape is right.
+ */
+const ZONELESS_VALUE_DECLARATIONS = new Set(["time", "date", "datetime2"]);
+
+/** Two digits, the width every part of a date or time text carries except the year. */
+function pad2(value: number): string {
+  return value.toString().padStart(2, "0");
+}
+
+/** `2026-09-01` - the calendar day, from the UTC-midnight `Date` the driver reads. */
+function dateText(value: Date): string {
+  return `${value.getUTCFullYear().toString().padStart(4, "0")}-${pad2(value.getUTCMonth() + 1)}-${pad2(value.getUTCDate())}`;
+}
+
+/**
+ * `10:30:00.1234567` - the time-of-day text, carrying the `scale` digits the column declared.
+ *
+ * The driver's `Date` holds the millisecond part and keeps the REST of the seven digits a
+ * `time(7)` can carry beside it, as a non-enumerable `nanosecondsDelta` (`tedious`
+ * `value-parser.js` sets it on every one of these reads), so the fraction is reconstructed
+ * exactly rather than rounded to milliseconds: 123 and 4567, not 1230000.
+ */
+function timeText(value: Date, scale: number | undefined): string {
+  const base = `${pad2(value.getUTCHours())}:${pad2(value.getUTCMinutes())}:${pad2(value.getUTCSeconds())}`;
+  const digits = scale ?? 0;
+  if (digits <= 0) return base;
+  const milliseconds = value.getUTCMilliseconds().toString().padStart(3, "0");
+  const remainder = Math.round(((value as { nanosecondsDelta?: number }).nanosecondsDelta ?? 0) * 1e7)
+    .toString()
+    .padStart(4, "0");
+  return `${base}.${`${milliseconds}${remainder}`.slice(0, digits)}`;
+}
+
+/**
+ * Rewrites, in place, every value whose declaration is one of those, into its text (#1132).
+ *
+ * Keyed on `recordset.columns` - the map `mssqlColumnTypes` reads - because a value cannot
+ * be told from its own shape: `time` and `datetimeoffset` arrive as the same kind of
+ * `Date`, and only the column says which one holds an instant. A result without the map is
+ * left exactly as the driver built it.
+ *
+ * All three query paths call it as the recordset is taken, before anything measures or
+ * shapes the result.
+ */
+/** A result set's column names: its declared columns, or the first row's keys without them. */
+function mssqlFields(recordset: Record<string, unknown>[] & { columns?: object }): string[] {
+  if (recordset.columns) return Object.keys(recordset.columns);
+  return recordset.length > 0 ? Object.keys(recordset[0]) : [];
+}
+
+function convertZonelessValues(recordset: Record<string, unknown>[]): void {
+  const columns = (recordset as { columns?: Record<string, MssqlColumnMetadata> }).columns;
+  if (!columns) return;
+  for (const [name, column] of Object.entries(columns)) {
+    const declaration = (column.type as { declaration?: unknown } | undefined)?.declaration;
+    if (typeof declaration !== "string" || !ZONELESS_VALUE_DECLARATIONS.has(declaration)) continue;
+    for (const row of recordset) {
+      const value = row[name];
+      if (!(value instanceof Date)) continue;
+      row[name] =
+        declaration === "date"
+          ? dateText(value)
+          : declaration === "time"
+            ? timeText(value, column.scale)
+            : `${dateText(value)} ${timeText(value, column.scale)}`;
+    }
+  }
+}
+
 // ============================================================================
 // MSSQL Provider
 // ============================================================================
@@ -1547,6 +1609,9 @@ export class MSSQLProvider extends SQLBaseProvider {
         { id: "catalog", label: "Database", labelPlural: "Databases" },
         { id: "schema", label: "Schema", labelPlural: "Schemas" },
       ],
+      // A database alone is an address as well as a database and a schema, so every depth up to the
+      // declaration is accepted and a longer path is refused (`acceptedContainerShapes()`, #1147).
+      containerPathShapes: "prefixes",
       // Seven kinds. Six are `sys.objects.type` spellings (`MSSQL_OBJECT_TYPES`) and the
       // seventh, the trigger, is read from `sys.triggers` because `sys.objects` holds no
       // DDL trigger at all (#789).
@@ -1825,18 +1890,33 @@ export class MSSQLProvider extends SQLBaseProvider {
       });
 
       const recordset = result.recordset || [];
-      const fields = recordset.columns
-        ? Object.keys(recordset.columns)
-        : recordset.length > 0
-          ? Object.keys(recordset[0])
-          : [];
+      convertZonelessValues(recordset);
+
+      // A text with several result sets carries all of them (#1312). The editor sends a
+      // T-SQL batch as one request, so `SELECT * FROM a; SELECT * FROM b` reaches here whole,
+      // and the multi-statement route shows the last one with rows, as it does across a
+      // script's statements. `rows` stays the FIRST set, which is what `EXEC sp_help` and
+      // every caller before batches were shown.
+      const recordsets = (result.recordsets ?? []) as (typeof result.recordset)[];
+      const resultSets =
+        recordsets.length > 1
+          ? recordsets.map((set) => {
+              if (set !== recordset) convertZonelessValues(set);
+              return {
+                rows: set as Record<string, unknown>[],
+                fields: mssqlFields(set),
+                ...mssqlColumnTypes(set.columns),
+              };
+            })
+          : undefined;
 
       return {
         rows: recordset as Record<string, unknown>[],
-        fields,
+        fields: mssqlFields(recordset),
         rowCount: result.rowsAffected?.[0] ?? recordset.length,
         executionTime,
         ...mssqlColumnTypes(recordset.columns),
+        ...(resultSets && { resultSets }),
       };
     });
   }
@@ -2146,6 +2226,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       });
 
       const recordset = result.recordset || [];
+      convertZonelessValues(recordset);
       // The ROW budget bounds DATA rows, and a plan's rows are not data: they are the
       // optimizer's nodes, one per operator. Measured on AdventureWorks2022, an ordinary
       // `SELECT TOP 10 *` over one shipped view compiles to 170 of them and the same view
@@ -2601,6 +2682,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       });
 
       const recordset = result.recordset || [];
+      convertZonelessValues(recordset);
       const fields = recordset.length > 0 ? Object.keys(recordset[0]) : [];
 
       return {
@@ -3158,7 +3240,19 @@ export class MSSQLProvider extends SQLBaseProvider {
   // Maintenance Operations
   // ============================================================================
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  /**
+   * A maintenance target as a schema-qualified identifier, using the `[bracket]` quoting this
+   * provider already escapes with. A container is honoured when the caller sends one; a bare
+   * name keeps the previous reading, where the connected default schema applies.
+   */
+  private qualifyMaintenanceTarget(target: string, container?: string): string {
+    if (container) {
+      return `${this.escapeIdentifier(container)}.${this.escapeIdentifier(target)}`;
+    }
+    return this.escapeIdentifier(target);
+  }
+
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
@@ -3168,7 +3262,7 @@ export class MSSQLProvider extends SQLBaseProvider {
         switch (type) {
           case "analyze":
             if (target) {
-              sql = `UPDATE STATISTICS [${target.replace(/\]/g, "]]")}]`;
+              sql = `UPDATE STATISTICS ${this.qualifyMaintenanceTarget(target, container)}`;
             } else {
               sql = `EXEC sp_updatestats`;
             }
@@ -3178,7 +3272,7 @@ export class MSSQLProvider extends SQLBaseProvider {
             break;
           case "optimize":
             if (target) {
-              sql = `ALTER INDEX ALL ON [${target.replace(/\]/g, "]]")}] REBUILD`;
+              sql = `ALTER INDEX ALL ON ${this.qualifyMaintenanceTarget(target, container)} REBUILD`;
             } else {
               sql = REBUILD_ALL_INDEXES_SQL;
             }

@@ -496,6 +496,7 @@ describe("assertPersistableState — RAW_RESULT_SET", () => {
       rowCount: 2,
       executionTime: 11,
       columnTypes: { id: "integer" },
+      vectorColumns: { embedding: { kind: "dense", dtype: "float32", dimension: 3 } },
       pagination: { limit: 100, offset: 0, hasMore: false, totalReturned: 2, wasLimited: false },
       warnings: [{ message: "sequential scan" }],
     };

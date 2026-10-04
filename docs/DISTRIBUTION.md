@@ -12,7 +12,7 @@ how the release pipeline publishes each channel. For a one-line-per-channel over
 | Homebrew | macOS / Linux workstations | [Homebrew](#homebrew) |
 | .deb / .rpm | Debian/Ubuntu and RHEL/Fedora servers (systemd) | [Linux packages (.deb / .rpm)](#linux-packages-deb--rpm) |
 | Snap | Ubuntu and other snapd systems | [Snap](#snap) |
-| Windows (winget / Chocolatey / portable zip) | Windows workstations | [Windows](#windows-winget--chocolatey--portable-zip) |
+| Windows (winget / Chocolatey / Scoop / portable zip) | Windows workstations | [Windows](#windows-winget--chocolatey--scoop--portable-zip) |
 | Desktop app (AppImage, .deb, FlatPark) | Linux desktops - an application window, no browser tab | [Desktop app](#desktop-app-appimage-debian-package-flatpark) |
 | Unraid | An Unraid server - one click from the Apps tab | [Unraid](#unraid-community-applications) |
 | Sealos | One-click managed Kubernetes, nothing to install locally | [Sealos](#sealos-app-store) |
@@ -480,6 +480,9 @@ each *newly added* OpenShift version's catalog) and does not substitute for
 (k8s-operatorhub/community-operators) has no such second step: its
 bundle-directory PR is the whole listing.
 
+So on this catalog a merged version directory is not yet a node of the channel graph: that happens only when the bot's "Catalog update" PR adds it to `catalog-templates/basic.yaml`, and until then a submission that replaces it fails `add-bundle-to-fbc-dryrun` with `multiple channel heads found in graph` (measured on community-operators-prod#11290, submitted while 0.16.0's catalog update #11204 was still open).
+The `submit-catalogs` job therefore reads that template and skips, naming the version, while the predecessor is a bundle but not yet a channel entry.
+
 ### Automated submission
 
 Both submissions are opened by the `submit-catalogs` job in
@@ -498,6 +501,7 @@ A skip that means a release did not reach a catalog is a `::warning::` rather th
 | the operator has no directory in that catalog | a first listing needs review and metadata this path does not carry |
 | the catalog already carries this version | a rerun after a merge |
 | an open submission for any other version | see below, this one is a hard stop |
+| FBC only: the predecessor is a bundle directory but not yet an entry of the channel template | its catalog update has to merge first, or the new bundle replaces a node the graph does not have |
 | the release is a prerelease | the catalogs take bare semver directories only |
 
 Three conditions are hard failures rather than skips, because each is a misconfiguration on our side that would otherwise break the channel quietly:
@@ -634,7 +638,7 @@ rebuilt archive never invalidates a previously printed admin password.
   `scripts/build-standalone-payload.sh` (checksum verification is skipped and the archive is
   re-extracted on every run).
 - On Windows the launcher downloads the win32 zip and extracts it with the built-in
-  `System32\tar.exe` (bsdtar); see [Windows](#windows-winget--chocolatey--portable-zip)
+  `System32\tar.exe` (bsdtar); see [Windows](#windows-winget--chocolatey--scoop--portable-zip)
   ([issue #114](https://github.com/libredb/libredb-studio/issues/114)).
 - Versions released before the standalone tarballs existed have no artifacts; the launcher
   detects this (HTTP 404) and suggests `npx @libredb/studio@latest`.
@@ -799,6 +803,34 @@ sudo systemctl restart libredb-studio        # apply configuration changes
 - Removal (`apt remove` / `rpm -e`) stops and disables the service; upgrades restart it if it
   is running (standard systemd maintainer scripts, `packaging/linux/scripts/`).
 
+## Arch Linux (AUR)
+
+`libredb-studio-bin` repackages the prebuilt standalone tarball for Arch Linux and its derivatives
+(x86_64 and aarch64). It installs the same launcher, systemd unit and `/etc/libredb-studio/env`
+template as the `.deb` and `.rpm`, so the operating notes in the section above (configuration,
+state directory, `journalctl`) apply unchanged:
+
+```bash
+paru -S libredb-studio-bin        # or yay, or a manual makepkg from the AUR clone
+sudo systemctl enable --now libredb-studio
+journalctl -u libredb-studio      # first run prints the generated admin password here
+```
+
+- **Node.js comes from the distribution**, not from the package: it depends on
+  `nodejs-lts-krypton` (24.x, which provides `/usr/bin/node`) and links the launcher's
+  `node/bin/node` to it. Arch's plain `nodejs` is on 26.x; the 24.x line is the same pin the
+  Homebrew formula uses (`node@24`). The two cannot be installed together.
+- **Status.** The package is staged in [`packaging/aur/`](../packaging/aur) and the channel is
+  `pending` in `distribution/channels.yaml` until the first push to the AUR ([#971](https://github.com/libredb/libredb-studio/issues/971)).
+  The AUR account is the project's, registered with `channels@libredb.org`, and the first push is
+  made by hand from it.
+- **Updates are automatic once the channel is live.** The `aur` job in `release-artifacts.yml`
+  renders the `PKGBUILD` for each stable tag, builds and lints it in an Arch container, and pushes
+  it over SSH with the `AUR_SSH_PRIVATE_KEY` secret. The release switchboard reports the channel
+  as enabled only while it is `live`, so flipping the status is the switch. Details and the manual
+  first push: [`packaging/aur/README.md`](../packaging/aur/README.md#releases).
+- **What was verified**, and what was not, is listed in that README.
+
 ## Snap
 
 Published on the [Snap Store](https://snapcraft.io/libredb-studio) for amd64 and arm64 (live
@@ -890,7 +922,7 @@ to server-side Postgres, uncomment the `STORAGE_PROVIDER` / `STORAGE_POSTGRES_UR
 Full variable reference: [`.env.example`](../.env.example). OIDC setup details:
 [`docs/OIDC.md`](OIDC.md). Storage providers: [`docs/STORAGE.md`](STORAGE.md).
 
-## Windows (winget / Chocolatey / portable zip)
+## Windows (winget / Chocolatey / Scoop / portable zip)
 
 The win32-x64 standalone zip is built and attached to every
 [GitHub release](https://github.com/libredb/libredb-studio/releases) since 0.9.59.
@@ -901,6 +933,17 @@ release now submits its update PR automatically. **Chocolatey is live as well**:
 (0.9.59) was approved by a community moderator on 2026-08-24, so `choco install libredb-studio`
 resolves from the community repository and every release packs and pushes automatically (track
 [issue #114](https://github.com/libredb/libredb-studio/issues/114)).
+
+**Scoop is live too**: the Extras bucket listing
+([ScoopInstaller/Extras#18786](https://github.com/ScoopInstaller/Extras/pull/18786)) merged on
+2026-09-25.
+This repository's release CI does nothing for it.
+The bucket's Excavator workflow checks our release feed every four hours and rewrites the
+manifest's version, URL and hash itself.
+It finds releases through the manifest's `checkver` regex, `releases/tag/([\d.]+)"`, and the hash
+through the release's `SHA256SUMS`.
+Renaming the release tag shape, the zip, or `SHA256SUMS` therefore stops Scoop updates without any
+failure in this repository.
 
 > **Chocolatey was switched off in the inventory until its moderation cleared**
 > (`update.ci_enabled` in [`distribution/channels.yaml`](../distribution/channels.yaml) — see
@@ -922,6 +965,10 @@ winget install LibreDB.Studio
 # Chocolatey
 choco install libredb-studio
 
+# Scoop (Extras bucket)
+scoop bucket add extras
+scoop install extras/libredb-studio
+
 # Then, from any terminal - first run prints the generated admin credentials
 libredb-studio
 ```
@@ -935,9 +982,10 @@ libredb-studio
 > use stays permitted, and `choco install libredb-studio` is unchanged when it resolves from an
 > internal mirror. winget carries no equivalent restriction.
 
-Open http://127.0.0.1:3000 and log in with the printed credentials. Both packages install the
-same standalone zip: the server payload, a bundled private Node.js runtime (`node\node.exe`),
-and the `libredb-studio.exe` launcher — nothing else to install.
+Open http://127.0.0.1:3000 and log in with the printed credentials. All three packages install the same standalone zip: the server payload, a bundled private Node.js runtime (`node\node.exe`),
+and the `libredb-studio.exe` launcher.
+The Db2 driver's native addon also needs the Microsoft Visual C++ 2015-2022 x64 redistributable (it imports `VCRUNTIME140.dll`).
+winget and Chocolatey install it as a declared dependency (`Microsoft.VCRedist.2015+.x64`, `vcredist140`); with Scoop, install it once with `scoop install extras/vcredist2022` if the machine lacks it.
 
 The launcher mirrors the Linux packages' contract:
 
@@ -1405,6 +1453,7 @@ setups still publish the rest:
 | `CHOCO_API_KEY` | The chocolatey job: `choco pack` + `choco push` to `https://push.chocolatey.org/` (API key of the `libredb` community account) | Chocolatey publish skipped; the win32 zip still attaches to the release |
 | — | Every row above whose channel is switchable also needs `update.ci_enabled: true` in [`distribution/channels.yaml`](../distribution/channels.yaml): the secret says CI *can* publish, the flag says it *should*. See [Turning a channel's automation off](#turning-a-channels-automation-off) | Channel skipped with a notice; the release publishes normally |
 | `OPERATOR_CATALOG_TOKEN` | The `submit-catalogs` job in `operator-release.yml`: bundle PRs to `k8s-operatorhub/community-operators` and `redhat-openshift-ecosystem/community-operators-prod`. Classic PAT with `public_repo` on an account in the operator's upstream `ci.yaml` reviewers list, because that login is what upstream authorizes | Catalog submission skipped with a notice |
+| `AUR_SSH_PRIVATE_KEY` | The aur job: render, build and `git push` of `libredb-studio-bin` to `ssh://aur@aur.archlinux.org/libredb-studio-bin.git`. The private half of the SSH key registered on the project's AUR account (`channels@libredb.org`). Runs only while the `aur` channel is `live` | AUR push skipped |
 | `WINGETCREATE_GITHUB_TOKEN` | The winget job: `wingetcreate update --submit` PRs to `microsoft/winget-pkgs`. Classic PAT with `public_repo` scope — wingetcreate does not support fine-grained PATs | winget submission skipped |
 
 The chocolatey and winget jobs run strictly **after** `publish-release`: both channels download
@@ -1542,7 +1591,7 @@ pin or editing a channel entry is always a human commit.
 | 1 | Packaged formats owned by this repo, CI-published | Helm, Homebrew tap, Snap, .deb/.rpm, desktop AppImage |
 | 2 | LibreDB-owned copies and listings, bumped by hand | Railway, Koyeb button, Fly.io config, Render Blueprint, Unraid CA template |
 | 3 | Upstream community catalogs, bumped via PR | CapRover official, Dokploy, Cosmos, Kubero, Sealos, TrueNAS SCALE |
-| 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DigitalOcean, Google Cloud Marketplace, winget, Chocolatey, Flathub |
+| 4 | Partner or curated catalogs (not self-serve) | Rancher partner charts, Koyeb catalog, DigitalOcean, Google Cloud Marketplace, winget, Chocolatey, Scoop, Flathub |
 
 **Categories** (`category` on every channel) are the business-facing buckets rendered in
 [`docs/CHANNELS.md`](CHANNELS.md): `registries-releases`, `containers`,
@@ -1667,8 +1716,10 @@ here as the worked example because it is the case the switch was built for.
 The release workflow reads it (`distribution-check.mjs --ci-outputs` in the `channels` job, whose
 outputs each channel's availability step consults), so **the edit is the whole switch** — no
 secret to delete, no workflow change, and the decision is reviewable in a diff next to the
-channel's `status` and note. A channel is published only when its flag says `true` *and* its
-secret is present.
+channel's `status` and note. A channel is published only when its flag says `true`, its
+`status` is `live`, *and* its secret is present. The status half is what lets a channel be staged
+before its account exists: the AUR package landed while the channel was `pending` (#971), and
+setting it `live` is what starts its publish job.
 
 Three deliberate constraints:
 

@@ -1,0 +1,20 @@
+# The packages the Milvus seed installs, each pinned to the version the research seed's environment held:
+# pymilvus 3.0.2, numpy 2.5.3 and ml_dtypes 0.6.0, and their dependencies. docker/lock-requirements.sh writes
+# requirements.txt from this file; change this file, never that one.
+cachetools==7.2.0
+certifi==2026.7.22
+charset-normalizer==3.5.2
+grpcio==1.84.0
+idna==3.20
+ml_dtypes==0.6.0
+numpy==2.5.3
+orjson==3.12.0
+pandas==3.0.6
+protobuf==7.36.2
+pymilvus==3.0.2
+python-dateutil==2.9.0.post0
+python-dotenv==1.2.4
+requests==2.34.2
+six==1.17.0
+typing_extensions==4.16.0
+urllib3==2.8.0

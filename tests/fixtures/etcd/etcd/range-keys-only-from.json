@@ -1,0 +1,160 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.387Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: from /config/ to the end, keys only, limit 5: a page from a cursor",
+    "request": {
+      "key": {
+        "$bytes": "L2NvbmZpZy8="
+      },
+      "range_end": {
+        "$bytes": "AA=="
+      },
+      "limit": {
+        "$int64": "5"
+      },
+      "keys_only": true
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2NvbmZpZy8="
+      },
+      "range_end": {
+        "$bytes": "AA=="
+      },
+      "keys_only": true
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L2NvbmZpZy9h"
+        },
+        "create_revision": {
+          "$int64": "10"
+        },
+        "mod_revision": {
+          "$int64": "10"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2NvbmZpZy9i"
+        },
+        "create_revision": {
+          "$int64": "11"
+        },
+        "mod_revision": {
+          "$int64": "11"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2ZlYXR1cmUtZmxhZw=="
+        },
+        "create_revision": {
+          "$int64": "8"
+        },
+        "mod_revision": {
+          "$int64": "8"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2hpc3RvcnkvY291bnRlcg=="
+        },
+        "create_revision": {
+          "$int64": "20"
+        },
+        "mod_revision": {
+          "$int64": "22"
+        },
+        "version": {
+          "$int64": "3"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L2xlYXNlcy9zZXNzaW9uLTE="
+        },
+        "create_revision": {
+          "$int64": "23"
+        },
+        "mod_revision": {
+          "$int64": "23"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "67"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": true,
+    "count": {
+      "$int64": "26"
+    }
+  }
+}

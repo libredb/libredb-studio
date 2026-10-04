@@ -3,7 +3,7 @@
 import type { CsvDelimiter } from "@/lib/export/csv";
 
 import React, { useMemo } from "react";
-import type { DatabaseConnection, QueryTab, QueryResult } from "@/lib/types";
+import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { MaskingConfig } from "@/lib/data-masking";
@@ -19,6 +19,7 @@ import { pageOfferFor } from "@/components/results-grid/page-offer";
 import type { ResultExportFormat } from "@/lib/export/result-export";
 
 import { resolveExplainPlan } from "@/lib/explain";
+import { hasGraphValues } from "@/lib/db/graph/result-graph";
 import { cn } from "@/lib/utils";
 import {
   ChartColumn,
@@ -30,7 +31,9 @@ import {
   GitCompare,
   LayoutDashboard,
   LayoutGrid,
+  Network,
   Terminal,
+  TriangleAlert,
   X,
   Zap,
 } from "lucide-react";
@@ -44,6 +47,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { storage } from "@/lib/storage";
+import { offersSqlExport } from "@/lib/db/types";
 
 /**
  * Every form a result can leave this panel in, in the order the menu offers them.
@@ -66,8 +70,12 @@ const RESULT_FORMATS: readonly {
   { format: "sql-ddl", label: "DDL (CREATE TABLE)" },
 ];
 
+/** The two formats that write a SQL table, offered only where the dialect says they apply (`offersSqlExport`, BACKLOG U69). */
+const SQL_TABLE_FORMATS: ReadonlySet<ResultExportFormat> = new Set<ResultExportFormat>(["sql-insert", "sql-ddl"]);
+
 export type BottomPanelMode =
   | "results"
+  | "graph"
   | "explain"
   | "history"
   | "saved"
@@ -113,6 +121,11 @@ const DataCharts = React.lazy(
 );
 const SchemaDiff = React.lazy(
   lazyRetry(() => import("@/components/SchemaDiff").then((m) => ({ default: m.SchemaDiff }))),
+);
+// The canvas library itself is a further dynamic import inside the view, so this
+// chunk is the view's own code and the library arrives only once the tab is opened.
+const GraphView = React.lazy(
+  lazyRetry(() => import("@/components/results-graph/GraphView").then((m) => ({ default: m.GraphView }))),
 );
 
 // The saved-chart dashboard. Its data is read on mount, not its module — the module
@@ -164,7 +177,17 @@ function ChartDashboard({ result }: { result: QueryResult | null }) {
 interface BottomPanelProps {
   mode: BottomPanelMode;
   onSetMode: (mode: BottomPanelMode) => void;
-  currentTab: QueryTab;
+  // What the panel draws of the tab, and nothing else (X5). The panel used to be handed
+  // the whole `QueryTab`, whose identity changes on every keystroke because
+  // `onContentChange` rewrites the query into the tab; these are the fields it reads.
+  result: QueryResult | null;
+  explainPlan: unknown;
+  // The statement the explain view pairs with its plan. The shells hand it only while that
+  // view is open: anywhere else it would be a prop that changes on every keystroke and
+  // re-renders this memoized panel for a view that is not on screen (X5).
+  explainQuery?: string;
+  resultQuery: string | undefined;
+  runError: string | undefined;
   schema: readonly DetailedObject[];
   schemaContext: string;
   activeConnection: DatabaseConnection | null;
@@ -220,10 +243,14 @@ interface BottomPanelProps {
   onDismissAgentArtifact?: () => void;
 }
 
-export function BottomPanel({
-  mode,
+export const BottomPanel = React.memo(function BottomPanel({
+  mode: requestedMode,
   onSetMode,
-  currentTab,
+  result,
+  explainPlan,
+  explainQuery,
+  resultQuery,
+  runError,
   schema,
   schemaContext,
   activeConnection,
@@ -247,7 +274,16 @@ export function BottomPanel({
   agentArtifact = null,
   onDismissAgentArtifact,
 }: BottomPanelProps) {
-  const explainInput = useMemo(() => resolveExplainPlan(currentTab.explainPlan), [currentTab.explainPlan]);
+  const explainInput = useMemo(() => resolveExplainPlan(explainPlan), [explainPlan]);
+  /*
+    The Graph tab is offered by the result's shape, not by the engine: only a result
+    that holds a node, a relationship or a path at any depth has anything to draw.
+    The mode is shell state and outlives the result it was chosen for (switching to a
+    tab whose result has none keeps it), so it is read as Results until a graph is
+    back, rather than leaving the panel on a tab the strip no longer shows.
+  */
+  const offersGraph = useMemo(() => hasGraphValues(result?.rows ?? [], result?.fields ?? []), [result]);
+  const mode = requestedMode === "graph" && !offersGraph ? "results" : requestedMode;
 
   /*
     An agent artifact is shown in ONE surface — the one the RUN's own record names,
@@ -282,7 +318,7 @@ export function BottomPanel({
     ((mode === "results" && hydratedResult !== null) ||
       (mode === "explain" && hydratedPlan !== null) ||
       (mode === "charts" && hydratedChart !== null));
-  const displayedResult = hydratedResult ?? currentTab.result;
+  const displayedResult = hydratedResult ?? result;
   /**
    * What an export must be attributed to: the artifact when the run's rows are the
    * ones on screen, null when they are the tab's own. Only the results surface has an
@@ -305,6 +341,10 @@ export function BottomPanel({
   // How much of the result an export would write — the count the button carries and
   // the shortfall the menu states. Derived here so both read the same numbers.
   const exportScope = describeExportScope(displayedResult ?? { rows: [] }, gridPageOffer !== undefined);
+  // One list for both menus, filtered once, so the file items and the clipboard items cannot disagree (#701).
+  const resultFormats = offersSqlExport(metadata?.capabilities)
+    ? RESULT_FORMATS
+    : RESULT_FORMATS.filter((entry) => !SQL_TABLE_FORMATS.has(entry.format));
 
   /**
    * Hands one format entry to whichever destination the user chose.
@@ -327,6 +367,12 @@ export function BottomPanel({
       label: "Results",
       icon: <LayoutGrid strokeWidth={1.5} className="w-3 h-3" />,
       activeClass: "text-hue-blue border-hue-blue-tint bg-fill",
+    },
+    {
+      key: "graph",
+      label: "Graph",
+      icon: <Network strokeWidth={1.5} className="w-3 h-3" />,
+      activeClass: "text-hue-green border-hue-green-tint bg-fill",
     },
     {
       key: "explain",
@@ -378,7 +424,9 @@ export function BottomPanel({
     },
   ];
 
-  const visibleTabs = metadata?.capabilities.explainFormat ? tabs : tabs.filter((tab) => tab.key !== "explain");
+  const explainTabs = metadata?.capabilities.explainFormat ? tabs : tabs.filter((tab) => tab.key !== "explain");
+  // The Graph tab is offered only for a result that holds a graph value (U72); every other tab is unaffected.
+  const visibleTabs = offersGraph ? explainTabs : explainTabs.filter((tab) => tab.key !== "graph");
 
   return (
     /*
@@ -457,7 +505,7 @@ export function BottomPanel({
                   </div>
                 )}
                 <DropdownMenuSeparator className="bg-hairline" />
-                {RESULT_FORMATS.map((entry) => (
+                {resultFormats.map((entry) => (
                   <DropdownMenuItem
                     key={`export-${entry.label}`}
                     onClick={() => runResultFormat(onExportResults, entry)}
@@ -473,7 +521,7 @@ export function BottomPanel({
                   answer than a file does, having no name to carry a caveat.
                 */}
                 <DropdownMenuLabel className="text-xs font-normal text-fg-muted">To clipboard</DropdownMenuLabel>
-                {RESULT_FORMATS.map((entry) => (
+                {resultFormats.map((entry) => (
                   <DropdownMenuItem
                     key={`copy-${entry.label}`}
                     onClick={() => runResultFormat(onCopyResults, entry)}
@@ -524,7 +572,7 @@ export function BottomPanel({
           <React.Suspense fallback={<ViewLoading label="Loading the panel" />}>
             {mode === "pivot" ? (
               <PivotTable
-                result={currentTab.result}
+                result={result}
                 onLoadQuery={(q) => {
                   onLoadQuery(q);
                   onSetMode("results");
@@ -557,11 +605,18 @@ export function BottomPanel({
                 }}
               />
             ) : mode === "charts" ? (
-              <DataCharts result={hydratedChart ?? currentTab.result} spec={hydratedChartSpec} />
+              <DataCharts result={hydratedChart ?? result} spec={hydratedChartSpec} />
+            ) : mode === "graph" && result ? (
+              <GraphView
+                result={result}
+                maskingEnabled={maskingEnabled}
+                userRole={userRole}
+                maskingConfig={maskingConfig}
+              />
             ) : mode === "schemadiff" ? (
               <SchemaDiff schema={schema} connection={activeConnection} />
             ) : mode === "dashboard" ? (
-              <ChartDashboard result={currentTab.result} />
+              <ChartDashboard result={result} />
             ) : mode === "explain" ? (
               <VisualExplain
                 plan={hydratedPlan ?? explainInput}
@@ -572,7 +627,7 @@ export function BottomPanel({
               explanation of a statement that never produced it; with no query the view
               says so itself instead.
             */
-                query={hydratedPlan === null ? currentTab.query : undefined}
+                query={hydratedPlan === null ? explainQuery : undefined}
                 schemaContext={schemaContext}
                 databaseType={activeConnection?.type}
                 onLoadQuery={(q) => {
@@ -581,26 +636,80 @@ export function BottomPanel({
                 }}
               />
             ) : displayedResult ? (
-              <ResultsGrid
-                result={displayedResult}
-                onLoadMore={hydratedHere ? undefined : onLoadMore}
-                isLoadingMore={isLoadingMore}
-                supportsResultPagination={metadata?.capabilities.supportsResultPagination}
-                // The statement these ROWS came from, for the ordering notice. Withheld
-                // for a hydrated result for the same reason `onLoadMore` is: those rows
-                // are an agent run's, and the tab's own statement did not produce them.
-                resultQuery={hydratedHere ? undefined : currentTab.resultQuery}
-                databaseType={activeConnection?.type}
-                maskingEnabled={maskingEnabled}
-                onToggleMasking={onToggleMasking}
-                userRole={userRole}
-                maskingConfig={maskingConfig}
-                editingEnabled={hydratedHere ? false : editingEnabled}
-                pendingChanges={pendingChanges}
-                onCellChange={onCellChange}
-                onApplyChanges={onApplyChanges}
-                onDiscardChanges={onDiscardChanges}
-              />
+              <div className="h-full flex flex-col">
+                {/*
+                  A result AND a run error on the same tab is a script that stopped on a failing
+                  statement (#1385): the earlier statements' rows stay, the failure stands above
+                  them, and a grid with no rows is left out because its "The operation was
+                  successful" would contradict the banner. A hydrated result is another run's.
+                */}
+                {runError !== undefined && !hydratedHere && (
+                  <div
+                    role="alert"
+                    className="shrink-0 px-3 py-2 border-b border-destructive/30 bg-destructive/10 text-destructive"
+                    data-testid="script-failure"
+                  >
+                    <p className="text-xs font-medium">The script stopped at a failing statement.</p>
+                    <p
+                      className="mt-1 break-words whitespace-pre-wrap font-mono text-xs"
+                      data-testid="script-failure-message"
+                    >
+                      {runError}
+                    </p>
+                  </div>
+                )}
+                {(runError === undefined || hydratedHere || displayedResult.rows.length > 0) && (
+                  <div className="flex-1 min-h-0">
+                    <ResultsGrid
+                      result={displayedResult}
+                      onLoadMore={hydratedHere ? undefined : onLoadMore}
+                      isLoadingMore={isLoadingMore}
+                      supportsResultPagination={metadata?.capabilities.supportsResultPagination}
+                      // The statement these ROWS came from, for the ordering notice. Withheld
+                      // for a hydrated result for the same reason `onLoadMore` is: those rows
+                      // are an agent run's, and the tab's own statement did not produce them.
+                      resultQuery={hydratedHere ? undefined : resultQuery}
+                      databaseType={activeConnection?.type}
+                      maskingEnabled={maskingEnabled}
+                      onToggleMasking={onToggleMasking}
+                      userRole={userRole}
+                      maskingConfig={maskingConfig}
+                      editingEnabled={hydratedHere ? false : editingEnabled}
+                      inlineEditRefusedColumns={metadata?.capabilities.inlineEditRefusedColumns}
+                      pendingChanges={pendingChanges}
+                      onCellChange={onCellChange}
+                      onApplyChanges={onApplyChanges}
+                      onDiscardChanges={onDiscardChanges}
+                    />
+                  </div>
+                )}
+              </div>
+            ) : runError !== undefined ? (
+              /*
+                The tab's last run failed, and its failure stands where its rows would.
+                After the grid, so a hydrated result keeps its precedence, and before the
+                empty state, which would read as "nothing ran". Rendered here rather than
+                left to the toast: the embedded shell mounts no Toaster, so in that product
+                this block is the only failure signal there is.
+              */
+              <div
+                role="alert"
+                className="h-full flex flex-col items-center justify-center px-3 text-center bg-surface"
+                data-testid="run-failure"
+              >
+                <TriangleAlert
+                  aria-hidden="true"
+                  strokeWidth={1.5}
+                  className="mb-2 h-8 w-8 text-destructive opacity-50"
+                />
+                <p className="text-xs font-medium text-destructive">The query failed.</p>
+                <p
+                  className="mt-1 max-w-xl break-words whitespace-pre-wrap font-mono text-xs text-destructive"
+                  data-testid="run-failure-message"
+                >
+                  {runError}
+                </p>
+              </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center opacity-20 bg-surface">
                 <Terminal strokeWidth={1.5} className="w-12 h-12 mb-4" />
@@ -613,4 +722,4 @@ export function BottomPanel({
       </div>
     </div>
   );
-}
+});

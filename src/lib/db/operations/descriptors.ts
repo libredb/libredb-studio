@@ -62,8 +62,9 @@ export const sqlQueryReadDescriptor: RegistrableOperationDescriptor = {
  * whether the Explain button and tab are rendered and which strategy module in
  * `src/lib/explain` reads the result. The agent's plan path does not go through
  * any of that. `composed-sql.ts` says so in its own header: the editor's PostgreSQL
- * strategy is deliberately not reused here, because its `buildSql` always emits the
- * EXECUTING form. The agent composes its own estimating form per dialect, and
+ * strategy is deliberately not reused here, because it is chosen by a capability the
+ * editor's provider measures and can emit the EXECUTING form. The agent composes its
+ * own estimating form per dialect, and
  * `composeEstimatingExplain` REFUSES a dialect it has not verified
  * (`UNSUPPORTED_DIALECT`) before this descriptor is ever resolved, so the real gate
  * was never this line.

@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "service": "milvus-mtls",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "GetVersion",
+    "user": "root",
+    "surface": "GetVersion over mutual TLS with a clientAuth certificate",
+    "request": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "version": "3.0.2"
+  }
+}

@@ -1,0 +1,197 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-03T05:18:21.479Z",
+    "database": "neo4j"
+  },
+  "statement": "MATCH (n:`Person`) RETURN n LIMIT 100",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 500
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "n"
+    ],
+    "rows": [
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:34",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "go",
+              "kubernetes"
+            ],
+            "name": "Ayse Yilmaz",
+            "active": true,
+            "age": 34
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:35",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "java",
+              "kafka"
+            ],
+            "name": "Mehmet Demir",
+            "active": true,
+            "age": 41
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:36",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "python"
+            ],
+            "name": "Zeynep Kaya",
+            "active": false,
+            "age": 29
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:37",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "rust",
+              "postgres"
+            ],
+            "name": "Emre Çelik",
+            "active": true,
+            "age": 38
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:38",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [],
+            "name": "Elif Şahin",
+            "active": true,
+            "age": 27
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:39",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "scala",
+              "spark"
+            ],
+            "name": "Jonas Berg",
+            "active": true,
+            "age": 45
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:40",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "typescript"
+            ],
+            "name": "Ana Souza",
+            "active": true,
+            "age": 31
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:41",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "c",
+              "linux"
+            ],
+            "name": "Kenji Sato",
+            "active": false,
+            "age": 36
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:42",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "sql",
+              "dbt"
+            ],
+            "name": "Lena Fischer",
+            "active": true,
+            "age": 33
+          }
+        }
+      },
+      {
+        "n": {
+          "~graph": "node",
+          "elementId": "4:13eea926-330c-43fa-b582-42d3ab6a3a11:43",
+          "labels": [
+            "Person"
+          ],
+          "properties": {
+            "skills": [
+              "elixir"
+            ],
+            "name": "Omar Haddad",
+            "active": true,
+            "age": 40
+          }
+        }
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

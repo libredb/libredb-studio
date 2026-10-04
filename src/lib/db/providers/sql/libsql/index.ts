@@ -220,6 +220,9 @@ export class LibSQLProvider extends SQLBaseProvider {
       // read off a provider that never connects, so it could not describe session state
       // in any case. See `objects.ts`.
       containerLevels: [],
+      // `exact` over no level: the empty path is the only address, so any segment at all is a
+      // caller holding another engine's model. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: LIBSQL_OBJECT_KINDS,
     };
   }
@@ -446,8 +449,11 @@ export class LibSQLProvider extends SQLBaseProvider {
    * `check` reads the answer rather than the status: `PRAGMA integrity_check`
    * succeeds as a statement and reports the damage in its row, so a provider that
    * only checked for an exception would report a corrupt database as healthy.
+   *
+   * `container` is deliberately ignored, for the same reason as `sqlite.ts`: a libSQL
+   * connection resolves names against its one attached database (#772).
    */
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, _container?: string): Promise<MaintenanceResult> {
     const transport = this.requireTransport();
 
     const { result, executionTime } = await this.measureExecution(async () => {
@@ -497,7 +503,7 @@ export class LibSQLProvider extends SQLBaseProvider {
 
   private describeConnectFailure(error: unknown): Error {
     const mapped = this.mapLibSQLError(error);
-    if (mapped instanceof AuthenticationError) return mapped;
+    if (mapped instanceof AuthenticationError || mapped instanceof DatabaseConfigError) return mapped;
 
     return new ConnectionError(
       `Failed to connect to libSQL: ${mapped.message}`,

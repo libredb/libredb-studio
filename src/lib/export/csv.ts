@@ -40,8 +40,11 @@ export type CsvDelimiter = "," | ";" | "\t";
  * Absent is empty, which is how a reader spells NULL. It used to be the literal
  * text `null`/`undefined`, which reads back as a four- or nine-character string
  * and is indistinguishable from a column that genuinely holds that word.
+ *
+ * Exported for `/api/db/profile`, which writes a column's MIN, MAX and sample values
+ * as text and has to spell a date, a binary value or a bigint the way the file does.
  */
-function renderValue(value: unknown): string {
+export function renderValue(value: unknown): string {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toISOString();
   // Before the object branch, and through the same module the grid renders with:

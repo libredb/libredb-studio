@@ -1,0 +1,21 @@
+{
+  "version": "3.12.0-core",
+  "name": "hostile-names",
+  "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "db": "home",
+      "q": "SELECT * FROM \"home\"..\"we\\\"ird name;x\", \"home\"..\"edge cases,m\"",
+      "chunked": "true",
+      "chunk_size": "1000"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"edge cases,m\",\"columns\":[\"time\",\"\\\"quoted\\\"\",\"room\",\"room name\",\"t=k\",\"temp °C\",\"v\"],\"values\":[[\"2022-01-01T08:00:00Z\",2,null,\"Café \\\"Ünïcode\\\",x\",\"a=b\",1.5,null]]}],\"partial\":true}]}{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"we\\\"ird name;x\",\"columns\":[\"time\",\"\\\"quoted\\\"\",\"room\",\"room name\",\"t=k\",\"temp °C\",\"v\"],\"values\":[[\"2022-01-01T08:00:00Z\",null,\"a\",null,null,null,1]]}]}]}"
+}

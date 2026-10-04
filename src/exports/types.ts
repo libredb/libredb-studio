@@ -12,6 +12,7 @@ export type {
   ForeignKeySchema,
   QueryPagination,
   QueryResult,
+  QueryResultSet,
   QueryWarning,
   QueryTab,
   QueryHistoryItem,
@@ -23,7 +24,15 @@ export type {
 } from "../lib/types";
 
 // Also export provider types
-export type { ProviderCapabilities, ProviderLabels, MaintenanceOperationSpec } from "../lib/db/types";
+export type {
+  ProviderCapabilities,
+  ProviderLabels,
+  MaintenanceOperationSpec,
+  MaintenancePreview,
+} from "../lib/db/types";
+
+// The vector column declaration a result carries (`QueryResult.vectorColumns`, `WorkspaceQueryResult.vectorColumns`)
+export type { VectorColumn, VectorKind, VectorDType, SparseEncoding } from "../lib/db/vector/types";
 
 /**
  * The shape a consumer of `StudioWorkspaceProps.onSchemaFetch` returns (#789).
@@ -46,6 +55,7 @@ export type {
   ContainerLevelSpec,
   Container,
   DatabaseObject,
+  ObjectReadRange,
   KindCount,
   ObjectDetail,
   ObjectDetailBatch,

@@ -24,4 +24,4 @@ export { getOrCreateProvider, createDatabaseProvider } from "./factory";
 // package's public type surface is `src/exports/types.ts`, which re-exports
 // from `src/lib/types` directly and never passes through here - so a type
 // mirrored here for symmetry is dead weight, not API.
-export type { MaintenanceType } from "./types";
+export type { MaintenanceOperation } from "./types";

@@ -102,10 +102,15 @@ mock.module("@/lib/db-ui-config", () => ({
 }));
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { render, act, cleanup, fireEvent } from "@testing-library/react";
+import { render, act, cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import React from "react";
 
 import { OperationsTab } from "@/components/admin/tabs/OperationsTab";
+import {
+  SYNTHETIC_ENTITY_CAPABILITIES,
+  SYNTHETIC_PREVIEW,
+  SYNTHETIC_REFUSED_PREVIEW,
+} from "../../fixtures/maintenance-entity-operations";
 
 // =============================================================================
 // Test data
@@ -707,7 +712,7 @@ describe("OperationsTab", () => {
       fireEvent.click(analyzeBtn!.closest("button")!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", undefined, undefined);
     // Operation log should appear with success
     expect(queryByText("Operation Log (this session)")).not.toBeNull();
     expect(queryByText("ANALYZE")).not.toBeNull();
@@ -724,7 +729,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(vacuumBtn!.closest("button")!);
     });
-    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", undefined, undefined);
     expect(queryByText("VACUUM")).not.toBeNull();
   });
 
@@ -739,7 +744,7 @@ describe("OperationsTab", () => {
     await act(async () => {
       fireEvent.click(reindexBtn!.closest("button")!);
     });
-    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", undefined, undefined);
     expect(queryByText("REINDEX")).not.toBeNull();
   });
 
@@ -815,7 +820,7 @@ describe("OperationsTab", () => {
       fireEvent.click(buttons[0]!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "users");
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "users", "public");
   });
 
   test("per-table vacuum button calls runMaintenance with table name", async () => {
@@ -832,7 +837,7 @@ describe("OperationsTab", () => {
       fireEvent.click(buttons[1]!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", "users");
+    expect(mockRunMaintenance).toHaveBeenCalledWith("vacuum", "users", "public");
   });
 
   // =========================================================================
@@ -914,6 +919,33 @@ describe("OperationsTab", () => {
       fireEvent.click(cancelBtn!);
     });
 
+    expect(mockKillSession).not.toHaveBeenCalled();
+  });
+
+  // The dialog opens from state, with no AlertDialogTrigger for Radix to return to (#1198).
+  test("cancelling the kill dialog puts focus back on the row's kill button", async () => {
+    let renderResult: ReturnType<typeof render>;
+    await act(async () => {
+      renderResult = render(<OperationsTab />);
+    });
+    const { getByRole, baseElement } = renderResult!;
+
+    const killBtn = getByRole("button", { name: "Terminate session 1234" });
+    killBtn.focus();
+    await act(async () => {
+      fireEvent.click(killBtn);
+    });
+
+    const cancelBtn = Array.from(baseElement.querySelectorAll("button")).find(
+      (btn) => btn.textContent?.trim() === "Cancel",
+    );
+    expect(cancelBtn).not.toBeUndefined();
+    await act(async () => {
+      fireEvent.click(cancelBtn!);
+    });
+
+    await waitFor(() => expect(baseElement.textContent).not.toContain("Terminate Session?"));
+    await waitFor(() => expect(document.activeElement).toBe(getByRole("button", { name: "Terminate session 1234" })));
     expect(mockKillSession).not.toHaveBeenCalled();
   });
 
@@ -1695,7 +1727,7 @@ describe("OperationsTab", () => {
       fireEvent.click(button!);
     });
 
-    expect(mockRunMaintenance).toHaveBeenCalledWith("optimize", undefined);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("optimize", undefined, undefined);
   });
 
   test("an operation with no whole-database form gets no global card", async () => {
@@ -1768,7 +1800,7 @@ describe("OperationsTab", () => {
     });
 
     // The target is what made this control honest: "users" is the collection row.
-    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+    expect(mockRunMaintenance).toHaveBeenCalledWith("reindex", "users", "public");
   });
 
   test("an operation that ignores its target gets no per-row control", async () => {
@@ -2047,5 +2079,593 @@ describe("OperationsTab", () => {
     expect(printedName("go_gc_duration_seconds")).toBe("go_gc_duration_seconds");
     // The control: a row that has a schema still prints it, joined by the separator.
     expect(printedName("orders")).toBe("public.orders");
+  });
+
+  // =========================================================================
+  // A read-only connection (#1089)
+  // =========================================================================
+
+  describe("a read-only connection", () => {
+    const readOnlyConnection = {
+      id: "c1",
+      name: "Guarded",
+      type: "postgres",
+      host: "localhost",
+      port: 5432,
+      database: "dev",
+      readOnly: true,
+      createdAt: new Date(),
+    };
+    const line = "This connection is read-only: use a read-write connection for maintenance";
+
+    test("shows the one line in place of every global card the section would draw", async () => {
+      mockConnectionsList = [readOnlyConnection];
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OperationsTab />);
+      });
+      const { queryByText, getByTestId } = renderResult!;
+
+      const section = getByTestId("operations-read-only");
+      expect(section.textContent).toContain("Global Operations");
+      expect(section.textContent).toContain(line);
+      for (const card of [
+        "Run Analyze",
+        "Run Vacuum",
+        "Run Reindex",
+        "Update Statistics",
+        "Reclaim Space",
+        "Rebuild Indexes",
+      ]) {
+        expect({ card, drawn: queryByText(card) !== null }).toEqual({ card, drawn: false });
+      }
+      expect(
+        queryByText("These operations can be resource-intensive. Avoid running them during peak traffic hours."),
+      ).toBeNull();
+    });
+
+    test("says nothing where the engine offers no global operation", async () => {
+      mockConnectionsList = [readOnlyConnection];
+      mockMetadata = { capabilities: { supportsMaintenance: false, maintenanceOperations: [] } };
+      let renderResult: ReturnType<typeof render>;
+      await act(async () => {
+        renderResult = render(<OperationsTab />);
+      });
+      const { queryByText, queryByTestId } = renderResult!;
+
+      expect(queryByTestId("operations-read-only")).toBeNull();
+      expect(queryByText("Global Operations")).toBeNull();
+    });
+
+    test("a read-write connection keeps its cards and draws no line", async () => {
+      // The file's default connection carries no readOnly.
+      let absentView: ReturnType<typeof render>;
+      await act(async () => {
+        absentView = render(<OperationsTab />);
+      });
+
+      expect(absentView!.queryByTestId("operations-read-only")).toBeNull();
+      expect(absentView!.queryByText("Run Analyze")).not.toBeNull();
+      cleanup();
+
+      // `false` is the same mode as absent, so it keeps the cards too.
+      mockConnectionsList = [{ ...readOnlyConnection, readOnly: false }];
+      let falseView: ReturnType<typeof render>;
+      await act(async () => {
+        falseView = render(<OperationsTab />);
+      });
+
+      expect(falseView!.queryByTestId("operations-read-only")).toBeNull();
+      expect(falseView!.queryByText("Run Analyze")).not.toBeNull();
+    });
+  });
+
+  // =========================================================================
+  // Declared cards (#1089, section 7.2)
+  //
+  // An operation the gate offers globally with a `title` gets one card of its own, in
+  // the provider's words, in place of the card worded from ProviderLabels; a card
+  // declared with `confirmation: "typed"` sends nothing until the connection's name is
+  // typed exactly. No shipped provider declares a title before etcd, so every existing
+  // page renders as the tests above pin it.
+  // =========================================================================
+
+  const COMPACT_DESCRIPTION =
+    "Removes every revision before the current one. History reads before it fail, and a watch from an older revision is cancelled.";
+  const DEFRAGMENT_DESCRIPTION =
+    "Rebuilds the database file of the member this connection reaches, and only that member. That member blocks reads and writes while it runs.";
+  const DISARM_DESCRIPTION =
+    "Clears every raised alarm. Defragment every member that alarm list names first: a NOSPACE alarm comes back on the next write if the database is still over its quota.";
+  const UNNAMED =
+    "This operation is confirmed by typing the connection's name, and this connection has none. Give it a name in its connection settings first.";
+
+  /** etcd's three operations, declared in the words of section 7.2. */
+  const declaredCardsMetadata = {
+    capabilities: {
+      supportsMaintenance: true,
+      maintenanceOperations: ["compact", "defragment", "disarm"],
+      maintenanceOperationSpecs: {
+        compact: {
+          label: "Compact history",
+          title: "Compact history",
+          description: COMPACT_DESCRIPTION,
+          global: true,
+          perEntity: false,
+          confirmation: "typed",
+        },
+        defragment: {
+          label: "Defragment",
+          title: "Defragment the member",
+          description: DEFRAGMENT_DESCRIPTION,
+          global: true,
+          perEntity: false,
+          confirmation: "typed",
+        },
+        disarm: {
+          label: "Disarm alarms",
+          title: "Disarm alarms",
+          description: DISARM_DESCRIPTION,
+          global: true,
+          perEntity: false,
+          confirmation: "typed",
+        },
+      },
+      tablesAreDerivedGroupings: true,
+    },
+  };
+
+  /** Clicks a card's button and returns the typed dialog it opened, found by the dialog's title. */
+  const openTypedDialog = async (view: ReturnType<typeof render>, label: string, title: string) => {
+    await act(async () => {
+      fireEvent.click(view.getByRole("button", { name: label }));
+    });
+    return view.getByRole("alertdialog", { name: title });
+  };
+
+  test("draws one card per declared operation, in declaration order and in the provider's own words", async () => {
+    mockMetadata = declaredCardsMetadata;
+    const view = await render_();
+
+    expect(view.queryByText("Global Operations")).not.toBeNull();
+    expect(Array.from(view.container.querySelectorAll("h4")).map((heading) => heading.textContent)).toEqual([
+      "Compact history",
+      "Defragment the member",
+      "Disarm alarms",
+    ]);
+    for (const label of ["Compact history", "Defragment", "Disarm alarms"]) {
+      expect(view.getByRole("button", { name: label })).toBeTruthy();
+    }
+    for (const description of [COMPACT_DESCRIPTION, DEFRAGMENT_DESCRIPTION, DISARM_DESCRIPTION]) {
+      expect(view.queryByText(description)).not.toBeNull();
+    }
+    // None of the three is an operation the ProviderLabels cards send, so none of those renders.
+    for (const legacy of [
+      "Run Analyze",
+      "Run Vacuum",
+      "Run Reindex",
+      "Update Statistics",
+      "Reclaim Space",
+      "Rebuild Indexes",
+    ]) {
+      expect({ legacy, drawn: view.queryByText(legacy) !== null }).toEqual({ legacy, drawn: false });
+    }
+    expect(
+      view.queryByText("These operations can be resource-intensive. Avoid running them during peak traffic hours."),
+    ).not.toBeNull();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test.each<[string, string, string, string]>([
+    ["compact", "Compact history", "Compact history", COMPACT_DESCRIPTION],
+    ["defragment", "Defragment", "Defragment the member", DEFRAGMENT_DESCRIPTION],
+    ["disarm", "Disarm alarms", "Disarm alarms", DISARM_DESCRIPTION],
+  ])(
+    "%s sends nothing until the connection's name is typed exactly, then sends once",
+    async (type, label, title, description) => {
+      mockMetadata = declaredCardsMetadata;
+      const view = await render_();
+
+      const dialog = await openTypedDialog(view, label, title);
+      expect(dialog.textContent).toContain(description);
+      expect(mockRunMaintenance).not.toHaveBeenCalled();
+
+      const input = within(dialog).getByLabelText("Type PG Dev to confirm") as HTMLInputElement;
+      const confirm = within(dialog).getByRole("button", { name: title }) as HTMLButtonElement;
+      expect(confirm.className).toContain("bg-danger-solid");
+      expect(confirm.disabled).toBe(true);
+      for (const wrong of ["pg dev", "PG DEV", " PG Dev", "PG Dev "]) {
+        fireEvent.change(input, { target: { value: wrong } });
+        expect({ wrong, disabled: confirm.disabled }).toEqual({ wrong, disabled: true });
+      }
+      // Enter submits the form even while the button is disabled, and still sends nothing.
+      fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+      expect(mockRunMaintenance).not.toHaveBeenCalled();
+
+      fireEvent.change(input, { target: { value: "PG Dev" } });
+      expect(confirm.disabled).toBe(false);
+      await act(async () => {
+        fireEvent.click(confirm);
+      });
+
+      await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+      expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+      expect(mockRunMaintenance).toHaveBeenCalledWith(type, undefined, undefined);
+      expect(view.queryByText(type.toUpperCase())).not.toBeNull();
+    },
+  );
+
+  test("Cancel sends nothing, and focus goes back to the card's button", async () => {
+    mockMetadata = declaredCardsMetadata;
+    const view = await render_();
+    view.getByRole("button", { name: "Disarm alarms" }).focus();
+
+    const dialog = await openTypedDialog(view, "Disarm alarms", "Disarm alarms");
+    fireEvent.change(within(dialog).getByLabelText("Type PG Dev to confirm"), { target: { value: "PG Dev" } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    });
+
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(view.getByRole("button", { name: "Disarm alarms" })));
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a dialog confirmed once and opened again starts empty, its confirm button disabled", async () => {
+    mockMetadata = declaredCardsMetadata;
+    const view = await render_();
+
+    const first = await openTypedDialog(view, "Compact history", "Compact history");
+    fireEvent.change(within(first).getByLabelText("Type PG Dev to confirm"), { target: { value: "PG Dev" } });
+    await act(async () => {
+      fireEvent.click(within(first).getByRole("button", { name: "Compact history" }));
+    });
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+
+    const second = await openTypedDialog(view, "Compact history", "Compact history");
+    expect((within(second).getByLabelText("Type PG Dev to confirm") as HTMLInputElement).value).toBe("");
+    expect((within(second).getByRole("button", { name: "Compact history" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+  });
+
+  test("a connection whose name is empty gets the name sentence in place of the field, and nothing is sent", async () => {
+    mockMetadata = declaredCardsMetadata;
+    mockConnectionsList = [{ ...mockConnectionsList[0], name: "" }];
+    const view = await render_();
+
+    const dialog = await openTypedDialog(view, "Compact history", "Compact history");
+    expect(dialog.textContent).toContain(UNNAMED);
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+    expect((within(dialog).getByRole("button", { name: "Compact history" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test.each<[string, string, string]>([
+    ["analyze", "Run Analyze", "Update Statistics"],
+    ["vacuum", "Run Vacuum", "Reclaim Space"],
+    ["reindex", "Run Reindex", "Rebuild Indexes"],
+  ])(
+    "a title on %s draws its declared card in place of the card worded from ProviderLabels",
+    async (type, legacyLabel, legacyTitle) => {
+      mockMetadata = {
+        capabilities: {
+          supportsMaintenance: true,
+          maintenanceOperations: ["analyze", "vacuum", "reindex"],
+          maintenanceOperationSpecs: {
+            [type]: {
+              label: `Declared ${type}`,
+              title: `The declared ${type} card`,
+              description: `Runs ${type} over the whole database.`,
+              global: true,
+              perEntity: false,
+            },
+          },
+        },
+      };
+      const view = await render_();
+
+      expect(view.queryByText(legacyLabel)).toBeNull();
+      expect(view.queryByText(legacyTitle)).toBeNull();
+      expect(view.getAllByText(`The declared ${type} card`)).toHaveLength(1);
+      // The other two keep their worded cards: one operation never has two cards, and none loses its only one.
+      for (const other of ["Run Analyze", "Run Vacuum", "Run Reindex"].filter((label) => label !== legacyLabel)) {
+        expect({ other, drawn: view.queryByText(other) !== null }).toEqual({ other, drawn: true });
+      }
+
+      // No confirmation is declared, so the card sends with one click, as every other card on the tab does.
+      await act(async () => {
+        fireEvent.click(view.getByRole("button", { name: `Declared ${type}` }));
+      });
+      expect(view.queryByRole("alertdialog")).toBeNull();
+      expect(mockRunMaintenance).toHaveBeenCalledWith(type, undefined, undefined);
+    },
+  );
+
+  test("a title on the operation a redirected vacuum slot names withholds that slot", async () => {
+    // MySQL's shape: the vacuum wording names `optimize`, so the vacuum card sends optimize, and a declared
+    // optimize card takes its place rather than standing beside it.
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze", "optimize"],
+        maintenanceOperationSpecs: {
+          analyze: { label: "Analyze Table", perEntity: true, global: true },
+          optimize: {
+            label: "Optimize now",
+            title: "Optimize every table",
+            description: "Runs OPTIMIZE TABLE over every table.",
+            perEntity: false,
+            global: true,
+          },
+        },
+      },
+      labels: {
+        vacuumActionOperation: "optimize",
+        vacuumGlobalLabel: "Run Optimize",
+        vacuumGlobalTitle: "Optimize Tables",
+        vacuumGlobalDesc: "Runs OPTIMIZE TABLE over every table in the database.",
+      },
+    };
+    const view = await render_();
+
+    expect(view.queryByText("Run Optimize")).toBeNull();
+    expect(view.queryByText("Optimize Tables")).toBeNull();
+    expect(view.getAllByText("Optimize every table")).toHaveLength(1);
+    expect(view.queryByText("Run Analyze")).not.toBeNull();
+  });
+
+  test("a title the gate does not offer globally draws no card", async () => {
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["compact"],
+        maintenanceOperationSpecs: {
+          // Declared with no whole-database form.
+          compact: {
+            label: "Compact history",
+            title: "Compact history",
+            description: COMPACT_DESCRIPTION,
+            global: false,
+            perEntity: false,
+          },
+          // Worded, but not an operation the provider declares: the route would answer 400.
+          disarm: {
+            label: "Disarm alarms",
+            title: "Disarm alarms",
+            description: DISARM_DESCRIPTION,
+            global: true,
+            perEntity: false,
+          },
+        },
+      },
+    };
+    const view = await render_();
+
+    expect(view.queryByText("Compact history")).toBeNull();
+    expect(view.queryByText("Disarm alarms")).toBeNull();
+    expect(view.queryByText("Global Operations")).toBeNull();
+  });
+
+  test("an operation listed twice still draws one card", async () => {
+    mockMetadata = {
+      capabilities: { ...declaredCardsMetadata.capabilities, maintenanceOperations: ["disarm", "disarm"] },
+    };
+    const view = await render_();
+
+    expect(view.getAllByRole("button", { name: "Disarm alarms" })).toHaveLength(1);
+  });
+
+  test("the three new operations get no per-row control", async () => {
+    // TABLE_ACTIONS is not a reader of them: rows here are addressable, so only that list withholds them.
+    mockMetadata = {
+      capabilities: { ...declaredCardsMetadata.capabilities, tablesAreDerivedGroupings: false },
+    };
+    const { container } = await render_();
+
+    expect(titlesIn(container)).toEqual([]);
+  });
+
+  test("a per-row control sends with one click, even for an operation whose global card asks for the name", async () => {
+    // Not a shape any provider may declare: tests/unit/db/maintenance-confirmation-capability.test.ts refuses
+    // `confirmation` beside `perEntity: true`. It pins that the per-row controls read neither the new fields
+    // nor the typed dialog.
+    mockMetadata = {
+      capabilities: {
+        supportsMaintenance: true,
+        maintenanceOperations: ["analyze"],
+        maintenanceOperationSpecs: {
+          analyze: {
+            label: "Analyze Table",
+            title: "Analyze the database",
+            description: "Runs ANALYZE over the whole database.",
+            perEntity: true,
+            global: true,
+            confirmation: "typed",
+          },
+        },
+      },
+    };
+    const view = await render_();
+
+    await act(async () => {
+      fireEvent.click(view.container.querySelector('button[title="Analyze Table"]') as HTMLButtonElement);
+    });
+    expect(view.queryByRole("alertdialog")).toBeNull();
+    expect(mockRunMaintenance).toHaveBeenCalledWith("analyze", "users", "public");
+
+    // The same operation's card asks.
+    await act(async () => {
+      fireEvent.click(view.getByText("Analyze Table", { selector: "button" }));
+    });
+    expect(view.getByRole("alertdialog", { name: "Analyze the database" })).toBeTruthy();
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+  });
+
+  test("a read-only connection draws the one line in place of the declared cards, and no card of theirs", async () => {
+    // Declared cards are the section's only global operations here, as they are on etcd (Task 6 beside Task 7).
+    mockMetadata = declaredCardsMetadata;
+    mockConnectionsList = [
+      {
+        id: "c1",
+        name: "Guarded",
+        type: "postgres",
+        host: "localhost",
+        port: 5432,
+        database: "dev",
+        readOnly: true,
+        createdAt: new Date(),
+      },
+    ];
+    const view = await render_();
+
+    const section = view.getByTestId("operations-read-only");
+    expect(section.textContent).toContain("Global Operations");
+    expect(section.textContent).toContain("This connection is read-only: use a read-write connection for maintenance");
+    for (const label of ["Compact history", "Defragment", "Disarm alarms"]) {
+      expect({ label, drawn: view.queryByRole("button", { name: label }) !== null }).toEqual({ label, drawn: false });
+    }
+    for (const description of [COMPACT_DESCRIPTION, DEFRAGMENT_DESCRIPTION, DISARM_DESCRIPTION]) {
+      expect(view.queryByText(description)).toBeNull();
+    }
+  });
+
+  // =========================================================================
+  // Declared per-row operations, the typed target and the preview (spec 3.11)
+  //
+  // The synthetic declaration of tests/fixtures/maintenance-entity-operations.ts: two per-row operations outside
+  // MaintenanceType, "Release Object" (typed target) and "Load Object" (typed target and preview), declared in that
+  // order. No shipped provider declares either; the census suite pins that.
+  // =========================================================================
+
+  const mockPreview = mock(async (): Promise<typeof SYNTHETIC_PREVIEW> => SYNTHETIC_PREVIEW);
+
+  /** Clicks a row's control, found by its title, and returns the dialog it opened, found by the dialog's title. */
+  const openRowDialog = async (view: ReturnType<typeof render>, title: string) => {
+    await act(async () => {
+      fireEvent.click(view.container.querySelector(`button[title="${title}"]`) as HTMLButtonElement);
+    });
+    return view.getByRole("alertdialog", { name: title });
+  };
+
+  const withPreview = (preview: () => Promise<typeof SYNTHETIC_PREVIEW>) => {
+    mockPreview.mockClear();
+    mockPreview.mockImplementation(preview);
+    monitoringOverride = { previewMaintenance: mockPreview };
+  };
+
+  test("draws one row control per declared per-row operation, after the tab's own, in declaration order", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    const { container } = await render_();
+
+    expect(titlesIn(container)).toEqual(["Analyze Table", "Release Object", "Load Object"]);
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a typed-target control sends nothing until the row's own name is typed exactly, then sends once", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Release Object");
+    expect(dialog.textContent).toContain("Release Object runs on users only.");
+    const input = within(dialog).getByLabelText("Type users to confirm") as HTMLInputElement;
+    const confirm = within(dialog).getByRole("button", { name: "Release Object" }) as HTMLButtonElement;
+    for (const wrong of ["drop", "USERS", "Users", "PG Dev", " users", "users "]) {
+      fireEvent.change(input, { target: { value: wrong } });
+      expect({ wrong, disabled: confirm.disabled }).toEqual({ wrong, disabled: true });
+    }
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "users" } });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("disarm", "users", "public");
+    expect(view.queryByText("DISARM")).not.toBeNull();
+  });
+
+  test("a preview control reads the preview, shows it, and asks for the row's name before it sends", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => SYNTHETIC_PREVIEW);
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(dialog).queryByText(SYNTHETIC_PREVIEW.summary)).not.toBeNull());
+    expect(mockPreview).toHaveBeenCalledTimes(1);
+    expect(mockPreview).toHaveBeenCalledWith("compact", "users", "public");
+    for (const fact of SYNTHETIC_PREVIEW.facts) {
+      expect(dialog.textContent).toContain(fact.label);
+      expect(dialog.textContent).toContain(fact.value);
+    }
+    expect(dialog.textContent).toContain("as reported by the server, possibly several seconds old");
+
+    const confirm = within(dialog).getByRole("button", { name: "Load Object" }) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(within(dialog).getByLabelText("Type users to confirm"), { target: { value: "users" } });
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+    expect(mockRunMaintenance).toHaveBeenCalledTimes(1);
+    expect(mockRunMaintenance).toHaveBeenCalledWith("compact", "users", "public");
+  });
+
+  test("a refused preview shows the refusal, with no confirm button, and sends nothing", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => SYNTHETIC_REFUSED_PREVIEW);
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(dialog).queryByText(SYNTHETIC_REFUSED_PREVIEW.refusal as string)).not.toBeNull());
+    expect(within(dialog).queryByRole("button", { name: "Load Object" })).toBeNull();
+    expect(within(dialog).queryByLabelText("Type users to confirm")).toBeNull();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a preview the route refuses shows the route's sentence, with no confirm button", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => {
+      throw new Error("This operation has no preview");
+    });
+    const view = await render_();
+
+    const dialog = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(dialog).queryByText("This operation has no preview")).not.toBeNull());
+    expect(within(dialog).queryByRole("button", { name: "Load Object" })).toBeNull();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a preview dialog opened again starts empty and reads the preview again", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    withPreview(async () => SYNTHETIC_PREVIEW);
+    const view = await render_();
+
+    const first = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(first).queryByText(SYNTHETIC_PREVIEW.summary)).not.toBeNull());
+    fireEvent.change(within(first).getByLabelText("Type users to confirm"), { target: { value: "users" } });
+    await act(async () => {
+      fireEvent.click(within(first).getByRole("button", { name: "Cancel" }));
+    });
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+
+    const second = await openRowDialog(view, "Load Object");
+    await waitFor(() => expect(within(second).queryByText(SYNTHETIC_PREVIEW.summary)).not.toBeNull());
+    expect((within(second).getByLabelText("Type users to confirm") as HTMLInputElement).value).toBe("");
+    expect(mockPreview).toHaveBeenCalledTimes(2);
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
+  });
+
+  test("a whole-database card with a typed confirmation still asks for the connection's name, not a row's", async () => {
+    mockMetadata = { capabilities: SYNTHETIC_ENTITY_CAPABILITIES };
+    const view = await render_();
+
+    const dialog = await openTypedDialog(view, "Defragment", "Defragment the member");
+    expect(within(dialog).getByLabelText("Type PG Dev to confirm")).toBeTruthy();
+    expect(mockRunMaintenance).not.toHaveBeenCalled();
   });
 });

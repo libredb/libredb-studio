@@ -6,8 +6,16 @@ import React from "react";
 import { describe, test, expect, mock, afterEach } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { TablesTab } from "@/components/monitoring/tabs/TablesTab";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { toTableStats } from "@/lib/db/providers/keyvalue/etcd/monitoring";
 import type { MonitoringData, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { TABLE_LABELS } from "../../fixtures/provider-labels";
+import {
+  SYNTHETIC_ENTITY_CAPABILITIES,
+  SYNTHETIC_PREVIEW,
+  SYNTHETIC_REFUSED_PREVIEW,
+} from "../../fixtures/maintenance-entity-operations";
 
 function makeData(): MonitoringData {
   return {
@@ -174,21 +182,21 @@ describe("TablesTab", () => {
     expect(reindexButton).not.toBeNull();
 
     fireEvent.click(analyzeButton!);
-    expect(onRunMaintenance).toHaveBeenCalledWith("analyze", "users");
+    expect(onRunMaintenance).toHaveBeenCalledWith("analyze", "users", "public");
     expect(vacuumButton!.disabled).toBe(true);
     await waitFor(() => {
       expect(vacuumButton!.disabled).toBe(false);
     });
 
     fireEvent.click(vacuumButton!);
-    expect(onRunMaintenance).toHaveBeenCalledWith("vacuum", "users");
+    expect(onRunMaintenance).toHaveBeenCalledWith("vacuum", "users", "public");
     expect(reindexButton!.disabled).toBe(true);
     await waitFor(() => {
       expect(reindexButton!.disabled).toBe(false);
     });
 
     fireEvent.click(reindexButton!);
-    expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+    expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users", "public");
   });
 
   test("shows non-admin placeholder for actions", () => {
@@ -271,7 +279,7 @@ describe("TablesTab", () => {
 
     fireEvent.click(reindexButton!);
     await waitFor(() => {
-      expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users");
+      expect(onRunMaintenance).toHaveBeenCalledWith("reindex", "users", "public");
     });
   });
 
@@ -620,7 +628,7 @@ describe("per-row controls follow the provider's own declaration", () => {
 
     // Oracle's "Rebuild Indexes" is `optimize`, and the target is the TABLE - the
     // shape that answered ORA-01418 for a table name before this change.
-    await waitFor(() => expect(onRunMaintenance).toHaveBeenCalledWith("optimize", "users"));
+    await waitFor(() => expect(onRunMaintenance).toHaveBeenCalledWith("optimize", "users", "public"));
   });
 
   test("a provider that declares no specs keeps the pre-#U9 three controls", () => {
@@ -839,6 +847,42 @@ describe("a provider that declares what its list holds", () => {
     expect(queryByText("Total")).toBeNull();
   });
 
+  // etcd spec 7.1 and 6.3: the rows are the key-prefix groups, and a key in no group is counted in the
+  // Overview alone, so the cards count the groups listed, under etcd's caption. The labels and the
+  // capabilities are the ones the provider answers /api/db/provider-meta with, read unconnected.
+  test("etcd's Tables cards render under its tableStatsCaption, titled Listed", () => {
+    const etcd = new EtcdProvider(CENSUS_CONNECTION.etcd);
+    const base = makeData();
+    const data = {
+      ...base,
+      overview: { ...base.overview, tableCount: 7 },
+      tables: toTableStats([
+        { group: "/apisix/routes/*", count: "2" },
+        { group: "/config/app/*", count: "3" },
+      ]),
+    } as MonitoringData;
+    const { getByTestId, queryByText } = render(
+      <TablesTab
+        data={data}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        capabilities={etcd.getCapabilities()}
+        labels={etcd.getLabels()}
+      />,
+    );
+
+    expect(getByTestId("tables-list-scope").textContent).toBe(
+      "The key-prefix groups; a key in no group is counted in the Overview and not here",
+    );
+    expect(queryByText("Listed")).not.toBeNull();
+    expect(queryByText("Tables")).toBeNull();
+    // Two groups listed, five keys between them: never the Overview's seven, which count the ungrouped keys too.
+    expect(getByTestId("tables-stat-count").textContent).toBe("2");
+    expect(queryByText("5 rows")).not.toBeNull();
+    // No RPC reports a group's bytes, so the size is unknown rather than a sum of zeros.
+    expect(getByTestId("tables-stat-size").textContent).toBe("N/A");
+  });
+
   test("an engine that declares no caption renders exactly as it does with no labels at all", () => {
     const unlabelled = render(
       <TablesTab
@@ -911,5 +955,116 @@ describe("a provider that declares what its list holds", () => {
       expect(getByTestId("tables-stat-count").textContent).toBe("N/A");
       cleanup();
     }
+  });
+});
+
+describe("declared per-row operations, the typed target and the preview (spec 3.11)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const titlesFrom = (container: HTMLElement) =>
+    Array.from(container.querySelectorAll("button"))
+      .map((b) => b.getAttribute("title"))
+      .filter((t): t is string => t !== null);
+
+  const declared = makeCapabilities({ ...SYNTHETIC_ENTITY_CAPABILITIES });
+
+  test("draws each declared per-row operation after the tab's own, in declaration order, on every row", () => {
+    const { container } = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={mock(async () => true)}
+        onPreviewMaintenance={mock(async () => SYNTHETIC_PREVIEW)}
+        capabilities={declared}
+      />,
+    );
+
+    expect(titlesFrom(container)).toEqual([
+      "Analyze Table",
+      "Release Object",
+      "Load Object",
+      "Analyze Table",
+      "Release Object",
+      "Load Object",
+    ]);
+  });
+
+  test("a preview control is withheld where the tab was handed no way to read a preview", () => {
+    const { container } = render(
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={mock(async () => true)} capabilities={declared} />,
+    );
+
+    expect(titlesFrom(container)).toEqual(["Analyze Table", "Release Object", "Analyze Table", "Release Object"]);
+  });
+
+  test("a typed-target control sends nothing until the row's own name is typed exactly, then sends once", async () => {
+    const onRunMaintenance = mock(async () => true);
+    const view = render(
+      <TablesTab data={makeData()} loading={false} onRunMaintenance={onRunMaintenance} capabilities={declared} />,
+    );
+
+    fireEvent.click(view.container.querySelector('button[title="Release Object"]') as HTMLButtonElement);
+    const dialog = await view.findByRole("alertdialog", { name: "Release Object" });
+    const input = view.getByLabelText("Type users to confirm") as HTMLInputElement;
+    const confirm = dialog.querySelector('button[type="submit"]') as HTMLButtonElement;
+    for (const wrong of ["drop", "USERS", "Users", "public.users", " users"]) {
+      fireEvent.change(input, { target: { value: wrong } });
+      expect({ wrong, disabled: confirm.disabled }).toEqual({ wrong, disabled: true });
+    }
+    expect(onRunMaintenance).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: "users" } });
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(onRunMaintenance).toHaveBeenCalledTimes(1));
+    expect(onRunMaintenance).toHaveBeenCalledWith("disarm", "users", "public");
+    await waitFor(() => expect(view.queryByRole("alertdialog")).toBeNull());
+  });
+
+  test("a preview control reads the preview for its row and offers the confirm button only after it and the name", async () => {
+    const onRunMaintenance = mock(async () => true);
+    const onPreviewMaintenance = mock(async () => SYNTHETIC_PREVIEW);
+    const view = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={onRunMaintenance}
+        onPreviewMaintenance={onPreviewMaintenance}
+        capabilities={declared}
+      />,
+    );
+
+    fireEvent.click(view.container.querySelector('button[title="Load Object"]') as HTMLButtonElement);
+    const dialog = await view.findByRole("alertdialog", { name: "Load Object" });
+    await waitFor(() => expect(dialog.textContent).toContain(SYNTHETIC_PREVIEW.summary));
+    expect(onPreviewMaintenance).toHaveBeenCalledWith("compact", "users", "public");
+
+    const confirm = dialog.querySelector('button[type="submit"]') as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.change(view.getByLabelText("Type users to confirm"), { target: { value: "users" } });
+    fireEvent.click(confirm);
+
+    await waitFor(() => expect(onRunMaintenance).toHaveBeenCalledWith("compact", "users", "public"));
+  });
+
+  test("a refused preview offers no confirm button and sends nothing", async () => {
+    const onRunMaintenance = mock(async () => true);
+    const view = render(
+      <TablesTab
+        data={makeData()}
+        loading={false}
+        onRunMaintenance={onRunMaintenance}
+        onPreviewMaintenance={mock(async () => SYNTHETIC_REFUSED_PREVIEW)}
+        capabilities={declared}
+      />,
+    );
+
+    fireEvent.click(view.container.querySelector('button[title="Load Object"]') as HTMLButtonElement);
+    const dialog = await view.findByRole("alertdialog", { name: "Load Object" });
+    await waitFor(() => expect(dialog.textContent).toContain(SYNTHETIC_REFUSED_PREVIEW.refusal as string));
+    expect(dialog.querySelector('button[type="submit"]')).toBeNull();
+    expect(onRunMaintenance).not.toHaveBeenCalled();
   });
 });

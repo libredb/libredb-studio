@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T12:30:30.838Z",
+    "runtime": "bun 1.4.2",
+    "surface": "points/query, Dot max_sim, docs.colbert, the multivector of id 0",
+    "request": {
+      "method": "POST",
+      "path": "/collections/docs/points/query",
+      "headers": {},
+      "body": "{\"query\":[[0.2681426703929901,0.17340852320194244,-0.13641242682933807,0.1548650711774826,0.15048165619373322,-0.1775488555431366,0.09016049653291702,-0.12597866356372833,0.13564841449260712,0.0930170789361,-0.34972408413887024,-0.0026361625641584396,-0.6985968351364136,0.15636105835437775,-0.3287505805492401,0.0856735110282898]],\"using\":\"colbert\",\"limit\":3,\"with_payload\":[\"seq\"]}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 295,
+    "body": "{\"result\":{\"points\":[{\"id\":0,\"version\":23,\"score\":1.0000001,\"payload\":{\"seq\":0}},{\"id\":\"ac01af47-201b-5ef8-8138-534fc8f5c5a4\",\"version\":30,\"score\":0.693028,\"payload\":{\"seq\":1832}},{\"id\":1152921504606847552,\"version\":25,\"score\":0.6884149,\"payload\":{\"seq\":581}}]},\"status\":\"ok\",\"time\":0.000636632}"
+  }
+}

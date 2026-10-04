@@ -79,3 +79,37 @@ describe("mapDatabaseError — cancellation patterns", () => {
     expect(mapped).not.toBeInstanceOf(QueryCancelledError);
   });
 });
+
+describe("mapDatabaseError — PostgreSQL timeout is a timeout, not a cancel (#1145)", () => {
+  // PostgreSQL reports statement_timeout and lock_timeout preemption with the same
+  // "canceling statement due to …" prefix an operator cancel uses. Both are TIMEOUTS —
+  // a time budget elapsed and the statement did not run to completion — so they must
+  // map to TimeoutError carrying the engine's own text, while only the operator cancel
+  // (pg_cancel_backend) stays a QueryCancelledError.
+  test('"canceling statement due to statement timeout" maps to TimeoutError, not QueryCancelledError', () => {
+    const native = new Error("canceling statement due to statement timeout");
+    const mapped = mapDatabaseError(native, "postgres", "SELECT pg_sleep(5)");
+    expect(mapped).toBeInstanceOf(TimeoutError);
+    expect(mapped).not.toBeInstanceOf(QueryCancelledError);
+    expect(mapped.code).toBe("TIMEOUT_ERROR");
+    // The engine's own wording is preserved rather than collapsed to "Query was cancelled".
+    expect(mapped.message).toContain("statement timeout");
+    expect(mapped.query).toBe("SELECT pg_sleep(5)");
+  });
+
+  test('"canceling statement due to lock timeout" maps to TimeoutError (a lock_timeout is a timeout)', () => {
+    const native = new Error("canceling statement due to lock timeout");
+    const mapped = mapDatabaseError(native, "postgres");
+    expect(mapped).toBeInstanceOf(TimeoutError);
+    expect(mapped).not.toBeInstanceOf(QueryCancelledError);
+    expect(mapped.message).toContain("lock timeout");
+  });
+
+  test('CONTROL: "canceling statement due to user request" stays a QueryCancelledError', () => {
+    const native = new Error("canceling statement due to user request");
+    const mapped = mapDatabaseError(native, "postgres");
+    expect(mapped).toBeInstanceOf(QueryCancelledError);
+    expect(mapped).not.toBeInstanceOf(TimeoutError);
+    expect(mapped.message).toBe("Query was cancelled");
+  });
+});

@@ -1,0 +1,20 @@
+{
+  "version": "3.12.0-core",
+  "name": "sql-keyword-show-tables",
+  "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/api/v3/query_sql",
+    "query": {},
+    "body": {
+      "db": "home",
+      "q": "SHOW TABLES",
+      "format": "jsonl"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/jsonl",
+  "body": "{\"table_catalog\":\"public\",\"table_schema\":\"iox\",\"table_name\":\"edge\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"iox\",\"table_name\":\"edge cases,m\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"iox\",\"table_name\":\"home\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"iox\",\"table_name\":\"numbers\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"iox\",\"table_name\":\"sparse\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"iox\",\"table_name\":\"we\\\"ird name;x\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"distinct_caches\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"influxdb_schema\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"last_caches\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"parquet_files\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"processing_engine_logs\",\"table_type\":\"VIEW\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"processing_engine_trigger_arguments\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"processing_engine_triggers\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"system\",\"table_name\":\"queries\",\"table_type\":\"BASE TABLE\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"information_schema\",\"table_name\":\"tables\",\"table_type\":\"VIEW\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"information_schema\",\"table_name\":\"views\",\"table_type\":\"VIEW\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"information_schema\",\"table_name\":\"columns\",\"table_type\":\"VIEW\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"information_schema\",\"table_name\":\"df_settings\",\"table_type\":\"VIEW\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"information_schema\",\"table_name\":\"schemata\",\"table_type\":\"VIEW\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"information_schema\",\"table_name\":\"routines\",\"table_type\":\"VIEW\"}\n{\"table_catalog\":\"public\",\"table_schema\":\"information_schema\",\"table_name\":\"parameters\",\"table_type\":\"VIEW\"}\n"
+}

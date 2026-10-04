@@ -4,7 +4,7 @@
  */
 
 import { randomBytes, randomUUID } from "node:crypto";
-import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfig } from "pg";
+import { Pool, type PoolClient, type PoolConfig as PgPoolConfig, type QueryConfig, types } from "pg";
 import { SQLBaseProvider } from "./sql-base";
 import {
   type DatabaseConnection,
@@ -47,10 +47,12 @@ import {
 } from "../../types";
 import {
   applySourceBound,
+  assertContainerPathShape,
   assertObjectPathShape,
   type ObjectPathShapeEngine,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   kindAcceptsSourceEdits,
@@ -67,17 +69,119 @@ import {
   ExecutionProfileError,
   QueryError,
   mapDatabaseError,
+  NO_TRANSACTION_OPENED,
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
+import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
+/**
+ * PostgreSQL's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147). Which level the readers need
+ * is not a field either: they look `schema` up rather than by position, so a declaration that
+ * names none is refused by `containerSchema` itself, where the reads are.
+ */
+const POSTGRES_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "postgres",
+  label: "A PostgreSQL",
+  shapeNames: "id",
+};
+
+// ============================================================================
+// Type parsers
+// ============================================================================
+
+// `pg_type` OIDs, the numbers `pg-types` registers its parsers under.
+const DATE_OID = 1082;
+const TIMESTAMP_OID = 1114;
+const DATE_ARRAY_OID = 1182;
+const TIMESTAMP_ARRAY_OID = 1115;
+const TIMESTAMPTZ_OID = 1184;
+const TIMESTAMPTZ_ARRAY_OID = 1185;
+// Widened to `number`: `pg-types` types the OID as an enum of scalar types, and 1009 is not one.
+const TEXT_ARRAY_OID: number = 1009;
+
+type TypeFormat = Parameters<typeof types.getTypeParser>[1];
+
+/**
+ * The per-pool parsers: `date` and `timestamp` (and their arrays) arrive as the engine's own
+ * text, and every other type is whatever `pg-types` makes of it.
+ *
+ * `pg-types` builds a `date` as a Date at LOCAL midnight of the Node process and reads a
+ * `timestamp` as local wall-clock time, and every row path then serialises that Date as ISO
+ * UTC, so the value moved with the server's TZ. Measured 2026-09-27 on postgres:18-alpine
+ * through this provider, `DATE '2026-09-01'` answered 2026-08-31T21:00:00.000Z under
+ * TZ=Europe/Istanbul and a SQL INSERT export replayed it as 2026-08-31; `'infinity'::date`
+ * became Infinity and then null, and a BC date moved by the zone's LMT offset. Neither type
+ * names an instant, so there is no Date that is right for it, and the text is exact.
+ *
+ * `timestamptz` does name one, and stays a Date: its ISO UTC string is the same in every TZ.
+ * Its two infinities are the exception, and arrive as the engine's text: `pg-types` reads
+ * `infinity` as the NUMBER Infinity, which `JSON.stringify` writes as null, so measured on
+ * PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
+ *
+ * Per pool, never `types.setTypeParser`: that registry is process-wide, and a host that embeds
+ * `@libredb/studio` has its own `pg` users. Only the text format is intercepted, because the
+ * binary one has no text to hand back. The arrays are parsed as `text[]` is, which keeps
+ * NULL elements as null.
+ */
+const ZONELESS_AS_TEXT: NonNullable<PgPoolConfig["types"]> = {
+  getTypeParser: (oid: number, format: TypeFormat = "text") => {
+    if (format === "text") {
+      if (oid === DATE_OID || oid === TIMESTAMP_OID) return (value: string) => value;
+      if (oid === DATE_ARRAY_OID || oid === TIMESTAMP_ARRAY_OID) return types.getTypeParser(TEXT_ARRAY_OID, "text");
+      if (oid === TIMESTAMPTZ_OID) return instantOrInfinity;
+      if (oid === TIMESTAMPTZ_ARRAY_OID) {
+        return (value: string) => instantsOrInfinities(types.getTypeParser(TEXT_ARRAY_OID, "text")(value));
+      }
+    }
+    return types.getTypeParser(oid, format);
+  },
+};
+
+const INFINITE_INSTANT = /^-?infinity$/;
+
+/** A `timestamptz` as the Date `pg-types` builds, or its text when it is one of the two infinities. */
+function instantOrInfinity(value: string): unknown {
+  return INFINITE_INSTANT.test(value) ? value : types.getTypeParser(TIMESTAMPTZ_OID, "text")(value);
+}
+
+/** A `timestamptz[]` read as `text[]` (nested for more dimensions, NULL kept), each element as above. */
+function instantsOrInfinities(element: unknown): unknown {
+  if (Array.isArray(element)) return element.map(instantsOrInfinities);
+  return typeof element === "string" ? instantOrInfinity(element) : element;
+}
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
+
+/**
+ * What `pg` keeps on a connected client and does not declare in its types: the BackendKeyData
+ * the server sent at startup, the address the client connected to (a tunnel's local end when
+ * there is one), and its TLS setting. The wire-protocol cancel needs all five, the last so it
+ * is encrypted wherever the session is.
+ */
+interface BackendKey {
+  processID?: unknown;
+  secretKey?: unknown;
+  host: string;
+  port: number;
+  ssl?: PgCancelTarget["ssl"];
+}
+
+/**
+ * How long a wire-protocol cancel may take to show: first for the request itself, then for
+ * the run to end. CockroachDB v26.3.2 ended `pg_sleep(20)` about 0.5 s after the request.
+ */
+const WIRE_CANCEL_CONFIRM_MS = 3000;
+const SETTLE_POLL_MS = 25;
 
 interface PgStatActivityRow {
   datname?: string;
@@ -522,7 +626,10 @@ const COUNTS_RELATION_ARM = `
           WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','S')`;
 
 // `prokind` is a PostgreSQL 11 column. Everything that predates it, and the forks that
-// never grew it, answer 42703 here - which is why this arm is separable at all.
+// never grew it, refuse this arm - which is why it is separable at all. They do not agree
+// on HOW: PostgreSQL answers 42703, Materialize v26.44.1 answers XX000 with the same
+// `column "p.prokind" does not exist`, so `isMissingProkindError()` reads the column name
+// and not the code.
 const COUNTS_ROUTINE_ARM = `
           SELECT CASE p.prokind WHEN 'f' THEN 'function' WHEN 'p' THEN 'procedure' END
           FROM pg_catalog.pg_proc p
@@ -556,12 +663,15 @@ const COUNTS_SQL_WITHOUT_ROUTINES = countsSql([COUNTS_RELATION_ARM, COUNTS_TRIGG
 
 // A server that has no `pg_proc.prokind` cannot tell a function from a procedure, so the
 // two routine folders are unknowable there - but the relations and the triggers still
-// are. Keyed on the column name as well as the code because 42703 is "undefined column"
-// generally, and re-running without the routine arm repairs nothing if the missing
-// column was in one of the arms that survive.
+// are. Keyed on the column name and NOT on the SQLSTATE, like every other fallback in
+// this file: PostgreSQL answers 42703, while Materialize v26.44.1 answers XX000 (its
+// generic internal error) with the same `column "p.prokind" does not exist`, so a 42703
+// key cost the whole tree there and an XX000 key would read every internal error as a
+// missing column. Only the routine arm names `prokind`, so a refusal that names it is a
+// refusal of that arm, and re-running without it is a repair rather than a guess.
 function isMissingProkindError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return (error as { code?: string }).code === "42703" && error.message.toLowerCase().includes("prokind");
+  return error.message.toLowerCase().includes("prokind");
 }
 
 // The relkinds behind each relation-shaped kind id, so `listObjects` never interpolates
@@ -1357,15 +1467,21 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * A path of another depth is a caller that built it from another engine's shape, and it
  * raises rather than reading a segment and carrying on: `undefined` bound to `$1` would
  * answer an empty folder that looks exactly like a schema holding nothing.
+ *
+ * The same failure arrives through a declaration rather than a caller: a depth-matching one
+ * that names no `schema` level passes the shared shape check, so the lookup below refuses
+ * it. A rule only this engine's readers need cannot be seen by that check, which compares
+ * depths, so it lives here, next to the reads it protects.
  */
 function containerSchema(capabilities: ProviderCapabilities, container: readonly string[]): string {
+  assertContainerPathShape(capabilities, container, POSTGRES_CONTAINER_PATH_ENGINE);
   const levels = declaredLevels(capabilities);
   const index = levels.findIndex((level) => level.id === "schema");
-  const segment = container.length === levels.length && index >= 0 ? container[index] : undefined;
+  const segment = index < 0 ? undefined : container[index];
   if (segment === undefined) {
     throw new QueryError(
-      `A PostgreSQL container path is [${levels.map((level) => level.id).join(", ")}], ` +
-        `received ${JSON.stringify(container)}`,
+      `A PostgreSQL path needs a "schema" container level and a segment for it; the declaration is ` +
+        `[${levels.map((level) => level.id).join(", ")}] and the path is ${JSON.stringify(container)}`,
       "postgres",
     );
   }
@@ -1920,9 +2036,12 @@ function assertAgentRoleIsUnprivileged(rows: unknown[]): void {
  *   MEMORY, found SELECT` for `EXPLAIN ANALYZE`, which is a different statement
  *   there. The plain `EXPLAIN` is the only plan grammar it publishes.
  *
- * Each probe is the statement its strategy really sends, so a grammar that answers
- * here is one the panel can use. `SELECT 1` is what they run: the first two forms
- * execute what they explain, and this one has nothing to execute.
+ * Each probe is the statement its strategy sends for the Explain button (`analyze`),
+ * so a grammar that answers here is one the panel can use. The background plan asks
+ * for the `estimate`, which `postgres-json` builds as `EXPLAIN (FORMAT JSON)` (#1311);
+ * that form is not probed, because a server accepting the parenthesised ANALYZE form
+ * accepts it too. `SELECT 1` is what they run: the first two forms execute what they
+ * explain, and this one has nothing to execute.
  */
 const EXPLAIN_PROBES: readonly (readonly [sql: string, format: ExplainFormat])[] = [
   ["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1", "postgres-json"],
@@ -2040,6 +2159,10 @@ export class PostgresProvider extends SQLBaseProvider {
       supportsResultPagination: true,
       // BEGIN / COMMIT / ROLLBACK over one held pool client (`beginTransaction()` below).
       supportsTransactions: true,
+      // PostgreSQL's DDL rolls back, so nothing here commits implicitly. These two END the
+      // transaction all the same: `END` is PostgreSQL's synonym for COMMIT, and `PREPARE
+      // TRANSACTION` detaches it from the session, so SANDBOX's ROLLBACK would reach nothing.
+      implicitCommitStatements: ["END", "PREPARE TRANSACTION"],
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
       // Every statement below has both forms - `VACUUM ANALYZE <table>` and bare
       // `VACUUM ANALYZE`, `REINDEX TABLE <table>` and `REINDEX DATABASE` - so
@@ -2056,6 +2179,9 @@ export class PostgresProvider extends SQLBaseProvider {
       // database and nothing in the product can switch it on a live connection, so
       // declaring a catalog level would draw a folder with exactly one child forever.
       containerLevels: [{ id: "schema", label: "Schema", labelPlural: "Schemas" }],
+      // Only the declared depth is an address (#1147). Which level the reads need is PostgreSQL's
+      // own rule and stays in `containerSchema`, beside the reads it protects.
+      containerPathShapes: "exact",
       // Seven kinds, each with the catalog that answers for it (#789):
       // table, view, materialized view and sequence from `pg_class.relkind`; function and
       // procedure from `pg_proc.prokind`; trigger from `pg_trigger`.
@@ -2291,6 +2417,8 @@ export class PostgresProvider extends SQLBaseProvider {
       connectionTimeoutMillis: this.poolConfig.acquireTimeout,
       statement_timeout: this.queryTimeout,
       ssl: sslConfig,
+      // In the base so both connection forms below carry it.
+      types: ZONELESS_AS_TEXT,
     };
 
     if (this.config.connectionString) {
@@ -2347,8 +2475,12 @@ export class PostgresProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
-  // Track running query PIDs for cancellation
-  private runningQueryPids = new Map<string, number>();
+  /**
+   * The statements running under a caller's id, so `cancelQuery` can reach them: the
+   * backend pid for `pg_cancel_backend`, and the client for the wire-protocol cancel, which
+   * names the session by the key the server gave that client (#1364).
+   */
+  private runningQueries = new Map<string, { pid: number; client: PoolClient }>();
 
   public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
@@ -2361,12 +2493,12 @@ export class PostgresProvider extends SQLBaseProvider {
             // Track PID for cancellation support
             if (queryId) {
               const pidRes = await client.query("SELECT pg_backend_pid() as pid");
-              this.runningQueryPids.set(queryId, pidRes.rows[0].pid);
+              this.runningQueries.set(queryId, { pid: pidRes.rows[0].pid, client });
             }
             const res = await client.query(sql, params);
             return res;
           } finally {
-            if (queryId) this.runningQueryPids.delete(queryId);
+            if (queryId) this.runningQueries.delete(queryId);
             // Read while this call still HOLDS the client, and before the release that
             // puts it back within reach of everybody else: after the release the status
             // can be another caller's, and a statement that FAILS inside a transaction —
@@ -2376,7 +2508,7 @@ export class PostgresProvider extends SQLBaseProvider {
             client.release();
           }
         } catch (error) {
-          if (queryId) this.runningQueryPids.delete(queryId);
+          if (queryId) this.runningQueries.delete(queryId);
           throw mapDatabaseError(error, "postgres", sql);
         }
       });
@@ -2391,10 +2523,38 @@ export class PostgresProvider extends SQLBaseProvider {
     });
   }
 
+  /**
+   * Stop the statement running under `queryId`, and answer true only when it stopped.
+   *
+   * `pg_cancel_backend` first, which stock PostgreSQL and its forks honour. Where it is
+   * refused or answers false, the wire-protocol CancelRequest for the same session (see
+   * `pg-wire-cancel.ts` for the engines measured), and then true only once the run has
+   * actually ended, within `WIRE_CANCEL_CONFIRM_MS`: the server sends no answer to a
+   * CancelRequest, so the run settling is the only confirmation there is. Before #1364 a
+   * refused `pg_cancel_backend` was the end of it, and the statement kept running.
+   */
   public async cancelQuery(queryId: string): Promise<boolean> {
-    const pid = this.runningQueryPids.get(queryId);
-    if (!pid) return false;
+    const running = this.runningQueries.get(queryId);
+    if (!running) return false;
 
+    if (await this.cancelBackend(running.pid)) return true;
+
+    const { processID, secretKey, host, port, ssl } = running.client as PoolClient & BackendKey;
+    if (typeof processID !== "number" || typeof secretKey !== "number") return false;
+    const sent = await sendPgCancelRequest(
+      { host, port, processID, secretKey, ssl },
+      WIRE_CANCEL_CONFIRM_MS,
+      // Only while this run still holds that session: once it has ended, the pool may have
+      // handed the session to another request, whose statement the request would stop. The
+      // check narrows that to the request's own flight time and cannot close it: a statement
+      // that ends while the 16 bytes travel leaves the key on a session someone else may
+      // already be using, the same window `psql`'s Ctrl+C has, inherent to the protocol.
+      () => this.runningQueries.get(queryId)?.client === running.client,
+    );
+    return sent && (await this.settles(queryId, WIRE_CANCEL_CONFIRM_MS));
+  }
+
+  private async cancelBackend(pid: number): Promise<boolean> {
     try {
       const client = await this.pool!.connect();
       try {
@@ -2407,6 +2567,17 @@ export class PostgresProvider extends SQLBaseProvider {
       console.error("[Postgres] Failed to cancel query:", error);
       return false;
     }
+  }
+
+  /** Whether the run under `queryId` ends within `timeoutMs`. */
+  private async settles(queryId: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.runningQueries.has(queryId)) {
+      if (Date.now() >= deadline) return false;
+      // oxlint-disable-next-line no-await-in-loop -- a poll: each wait must end before the run is looked at again.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+    }
+    return true;
   }
 
   // ============================================================================
@@ -2543,7 +2714,22 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "postgres");
     this.txClient = await this.pool!.connect();
-    await this.txClient.query("BEGIN");
+    try {
+      await this.txClient.query("BEGIN");
+    } catch (error) {
+      this.txClient.release();
+      this.txClient = null;
+      throw error;
+    }
+    // The ReadyForQuery byte after BEGIN is the server saying whether a transaction is open.
+    // A PostgreSQL-wire relative can accept the statement and open none: RisingWave answers
+    // `I` with a NOTICE (see NO_TRANSACTION_OPENED), so every statement run in the "session"
+    // autocommitted and SANDBOX's ROLLBACK undid nothing. Refused here, before anything runs.
+    if (this.txClient.getTransactionStatus() === "I") {
+      this.txClient.release();
+      this.txClient = null;
+      throw new QueryError(NO_TRANSACTION_OPENED, "postgres");
+    }
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks. Single-line callback
@@ -2554,29 +2740,58 @@ export class PostgresProvider extends SQLBaseProvider {
   public async commitTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
+    const client = this.txClient;
     try {
-      await this.txClient.query("COMMIT");
+      await client.query("COMMIT");
     } finally {
-      this.txClient.release();
-      this.txClient = null;
-      this.txActive = false;
+      this.releaseHeldClient(client);
     }
   }
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
+    const client = this.txClient;
     try {
-      await this.txClient.query("ROLLBACK");
+      await client.query("ROLLBACK");
     } finally {
-      this.txClient.release();
-      this.txClient = null;
-      this.txActive = false;
+      this.releaseHeldClient(client);
     }
   }
 
   public isInTransaction(): boolean {
     return this.txActive;
+  }
+
+  /**
+   * Hand `client` back and forget the session, but only while it is still THE session's
+   * client. A COMMIT or ROLLBACK queued behind an in-flight `queryInTransaction()` can find
+   * that statement's `endHeldTransaction()` already released it, and releasing a client twice
+   * (or `null`) is a crash rather than a no-op.
+   */
+  private releaseHeldClient(client: PoolClient): void {
+    if (this.txClient !== client) return;
+    client.release();
+    this.txClient = null;
+    this.txActive = false;
+  }
+
+  /**
+   * Let go of a session the SERVER already ended. A ROLLBACK is still sent first, best effort:
+   * the status byte is the evidence the transaction is gone, and it was measured on
+   * PostgreSQL 18 and RisingWave 3.1.0 but not on every relative this provider serves. If a
+   * relative ever reports `I` with a transaction still open, the client must not go back to
+   * the pool holding it; where the transaction really is gone the ROLLBACK is a no-op that
+   * answers a WARNING.
+   */
+  private async endHeldTransaction(client: PoolClient): Promise<void> {
+    this.clearTxTimeout();
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* a no-op that failed is still a no-op; the release below is what matters */
+    }
+    this.releaseHeldClient(client);
   }
 
   /**
@@ -2737,6 +2952,14 @@ export class PostgresProvider extends SQLBaseProvider {
           return await this.txClient!.query(sql, params);
         } catch (error) {
           throw mapDatabaseError(error, "postgres", sql);
+        } finally {
+          // PostgreSQL's DDL is transactional, so this is not about DDL: it is a statement
+          // that ENDS the transaction itself, a typed `COMMIT` or `END` in a multi-statement
+          // text. The server reports `I` afterwards and the held client is just a pooled
+          // client again, so a ROLLBACK would undo nothing. The session is ended here and the
+          // route reports `inTransaction: false` instead.
+          const client = this.txClient;
+          if (client?.getTransactionStatus() === "I") await this.endHeldTransaction(client);
         }
       });
 
@@ -2837,11 +3060,16 @@ export class PostgresProvider extends SQLBaseProvider {
    * the object browser can say why a folder has no number instead of showing a zero
    * nobody measured.
    *
-   * The `prokind` retry is the one partial outcome. That column arrived in PostgreSQL 11
-   * and the wire-compatible forks do not all have it, so a server can answer for its
+   * The routine retry is the one partial outcome. `pg_proc.prokind` arrived in PostgreSQL
+   * 11 and the wire-compatible forks do not all have it, so a server can answer for its
    * relations and its triggers while being unable to tell a function from a procedure.
    * Losing the two routine folders is the right cost there; losing the whole container to
    * one missing column is not.
+   *
+   * The retry is keyed on the refusal naming `prokind` (`isMissingProkindError()`), under
+   * any SQLSTATE, and every other refusal costs every folder on the first read: a statement
+   * timeout or a cancel is not run a second time, and its sentence is never filed under
+   * the routine pair as though it were about routines.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();
@@ -4112,8 +4340,15 @@ export class PostgresProvider extends SQLBaseProvider {
    * Bare table names default to the public schema; "schema.table" is quoted
    * per-part. Returns an empty string when no target is given.
    */
-  private qualifyMaintenanceTarget(target?: string): string {
+  private qualifyMaintenanceTarget(target?: string, container?: string): string {
     if (!target) return "";
+    // An explicit container wins over anything the name appears to carry: a container can
+    // legitimately contain a dot, and splitting a name to recover it is the ambiguity this
+    // parameter exists to remove. Without one the old readings stay, so existing callers do
+    // not change behaviour.
+    if (container) {
+      return this.escapeIdentifier(container) + "." + this.escapeIdentifier(target);
+    }
     if (target.includes(".")) {
       return target
         .split(".")
@@ -4123,16 +4358,16 @@ export class PostgresProvider extends SQLBaseProvider {
     return "public." + this.escapeIdentifier(target);
   }
 
-  public async runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult> {
+  public async runMaintenance(type: MaintenanceType, target?: string, container?: string): Promise<MaintenanceResult> {
     this.ensureConnected();
 
     const { result, executionTime } = await this.measureExecution(async () => {
       const client = await this.pool!.connect();
       try {
         let sql = "";
-        // Resolve target into a schema-qualified, quoted identifier (defaults to
-        // the public schema for bare names; "schema.table" is also supported).
-        const qualifiedTarget = this.qualifyMaintenanceTarget(target);
+        // Resolve target into a schema-qualified, quoted identifier: the caller's container
+        // when there is one, else "schema.table", else the public schema for bare names.
+        const qualifiedTarget = this.qualifyMaintenanceTarget(target, container);
 
         switch (type) {
           case "vacuum":
@@ -4189,6 +4424,8 @@ export class PostgresProvider extends SQLBaseProvider {
 
     return {
       total: this.pool.totalCount,
+      // The configured ceiling, kept apart from `total` (the clients open right now).
+      max: this.poolConfig.max,
       idle: this.pool.idleCount,
       active: this.pool.totalCount - this.pool.idleCount,
       waiting: this.pool.waitingCount,
@@ -4341,7 +4578,7 @@ export class PostgresProvider extends SQLBaseProvider {
         // `|| "100"` was two bugs in one operator: it invented a perfect cache for a
         // NULL, and it also discarded a measured 0 - a cold cache reading 0% is a
         // measurement, and the one the panel most needs to show.
-        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio }),
+        ...(cacheHitRatio === undefined ? {} : { cacheHitRatio, cacheHitAdvice: "Increase shared_buffers" }),
         // transactionsPerSecond / queriesPerSecond would need time-based sampling,
         // which this call does not do, so they stay absent.
         //

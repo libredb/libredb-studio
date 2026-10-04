@@ -1,0 +1,2825 @@
+{
+  "$generated": {
+    "by": "tests/live/qdrant-evidence.ts",
+    "source": "github.com/qdrant/qdrant docs/redoc/master/openapi.json at tag v1.19.1",
+    "sha256": "eb3e5d71ba74e1d99124ca1a77d563bbfa47084f04a13ef9b197e339f5a4ce0a"
+  },
+  "operations": [
+    {
+      "op": "root",
+      "method": "GET",
+      "path": "/",
+      "pathParameters": [],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "get_collections",
+      "method": "GET",
+      "path": "/collections",
+      "pathParameters": [],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "get_collection",
+      "method": "GET",
+      "path": "/collections/{collection_name}",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "collection_exists",
+      "method": "GET",
+      "path": "/collections/{collection_name}/exists",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "get_collections_aliases",
+      "method": "GET",
+      "path": "/aliases",
+      "pathParameters": [],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "get_collection_aliases",
+      "method": "GET",
+      "path": "/collections/{collection_name}/aliases",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "get_points",
+      "method": "POST",
+      "path": "/collections/{collection_name}/points",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": "PointRequest",
+      "requestBodyRequired": false
+    },
+    {
+      "op": "get_point",
+      "method": "GET",
+      "path": "/collections/{collection_name}/points/{id}",
+      "pathParameters": [
+        "collection_name",
+        "id"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "scroll_points",
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/scroll",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": "ScrollRequest",
+      "requestBodyRequired": false
+    },
+    {
+      "op": "count_points",
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/count",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": "CountRequest",
+      "requestBodyRequired": false
+    },
+    {
+      "op": "facet",
+      "method": "POST",
+      "path": "/collections/{collection_name}/facet",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": "FacetRequest",
+      "requestBodyRequired": false
+    },
+    {
+      "op": "query_points",
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": "QueryRequest",
+      "requestBodyRequired": false
+    },
+    {
+      "op": "query_batch_points",
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/batch",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": "QueryRequestBatch",
+      "requestBodyRequired": false
+    },
+    {
+      "op": "query_points_groups",
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/groups",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "consistency",
+        "timeout"
+      ],
+      "requestBody": "QueryGroupsRequest",
+      "requestBodyRequired": false
+    },
+    {
+      "op": "get_optimizations",
+      "method": "GET",
+      "path": "/collections/{collection_name}/optimizations",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [
+        "with",
+        "completed_limit"
+      ],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "list_snapshots",
+      "method": "GET",
+      "path": "/collections/{collection_name}/snapshots",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    },
+    {
+      "op": "collection_cluster_info",
+      "method": "GET",
+      "path": "/collections/{collection_name}/cluster",
+      "pathParameters": [
+        "collection_name"
+      ],
+      "queryParameters": [],
+      "requestBody": null,
+      "requestBodyRequired": false
+    }
+  ],
+  "schemas": {
+    "AbsExpression": {
+      "type": "object",
+      "required": [
+        "abs"
+      ],
+      "properties": {
+        "abs": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "AcornSearchParams": {
+      "type": "object",
+      "properties": {
+        "enable": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max_selectivity": {
+          "type": "number",
+          "format": "double",
+          "maximum": 1,
+          "minimum": 0,
+          "nullable": true
+        }
+      }
+    },
+    "AcoshExpression": {
+      "type": "object",
+      "required": [
+        "acosh"
+      ],
+      "properties": {
+        "acosh": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "AnyVariants": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "uniqueItems": true
+        }
+      ]
+    },
+    "Bm25Config": {
+      "type": "object",
+      "properties": {
+        "k": {
+          "default": 1.2,
+          "type": "number",
+          "format": "double"
+        },
+        "b": {
+          "default": 0.75,
+          "type": "number",
+          "format": "double"
+        },
+        "avg_len": {
+          "default": 256,
+          "type": "number",
+          "format": "double"
+        },
+        "tokenizer": {
+          "$ref": "#/components/schemas/TokenizerType"
+        },
+        "language": {
+          "type": "string",
+          "nullable": true
+        },
+        "lowercase": {
+          "type": "boolean",
+          "nullable": true
+        },
+        "ascii_folding": {
+          "type": "boolean",
+          "nullable": true
+        },
+        "stopwords": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/StopwordsInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "stemmer": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/StemmingAlgorithm"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "min_token_len": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true
+        },
+        "max_token_len": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true
+        }
+      }
+    },
+    "Condition": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/FieldCondition"
+        },
+        {
+          "$ref": "#/components/schemas/IsEmptyCondition"
+        },
+        {
+          "$ref": "#/components/schemas/IsNullCondition"
+        },
+        {
+          "$ref": "#/components/schemas/HasIdCondition"
+        },
+        {
+          "$ref": "#/components/schemas/HasVectorCondition"
+        },
+        {
+          "$ref": "#/components/schemas/SliceCondition"
+        },
+        {
+          "$ref": "#/components/schemas/NestedCondition"
+        },
+        {
+          "$ref": "#/components/schemas/Filter"
+        }
+      ]
+    },
+    "ContextInput": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ContextPair"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ContextPair"
+          }
+        },
+        {
+          "nullable": true
+        }
+      ]
+    },
+    "ContextPair": {
+      "type": "object",
+      "required": [
+        "negative",
+        "positive"
+      ],
+      "properties": {
+        "positive": {
+          "$ref": "#/components/schemas/VectorInput"
+        },
+        "negative": {
+          "$ref": "#/components/schemas/VectorInput"
+        }
+      }
+    },
+    "ContextQuery": {
+      "type": "object",
+      "required": [
+        "context"
+      ],
+      "properties": {
+        "context": {
+          "$ref": "#/components/schemas/ContextInput"
+        }
+      }
+    },
+    "CountRequest": {
+      "type": "object",
+      "properties": {
+        "shard_key": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ShardKeySelector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Filter"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "exact": {
+          "default": true,
+          "type": "boolean"
+        }
+      }
+    },
+    "DatetimeExpression": {
+      "type": "object",
+      "required": [
+        "datetime"
+      ],
+      "properties": {
+        "datetime": {
+          "type": "string"
+        }
+      }
+    },
+    "DatetimeKeyExpression": {
+      "type": "object",
+      "required": [
+        "datetime_key"
+      ],
+      "properties": {
+        "datetime_key": {
+          "type": "string"
+        }
+      }
+    },
+    "DatetimeRange": {
+      "type": "object",
+      "properties": {
+        "lt": {
+          "type": "string",
+          "format": "date-time",
+          "nullable": true
+        },
+        "gt": {
+          "type": "string",
+          "format": "date-time",
+          "nullable": true
+        },
+        "gte": {
+          "type": "string",
+          "format": "date-time",
+          "nullable": true
+        },
+        "lte": {
+          "type": "string",
+          "format": "date-time",
+          "nullable": true
+        }
+      }
+    },
+    "DecayParamsExpression": {
+      "type": "object",
+      "required": [
+        "x"
+      ],
+      "properties": {
+        "x": {
+          "$ref": "#/components/schemas/Expression"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Expression"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "scale": {
+          "type": "number",
+          "format": "float",
+          "nullable": true
+        },
+        "midpoint": {
+          "type": "number",
+          "format": "float",
+          "nullable": true
+        }
+      }
+    },
+    "Direction": {
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ]
+    },
+    "DisabledStemmerParams": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/components/schemas/NoStemmer"
+        }
+      }
+    },
+    "DiscoverInput": {
+      "type": "object",
+      "required": [
+        "context",
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/components/schemas/VectorInput"
+        },
+        "context": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ContextPair"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/ContextPair"
+              }
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "DiscoverQuery": {
+      "type": "object",
+      "required": [
+        "discover"
+      ],
+      "properties": {
+        "discover": {
+          "$ref": "#/components/schemas/DiscoverInput"
+        }
+      }
+    },
+    "DivExpression": {
+      "type": "object",
+      "required": [
+        "div"
+      ],
+      "properties": {
+        "div": {
+          "$ref": "#/components/schemas/DivParams"
+        }
+      }
+    },
+    "DivParams": {
+      "type": "object",
+      "required": [
+        "left",
+        "right"
+      ],
+      "properties": {
+        "left": {
+          "$ref": "#/components/schemas/Expression"
+        },
+        "right": {
+          "$ref": "#/components/schemas/Expression"
+        },
+        "by_zero_default": {
+          "type": "number",
+          "format": "float",
+          "nullable": true
+        }
+      }
+    },
+    "Document": {
+      "type": "object",
+      "required": [
+        "model",
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/DocumentOptions"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "DocumentOptions": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": true
+        },
+        {
+          "$ref": "#/components/schemas/Bm25Config"
+        }
+      ]
+    },
+    "ExpDecayExpression": {
+      "type": "object",
+      "required": [
+        "exp_decay"
+      ],
+      "properties": {
+        "exp_decay": {
+          "$ref": "#/components/schemas/DecayParamsExpression"
+        }
+      }
+    },
+    "ExpExpression": {
+      "type": "object",
+      "required": [
+        "exp"
+      ],
+      "properties": {
+        "exp": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "Expression": {
+      "anyOf": [
+        {
+          "type": "number",
+          "format": "float"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/components/schemas/Condition"
+        },
+        {
+          "$ref": "#/components/schemas/GeoDistance"
+        },
+        {
+          "$ref": "#/components/schemas/DatetimeExpression"
+        },
+        {
+          "$ref": "#/components/schemas/DatetimeKeyExpression"
+        },
+        {
+          "$ref": "#/components/schemas/MultExpression"
+        },
+        {
+          "$ref": "#/components/schemas/SumExpression"
+        },
+        {
+          "$ref": "#/components/schemas/MaxExpression"
+        },
+        {
+          "$ref": "#/components/schemas/MinExpression"
+        },
+        {
+          "$ref": "#/components/schemas/NegExpression"
+        },
+        {
+          "$ref": "#/components/schemas/AbsExpression"
+        },
+        {
+          "$ref": "#/components/schemas/DivExpression"
+        },
+        {
+          "$ref": "#/components/schemas/SqrtExpression"
+        },
+        {
+          "$ref": "#/components/schemas/PowExpression"
+        },
+        {
+          "$ref": "#/components/schemas/ExpExpression"
+        },
+        {
+          "$ref": "#/components/schemas/Log10Expression"
+        },
+        {
+          "$ref": "#/components/schemas/LnExpression"
+        },
+        {
+          "$ref": "#/components/schemas/AcoshExpression"
+        },
+        {
+          "$ref": "#/components/schemas/LinDecayExpression"
+        },
+        {
+          "$ref": "#/components/schemas/ExpDecayExpression"
+        },
+        {
+          "$ref": "#/components/schemas/GaussDecayExpression"
+        }
+      ]
+    },
+    "ExtendedPointId": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "format": "uuid"
+        }
+      ]
+    },
+    "FacetRequest": {
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "shard_key": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ShardKeySelector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Filter"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "exact": {
+          "type": "boolean",
+          "nullable": true
+        }
+      }
+    },
+    "FeedbackItem": {
+      "type": "object",
+      "required": [
+        "example",
+        "score"
+      ],
+      "properties": {
+        "example": {
+          "$ref": "#/components/schemas/VectorInput"
+        },
+        "score": {
+          "type": "number",
+          "format": "float"
+        }
+      }
+    },
+    "FeedbackStrategy": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/NaiveFeedbackStrategy"
+        }
+      ]
+    },
+    "FieldCondition": {
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "match": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Match"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "range": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/RangeInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "geo_bounding_box": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/GeoBoundingBox"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "geo_radius": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/GeoRadius"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "geo_polygon": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/GeoPolygon"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "values_count": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ValuesCount"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "is_empty": {
+          "type": "boolean",
+          "nullable": true
+        },
+        "is_null": {
+          "type": "boolean",
+          "nullable": true
+        }
+      }
+    },
+    "Filter": {
+      "type": "object",
+      "properties": {
+        "should": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Condition"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Condition"
+              }
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "min_should": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/MinShould"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "must": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Condition"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Condition"
+              }
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "must_not": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Condition"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Condition"
+              }
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "FormulaQuery": {
+      "type": "object",
+      "required": [
+        "formula"
+      ],
+      "properties": {
+        "formula": {
+          "$ref": "#/components/schemas/Expression"
+        },
+        "defaults": {
+          "default": {},
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "Fusion": {
+      "type": "string",
+      "enum": [
+        "rrf",
+        "dbsf"
+      ]
+    },
+    "FusionQuery": {
+      "type": "object",
+      "required": [
+        "fusion"
+      ],
+      "properties": {
+        "fusion": {
+          "$ref": "#/components/schemas/Fusion"
+        }
+      }
+    },
+    "GaussDecayExpression": {
+      "type": "object",
+      "required": [
+        "gauss_decay"
+      ],
+      "properties": {
+        "gauss_decay": {
+          "$ref": "#/components/schemas/DecayParamsExpression"
+        }
+      }
+    },
+    "GeoBoundingBox": {
+      "type": "object",
+      "required": [
+        "bottom_right",
+        "top_left"
+      ],
+      "properties": {
+        "top_left": {
+          "$ref": "#/components/schemas/GeoPoint"
+        },
+        "bottom_right": {
+          "$ref": "#/components/schemas/GeoPoint"
+        }
+      }
+    },
+    "GeoDistance": {
+      "type": "object",
+      "required": [
+        "geo_distance"
+      ],
+      "properties": {
+        "geo_distance": {
+          "$ref": "#/components/schemas/GeoDistanceParams"
+        }
+      }
+    },
+    "GeoDistanceParams": {
+      "type": "object",
+      "required": [
+        "origin",
+        "to"
+      ],
+      "properties": {
+        "origin": {
+          "$ref": "#/components/schemas/GeoPoint"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "GeoLineString": {
+      "type": "object",
+      "required": [
+        "points"
+      ],
+      "properties": {
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/GeoPoint"
+          }
+        }
+      }
+    },
+    "GeoPoint": {
+      "type": "object",
+      "required": [
+        "lat",
+        "lon"
+      ],
+      "properties": {
+        "lon": {
+          "type": "number",
+          "format": "double"
+        },
+        "lat": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "GeoPolygon": {
+      "type": "object",
+      "required": [
+        "exterior"
+      ],
+      "properties": {
+        "exterior": {
+          "$ref": "#/components/schemas/GeoLineString"
+        },
+        "interiors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/GeoLineString"
+          },
+          "nullable": true
+        }
+      }
+    },
+    "GeoRadius": {
+      "type": "object",
+      "required": [
+        "center",
+        "radius"
+      ],
+      "properties": {
+        "center": {
+          "$ref": "#/components/schemas/GeoPoint"
+        },
+        "radius": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "HasIdCondition": {
+      "type": "object",
+      "required": [
+        "has_id"
+      ],
+      "properties": {
+        "has_id": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ExtendedPointId"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "HasVectorCondition": {
+      "type": "object",
+      "required": [
+        "has_vector"
+      ],
+      "properties": {
+        "has_vector": {
+          "type": "string"
+        }
+      }
+    },
+    "IdfCorpusParams": {
+      "type": "object",
+      "required": [
+        "corpus"
+      ],
+      "properties": {
+        "corpus": {
+          "$ref": "#/components/schemas/Filter"
+        }
+      }
+    },
+    "IdfParams": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/IdfScope"
+        },
+        {
+          "$ref": "#/components/schemas/IdfCorpusParams"
+        }
+      ]
+    },
+    "IdfScope": {
+      "type": "string",
+      "enum": [
+        "global"
+      ]
+    },
+    "Image": {
+      "type": "object",
+      "required": [
+        "image",
+        "model"
+      ],
+      "properties": {
+        "image": {},
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true,
+          "nullable": true
+        }
+      }
+    },
+    "InferenceObject": {
+      "type": "object",
+      "required": [
+        "model",
+        "object"
+      ],
+      "properties": {
+        "object": {},
+        "model": {
+          "type": "string",
+          "minLength": 1
+        },
+        "options": {
+          "type": "object",
+          "additionalProperties": true,
+          "nullable": true
+        }
+      }
+    },
+    "IsEmptyCondition": {
+      "type": "object",
+      "required": [
+        "is_empty"
+      ],
+      "properties": {
+        "is_empty": {
+          "$ref": "#/components/schemas/PayloadField"
+        }
+      }
+    },
+    "IsNullCondition": {
+      "type": "object",
+      "required": [
+        "is_null"
+      ],
+      "properties": {
+        "is_null": {
+          "$ref": "#/components/schemas/PayloadField"
+        }
+      }
+    },
+    "Language": {
+      "type": "string",
+      "enum": [
+        "arabic",
+        "azerbaijani",
+        "basque",
+        "bengali",
+        "catalan",
+        "chinese",
+        "danish",
+        "dutch",
+        "english",
+        "finnish",
+        "french",
+        "german",
+        "greek",
+        "hebrew",
+        "hinglish",
+        "hungarian",
+        "indonesian",
+        "italian",
+        "japanese",
+        "kazakh",
+        "nepali",
+        "norwegian",
+        "portuguese",
+        "romanian",
+        "russian",
+        "slovene",
+        "spanish",
+        "swedish",
+        "tajik",
+        "turkish"
+      ]
+    },
+    "LinDecayExpression": {
+      "type": "object",
+      "required": [
+        "lin_decay"
+      ],
+      "properties": {
+        "lin_decay": {
+          "$ref": "#/components/schemas/DecayParamsExpression"
+        }
+      }
+    },
+    "LnExpression": {
+      "type": "object",
+      "required": [
+        "ln"
+      ],
+      "properties": {
+        "ln": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "Log10Expression": {
+      "type": "object",
+      "required": [
+        "log10"
+      ],
+      "properties": {
+        "log10": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "LookupLocation": {
+      "type": "object",
+      "required": [
+        "collection"
+      ],
+      "properties": {
+        "collection": {
+          "type": "string"
+        },
+        "vector": {
+          "default": null,
+          "type": "string",
+          "nullable": true
+        },
+        "shard_key": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ShardKeySelector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "Match": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/MatchValue"
+        },
+        {
+          "$ref": "#/components/schemas/MatchText"
+        },
+        {
+          "$ref": "#/components/schemas/MatchTextAny"
+        },
+        {
+          "$ref": "#/components/schemas/MatchPhrase"
+        },
+        {
+          "$ref": "#/components/schemas/MatchPrefix"
+        },
+        {
+          "$ref": "#/components/schemas/MatchAny"
+        },
+        {
+          "$ref": "#/components/schemas/MatchExcept"
+        }
+      ]
+    },
+    "MatchAny": {
+      "type": "object",
+      "required": [
+        "any"
+      ],
+      "properties": {
+        "any": {
+          "$ref": "#/components/schemas/AnyVariants"
+        }
+      }
+    },
+    "MatchExcept": {
+      "type": "object",
+      "required": [
+        "except"
+      ],
+      "properties": {
+        "except": {
+          "$ref": "#/components/schemas/AnyVariants"
+        }
+      }
+    },
+    "MatchPhrase": {
+      "type": "object",
+      "required": [
+        "phrase"
+      ],
+      "properties": {
+        "phrase": {
+          "type": "string"
+        }
+      }
+    },
+    "MatchPrefix": {
+      "type": "object",
+      "required": [
+        "prefix"
+      ],
+      "properties": {
+        "prefix": {
+          "type": "string"
+        }
+      }
+    },
+    "MatchText": {
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "MatchTextAny": {
+      "type": "object",
+      "required": [
+        "text_any"
+      ],
+      "properties": {
+        "text_any": {
+          "type": "string"
+        }
+      }
+    },
+    "MatchValue": {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "$ref": "#/components/schemas/ValueVariants"
+        }
+      }
+    },
+    "MaxExpression": {
+      "type": "object",
+      "required": [
+        "max"
+      ],
+      "properties": {
+        "max": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Expression"
+          }
+        }
+      }
+    },
+    "MinExpression": {
+      "type": "object",
+      "required": [
+        "min"
+      ],
+      "properties": {
+        "min": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Expression"
+          }
+        }
+      }
+    },
+    "MinShould": {
+      "type": "object",
+      "required": [
+        "conditions",
+        "min_count"
+      ],
+      "properties": {
+        "conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Condition"
+          }
+        },
+        "min_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1
+        }
+      }
+    },
+    "Mmr": {
+      "type": "object",
+      "properties": {
+        "diversity": {
+          "type": "number",
+          "format": "float",
+          "maximum": 1,
+          "minimum": 0,
+          "nullable": true
+        },
+        "candidates_limit": {
+          "type": "integer",
+          "format": "uint",
+          "maximum": 16384,
+          "minimum": 0,
+          "nullable": true
+        }
+      }
+    },
+    "MultExpression": {
+      "type": "object",
+      "required": [
+        "mult"
+      ],
+      "properties": {
+        "mult": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Expression"
+          }
+        }
+      }
+    },
+    "NaiveFeedbackStrategy": {
+      "type": "object",
+      "required": [
+        "naive"
+      ],
+      "properties": {
+        "naive": {
+          "$ref": "#/components/schemas/NaiveFeedbackStrategyParams"
+        }
+      }
+    },
+    "NaiveFeedbackStrategyParams": {
+      "type": "object",
+      "required": [
+        "a",
+        "b",
+        "c"
+      ],
+      "properties": {
+        "a": {
+          "type": "number",
+          "format": "float"
+        },
+        "b": {
+          "type": "number",
+          "format": "float",
+          "minimum": 0
+        },
+        "c": {
+          "type": "number",
+          "format": "float"
+        }
+      }
+    },
+    "NearestQuery": {
+      "type": "object",
+      "required": [
+        "nearest"
+      ],
+      "properties": {
+        "nearest": {
+          "$ref": "#/components/schemas/VectorInput"
+        },
+        "mmr": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Mmr"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "NegExpression": {
+      "type": "object",
+      "required": [
+        "neg"
+      ],
+      "properties": {
+        "neg": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "Nested": {
+      "type": "object",
+      "required": [
+        "filter",
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "filter": {
+          "$ref": "#/components/schemas/Filter"
+        }
+      }
+    },
+    "NestedCondition": {
+      "type": "object",
+      "required": [
+        "nested"
+      ],
+      "properties": {
+        "nested": {
+          "$ref": "#/components/schemas/Nested"
+        }
+      }
+    },
+    "NoStemmer": {
+      "type": "string",
+      "enum": [
+        "none"
+      ]
+    },
+    "OrderBy": {
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Direction"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "start_from": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/StartFrom"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "OrderByInterface": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/components/schemas/OrderBy"
+        }
+      ]
+    },
+    "OrderByQuery": {
+      "type": "object",
+      "required": [
+        "order_by"
+      ],
+      "properties": {
+        "order_by": {
+          "$ref": "#/components/schemas/OrderByInterface"
+        }
+      }
+    },
+    "PayloadField": {
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "type": "string"
+        }
+      }
+    },
+    "PayloadSelector": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/PayloadSelectorInclude"
+        },
+        {
+          "$ref": "#/components/schemas/PayloadSelectorExclude"
+        }
+      ]
+    },
+    "PayloadSelectorExclude": {
+      "type": "object",
+      "required": [
+        "exclude"
+      ],
+      "properties": {
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PayloadSelectorInclude": {
+      "type": "object",
+      "required": [
+        "include"
+      ],
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PointRequest": {
+      "type": "object",
+      "required": [
+        "ids"
+      ],
+      "properties": {
+        "shard_key": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ShardKeySelector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ExtendedPointId"
+          }
+        },
+        "with_payload": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithPayloadInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "with_vector": {
+          "$ref": "#/components/schemas/WithVector"
+        }
+      }
+    },
+    "PowExpression": {
+      "type": "object",
+      "required": [
+        "pow"
+      ],
+      "properties": {
+        "pow": {
+          "$ref": "#/components/schemas/PowParams"
+        }
+      }
+    },
+    "PowParams": {
+      "type": "object",
+      "required": [
+        "base",
+        "exponent"
+      ],
+      "properties": {
+        "base": {
+          "$ref": "#/components/schemas/Expression"
+        },
+        "exponent": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "Prefetch": {
+      "type": "object",
+      "properties": {
+        "prefetch": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Prefetch"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Prefetch"
+              }
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/QueryInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "using": {
+          "type": "string",
+          "nullable": true
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Filter"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/SearchParams"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "score_threshold": {
+          "type": "number",
+          "format": "float",
+          "nullable": true
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "lookup_from": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/LookupLocation"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "QuantizationSearchParams": {
+      "type": "object",
+      "properties": {
+        "ignore": {
+          "default": false,
+          "type": "boolean"
+        },
+        "rescore": {
+          "type": "boolean",
+          "nullable": true
+        },
+        "oversampling": {
+          "type": "number",
+          "format": "double",
+          "minimum": 1,
+          "nullable": true
+        }
+      }
+    },
+    "Query": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/NearestQuery"
+        },
+        {
+          "$ref": "#/components/schemas/RecommendQuery"
+        },
+        {
+          "$ref": "#/components/schemas/DiscoverQuery"
+        },
+        {
+          "$ref": "#/components/schemas/ContextQuery"
+        },
+        {
+          "$ref": "#/components/schemas/OrderByQuery"
+        },
+        {
+          "$ref": "#/components/schemas/FusionQuery"
+        },
+        {
+          "$ref": "#/components/schemas/RrfQuery"
+        },
+        {
+          "$ref": "#/components/schemas/FormulaQuery"
+        },
+        {
+          "$ref": "#/components/schemas/SampleQuery"
+        },
+        {
+          "$ref": "#/components/schemas/RelevanceFeedbackQuery"
+        }
+      ]
+    },
+    "QueryGroupsRequest": {
+      "type": "object",
+      "required": [
+        "group_by"
+      ],
+      "properties": {
+        "shard_key": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ShardKeySelector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "prefetch": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Prefetch"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Prefetch"
+              }
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/QueryInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "using": {
+          "type": "string",
+          "nullable": true
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Filter"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/SearchParams"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "score_threshold": {
+          "type": "number",
+          "format": "float",
+          "nullable": true
+        },
+        "with_vector": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithVector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "with_payload": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithPayloadInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "lookup_from": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/LookupLocation"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "group_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "group_size": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "with_lookup": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithLookupInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "QueryInterface": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/VectorInput"
+        },
+        {
+          "$ref": "#/components/schemas/Query"
+        }
+      ]
+    },
+    "QueryRequest": {
+      "type": "object",
+      "properties": {
+        "shard_key": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ShardKeySelector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "prefetch": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Prefetch"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Prefetch"
+              }
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/QueryInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "using": {
+          "type": "string",
+          "nullable": true
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Filter"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "params": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/SearchParams"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "score_threshold": {
+          "type": "number",
+          "format": "float",
+          "nullable": true
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "offset": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true
+        },
+        "with_vector": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithVector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "with_payload": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithPayloadInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "lookup_from": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/LookupLocation"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "QueryRequestBatch": {
+      "type": "object",
+      "required": [
+        "searches"
+      ],
+      "properties": {
+        "searches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/QueryRequest"
+          }
+        }
+      }
+    },
+    "Range": {
+      "type": "object",
+      "properties": {
+        "lt": {
+          "type": "number",
+          "format": "double",
+          "nullable": true
+        },
+        "gt": {
+          "type": "number",
+          "format": "double",
+          "nullable": true
+        },
+        "gte": {
+          "type": "number",
+          "format": "double",
+          "nullable": true
+        },
+        "lte": {
+          "type": "number",
+          "format": "double",
+          "nullable": true
+        }
+      }
+    },
+    "RangeInterface": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Range"
+        },
+        {
+          "$ref": "#/components/schemas/DatetimeRange"
+        }
+      ]
+    },
+    "RecommendInput": {
+      "type": "object",
+      "properties": {
+        "positive": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/VectorInput"
+          },
+          "nullable": true
+        },
+        "negative": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/VectorInput"
+          },
+          "nullable": true
+        },
+        "strategy": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/RecommendStrategy"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "RecommendQuery": {
+      "type": "object",
+      "required": [
+        "recommend"
+      ],
+      "properties": {
+        "recommend": {
+          "$ref": "#/components/schemas/RecommendInput"
+        }
+      }
+    },
+    "RecommendStrategy": {
+      "type": "string",
+      "enum": [
+        "average_vector",
+        "best_score",
+        "sum_scores"
+      ]
+    },
+    "RelevanceFeedbackInput": {
+      "type": "object",
+      "required": [
+        "feedback",
+        "strategy",
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/components/schemas/VectorInput"
+        },
+        "feedback": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/FeedbackItem"
+          }
+        },
+        "strategy": {
+          "$ref": "#/components/schemas/FeedbackStrategy"
+        }
+      }
+    },
+    "RelevanceFeedbackQuery": {
+      "type": "object",
+      "required": [
+        "relevance_feedback"
+      ],
+      "properties": {
+        "relevance_feedback": {
+          "$ref": "#/components/schemas/RelevanceFeedbackInput"
+        }
+      }
+    },
+    "Rrf": {
+      "type": "object",
+      "properties": {
+        "k": {
+          "default": null,
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "weights": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          },
+          "nullable": true
+        }
+      }
+    },
+    "RrfQuery": {
+      "type": "object",
+      "required": [
+        "rrf"
+      ],
+      "properties": {
+        "rrf": {
+          "$ref": "#/components/schemas/Rrf"
+        }
+      }
+    },
+    "Sample": {
+      "type": "string",
+      "enum": [
+        "random"
+      ]
+    },
+    "SampleQuery": {
+      "type": "object",
+      "required": [
+        "sample"
+      ],
+      "properties": {
+        "sample": {
+          "$ref": "#/components/schemas/Sample"
+        }
+      }
+    },
+    "ScrollRequest": {
+      "type": "object",
+      "properties": {
+        "shard_key": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ShardKeySelector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "offset": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ExtendedPointId"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Filter"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "with_payload": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithPayloadInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "with_vector": {
+          "$ref": "#/components/schemas/WithVector"
+        },
+        "order_by": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/OrderByInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "SearchParams": {
+      "type": "object",
+      "properties": {
+        "hnsw_ef": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 1,
+          "nullable": true
+        },
+        "exact": {
+          "default": false,
+          "type": "boolean"
+        },
+        "quantization": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/QuantizationSearchParams"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "indexed_only": {
+          "default": false,
+          "type": "boolean"
+        },
+        "acorn": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/AcornSearchParams"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "idf": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/IdfParams"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "ShardKey": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      ]
+    },
+    "ShardKeySelector": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/ShardKey"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/ShardKey"
+          }
+        },
+        {
+          "$ref": "#/components/schemas/ShardKeyWithFallback"
+        }
+      ]
+    },
+    "ShardKeyWithFallback": {
+      "type": "object",
+      "required": [
+        "fallback",
+        "target"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/components/schemas/ShardKey"
+        },
+        "fallback": {
+          "$ref": "#/components/schemas/ShardKey"
+        }
+      }
+    },
+    "Slice": {
+      "type": "object",
+      "required": [
+        "index",
+        "total"
+      ],
+      "properties": {
+        "total": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 1
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      }
+    },
+    "SliceCondition": {
+      "type": "object",
+      "required": [
+        "slice"
+      ],
+      "properties": {
+        "slice": {
+          "$ref": "#/components/schemas/Slice"
+        }
+      }
+    },
+    "Snowball": {
+      "type": "string",
+      "enum": [
+        "snowball"
+      ]
+    },
+    "SnowballLanguage": {
+      "type": "string",
+      "enum": [
+        "arabic",
+        "armenian",
+        "danish",
+        "dutch",
+        "english",
+        "finnish",
+        "french",
+        "german",
+        "greek",
+        "hungarian",
+        "italian",
+        "norwegian",
+        "portuguese",
+        "romanian",
+        "russian",
+        "spanish",
+        "swedish",
+        "tamil",
+        "turkish"
+      ]
+    },
+    "SnowballParams": {
+      "type": "object",
+      "required": [
+        "language",
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "$ref": "#/components/schemas/Snowball"
+        },
+        "language": {
+          "$ref": "#/components/schemas/SnowballLanguage"
+        }
+      }
+    },
+    "SparseVector": {
+      "type": "object",
+      "required": [
+        "indices",
+        "values"
+      ],
+      "properties": {
+        "indices": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      }
+    },
+    "SqrtExpression": {
+      "type": "object",
+      "required": [
+        "sqrt"
+      ],
+      "properties": {
+        "sqrt": {
+          "$ref": "#/components/schemas/Expression"
+        }
+      }
+    },
+    "StartFrom": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    },
+    "StemmingAlgorithm": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/SnowballParams"
+        },
+        {
+          "$ref": "#/components/schemas/DisabledStemmerParams"
+        }
+      ]
+    },
+    "StopwordsInterface": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/Language"
+        },
+        {
+          "$ref": "#/components/schemas/StopwordsSet"
+        }
+      ]
+    },
+    "StopwordsSet": {
+      "type": "object",
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Language"
+          },
+          "uniqueItems": true,
+          "nullable": true
+        },
+        "custom": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true,
+          "nullable": true
+        }
+      }
+    },
+    "SumExpression": {
+      "type": "object",
+      "required": [
+        "sum"
+      ],
+      "properties": {
+        "sum": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/Expression"
+          }
+        }
+      }
+    },
+    "TokenizerType": {
+      "type": "string",
+      "enum": [
+        "prefix",
+        "whitespace",
+        "word",
+        "multilingual"
+      ]
+    },
+    "ValueVariants": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "boolean"
+        }
+      ]
+    },
+    "ValuesCount": {
+      "type": "object",
+      "properties": {
+        "lt": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true
+        },
+        "gt": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true
+        },
+        "gte": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true
+        },
+        "lte": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "nullable": true
+        }
+      }
+    },
+    "VectorInput": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "float"
+          }
+        },
+        {
+          "$ref": "#/components/schemas/SparseVector"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        },
+        {
+          "$ref": "#/components/schemas/ExtendedPointId"
+        },
+        {
+          "$ref": "#/components/schemas/Document"
+        },
+        {
+          "$ref": "#/components/schemas/Image"
+        },
+        {
+          "$ref": "#/components/schemas/InferenceObject"
+        }
+      ]
+    },
+    "WithLookup": {
+      "type": "object",
+      "required": [
+        "collection"
+      ],
+      "properties": {
+        "collection": {
+          "type": "string"
+        },
+        "with_payload": {
+          "default": true,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithPayloadInterface"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        },
+        "with_vectors": {
+          "default": null,
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WithVector"
+            },
+            {
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "WithLookupInterface": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/components/schemas/WithLookup"
+        }
+      ]
+    },
+    "WithPayloadInterface": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "$ref": "#/components/schemas/PayloadSelector"
+        }
+      ]
+    },
+    "WithVector": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    }
+  }
+}

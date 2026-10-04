@@ -14,10 +14,17 @@ import {
   Code,
   ChartColumn,
   WandSparkles,
+  Wrench,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { kindAcceptsRowWrites } from "@/lib/db/object-kinds";
-import { maintenanceControl, offersCodeGeneration, offersColumnProfiling, offersCountQuery } from "@/lib/db/types";
+import {
+  declaredEntityOperations,
+  maintenanceControl,
+  offersCodeGeneration,
+  offersColumnProfiling,
+  offersCountQuery,
+} from "@/lib/db/types";
 import { formatRowCount, formatRowCountTitle } from "@/lib/db/utils/pool-manager";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
@@ -131,8 +138,17 @@ function renderMenuItems({
   // The vacuum item follows `vacuumActionOperation`, not the literal `vacuum`: four
   // providers point that wording at an operation that is not a vacuum, and it is the
   // operation - not the label - whose targeting decides whether a table can be named.
-  const analyzeControl = maintenanceControl(capabilities, "analyze", "perEntity");
-  const vacuumControl = maintenanceControl(capabilities, labels?.vacuumActionOperation ?? "vacuum", "perEntity");
+  // The row's kind too, as the desktop tree asks it: Db2's RUNSTATS runs on a table, not a view (#786).
+  const analyzeControl = maintenanceControl(capabilities, "analyze", "perEntity", table.kind);
+  const vacuumControl = maintenanceControl(
+    capabilities,
+    labels?.vacuumActionOperation ?? "vacuum",
+    "perEntity",
+    table.kind,
+  );
+  // Every declared operation outside `MaintenanceType` that runs on one row, in declaration order (spec 3.11): the
+  // same list the desktop tree's row menu reads, so the two menus cannot disagree.
+  const entityOperations = declaredEntityOperations(capabilities, table.kind);
 
   return (
     <>
@@ -206,23 +222,31 @@ function renderMenuItems({
           src/components/monitoring/tabs/TablesTab.tsx for the /monitoring panel. Each is the only
           reader that knows whether a row turned up, and its answer is testable against what
           actually renders rather than against what was declared. */}
-      {isAdmin && rowsAreAddressable && (analyzeControl.offered || vacuumControl.offered) && (
-        <>
-          <Separator />
-          {analyzeControl.offered && (
-            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
-              <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
-              {analyzeControl.label ?? labels?.analyzeAction ?? "Analyze Table"}
-            </Item>
-          )}
-          {vacuumControl.offered && (
-            <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
-              <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
-              {vacuumControl.label ?? labels?.vacuumAction ?? "Vacuum Table"}
-            </Item>
-          )}
-        </>
-      )}
+      {isAdmin &&
+        rowsAreAddressable &&
+        (analyzeControl.offered || vacuumControl.offered || entityOperations.length > 0) && (
+          <>
+            <Separator />
+            {analyzeControl.offered && (
+              <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
+                <Search strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-amber" />
+                {analyzeControl.label ?? labels?.analyzeAction ?? "Analyze Table"}
+              </Item>
+            )}
+            {vacuumControl.offered && (
+              <Item onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
+                <Trash2 strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-hue-blue" />
+                {vacuumControl.label ?? labels?.vacuumAction ?? "Vacuum Table"}
+              </Item>
+            )}
+            {entityOperations.map((operation) => (
+              <Item key={operation.type} onClick={() => callbacks.onOpenMaintenance?.("tables", table.path)}>
+                <Wrench strokeWidth={1.5} className="w-3.5 h-3.5 mr-2 text-brand" />
+                {operation.label}
+              </Item>
+            ))}
+          </>
+        )}
     </>
   );
 }
@@ -303,12 +327,13 @@ export const TableItem = React.memo(function TableItem({
 
             <div
               title={table.rowCount === undefined ? undefined : formatRowCountTitle(table.rowCount)}
-              className="shrink-0 relative w-8 h-6 flex items-center justify-center"
+              // Stacked where hover swaps them, side by side where the button is always shown.
+              className="shrink-0 relative w-8 h-6 flex items-center justify-center [@media(hover:none)]:w-auto [@media(hover:none)]:gap-1"
             >
               {table.rowCount !== undefined && (
                 <span
                   title={formatRowCountTitle(table.rowCount)}
-                  className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none"
+                  className="absolute inset-0 flex items-center justify-center text-[0.625rem] font-mono text-muted-foreground/70 whitespace-nowrap opacity-100 group-hover:opacity-0 transition-opacity pointer-events-none [@media(hover:none)]:static"
                 >
                   {formatRowCount(table.rowCount)}
                 </span>
@@ -318,7 +343,7 @@ export const TableItem = React.memo(function TableItem({
                   <button
                     aria-label={actionsLabel}
                     title={actionsLabel}
-                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
+                    className="absolute inset-0 w-full h-full opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 [@media(hover:none)]:static [@media(hover:none)]:w-6 focus-within:opacity-100 transition-opacity hover:bg-accent flex items-center justify-center"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <EllipsisVertical

@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { DatabaseConnection } from "@/lib/types";
+import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import { isCredentialReference } from "./credential-resolver";
 
 // SSLMode matches the union in src/lib/types.ts — NO 'prefer'. Kept in step BY HAND: a zod
 // enum is a value, so a mode missing here is not a compile error, it is a seed file the
@@ -21,6 +24,25 @@ const ConnectionEnvironmentSchema = z.enum(["production", "staging", "developmen
 // Allowed roles in current iteration (matches JWT role: 'admin' | 'user' + wildcard)
 const AllowedRoleSchema = z.enum(["*", "admin", "user"]);
 
+/**
+ * The load's refusal of an MCP opt-in on an engine MCP is not offered for (#1089). Read from the record
+ * it is handed, `MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
+ * admitted by its own entry. Refused rather than stripped, because a stripped opt-in would load a file
+ * that asks for something the product will not do. A factory over the record, the way
+ * `offersReadOnlyToggle` takes its engine's answer, so the refusal is tested before any shipped engine
+ * answers false.
+ */
+export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType, boolean>>) {
+  return (conn: { type: DatabaseType; mcp?: boolean }, ctx: z.RefinementCtx): void => {
+    if (conn.mcp !== true || exposable[conn.type]) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `mcp is not offered for ${conn.type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`,
+      path: ["mcp"],
+    });
+  };
+}
+
 // Kept in step with DatabaseType in src/lib/types.ts BY HAND: a zod enum is a value,
 // so a type-id missing here is not a compile error - it is a seed file the server
 // rejects with "invalid enum value" for a connection type the product supports.
@@ -31,6 +53,7 @@ const SeedDatabaseType = z.enum([
   "mongodb",
   "redis",
   "oracle",
+  "db2",
   "mssql",
   "libredb",
   "couchbase",
@@ -43,12 +66,36 @@ const SeedDatabaseType = z.enum([
   "libsql",
   "duckdb",
   "prometheus",
+  "kafka",
+  "etcd",
+  "neo4j",
+  "milvus",
+  "qdrant",
+  "influxdb",
+  "influxdb3",
+  "oxia",
 ]);
 
 export const SeedDefaultsSchema = z.object({
   managed: z.boolean().optional(),
   environment: ConnectionEnvironmentSchema.optional(),
   ssl: SSLConfigSchema,
+  // Refused rather than stripped (#246): a default would opt every later connection in to MCP.
+  mcp: z
+    .never({
+      error:
+        "mcp is set per connection and never in defaults: add mcp: true to each seed connection an MCP client may use",
+    })
+    .optional(),
+  // Refused rather than stripped (#1089), like mcp: a default is merged only after the file is parsed,
+  // past the refusal of an engine whose provider does not enforce the mode, so a merged default would
+  // reach engines that ignore it.
+  readOnly: z
+    .never({
+      error:
+        "readOnly is set per connection and never in defaults: add readOnly: true to each seed connection that must refuse writes",
+    })
+    .optional(),
 });
 
 export const SeedConnectionSchema = z
@@ -93,6 +140,15 @@ export const SeedConnectionSchema = z
     // no error. Refuse at parse instead.
     apiKeyId: z.string().optional(),
     apiKeySecret: z.string().optional(),
+    // Kafka only (#1088): which SASL mechanism checks `user` and `password`, absent meaning none.
+    // Declared, because zod strips an undeclared key and a seeded SCRAM connection would then reach
+    // the provider as a credential with no mechanism, which it refuses. Kept in step with the union
+    // on DatabaseConnection by hand, as the SSL modes above are. A mechanism names no credential
+    // and no address, so it is not a field a `${ENV}` or `${vault:...}` reference is resolved in
+    // (RESOLVABLE_FIELDS in credential-resolver.ts), and the file is validated before anything is
+    // resolved: this enum refuses a reference here at load, naming the field. No type refine: the
+    // field is inert on every other engine, and nothing falls back silently when it is absent.
+    saslMechanism: z.enum(["PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"]).optional(),
     schema: z.string().optional(),
     // Read no catalog when this connection opens (#765). Declarable in the seed file
     // because the deployment that ships a 40,000-object owner is the one that knows, and
@@ -101,6 +157,26 @@ export const SeedConnectionSchema = z
     // schema fails SILENTLY when a field is missing: zod strips an unknown key, so a seed
     // file setting it would round-trip as `undefined` with no error anywhere.
     skipObjectScan: z.boolean().optional(),
+    // Visible to MCP clients (#246). Per connection and never a default, because a file-wide
+    // default would turn the opt-in into an opt-out for every connection the file later gains.
+    // Declared for the reason skipObjectScan is: zod strips an undeclared key silently, and a seed
+    // file's opt-in would validate and vanish. src/lib/seed/connection-filter.ts copies it.
+    mcp: z.boolean().optional(),
+    // Refuse every write on this connection (#1089). Declared for the reason skipObjectScan is: zod
+    // strips an undeclared key silently, and a seed file's read-only mode would validate and vanish,
+    // leaving a connection that writes. A literal boolean, never a reference: it names no credential
+    // and no address, so it is not in RESOLVABLE_FIELDS, and a `${ENV}` here fails this type at load,
+    // naming the field. Accepted only on an engine whose provider enforces it (the second refine
+    // below), and only on a managed seed (SeedConfigSchema).
+    readOnly: z.boolean().optional(),
+    // Db2 (#786), both InfluxDB types and Oxia: accept that a connection with no TLS sends its password or token in
+    // cleartext, which the provider otherwise refuses. Declared for the reason skipObjectScan is: zod strips an
+    // undeclared key silently, and a seed file's consent would validate and vanish, leaving a
+    // connection the provider refuses with a message naming a field the file did set.
+    allowInsecureAuth: z.boolean().optional(),
+    // Oxia only (O6): an address list the provider parses and refuses entry by entry; resolvable as `host` is
+    // (`RESOLVABLE_FIELDS`).
+    dataServers: z.string().optional(),
   })
   .superRefine((conn, ctx) => {
     if (conn.type === "elasticsearch") return;
@@ -111,7 +187,56 @@ export const SeedConnectionSchema = z
         "apiKeyId and apiKeySecret are Elasticsearch-only. OpenSearch (and every other engine) refuses the pair: nothing here has measured whether OpenSearch's security plugin accepts Authorization: ApiKey, so a seed that carries it is rejected rather than listed as a connection that silently falls back to user/password.",
       path: conn.apiKeyId !== undefined ? ["apiKeyId"] : ["apiKeySecret"],
     });
+  })
+  // An MCP opt-in on an engine MCP is not offered for (#1089), read from MCP_EXPOSABLE.
+  .superRefine(refuseMcpWhereNotOffered(MCP_EXPOSABLE))
+  // A read-only mode the engine's provider ignores would be a promise nobody keeps: the seed would be
+  // listed as read-only and still write (#1089). Read from READ_ONLY_ENFORCED, never a type-id branch,
+  // so an engine is admitted by its own declaration.
+  .superRefine((conn, ctx) => {
+    if (conn.readOnly !== true || READ_ONLY_ENFORCED[conn.type]) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `readOnly is not offered for ${conn.type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`,
+      path: ["readOnly"],
+    });
+  })
+  // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a
+  // published default pair, or no secret where the type accepts none, so the mode would promise a boundary the
+  // server does not keep. The file shows only literals, so a pair with a `${ENV}` or `${vault:...}` reference in
+  // either field passes here and the type's provider checks the resolved value before it dials, while a password
+  // the file leaves absent or empty is refused whatever the user is: load refuses what the file shows; resolution
+  // refuses the rest. Read from the declared record, never a type-id branch. The message names the connection and
+  // the field, never the value.
+  .superRefine((conn, ctx) => {
+    if (conn.readOnly !== true) return;
+    if (isCredentialReference(conn.password)) return;
+    const userIsReference = isCredentialReference(conn.user);
+    if (userIsReference && (conn.password ?? "") !== "") return;
+    const refusal = readOnlySeedRefusal(conn.type, {
+      user: userIsReference ? undefined : conn.user,
+      password: conn.password,
+    });
+    if (refusal === undefined) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Seed connection "${conn.id}": ${refusal} readOnly: true is refused with this credential, because the mode would promise a boundary the server does not keep. Give this connection a credential of its own, or remove readOnly.`,
+      path: ["password"],
+    });
   });
+
+/**
+ * The load's refusal of a read-only seed that is not managed (#1089). An editable seed is copied into
+ * the browser of every user its roles admit, with its password and TLS client key
+ * (`GET /api/connections/managed`), and the sidebar's Duplicate turns that copy into a connection of
+ * the user's own, which `resolveConnection` returns verbatim and whose readOnly the user can clear, so
+ * the mode would bind nobody. It names `defaults.managed` when the value came from there, because that
+ * is the line to change.
+ */
+function unmanagedReadOnlyMessage(fromDefaults: boolean): string {
+  const managed = fromDefaults ? "managed: false from defaults.managed" : "managed: false";
+  return `readOnly: true needs a managed connection, and this one has ${managed}: an unmanaged seed is copied into the browser of every user its roles admit, with its password and TLS client key, and Duplicate turns that copy into a connection of the user's own whose readOnly can be cleared. Set managed: true on this connection, or remove readOnly.`;
+}
 
 export const SeedConfigSchema = z
   .object({
@@ -121,6 +246,20 @@ export const SeedConfigSchema = z
   })
   .refine((cfg) => new Set(cfg.connections.map((c) => c.id)).size === cfg.connections.length, {
     message: "Connection IDs must be unique",
+  })
+  // Here and not on SeedConnectionSchema, because `defaults.managed` is merged only after parsing
+  // (connection-filter.ts): the effective value is the connection's own, else the default, else true,
+  // the precedence mergeDefaults and filterByRoles apply.
+  .superRefine((cfg, ctx) => {
+    cfg.connections.forEach((conn, index) => {
+      if (conn.readOnly !== true) return;
+      if ((conn.managed ?? cfg.defaults?.managed ?? true) === true) return;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: unmanagedReadOnlyMessage(conn.managed === undefined),
+        path: ["connections", index, "readOnly"],
+      });
+    });
   });
 
 export type SeedConnection = z.infer<typeof SeedConnectionSchema>;
@@ -131,4 +270,6 @@ export interface ManagedConnection extends DatabaseConnection {
   managed: boolean;
   roles: string[];
   seedId: string;
+  /** Visible to MCP clients (#246); absent on the built-in samples, which never opt in. */
+  mcp?: boolean;
 }

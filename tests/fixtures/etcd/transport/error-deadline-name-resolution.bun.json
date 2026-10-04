@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "service": "transport",
+    "image": "none",
+    "digest": "none",
+    "clusterId": "none",
+    "memberId": "none",
+    "date": "2026-09-30T16:31:03.465Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Maintenance/Status",
+    "surface": "status to a name that does not resolve, with a deadline that has already passed",
+    "request": {},
+    "match": {},
+    "metadata": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "4 DEADLINE_EXCEEDED: Deadline exceeded after 0.000s,waiting for name resolution",
+    "code": 4,
+    "details": "Deadline exceeded after 0.000s,waiting for name resolution"
+  }
+}

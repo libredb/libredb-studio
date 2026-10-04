@@ -57,7 +57,27 @@ function formatTime(ms: number): string {
 // Analysis Functions
 // ============================================================================
 
+/**
+ * Whether this plan node reports what really happened (`EXPLAIN (ANALYZE ...)`) or
+ * only what the planner expects (`EXPLAIN (FORMAT JSON)`). An estimate carries no
+ * `Actual *` field at all, and reading it as a run would show every node as zero rows
+ * in zero time. The background plan beside every run is an estimate since #1311,
+ * because the ANALYZE form executed the user's statement a second time.
+ */
+function wasExecuted(node: ExplainPlanNode): boolean {
+  return node["Actual Rows"] !== undefined;
+}
+
+/** What the plan bars are drawn against: time when the plan ran, cost when it was only planned. */
+function planScale(analysis: PlanAnalysis): number {
+  return (analysis.executed ? analysis.executionTime : analysis.totalCost) || 1;
+}
+
 interface PlanAnalysis {
+  /** False for an estimated plan: the figures below are the planner's, nothing ran. */
+  executed: boolean;
+  /** The planner's row estimate for the statement's result (the root node's). */
+  plannedRows: number;
   totalTime: number;
   planningTime: number;
   executionTime: number;
@@ -95,6 +115,7 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
   const executionTime = plan?.[0]?.["Execution Time"] || rootPlan?.["Actual Total Time"] || 0;
   const planningTime = plan?.[0]?.["Planning Time"] || 0;
   const totalCost = rootPlan?.["Total Cost"] || 0;
+  const executed = rootPlan !== undefined && wasExecuted(rootPlan);
 
   // Recursive node analysis
   function analyzeNode(node: ExplainPlanNode, depth: number = 0) {
@@ -110,12 +131,14 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
     bufferHits += node["Shared Hit Blocks"] || 0;
     bufferReads += node["Shared Read Blocks"] || 0;
 
-    // Check for Sequential Scan on large tables
-    if (nodeType.includes("Seq Scan") && actualRows > 10000) {
+    // Check for Sequential Scan on large tables. An estimated plan has no actual rows,
+    // so the planner's count stands in: a scan it expects to be large is the finding.
+    const scannedRows = executed ? actualRows : planRows;
+    if (nodeType.includes("Seq Scan") && scannedRows > 10000) {
       warnings.push({
         type: "warning",
         title: "Sequential Scan",
-        description: `Full table scan on "${node["Relation Name"] || "table"}" (${formatNumber(actualRows)} rows). Consider adding an index.`,
+        description: `Full table scan on "${node["Relation Name"] || "table"}" (${formatNumber(scannedRows)} rows). Consider adding an index.`,
         node: nodeType,
       });
     }
@@ -177,11 +200,13 @@ function analyzePlan(plan: ExplainPlanResult[]): PlanAnalysis {
 
   insights.push({
     label: "Execution",
-    value: formatTime(executionTime),
+    value: executed ? formatTime(executionTime) : "Not executed",
     status: executionTime > 1000 ? "critical" : executionTime > 100 ? "warning" : "good",
   });
 
   return {
+    executed,
+    plannedRows: rootPlan?.["Plan Rows"] || 0,
     totalTime: executionTime + planningTime,
     planningTime,
     executionTime,
@@ -225,16 +250,18 @@ const StatusBadge = ({ status }: { status: "good" | "warning" | "critical" }) =>
 };
 
 // Compact Plan Node
-const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?: number; maxTime: number }) => {
+// `scale` is the root's measure the bar is drawn against: its execution time for an
+// executed plan, its total cost for an estimate (see `wasExecuted`).
+const PlanNode = ({ node, depth = 0, scale }: { node: ExplainPlanNode; depth?: number; scale: number }) => {
   const [expanded, setExpanded] = useState(depth < 2);
   const nodeType = node["Node Type"] || "Unknown";
-  const actualTime = node["Actual Total Time"] || 0;
-  const actualRows = node["Actual Rows"] || 0;
+  const executed = wasExecuted(node);
+  const measure = executed ? node["Actual Total Time"] || 0 : node["Total Cost"] || 0;
   const children = node["Plans"] || [];
   const isIndexScan = nodeType.includes("Index");
   const isSeqScan = nodeType.includes("Seq Scan");
 
-  const timePercent = maxTime > 0 ? (actualTime / maxTime) * 100 : 0;
+  const timePercent = scale > 0 ? (measure / scale) * 100 : 0;
 
   return (
     <div className="relative">
@@ -280,14 +307,16 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
 
         {/* Stats */}
         <div className="flex items-center gap-4 text-xs font-mono">
-          <span className="text-fg-muted w-16 text-right">{formatNumber(actualRows)} rows</span>
+          <span className="text-fg-muted w-16 text-right">
+            {executed ? formatNumber(node["Actual Rows"] || 0) : `~${formatNumber(node["Plan Rows"] || 0)}`} rows
+          </span>
           <span
             className={cn(
               "w-16 text-right",
               timePercent > 50 ? "text-danger" : timePercent > 20 ? "text-warning" : "text-fg-tertiary",
             )}
           >
-            {formatTime(actualTime)}
+            {executed ? formatTime(measure) : `cost ${formatNumber(measure)}`}
           </span>
           {/* Time bar */}
           <div className="w-20 h-1.5 bg-fill rounded-full overflow-hidden">
@@ -329,7 +358,7 @@ const PlanNode = ({ node, depth = 0, maxTime }: { node: ExplainPlanNode; depth?:
 
           {/* Children */}
           {children.map((child, idx) => (
-            <PlanNode key={idx} node={child} depth={depth + 1} maxTime={maxTime} />
+            <PlanNode key={idx} node={child} depth={depth + 1} scale={scale} />
           ))}
         </div>
       )}
@@ -837,16 +866,37 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             </div>
           ) : (
             <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
-                <Clock strokeWidth={1.5} className="w-3 h-3 text-brand" />
-                <span className="text-xs font-medium text-fg">{formatTime(analysis?.executionTime || 0)}</span>
-                <span className="text-xs text-fg-subtle">execution</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-3 h-3 text-fg-muted" />
-                <span className="text-xs font-medium text-fg-tertiary">{formatNumber(analysis?.totalRows || 0)}</span>
-                <span className="text-xs text-fg-subtle">rows</span>
-              </div>
+              {analysis?.executed === false ? (
+                // An estimate: nothing ran, so there is no time to show and the rows
+                // are the planner's expectation for the result.
+                <>
+                  <div className="flex items-center gap-2">
+                    <Clock strokeWidth={1.5} className="w-3 h-3 text-brand" />
+                    <span className="text-xs font-medium text-fg">Estimated plan</span>
+                    <span className="text-xs text-fg-subtle">not executed</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-3 h-3 text-fg-muted" />
+                    <span className="text-xs font-medium text-fg-tertiary">~{formatNumber(analysis.plannedRows)}</span>
+                    <span className="text-xs text-fg-subtle">rows</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <Clock strokeWidth={1.5} className="w-3 h-3 text-brand" />
+                    <span className="text-xs font-medium text-fg">{formatTime(analysis?.executionTime || 0)}</span>
+                    <span className="text-xs text-fg-subtle">execution</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <TrendingUp className="w-3 h-3 text-fg-muted" />
+                    <span className="text-xs font-medium text-fg-tertiary">
+                      {formatNumber(analysis?.totalRows || 0)}
+                    </span>
+                    <span className="text-xs text-fg-subtle">rows</span>
+                  </div>
+                </>
+              )}
               <div className="flex items-center gap-2">
                 <HardDrive strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
                 <span className="text-xs font-medium text-fg-tertiary">{formatNumber(analysis?.totalCost || 0)}</span>
@@ -980,7 +1030,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             <div>
               <h3 className="text-xs font-medium text-fg-muted mb-2">Execution Plan</h3>
               <div className="rounded-lg border border-hairline bg-fill-subtle p-2">
-                {rootPlan && analysis && <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />}
+                {rootPlan && analysis && <PlanNode node={rootPlan} scale={planScale(analysis)} />}
               </div>
             </div>
           </div>
@@ -991,7 +1041,7 @@ export function VisualExplain({ plan, query, schemaContext, databaseType, onLoad
             <div className="rounded-lg border border-hairline bg-fill-subtle p-2">
               {input.kind === "tree" && <TreeNodeView node={input.root} />}
               {input.kind !== "tree" && rootPlan && analysis && (
-                <PlanNode node={rootPlan} maxTime={analysis.executionTime || 1} />
+                <PlanNode node={rootPlan} scale={planScale(analysis)} />
               )}
             </div>
           </div>

@@ -27,6 +27,10 @@
  *    admin", i.e. an ordinary user of the whole application. Separate keys make
  *    that unreachable instead of relying on every future reader to check a claim.
  *
+ * The MCP endpoint (`/api/mcp`, #246) is the second path the proxy treats this way: it verifies a
+ * scoped bearer token of its own (`src/lib/mcp/token.ts`), derived from JWT_SECRET under another
+ * label, so neither credential verifies as the other or as a session.
+ *
  * What this token does NOT decide is what the run may do. Authorization for a tool
  * call is read from the run's own persisted actor (`run-store.ts`), never from this
  * token and never from a request body — the token says which run to drive, and the

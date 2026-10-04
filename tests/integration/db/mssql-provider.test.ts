@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, mock, spyOn } from "bun:test";
 import {
   callerBoundTruncationReason,
   isSourcePartUnavailable,
@@ -1358,6 +1358,54 @@ describe("MSSQLProvider", () => {
       expect(capturedSql).toContain("UPDATE STATISTICS");
     });
 
+    // #772: `schemaName` is the schema on SQL Server, and the row holds it. A container
+    // qualifies the target; without one the connected default schema applies.
+    test("a container schema-qualifies the target rather than escaping it whole", async () => {
+      let capturedSql = "";
+      mockQueryFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("analyze", "Orders", "reporting");
+
+      expect(capturedSql).toBe("UPDATE STATISTICS [reporting].[Orders]");
+    });
+
+    test("optimize qualifies the same way, and a bare name stays unqualified", async () => {
+      const captured: string[] = [];
+      mockQueryFn = async (sql: string) => {
+        captured.push(sql);
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("optimize", "Orders", "reporting");
+      await provider.runMaintenance("optimize", "Orders");
+
+      // `connect()` runs its own `SELECT 1` probe first, so the two maintenance statements
+      // are selected by prefix rather than positionally.
+      const rebuilds = captured.filter((sql) => sql.startsWith("ALTER INDEX ALL ON"));
+      expect(rebuilds).toEqual([
+        "ALTER INDEX ALL ON [reporting].[Orders] REBUILD",
+        "ALTER INDEX ALL ON [Orders] REBUILD",
+      ]);
+    });
+
+    test("a container and a target that carry a bracket are both escaped", async () => {
+      let capturedSql = "";
+      mockQueryFn = async (sql: string) => {
+        capturedSql = sql;
+        return defaultQuery(sql);
+      };
+
+      await provider.connect();
+      await provider.runMaintenance("analyze", "Or]ders", "rep]orting");
+
+      expect(capturedSql).toBe("UPDATE STATISTICS [rep]]orting].[Or]]ders]");
+    });
+
     test("analyze without target calls sp_updatestats", async () => {
       let capturedSql = "";
       mockQueryFn = async (sql: string) => {
@@ -2005,6 +2053,40 @@ describe("MSSQLProvider declared column types", () => {
     });
   });
 
+  // #1312: the editor sends a T-SQL batch as one request. A text with several result sets
+  // still answers with its FIRST, as `EXEC sp_help` always did, and carries every set for the
+  // multi-statement route to choose from.
+  test("query() carries every result set of a batch and still answers with the first", async () => {
+    const first = withColumns([{ a: 1 }], { a: { declaration: "int" } });
+    const last = withColumns([{ doubled: 10 }, { doubled: 20 }], { doubled: { declaration: "int" } });
+    const bare = Object.assign([{ z: 1 }], {});
+    const empty = Object.assign([] as Record<string, unknown>[], {});
+    mockQueryFn = async () => ({ recordset: first, recordsets: [first, last, bare, empty], rowsAffected: [1, 2, 1] });
+
+    await provider.connect();
+    const result = await provider.query("SELECT 1 AS a; SELECT d FROM t; SELECT 1 AS z; SELECT * FROM e");
+
+    expect(result.rows).toEqual([{ a: 1 }]);
+    expect(result.rowCount).toBe(1);
+    expect(result.resultSets).toEqual([
+      { rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: "int" } },
+      { rows: [{ doubled: 10 }, { doubled: 20 }], fields: ["doubled"], columnTypes: { doubled: "int" } },
+      { rows: [{ z: 1 }], fields: ["z"] },
+      { rows: [], fields: [] },
+    ]);
+  });
+
+  test("query() carries no result sets for a text that produced one", async () => {
+    const only = withColumns([{ n: 1 }], { n: { declaration: "int" } });
+    mockQueryFn = async () => ({ recordset: only, recordsets: [only], rowsAffected: [7, 1] });
+
+    await provider.connect();
+    const result = await provider.query("UPDATE t SET a = 1; SELECT 1 AS n");
+
+    expect(result.rows).toEqual([{ n: 1 }]);
+    expect(Object.hasOwn(result, "resultSets")).toBe(false);
+  });
+
   test("the key is omitted entirely when the recordset carries no column map", async () => {
     mockQueryFn = async () => ({ recordset: [{ a: 1 }], rowsAffected: [1] });
 
@@ -2029,6 +2111,212 @@ describe("MSSQLProvider declared column types", () => {
     const result = await provider.queryInTransaction("SELECT u FROM types WHERE 1 = 0");
 
     expect(result.columnTypes).toEqual({ u: "uniqueidentifier" });
+    await provider.rollbackTransaction();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Zoneless value types (#1132)
+// ---------------------------------------------------------------------------
+
+/**
+ * A `Date` read the way tedious reads a zoneless value (`value-parser.js`): the millisecond
+ * part sits in the `Date` and the remainder rides beside it as a non-enumerable
+ * `nanosecondsDelta`. A fixture that only set the `Date` would let a fix that drops the
+ * sub-millisecond digits pass.
+ */
+function tediousDate(milliseconds: number, nanosecondsDelta: number): Date {
+  const date = new Date(milliseconds);
+  Object.defineProperty(date, "nanosecondsDelta", { enumerable: false, value: nanosecondsDelta });
+  return date;
+}
+
+/**
+ * `time`, `date` and `datetime2` do not hold a moment, and the driver hands all three back
+ * as a `Date` that pretends they do: `time` becomes a time-of-day on an invented
+ * 1970-01-01, `date` a UTC midnight, `datetime2` a wall-clock reading mapped through UTC.
+ * Serialized as ISO instants they report moments none of them holds, and a `time(7)` loses
+ * four of its seven digits to the format.
+ *
+ * `datetimeoffset` is the control that must NOT be converted: it IS an instant, so its ISO
+ * shape is the honest one.
+ */
+describe("MSSQLProvider zoneless value types (#1132)", () => {
+  let provider: MSSQLProvider;
+
+  // CI runs at UTC, where a local getter and a UTC one read the same field, so the
+  // assertions below would pass against either. Held at St. John's for this block: west
+  // of UTC and on a half-hour offset, so a local getter moves the hour and the minute,
+  // and puts a UTC-midnight `date` on the previous day.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/St_Johns";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
+
+  /** A recordset the way `mssql` builds one: an array with a `columns` map on it. */
+  function withColumns(
+    rows: Record<string, unknown>[],
+    columns: Record<string, { declaration: string; scale?: number }>,
+  ) {
+    const recordset = rows as Record<string, unknown>[] & { columns: unknown };
+    recordset.columns = Object.fromEntries(
+      Object.entries(columns).map(([name, entry]) => [
+        name,
+        { name, type: { declaration: entry.declaration }, scale: entry.scale },
+      ]),
+    );
+    return recordset;
+  }
+
+  beforeEach(() => {
+    capturedInputs = [];
+    cancelShouldThrow = false;
+    provider = new MSSQLProvider(baseConfig);
+  });
+
+  afterEach(async () => {
+    try {
+      await provider.disconnect();
+    } catch {
+      /* ignore */
+    }
+  });
+
+  test("time(7) keeps all seven digits, from the millisecond part and the driver's remainder together", async () => {
+    // What the driver built for `CAST('10:30:00.1234567' AS time(7))`: the `Date` holds
+    // 10:30:00.123 and the four remaining digits ride as the remainder.
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ t: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567) }], {
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe("10:30:00.1234567");
+    expect(result.fields).toEqual(["t"]);
+  });
+
+  test("time(3) and time(0) carry exactly the digits their scale declares", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns(
+        [
+          {
+            t3: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0),
+            t0: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 0), 0),
+          },
+        ],
+        { t3: { declaration: "time", scale: 3 }, t0: { declaration: "time", scale: 0 } },
+      ),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t3, t0 FROM types");
+
+    expect(result.rows[0].t3).toBe("10:30:00.123");
+    expect(result.rows[0].t0).toBe("10:30:00");
+  });
+
+  test("a time Date that arrived without the driver's remainder keeps its milliseconds, padded to the scale", async () => {
+    // The remainder is on every value tedious reads; a Date that lost it must not put
+    // `NaN` into the text, and its milliseconds are still the ones the column holds.
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ t: new Date(Date.UTC(1970, 0, 1, 10, 30, 0, 123)) }], {
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe("10:30:00.1230000");
+  });
+
+  test("date reads as the calendar day it is, not as a UTC midnight instant", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ d: new Date(Date.UTC(2026, 8, 1)) }], { d: { declaration: "date" } }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT d FROM types");
+
+    expect(result.rows[0].d).toBe("2026-09-01");
+  });
+
+  test("datetime2 reads as the engine's wall-clock text, fraction included when the scale has one", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns(
+        [
+          {
+            at7: tediousDate(Date.UTC(2026, 8, 1, 10, 30, 0, 123), 0.0004567),
+            at0: new Date(Date.UTC(2026, 8, 1, 10, 30, 0)),
+          },
+        ],
+        { at7: { declaration: "datetime2", scale: 7 }, at0: { declaration: "datetime2", scale: 0 } },
+      ),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT at7, at0 FROM types");
+
+    expect(result.rows[0].at7).toBe("2026-09-01 10:30:00.1234567");
+    expect(result.rows[0].at0).toBe("2026-09-01 10:30:00");
+  });
+
+  test("datetimeoffset stays an instant, and neither a NULL nor any other declaration is touched", async () => {
+    const instant = tediousDate(Date.UTC(2026, 8, 1, 10, 30, 0, 123), 0.0004567);
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ at: instant, id: 19, name: "x", t: null }], {
+        at: { declaration: "datetimeoffset", scale: 7 },
+        id: { declaration: "bigint" },
+        name: { declaration: "nvarchar" },
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    const result = await provider.query("SELECT at, id, name, t FROM types");
+
+    expect(result.rows[0].at).toBe(instant);
+    expect(result.rows[0].id).toBe(19);
+    expect(result.rows[0].name).toBe("x");
+    expect(result.rows[0].t).toBeNull();
+  });
+
+  test("a result without the driver's column map is left exactly as the driver built it", async () => {
+    const untyped = tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567);
+    mockQueryFn = async () => ({ recordset: [{ t: untyped }], rowsAffected: [1] });
+
+    await provider.connect();
+    const result = await provider.query("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe(untyped);
+  });
+
+  test("queryInTransaction() reads the same map, so its values convert the same way", async () => {
+    mockQueryFn = async () => ({
+      recordset: withColumns([{ t: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567) }], {
+        t: { declaration: "time", scale: 7 },
+      }),
+      rowsAffected: [1],
+    });
+
+    await provider.connect();
+    await provider.beginTransaction();
+    const result = await provider.queryInTransaction("SELECT t FROM types");
+
+    expect(result.rows[0].t).toBe("10:30:00.1234567");
     await provider.rollbackTransaction();
   });
 });
@@ -2713,7 +3001,7 @@ describe("object surface", () => {
       .sort();
 
     // `sql` and NOT `tsql`. MEASURED in this epic: `tsql` is not one of the 89 language ids
-    // the installed monaco-editor 0.56.0 bundle registers, and an unregistered id degrades
+    // the installed monaco-editor 0.57.0 bundle registers, and an unregistered id degrades
     // to plain text with no throw and nothing observable (#789).
     expect(declared).toEqual([
       ["function", "sql"],
@@ -5288,6 +5576,16 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     expect(typed.fields).toEqual(["ok"]);
     expect(typed.columnTypes).toEqual({ ok: "int" });
+  });
+
+  test("a zoneless value served under the profile is the engine's text too, on the same column map (#1132)", async () => {
+    const profiled = await openProfiled();
+    engine.rows = [{ t: tediousDate(Date.UTC(1970, 0, 1, 10, 30, 0, 123), 0.0004567) }];
+    engine.columns = { t: { name: "t", type: { declaration: "time" }, scale: 7 } };
+
+    const result = await profiled.queryReadOnly(READ_SELECT.sql, budget());
+
+    expect(result.rows[0].t).toBe("10:30:00.1234567");
   });
 
   // -------------------------------------------------------------------------

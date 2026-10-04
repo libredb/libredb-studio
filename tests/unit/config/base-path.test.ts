@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { readBasePath, getBasePath, withBasePath, appFetch } from "@/lib/config/base-path";
+import { readFileSync } from "node:fs";
+import {
+  readBasePath,
+  getBasePath,
+  withBasePath,
+  appFetch,
+  currentAppPath,
+  onSessionEnded,
+} from "@/lib/config/base-path";
+import { sessionRequiredBody } from "@/lib/api/session-ended";
 
 const originalBase = process.env.NEXT_PUBLIC_BASE_PATH;
 const originalFetch = globalThis.fetch;
@@ -80,4 +89,139 @@ describe("build-time base path", () => {
     await appFetch("/api/auth/me");
     expect(fetchMock).toHaveBeenLastCalledWith("/~/libredb/api/auth/me");
   });
+
+  test("a session-required 401 reaches the session-ended handler and the caller still gets the response", async () => {
+    const response = new Response(JSON.stringify(sessionRequiredBody("Session expired. Sign in again.")), {
+      status: 401,
+    });
+    globalThis.fetch = mock(async () => response) as unknown as typeof fetch;
+    const handler = mock(() => {});
+    const unregister = onSessionEnded(handler);
+    try {
+      expect(await appFetch("/api/db/query", { method: "POST" })).toBe(response);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect((await response.json()).code).toBe("AUTH_REQUIRED");
+    } finally {
+      unregister();
+    }
+  });
+});
+
+describe("currentAppPath", () => {
+  const originalWindow = (globalThis as { window?: unknown }).window;
+  afterEach(() => {
+    (globalThis as { window?: unknown }).window = originalWindow;
+  });
+  const at = (pathname: string, search = "") => {
+    (globalThis as { window?: unknown }).window = { location: { pathname, search } };
+  };
+
+  test("is the path and query at the root", () => {
+    delete process.env.NEXT_PUBLIC_BASE_PATH;
+    at("/admin/audit", "?tab=2");
+    expect(currentAppPath()).toBe("/admin/audit?tab=2");
+  });
+
+  test("strips the deployment prefix, which the router adds back", () => {
+    process.env.NEXT_PUBLIC_BASE_PATH = "/tools/libredb";
+    at("/tools/libredb/admin", "?x=1");
+    expect(currentAppPath()).toBe("/admin?x=1");
+    at("/tools/libredb");
+    expect(currentAppPath()).toBe("/");
+  });
+
+  test("leaves a path that only shares the prefix's first characters alone", () => {
+    process.env.NEXT_PUBLIC_BASE_PATH = "/tools/libredb";
+    at("/tools/libredb-other");
+    expect(currentAppPath()).toBe("/tools/libredb-other");
+  });
+});
+
+const json = (status: number, body: unknown) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+/** Answers the next appFetch with `response` and returns what appFetch handed back. */
+async function respondWith(response: Response): Promise<Response> {
+  globalThis.fetch = mock(async () => response) as unknown as typeof fetch;
+  return appFetch("/api/db/query");
+}
+
+let unregister: (() => void) | null = null;
+afterEach(() => {
+  unregister?.();
+  unregister = null;
+});
+
+describe("appFetch session-ended notice", () => {
+  test("calls the registered handler for a session-required 401, leaving the body readable", async () => {
+    const handler = mock(() => {});
+    unregister = onSessionEnded(handler);
+    const response = json(401, sessionRequiredBody("Session expired. Sign in again."));
+
+    await respondWith(response);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(await response.json()).toEqual({ error: "Session expired. Sign in again.", code: "AUTH_REQUIRED" });
+  });
+
+  // A wrong database password and a rejected model key are both 401 too, with the Studio session
+  // intact. Sending the user to sign in for either would be wrong.
+  for (const body of [
+    { error: "password authentication failed", code: "AUTH_ERROR" },
+    { error: "Invalid API key. Please check your configuration.", code: "LLM_AUTH" },
+    { success: false, message: "Invalid email or password" },
+    null,
+  ]) {
+    test(`ignores a 401 whose body is ${JSON.stringify(body)}`, async () => {
+      const handler = mock(() => {});
+      unregister = onSessionEnded(handler);
+      await respondWith(json(401, body));
+      expect(handler).not.toHaveBeenCalled();
+    });
+  }
+
+  test("ignores a 401 whose body is not JSON", async () => {
+    const handler = mock(() => {});
+    unregister = onSessionEnded(handler);
+    await respondWith(new Response("<!DOCTYPE html>", { status: 401 }));
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test("ignores every other status", async () => {
+    const handler = mock(() => {});
+    unregister = onSessionEnded(handler);
+    await respondWith(json(403, sessionRequiredBody("x")));
+    await respondWith(json(200, sessionRequiredBody("x")));
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  test("with no handler registered, as in an embedding application, nothing happens", async () => {
+    const response = json(401, sessionRequiredBody("Authentication required"));
+    await respondWith(response);
+    expect(response.bodyUsed).toBe(false);
+  });
+
+  test("unregistering removes only the handler it registered", async () => {
+    const first = mock(() => {});
+    const second = mock(() => {});
+    const removeFirst = onSessionEnded(first);
+    unregister = onSessionEnded(second);
+    removeFirst();
+
+    await respondWith(json(401, sessionRequiredBody("x")));
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+
+    unregister();
+    unregister = null;
+    await respondWith(json(401, sessionRequiredBody("x")));
+    expect(second).toHaveBeenCalledTimes(1);
+  });
+});
+
+// next.config.ts reads this file, and a config file cannot resolve the alias an import would use:
+// an import here fails `next build` before it compiles anything ("Cannot find module").
+test("base-path.ts stays import-free, so next.config.ts can load it", () => {
+  const source = readFileSync(new URL("../../../src/lib/config/base-path.ts", import.meta.url), "utf8");
+  expect(source).not.toMatch(/^\s*(import|export\s+[^;]*\sfrom)\s/m);
 });

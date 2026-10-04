@@ -298,7 +298,7 @@ mode cannot fall through to the trusting branch unnoticed.
 
 See the [non-Azure trust caveat](#15-known-limitations--future-work).
 
-### 4.4 Connection-string nuance ⚠️
+### 4.4 Connection-string nuance
 
 `getCapabilities().supportsConnectionString` is `true` and the UI parser accepts both `mssql://` and
 `sqlserver://` URLs — but it **decomposes them into discrete fields** (`host`/`port`/`user`/`password`/
@@ -325,6 +325,12 @@ values matched case-insensitively because ADO.NET writes `True`:
 Any other spelling of either keyword is reported in the paste banner and leaves the form's SSL Mode
 untouched rather than falling back to `disable`.
 
+A `tcp:` protocol prefix on `Server`, which the Azure portal writes in every ADO.NET string it hands
+out (`Server=tcp:<server>.database.windows.net,1433;…`), is dropped before the host and port are split.
+tedious resolves the value as a hostname, so a kept prefix failed as `getaddrinfo ENOTFOUND tcp:…`.
+`np:` (named pipes) and `lpc:` (shared memory) are protocols tedious cannot speak, so Host is left
+as it was and the paste banner says the server was not applied.
+
 `verify-system` is not produced by this parser: `Encrypt=True` with `TrustServerCertificate` off is
 `verify-full` already, and since all three verifying modes build the same tedious call, translating it
 to the newer name would change the wording on the form without changing a single option on the wire.
@@ -343,6 +349,26 @@ to the newer name would change the wording on the form without changing a single
 { rows: recordset, fields, rowCount: rowsAffected[0] ?? recordset.length, executionTime, columnTypes? }
 ```
 
+A text that returns several result sets still answers with its **first**, as `EXEC sp_help` always
+did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `POST /api/db/transaction` do not send that field; the
+multi-statement route reads it to show a batch's last result with rows.
+
+**The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
+of one request the batch between `GO` lines (`src/lib/sql/grammar.ts`), so `DECLARE @x INT = 5;
+SELECT @x * 2` reaches the server as one request and answers 10, a `#temp` table created in a batch is
+there for the batch's next statement, and `CREATE PROCEDURE … AS BEGIN …; …; END` is created as written.
+A line holding only `GO` (any case, optionally followed by a `--` comment) separates batches and is
+never sent; `GO 5` is not read as a separator and the server refuses it (measured on SQL Server 2025 RTM-CU9: `Incorrect syntax near 'GO'.`). Each batch is
+its own request on a pooled connection, so a `#temp` table created in one batch is visible to the next
+only if it borrows the same connection (`docs/BACKLOG.md` D92). The last batch's last statement is
+bounded with `TOP` when it is a read, unless the batch is a module definition (its first statement
+creates or alters a procedure, function, trigger or view), whose tail is the stored body. "Run the
+statement at the cursor" runs the caret's own statement in a batch that is a run of statements and the
+whole batch only for a module definition (`docs/editor/query-optimization.md`, multi-statement runs).
+Measured before this on SQL
+Server 2025 RTM-CU9: each `;`-fragment was its own request, so the same script answered `Must declare
+the scalar variable "@x"`, `Invalid object name '#t'` and `Incorrect syntax near 'GO'`.
+
 Native `mssql` errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
 ### 5.2 Query cancellation
@@ -352,7 +378,7 @@ A query issued with a `queryId` stores its `Request`. `cancelQuery(queryId)`
 for that id; otherwise it calls `request.cancel()` and returns `true` as long as that call doesn't
 throw — it does **not** confirm the cancellation actually took effect. Exposed via `POST /api/db/cancel`.
 
-### 5.3 Data-type & parameter handling ⚠️
+### 5.3 Data-type & parameter handling
 
 - **Parameters are bound without an explicit SQL type.** `query()` calls
   `request.input(\`p${i+1}\`, value)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) and
@@ -367,12 +393,40 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   1234567890123456.7891234567 as the number 1234567890123456.8; `MONEY` 922337203685477.5807 as
   922337203685477.6; `NUMERIC(20,4)` and `INT` as numbers of their own value. Fetching the three
   that round as strings would preserve fidelity.
+- **`time`, `date` and `datetime2` read as the engine's OWN TEXT (#1132), because none of them
+  holds a moment.** `tedious` reads all three as a `Date` built in UTC - `time` as a time-of-day
+  on an invented 1970-01-01, `date` as UTC midnight, `datetime2` as a wall-clock reading mapped
+  through UTC - and a `time(7)` loses the four digits a `Date` cannot carry. Serialized as an
+  ISO instant, `CAST('10:30:00.1234567' AS time(7))` arrived as `1970-01-01T10:30:00.123Z`: a
+  moment it does not hold, and four digits short. `query()`, `queryReadOnly()` and
+  `queryInTransaction()` now rewrite the three declarations into the engine's text, keyed on
+  `recordset.columns` - the same map [§5.4](#54-declared-column-types) reads - and reconstruct
+  the fraction from the remainder the driver keeps on the value (`nanosecondsDelta`), so
+  `time(7)` keeps all seven digits. `datetimeoffset` is deliberately untouched: it IS an
+  instant. Measured 2026-09-28 on SQL Server 2022 CU27 (16.0.4295.3) through `mssql` 12.7.2 /
+  `tedious` 20.3.0, one row:
+
+  | declared | engine's own text | read BEFORE (the driver's `Date`) | read now |
+  |---|---|---|---|
+  | `TIME(7)` `10:30:00.1234567` | `10:30:00.1234567` | `1970-01-01T10:30:00.123Z` | `10:30:00.1234567` |
+  | `TIME(3)` `10:30:00.123` | `10:30:00.123` | `1970-01-01T10:30:00.123Z` | `10:30:00.123` |
+  | `TIME(0)` `10:30:00` | `10:30:00` | `1970-01-01T10:30:00.000Z` | `10:30:00` |
+  | `DATE` `2026-09-01` | `2026-09-01` | `2026-09-01T00:00:00.000Z` | `2026-09-01` |
+  | `DATETIME2(7)` `2026-09-01 10:30:00.1234567` | `2026-09-01 10:30:00.1234567` | `2026-09-01T10:30:00.123Z` | `2026-09-01 10:30:00.1234567` |
+  | `DATETIME2(0)` `2026-09-01 10:30:00` | `2026-09-01 10:30:00` | `2026-09-01T10:30:00.000Z` | `2026-09-01 10:30:00` |
+  | `DATETIMEOFFSET(7)` `… +05:30` | (an instant, unconverted) | `2026-09-01T05:00:00.123Z` | `2026-09-01T05:00:00.123Z` |
+
+  The engine's own text is what the guard compares against - `CONVERT(varchar, …)` of the same
+  row, not a hardcoded spelling; rerun with
+  [`tests/live/mssql-zoneless-values.ts`](../../tests/live/mssql-zoneless-values.ts)
+  ([§13.4](#134-optional-verifying-against-a-live-sql-server)).
 - **Binary** (`VARBINARY`/`IMAGE`/`rowversion`) comes back as a Node `Buffer` and is **not**
   stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
   is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
   Cassandra stopped spelling their bytes `0x…` in the provider.
-- **Only the first result set is returned.** `query()` reads `result.recordset` (singular), so a
-  multi-statement batch or a stored procedure returning several result sets surfaces just one.
+- **One result set is shown.** `query()` answers with the first result set and carries the others in
+  `resultSets` (§5.1); the single-statement route shows the first and the multi-statement route a
+  batch's last one with rows.
 
 ### 5.4 Declared column types
 
@@ -408,6 +462,15 @@ this existed, the probe table's `BIGINT` and `UNIQUEIDENTIFIER` columns both exp
 `NVARCHAR(MAX)` and its `DECIMAL(10,2)` as `FLOAT` - which is the same evidence read the right way
 round, a string exporting as text and a number as a float. Both execution paths fill it from the same column map - including
 `queryInTransaction()`, which had the map available all along and simply never read it.
+
+### 5.5 What the SQL INSERT export writes for a BIT
+
+`mssql` returns a BIT as a JS boolean, and T-SQL has no boolean literal: an exported `true` is `Msg 207: Invalid column name 'true'`, and that fails the whole batch.
+The SQL INSERT export writes a boolean as `1` / `0` for this dialect (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+Dates need nothing: the ISO text a `Date` becomes (`2024-12-31T23:59:59.997Z`) replays into `datetime`, `datetime2`, `smalldatetime`, `datetimeoffset` and `date`.
+
+Measured 2026-10-04 on SQL Server 2025 (17.0.5005.3): a table of `bit`, the five date and time types, `uniqueidentifier`, `decimal(38,10)`, `bigint`, `money`, `varbinary(max)`, `nvarchar(max)`, `float`, `real`, `tinyint` and `xml` exported and replayed with `sqlcmd` into both a `SELECT * INTO copy … WHERE 1 = 0` copy and the exported DDL's own table without an error.
+Two cells read back differently, both lost by the driver before the export sees them: a `datetimeoffset` keeps its instant but not its offset or its digits past the millisecond, and a `decimal` past 15 significant digits arrives as a rounded JS number.
 
 ---
 
@@ -455,7 +518,7 @@ The cost while it stands: an abandoned transaction holds its locks until the con
 
 ## 7. Schema introspection
 
-Five bulk queries grouped in memory (see [§3.3](#33-five-query-schema-introspection-cross-schema)):
+Five bulk queries grouped in memory (see [§3.3](#33-schema-introspection-cross-schema)):
 
 | Data | Source |
 |------|--------|
@@ -521,13 +584,10 @@ in one trigger folder, and a serialised key sorts the deeper path before its own
 `a\"b` and sorts after `a0b`, while the segments sort the other way. Both names are legal DDL
 trigger names, measured.
 
-A container path may be a database alone or a database and a schema, and both are true questions:
-the tree draws kind folders only at the deepest level
-([`flatten.ts`](../../src/components/object-tree/flatten.ts)), but `assertContainerDepth` in
-[`object-route.ts`](../../src/lib/api/object-route.ts) admits any path down to the declared depth and
-the shared conformance helper reads counts at the OUTER one. A database-level read answers for the
-whole database, and for every kind except `trigger` it equals the sum over the schemas
-`listContainers` lists. Measured on the fixture:
+A container path may be a database alone or a database and a schema, and both are true questions, which the declaration states as `containerPathShapes: "prefixes"`.
+The tree draws kind folders only at the deepest level ([`flatten.ts`](../../src/components/object-tree/flatten.ts)), while the object routes in [`object-route.ts`](../../src/lib/api/object-route.ts) accept `container` in either shape by reading that field through the same kernel function this provider refuses by (`acceptedContainerShapes()` in [`object-kinds.ts`](../../src/lib/db/object-kinds.ts)), and the shared conformance helper reads counts at the OUTER one.
+A database-level read answers for the whole database, and for every kind except `trigger` it equals the sum over the schemas `listContainers` lists.
+Measured on the fixture:
 
 | Read | table | view | procedure | function | trigger | synonym | sequence |
 |---|---|---|---|---|---|---|---|
@@ -889,7 +949,7 @@ sentence names the catalog view and the column the decision came from instead.
   encryption at all.
 
 **`sql` and not `tsql`.**
-MEASURED in #789: `tsql` is not among the 89 language ids the installed monaco-editor 0.56.0 bundle
+MEASURED in #789: `tsql` is not among the 89 language ids the installed monaco-editor 0.57.0 bundle
 registers, and an unregistered id degrades to plain text silently.
 So a T-SQL definition renders under the generic `sql` grammar, and T-SQL-only spellings
 (`OUTER APPLY`, `MERGE ... OUTPUT`, `@variable`) draw as plain identifiers.
@@ -1254,8 +1314,10 @@ boundary preserves those states without a falsy test that would erase a genuine 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)); targets
-are bracket-escaped (`]` → `]]`):
+`runMaintenance(type, target?, container?)` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)); targets
+are bracket-escaped (`]` → `]]`). A `container` is the SCHEMA the row carries as `schemaName`
+(#772), emitted as `[schema].[table]`; without one a bare target keeps the previous reading, where
+the connected default schema applies.
 
 | Type | With target | Without target |
 |------|-------------|----------------|
@@ -1314,6 +1376,7 @@ render those words and send an operation SQL Server declares (#496).
 | `defaultPort` | `1433` |
 | `schemaRefreshPattern` | `(CREATE\|DROP\|ALTER\|TRUNCATE)\b` (from base) |
 | `containerLevels` | **two**: `catalog` (Database) then `schema` - the first two-level engine in #789 ([§7](#the-object-surface-789)) |
+| `containerPathShapes` | `prefixes`: `[database]` and `[database, schema]` both address a container, because a database alone is a true question here ([§7](#the-object-surface-789)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | seven: table, view, procedure, function, trigger, synonym, sequence. No `index` kind and no materialized view ([§7](#the-object-surface-789)) |
 
 ### Labels — overridden (`getLabels()`, [`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts))
@@ -1649,6 +1712,17 @@ docker run --rm -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD='Str0ng!Passw0rd' \
 `--cpus 4` is not decoration on a many-core host: SQL Server asserts on the processor topology in a
 container, which is the same reason `database-compose.yml` pins `2022-latest`.
 
+`tests/live/mssql-zoneless-values.ts` (#1132, [§5.3](#53-data-type--parameter-handling)) holds the
+zoneless-value reading against the server itself: it creates a throwaway database, reads
+`time`/`date`/`datetime2`/`datetimeoffset` through the provider AND as the engine's own `CONVERT`
+text, and requires the two to agree - including that the raw driver value is still the invented
+`Date` the conversion compensates for. Its expectations are the server's own printed text, not
+hardcoded spellings. Supply the password configured on the container:
+
+```bash
+MSSQL_TEST_PORT=1433 MSSQL_TEST_PASSWORD="$PROBE_PASSWORD" bun tests/live/mssql-zoneless-values.ts
+```
+
 For the object surface, apply the fixture first. The image has **no init-script directory** (no
 `/docker-entrypoint-initdb.d`, no `/container-entrypoint-initdb.d`), so it cannot be mounted the way
 the PostgreSQL, MySQL and Oracle fixtures are:
@@ -1738,8 +1812,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **Binary columns aren't sanitized.** `VARBINARY`/`IMAGE`/`rowversion` come back as Node `Buffer`s
   and cross the wire as `{"type":"Buffer","data":[…]}` (no `0x…` hex conversion like the MySQL
   provider) — see [§5.3](#53-data-type--parameter-handling). The client recovers them: the results
-  grid, the row detail sheet and the CSV export all classify that shape as binary and render `\x…`
-  hex (`src/lib/export/binary.ts`), so what remains is the response size — about four bytes of JSON
+  grid, the row detail sheet, the CSV export and the JSON export (#1381) all classify that shape as
+  binary and write `\x…` hex (`src/lib/export/binary.ts`), so what remains is the response size: about four bytes of JSON
   digits per byte of data.
 - **Numeric precision loss** — `DECIMAL`/`NUMERIC`/`MONEY` are returned as JS `number`s and can lose
   precision; they would need to be fetched as strings to stay exact. `BIGINT` already arrives as one
@@ -1796,4 +1870,4 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - Errors (incl. SQL Server mapping): [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/mssql-provider.test.ts`](../../tests/integration/db/mssql-provider.test.ts)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
-- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [Apache Trino](./trino.md) · [Redis](./redis.md)
+- Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [Trino](./trino.md) · [Redis](./redis.md)

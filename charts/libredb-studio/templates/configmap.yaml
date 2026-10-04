@@ -42,6 +42,9 @@ data:
   {{- if eq (include "libredb-studio.storageProvider" .) "sqlite" }}
   STORAGE_SQLITE_PATH: {{ .Values.config.storageSqlitePath | quote }}
   {{- end }}
+  {{- if .Values.config.passkeyOrigin }}
+  PASSKEY_ORIGIN: {{ .Values.config.passkeyOrigin | quote }}
+  {{- end }}
   {{- if .Values.config.llmProvider }}
   LLM_PROVIDER: {{ .Values.config.llmProvider | quote }}
   {{- end }}

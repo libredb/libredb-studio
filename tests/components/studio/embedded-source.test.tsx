@@ -159,7 +159,6 @@ import type {
   ObjectSourceDocument,
   ProviderCapabilities,
 } from "@/lib/db/types";
-import type { QueryTab } from "@/lib/types";
 
 const DEFINITION = "CREATE FUNCTION app.order_total(integer) RETURNS numeric AS $$ SELECT 1 $$;";
 
@@ -580,16 +579,16 @@ describe("the embedded workspace reads an object's source through the host", () 
      * back to the query tab passed against the ungated loader, because the write landed on the
      * OTHER tab.
      *
-     * READ OFF THE PANEL'S OWN `currentTab` PROP, which is the active tab itself. The earlier
-     * spelling withdrew the host's reader to turn this tab back into an ordinary editor and read
-     * the statement out of it; that gesture no longer exists, because a tab whose address names
-     * an object now stays a definition pane and refuses instead of becoming an editable one
-     * (#789, external review of PR #820). This reads the same field directly, and it is checked
-     * to BE the Source tab first, so it cannot be satisfied by some other tab's empty statement.
+     * BottomPanel is no longer handed the whole tab (X5), so the Source tab's ADDRESS is read off
+     * the viewer's own `path` prop, and the query off the statement the panel is handed while its
+     * explain view is open, which is the only view it is handed in. The pane above showing the
+     * definition is what proves the active tab is the Source tab, so an empty query here cannot
+     * be some other tab's.
      */
-    const shownTab = capturedBottomPanelProps.currentTab as QueryTab;
-    expect(shownTab.source?.path).toEqual(ROUTINE.path);
-    expect(shownTab.query).toBe("");
+    expect(capturedSourceViewProps.path).toEqual(ROUTINE.path);
+    act(() => (capturedBottomPanelProps.onSetMode as (mode: string) => void)("explain"));
+    await waitFor(() => expect(capturedBottomPanelProps.mode).toBe("explain"));
+    expect(capturedBottomPanelProps.explainQuery).toBe("");
   });
 
   test("a kind that declares no source is offered nothing and activates nothing", async () => {

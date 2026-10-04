@@ -12,6 +12,8 @@ import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 
 interface PoolStats {
   total: number;
+  /** Configured ceiling, absent where the provider has none to report. */
+  max?: number;
   idle: number;
   active: number;
   waiting: number;
@@ -111,8 +113,11 @@ export function PoolTab({ connection }: PoolTabProps) {
   // with no message, and that IS a measurement - 0 connections, truthfully - which keeps
   // the arithmetic and the labels below unchanged.
   const measured = stats !== null && stats.message === undefined ? stats : null;
-  const usagePercent =
-    measured !== null && measured.total > 0 ? Math.round((measured.active / measured.total) * 100) : 0;
+  // Utilization is against the configured ceiling when the provider reports one: a pool
+  // at 2 of 10 allowed clients with both busy is 20% utilized, not 100%. Without a
+  // ceiling the open count is the only denominator there is.
+  const capacity = measured?.max !== undefined && measured.max > 0 ? measured.max : (measured?.total ?? 0);
+  const usagePercent = measured !== null && capacity > 0 ? Math.round((measured.active / capacity) * 100) : 0;
 
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
@@ -161,7 +166,11 @@ function PoolStatsGrid({ measured, usagePercent }: Readonly<{ measured: PoolStat
         </CardHeader>
         <CardContent className="p-3 sm:p-4 pt-0">
           <div className="text-lg sm:text-2xl font-medium">{measured !== null ? measured.total : "N/A"}</div>
-          {measured !== null && <p className="text-xs sm:text-xs text-muted-foreground mt-1">Max pool size</p>}
+          {measured !== null && (
+            <p className="text-xs sm:text-xs text-muted-foreground mt-1">
+              Open clients{measured.max !== undefined && ` · Max pool size ${measured.max}`}
+            </p>
+          )}
         </CardContent>
       </Card>
 

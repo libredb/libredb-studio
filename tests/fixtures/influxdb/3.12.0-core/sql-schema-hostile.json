@@ -1,0 +1,20 @@
+{
+  "version": "3.12.0-core",
+  "name": "sql-schema-hostile",
+  "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/api/v3/query_sql",
+    "query": {},
+    "body": {
+      "db": "home",
+      "q": "SELECT key, data_type FROM system.influxdb_schema WHERE measurement = 'we\"ird name;x'",
+      "format": "jsonl"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/jsonl",
+  "body": "{\"key\":\"room\",\"data_type\":\"tag\"}\n{\"key\":\"time\",\"data_type\":\"time\"}\n{\"key\":\"v\",\"data_type\":\"integer\"}\n"
+}

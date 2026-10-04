@@ -1,0 +1,1318 @@
+{
+  "$generated": {
+    "by": "tests/live/vector-corpus.ts",
+    "source": "github.com/qdrant/landing_page",
+    "commit": "bb7f15b97237c97748fdbeea45499e2fcaba2377",
+    "directory": "qdrant-landing/content/documentation/headless/snippets/",
+    "derivation": "each snippet's http block, its placeholders filled and the prose of every comment replaced by note",
+    "fill": [
+      [
+        "{collection_name}",
+        "docs"
+      ],
+      [
+        "<your-collection>",
+        "docs"
+      ],
+      [
+        "{vector_name}",
+        "text"
+      ],
+      [
+        "{point_id}",
+        "42"
+      ],
+      [
+        "{snapshot_name}",
+        "snap.snapshot"
+      ]
+    ]
+  },
+  "blocks": [
+    {
+      "file": "batch-update-points__basic.http.md",
+      "sourceSha256": "c7deb4d48074c209f2f150ec53e7f638508a0974e5d19c802abf44d8e3c912ff",
+      "text": "POST /collections/docs/points/batch\n{\n    \"operations\": [\n        {\n            \"upsert\": {\n                \"points\": [\n                    {\n                        \"id\": 1,\n                        \"vector\": [1.0, 2.0, 3.0, 4.0],\n                        \"payload\": {}\n                    }\n                ]\n            }\n        },\n        {\n            \"update_vectors\": {\n                \"points\": [\n                    {\n                        \"id\": 1,\n                        \"vector\": [1.0, 2.0, 3.0, 4.0]\n                    }\n                ]\n            }\n        },\n        {\n            \"delete_vectors\": {\n                \"points\": [1],\n                \"vector\": [\"\"]\n            }\n        },\n        {\n            \"overwrite_payload\": {\n                \"payload\": {\n                    \"test_payload\": \"1\"\n                },\n                \"points\": [1]\n            }\n        },\n        {\n            \"set_payload\": {\n                \"payload\": {\n                    \"test_payload_2\": \"2\",\n                    \"test_payload_3\": \"3\"\n                },\n                \"points\": [1]\n            }\n        },\n        {\n            \"delete_payload\": {\n                \"keys\": [\"test_payload_2\"],\n                \"points\": [1]\n            }\n        },\n        {\n            \"clear_payload\": {\n                \"points\": [1]\n            }\n        },\n        {\"delete\": {\"points\": [1]}}\n    ]\n}\n"
+    },
+    {
+      "file": "check-collection-exists__simple.http.md",
+      "sourceSha256": "2af571842b6b1fb0c7a681f48f43301572ce102b8aaacdf29e09a799410b9182",
+      "text": "GET /collections/docs/exists\n"
+    },
+    {
+      "file": "clear-payload__simple.http.md",
+      "sourceSha256": "024b4438a83a960ba77b78f3c4561273e92429438bf35f246d48042430972f0b",
+      "text": "POST /collections/docs/points/payload/clear\n{\n    \"points\": [0, 3, 100]\n}\n"
+    },
+    {
+      "file": "cloud-inference__image.http.md",
+      "sourceSha256": "0940b34b99eff00b3176501081c9b1c1d6a25cef9beefea548893b799a637dd1",
+      "text": "# note\nPUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"image\": \"https://qdrant.tech/example.png\",\n        \"model\": \"qdrant/clip-vit-b-32-vision\"\n      },\n      \"payload\": {\n        \"title\": \"Example Image\"\n      }\n    }\n  ]\n}\n\n# note\nPOST /collections/docs/points/query\n{\n  \"query\": {\n    \"text\": \"Mission to Mars\",\n    \"model\": \"qdrant/clip-vit-b-32-text\"\n  }\n}\n"
+    },
+    {
+      "file": "cloud-inference__simple.http.md",
+      "sourceSha256": "38831f52da3ddc639a794d747c6e29155eb6d66ff0398e629ffe88602eb8e4f3",
+      "text": "# note\nPUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"payload\": { \"topic\": \"cooking\", \"type\": \"dessert\" },\n      \"vector\": {\n        \"text\": \"Recipe for baking chocolate chip cookies\",\n        \"model\": \"<the-model-to-use>\"\n      }\n    }\n  ]\n}\n\n# note\nPOST /collections/docs/points/query\n{\n  \"query\": {\n    \"text\": \"How to bake cookies?\",\n    \"model\": \"<the-model-to-use>\"\n  }\n}\n"
+    },
+    {
+      "file": "collection-aliases__create.http.md",
+      "sourceSha256": "5c463ab915516a18af4322431c6a6a71110f66e765a81718f013c2937d5fee47",
+      "text": "POST /collections/aliases\n{\n    \"actions\": [\n        {\n            \"create_alias\": {\n                \"collection_name\": \"example_collection\",\n                \"alias_name\": \"production_collection\"\n            }\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "collection-aliases__delete.http.md",
+      "sourceSha256": "2dd25670affe9dd58733766c9ad5de984dd1f4972624bdaee88624197942da0b",
+      "text": "POST /collections/aliases\n{\n    \"actions\": [\n        {\n            \"delete_alias\": {\n                \"alias_name\": \"production_collection\"\n            }\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "collection-aliases__list-all.http.md",
+      "sourceSha256": "e541e58d8c404b89a8f2dfc9e0a8edd676e6f47dec67378d5028033540b343c5",
+      "text": "GET /aliases\n"
+    },
+    {
+      "file": "collection-aliases__list.http.md",
+      "sourceSha256": "06321cfe1d708604ae5d52c4fe8dae6a5bf75ee413bc0e9662fa28be0d086a89",
+      "text": "GET /collections/docs/aliases\n"
+    },
+    {
+      "file": "collection-aliases__switch.http.md",
+      "sourceSha256": "ef287409d325fc4307ad8a991a5e0b17fbcc56b808edc0bd0e800bc4e83c17a4",
+      "text": "POST /collections/aliases\n{\n    \"actions\": [\n        {\n            \"delete_alias\": {\n                \"alias_name\": \"production_collection\"\n            }\n        },\n        {\n            \"create_alias\": {\n                \"collection_name\": \"example_collection\",\n                \"alias_name\": \"production_collection\"\n            }\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "collection-info__simple.http.md",
+      "sourceSha256": "a93ebec3bd336e21ef55f58f4431e7f4226ee682e2f25f5c64f589510e169906",
+      "text": "GET /collections/docs\n"
+    },
+    {
+      "file": "count-points__with-filter-exact.http.md",
+      "sourceSha256": "587894e6c7d42d6e34749c27609898399544e8be05a52c89bf54fd5c32c24972",
+      "text": "POST /collections/docs/points/count\n{\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"color\",\n                \"match\": {\n                    \"value\": \"red\"\n                }\n            }\n        ]\n    },\n    \"exact\": true\n}\n"
+    },
+    {
+      "file": "create-collection__datatype-float16-sparse-and-dense.http.md",
+      "sourceSha256": "66ce85ff93947bdd83b5d1f5f6e543b73a118183384ffc0d108a6c892a56f88d",
+      "text": "PUT /collections/docs\n{\n  \"vectors\": {\n    \"size\": 128,\n    \"distance\": \"Cosine\",\n    \"datatype\": \"float16\" // note\n  },\n  \"sparse_vectors\": {\n    \"text\": {\n      \"index\": {\n        \"datatype\": \"float16\" // note\n      }\n    }\n  }\n}\n"
+    },
+    {
+      "file": "create-collection__datatype-turbo4.http.md",
+      "sourceSha256": "cf8c7ebc698c10a7e386a188342807a11776aded394890d18bf4f93aff1ada69",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 1024,\n      \"distance\": \"Cosine\",\n      \"datatype\": \"turbo4\"\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__datatype-uint8-sparse-and-dense.http.md",
+      "sourceSha256": "216a97934cb62a784bbe7d3427d41d78dd78b9a10fdac2027837a06d4269fc16",
+      "text": "PUT /collections/docs\n{\n  \"vectors\": {\n    \"size\": 128,\n    \"distance\": \"Cosine\",\n    \"datatype\": \"uint8\" // note\n  },\n  \"sparse_vectors\": {\n    \"text\": {\n      \"index\": {\n        \"datatype\": \"uint8\" // note\n      }\n    }\n  }\n}\n"
+    },
+    {
+      "file": "create-collection__datatype-uint8.http.md",
+      "sourceSha256": "cbc17ca0ed40ad50fa81c987f1ae1d938c9f59d3c291e5028682ee0928dfd5ca",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 1024,\n      \"distance\": \"Cosine\",\n      \"datatype\": \"uint8\"\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__multiple-vectors.http.md",
+      "sourceSha256": "aebefadbaa3929e98ce4d03cb13890dfdb58447ed48c40183e67a66eeb8c7bf6",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n        \"image\": {\n            \"size\": 4,\n            \"distance\": \"Dot\"\n        },\n        \"text\": {\n            \"size\": 8,\n            \"distance\": \"Cosine\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__named-vectors.http.md",
+      "sourceSha256": "1bbfc177f29978c90a23fa5344126cfa094666174ef999e6a177ac99fcd3f384",
+      "text": "PUT /collections/docs\n{\n  \"vectors\": {\n    \"image\": {\n      \"size\": 4,\n      \"distance\": \"Dot\"\n    },\n    \"text\": {\n      \"size\": 5,\n      \"distance\": \"Cosine\"\n    }\n  },\n  \"sparse_vectors\": {\n    \"text-sparse\": {}\n  }\n}\n"
+    },
+    {
+      "file": "create-collection__quantization-on-disk.http.md",
+      "sourceSha256": "4b1c20b28f0810c32d8338082cfe8b6c7f764f3fb7c6acc97f36b5a0b7767fbd",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\",\n      \"memory\": \"cold\"\n    },\n    \"quantization_config\": {\n        \"scalar\": {\n            \"type\": \"int8\",\n            \"memory\": \"cold\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__simple.http.md",
+      "sourceSha256": "f4e8d127eb22436256c3755c851b6f29760d1355ddb5ad1ce593df6085d392ce",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 300,\n      \"distance\": \"Cosine\"\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__sparse-vector-idf.http.md",
+      "sourceSha256": "9fd30720be1aa7d64b5566e6c710c0eaa2ea443f1ee7a98257b3d5f8bb00bce4",
+      "text": "PUT /collections/docs\n{\n    \"sparse_vectors\": {\n        \"text\": {\n            \"modifier\": \"idf\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__sparse-vector-index-on-disk.http.md",
+      "sourceSha256": "4b2049c03d26d1fb3c7fd27d33d880f685eb7f050f44ae241e211b79a2f1fb23",
+      "text": "PUT /collections/docs\n{\n    \"sparse_vectors\": {\n        \"text\": {\n            \"index\": {\n                \"memory\": \"cold\"\n            }\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__sparse-vector-index.http.md",
+      "sourceSha256": "c6fd9a527e66e93242598b449f7f3f536c3edacc55ae4ebdcc23ea23c7b87f5c",
+      "text": "PUT /collections/docs\n{\n    \"sparse_vectors\": {\n        \"text\": {\n            \"index\": {}\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__sparse-vector.http.md",
+      "sourceSha256": "d278ba0dddd2ff09cff53241d12c7f943bafc9eff39214db041f4ee2a8df0d37",
+      "text": "PUT /collections/docs\n{\n    \"sparse_vectors\": {\n        \"text\": { }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__turbo-quantization-and-vectors-in-ram.http.md",
+      "sourceSha256": "6c3ec0cb26f6771c0661557e3acb65590dc59f9dc1b24e6c53593ba4cc73e8ee",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\",\n      \"datatype\": \"turbo4\"\n    },\n    \"quantization_config\": {\n        \"turbo\": {\n            \"bits\": \"bits1\",\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__turbo-quantization-in-ram.http.md",
+      "sourceSha256": "f7c76d74237aeb4843073cb06e6b5f57b569aefc269e3e7b6571badb3e630cfe",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n        \"size\": 768,\n        \"distance\": \"Cosine\",\n        \"memory\": \"cold\",\n        \"datatype\": \"turbo4\"\n    },\n    \"quantization_config\": {\n        \"turbo\": {\n            \"bits\": \"bits1\",\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-binary-quantization-and-encoding.http.md",
+      "sourceSha256": "53ed5aae33468b66bfd32514171d72d0ea3fd521ca1ee62ec9267cf8b179bd68",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 1536,\n      \"distance\": \"Cosine\"\n    },\n    \"quantization_config\": {\n        \"binary\": {\n            \"encoding\": \"two_bits\",\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-binary-quantization-and-query-encoding.http.md",
+      "sourceSha256": "720065917b7ad0ecd6f1b3444d09c792545293ac8f065efcbd558c2e24adbf09",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 1536,\n      \"distance\": \"Cosine\"\n    },\n    \"quantization_config\": {\n        \"binary\": {\n            \"query_encoding\": \"scalar8bits\",\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-binary-quantization.http.md",
+      "sourceSha256": "3b00579732d13c31979619c965421280727f5ca30ecac6b77dce4f9759b2471a",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 1536,\n      \"distance\": \"Cosine\"\n    },\n    \"quantization_config\": {\n        \"binary\": {\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-custom-sharding.http.md",
+      "sourceSha256": "2aacc7e462c6ebb583c317a995accfe808a6e91f31f207a08038d9d82a442ac9",
+      "text": "PUT /collections/docs\n{\n    \"shard_number\": 1,\n    \"sharding_method\": \"custom\"\n    // note\n}\n"
+    },
+    {
+      "file": "create-collection__with-disabled-global-hnsw.http.md",
+      "sourceSha256": "a61012dde46c4776233775c016cd94a1b703b7af9de3492cc2b89dd7e8b3b052",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    },\n    \"hnsw_config\": {\n        \"payload_m\": 16,\n        \"m\": 0\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-high-number-of-segments.http.md",
+      "sourceSha256": "76b5c1b782b48d63e87707d07275dcc9253116416edb6a39e94b7c1829dba4a2",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    },\n    \"optimizers_config\": {\n        \"default_segment_number\": 16\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-inline-storage.http.md",
+      "sourceSha256": "11bd590dd352f4e18a17d502eaa2fc2523bdfcafc857f2fd09d8220a3f3c830f",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\",\n      \"memory\": \"cold\",\n      \"datatype\": \"turbo4\"\n    },\n    \"quantization_config\": {\n        \"turbo\": {\n            \"memory\": \"cold\",\n            \"bits\": \"bits1\"\n        }\n    },\n    \"hnsw_config\": {\n        \"memory\": \"cold\",\n        \"inline_storage\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-large-segments.http.md",
+      "sourceSha256": "1e80b4553c62edc0bf11509a80cfa282fe5bf0f5f909ca7f979dafca5fe771c1",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    },\n    \"optimizers_config\": {\n        \"default_segment_number\": 2,\n        \"max_segment_size\": 5000000\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-memory-tiers.http.md",
+      "sourceSha256": "e0f4aeaabcf2553cb8161bb0f5a479a4b6766dc005f07700de174bc696f39206",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n        \"size\": 768,\n        \"distance\": \"Cosine\",\n        \"memory\": \"cached\"\n    },\n    \"hnsw_config\": {\n        \"memory\": \"cold\"\n    },\n    \"quantization_config\": {\n        \"scalar\": {\n            \"type\": \"int8\",\n            \"memory\": \"pinned\"\n        }\n    },\n    \"payload\": {\n        \"memory\": \"cached\"\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-metadata.http.md",
+      "sourceSha256": "9ea3a1eea208492216531f0feb1169c43536eb9be8e93ed645086627ba0210a1",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 300,\n      \"distance\": \"Cosine\"\n    },\n    \"metadata\": {\n      \"my-metadata-field\": \"value-1\",\n      \"another-field\": 123\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-multivector.http.md",
+      "sourceSha256": "e5b75eab97aec4c4c8d8e6dd2663ba91a02866767be27cc1583d5ca51c146c26",
+      "text": "PUT /collections/docs\n{\n  \"vectors\": {\n    \"size\": 128,\n    \"distance\": \"Cosine\",\n    \"multivector_config\": {\n      \"comparator\": \"max_sim\"\n    }\n  }\n}\n"
+    },
+    {
+      "file": "create-collection__with-optimizer-config.http.md",
+      "sourceSha256": "1004be9f896970b168d81974aa0e320880e057b51903dc336149d03488b7d2ee",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    },\n    \"optimizers_config\": {\n        \"indexing_threshold\": 20000\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-product-quantization.http.md",
+      "sourceSha256": "f71e03e0eb1f0c248aefacd2181294d61ef46735f687878e0c127204a0110a7f",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    },\n    \"quantization_config\": {\n        \"product\": {\n            \"compression\": \"x16\",\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-replication-factor.http.md",
+      "sourceSha256": "273dc00ac8a68cfa1653958729a26a3eeeb8e01ab94a16b566c60f5ffdb92062",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n        \"size\": 300,\n        \"distance\": \"Cosine\"\n    },\n    \"shard_number\": 6,\n    \"replication_factor\": 2\n}\n"
+    },
+    {
+      "file": "create-collection__with-scalar-quantization-params.http.md",
+      "sourceSha256": "d042196791279b5438aff70ae8fe542146181f90f9080694867480bb1679c352",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    },\n    \"quantization_config\": {\n        \"scalar\": {\n            \"type\": \"int8\",\n            \"quantile\": 0.99,\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-shard-number.http.md",
+      "sourceSha256": "19373d0f936e9b93d46b04d0d1db366a56b138d8e7362809657cc9c12de530cd",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 300,\n      \"distance\": \"Cosine\"\n    },\n    \"shard_number\": 6\n}\n"
+    },
+    {
+      "file": "create-collection__with-turbo-quant-bits.http.md",
+      "sourceSha256": "bf5841feb4bce905d645fe5483176a250c5cac7c3d1ce366d5a054436a7cf9b8",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 1536,\n      \"distance\": \"Cosine\"\n    },\n    \"quantization_config\": {\n        \"turbo\": {\n            \"bits\": \"bits2\",\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-turbo-quant.http.md",
+      "sourceSha256": "71955dae9627cb29869177b518794918dae4029d84c56ce9f16dbfa190014c70",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 1536,\n      \"distance\": \"Cosine\"\n    },\n    \"quantization_config\": {\n        \"turbo\": {\n            \"memory\": \"pinned\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-two-shards.http.md",
+      "sourceSha256": "3f76c2a7a3dd3ab26dbce1190e3847abdbe914f544560dff81ba1f1790348e1a",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\"\n    },\n    \"shard_number\": 2\n}\n"
+    },
+    {
+      "file": "create-collection__with-vectors-and-hnsw-on-disk.http.md",
+      "sourceSha256": "38e5c88b48716e651443ba4889f4b30be7986b0e5702c6602fc84fd13a334a09",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\",\n      \"memory\": \"cold\"\n    },\n    \"hnsw_config\": {\n        \"memory\": \"cold\"\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-vectors-on-disk.http.md",
+      "sourceSha256": "0be57b3eb21bbeb72727878145b16fb8550b1b28f4dc5e510db511127b8c6f73",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n      \"size\": 768,\n      \"distance\": \"Cosine\",\n      \"memory\": \"cold\"\n    }\n}\n"
+    },
+    {
+      "file": "create-collection__with-write-consistency-factor.http.md",
+      "sourceSha256": "3ce4e3328b2453db798ee655350509f081741ef164f0f0edf7bd1645d30691c6",
+      "text": "PUT /collections/docs\n{\n    \"vectors\": {\n        \"size\": 300,\n        \"distance\": \"Cosine\"\n    },\n    \"shard_number\": 6,\n    \"replication_factor\": 2,\n    \"write_consistency_factor\": 2\n}\n"
+    },
+    {
+      "file": "create-named-vector__dense.http.md",
+      "sourceSha256": "0529cedb58f8a7947c6d9ab761dbf3fa68eda17f6e07fa19d5824b4b7575aa02",
+      "text": "PUT /collections/docs/vectors/text\n{\n    \"dense\": {\n        \"size\": 256,\n        \"distance\": \"Cosine\"\n    }\n}\n"
+    },
+    {
+      "file": "create-named-vector__sparse.http.md",
+      "sourceSha256": "87b088f49c9f36ec7d725acf207f96b55fda3f2ea28992993e2dbf159d5360ab",
+      "text": "PUT /collections/docs/vectors/text\n{\n    \"sparse\": {\n        \"modifier\": \"Idf\"\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__asciifolding-full-text.http.md",
+      "sourceSha256": "eb597568a4c9c5a465abab8703f8eb25d554b4e9bb4e16dd9daba8561736576f",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"text\",\n        \"tokenizer\": \"word\",\n        \"ascii_folding\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__disable-hnsw.http.md",
+      "sourceSha256": "836ebca6dbacdfe616af61e03b37ee05918a6d3a9d55d60ad9a1a675fc61d2b2",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"keyword\",\n        \"enable_hnsw\": false\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__integer-is-principal.http.md",
+      "sourceSha256": "873fd41d91b14a231feefb337dd7a895037f9e10409e8e21cb3d343304be68a7",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"timestamp\",\n    \"field_schema\": {\n        \"type\": \"integer\",\n        \"is_principal\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__integer-with-params.http.md",
+      "sourceSha256": "e5a0170e6bedc50c3230c195982cd5b9640296c4f6de7a28b97f537c9817f95a",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"integer\",\n        \"lookup\": false,\n        \"range\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__keyword-is-tenant.http.md",
+      "sourceSha256": "f178e358c3bae5e714d3adeab78b30746c0e0cf5b0bffad310a5f480c0bb4fc8",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"payload_field_name\",\n    \"field_schema\": {\n        \"type\": \"keyword\",\n        \"is_tenant\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__keyword-on-disk.http.md",
+      "sourceSha256": "1ee2832225f983a2783dca85a1b2d5342ecd118b301f10daa6b1e1c2270fb693",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"payload_field_name\",\n    \"field_schema\": {\n        \"type\": \"keyword\",\n        \"memory\": \"cold\"\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__keyword-with-prefix.http.md",
+      "sourceSha256": "20336697c8a7775df453ffdfbfcb622e1d377208e51c76d753d60968a03ac80f",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"url\",\n    \"field_schema\": {\n        \"type\": \"keyword\",\n        \"prefix\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__lowercase-full-text.http.md",
+      "sourceSha256": "3406b4d6527cc6af394667888a0f45b9c17907c29d29651c228f02b64de0eab5",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"text\",\n        \"tokenizer\": \"word\",\n        \"lowercase\": false\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__phrase-full-text.http.md",
+      "sourceSha256": "e00560ff9bfd4d3c69be03c0785000254454d304fe6c59ef3781cc62258c1d62",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"text\",\n        \"tokenizer\": \"word\",\n        \"lowercase\": true,\n        \"phrase_matching\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__simple-full-text.http.md",
+      "sourceSha256": "e82db5470e7d8352dd32d0464adf9cfbe3417a1d193a88c190cfcc1cd4dd5011",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"text\",\n        \"tokenizer\": \"word\",\n        \"min_token_len\": 2,\n        \"max_token_len\": 10,\n        \"lowercase\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__simple-keyword.http.md",
+      "sourceSha256": "459dc6b70c16e454bed0372d03b0cb2cc9f2fb5a1dc37f31668bfc49c464138d",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": \"keyword\"\n}\n"
+    },
+    {
+      "file": "create-payload-index__stemmer-full-text.http.md",
+      "sourceSha256": "ac6d7d74364da6f0fa7b22357e3999795446ec1aebda551198f97ca837eab8f3",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"text\",\n        \"tokenizer\": \"word\",\n        \"stemmer\": {\n            \"type\": \"snowball\",\n            \"language\": \"english\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__stopwords-full-text.http.md",
+      "sourceSha256": "10365555d424f46d47cabad3ceaab57f38dfd2b188ca4c5521b9677f857c0bab",
+      "text": "// note\nPUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"text\",\n        \"tokenizer\": \"word\",\n        \"stopwords\": \"english\"\n    }\n}\n\n// note\nPUT /collections/docs/index\n{\n    \"field_name\": \"name_of_the_field_to_index\",\n    \"field_schema\": {\n        \"type\": \"text\",\n        \"tokenizer\": \"word\",\n        \"stopwords\": {\n            \"languages\": [\n                \"english\",\n                \"spanish\"\n            ],\n            \"custom\": [\n                \"example\"\n            ]\n        }\n    }\n}\n"
+    },
+    {
+      "file": "create-payload-index__with-group-id-as-tenant.http.md",
+      "sourceSha256": "d985ea74a2f513ee56172bda1129a2b1b3e624adf5880688c99b1b986bc58407",
+      "text": "PUT /collections/docs/index\n{\n    \"field_name\": \"group_id\",\n    \"field_schema\": {\n        \"type\": \"keyword\",\n        \"is_tenant\": true\n    }\n}\n"
+    },
+    {
+      "file": "create-shard__create-named-shard-default.http.md",
+      "sourceSha256": "f293ecbfaae08869448207087203f5b425e4ba1ee04bf13adc5e98df67da84cd",
+      "text": "PUT /collections/docs/shards\n{\n  \"shard_key\": \"default\",\n  \"shards_number\": 1\n}\n"
+    },
+    {
+      "file": "create-shard__create-named-shard-for-promotion.http.md",
+      "sourceSha256": "f78af39efde0b3353052903b36099c37795a852a0699eb972d2d9d05cda224fc",
+      "text": "PUT /collections/docs/shards\n{\n  \"shard_key\": \"user_1\",\n  \"shards_number\": 1,\n  \"replication_factor\": 1,\n  \"initial_state\": \"Partial\"\n}\n"
+    },
+    {
+      "file": "create-shard__create-named-shard.http.md",
+      "sourceSha256": "25160604faffe2f5ed85bfbe22591b63e9cab8f09c292539ec8e21732e1a473f",
+      "text": "PUT /collections/docs/shards\n{\n  \"shard_key\": \"{shard_key}\"\n}\n"
+    },
+    {
+      "file": "delete-collection__simple.http.md",
+      "sourceSha256": "e2f0797d3c8282c001167cb744ca6f14fdc087f7aee0bd5782a2e4500597885b",
+      "text": "DELETE /collections/docs\n"
+    },
+    {
+      "file": "delete-named-vector.http.md",
+      "sourceSha256": "ab366e5d9d55a400bccd3b8dfbd3ec860a405aebae2c6a7aa989b24e700b71d7",
+      "text": "DELETE /collections/docs/vectors/text\n"
+    },
+    {
+      "file": "delete-payload__by-filter.http.md",
+      "sourceSha256": "339cdf4b13be4136a1f02454271901f96d8175476bce3c78c40f169c975ea2b7",
+      "text": "POST /collections/docs/points/payload/delete\n{\n    \"keys\": [\"color\", \"price\"],\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"color\",\n                \"match\": {\n                    \"value\": \"red\"\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "delete-payload__by-point-id.http.md",
+      "sourceSha256": "2d852cc4a768cf66a5bbf27665cc13cae895a6bad1f489016c697990061acfeb",
+      "text": "POST /collections/docs/points/payload/delete\n{\n    \"keys\": [\"color\", \"price\"],\n    \"points\": [0, 3, 100]\n}\n"
+    },
+    {
+      "file": "delete-points__by-filter.http.md",
+      "sourceSha256": "37018afc59e64784bb2d280f7c8afa4a8fd09069b7122bcf3ba69e5f3efdc69c",
+      "text": "POST /collections/docs/points/delete\n{\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"color\",\n                \"match\": {\n                    \"value\": \"red\"\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "delete-points__simple.http.md",
+      "sourceSha256": "591ba3665796239d5741741c8ce053b625fbf0bcd8cfb8d432a924dcdfe0dba9",
+      "text": "POST /collections/docs/points/delete\n{\n    \"points\": [0, 3, 100]\n}\n"
+    },
+    {
+      "file": "delete-vectors__simple.http.md",
+      "sourceSha256": "a2c3767ee5f1f206d1d808d34a32a40fa9c4d6a7859ba38fadf5f79aa3342b8c",
+      "text": "POST /collections/docs/points/vectors/delete\n{\n    \"points\": [0, 3, 100],\n    \"vectors\": [\"text\", \"image\"]\n}\n"
+    },
+    {
+      "file": "distance-matrix__basic.http.md",
+      "sourceSha256": "5b4935ebb04b08fb944d6314ac25fb6433b496ed2d3c98ab12f17b907be0bf08",
+      "text": "POST /collections/docs/points/search/matrix/pairs\n{\n    \"sample\": 10,\n    \"limit\": 2,\n    \"filter\": {\n        \"must\": {\n            \"key\": \"color\",\n            \"match\": { \"value\": \"red\" }\n        }\n    }  \n}\n"
+    },
+    {
+      "file": "distance-matrix__offsets-format.http.md",
+      "sourceSha256": "9a9af8664db31615553aee207da44772257ee683db9f34f078966247fe179480",
+      "text": "POST /collections/docs/points/search/matrix/offsets\n{\n    \"sample\": 10,\n    \"limit\": 2,\n    \"filter\": {\n        \"must\": {\n            \"key\": \"color\",\n            \"match\": { \"value\": \"red\" }\n        }\n    }\n}\n"
+    },
+    {
+      "file": "facet-counts__exact.http.md",
+      "sourceSha256": "64e39f558f52a25486bff4531a5089d15c9876ad62006d1ae2fff8afb2b7215a",
+      "text": "POST /collections/docs/facet\n{\n    \"key\": \"size\",\n    \"exact\": true\n}\n"
+    },
+    {
+      "file": "facet-counts__simple-with-filter.http.md",
+      "sourceSha256": "af0957f77fea0aa3238e7a2b4d538aa3c7193029c5a02a001d7ebf95cd83a97b",
+      "text": "POST /collections/docs/facet\n{\n    \"key\": \"size\",\n    \"filter\": {\n      \"must\": {\n        \"key\": \"color\",\n        \"match\": { \"value\": \"red\" }\n      }\n    }\n}\n"
+    },
+    {
+      "file": "filter-condition__slice.http.md",
+      "sourceSha256": "17afb40564c325a63617cd1bee6941bc954f04bdb9c856d4fa468aa1861be247",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [\n            { \"slice\": { \"index\": 3, \"total\": 8 } }\n        ]\n    }\n    ...\n}\n"
+    },
+    {
+      "file": "inference__cohere-query.http.md",
+      "sourceSha256": "3ee1a9e724302a3201a61daa71952e39f42bb66454307d6c0c81ea4fa08d270d",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"text\": \"a green square\",\n    \"model\": \"cohere/embed-v4.0\",\n    \"options\": {\n      \"cohere-api-key\": \"<YOUR_COHERE_API_KEY>\",\n      \"output_dimension\": 512\n    }\n  }\n}\n"
+    },
+    {
+      "file": "inference__cohere-upsert.http.md",
+      "sourceSha256": "4c310821e29d5a51840fe25f03074145a144b3f2880a97c01086fd27c5436c22",
+      "text": "PUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"image\": \"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAFUlEQVR42mNk+M9Qz0AEYBxVSF+FAAhKDveksOjmAAAAAElFTkSuQmCC\",\n        \"model\": \"cohere/embed-v4.0\",\n        \"options\": {\n          \"cohere-api-key\": \"<YOUR_COHERE_API_KEY>\",\n          \"output_dimension\": 512\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__external-api-key-body.http.md",
+      "sourceSha256": "45d933f59d6373dfe4361d2971ab313025b5cf422bc4ff0314b58e2ba1c0a03c",
+      "text": "PUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"text\": \"Recipe for baking chocolate chip cookies\",\n        \"model\": \"openai/text-embedding-3-large\",\n        \"options\": {\n          \"openai-api-key\": \"<YOUR_OPENAI_API_KEY>\"\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__ingest.http.md",
+      "sourceSha256": "7e5d71f9b2d61018ae579bff8fe361fcfc3de61bd28387dae3b8101af864ac6a",
+      "text": "PUT /collections/docs/points\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"my-bm25-vector\": {\n          \"text\": \"Recipe for baking chocolate chip cookies\",\n          \"model\": \"qdrant/bm25\"\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__jinaai-query.http.md",
+      "sourceSha256": "ca3d3ec2ec41485d9ee50d97316c79301f91ca9e13f2d6a9748a8c4644c276ca",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"text\": \"Mission to Mars\",\n    \"model\": \"jinaai/jina-clip-v2\",\n    \"options\": {\n      \"jina-api-key\": \"<YOUR_JINAAI_API_KEY>\",\n      \"dimensions\": 512\n    }\n  }\n}\n"
+    },
+    {
+      "file": "inference__jinaai-upsert.http.md",
+      "sourceSha256": "eaa4d1f43afe50cf08bd79f84de0d67bcc844404dba4ef89a69df1d9897e380c",
+      "text": "PUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"image\": \"https://qdrant.tech/example.png\",\n        \"model\": \"jinaai/jina-clip-v2\",\n        \"options\": {\n          \"jina-api-key\": \"<YOUR_JINAAI_API_KEY>\",\n          \"dimensions\": 512\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__mrl-multi-stage.http.md",
+      "sourceSha256": "d077d1fbe57c56ff12af91ae3bac497e8492c0a98416314b62dcdc7bed1c13cd",
+      "text": "POST /collections/docs/points/query\n{\n  \"prefetch\": {\n    \"query\": {\n      \"text\": \"How to bake cookies?\",\n      \"model\": \"openai/text-embedding-3-small\",\n      \"options\": {\n        \"openai-api-key\": \"<YOUR_OPENAI_API_KEY>\",\n        \"mrl\": 64\n      }\n    },\n    \"using\": \"small\",\n    \"limit\": 1000\n  },\n  \"query\": {\n    \"text\": \"How to bake cookies?\",\n    \"model\": \"openai/text-embedding-3-small\",\n    \"options\": {\n      \"openai-api-key\": \"<YOUR_OPENAI_API_KEY>\"\n    }\n  },\n  \"using\": \"large\",\n  \"limit\": 10\n}\n"
+    },
+    {
+      "file": "inference__mrl.http.md",
+      "sourceSha256": "403d7f45dd2a3c0d16274a4265c2f1197a32dc07e16a8ac77f376bacc9814159",
+      "text": "PUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"large\": {\n          \"text\": \"Recipe for baking chocolate chip cookies\",\n          \"model\": \"openai/text-embedding-3-small\",\n          \"options\": {\n            \"openai-api-key\": \"<YOUR_OPENAI_API_KEY>\"\n          }\n        },\n        \"small\": {\n          \"text\": \"Recipe for baking chocolate chip cookies\",\n          \"model\": \"openai/text-embedding-3-small\",\n          \"options\": {\n            \"openai-api-key\": \"<YOUR_OPENAI_API_KEY>\",\n            \"mrl\": 64\n          }\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__multiple.http.md",
+      "sourceSha256": "d51add8e7d3d0d178562d7c7762876581f7cb2d1df7f2548bb42f8aed6afbfc7",
+      "text": "PUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"image\": {\n          \"image\": \"https://qdrant.tech/example.png\",\n          \"model\": \"jinaai/jina-clip-v2\",\n          \"options\": {\n            \"jina-api-key\": \"<YOUR_JINAAI_API_KEY>\",\n            \"dimensions\": 512\n          }\n        },\n        \"text\": {\n          \"text\": \"Mars, the red planet\",\n          \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n        },\n        \"bm25\": {\n          \"text\": \"Mars, the red planet\",\n          \"model\": \"qdrant/bm25\"\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__openai-query.http.md",
+      "sourceSha256": "42dc3327b38d0d432cbb181ba6a4181a006c837877d4d6dcaf723f8b22ad29ad",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"text\": \"How to bake cookies?\",\n    \"model\": \"openai/text-embedding-3-large\",\n    \"options\": {\n      \"openai-api-key\": \"<YOUR_OPENAI_API_KEY>\",\n      \"dimensions\": 512\n    }\n  }\n}\n"
+    },
+    {
+      "file": "inference__openai-upsert.http.md",
+      "sourceSha256": "4162a2f9a7d8ffe7ffdaea6ea4e45259946592d498c9a2e57e1fd9dd94a853f0",
+      "text": "PUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"text\": \"Recipe for baking chocolate chip cookies\",\n        \"model\": \"openai/text-embedding-3-large\",\n        \"options\": {\n          \"openai-api-key\": \"<YOUR_OPENAI_API_KEY>\",\n          \"dimensions\": 512\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__openrouter-query.http.md",
+      "sourceSha256": "b9f1cff75dcf96646874fcd49c323a5a49767142273ee9c23a2b0e3f582acd0a",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"text\": \"How to bake cookies?\",\n    \"model\": \"openrouter/mistralai/mistral-embed-2312\",\n    \"options\": {\n      \"openrouter-api-key\": \"<YOUR_OPENROUTER_API_KEY>\"\n    }\n  }\n}\n"
+    },
+    {
+      "file": "inference__openrouter-upsert.http.md",
+      "sourceSha256": "a9cc45cd16079f404f8be72d2fab5c262a515b3dcd2517398df683fdf2b8f5cf",
+      "text": "PUT /collections/docs/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"text\": \"Recipe for baking chocolate chip cookies\",\n        \"model\": \"openrouter/mistralai/mistral-embed-2312\",\n        \"options\": {\n          \"openrouter-api-key\": \"<YOUR_OPENROUTER_API_KEY>\"\n        }\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "inference__query-document.http.md",
+      "sourceSha256": "1e02e700141dc668255f89343952599adb7e03d563ae118f0a56f11de3e9e792",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"nearest\": {\n      \"text\": \"My Query Text\",\n      \"model\": \"<the-model-to-use>\"\n    }\n  }\n}\n"
+    },
+    {
+      "file": "inference__query-vector.http.md",
+      "sourceSha256": "7ab44baa87d6893a18bfab18759ef16f0b3e8632f0f809437c9eeea3f8fc32e0",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"nearest\": [0.12, 0.34, 0.56, 0.78, ...]\n  }\n}\n"
+    },
+    {
+      "file": "inference__query.http.md",
+      "sourceSha256": "eabcab3a968bf230783810ba12a0e56b139985cc77a669950ef8ab4a8fcae97f",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"text\": \"How to bake cookies?\",\n    \"model\": \"qdrant/bm25\"\n  },\n  \"using\": \"my-bm25-vector\"\n}\n"
+    },
+    {
+      "file": "insert-points__batch-simple.http.md",
+      "sourceSha256": "af112aa78feeeb753a01630e55df8570a79c55ea30fdc2db672f8b19d1428cc3",
+      "text": "PUT /collections/docs/points\n{\n    \"batch\": {\n        \"ids\": [1, 2, 3],\n        \"payloads\": [\n            {\"color\": \"red\"},\n            {\"color\": \"green\"},\n            {\"color\": \"blue\"}\n        ],\n        \"vectors\": [\n            [0.9, 0.1, 0.1],\n            [0.1, 0.9, 0.1],\n            [0.1, 0.1, 0.9]\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "insert-points__batch-with-strong-ordering.http.md",
+      "sourceSha256": "946e336479d3fe4ff89a95b2f3b2d3f5f8c9798cac73bd25f1144443a97722bf",
+      "text": "PUT /collections/docs/points?ordering=strong\n{\n    \"batch\": {\n        \"ids\": [1, 2, 3],\n        \"payloads\": [\n            {\"color\": \"red\"},\n            {\"color\": \"green\"},\n            {\"color\": \"blue\"}\n        ],\n        \"vectors\": [\n            [0.9, 0.1, 0.1],\n            [0.1, 0.9, 0.1],\n            [0.1, 0.1, 0.9]\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "insert-points__int-one-point-simple.http.md",
+      "sourceSha256": "0a34721c4e98b408782fe401b244b7c611ae0b55d4084d604ac591d6e3038196",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"payload\": {\"color\": \"red\"},\n            \"vector\": [0.9, 0.1, 0.1]\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__list-of-points-simple.http.md",
+      "sourceSha256": "2a3a13c3047833b48b14a09636af13f77c1ff2765a440006f8aaddb3b27a0d5f",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"payload\": {\"color\": \"red\"},\n            \"vector\": [0.9, 0.1, 0.1]\n        },\n        {\n            \"id\": 2,\n            \"payload\": {\"color\": \"green\"},\n            \"vector\": [0.1, 0.9, 0.1]\n        },\n        {\n            \"id\": 3,\n            \"payload\": {\"color\": \"blue\"},\n            \"vector\": [0.1, 0.1, 0.9]\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__named-vectors.http.md",
+      "sourceSha256": "bca1f08bdcaea76d52d7e075b064a232a42c543db4a22189e315ffdfe56c5025",
+      "text": "PUT /collections/docs/points?wait=true\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"vector\": {\n                \"image\": [0.9, 0.1, 0.1, 0.2],\n                \"text\": [0.4, 0.7, 0.1, 0.8, 0.1],\n                \"text-sparse\": {\n                  \"indices\": [1, 3, 5, 7],\n                  \"values\": [0.1, 0.2, 0.3, 0.4]\n                }\n            }\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__sparse-vectors-single.http.md",
+      "sourceSha256": "42c3506dcc193907be5b2a640eb5ac6e415ed37b167c6876123ad0cd3860c163",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"vector\": {\n                \"text\": {\n                    \"indices\": [1, 3, 5, 7],\n                    \"values\": [0.1, 0.2, 0.3, 0.4]\n                }\n            }\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__sparse-vectors.http.md",
+      "sourceSha256": "385c8c487cf088ea78cfb9f6da5cfcec34bb8437fd1c52ade46262bf2dd82da9",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"vector\": {\n                \"text\": {\n                    \"indices\": [6, 7],\n                    \"values\": [1.0, 2.0]\n                }\n            }\n        },\n        {\n            \"id\": 2,\n            \"vector\": {\n                \"text\": {\n                    \"indices\": [1, 2, 4, 15, 33, 34],\n                    \"values\": [0.1, 0.2, 0.3, 0.4, 0.5]\n                }\n            }\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__update-mode.http.md",
+      "sourceSha256": "116999daf2707501df4db3562582aaff41f283ec178fd5e0d3b6d0b322eb2858",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"payload\": {\"color\": \"red\"},\n            \"vector\": [0.9, 0.1, 0.1]\n        },\n        {\n            \"id\": 2,\n            \"payload\": {\"color\": \"green\"},\n            \"vector\": [0.1, 0.9, 0.1]\n        },\n        {\n            \"id\": 3,\n            \"payload\": {\"color\": \"blue\"},\n            \"vector\": [0.1, 0.1, 0.9]\n        }\n    ],\n    \"update_mode\": \"insert_only\"\n}\n"
+    },
+    {
+      "file": "insert-points__uuid-one-point-simple.http.md",
+      "sourceSha256": "113e5e8ae915e434b2ecd73e44adc88b32d94174522f27c68386655c2dad9198",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": \"5c56c793-69f3-4fbf-87e6-c4bf54c28c26\",\n            \"payload\": {\"color\": \"red\"},\n            \"vector\": [0.9, 0.1, 0.1]\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__with-condition.http.md",
+      "sourceSha256": "d332921deb7ba315c2bea8df6b852e9ef376e16d7c4695b2d74bfd70014298b1",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"vector\": [0.05, 0.61, 0.76, 0.74],\n            \"payload\": {\n                \"city\": \"Berlin\",\n                \"price\": 1.99,\n                \"version\": 3\n            }\n        }\n    ],\n    \"update_filter\": {\n        \"must\": [\n            {\n                \"key\": \"version\",\n                \"match\": {\n                    \"value\": 2\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "insert-points__with-custom-shard.http.md",
+      "sourceSha256": "41ca178a7055ccf9c079e28d981833a472a4058a5e4c541426e6c7f6fa1e5a70",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1111,\n            \"vector\": [0.1, 0.2, 0.3]\n        },\n    ],\n    \"shard_key\": \"user_1\"\n}\n"
+    },
+    {
+      "file": "insert-points__with-multiple-vectors.http.md",
+      "sourceSha256": "f2a6d89010bafe7c24d7566fb16a918f01d54db5dd88dc5dfe2c165259b7d401",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"vector\": {\n                \"image\": [0.9, 0.1, 0.1, 0.2],\n                \"text\": [0.4, 0.7, 0.1, 0.8, 0.1, 0.1, 0.9, 0.2]\n            }\n        },\n        {\n            \"id\": 2,\n            \"vector\": {\n                \"image\": [0.2, 0.1, 0.3, 0.9],\n                \"text\": [0.5, 0.2, 0.7, 0.4, 0.7, 0.2, 0.3, 0.9]\n            }\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__with-multivector.http.md",
+      "sourceSha256": "0d551b332e6c90363f9e5e71146d9a88c6f1651b081d2dd01809d7d4020ac715",
+      "text": "PUT /collections/docs/points\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": [\n        [-0.013,  0.020, -0.007, -0.111, ...],\n        [-0.030, -0.055,  0.001,  0.072, ...],\n        [-0.041,  0.014, -0.032, -0.062, ...]\n      ]\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "insert-points__with-payload.http.md",
+      "sourceSha256": "5af3f4b6a4474ff761642d4917eda5cba22e0333b05cdaee1896cf3b3a5a7c38",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"vector\": [0.05, 0.61, 0.76, 0.74],\n            \"payload\": {\"city\": \"Berlin\", \"price\": 1.99}\n        },\n        {\n            \"id\": 2,\n            \"vector\": [0.19, 0.81, 0.75, 0.11],\n            \"payload\": {\"city\": [\"Berlin\", \"London\"], \"price\": 1.99}\n        },\n        {\n            \"id\": 3,\n            \"vector\": [0.36, 0.55, 0.47, 0.94],\n            \"payload\": {\"city\": [\"Berlin\", \"Moscow\"], \"price\": [1.99, 2.99]}\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "insert-points__with-tenant-group-id-and-fallback-shard-key.http.md",
+      "sourceSha256": "8762058df4dffd8db60cecf73a4c416abe20104a4afa14ed787df215b8337c7d",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"payload\": {\"group_id\": \"user_1\"},\n            \"vector\": [0.9, 0.1, 0.1]\n        }\n    ],\n    \"shard_key\": {\n        \"fallback\": \"default\",\n        \"target\": \"user_1\"\n    }\n}\n"
+    },
+    {
+      "file": "insert-points__with-tenant-group-id.http.md",
+      "sourceSha256": "c1322c8f9dc32903991a9a65d46eb76cca86c6e11506e3038609647768b1e787",
+      "text": "PUT /collections/docs/points\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"payload\": {\"group_id\": \"user_1\"},\n            \"vector\": [0.9, 0.1, 0.1]\n        },\n        {\n            \"id\": 2,\n            \"payload\": {\"group_id\": \"user_1\"},\n            \"vector\": [0.1, 0.9, 0.1]\n        },\n        {\n            \"id\": 3,\n            \"payload\": {\"group_id\": \"user_2\"},\n            \"vector\": [0.1, 0.1, 0.9]\n        },\n    ]\n}\n"
+    },
+    {
+      "file": "list-all-collections__simple.http.md",
+      "sourceSha256": "19991e84d91666162dbfb95a4ec48459a184185dfefa62c4ca9f6edfa843c099",
+      "text": "GET /collections\n"
+    },
+    {
+      "file": "list-shard-keys.http.md",
+      "sourceSha256": "d6d7623de132228e3220cb7755ba2fd53ef10dab0989955fc392059e93b613a6",
+      "text": "GET /collections/docs/shards\n"
+    },
+    {
+      "file": "optimizations.http.md",
+      "sourceSha256": "c4b6c2f6e7f39e9749c49dbea91625e550122572c632837785c536df596223d9",
+      "text": "GET /collections/docs/optimizations?with=queued,completed\n"
+    },
+    {
+      "file": "overwrite-payload__by-point-id.http.md",
+      "sourceSha256": "c32d861b999b222668994d77dba8b22244321f2e5b2440f44d5ece0ac7c40208",
+      "text": "PUT /collections/docs/points/payload\n{\n    \"payload\": {\n        \"property1\": \"string\",\n        \"property2\": \"string\"\n    },\n    \"points\": [\n        0, 3, 100\n    ]\n}\n"
+    },
+    {
+      "file": "query-groups__basic.http.md",
+      "sourceSha256": "5b76d2e7ee82629c39aad353cd23c190067b361ebc5b82c9c80e22f1addd6fea",
+      "text": "POST /collections/docs/points/query/groups\n{\n    // note\n    \"query\": [1.1],\n    // note\n    \"group_by\": \"document_id\",  // note\n    \"limit\": 4,                 // note\n    \"group_size\": 2            // note\n}\n"
+    },
+    {
+      "file": "query-groups__basic___server.http.md",
+      "sourceSha256": "5b76d2e7ee82629c39aad353cd23c190067b361ebc5b82c9c80e22f1addd6fea",
+      "text": "POST /collections/docs/points/query/groups\n{\n    // note\n    \"query\": [1.1],\n    // note\n    \"group_by\": \"document_id\",  // note\n    \"limit\": 4,                 // note\n    \"group_size\": 2            // note\n}\n"
+    },
+    {
+      "file": "query-groups__with-lookup-ingest.http.md",
+      "sourceSha256": "ba88d772beed274a7e23655c20d6a0645db87cb0f30b06397cdd90bf1475e087",
+      "text": "PUT /collections/documents/points\n{\n    \"points\": [\n        {\n            \"id\": 200,\n            \"vector\": {},\n            \"payload\": {\"title\": \"Document A\", \"text\": \"This is document A\"}\n        },\n        {\n            \"id\": 201,\n            \"vector\": {},\n            \"payload\": {\"title\": \"Document B\", \"text\": \"This is document B\"}\n        }\n    ]\n}\n\nPUT /collections/chunks/points\n{\n    \"points\": [\n        {\n            \"id\": 0,\n            \"vector\": [0.1, 0.2, 0.3, 0.4],\n            \"payload\": {\"document_id\": 200}\n        },\n        {\n            \"id\": 1,\n            \"vector\": [0.5, 0.6, 0.7, 0.8],\n            \"payload\": {\"document_id\": [200, 201]}\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "query-groups__with-lookup-setup.http.md",
+      "sourceSha256": "08eab90c94960c363ac96244409c4e15d27ec7efb54de0d759b28635c0aea91c",
+      "text": "PUT /collections/chunks\n{\n    \"vectors\": {\n        \"size\": 4,\n        \"distance\": \"Cosine\"\n    }\n}\n\nPUT /collections/chunks/index\n{\n    \"field_name\": \"document_id\",\n    \"field_schema\": \"integer\"\n}\n\nPUT /collections/documents\n{\n    \"vectors\": {}\n}\n"
+    },
+    {
+      "file": "query-groups__with-lookup.http.md",
+      "sourceSha256": "5cf6fd33a02e0d85471a29e5fdebeb40d68dc5d4e5764967b4dd71800c8fc058",
+      "text": "POST /collections/chunks/points/query/groups\n{\n    // note\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n\n    // note\n    \"group_by\": \"document_id\",\n    \"limit\": 2,\n    \"group_size\": 2,\n\n    // note\n    \"with_lookup\": {\n        // note\n        \"collection\": \"documents\",\n\n        // note\n        // note\n        \"with_payload\": [\"title\", \"text\"],\n\n        // note\n        // note\n        \"with_vectors\": false\n    }\n}\n"
+    },
+    {
+      "file": "query-points-explore__basic-recommend.http.md",
+      "sourceSha256": "8414555de84b24bbd73509cdfea1ccf6b5730871099561322b370402804a5c4c",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"recommend\": {\n      \"positive\": [100, 231],\n      \"negative\": [718, [0.2, 0.3, 0.4, 0.5]],\n      \"strategy\": \"average_vector\"\n    }\n  },\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"city\",\n        \"match\": {\n          \"value\": \"London\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "query-points-explore__context-basic.http.md",
+      "sourceSha256": "a5d4416b46951e5d6a8b1a69269c8589db80252910cfef566a39efd1cb7ec789",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"context\": [\n      {\n        \"positive\": 100,\n        \"negative\": 718\n      },\n      {\n        \"positive\": 200,\n        \"negative\": 300\n      }\n    ]\n  },\n  \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points-explore__discovery-basic.http.md",
+      "sourceSha256": "6e204861533cfb0d7af83876f6c6de8a0c75e6e7c1064019758265012c3478e7",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"discover\": {\n      \"target\": [0.2, 0.1, 0.9, 0.7],\n      \"context\": [\n        {\n          \"positive\": 100,\n          \"negative\": 718\n        },\n        {\n          \"positive\": 200,\n          \"negative\": 300\n        }\n      ]\n    }\n  },\n  \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points-explore__recommend-batch.http.md",
+      "sourceSha256": "98fe944fb08197a6b62f811d8d5f906572a4e0907db9597aa2c5e9f793c037e9",
+      "text": "POST /collections/docs/points/query/batch\n{\n  \"searches\": [\n    {\n      \"query\": {\n        \"recommend\": {\n          \"positive\": [100, 231],\n          \"negative\": [718]\n        }\n      },\n      \"filter\": {\n        \"must\": [\n          {\n            \"key\": \"city\",\n            \"match\": {\n              \"value\": \"London\"\n            }\n          }\n        ]\n      },\n      \"limit\": 10\n    },\n    {\n      \"query\": {\n        \"recommend\": {\n          \"positive\": [200, 67],\n          \"negative\": [300]\n        }\n      },\n      \"filter\": {\n        \"must\": [\n          {\n            \"key\": \"city\",\n            \"match\": {\n              \"value\": \"London\"\n            }\n          }\n        ]\n      },\n      \"limit\": 10\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "query-points-explore__recommend-lookup-from.http.md",
+      "sourceSha256": "5c826b2765fcfb70ed845e7d70901771b4ef225b2791f23bb477343f3e930152",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"recommend\": {\n      \"positive\": [100, 231],\n      \"negative\": [718]\n    }\n  },\n  \"limit\": 10,\n  \"lookup_from\": {\n    \"collection\": \"{external_collection_name}\",\n    \"vector\": \"{external_vector_name}\"\n  }\n}\n"
+    },
+    {
+      "file": "query-points-explore__recommend-named-vectors.http.md",
+      "sourceSha256": "a271cb2474591c517d3eafefa77076180b3d5732d44424979f9fc801809c8101",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"recommend\": {\n      \"positive\": [100, 231],\n      \"negative\": [718]\n    }\n  },\n  \"using\": \"image\",\n  \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points-explore__relevance-feedback-naive.http.md",
+      "sourceSha256": "b43e4c322ad8fc00505605ba1d3675f42cab82de65cc7530a762f65da9708b19",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"relevance_feedback\": {\n      \"target\": [0.1, 0.9, 0.23, ...],\n      \"feedback\": [\n        { \"example\": 111, \"score\": 0.68 },\n        { \"example\": 222, \"score\": 0.72 },\n        { \"example\": 333, \"score\": 0.61 }\n      ],\n      \"strategy\": {\n        \"naive\": {\n          \"a\": 0.12,\n          \"b\": 0.43,\n          \"c\": 0.03\n        }\n      }\n    }\n  }\n}\n"
+    },
+    {
+      "file": "query-points__basic-with-filter-and-params.http.md",
+      "sourceSha256": "0c9f12b0bddf2a30b5ee86901887689b4d6afe7f509349a508608367dd49bb5f",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.79],\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"city\",\n                \"match\": {\n                    \"value\": \"London\"\n                }\n            }\n        ]\n    },\n    \"params\": {\n        \"hnsw_ef\": 128,\n        \"exact\": false\n    },\n    \"limit\": 3\n}\n"
+    },
+    {
+      "file": "query-points__batch-search.http.md",
+      "sourceSha256": "7723388ac94357a91731a72d20bc7410b82c4f73b8b9e2b1b7053c2b87e04d19",
+      "text": "POST /collections/docs/points/query/batch\n{\n    \"searches\": [\n        {\n            \"query\": [0.2, 0.1, 0.9, 0.7],\n            \"filter\": {\n                \"must\": [\n                    {\n                        \"key\": \"city\",\n                        \"match\": {\n                            \"value\": \"London\"\n                        }\n                    }\n                ]\n            },\n            \"limit\": 3\n        },\n        {\n            \"query\": [0.5, 0.3, 0.2, 0.3],\n            \"filter\": {\n                \"must\": [\n                    {\n                        \"key\": \"city\",\n                        \"match\": {\n                            \"value\": \"London\"\n                        }\n                    }\n                ]\n            },\n            \"limit\": 3\n        }\n    ]\n}\n"
+    },
+    {
+      "file": "query-points__by-existing-id-with-lookup.http.md",
+      "sourceSha256": "567a373d5d308f17f99fa0d5ab45a5966fb8844af6a0835ae99c7a5992509fdc",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": \"43cf51e2-8777-4f52-bc74-c2cbde0c8b04\", // note\n    \"using\": \"512d-vector\",\n    \"lookup_from\": {\n        \"collection\": \"another_collection\", // note\n        \"vector\": \"image-512\" // note\n    }\n}\n"
+    },
+    {
+      "file": "query-points__by-existing-id.http.md",
+      "sourceSha256": "25223da977e616e709c8db96f7ca0516323ac034c96c7e8759ab4ebd41ea682b",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": \"43cf51e2-8777-4f52-bc74-c2cbde0c8b04\" // note\n}\n"
+    },
+    {
+      "file": "query-points__disable-quantization-rescoring.http.md",
+      "sourceSha256": "d6249c298f07f7958da225dbe799cfbfa94e2227e9596e1184c3575e0c406b56",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"params\": {\n        \"quantization\": {\n            \"rescore\": false\n        }\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__exclude-fields.http.md",
+      "sourceSha256": "d90c5cae7bfafdf8d7e9a92317db755e7cfdf70d620de5dfa8f9a9438545042a",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"with_payload\": {\n      \"exclude\": [\"city\"]\n    }\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-dbsf___server.http.md",
+      "sourceSha256": "267600b79f859af96c8a12cf292e629ac25085185634dccb7e4841fb46369770",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": [\n        {\n            \"query\": { \n                \"indices\": [1, 42],    // note\n                \"values\": [0.22, 0.8]  // note\n             },\n            \"using\": \"sparse\",\n            \"limit\": 20\n        },\n        {\n            \"query\": [0.01, 0.45, 0.67, ...], // note\n            \"using\": \"dense\",\n            \"limit\": 20\n        }\n    ],\n    \"query\": { \"fusion\": \"dbsf\" }, // note\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-formula-decay___server.http.md",
+      "sourceSha256": "182062268dc1b86cbefc0f97367e0e51c005e5cfa0eda80b9b452e45857ec05f",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": {\n        \"prefetch\": [\n            {\n                \"query\": {\n                    \"indices\": [1, 42],    // note\n                    \"values\": [0.22, 0.8]  // note\n                },\n                \"using\": \"sparse\",\n                \"limit\": 100\n            },\n            {\n                \"query\": [0.01, 0.45, 0.67, ...], // note\n                \"using\": \"dense\",\n                \"limit\": 100\n            }\n        ],\n        \"query\": { \"rrf\": {} },\n        \"limit\": 100\n    },\n    \"query\": {\n        \"formula\": {\n            \"sum\": [\n                \"$score\", // note\n                {\n                    \"mult\": [\n                        0.1, // note\n                        {\n                            \"exp_decay\": {\n                                \"x\": {\n                                    \"datetime_key\": \"published_at\"\n                                },\n                                \"target\": {\n                                    \"datetime\": \"YYYY-MM-DDT00:00:00Z\"\n                                },\n                                \"scale\": 15552000, // note\n                                \"midpoint\": 0.5\n                            }\n                        }\n                    ]\n                }\n            ]\n        }\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-mmr.http.md",
+      "sourceSha256": "e4a840b4ff7ba8b8d050eb57800c62999f02a9bd3b9e3ec7f52c3af072c341cd",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": {\n    \"nearest\": [0.01, 0.45, 0.67, ...], // note\n    \"mmr\": {\n      \"diversity\": 0.5, // note\n      \"candidates_limit\": 100 // note\n    }\n  },\n  \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-rescoring-multistage___server.http.md",
+      "sourceSha256": "0a9cbc5a89e41f935826c1e282e876a50b3ed85d7a7045757db2a8a620e2428b",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": {\n        \"prefetch\": {\n            \"query\": [1, 23, 45, 67], // note\n            \"using\": \"mrl_byte\",\n            \"limit\": 1000\n        },\n        \"query\": [0.01, 0.45, 0.67, ...], // note\n        \"using\": \"full\",\n        \"limit\": 100\n    },\n    \"query\": [           // note\n        [0.1, 0.2, ...], // note\n        [0.2, 0.1, ...], // note\n        [0.8, 0.9, ...]  // note\n    ],                   // note\n    \"using\": \"colbert\",\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-rescoring-multivector___server.http.md",
+      "sourceSha256": "04dd54b4c1efcaeab7af99c98b0f3d20c84b3c9baadf997d4693b1fe568bc9f8",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": {\n        \"query\": [0.01, 0.45, 0.67, ...], // note\n        \"limit\": 100\n    },\n    \"query\": [           // note\n        [0.1, 0.2, ...], // note\n        [0.2, 0.1, ...], // note\n        [0.8, 0.9, ...]  // note\n    ],                   // note\n    \"using\": \"colbert\",\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-rescoring-with-payload.http.md",
+      "sourceSha256": "5fdb76ea68f74a950bb27a53425bccba2f5bbf3c00952102984c11438aa80b9a",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": [\n        {\n            \"query\": [0.01, 0.45, 0.67, ...], // note\n            \"filter\": {\n                \"must\": {\n                    \"key\": \"color\",\n                    \"match\": {\n                        \"value\": \"red\"\n                    }\n                }\n            },\n            \"limit\": 10\n        },\n        {\n            \"query\": [0.01, 0.45, 0.67, ...], // note\n            \"filter\": {\n                \"must\": {\n                    \"key\": \"color\",\n                    \"match\": {\n                        \"value\": \"green\"\n                    }\n                }\n            },\n            \"limit\": 10\n        }\n    ],\n    \"query\": { \"order_by\": \"price\" }\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-rescoring___server.http.md",
+      "sourceSha256": "79fe3e1806fcc3eddb98419ab4001b36096a37b142f4d95d83864e0908fdcf87",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": {\n        \"query\": [1, 23, 45, 67], // note\n        \"using\": \"mrl_byte\",\n        \"limit\": 1000\n    },\n    \"query\": [0.01, 0.299, 0.45, 0.67, ...], // note\n    \"using\": \"full\",\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-rrf-k___server.http.md",
+      "sourceSha256": "f43cbc7d628ca001d61c87ad66d19551d91a083c533b440c777b8745c084b206",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": [\n      // note\n    ],\n    \"query\": { \"rrf\": {\"k\": 60 } }, // note\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-rrf-weights___server.http.md",
+      "sourceSha256": "f854b37f4597d58eef27e5d7daed2bbc6e7dc04b07ef5dd3a17212bb233263c6",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": [\n        // note\n    ],\n    \"query\": {\n        \"rrf\": {\n            \"weights\": [3.0, 1.0]\n        }\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__hybrid-rrf___server.http.md",
+      "sourceSha256": "072107bf5af92ec2541a8f0735a57b7145b09a2b696873b21d602e2bf994cdf3",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": [\n        {\n            \"query\": { \n                \"indices\": [1, 42],    // note\n                \"values\": [0.22, 0.8]  // note\n             },\n            \"using\": \"sparse\",\n            \"limit\": 20\n        },\n        {\n            \"query\": [0.01, 0.45, 0.67, ...], // note\n            \"using\": \"dense\",\n            \"limit\": 20\n        }\n    ],\n    \"query\": { \"rrf\": {} }, // note\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__multivector.http.md",
+      "sourceSha256": "05f1ac37357d42864959eeff4b8c32e1ea55a4871d1230ed9905b9d893cc6019",
+      "text": "POST /collections/docs/points/query\n{\n  \"query\": [\n    [-0.013,  0.020, -0.007, -0.111, ...],\n    [-0.030, -0.055,  0.001,  0.072, ...],\n    [-0.041,  0.014, -0.032, -0.062, ...]\n  ]\n}\n"
+    },
+    {
+      "file": "query-points__named-vector.http.md",
+      "sourceSha256": "4244476c04460459f470804651332dd1a4232e7fa529bb64f23850b2472467d2",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"using\": \"image\",\n    \"limit\": 3\n}\n"
+    },
+    {
+      "file": "query-points__random-sample.http.md",
+      "sourceSha256": "9e49d078646c1540e86f61d0e3c96bcfae28db949130cc6e54e55f3d686f4ad1",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": {\n        \"sample\": \"random\"\n    }\n}\n"
+    },
+    {
+      "file": "query-points__score-boost-closer-to-user.http.md",
+      "sourceSha256": "27834e9aa840078baaf94ad8b47a31a167d05b19f9a5ca0eab2dc7e613ea4a7c",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": { \"query\": [0.2, 0.8, ...], \"limit\": 50 },\n    \"query\": {\n        \"formula\": {\n            \"sum\": [\n                \"$score\",\n                {\n                    \"gauss_decay\": {\n                        \"x\": {\n                            \"geo_distance\": {\n                                \"origin\": { \"lat\": 52.504043, \"lon\": 13.393236 },\n                                \"to\": \"geo.location\"\n                            }\n                        },\n                        \"scale\": 5000 // note\n                    }\n                }\n            ]\n        },\n        \"defaults\": { \"geo.location\": {\"lat\": 48.137154, \"lon\": 11.576124} }\n    }\n}\n"
+    },
+    {
+      "file": "query-points__score-boost-tags.http.md",
+      "sourceSha256": "6c45746e9ac241abaf1911123f450fb1ff44e4ce1433b0d54f2ff20f370f40c3",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": {\n        \"query\": [0.2, 0.8, ...],  // note\n        \"limit\": 50\n    },\n    \"query\": {\n        \"formula\": {\n            \"sum\": [\n                \"$score\",\n                { \n                    \"mult\": [ \n                        0.5,\n                        { \n                            \"key\": \"tag\",\n                            \"match\": { \"any\": [\"h1\", \"h2\", \"h3\", \"h4\"] } \n                        } \n                    ]\n                },\n                {\n                    \"mult\": [\n                        0.25,\n                        { \n                            \"key\": \"tag\",\n                            \"match\": { \"any\": [\"p\", \"li\"] } \n                        }\n                    ]\n                }\n            ]\n        }\n    }\n}\n"
+    },
+    {
+      "file": "query-points__score-boost-time.http.md",
+      "sourceSha256": "a39a55fb0e70c2db63a5f1ec5557559c9ed42450b24ba8c2bc096c4f5b10ed6e",
+      "text": "POST /collections/docs/points/query\n{\n    \"prefetch\": {\n        \"query\": [0.2, 0.8, ...],  // note\n        \"limit\": 50\n    },\n    \"query\": {\n        \"formula\": {\n            \"sum\": [\n                \"$score\", // note\n                {\n                    \"exp_decay\": {\n                        \"x\": {\n                            \"datetime_key\": \"update_time\" // note\n                        },\n                        \"target\": {\n                            \"datetime\": \"YYYY-MM-DDT00:00:00Z\" // note\n                        },\n                        \"scale\": 86400, // note\n                        \"midpoint\": 0.5 // note\n                    }\n                }\n            ]\n        }\n    }\n}\n"
+    },
+    {
+      "file": "query-points__simple-dense.http.md",
+      "sourceSha256": "19401200827cfca25bebf54eacbbe2a9eee10b8c8adecbdb003460a9b4302268",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7] // note\n}\n"
+    },
+    {
+      "file": "query-points__sparse-vectors.http.md",
+      "sourceSha256": "9afde3172057ee448c1a1cd686faff8a6744a8468b9aa89f57ba1c626e645413",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": {\n        \"indices\": [1, 3, 5, 7],\n        \"values\": [0.1, 0.2, 0.3, 0.4]\n    },\n    \"using\": \"text\"\n}\n"
+    },
+    {
+      "file": "query-points__with-acorn.http.md",
+      "sourceSha256": "733b284fdf86ecbe0409b20a5f51a005b1db135d489487983b789ae796ead82f",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"params\": {\n        \"acorn\": {\n            \"enable\": true,\n            \"max_selectivity\": 0.4\n        }\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__with-consistency-majority.http.md",
+      "sourceSha256": "2d5bfc9df6a9ce04f120cc196f782a7aea039f5bd67d3f6a3df63963062f8c36",
+      "text": "POST /collections/docs/points/query?consistency=majority\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"city\",\n                \"match\": {\n                    \"value\": \"London\"\n                }\n            }\n        ]\n    },\n    \"params\": {\n        \"hnsw_ef\": 128,\n        \"exact\": false\n    },\n    \"limit\": 3\n}\n"
+    },
+    {
+      "file": "query-points__with-disabled-rescoring.http.md",
+      "sourceSha256": "d6249c298f07f7958da225dbe799cfbfa94e2227e9596e1184c3575e0c406b56",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"params\": {\n        \"quantization\": {\n            \"rescore\": false\n        }\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__with-exact-search.http.md",
+      "sourceSha256": "2e444705779ca8c7565c677ae6e3a46c808a525b73bf59f680d2865f70360fee",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"params\": {\n        \"exact\": true\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__with-filter-by-group-id-and-fallback-shard-key.http.md",
+      "sourceSha256": "a2263217d65ead515bfe761f3c9962471cefc87685fdb350b76bc4ebfee76de1",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.1, 0.1, 0.9],\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"group_id\",\n                \"match\": {\n                    \"value\": \"user_1\"\n                }\n            }\n        ]\n    },\n    \"shard_key\": {\n        \"fallback\": \"default\",\n        \"target\": \"user_1\"\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__with-filter-by-group-id.http.md",
+      "sourceSha256": "588a611f141f478bc030b4e061030eda71d1143b3ab00a89683889621105d3cf",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.1, 0.1, 0.9],\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"group_id\",\n                \"match\": {\n                    \"value\": \"user_1\"\n                }\n            }\n        ]\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__with-id-exclusion-pagination.http.md",
+      "sourceSha256": "830dc7a567bfba34726daf314d6ab3c071d1cd8ddba5b08335d51153efbbc1af",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"filter\": {\n        \"must_not\": [\n            { \"has_id\": [83461, 19284, 57392, 44017, 91825] }\n        ]\n    },\n    \"limit\": 5\n}\n"
+    },
+    {
+      "file": "query-points__with-ignored-quantization.http.md",
+      "sourceSha256": "b1fdbce7506ddb98baa1a6d510a837db2bafdabc00bea3680915d46bfa3ddad0",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"params\": {\n        \"quantization\": {\n            \"ignore\": true\n        }\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "query-points__with-offset.http.md",
+      "sourceSha256": "27736477876ee659456bc104b4fb62c04e6b2463b62b79c87f86f352663b8460",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"with_vectors\": true,\n    \"with_payload\": true,\n    \"limit\": 10,\n    \"offset\": 100\n}\n"
+    },
+    {
+      "file": "query-points__with-params.http.md",
+      "sourceSha256": "89c89fec3f50a1aed9f49ee0aa9381baac11ee42292f07deb2530d8e194e2d30",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"params\": {\n        \"hnsw_ef\": 128,\n        \"exact\": false\n    },\n    \"limit\": 3\n}\n"
+    },
+    {
+      "file": "query-points__with-payload-and-vectors.http.md",
+      "sourceSha256": "7cd62e3fb596e208254e82022d04a15ef6cf891fe0ba4a2c249843970b48f10b",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"with_vectors\": true,\n    \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "query-points__with-payload-fields.http.md",
+      "sourceSha256": "3ae75856bb702d6f0d8d139abf453fcdff0eebec39521a4805c6bf9365dd31d1",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"with_payload\": [\"city\", \"village\", \"town\"]\n}\n"
+    },
+    {
+      "file": "query-points__with-quantization-oversampling.http.md",
+      "sourceSha256": "1e27494a2aba11f93ac622be21b45f0ff5ba4071f65d8d8af7c0e29424d940c5",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": [0.2, 0.1, 0.9, 0.7],\n    \"params\": {\n        \"quantization\": {\n            \"ignore\": false,\n            \"rescore\": true,\n            \"oversampling\": 2.0\n        }\n    },\n    \"limit\": 10\n}\n"
+    },
+    {
+      "file": "retrieve-points__simple.http.md",
+      "sourceSha256": "08747093393605f37f0a648690e116ec33fdc5dc9774f464434181cf5722b44d",
+      "text": "POST /collections/docs/points\n{\n    \"ids\": [0, 3, 100]\n}\n"
+    },
+    {
+      "file": "retrieve-points__single.http.md",
+      "sourceSha256": "0a2a82940b13d16ae22e0f08274edec661e6389f1d486e2259310c11f558b447",
+      "text": "GET /collections/docs/points/42\n"
+    },
+    {
+      "file": "scroll-points__with-filter-and-params.http.md",
+      "sourceSha256": "16721dcd082d7b6f77db70937269a4d1ddbf745402a2999da250598fd6560fcb",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"color\",\n                \"match\": {\n                    \"value\": \"red\"\n                }\n            }\n        ]\n    },\n    \"limit\": 1,\n    \"with_payload\": true,\n    \"with_vector\": false\n}\n"
+    },
+    {
+      "file": "scroll-points__with-filter-has-vector.http.md",
+      "sourceSha256": "fc6ab2a7472264842566b71b2c746de189aeaaa8312525d447c778f3d2b30a00",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [\n            { \"has_vector\": \"image\" }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-filter-on-nested-array-match.http.md",
+      "sourceSha256": "6579dbb13c5c714d0a9ace8cdc22830a2441bd06d353b6e470bcbef60a9e32a5",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"should\": [\n            {\n                \"key\": \"country.cities[].sightseeing\",\n                \"match\": {\n                    \"value\": \"Osaka Castle\"\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-filter-on-nested-array.http.md",
+      "sourceSha256": "e9f3b98c5ce898b5e1665afb44b28fef64898d950a7bdd96c160c99c1540c939",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"should\": [\n            {\n                \"key\": \"country.cities[].population\",\n                \"range\": {\n                    \"gte\": 9.0,\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-filter-on-nested-fields.http.md",
+      "sourceSha256": "b2271772076a1ca531135e02471d48d74203bf282cf0bc8a87586d56d8b4276a",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"should\": [\n            {\n                \"key\": \"country.name\",\n                \"match\": {\n                    \"value\": \"Germany\"\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-filter-with-multiple-nested.http.md",
+      "sourceSha256": "ae4b05a99b32c23c301467000dc0769bfcd564a16088aae584d872c4aba117f7",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"diet[].food\",\n                  \"match\": {\n                    \"value\": \"meat\"\n                }\n            },\n            {\n                \"key\": \"diet[].likes\",\n                  \"match\": {\n                    \"value\": true\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-filter-with-nested-clause-and-has-id.http.md",
+      "sourceSha256": "b5d71dcaa02152496e33e34a68366da248ac5b7628c973e0624690b62b602de8",
+      "text": "POST /collections/docs/points/scroll\n{\n   \"filter\":{\n      \"must\":[\n         {\n            \"nested\":{\n               \"key\":\"diet\",\n               \"filter\":{\n                  \"must\":[\n                     {\n                        \"key\":\"food\",\n                        \"match\":{\n                           \"value\":\"meat\"\n                        }\n                     },\n                     {\n                        \"key\":\"likes\",\n                        \"match\":{\n                           \"value\":true\n                        }\n                     }\n                  ]\n               }\n            }\n         },\n         {\n            \"has_id\":[\n               1\n            ]\n         }\n      ]\n   }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-filter-with-nested-clause.http.md",
+      "sourceSha256": "4331ed7de4e8eb33587ade701c18eb34d697111ebb6f8ab3aa027f2275878a51",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [{\n            \"nested\": {\n                \"key\": \"diet\",\n                \"filter\":{\n                    \"must\": [\n                        {\n                            \"key\": \"food\",\n                            \"match\": {\n                                \"value\": \"meat\"\n                            }\n                        },\n                        {\n                            \"key\": \"likes\",\n                            \"match\": {\n                                \"value\": true\n                            }\n                        }\n                    ]\n                }\n            }\n        }]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-has-id-filter.http.md",
+      "sourceSha256": "0869c21096d2936756b02f606cc32e77e77e432ba371c6ab7816869b8cc9f9be",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [\n            { \"has_id\": [1,3,5,7,9,11] }\n        ]\n    }\n    ...\n}\n"
+    },
+    {
+      "file": "scroll-points__with-multiple-clauses-combination.http.md",
+      "sourceSha256": "29d9b40baa0be7bdcbeb8545cfbb5e8e749ac02a3d781fe2148b45d669ac7a71",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [\n            { \"key\": \"city\", \"match\": { \"value\": \"London\" } }\n        ],\n        \"must_not\": [\n            { \"key\": \"color\", \"match\": { \"value\": \"red\" } }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-must-filter.http.md",
+      "sourceSha256": "60105ca664b798f49da81b04969d7422e363a9093940b63daa8304ae9559da41",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must\": [\n            { \"key\": \"city\", \"match\": { \"value\": \"London\" } },\n            { \"key\": \"color\", \"match\": { \"value\": \"red\" } }\n        ]\n    }\n    ...\n}\n"
+    },
+    {
+      "file": "scroll-points__with-must-not-filter.http.md",
+      "sourceSha256": "6f5497e2bbc43a432c4f3d061b30e79324483b27853852d58482b7fde7ca6a0e",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must_not\": [\n            { \"key\": \"city\", \"match\": { \"value\": \"London\" } },\n            { \"key\": \"color\", \"match\": { \"value\": \"red\" } }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-nested-clauses-filter.http.md",
+      "sourceSha256": "0f39f594a131b54403408daeba60cf674d336872a0021bff87a25d32f4e41c75",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"must_not\": [\n            {\n                \"must\": [\n                    { \"key\": \"city\", \"match\": { \"value\": \"London\" } },\n                    { \"key\": \"color\", \"match\": { \"value\": \"red\" } }\n                ]\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "scroll-points__with-order-by-advanced.http.md",
+      "sourceSha256": "4419a4158b21fd47dfec9060a8bf34f53a6ecd526c325463ab1d7dc0c88340cb",
+      "text": "\"order_by\": {\n    \"key\": \"timestamp\",\n    \"direction\": \"desc\" // default is \"asc\"\n    \"start_from\": 123, // start from this value\n}\n"
+    },
+    {
+      "file": "scroll-points__with-order-by-simple.http.md",
+      "sourceSha256": "88d66caedb2075d80be253d31d5192170b392fb784989a85dd78536845c0d787",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"limit\": 15,\n    \"order_by\": \"timestamp\", // note\n}\n"
+    },
+    {
+      "file": "scroll-points__with-should-filter.http.md",
+      "sourceSha256": "fcf7a27c5a010a164d4b3180593ad883bce1222109763dac07a5fdeabc07f890",
+      "text": "POST /collections/docs/points/scroll\n{\n    \"filter\": {\n        \"should\": [\n            { \"key\": \"city\", \"match\": { \"value\": \"London\" } },\n            { \"key\": \"color\", \"match\": { \"value\": \"red\" } }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "set-payload__by-filter.http.md",
+      "sourceSha256": "3e2d7955cd664bec2915f23fa81c8038422cb3e542857fde8982348891fa8bd3",
+      "text": "POST /collections/docs/points/payload\n{\n    \"payload\": {\n        \"property1\": \"string\",\n        \"property2\": \"string\"\n    },\n    \"filter\": {\n        \"must\": [\n            {\n                \"key\": \"color\",\n                \"match\": {\n                    \"value\": \"red\"\n                }\n            }\n        ]\n    }\n}\n"
+    },
+    {
+      "file": "set-payload__by-nested-key.http.md",
+      "sourceSha256": "8644f6677f14213af6a7a163d620e6a0d1007385d6567b85d51051228fe19e51",
+      "text": "POST /collections/docs/points/payload\n{\n    \"payload\": {\n        \"nested_property\": \"qux\",\n    },\n    \"key\": \"property1\",\n    \"points\": [1]\n}\n"
+    },
+    {
+      "file": "set-payload__by-point-id.http.md",
+      "sourceSha256": "57bcdc0f85588303a90715be6d26ade2c87c0b7e76e45f95b30e039710e424f2",
+      "text": "POST /collections/docs/points/payload\n{\n    \"payload\": {\n        \"property1\": \"string\",\n        \"property2\": \"string\"\n    },\n    \"points\": [\n        0, 3, 100\n    ]\n}\n"
+    },
+    {
+      "file": "shard-transfer__with-filter.http.md",
+      "sourceSha256": "f285625d65967c915aa9479a67f02403517461dfaa3716cd4f2cfa0d8730dfb9",
+      "text": "POST /collections/docs/cluster\n{\n    \"replicate_points\": {\n        \"filter\": {\n            \"must\": {\n                \"key\": \"group_id\",\n                \"match\": {\n                    \"value\": \"user_1\"\n                }\n            }\n        },\n        \"from_shard_key\": \"default\",\n        \"to_shard_key\": \"user_1\"\n    }\n}\n"
+    },
+    {
+      "file": "snapshots__create-collection-snapshot.http.md",
+      "sourceSha256": "10d245c67e21ca222c464c08bfa979e5b150b8aa8baab120687855b054416565",
+      "text": "POST /collections/docs/snapshots\n"
+    },
+    {
+      "file": "snapshots__create-full-snapshot.http.md",
+      "sourceSha256": "adb363ae638f318e6f59e4d6f11cba81184c6dfb319abf0fc87bb145c2e3135b",
+      "text": "POST /snapshots\n"
+    },
+    {
+      "file": "snapshots__delete-collection-snapshot.http.md",
+      "sourceSha256": "78fb05327083c4939f135e5265c9cc1e28680b1b0a8aea613414bd1d17e6d476",
+      "text": "DELETE /collections/docs/snapshots/snap.snapshot\n"
+    },
+    {
+      "file": "snapshots__delete-full-snapshot.http.md",
+      "sourceSha256": "7c8b52623ff02464d5fd774eb0be23a90d7eac26cc39db4697ca1b7d453b0495",
+      "text": "DELETE /snapshots/snap.snapshot\n"
+    },
+    {
+      "file": "snapshots__download-collection-snapshot.http.md",
+      "sourceSha256": "4969ce6e437aec41e2a78f9be14704a42729d553d61772d3da3ba96cf77ce12b",
+      "text": "GET /collections/docs/snapshots/snap.snapshot\n"
+    },
+    {
+      "file": "snapshots__download-full-snapshot.http.md",
+      "sourceSha256": "9ff1f60b7df269ee6d46c23b4e669bf37f21182a7080061c280a4561b7100f48",
+      "text": "GET /snapshots/snap.snapshot\n"
+    },
+    {
+      "file": "snapshots__list-collection-snapshots.http.md",
+      "sourceSha256": "5342ce16d428af2733ebed278b7ac0401a9b040a49be375743c66c483c44a5c5",
+      "text": "GET /collections/docs/snapshots\n"
+    },
+    {
+      "file": "snapshots__list-full-snapshots.http.md",
+      "sourceSha256": "d386cf8680e62a83d7dd45eeab036f317fade8ad1af5164296e755bb55310b88",
+      "text": "GET /snapshots\n"
+    },
+    {
+      "file": "snapshots__recover-collection-snapshot-from-url.http.md",
+      "sourceSha256": "d47cf74e6adbd6e488b98ae4b528b9be343353561f65ade17fff6e4b28e407ba",
+      "text": "PUT /collections/docs/snapshots/recover\n{\n  \"location\": \"http://qdrant-node-1:6333/collections/docs/snapshots/snapshot-2022-10-10.snapshot\"\n}\n"
+    },
+    {
+      "file": "snapshots__recover-snapshot-with-priority.http.md",
+      "sourceSha256": "6184952db67b6bdf6a8c30dfbd98fda7ef03683791521c149d8507205a58f543",
+      "text": "PUT /collections/docs/snapshots/recover\n{\n  \"location\": \"http://qdrant-node-1:6333/collections/docs/snapshots/snapshot-2022-10-10.snapshot\",\n  \"priority\": \"snapshot\"\n}\n"
+    },
+    {
+      "file": "strict-mode__condition-max-size.http.md",
+      "sourceSha256": "b6d9e4c0fbfba4d380042a3a483feb281f8fb4588c565400535c22127e3f8204",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"condition_max_size\": 10\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__disable.http.md",
+      "sourceSha256": "ff74f4f1ff7fde4e5ae8bf8306c2ca6c73da9b70aa86f0bc460acc03f9ba26cb",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": false\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__filter-max-conditions.http.md",
+      "sourceSha256": "fb18b4f83e54ad3be751a07b0a10cf518502b05133abffd88292c517bfaa04d3",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"filter_max_conditions\": 10\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__max-collection-storage-size-bytes.http.md",
+      "sourceSha256": "eda9fae8c26016e95fcd13d83d707d5791bff8b7d134605c8c583dc633f15ef5",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"max_collection_vector_size_bytes\": 1000000,\n        \"max_collection_payload_size_bytes\": 1000000\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__max-payload-index-count.http.md",
+      "sourceSha256": "28f2f37161c3f74167fb86d5a75545e535db5edc62c95a6e2f32954eefe44e81",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"max_payload_index_count\": 10\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__max-points-count.http.md",
+      "sourceSha256": "5e849f6356c5bc5d42747bcc4c624f93f9a76c3eec6b206db4633c3627b6e6ef",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"max_points_count\": 1000\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__max-query-limit.http.md",
+      "sourceSha256": "23e850c6576d849c0aea95485b7a9ce8491651c0dbabbb827ecc363864d7714a",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"max_query_limit\": 10\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__max-resident-memory-percent.http.md",
+      "sourceSha256": "59a39af28c61d74e9ae85f18443f717cd5795c1878154e2f351996ea154a8ce3",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"max_resident_memory_percent\": 90\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__max-timeout.http.md",
+      "sourceSha256": "e91fa0c9b5d625207edae74d49e428fbc8d20841b7e443b3bf031621d12999c2",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"max_timeout\": 10\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__multivector-config.http.md",
+      "sourceSha256": "46d5ea3000691df03ef9194b9da2f9ecb1c4223db544e5d0200781162d2be723",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"multivector_config\": {\n            \"text\": {\n                \"max_vectors\": 10\n            }\n        }\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__rate-limiting.http.md",
+      "sourceSha256": "0b80cc5402ddf6aa1d16e22b3176136af21a8650b09f4e07ec84fe5508bf5ac1",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"read_rate_limit\": 1000,\n        \"write_rate_limit\": 100,\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__search-allow-exact.http.md",
+      "sourceSha256": "5bda6884eadf7d39b14535ccf4bca667e7f3483f7c11dcee3a426eafbec102f0",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"search_allow_exact\": false\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__search-max-batchsize.http.md",
+      "sourceSha256": "c9e62e85dd462c9e1196ebfbbe09aa693a3afb4664dbfbd362bcb763f600ad23",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"search_max_batchsize\": 1000\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__search-max-hnsw-ef.http.md",
+      "sourceSha256": "6d690388414f8f52c88007ece68d9409de53e5812cffb074ab10a0d720218f2c",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"search_max_hnsw_ef\": 128\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__search-max-oversampling.http.md",
+      "sourceSha256": "b558b76b0b9fa680c29945b14d19f4b2ed3b0318e231245d61075e9036cf2003",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"search_max_oversampling\": 2.0\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__sparse-config.http.md",
+      "sourceSha256": "d09430ce90f41fd35e5462e4ee1f814e5c778a47458a67a3045ff8a0cd4f8a8b",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"sparse_config\": {\n            \"text\": {\n                \"max_length\": 1000\n            }\n        }\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__unindexed-filtering-retrieve-off.http.md",
+      "sourceSha256": "12b3300299aae258341030dfd4ec5b48f3c92343a9a81e47276289eae0de5eb5",
+      "text": "PATCH /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"unindexed_filtering_retrieve\": true\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__unindexed-filtering-retrieve.http.md",
+      "sourceSha256": "5c6579a7545bd69a634926974af496106f908816bf73e6fa30599d73ef095ce3",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"unindexed_filtering_retrieve\": false\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__unindexed-filtering-update.http.md",
+      "sourceSha256": "1fede6b0e50e5f0a1800b063ac3e3f22d0456e017f54d21dfc53e7056906f3fa",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"unindexed_filtering_update\": false\n    }\n}\n"
+    },
+    {
+      "file": "strict-mode__upsert-max-batchsize.http.md",
+      "sourceSha256": "ed46be7878113df4b89c65e9d67cea4b7927e204560f4d31bd098e091d46d5a1",
+      "text": "PUT /collections/docs\n{\n    \"strict_mode_config\": {\n        \"enabled\": true,\n        \"upsert_max_batchsize\": 1000\n    }\n}\n"
+    },
+    {
+      "file": "text-search__batch-progressive-filter.http.md",
+      "sourceSha256": "6bab505003037a46c0b988e2f6dbefdddf57f4d63d0f1582e3d70c321c2a81f3",
+      "text": "POST /collections/books/points/query/batch\n{\n  \"searches\": [\n    {\n      \"query\": {\n        \"text\": \"time travel\",\n        \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n      },\n      \"using\": \"description-dense\",\n      \"with_payload\": true,\n      \"filter\": {\n        \"must\": [\n          {\n            \"key\": \"title\",\n            \"match\": {\n              \"text\": \"time travel\"\n            }\n          }\n        ]\n      }\n    },\n    {\n      \"query\": {\n        \"text\": \"time travel\",\n        \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n      },\n      \"using\": \"description-dense\",\n      \"with_payload\": true,\n      \"filter\": {\n        \"must\": [\n          {\n            \"key\": \"title\",\n            \"match\": {\n              \"text_any\": \"time travel\"\n            }\n          }\n        ]\n      }\n    },\n    {\n      \"query\": {\n        \"text\": \"time travel\",\n        \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n      },\n      \"using\": \"description-dense\",\n      \"with_payload\": true\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "text-search__create-author-keyword-index.http.md",
+      "sourceSha256": "62e5dc90bfc05808818859b3fc5f37c8fd19a2e32ce42224b0da664b561e1251",
+      "text": "PUT /collections/books/index?wait=true\n{\n    \"field_name\": \"author\",\n    \"field_schema\": \"keyword\"\n}\n"
+    },
+    {
+      "file": "text-search__create-bm25-collection.http.md",
+      "sourceSha256": "942f01d20067a4c7059298dd2a5d8c2f4c8c322cf8e26cb5fd2e431c76dc27c9",
+      "text": "PUT /collections/books\n{\n  \"sparse_vectors\": {\n    \"title-bm25\": {\n      \"modifier\": \"idf\"\n    }\n  }\n}\n"
+    },
+    {
+      "file": "text-search__create-description-dense-collection.http.md",
+      "sourceSha256": "066b689490e2a0da740c089ba47e88d9cb1830af509251615b85f487bc92c66d",
+      "text": "PUT /collections/books\n{\n  \"vectors\": {\n    \"description-dense\": {\n      \"size\": 384,\n      \"distance\": \"Cosine\"\n    }\n  }\n}\n"
+    },
+    {
+      "file": "text-search__create-hybrid-collection.http.md",
+      "sourceSha256": "948a2886bab6b3d570e88856de57715adb8f5515100e1cc8848072b871c9c094",
+      "text": "PUT /collections/books\n{\n  \"vectors\": {\n    \"description-dense\": {\n      \"size\": 384,\n      \"distance\": \"Cosine\"\n    }\n  },\n  \"sparse_vectors\": {\n    \"isbn-bm25\": {\n      \"modifier\": \"idf\"\n    }\n  }\n}\n"
+    },
+    {
+      "file": "text-search__create-title-phrase-index.http.md",
+      "sourceSha256": "5b08c622fbb9cbc20068602b2278fd5e3b2a7574d2f5b691ca302aed727ef2bd",
+      "text": "PUT /collections/books/index?wait=true\n{\n  \"field_name\": \"title\",\n  \"field_schema\": {\n    \"type\": \"text\",\n    \"ascii_folding\": true,\n    \"phrase_matching\": true\n  }\n}\n"
+    },
+    {
+      "file": "text-search__create-title-text-index.http.md",
+      "sourceSha256": "f8ed447ecfb1b6e829163e96cfb8ded7a930892e3af521ed9a86926cdb1c6606",
+      "text": "PUT /collections/books/index?wait=true\n{\n  \"field_name\": \"title\",\n  \"field_schema\": {\n    \"type\": \"text\",\n    \"ascii_folding\": true\n  }\n}\n"
+    },
+    {
+      "file": "text-search__filter-title-phrase.http.md",
+      "sourceSha256": "9447005fedb103926cfe31288b5d42703231baa47e237b72dd8f9ecab22da1ad",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"time travel\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"title\",\n        \"match\": {\n          \"phrase\": \"time machine\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__filter-title-text-any.http.md",
+      "sourceSha256": "f7dea917396ee55bc97fd91ebf926680a17d8e11a757ba859d70e554b7d7aba4",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"space opera\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"title\",\n        \"match\": {\n          \"text_any\": \"space war\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__filter-title-text.http.md",
+      "sourceSha256": "c0d15ba80708f25b521e0a70b272d66a95cdd381443b306ff0fe2e989c2f4764",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"space opera\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"title\",\n        \"match\": {\n          \"text\": \"space\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__hybrid-prefetch-rrf.http.md",
+      "sourceSha256": "ed7dac6bb60d6dba28fd12112a0ceb9f34288c6dd715286602da938905452057",
+      "text": "POST /collections/books/points/query\n{\n  \"prefetch\": [\n    {\n      \"query\": {\n        \"text\": \"9780553213515\",\n        \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n      },\n      \"using\": \"description-dense\",\n      \"score_threshold\": 0.5\n    },\n    {\n      \"query\": {\n        \"text\": \"9780553213515\",\n        \"model\": \"Qdrant/bm25\"\n      },\n      \"using\": \"isbn-bm25\"\n    }\n  ],\n  \"query\": {\n    \"fusion\": \"rrf\"\n  },\n  \"limit\": 10,\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__ingest-bm25-avglen.http.md",
+      "sourceSha256": "09d4e92728f449dcdab1ff895001abba091e91981f2e52c29cb493f2ae92c17a",
+      "text": "PUT /collections/books/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"title-bm25\": {\n          \"text\": \"The Time Machine\",\n          \"model\": \"qdrant/bm25\",\n          \"options\": {\n            \"avg_len\": 5.0\n          }\n        }\n      },\n      \"payload\": {\n        \"title\": \"The Time Machine\",\n        \"author\": \"H.G. Wells\",\n        \"isbn\": \"9780553213515\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "text-search__ingest-bm25-point.http.md",
+      "sourceSha256": "521008b107ce12157125ca9aabd33edcff704158b392195afe88bbed085dd760",
+      "text": "PUT /collections/books/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"title-bm25\": {\n          \"text\": \"The Time Machine\",\n          \"model\": \"qdrant/bm25\"\n        }\n      },\n      \"payload\": {\n        \"title\": \"The Time Machine\",\n        \"author\": \"H.G. Wells\",\n        \"isbn\": \"9780553213515\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "text-search__ingest-bm25-spanish.http.md",
+      "sourceSha256": "6dac1f67f94a40045c539414a87467662ca952ccdb81e91e2637a0dda40fa35a",
+      "text": "PUT /collections/books/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"title-bm25\": {\n          \"text\": \"La Máquina del Tiempo\",\n          \"model\": \"qdrant/bm25\",\n          \"options\": {\n            \"language\": \"spanish\"\n          }\n        }\n      },\n      \"payload\": {\n        \"title\": \"La Máquina del Tiempo\",\n        \"author\": \"H.G. Wells\",\n        \"isbn\": \"9788411486880\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "text-search__ingest-description-dense-point.http.md",
+      "sourceSha256": "f6bb4278962c65ea6f04105a4662c78968880bb96bb7589281511b7709d8668b",
+      "text": "PUT /collections/books/points?wait=true\n{\n  \"points\": [\n    {\n      \"id\": 1,\n      \"vector\": {\n        \"description-dense\": {\n          \"text\": \"A Victorian scientist builds a device to travel far into the future and observes the dim trajectories of humanity. He discovers evolutionary divergence and the consequences of class division. Wells's novella established time travel as a vehicle for social commentary.\",\n          \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n        }\n      },\n      \"payload\": {\n        \"title\": \"The Time Machine\",\n        \"author\": \"H.G. Wells\",\n        \"isbn\": \"9780553213515\"\n      }\n    }\n  ]\n}\n"
+    },
+    {
+      "file": "text-search__query-bm25-ascii-folding.http.md",
+      "sourceSha256": "4dd066b796f17ef3067f35db57aa0e7b86b4a749576610e009a2e70e5baef008",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"Mieville\",\n    \"model\": \"qdrant/bm25\",\n    \"options\": {\n      \"ascii_folding\": true\n    }\n  },\n  \"using\": \"author-bm25\",\n  \"limit\": 10,\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__query-bm25-idf-corpus.http.md",
+      "sourceSha256": "aab36ca8cd44ec6020a70b2f95e9f412229d9ed21fbf65690a540f04b5e668ed",
+      "text": "POST /collections/docs/points/query\n{\n    \"query\": {\n        \"text\": \"time travel\",\n        \"model\": \"qdrant/bm25\"\n    },\n    \"using\": \"title-bm25\",\n    \"filter\": {\n        \"must\": [\n            { \"key\": \"group_id\", \"match\": { \"value\": \"user_1\" } },\n            { \"key\": \"year\", \"match\": { \"value\": 2024 } }\n        ]\n    },\n    \"params\": {\n        \"idf\": {\n            \"corpus\": {\n                \"must\": [\n                    { \"key\": \"group_id\", \"match\": { \"value\": \"user_1\" } }\n                ]\n            }\n        }\n    },\n    \"limit\": 10,\n    \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__query-bm25-language-neutral.http.md",
+      "sourceSha256": "12532d67495312307c423b5ae499cbddc8024e3f7528a5f6108518c0838f5733",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"Mieville\",\n    \"model\": \"qdrant/bm25\",\n    \"options\": {\n      \"stemmer\": {\"type\": \"none\"},\n      \"stopwords\": {},\n      \"tokenizer\": \"multilingual\",\n      \"ascii_folding\": true\n    }\n  },\n  \"using\": \"author-bm25\",\n  \"limit\": 10,\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__query-bm25-multilingual-tokenizer.http.md",
+      "sourceSha256": "48d49cbc72255a4a2c7d09912aea417ee89d7c55eea2e8bc25749a597e720888",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"村上春樹\",\n    \"model\": \"qdrant/bm25\",\n    \"options\": {\n      \"tokenizer\": \"multilingual\"\n    }\n  },\n  \"using\": \"author-bm25\",\n  \"limit\": 10,\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__query-bm25-spanish.http.md",
+      "sourceSha256": "edeec914b67a2ff65bd57a23d9ee0a53432c3ed205d5168fa049874637ccc164",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"tiempo\",\n    \"model\": \"qdrant/bm25\",\n    \"options\": {\n      \"language\": \"spanish\"\n    }\n  },\n  \"using\": \"title-bm25\",\n  \"limit\": 10,\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__query-bm25.http.md",
+      "sourceSha256": "9151cc783b3cd1ae3510cfaeaf0aa99542a9d26d99a3d04e41bcbe16d7a56653",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"time travel\",\n    \"model\": \"qdrant/bm25\"\n  },\n  \"using\": \"title-bm25\",\n  \"limit\": 10,\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__query-description-dense.http.md",
+      "sourceSha256": "e34028752cef8c69f2fa5b990abd807c914becd2ee7d802c625fadeedd1b4a0a",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"time travel\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "text-search__query-filter-author-any.http.md",
+      "sourceSha256": "8781fbe3eae1fbd07cc2845dfb82da81352a3c9175c24c95f5ae7d7cb82323d9",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"space opera\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"author\",\n        \"match\": {\n          \"any\": [\"Larry Niven\", \"Jerry Pournelle\"]\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__query-filter-author-exclude.http.md",
+      "sourceSha256": "24024a9c9582783d31404e954c3b4d9f8737428380837a2b64c8491193e61341",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"time travel\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"must_not\": [\n      {\n        \"key\": \"author\",\n        \"match\": {\n          \"value\": \"H.G. Wells\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__query-filter-author.http.md",
+      "sourceSha256": "c33f556381eeb7b6068a163460f5a6145b45cdfad00950e2ffe728893e078f88",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"time travel\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"author\",\n        \"match\": {\n          \"value\": \"H.G. Wells\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__query-filter-authors-and.http.md",
+      "sourceSha256": "a3e1a426a551b5f763827683a2368d4701fc1b3b4b37d0142af5bfe0cfc1e948",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"space opera\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"must\": [\n      {\n        \"key\": \"author\",\n        \"match\": {\n          \"value\": \"Larry Niven\"\n        }\n      },\n      {\n        \"key\": \"author\",\n        \"match\": {\n          \"value\": \"Jerry Pournelle\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__query-filter-authors-or.http.md",
+      "sourceSha256": "cf27ab9604b14c40eca88c5cf60afcbf789326627d14c870742870fc56423d9b",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"space opera\",\n    \"model\": \"sentence-transformers/all-minilm-l6-v2\"\n  },\n  \"using\": \"description-dense\",\n  \"with_payload\": true,\n  \"filter\": {\n    \"should\": [\n      {\n        \"key\": \"author\",\n        \"match\": {\n          \"value\": \"Larry Niven\"\n        }\n      },\n      {\n        \"key\": \"author\",\n        \"match\": {\n          \"value\": \"Jerry Pournelle\"\n        }\n      }\n    ]\n  }\n}\n"
+    },
+    {
+      "file": "text-search__query-splade.http.md",
+      "sourceSha256": "a5856f147eec5fc41644efb7251c894ac524b9cedee9062716c5e18690ba5959",
+      "text": "POST /collections/books/points/query\n{\n  \"query\": {\n    \"text\": \"time travel\",\n    \"model\": \"prithivida/splade_pp_en_v1\"\n  },\n  \"using\": \"title-splade\",\n  \"limit\": 10,\n  \"with_payload\": true\n}\n"
+    },
+    {
+      "file": "update-collection__disable-quantization.http.md",
+      "sourceSha256": "e55217f78227c7b683d1440c002c292c2d9c5fb4b12dc2a35b04a3dcaf0b1a42",
+      "text": "PATCH /collections/docs\n{\n    \"quantization_config\": \"Disabled\"\n}\n"
+    },
+    {
+      "file": "update-collection__hnsw-and-quantization.http.md",
+      "sourceSha256": "ad61c676fa7d189fdbe92cfa3a71302d29de9777560f3642b5c8b5aebbfc75d4",
+      "text": "PATCH /collections/docs\n{\n    \"vectors\": {\n        \"my_vector\": {\n            \"hnsw_config\": {\n                \"m\": 32,\n                \"ef_construct\": 123\n            },\n            \"quantization_config\": {\n                \"product\": {\n                    \"compression\": \"x32\",\n                    \"memory\": \"pinned\"\n                }\n            },\n            \"memory\": \"cold\"\n        }\n    },\n    \"hnsw_config\": {\n        \"ef_construct\": 123\n    },\n    \"quantization_config\": {\n        \"scalar\": {\n            \"type\": \"int8\",\n            \"quantile\": 0.8,\n            \"memory\": \"cached\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__max-indexing-threads.http.md",
+      "sourceSha256": "a31caece5e9a2107382c9ce7028ec4c098ef018b39f25538a5353a8054b61cb1",
+      "text": "PATCH /collections/docs\n{\n    \"hnsw_config\": {\n        \"max_indexing_threads\": 4\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__max-optimization-threads.http.md",
+      "sourceSha256": "79e4eb5090398f98784f5a821ce00b53d180a78063f305a473f2a2d1d4e0149c",
+      "text": "PATCH /collections/docs\n{\n    \"optimizers_config\": {\n        \"max_optimization_threads\": 1\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__max-segment-size.http.md",
+      "sourceSha256": "13935892162f21eba97afb8b0e9cfbd87100db2521cdf3bbca8e417c57b1a8bf",
+      "text": "PATCH /collections/docs\n{\n    \"optimizers_config\": {\n        \"max_segment_size\": 100000\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__prevent-unoptimized.http.md",
+      "sourceSha256": "02758492574ff7a3f64b51f3fa7ee2cb41bd9317d7c82e77292129370fb02174",
+      "text": "PATCH /collections/docs\n{\n    \"optimizers_config\": {\n        \"prevent_unoptimized\": true\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__read-fan-out-delay-ms.http.md",
+      "sourceSha256": "9567247f15ef05b1f80b05ee7b8e67e0c6f0daacfcf2ca0ea7fcf6a548f6f1a6",
+      "text": "PATCH /collections/docs\n{\n    \"params\": {\n        \"read_fan_out_delay_ms\": 100\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__simple.http.md",
+      "sourceSha256": "f332fd7be7be2018903d88f106ba8bda10ba345db2f8fa438c73173cdd30ab08",
+      "text": "PATCH /collections/docs\n{\n    \"optimizers_config\": {\n        \"indexing_threshold\": 10000\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__trigger-indexing.http.md",
+      "sourceSha256": "f33d7acbb26bc61c4758b96aabdc0cd92ba73f8d9b418216ed34217a97109e88",
+      "text": "PATCH /collections/docs\n{\n    \"optimizers_config\": {}\n}\n"
+    },
+    {
+      "file": "update-collection__vectors-to-disk-default.http.md",
+      "sourceSha256": "818d153911912bf6d5a6fcd3f282b7817dea9147733c75f793101e08c919eff2",
+      "text": "PATCH /collections/docs\n{\n    \"vectors\": {\n        \"\": {\n            \"memory\": \"cold\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__vectors-to-disk-named.http.md",
+      "sourceSha256": "3e0c44d4dd9ea0e954ef7784a4be6ac9144322c71b0a921e657834e1eec26919",
+      "text": "PATCH /collections/docs\n{\n    \"vectors\": {\n        \"my_vector\": {\n            \"memory\": \"cold\"\n        }\n    }\n}\n"
+    },
+    {
+      "file": "update-collection__with-metadata.http.md",
+      "sourceSha256": "797d4ff9d7d8dc792a4d9f7c8b9db8a239c90e21095b97efefd2c6bd03626d0b",
+      "text": "PATCH /collections/docs\n{\n    \"metadata\": {\n        \"my-metadata-field\": {\n            \"key-a\": \"value-a\",\n            \"key-b\": 42\n        }\n    }\n}\n"
+    },
+    {
+      "file": "update-vectors__simple.http.md",
+      "sourceSha256": "0eedbed2d71c1e09c4888afb02f138286bbdc63e8e9f44bf003c525f744f0d50",
+      "text": "PUT /collections/docs/points/vectors\n{\n    \"points\": [\n        {\n            \"id\": 1,\n            \"vector\": {\n                \"image\": [0.1, 0.2, 0.3, 0.4]\n            }\n        },\n        {\n            \"id\": 2,\n            \"vector\": {\n                \"text\": [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]\n            }\n        }\n    ]\n}\n"
+    }
+  ]
+}

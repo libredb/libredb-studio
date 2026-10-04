@@ -163,6 +163,10 @@
           "type": ["boolean", "null"],
           "description": "AUTH_COOKIE_SECURE for the app: null (default) writes nothing and the app decides (Secure in production, except a loopback host reached over plain http), false drops the Secure flag - the answer for a browser reaching a non-loopback host over plain http, where the cookie is rejected and login silently loops - and true forces it on"
         },
+        "passkeyOrigin": {
+          "type": "string",
+          "description": "PASSKEY_ORIGIN for the app: the public origin people open Studio at (scheme, host and optional port, no path), such as https://studio.example.com. Empty (default) writes nothing and passkeys stay off. Needs storageProvider sqlite or postgres, local auth, and an application image that includes passkey sign-in (#785); appVersion 0.17.0 does not read it. The app validates the value"
+        },
         "storageSqlitePath": {
           "type": "string",
           "description": "SQLite database file path"
@@ -208,6 +212,29 @@
         "threadContext": {
           "type": ["boolean", "null"],
           "description": "Whether a run may be told about the conversation it belongs to: null (default) writes nothing and the app keeps its own default, which is on; false writes LIBREDB_AGENT_THREAD_CONTEXT=false, so every run opens on its own and the rail says so"
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Serve /api/mcp: false (default) writes no LIBREDB_MCP_* variable; true writes all four as strings and requires url and tokenLabel"
+        },
+        "url": {
+          "type": "string",
+          "description": "The address MCP clients use and every token is bound to: an absolute http(s) URL ending in /api/mcp, with config.basePath when one is set"
+        },
+        "tokenLabel": {
+          "type": "string",
+          "description": "Any non-empty value; the token signing key is derived under it, so changing it revokes every MCP token at once"
+        },
+        "tokenTtlDays": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 365,
+          "description": "Days a minted MCP token stays valid"
         }
       }
     },

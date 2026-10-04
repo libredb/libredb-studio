@@ -120,6 +120,23 @@ describe("which connection a run may be started on", () => {
     expect(startableId(browserCopy(server, { password: "different" }), loaded(server))).toBeNull();
   });
 
+  test("a Kafka copy that authenticates by another SASL mechanism is not startable by the seed id", () => {
+    // A broker keeps a SCRAM credential per mechanism, so the same user and password under another
+    // mechanism are another principal's secret (#1088): the mechanism is a resolution field.
+    const server = descriptor({ type: "kafka", port: 9092, database: undefined, saslMechanism: "SCRAM-SHA-512" });
+    expect(startableId(browserCopy(server), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { saslMechanism: "SCRAM-SHA-256" }), loaded(server))).toBeNull();
+    expect(startableId(browserCopy(server, { saslMechanism: undefined }), loaded(server))).toBeNull();
+  });
+
+  test("a copy that lists other data servers is not startable by the seed id", () => {
+    // Which addresses a read may reach and the token may be sent to: a resolution field.
+    const server = descriptor({ dataServers: "a.internal:6648,b.internal:6648" });
+    expect(startableId(browserCopy(server), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { dataServers: "a.internal:6648" }), loaded(server))).toBeNull();
+    expect(startableId(browserCopy(server, { dataServers: undefined }), loaded(server))).toBeNull();
+  });
+
   // The field a hand-written comparison forgets: it changes which role the agent
   // executes as, which is the whole point of the least-privilege profile (#328).
   test("a copy carrying its own agent credentials is not startable", () => {
@@ -140,6 +157,16 @@ describe("which connection a run may be started on", () => {
     });
 
     expect(startableId(renamed, loaded(server))).toBe("seed:sales");
+  });
+
+  // #1089. The mode says what a connection may DO, not which database it reaches or as whom, so a
+  // copy differing only in it still reaches the seed's database with the seed's credentials, and a run
+  // started on the seed's id runs under the seed's own mode.
+  test("a copy differing only in its read-only mode is startable by the seed id", () => {
+    const server = descriptor();
+
+    expect(startableId(browserCopy(server, { readOnly: true }), loaded(server))).toBe("seed:sales");
+    expect(startableId(browserCopy(server, { readOnly: false }), loaded(server))).toBe("seed:sales");
   });
 
   // B37. A seed list that was never read is not an empty seed list. Deciding
@@ -329,6 +356,15 @@ describe("which database a connection would be read from", () => {
     expect(connectionResolutionKey({ ...base, id: "c2" })).toBe(same);
     expect(connectionResolutionKey({ ...base, createdAt: new Date(1) })).toBe(same);
     expect(connectionResolutionKey({ ...base, color: "red", group: "prod", environment: "production" })).toBe(same);
+  });
+
+  test("the read-only mode does not move the key (#1089)", () => {
+    // What a connection may do is not which database a read reaches: a panel keyed on this must not
+    // read again because the mode was switched.
+    const same = connectionResolutionKey(base);
+
+    expect(connectionResolutionKey({ ...base, readOnly: true })).toBe(same);
+    expect(connectionResolutionKey({ ...base, readOnly: false })).toBe(same);
   });
 
   test("a field that moves the database moves the key", () => {

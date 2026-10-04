@@ -59,6 +59,23 @@ describe("renderWindowsPackagingTemplate", () => {
     expect(rendered).toContain("RelativeFilePath: libredb-studio.exe");
   });
 
+  // db2-node's win32-x64-msvc addon imports VCRUNTIME140.dll (#786), which a
+  // clean Windows machine does not have, so both package managers install the
+  // Visual C++ 2015-2022 x64 redistributable first.
+  test("the winget installer manifest depends on the VC++ redistributable", () => {
+    const rendered = renderWindowsPackagingTemplate(readTemplate(TEMPLATES[1]), fixtureSums(), VERSION);
+    expect(rendered).toContain(
+      "Dependencies:\n  PackageDependencies:\n    - PackageIdentifier: Microsoft.VCRedist.2015+.x64\n",
+    );
+  });
+
+  test("the Chocolatey package depends on the VC++ redistributable and says so", () => {
+    const rendered = renderWindowsPackagingTemplate(readTemplate(TEMPLATES[3]), fixtureSums(), VERSION);
+    expect(rendered).toMatch(/<dependencies>\s*<dependency id="vcredist140" \/>\s*<\/dependencies>/);
+    expect(rendered).not.toContain("nothing else to install");
+    expect(rendered).toContain("Visual C++");
+  });
+
   test("the Chocolatey install script pins the checksum", () => {
     const template = readTemplate(TEMPLATES[4]);
     const rendered = renderWindowsPackagingTemplate(template, fixtureSums(), VERSION);

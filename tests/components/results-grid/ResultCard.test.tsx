@@ -115,4 +115,49 @@ describe("results-grid/ResultCard", () => {
     );
     expect(queryByText("Row 4")).not.toBeNull();
   });
+
+  test("a preview field the result declares as a vector draws the vector cell", () => {
+    const { queryByText } = render(
+      <ResultCard
+        row={{ id: 1, name: "doc", embedding: [1, 0.5] }}
+        fields={["id", "name", "embedding"]}
+        primaryColumn="name"
+        idColumn="id"
+        index={0}
+        onSelect={mock(() => {})}
+        vectorColumns={{ embedding: { kind: "dense", dtype: "float32", dimension: 2 } }}
+      />,
+    );
+    expect(queryByText("[1.0, 0.5] 2 dims")).not.toBeNull();
+  });
+
+  test("a primary column the result declares as a vector draws the vector cell as the card title", () => {
+    const { queryByText } = render(
+      <ResultCard
+        row={{ id: 1, description_embedding: [1, 0.5, 0] }}
+        fields={["id", "description_embedding"]}
+        primaryColumn="description_embedding"
+        idColumn="id"
+        index={0}
+        onSelect={mock(() => {})}
+        vectorColumns={{ description_embedding: { kind: "dense", dtype: "float32", dimension: 3 } }}
+      />,
+    );
+    expect(queryByText("[1.0, 0.5, 0.0] 3 dims")).not.toBeNull();
+    expect(queryByText("1,0.5,0")).toBeNull();
+  });
+
+  test("without the declaration the same preview field draws the JSON it did", () => {
+    const { queryByText } = render(
+      <ResultCard
+        row={{ id: 1, name: "doc", embedding: [1, 0.5] }}
+        fields={["id", "name", "embedding"]}
+        primaryColumn="name"
+        idColumn="id"
+        index={0}
+        onSelect={mock(() => {})}
+      />,
+    );
+    expect(queryByText("[1,0.5]")).not.toBeNull();
+  });
 });

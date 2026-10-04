@@ -96,6 +96,8 @@ const mockSetType = mock(() => {});
 const mockSetName = mock(() => {});
 const mockSetQueryTimeout = mock(() => {});
 const mockSetHost = mock(() => {});
+const mockSettleHost = mock(() => {});
+const mockTakeHostAddress = mock<(text: string) => boolean>(() => false);
 const mockSetPort = mock(() => {});
 const mockSetUser = mock(() => {});
 const mockSetPassword = mock(() => {});
@@ -132,6 +134,10 @@ const mockSetAuthSource = mock(() => {});
 const mockSetApiKeyId = mock(() => {});
 const mockSetApiKeySecret = mock(() => {});
 const mockSetSkipObjectScan = mock(() => {});
+const mockSetReadOnly = mock(() => {});
+const mockSetAllowInsecureAuth = mock(() => {});
+const mockSetDataServers = mock(() => {});
+const mockSetSaslMechanism = mock(() => {});
 
 let mockFormOverrides: Record<string, unknown> = {};
 
@@ -145,8 +151,19 @@ function getDefaultForm() {
     setQueryTimeout: mockSetQueryTimeout,
     skipObjectScan: false,
     setSkipObjectScan: mockSetSkipObjectScan,
+    readOnly: false,
+    setReadOnly: mockSetReadOnly,
+    allowInsecureAuth: false,
+    setAllowInsecureAuth: mockSetAllowInsecureAuth,
+    dataServers: "",
+    setDataServers: mockSetDataServers,
+    readOnlyOffered: false,
+    credentialWarning: undefined as string | undefined,
     host: "localhost",
     setHost: mockSetHost,
+    settleHost: mockSettleHost,
+    takeHostAddress: mockTakeHostAddress,
+    hostError: undefined as string | undefined,
     port: "5432",
     setPort: mockSetPort,
     user: "",
@@ -195,6 +212,8 @@ function getDefaultForm() {
     setApiKeyId: mockSetApiKeyId,
     apiKeySecret: "",
     setApiKeySecret: mockSetApiKeySecret,
+    saslMechanism: "",
+    setSaslMechanism: mockSetSaslMechanism,
     showSSH: false,
     setShowSSH: mockSetShowSSH,
     sshEnabled: false,
@@ -257,25 +276,143 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
   opensearch: ["host", "port", "user", "password"],
   prometheus: ["host", "port", "user", "password"],
+  kafka: ["host", "port", "saslMechanism", "user", "password"],
+  etcd: ["host", "port", "user", "password"],
+  db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  qdrant: ["host", "port", "password"],
+  influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+  influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
+  oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
 };
+/**
+ * A field list one test declares on top of the mirrored table, reset before every test. The dataServers cases
+ * use it to draw the field under a declared label and hint that no shipped entry carries.
+ */
+let mockDeclaredFields: Record<string, string[]> = {};
 const mockFields = (type: string): string[] =>
-  MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
+  mockDeclaredFields[type] ?? MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
 
-/** The field copy a `DatabaseUIConfig` may declare (#1085): labels and hints keyed by field. */
+/**
+ * What a `DatabaseUIConfig` may declare about its connection fields: labels and hints keyed by
+ * field (#1085), the choices of a field drawn as a select, and whether the SSH panel is offered
+ * (#1088).
+ */
 interface MockFieldCopy {
   readonly fieldLabels?: Readonly<Record<string, string>>;
   readonly fieldHints?: Readonly<Record<string, string>>;
+  readonly fieldPlaceholders?: Readonly<Record<string, string>>;
+  readonly fieldOptions?: Readonly<Record<string, readonly { readonly value: string; readonly label: string }[]>>;
+  readonly showSshTunnel?: false;
+  readonly readOnlyHint?: string;
 }
 
 /**
  * The copy each engine DECLARES for its connection fields (#1085), mirrored from the real table the
- * way MOCK_CONNECTION_FIELDS mirrors its field lists. Prometheus is the one shipped entry that
- * declares any, which tests/unit/lib/db-ui-config.test.ts pins against the real table.
+ * way MOCK_CONNECTION_FIELDS mirrors its field lists. Prometheus and Kafka are the shipped entries
+ * that declare any, which tests/unit/lib/db-ui-config.test.ts pins against the real table.
  */
 const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   prometheus: {
     fieldLabels: { user: "User", password: "Password or token" },
     fieldHints: { password: "Leave User empty to send this as a bearer token." },
+  },
+  kafka: {
+    fieldLabels: { saslMechanism: "SASL mechanism" },
+    fieldHints: { saslMechanism: "PLAIN and SCRAM require TLS" },
+    fieldOptions: {
+      saslMechanism: [
+        { value: "PLAIN", label: "PLAIN" },
+        { value: "SCRAM-SHA-256", label: "SCRAM-SHA-256" },
+        { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
+      ],
+    },
+    showSshTunnel: false,
+  },
+  // Mirrored from the real entry (#786, #1303); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  db2: {
+    fieldHints: {
+      allowInsecureAuth:
+        "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
+  },
+  // Mirrored from the real entry (#1089 6.1); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  etcd: {
+    fieldHints: {
+      host: "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS.",
+      user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
+      password:
+        "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
+    },
+  },
+  // Mirrored from the real entry (Neo4j spec A7); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  neo4j: {
+    fieldHints: { database: "Leave empty to use the server's home database." },
+    readOnlyHint:
+      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+  },
+  // Mirrored from the real entry (vector-family spec 5.2); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  milvus: {
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as a Zilliz Cloud endpoint, which is split into Host and Port. Port 9091 is Milvus's management port, which Studio never dials.",
+      database: "Optional; empty means default. A dbName in a request body overrides it.",
+      user: "Optional. At most 32 characters, starting with a letter. Leave it empty to put a token in Password or token.",
+      password:
+        "Milvus receives the password or token on every call, so a password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+    },
+  },
+  // Mirrored from the real entry (vector-family spec 6.2); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  qdrant: {
+    fieldLabels: { password: "API key or JWT" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as http://localhost:6333, which is split into Host and Port. Studio dials this REST port only, never Qdrant's gRPC port 6334 or its cluster port 6335.",
+      password:
+        "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice.",
+    },
+  },
+  // Mirrored from the real entries (InfluxDB spec A.3); tests/unit/lib/db-ui-config.test.ts pins the real ones.
+  influxdb: {
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password: "1.x: the user's password. 2.x and InfluxDB 3: an API token, with User empty.",
+      database:
+        'A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as "db".."measurement".',
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+  },
+  influxdb3: {
+    fieldLabels: { password: "Token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password:
+        "Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token.",
+      database:
+        "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here.",
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+  },
+  // Mirrored from the real entry (SB3-1.5); tests/unit/lib/db-ui-config.test.ts pins the real one.
+  oxia: {
+    fieldLabels: { password: "Token", database: "Namespace", dataServers: "Data servers" },
+    fieldPlaceholders: { database: "default" },
+    fieldHints: {
+      host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration.",
+      dataServers:
+        "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
+      allowInsecureAuth:
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
+    readOnlyHint:
+      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
   },
 };
 
@@ -295,11 +432,18 @@ mock.module("@/lib/db-ui-config", () => ({
     ...mockDeclaredCopy,
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
+  // The real rule over the mirrored table: false only where an entry declares `showSshTunnel: false`.
+  offersSshTunnel: (type: string) => MOCK_FIELD_COPY[type]?.showSshTunnel !== false,
   // The real pair's rule, mirrored the way `isFileBased` below mirrors its own: the modal reads
   // its field copy through these two, and the real ones run in tests/unit/lib/db-ui-config.test.ts.
   connectionFieldLabel: (config: MockFieldCopy, field: string, fallback: string) =>
     config.fieldLabels?.[field] ?? fallback,
   connectionFieldHint: (config: MockFieldCopy, field: string) => config.fieldHints?.[field],
+  connectionFieldPlaceholder: (config: MockFieldCopy, field: string, fallback: string) =>
+    config.fieldPlaceholders?.[field] ?? fallback,
+  readOnlyHint: (config: MockFieldCopy) =>
+    config.readOnlyHint ??
+    "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
   getDBIcon: () => () => null,
   getDBColor: () => "text-hue-blue",
   // `isFileBased` must be mocked now that `DB_UI_CONFIG` is an exported binding (#425 made
@@ -352,6 +496,7 @@ describe("ConnectionModal", () => {
   beforeEach(() => {
     mockFormOverrides = {};
     mockDeclaredCopy = {};
+    mockDeclaredFields = {};
     mockSetType.mockClear();
     mockSetName.mockClear();
     mockSetQueryTimeout.mockClear();
@@ -359,6 +504,9 @@ describe("ConnectionModal", () => {
     mockSetPort.mockClear();
     mockSetShowPasteInput.mockClear();
     mockSetShowSSL.mockClear();
+    mockSetSaslMechanism.mockClear();
+    mockSetReadOnly.mockClear();
+    mockSetDataServers.mockClear();
     mockHandleTestConnection.mockClear();
     mockHandleConnect.mockClear();
   });
@@ -399,6 +547,166 @@ describe("ConnectionModal", () => {
     mockFormOverrides = { isEditMode: true, skipObjectScan: true };
     const { getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
     expect((getByLabelText("Do not read the object list on connect") as HTMLInputElement).checked).toBe(true);
+  });
+
+  // #1089: the read-only mode is offered only where the form says so, which is an engine whose
+  // provider enforces it and never a copy of a seed. tests/hooks/use-connection-form.test.ts pins where
+  // that is, so the dialog is exercised here through the form's answer alone.
+  test("draws no Read-only toggle where the form does not offer one", () => {
+    const { queryByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Read-only")).toBeNull();
+  });
+
+  // A Neo4j connection is read-only whether or not the box is ticked (spec A7), so the default sentence,
+  // which says the mode can be turned off, would be false there: the engine declares its own.
+  test("draws the engine's own Read-only sentence where its config declares one", () => {
+    mockFormOverrides = { readOnlyOffered: true, type: "neo4j" };
+    const { getByText, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(
+      getByText(
+        "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+      ).id,
+    ).toBe("readOnly-hint");
+    expect(queryByText(/You can turn this off here/)).toBeNull();
+  });
+
+  test("offers the Read-only toggle where the form does, says what it refuses, and forwards it", () => {
+    mockFormOverrides = { readOnlyOffered: true };
+    const { getByLabelText, getByText, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const box = getByLabelText("Read-only") as HTMLInputElement;
+
+    expect(box.checked).toBe(false);
+    expect(box.getAttribute("aria-describedby")).toBe("readOnly-hint");
+    expect(
+      getByText(
+        "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
+      ).id,
+    ).toBe("readOnly-hint");
+
+    fireEvent.click(box);
+    expect(mockSetReadOnly).toHaveBeenCalledWith(true);
+
+    mockFormOverrides = { readOnlyOffered: true, readOnly: true };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect((getByLabelText("Read-only") as HTMLInputElement).checked).toBe(true);
+
+    // The untick is forwarded too: the hint says the mode can be turned off here, and a handler
+    // that forwarded a constant true would pass the tick above on its own.
+    mockSetReadOnly.mockClear();
+    fireEvent.click(getByLabelText("Read-only"));
+    expect(mockSetReadOnly).toHaveBeenCalledWith(false);
+  });
+
+  test("offers Db2's consent to a cleartext password only while SSL Mode is disable, and forwards it (#786)", () => {
+    mockFormOverrides = { type: "db2", sslMode: "disable" };
+    const { container, getByLabelText, queryByLabelText, rerender } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
+    const box = getByLabelText("Send the password without TLS") as HTMLInputElement;
+
+    expect(box.checked).toBe(false);
+    expect(box.getAttribute("aria-describedby")).toBe("allowInsecureAuth-hint");
+    expect(container.querySelector('[data-testid="allowInsecureAuth-hint"]')?.textContent).toBe(
+      "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    );
+    fireEvent.click(box);
+    expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(true);
+
+    mockFormOverrides = { type: "db2", sslMode: "disable", allowInsecureAuth: true };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect((getByLabelText("Send the password without TLS") as HTMLInputElement).checked).toBe(true);
+
+    // Under a TLS mode there is nothing to consent to, and on another engine no such field.
+    mockFormOverrides = { type: "db2", sslMode: "verify-full" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Send the password without TLS")).toBeNull();
+    mockFormOverrides = { type: "postgres", sslMode: "disable" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByLabelText("Send the password without TLS")).toBeNull();
+  });
+
+  test("the consent box draws the hint its type declares, and none where the type declares none", () => {
+    mockFormOverrides = { type: "db2", sslMode: "disable" };
+    mockDeclaredCopy = { fieldHints: { allowInsecureAuth: "Declared hint for allowInsecureAuth." } };
+    const { container, getByLabelText, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.querySelector("#allowInsecureAuth-hint")?.textContent).toBe(
+      "Declared hint for allowInsecureAuth.",
+    );
+    expect(getByLabelText("Send the password without TLS").getAttribute("aria-describedby")).toBe(
+      "allowInsecureAuth-hint",
+    );
+
+    // A type that takes the field and declares no hint draws the box with no sentence and no dangling reference.
+    mockFormOverrides = { type: "postgres", sslMode: "disable" };
+    mockDeclaredFields = { postgres: ["host", "port", "user", "password", "database", "allowInsecureAuth"] };
+    mockDeclaredCopy = {};
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.querySelector("#allowInsecureAuth-hint")).toBeNull();
+    expect(getByLabelText("Send the password without TLS").getAttribute("aria-describedby")).toBeNull();
+  });
+
+  test("warns about a cleartext Db2 password only while SSL Mode is disable", () => {
+    // The browser check on #1303: with verify-ca on port 50001 the password field still said the
+    // driver could send it in cleartext. The warning is the consent box's, drawn only without TLS.
+    mockFormOverrides = { type: "db2", sslMode: "verify-ca" };
+    const { container, queryByTestId, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.textContent).not.toContain("cleartext");
+    expect(queryByTestId("password-hint")).toBeNull();
+    expect(container.querySelector("#password")?.getAttribute("aria-describedby")).toBeNull();
+
+    mockFormOverrides = { type: "db2", sslMode: "disable" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.textContent).toContain("sends the password in cleartext");
+  });
+  test.each(["db2", "influxdb", "influxdb3"] as const)(
+    "the consent box under %s draws that type's own hint, only while SSL Mode is disable, and forwards it (InfluxDB spec R4)",
+    (type) => {
+      mockFormOverrides = { type, sslMode: "disable" };
+      const { getByLabelText, queryByLabelText, container, rerender } = render(
+        React.createElement(ConnectionModal, createDefaultProps()),
+      );
+      const box = getByLabelText("Send the password without TLS") as HTMLInputElement;
+
+      expect(container.querySelector("#allowInsecureAuth-hint")?.textContent).toBe(
+        MOCK_FIELD_COPY[type].fieldHints?.allowInsecureAuth,
+      );
+      fireEvent.click(box);
+      expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(true);
+
+      mockFormOverrides = { type, sslMode: "disable", allowInsecureAuth: true };
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect((getByLabelText("Send the password without TLS") as HTMLInputElement).checked).toBe(true);
+      mockSetAllowInsecureAuth.mockClear();
+      fireEvent.click(getByLabelText("Send the password without TLS"));
+      expect(mockSetAllowInsecureAuth).toHaveBeenCalledWith(false);
+
+      for (const sslMode of ["require", "verify-system", "verify-ca", "verify-full"]) {
+        mockFormOverrides = { type, sslMode };
+        rerender(React.createElement(ConnectionModal, createDefaultProps()));
+        expect(queryByLabelText("Send the password without TLS")).toBeNull();
+      }
+    },
+  );
+
+  test("oxia draws Host, Port, Token, Namespace and Data servers, and no User box", () => {
+    mockFormOverrides = { type: "oxia", sslMode: "disable" };
+    const { container, getByLabelText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    for (const field of ["host", "port", "password", "database", "dataServers"]) {
+      expect(container.querySelector(`#${field}`)).not.toBeNull();
+    }
+    expect(container.querySelector("#user")).toBeNull();
+    expect(container.querySelector('label[for="password"]')?.textContent).toBe("Token");
+    expect(container.querySelector('label[for="database"]')?.textContent).toBe("Namespace");
+    expect(container.querySelector('label[for="dataServers"]')?.textContent).toBe("Data servers");
+    // The Namespace box shows what an empty one means, not the dialog's "db" (ruling R34).
+    expect((container.querySelector("#database") as HTMLInputElement | null)?.placeholder).toBe("default");
+    // The consent box under SSL Mode disable, with Oxia's own sentence under it.
+    expect(getByLabelText("Send the password without TLS").getAttribute("aria-describedby")).toBe(
+      "allowInsecureAuth-hint",
+    );
+    expect(container.querySelector("#allowInsecureAuth-hint")?.textContent).toBe(
+      MOCK_FIELD_COPY.oxia.fieldHints?.allowInsecureAuth,
+    );
   });
 
   test("shows the saved query timeout when editing", () => {
@@ -721,6 +1029,8 @@ describe("ConnectionModal", () => {
     const props = createDefaultProps();
     const { queryByText } = render(React.createElement(ConnectionModal, props));
     expect(queryByText(/postgres:\/\//)).not.toBeNull();
+    // A `db2://` paste fills the fields (#786), so the list names it too.
+    expect(queryByText(/db2:\/\//)).not.toBeNull();
   });
 
   // ── 29b. verify-system is offered, and says what it verifies (D26) ──────
@@ -1011,6 +1321,85 @@ describe("ConnectionModal", () => {
     expect(container.querySelector("#user")).not.toBeNull();
   });
 
+  // ── 34b-quater. Kafka: a declared SASL select, the TLS panel, and no SSH tunnel (#1088 6.1) ──
+  //
+  // The select is drawn from the `kafka` entry's `fieldOptions` declaration, never from an
+  // `isKafka` branch, and the SSH panel is withheld through `offersSshTunnel`: a tunnel forwards one
+  // address, and a Kafka client reaches every broker at the address the broker advertises. The
+  // mock mirrors the declaration in `MOCK_FIELD_COPY`; the real entry is pinned in
+  // tests/unit/lib/db-ui-config.test.ts.
+
+  test("Kafka offers a SASL mechanism select with a None choice and the three mechanisms", () => {
+    mockFormOverrides = { type: "kafka" };
+    const { container, getByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    const select = container.querySelector("#saslMechanism") as HTMLSelectElement | null;
+    expect(select?.tagName).toBe("SELECT");
+    expect(container.querySelector('label[for="saslMechanism"]')?.textContent).toBe("SASL mechanism");
+    const options = [...(select?.options ?? [])].map((option) => ({ value: option.value, label: option.textContent }));
+    expect(options).toEqual([
+      { value: "", label: "None" },
+      { value: "PLAIN", label: "PLAIN" },
+      { value: "SCRAM-SHA-256", label: "SCRAM-SHA-256" },
+      { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
+    ]);
+    // The form holds no mechanism, so the select shows None.
+    expect(select?.value).toBe("");
+    // The declared hint is drawn under it and named by it, before the provider's refusal says so.
+    expect(getByTestId("saslMechanism-hint").textContent).toBe("PLAIN and SCRAM require TLS");
+    expect(select?.getAttribute("aria-describedby")).toBe("saslMechanism-hint");
+  });
+
+  test("choosing a mechanism, and then None, reaches the form state", () => {
+    mockFormOverrides = { type: "kafka" };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const select = container.querySelector("#saslMechanism") as HTMLSelectElement;
+
+    fireEvent.change(select, { target: { value: "SCRAM-SHA-512" } });
+    expect(mockSetSaslMechanism).toHaveBeenLastCalledWith("SCRAM-SHA-512");
+    fireEvent.change(select, { target: { value: "" } });
+    expect(mockSetSaslMechanism).toHaveBeenLastCalledWith("");
+    expect(mockSetSaslMechanism).toHaveBeenCalledTimes(2);
+  });
+
+  test("the select shows the mechanism the form holds", () => {
+    mockFormOverrides = { type: "kafka", saslMechanism: "SCRAM-SHA-256" };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect((container.querySelector("#saslMechanism") as HTMLSelectElement).value).toBe("SCRAM-SHA-256");
+  });
+
+  test("Kafka renders no Database box, and keeps the host, user and password boxes", () => {
+    mockFormOverrides = { type: "kafka" };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    // One connection is one cluster (#1088 6.1), so there is no database to name.
+    expect(container.querySelector("#database")).toBeNull();
+    expect(container.querySelector("#host")).not.toBeNull();
+    expect(container.querySelector("#user")).not.toBeNull();
+    expect(container.querySelector("#password")).not.toBeNull();
+  });
+
+  test("Kafka keeps the SSL/TLS panel and draws no SSH Tunnel toggle, even with a tunnel left on in the form", () => {
+    // `sshEnabled` and an open panel are what a tunnel switched on under another type leaves in the
+    // dialog's state; the toggle and the panel stay withheld all the same.
+    mockFormOverrides = { type: "kafka", sshEnabled: true, showSSH: true };
+    const { queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect(queryByText("SSL / TLS")).not.toBeNull();
+    expect(queryByText("SSH Tunnel")).toBeNull();
+    expect(queryByText("Enable SSH Tunnel")).toBeNull();
+  });
+
+  test("the control: an engine that offers a tunnel draws the SSH toggle and no SASL select", () => {
+    mockFormOverrides = { type: "postgres", sshEnabled: true, showSSH: true };
+    const { container, queryByText } = render(React.createElement(ConnectionModal, createDefaultProps()));
+
+    expect(queryByText("SSH Tunnel")).not.toBeNull();
+    expect(queryByText("Enable SSH Tunnel")).not.toBeNull();
+    expect(container.querySelector("#saslMechanism")).toBeNull();
+  });
+
   // ── 34c. Cassandra asks for the one field its driver cannot start without ──
   //
   // `cassandra-driver` 4.9.0 refuses to connect with no local data centre at all
@@ -1180,10 +1569,10 @@ describe("ConnectionModal", () => {
 
   /*
     The copy an engine DECLARES for a connection field (#1085). `DatabaseUIConfig.fieldLabels` and
-    `fieldHints` are read before this dialog's own words, and Prometheus is the one shipped entry
-    that declares either. So the census pins every shipped type's field labels and hints: Prometheus's
-    as `MOCK_FIELD_COPY` mirrors its declaration, and every other type's as they were before the
-    declaration existed. The cases after it declare copy for every field and read it back from each
+    `fieldHints` are read before this dialog's own words, and Prometheus and Kafka are the shipped
+    entries that declare either. So the census pins every shipped type's field labels and hints:
+    those two as `MOCK_FIELD_COPY` mirrors their declarations, and every other type's as they were
+    before the declaration existed. The cases after it declare copy for every field and read it back from each
     place a field is drawn; that copy is synthetic and lives in `mockDeclaredCopy`. The real table's
     copy is pinned in tests/unit/lib/db-ui-config.test.ts, which runs the real helpers.
   */
@@ -1203,6 +1592,9 @@ describe("ConnectionModal", () => {
       "authSource",
       "apiKeyId",
       "apiKeySecret",
+      "saslMechanism",
+      "allowInsecureAuth",
+      "dataServers",
     ] as const;
 
     /** Each connection-field label a render draws, keyed by the input it names (`htmlFor`). */
@@ -1232,7 +1624,7 @@ describe("ConnectionModal", () => {
     /**
      * [case, type, form state, labels drawn, declared hints drawn] for every shipped type, read off
      * the dialog's code under the field lists and the field copy this file mirrors. Every row but
-     * Prometheus's is what the dialog drew before the declaration existed.
+     * Prometheus's and Kafka's is what the dialog drew before the declaration existed.
      */
     const SHIPPED: readonly (readonly [
       string,
@@ -1245,6 +1637,8 @@ describe("ConnectionModal", () => {
       ["mysql", "mysql", {}, NETWORKED, {}],
       ["redis", "redis", {}, NETWORKED, {}],
       ["oracle", "oracle", {}, NETWORKED, {}],
+      // No password hint (#1303): the one declared hint is the consent box's, drawn while SSL Mode is disable.
+      ["db2", "db2", {}, NETWORKED, MOCK_FIELD_COPY.db2.fieldHints ?? {}],
       ["mssql", "mssql", {}, NETWORKED, {}],
       ["clickhouse", "clickhouse", {}, NETWORKED, {}],
       ["mongodb", "mongodb", {}, { ...NETWORKED, authSource: "Authentication Database" }, {}],
@@ -1287,6 +1681,54 @@ describe("ConnectionModal", () => {
         {},
         { ...CREDENTIALS_ONLY, user: "User", password: "Password or token" },
         { password: "Leave User empty to send this as a bearer token." },
+      ],
+      [
+        "kafka",
+        "kafka",
+        {},
+        { ...CREDENTIALS_ONLY, saslMechanism: "SASL mechanism" },
+        { saslMechanism: "PLAIN and SCRAM require TLS" },
+      ],
+      ["etcd", "etcd", {}, CREDENTIALS_ONLY, MOCK_FIELD_COPY.etcd.fieldHints ?? {}],
+      [
+        "milvus",
+        "milvus",
+        {},
+        { ...NETWORKED, password: "Password or token" },
+        MOCK_FIELD_COPY.milvus.fieldHints ?? {},
+      ],
+      // No User box and no Database box: Qdrant has neither (vector-family spec 6.2).
+      [
+        "qdrant",
+        "qdrant",
+        {},
+        { host: "Host & Instance", password: "API key or JWT" },
+        MOCK_FIELD_COPY.qdrant.fieldHints ?? {},
+      ],
+      // Every declared hint, the consent box's among them: the default form's SSL Mode is disable (InfluxDB spec A.3).
+      [
+        "influxdb",
+        "influxdb",
+        {},
+        { ...NETWORKED, password: "Password or token" },
+        MOCK_FIELD_COPY.influxdb.fieldHints ?? {},
+      ],
+      // No User box: InfluxDB 3's token is the password.
+      [
+        "influxdb3",
+        "influxdb3",
+        {},
+        { host: "Host & Instance", password: "Token", database: "Database Name" },
+        MOCK_FIELD_COPY.influxdb3.fieldHints ?? {},
+      ],
+      // No User box: Oxia has no user name (SB3-1.5). The default form's SSL Mode is disable, so the consent box and
+      // its hint are drawn too.
+      [
+        "oxia",
+        "oxia",
+        {},
+        { host: "Host & Instance", password: "Token", database: "Namespace", dataServers: "Data servers" },
+        MOCK_FIELD_COPY.oxia.fieldHints ?? {},
       ],
       ["sqlite", "sqlite", {}, FILE_PATH, {}],
       ["duckdb", "duckdb", {}, FILE_PATH, {}],
@@ -1364,6 +1806,14 @@ describe("ConnectionModal", () => {
         labelsFor("host", "user", "password", "apiKeyId", "apiKeySecret"),
         ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
       ],
+      [
+        "kafka",
+        "kafka",
+        {},
+        labelsFor("host", "user", "password", "saslMechanism"),
+        ["host", "port", "user", "password", "saslMechanism"],
+      ],
+      ["etcd", "etcd", {}, labelsFor("host", "user", "password"), ["host", "port", "user", "password"]],
       ["sqlite", "sqlite", {}, labelsFor("database"), ["database"]],
     ];
 
@@ -1429,5 +1879,147 @@ describe("ConnectionModal", () => {
       expect(queryByText(/turso db tokens create/)).not.toBeNull();
       expect(queryByText("Auth Token")).not.toBeNull();
     });
+
+    test("draws the Data servers box only for a type that takes the field, labelled and hinted from its declaration", () => {
+      mockFormOverrides = { type: "etcd", dataServers: "a.internal:6648" };
+      mockDeclaredFields = { etcd: ["host", "port", "user", "password", "dataServers"] };
+      mockDeclaredCopy = {
+        fieldLabels: { dataServers: "Declared label for dataServers" },
+        fieldHints: { dataServers: "Declared hint for dataServers." },
+      };
+      const { container, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+      const box = container.querySelector("#dataServers") as HTMLInputElement;
+      expect(box.value).toBe("a.internal:6648");
+      expect(box.getAttribute("autocomplete")).toBe("off");
+      expect(box.getAttribute("spellcheck")).toBe("false");
+      expect(box.getAttribute("aria-describedby")).toBe("dataServers-hint");
+      expect(container.querySelector('label[for="dataServers"]')?.textContent).toBe("Declared label for dataServers");
+      expect(container.querySelector('[data-testid="dataServers-hint"]')?.textContent).toBe(
+        "Declared hint for dataServers.",
+      );
+      fireEvent.change(box, { target: { value: "b.internal:6648" } });
+      expect(mockSetDataServers).toHaveBeenCalledWith("b.internal:6648");
+
+      // With no declared copy the dialog's own word labels it and no hint is drawn.
+      mockDeclaredCopy = {};
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect(container.querySelector('label[for="dataServers"]')?.textContent).toBe("Data servers");
+      expect(container.querySelector("#dataServers")?.getAttribute("aria-describedby")).toBeNull();
+
+      // Another engine draws no such box.
+      mockFormOverrides = { type: "postgres" };
+      mockDeclaredFields = {};
+      rerender(React.createElement(ConnectionModal, createDefaultProps()));
+      expect(container.querySelector("#dataServers")).toBeNull();
+    });
+  });
+});
+
+describe("ConnectionModal: the Host box address and the credential warning", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  beforeEach(() => {
+    mockFormOverrides = {};
+    mockDeclaredCopy = {};
+    mockDeclaredFields = {};
+    mockSetHost.mockClear();
+    mockSettleHost.mockClear();
+    mockTakeHostAddress.mockReset();
+    mockTakeHostAddress.mockImplementation(() => false);
+  });
+
+  test("settles the Host box when the user leaves it, so a typed address is split before Test and Save", () => {
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    fireEvent.input(host, { target: { value: "https://localhost" }, inputType: "insertText" });
+    expect(mockSettleHost).not.toHaveBeenCalled();
+    fireEvent.blur(host);
+    expect(mockSettleHost).toHaveBeenCalledTimes(1);
+  });
+
+  test("hands the Host box's text to the form with the input kind that delivered it", () => {
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    fireEvent.input(host, { target: { value: "http://localhost:6333" }, inputType: "insertFromPaste" });
+    expect(mockSetHost).toHaveBeenLastCalledWith("http://localhost:6333", "insertFromPaste");
+  });
+
+  test("offers a pasted address to the form as the paste's own text, and cancels the box's insertion when taken", () => {
+    mockTakeHostAddress.mockImplementation(() => true);
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const proceeded = fireEvent.paste(host, {
+      clipboardData: { getData: (format: string) => (format === "text/plain" ? "https://cluster.example.test" : "") },
+    });
+    expect(mockTakeHostAddress).toHaveBeenCalledWith("https://cluster.example.test");
+    expect(proceeded).toBe(false);
+  });
+
+  test("lets the box insert a paste the form does not take", () => {
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const proceeded = fireEvent.paste(host, { clipboardData: { getData: () => "cluster.example.test" } });
+    expect(mockTakeHostAddress).toHaveBeenCalledWith("cluster.example.test");
+    expect(proceeded).toBe(true);
+  });
+
+  test("offers a dropped address to the form as the drop's own text", () => {
+    mockTakeHostAddress.mockImplementation(() => true);
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const proceeded = fireEvent.drop(host, {
+      dataTransfer: { getData: (format: string) => (format === "text/plain" ? "http://h.example.test:6333" : "") },
+    });
+    expect(mockTakeHostAddress).toHaveBeenCalledWith("http://h.example.test:6333");
+    expect(proceeded).toBe(false);
+  });
+
+  test("draws the Host box's refusal right under the box, tied to it as its description", () => {
+    mockFormOverrides = { hostError: "Host takes no user name or password inside the address." };
+    const { container, getByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    const error = getByTestId("host-error");
+    expect(error.textContent).toBe("Host takes no user name or password inside the address.");
+    expect(error.getAttribute("role")).toBe("alert");
+    expect(host.getAttribute("aria-describedby")?.split(" ")).toContain(error.id);
+    expect(host.getAttribute("aria-invalid")).toBe("true");
+    // Under the Host and Port row, in the Host field's own block, not in the result banner far below.
+    expect(error.parentElement).toBe(host.parentElement?.parentElement ?? null);
+  });
+
+  test("keeps the declared host hint in the box's description beside the refusal", () => {
+    mockFormOverrides = { hostError: "Refused." };
+    mockDeclaredCopy = { fieldHints: { host: "Declared hint for host." } };
+    const { container } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    expect(host.getAttribute("aria-describedby")).toBe("host-hint host-error");
+  });
+
+  test("draws no Host refusal and marks the box valid when the form has none", () => {
+    const { container, queryByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    const host = container.querySelector("#host") as HTMLInputElement;
+    expect(queryByTestId("host-error")).toBeNull();
+    expect(host.hasAttribute("aria-invalid")).toBe(false);
+    expect(host.hasAttribute("aria-describedby")).toBe(false);
+  });
+
+  test("draws the form's credential warning beside the password, apart from the test result", () => {
+    mockFormOverrides = { credentialWarning: "Credential warning: synthetic sentence." };
+    const { container, getByTestId, queryByTestId } = render(
+      React.createElement(ConnectionModal, createDefaultProps()),
+    );
+    const warning = getByTestId("credential-warning");
+    expect(warning.textContent).toBe("Credential warning: synthetic sentence.");
+    // An `output` element: its implicit role is status, a polite live region, with no role attribute written.
+    expect(warning.tagName).toBe("OUTPUT");
+    expect(warning.parentElement).toBe((container.querySelector("#password") as HTMLElement).parentElement);
+    expect(queryByTestId("connection-test-result")).toBeNull();
+  });
+
+  test("draws no credential warning when the form has none", () => {
+    const { queryByTestId } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(queryByTestId("credential-warning")).toBeNull();
   });
 });

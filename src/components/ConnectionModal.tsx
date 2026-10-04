@@ -33,8 +33,11 @@ import { cn } from "@/lib/utils";
 import {
   connectionFieldHint,
   connectionFieldLabel,
+  connectionFieldPlaceholder,
   getDBConfig,
   isFileBased,
+  offersSshTunnel,
+  readOnlyHint,
   takesConnectionField,
   type ConnectionField,
   type DatabaseUIConfig,
@@ -76,6 +79,12 @@ function describedByHint(config: DatabaseUIConfig, field: ConnectionField): stri
 }
 
 /**
+ * The id of the Host box's refusal, drawn right under the box so the person sees why an address was not split
+ * without scrolling to the result banner, which repeats it.
+ */
+const HOST_ERROR_ID = "host-error";
+
+/**
  * The hint an engine DECLARES for one connection field (#1085), drawn under that field in this
  * panel's hint idiom: the muted paragraph `ssl-mode-hint` is, with a test id, and an id the field's
  * input names. Nothing is drawn where the engine declares none. The per-type hints the `isLibSQL`,
@@ -89,6 +98,52 @@ function DeclaredFieldHint({ config, field }: { readonly config: DatabaseUIConfi
     <p id={fieldHintId(field)} data-testid={fieldHintId(field)} className="text-xs text-fg-muted">
       {hint}
     </p>
+  );
+}
+
+/**
+ * A connection field an engine DECLARES as a select (#1088): the choices of its `fieldOptions`
+ * after an empty "None" choice, labelled and hinted the way every other field in this panel is.
+ * The caller binds it to that field's own state, because the dialog keeps each field in a state
+ * of its own. Kafka's SASL mechanism is the one field declared this way.
+ */
+function DeclaredFieldSelect({
+  config,
+  field,
+  fallbackLabel,
+  value,
+  onChange,
+}: {
+  readonly config: DatabaseUIConfig;
+  readonly field: ConnectionField;
+  readonly fallbackLabel: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center gap-2 mb-1">
+        <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+        <Label htmlFor={field} className="text-xs font-medium text-fg-muted">
+          {connectionFieldLabel(config, field, fallbackLabel)}
+        </Label>
+      </div>
+      <select
+        id={field}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-describedby={describedByHint(config, field)}
+        className="h-10 w-full rounded-md bg-panel border border-hairline focus:border-brand-tint/50 transition-all text-xs text-fg px-3"
+      >
+        <option value="">None</option>
+        {(config.fieldOptions?.[field] ?? []).map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <DeclaredFieldHint config={config} field={field} />
+    </div>
   );
 }
 
@@ -119,6 +174,9 @@ export function ConnectionModal({
     setName,
     host,
     setHost,
+    takeHostAddress,
+    settleHost,
+    hostError,
     port,
     setPort,
     user,
@@ -133,6 +191,12 @@ export function ConnectionModal({
     setQueryTimeout,
     skipObjectScan,
     setSkipObjectScan,
+    readOnly,
+    setReadOnly,
+    allowInsecureAuth,
+    setAllowInsecureAuth,
+    dataServers,
+    setDataServers,
     connectionString,
     setConnectionString,
     mongoConnectionMode,
@@ -177,6 +241,8 @@ export function ConnectionModal({
     setApiKeyId,
     apiKeySecret,
     setApiKeySecret,
+    saslMechanism,
+    setSaslMechanism,
 
     // SSH Tunnel
     showSSH,
@@ -205,6 +271,8 @@ export function ConnectionModal({
 
     // Derived data
     dbTypes,
+    readOnlyOffered,
+    credentialWarning,
   } = useConnectionForm({ isOpen, onClose, onConnect, editConnection, onTestConnection });
 
   // Couchbase pins one bucket per connection (issue #262, decision 4), so the shared
@@ -242,9 +310,8 @@ export function ConnectionModal({
 
   // What an engine DECLARES for a connection field wins over this dialog's own words (#1085): an
   // engine that names a field differently says so on `DatabaseUIConfig` instead of growing another
-  // `isX` branch above. The branches above stay the fallback: Prometheus is the one entry that
-  // declares anything, so every other engine's labels below read as they did before the
-  // declaration existed.
+  // `isX` branch above. The branches above stay the fallback, so an engine that declares nothing
+  // reads below exactly as it did before the declaration existed.
   const uiConfig = getDBConfig(type);
   const databaseLabel = connectionFieldLabel(uiConfig, "database", `${databaseFieldLabel} Name`);
 
@@ -279,7 +346,7 @@ export function ConnectionModal({
             {!isEditMode && (
               <button
                 onClick={() => setShowPasteInput(!showPasteInput)}
-                className="flex items-center gap-1.5 text-xs font-mediumr text-brand hover:text-brand-bright transition-colors px-2 py-1 rounded-md hover:bg-brand-tint/10"
+                className="flex items-center gap-1.5 text-xs font-medium text-brand hover:text-brand-bright transition-colors px-2 py-1 rounded-md hover:bg-brand-tint/10"
               >
                 <ClipboardPaste strokeWidth={1.5} className="w-3 h-3" />
                 Paste URL
@@ -298,7 +365,7 @@ export function ConnectionModal({
               className="mb-6 overflow-hidden"
             >
               <div className="p-3 rounded-lg border border-brand-tint/20 bg-brand-tint/5 space-y-2">
-                <Label className="text-xs font-mediumr text-brand">Paste Connection URL</Label>
+                <Label className="text-xs font-medium text-brand">Paste Connection URL</Label>
                 <div className="flex gap-2">
                   <Input
                     value={pasteInput}
@@ -316,7 +383,7 @@ export function ConnectionModal({
                   </Button>
                 </div>
                 <p className="text-xs text-fg-muted">
-                  Supports: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://
+                  Supports: postgres://, mysql://, mongodb://, redis://, oracle://, mssql://, db2://
                 </p>
               </div>
             </motion.div>
@@ -328,7 +395,7 @@ export function ConnectionModal({
           <div className="space-y-2">
             <div className="flex items-center gap-2 mb-1">
               <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-              <Label htmlFor="name" className="text-xs font-mediumr text-fg-muted">
+              <Label htmlFor="name" className="text-xs font-medium text-fg-muted">
                 Connection Name
               </Label>
             </div>
@@ -342,7 +409,7 @@ export function ConnectionModal({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="queryTimeout" className="text-xs font-mediumr text-fg-muted">
+            <Label htmlFor="queryTimeout" className="text-xs font-medium text-fg-muted">
               Query Timeout (ms)
             </Label>
             <Input
@@ -378,23 +445,48 @@ export function ConnectionModal({
                 aria-describedby="skipObjectScan-hint"
                 className="rounded border-edge bg-panel"
               />
-              <span className="text-xs font-mediumr text-fg-muted">Do not read the object list on connect</span>
+              <span className="text-xs font-medium text-fg-muted">Do not read the object list on connect</span>
             </label>
             <p id="skipObjectScan-hint" className="text-xs text-fg-muted">
               The editor still works. The object panel offers a load action instead.
             </p>
           </div>
 
+          {/*
+            The read-only mode (#1089), drawn only where the form offers it: an engine whose provider
+            enforces the mode, and never a copy of a seed, whose mode the server re-resolves from the
+            operator's file. Beside the no-scan choice, because it too is about what this connection
+            does rather than how it is reached.
+          */}
+          {readOnlyOffered && (
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  id="readOnly"
+                  type="checkbox"
+                  checked={readOnly}
+                  onChange={(e) => setReadOnly(e.target.checked)}
+                  aria-describedby="readOnly-hint"
+                  className="rounded border-edge bg-panel"
+                />
+                <span className="text-xs font-medium text-fg-muted">Read-only</span>
+              </label>
+              <p id="readOnly-hint" className="text-xs text-fg-muted">
+                {readOnlyHint(uiConfig)}
+              </p>
+            </div>
+          )}
+
           {/* Environment Selector */}
           <div className="space-y-2">
-            <Label className="text-xs font-mediumr text-fg-muted">Environment</Label>
+            <Label className="text-xs font-medium text-fg-muted">Environment</Label>
             <div className="flex flex-wrap items-center gap-2">
               {(Object.keys(ENVIRONMENT_COLORS) as ConnectionEnvironment[]).map((env) => (
                 <button
                   key={env}
                   onClick={() => setEnvironment(env)}
                   className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
                     environment === env
                       ? "border-edge bg-fill text-fg"
                       : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
@@ -480,7 +572,7 @@ export function ConnectionModal({
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
                       <Link strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                      <Label htmlFor="connectionString" className="text-xs font-mediumr text-fg-muted">
+                      <Label htmlFor="connectionString" className="text-xs font-medium text-fg-muted">
                         {connectionFieldLabel(uiConfig, "connectionString", "Connection URI")}
                       </Label>
                     </div>
@@ -497,7 +589,7 @@ export function ConnectionModal({
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
                       <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                      <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
+                      <Label htmlFor="database" className="text-xs font-medium text-fg-muted">
                         {databaseLabel} (optional override)
                       </Label>
                     </div>
@@ -535,7 +627,7 @@ export function ConnectionModal({
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 mb-1">
                       <Globe strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                      <Label htmlFor="host" className="text-xs font-mediumr text-fg-muted">
+                      <Label htmlFor="host" className="text-xs font-medium text-fg-muted">
                         {connectionFieldLabel(uiConfig, "host", "Host & Instance")}
                       </Label>
                     </div>
@@ -543,10 +635,22 @@ export function ConnectionModal({
                       <Input
                         id="host"
                         value={host}
-                        onChange={(e) => setHost(e.target.value)}
+                        onChange={(e) => setHost(e.target.value, (e.nativeEvent as InputEvent).inputType)}
+                        onBlur={settleHost}
+                        onPaste={(e) => {
+                          if (takeHostAddress(e.clipboardData.getData("text/plain"))) e.preventDefault();
+                        }}
+                        onDrop={(e) => {
+                          if (takeHostAddress(e.dataTransfer.getData("text/plain"))) e.preventDefault();
+                        }}
                         placeholder="localhost"
                         autoComplete="off"
-                        aria-describedby={describedByHint(uiConfig, "host")}
+                        aria-invalid={hostError === undefined ? undefined : true}
+                        aria-describedby={
+                          [describedByHint(uiConfig, "host"), hostError === undefined ? undefined : HOST_ERROR_ID]
+                            .filter((id) => id !== undefined)
+                            .join(" ") || undefined
+                        }
                         className="md:col-span-3 h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
                       <Input
@@ -558,9 +662,31 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
                     </div>
+                    {hostError !== undefined && (
+                      <p id={HOST_ERROR_ID} data-testid={HOST_ERROR_ID} role="alert" className="text-xs text-danger">
+                        {hostError}
+                      </p>
+                    )}
                     <DeclaredFieldHint config={uiConfig} field="host" />
                     <DeclaredFieldHint config={uiConfig} field="port" />
                   </div>
+
+                  {/*
+                    Only when the engine takes it, the same rule `buildConnection` writes it by,
+                    and drawn from the engine's declaration rather than an `isX` branch: Kafka's
+                    SASL mechanism, whose None choice writes no mechanism at all.
+                  */}
+                  {takesConnectionField(type, "saslMechanism") && (
+                    <DeclaredFieldSelect
+                      config={uiConfig}
+                      field="saslMechanism"
+                      fallbackLabel="SASL Mechanism"
+                      value={saslMechanism}
+                      onChange={(value) =>
+                        setSaslMechanism(value as NonNullable<DatabaseConnection["saslMechanism"]> | "")
+                      }
+                    />
+                  )}
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/*
@@ -572,7 +698,7 @@ export function ConnectionModal({
                       <div className="space-y-2">
                         <div className="flex items-center gap-2 mb-1">
                           <Key strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                          <Label htmlFor="user" className="text-xs font-mediumr text-fg-muted">
+                          <Label htmlFor="user" className="text-xs font-medium text-fg-muted">
                             {connectionFieldLabel(uiConfig, "user", "Username")}
                           </Label>
                         </div>
@@ -591,7 +717,7 @@ export function ConnectionModal({
                     <div className={takesConnectionField(type, "user") ? "space-y-2" : "space-y-2 md:col-span-2"}>
                       <div className="flex items-center gap-2 mb-1">
                         <ShieldCheck strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="password" className="text-xs font-mediumr text-fg-muted">
+                        <Label htmlFor="password" className="text-xs font-medium text-fg-muted">
                           {connectionFieldLabel(uiConfig, "password", passwordFieldLabel)}
                         </Label>
                       </div>
@@ -608,6 +734,23 @@ export function ConnectionModal({
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs"
                       />
                       <DeclaredFieldHint config={uiConfig} field="password" />
+                      {/*
+                        A credential the engine declares a warning for (src/lib/db/credential-warnings.ts),
+                        drawn before Test Connection and apart from its result: a caution about what was
+                        typed, which blocks nothing. An `output` rather than a p with role="status": it
+                        carries the polite live region natively, and jsx-a11y's prefer-tag-over-role is an
+                        error in this repository.
+                      */}
+                      {credentialWarning !== undefined && (
+                        <output
+                          id="credential-warning"
+                          data-testid="credential-warning"
+                          className="flex items-start gap-1.5 text-xs text-warning"
+                        >
+                          <TriangleAlert strokeWidth={1.5} className="w-3.5 h-3.5 shrink-0" />
+                          <span>{credentialWarning}</span>
+                        </output>
+                      )}
                       {/*
                         Measured on Trino 476 with authentication DISABLED: a request
                         carrying `Authorization: Basic` over plain HTTP is answered 401,
@@ -634,15 +777,16 @@ export function ConnectionModal({
 
                   {/*
                     Only when the engine takes it. Druid and the two search engines address
-                    a datasource or an index by name in the statement, and libSQL addresses
-                    the whole database by URL, so none of the four has a database to name
-                    here - and `buildConnection` never wrote what this box collected.
+                    a datasource or an index by name in the statement, libSQL addresses the
+                    whole database by URL, a Prometheus server holds one TSDB, and a Kafka
+                    connection is one cluster, so none of them has a database to name here -
+                    and `buildConnection` never wrote what this box collected.
                   */}
                   {takesConnectionField(type, "database") && (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
                         <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="database" className="text-xs font-mediumr text-fg-muted">
+                        <Label htmlFor="database" className="text-xs font-medium text-fg-muted">
                           {databaseLabel}
                         </Label>
                       </div>
@@ -650,7 +794,7 @@ export function ConnectionModal({
                         id="database"
                         value={database}
                         onChange={(e) => setDatabase(e.target.value)}
-                        placeholder={databaseFieldPlaceholder}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "database", databaseFieldPlaceholder)}
                         aria-describedby={describedByHint(uiConfig, "database")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
@@ -669,11 +813,37 @@ export function ConnectionModal({
                     </div>
                   )}
 
+                  {/*
+                    A cluster's data-server addresses, drawn where the engine takes the field: the same list
+                    `buildConnection` writes from. Its label and hint are the engine's own declaration; the
+                    provider parses and refuses the text.
+                  */}
+                  {takesConnectionField(type, "dataServers") && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <Server strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
+                        <Label htmlFor="dataServers" className="text-xs font-medium text-fg-muted">
+                          {connectionFieldLabel(uiConfig, "dataServers", "Data servers")}
+                        </Label>
+                      </div>
+                      <Input
+                        id="dataServers"
+                        value={dataServers}
+                        onChange={(e) => setDataServers(e.target.value)}
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-describedby={describedByHint(uiConfig, "dataServers")}
+                        className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
+                      />
+                      <DeclaredFieldHint config={uiConfig} field="dataServers" />
+                    </div>
+                  )}
+
                   {takesConnectionField(type, "schema") && (
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 mb-1">
                         <Database strokeWidth={1.5} className="w-3 h-3 text-fg-muted" />
-                        <Label htmlFor="schema" className="text-xs font-mediumr text-fg-muted">
+                        <Label htmlFor="schema" className="text-xs font-medium text-fg-muted">
                           {connectionFieldLabel(uiConfig, "schema", "Schema Name")}
                         </Label>
                       </div>
@@ -843,7 +1013,7 @@ export function ConnectionModal({
                     <div className="p-3 rounded-lg border border-hue-orange-tint/10 bg-hue-orange-tint/5 space-y-3">
                       {type === "oracle" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-fg-muted">
+                          <Label className="text-xs font-medium text-fg-muted">
                             {connectionFieldLabel(uiConfig, "serviceName", "Service Name")}
                           </Label>
                           <Input
@@ -861,7 +1031,7 @@ export function ConnectionModal({
                       )}
                       {type === "mssql" && (
                         <div className="space-y-1.5">
-                          <Label className="text-xs font-mediumr text-fg-muted">
+                          <Label className="text-xs font-medium text-fg-muted">
                             {connectionFieldLabel(uiConfig, "instanceName", "Instance Name")}
                           </Label>
                           <Input
@@ -884,7 +1054,7 @@ export function ConnectionModal({
             </div>
           )}
 
-          {/* SSL/TLS & SSH Panels - only for non-file-based providers */}
+          {/* SSL/TLS & SSH Panels - only for non-file-based providers, the SSH half only where offered */}
           {!isFileBased(type) && (
             <div className="space-y-2">
               {/* SSL/TLS Toggle */}
@@ -912,7 +1082,7 @@ export function ConnectionModal({
                   >
                     <div className="p-3 rounded-lg border border-hue-emerald-tint/10 bg-hue-emerald-tint/5 space-y-3">
                       <div className="space-y-2">
-                        <Label className="text-xs font-mediumr text-fg-muted">SSL Mode</Label>
+                        <Label className="text-xs font-medium text-fg-muted">SSL Mode</Label>
                         <div className="flex flex-wrap gap-1.5">
                           {(["disable", "require", "verify-system", "verify-ca", "verify-full"] as SSLMode[]).map(
                             (mode) => (
@@ -921,7 +1091,7 @@ export function ConnectionModal({
                                 type="button"
                                 onClick={() => setSSLMode(mode)}
                                 className={cn(
-                                  "px-2.5 py-1.5 rounded-md text-xs font-mediumr transition-all border",
+                                  "px-2.5 py-1.5 rounded-md text-xs font-medium transition-all border",
                                   sslMode === mode
                                     ? "border-hue-emerald-tint/30 bg-hue-emerald-tint/10 text-hue-emerald"
                                     : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
@@ -939,7 +1109,7 @@ export function ConnectionModal({
                       {sslMode !== "disable" && (
                         <div className="space-y-3">
                           <div className="space-y-1.5">
-                            <Label className="text-xs font-mediumr text-fg-muted">CA Certificate (PEM)</Label>
+                            <Label className="text-xs font-medium text-fg-muted">CA Certificate (PEM)</Label>
                             <textarea
                               value={caCert}
                               onChange={(e) => setCaCert(e.target.value)}
@@ -951,7 +1121,7 @@ export function ConnectionModal({
                           {(sslMode === "verify-ca" || sslMode === "verify-full") && (
                             <>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Client Certificate (PEM)</Label>
+                                <Label className="text-xs font-medium text-fg-muted">Client Certificate (PEM)</Label>
                                 <textarea
                                   value={clientCert}
                                   onChange={(e) => setClientCert(e.target.value)}
@@ -961,7 +1131,7 @@ export function ConnectionModal({
                                 />
                               </div>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Client Private Key (PEM)</Label>
+                                <Label className="text-xs font-medium text-fg-muted">Client Private Key (PEM)</Label>
                                 <textarea
                                   value={clientKey}
                                   onChange={(e) => setClientKey(e.target.value)}
@@ -979,144 +1149,178 @@ export function ConnectionModal({
                 )}
               </AnimatePresence>
 
-              {/* SSH Tunnel Toggle */}
-              <button
-                type="button"
-                onClick={() => setShowSSH(!showSSH)}
-                className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
-              >
-                <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
-                <span>SSH Tunnel</span>
-                {sshEnabled && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-hue-purple-tint/10 text-hue-purple border border-hue-purple-tint/20">
-                    ON
-                  </span>
-                )}
-                <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", showSSH && "rotate-180")} />
-              </button>
-              <AnimatePresence>
-                {showSSH && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0 }}
-                    animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }}
-                    className="overflow-hidden"
+              {/*
+                The consent to a cleartext password (#786), outside the accordion so it is seen while
+                SSL Mode is disable: the provider of a type that takes it refuses such a connection
+                without it, and the refusal names this box. The sentence under it is the type's own
+                declared hint (InfluxDB spec R4), never a fallback; tests/unit/lib/db-ui-config.test.ts
+                holds every type that takes the field to declaring one.
+              */}
+              {takesConnectionField(type, "allowInsecureAuth") && sslMode === "disable" && (
+                <div className="space-y-1 p-3 rounded-lg border border-warning-tint/10 bg-warning-tint/5">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      id="allowInsecureAuth"
+                      type="checkbox"
+                      checked={allowInsecureAuth}
+                      onChange={(e) => setAllowInsecureAuth(e.target.checked)}
+                      aria-describedby={describedByHint(uiConfig, "allowInsecureAuth")}
+                      className="rounded border-edge bg-panel"
+                    />
+                    <span className="text-xs font-medium text-warning">Send the password without TLS</span>
+                  </label>
+                  <DeclaredFieldHint config={uiConfig} field="allowInsecureAuth" />
+                </div>
+              )}
+
+              {/*
+                The SSH half only where the engine offers a tunnel (#1088). A Kafka client reaches
+                every broker at the address that broker advertises, which a tunnel does not carry,
+                so its TLS panel above stays and this does not; `buildConnection` reads the same
+                rule, so a tunnel switched on under another engine is not sent either.
+              */}
+              {offersSshTunnel(type) && (
+                <>
+                  {/* SSH Tunnel Toggle */}
+                  <button
+                    type="button"
+                    onClick={() => setShowSSH(!showSSH)}
+                    className="flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-hairline hover:border-hairline-strong bg-panel text-xs font-medium text-fg-tertiary hover:text-fg transition-all"
                   >
-                    <div className="p-3 rounded-lg border border-hue-purple-tint/10 bg-hue-purple-tint/5 space-y-3">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={sshEnabled}
-                          onChange={(e) => setSSHEnabled(e.target.checked)}
-                          className="rounded border-edge bg-panel"
-                        />
-                        <span className="text-xs font-medium text-fg-secondary">Enable SSH Tunnel</span>
-                      </label>
-                      {sshEnabled && (
-                        <div className="space-y-3">
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                            <div className="md:col-span-3 space-y-1.5">
-                              <Label className="text-xs font-mediumr text-fg-muted">SSH Host</Label>
-                              <Input
-                                value={sshHost}
-                                onChange={(e) => setSSHHost(e.target.value)}
-                                placeholder="bastion.example.com"
-                                autoComplete="off"
-                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
-                              />
-                            </div>
-                            <div className="space-y-1.5">
-                              <Label className="text-xs font-mediumr text-fg-muted">Port</Label>
-                              <Input
-                                value={sshPort}
-                                onChange={(e) => setSSHPort(e.target.value)}
-                                autoComplete="off"
-                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs font-mono"
-                              />
-                            </div>
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs font-mediumr text-fg-muted">Username</Label>
-                            <Input
-                              value={sshUsername}
-                              onChange={(e) => setSSHUsername(e.target.value)}
-                              placeholder="ubuntu"
-                              autoComplete="off"
-                              className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                    <Terminal strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
+                    <span>SSH Tunnel</span>
+                    {sshEnabled && (
+                      <span className="ml-1 px-1.5 py-0.5 rounded text-[0.625rem] bg-hue-purple-tint/10 text-hue-purple border border-hue-purple-tint/20">
+                        ON
+                      </span>
+                    )}
+                    <ChevronDown className={cn("w-3 h-3 ml-auto transition-transform", showSSH && "rotate-180")} />
+                  </button>
+                  <AnimatePresence>
+                    {showSSH && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="overflow-hidden"
+                      >
+                        <div className="p-3 rounded-lg border border-hue-purple-tint/10 bg-hue-purple-tint/5 space-y-3">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={sshEnabled}
+                              onChange={(e) => setSSHEnabled(e.target.checked)}
+                              className="rounded border-edge bg-panel"
                             />
-                          </div>
-                          <div className="space-y-2">
-                            <Label className="text-xs font-mediumr text-fg-muted">Auth Method</Label>
-                            <div className="flex gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setSSHAuthMethod("password")}
-                                className={cn(
-                                  "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
-                                  sshAuthMethod === "password"
-                                    ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
-                                    : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
-                                )}
-                              >
-                                Password
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setSSHAuthMethod("privateKey")}
-                                className={cn(
-                                  "flex-1 px-3 py-1.5 rounded-md text-xs font-mediumr transition-all border",
-                                  sshAuthMethod === "privateKey"
-                                    ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
-                                    : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
-                                )}
-                              >
-                                Private Key
-                              </button>
-                            </div>
-                          </div>
-                          {sshAuthMethod === "password" ? (
-                            <div className="space-y-1.5">
-                              <Label className="text-xs font-mediumr text-fg-muted">SSH Password</Label>
-                              <Input
-                                type="password"
-                                value={sshPassword}
-                                onChange={(e) => setSSHPassword(e.target.value)}
-                                placeholder="••••••••"
-                                autoComplete="new-password"
-                                className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
-                              />
-                            </div>
-                          ) : (
+                            <span className="text-xs font-medium text-fg-secondary">Enable SSH Tunnel</span>
+                          </label>
+                          {sshEnabled && (
                             <div className="space-y-3">
-                              <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Private Key (PEM)</Label>
-                                <textarea
-                                  value={sshPrivateKey}
-                                  onChange={(e) => setSSHPrivateKey(e.target.value)}
-                                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
-                                  rows={4}
-                                  className="w-full rounded-md bg-panel border border-hairline focus:border-hue-purple-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
-                                />
+                              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                <div className="md:col-span-3 space-y-1.5">
+                                  <Label className="text-xs font-medium text-fg-muted">SSH Host</Label>
+                                  <Input
+                                    value={sshHost}
+                                    onChange={(e) => setSSHHost(e.target.value)}
+                                    placeholder="bastion.example.com"
+                                    autoComplete="off"
+                                    className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs font-medium text-fg-muted">Port</Label>
+                                  <Input
+                                    value={sshPort}
+                                    onChange={(e) => setSSHPort(e.target.value)}
+                                    autoComplete="off"
+                                    className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs font-mono"
+                                  />
+                                </div>
                               </div>
                               <div className="space-y-1.5">
-                                <Label className="text-xs font-mediumr text-fg-muted">Passphrase (optional)</Label>
+                                <Label className="text-xs font-medium text-fg-muted">Username</Label>
                                 <Input
-                                  type="password"
-                                  value={sshPassphrase}
-                                  onChange={(e) => setSSHPassphrase(e.target.value)}
-                                  placeholder="Key passphrase (if encrypted)"
-                                  autoComplete="new-password"
+                                  value={sshUsername}
+                                  onChange={(e) => setSSHUsername(e.target.value)}
+                                  placeholder="ubuntu"
+                                  autoComplete="off"
                                   className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
                                 />
                               </div>
+                              <div className="space-y-2">
+                                <Label className="text-xs font-medium text-fg-muted">Auth Method</Label>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => setSSHAuthMethod("password")}
+                                    className={cn(
+                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                                      sshAuthMethod === "password"
+                                        ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
+                                        : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
+                                    )}
+                                  >
+                                    Password
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSSHAuthMethod("privateKey")}
+                                    className={cn(
+                                      "flex-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all border",
+                                      sshAuthMethod === "privateKey"
+                                        ? "border-hue-purple-tint/30 bg-hue-purple-tint/10 text-hue-purple"
+                                        : "border-transparent text-fg-muted hover:text-fg-secondary hover:bg-fill",
+                                    )}
+                                  >
+                                    Private Key
+                                  </button>
+                                </div>
+                              </div>
+                              {sshAuthMethod === "password" ? (
+                                <div className="space-y-1.5">
+                                  <Label className="text-xs font-medium text-fg-muted">SSH Password</Label>
+                                  <Input
+                                    type="password"
+                                    value={sshPassword}
+                                    onChange={(e) => setSSHPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    autoComplete="new-password"
+                                    className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="space-y-3">
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs font-medium text-fg-muted">Private Key (PEM)</Label>
+                                    <textarea
+                                      value={sshPrivateKey}
+                                      onChange={(e) => setSSHPrivateKey(e.target.value)}
+                                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste private key here...&#10;-----END OPENSSH PRIVATE KEY-----"
+                                      rows={4}
+                                      className="w-full rounded-md bg-panel border border-hairline focus:border-hue-purple-tint/50 text-xs font-mono text-fg-secondary p-2 resize-none placeholder:text-fg-subtle"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label className="text-xs font-medium text-fg-muted">Passphrase (optional)</Label>
+                                    <Input
+                                      type="password"
+                                      value={sshPassphrase}
+                                      onChange={(e) => setSSHPassphrase(e.target.value)}
+                                      placeholder="Key passphrase (if encrypted)"
+                                      autoComplete="new-password"
+                                      className="h-9 bg-panel border-hairline focus:border-hue-purple-tint/50 text-xs"
+                                    />
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           )}
                         </div>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </>
+              )}
             </div>
           )}
 

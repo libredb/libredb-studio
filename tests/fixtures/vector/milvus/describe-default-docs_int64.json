@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T14:40:45.520Z",
+    "runtime": "bun 1.4.2",
+    "surface": "collections/describe of default.docs_int64",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/collections/describe",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"dbName\":\"default\",\"collectionName\":\"docs_int64\"}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 1823,
+    "body": "{\"code\":0,\"data\":{\"aliases\":[],\"autoId\":true,\"collectionID\":469506719193499070,\"collectionName\":\"docs_int64\",\"consistencyLevel\":\"Bounded\",\"description\":\"int64 auto_id key, scalar fields of every kind, a dynamic field\",\"enableDynamicField\":true,\"externalSource\":\"\",\"externalSpec\":\"\",\"fields\":[{\"autoId\":true,\"clusteringKey\":false,\"description\":\"\",\"id\":100,\"name\":\"id\",\"nullable\":false,\"partitionKey\":false,\"primaryKey\":true,\"type\":\"Int64\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":101,\"name\":\"seq\",\"nullable\":false,\"partitionKey\":false,\"primaryKey\":false,\"type\":\"Int64\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":102,\"name\":\"vec\",\"nullable\":false,\"params\":[{\"key\":\"dim\",\"value\":\"8\"}],\"partitionKey\":false,\"primaryKey\":false,\"type\":\"FloatVector\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":103,\"name\":\"title\",\"nullable\":false,\"params\":[{\"key\":\"max_length\",\"value\":\"256\"}],\"partitionKey\":false,\"primaryKey\":false,\"type\":\"VarChar\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":104,\"name\":\"meta\",\"nullable\":false,\"partitionKey\":false,\"primaryKey\":false,\"type\":\"JSON\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"elementType\":\"Int64\",\"id\":105,\"name\":\"tags\",\"nullable\":false,\"params\":[{\"key\":\"max_capacity\",\"value\":\"8\"}],\"partitionKey\":false,\"primaryKey\":false,\"type\":\"Array\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":106,\"name\":\"maybe_count\",\"nullable\":true,\"partitionKey\":false,\"primaryKey\":false,\"type\":\"Int32\"}],\"functions\":[],\"indexes\":[{\"fieldName\":\"vec\",\"indexName\":\"vec\",\"metricType\":\"COSINE\"}],\"load\":\"LoadStateLoaded\",\"partitionsNum\":3,\"properties\":[{\"key\":\"timezone\",\"value\":\"UTC\"},{\"key\":\"namespace.sharding.enabled\",\"value\":\"false\"},{\"key\":\"max_field_id\",\"value\":\"107\"}],\"shardsNum\":1,\"structFields\":[]},\"message\":\"\"}"
+  }
+}

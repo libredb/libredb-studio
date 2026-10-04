@@ -361,6 +361,49 @@ describe("ObjectTree absence states", () => {
   });
 });
 
+/**
+ * A kind only the Keys panel enumerates draws no folder (#1089 3.4). etcd declares `key` with
+ * `enumeratedBy: "key-browser"` so a key's Source tab and edit resolve, and a Keys folder would put
+ * every key name in the tree. The folders come from `enumerableKinds`, so the kind is never listed
+ * either, and every other declared kind keeps its folder and its place in the sibling group.
+ */
+describe("ObjectTree and a kind the Keys panel enumerates", () => {
+  const keyValue = capabilitiesOf({
+    containerLevels: [],
+    objectKinds: [
+      { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" },
+      {
+        id: "key",
+        role: "config",
+        label: "Key",
+        labelPlural: "Keys",
+        enumeratedBy: "key-browser",
+        hasSource: true,
+        sourceLanguage: "json",
+      },
+      { id: "member", role: "config", label: "Member", labelPlural: "Members" },
+    ],
+  });
+
+  test("draws a folder for every other declared kind and none for it, and never lists it", async () => {
+    const calls = installFetch({
+      counts: () => ({ prefix: { count: 2 }, member: { count: 1 } }),
+      list: (body) => (String(body.kind) === "prefix" ? [{ path: ["/app/*"], name: "/app/*", kind: "prefix" }] : []),
+    });
+    render(<ObjectTree connection={connectionOf("kv")} capabilities={keyValue} />);
+
+    const prefixes = await screen.findByRole("treeitem", { name: /Key Prefixes/ });
+    expect((await within(prefixes).findByTestId("tree-row-badge")).textContent).toBe("2");
+    expect(screen.queryByRole("treeitem", { name: /^Keys/ })).toBeNull();
+    expect(screen.getByRole("treeitem", { name: /Members/ }).getAttribute("aria-setsize")).toBe("2");
+    expect(screen.getAllByRole("treeitem")).toHaveLength(2);
+
+    await userEvent.click(prefixes);
+    await waitFor(() => expect(screen.getByText("/app/*")).toBeTruthy());
+    expect(calls.filter((call) => call.route === "list").map((call) => call.body.kind)).toEqual(["prefix"]);
+  });
+});
+
 describe("ObjectTree engine gaps", () => {
   /*
     A read that settles after the reader has moved to another connection must not land on the
@@ -644,6 +687,23 @@ describe("ObjectTree object rows", () => {
     await waitFor(() => expect(row(/Views/).getAttribute("aria-expanded")).toBe("true"));
     await userEvent.keyboard(" ");
     await waitFor(() => expect(row(/Views/).getAttribute("aria-expanded")).toBe("false"));
+  });
+
+  test("a held Space on an object row activates once, and its repeats are still swallowed", async () => {
+    // Every auto-repeat of a held key arrives as another keydown, so without the guard one long
+    // press opened a data tab per repeat.
+    const clicked: DatabaseObject[] = [];
+    withObjects();
+    await openTables((object) => clicked.push(object));
+
+    row(/orders/).focus();
+    await userEvent.click(row(/orders/));
+    clicked.length = 0;
+
+    expect(fireEvent.keyDown(row(/orders/), { key: " ", repeat: true })).toBe(false);
+    expect(clicked).toHaveLength(0);
+    expect(fireEvent.keyDown(row(/orders/), { key: " " })).toBe(false);
+    expect(clicked).toHaveLength(1);
   });
 });
 

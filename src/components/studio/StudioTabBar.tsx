@@ -2,6 +2,7 @@
 
 import React, { useEffect, type Dispatch, type SetStateAction } from "react";
 import type { QueryTab } from "@/lib/types";
+import type { StudioTabSummary } from "@/hooks/use-tab-summaries";
 import { SHORTCUTS, matchesShortcut, shortcutLabel } from "@/lib/keyboard-shortcuts";
 import { cn } from "@/lib/utils";
 import { FileBraces, FileCode, Hash, Plus, X } from "lucide-react";
@@ -15,19 +16,19 @@ import { FileBraces, FileCode, Hash, Plus, X } from "lucide-react";
  *
  * The SOURCE arm is first and it wins over the dialect. A Source tab holds no query, so its
  * `type` is the neutral `"sql"` on a SQL connection and whatever `resolveTabType` answered on
- * a document connection; without this arm a Source tab on MongoDB or Redis would take the
- * document icon and be indistinguishable from a query tab in the one place a reader picks a
- * tab from. Nothing errors if the arm is missing, which is exactly why it is tested.
+ * a document connection; without this arm a Source tab on MongoDB, Redis, Prometheus, Kafka or etcd
+ * would take the document icon and be indistinguishable from a query tab in the one place a reader
+ * picks a tab from. Nothing errors if the arm is missing, which is exactly why it is tested.
  *
  * The last arm means "a query language that is not SQL", not "JSON": Redis and LibreDB commands
- * take it, and so does PromQL (#1085), decided rather than defaulted and pinned in
- * `tests/components/studio/StudioTabBar.test.tsx`.
+ * take it, and so do PromQL (#1085), Kafka's read request (#1088), an etcdctl command (#1089) and Cypher,
+ * decided rather than defaulted and pinned in `tests/components/studio/StudioTabBar.test.tsx`.
  */
-function tabIcon(tab: QueryTab): React.JSX.Element {
+function tabIcon(tab: StudioTabSummary): React.JSX.Element {
   // The ELEMENT rather than the component, so nothing here assigns a component to a local
   // inside a render: `react(static-components)` is an error in this repository's oxlint
   // configuration, and the three returns also keep the size and the stroke in one place.
-  if (tab.source !== undefined) return <FileCode strokeWidth={1.5} className="w-3 h-3" />;
+  if (tab.isSource) return <FileCode strokeWidth={1.5} className="w-3 h-3" />;
   if (tab.type === "sql") return <Hash strokeWidth={1.5} className="w-3 h-3" />;
   return <FileBraces strokeWidth={1.5} className="w-3 h-3" />;
 }
@@ -39,8 +40,8 @@ function tabIcon(tab: QueryTab): React.JSX.Element {
  * strip cannot mark one by accident. The pane writes `dirty` onto `SourceTabState` only when the
  * buffer's dirtiness FLIPS, so this costs one render per transition rather than one per keystroke.
  */
-function hasUnsavedEdit(tab: QueryTab): boolean {
-  return tab.source?.dirty === true;
+function hasUnsavedEdit(tab: StudioTabSummary): boolean {
+  return tab.dirty;
 }
 
 /**
@@ -56,12 +57,12 @@ function hasUnsavedEdit(tab: QueryTab): boolean {
  * from the visible text in the ordinary case. An `aria-label` that duplicates the visible label is
  * a second copy of the same string that can drift from it under a rename.
  */
-function tabAccessibleName(tab: QueryTab): string | undefined {
+function tabAccessibleName(tab: StudioTabSummary): string | undefined {
   return hasUnsavedEdit(tab) ? `${tab.name} (unsaved edit)` : undefined;
 }
 
 interface StudioTabBarProps {
-  tabs: QueryTab[];
+  tabs: ReadonlyArray<StudioTabSummary>;
   activeTabId: string;
   editingTabId: string | null;
   editingTabName: string;
@@ -73,7 +74,7 @@ interface StudioTabBarProps {
   onAddTab: () => void;
 }
 
-export function StudioTabBar({
+export const StudioTabBar = React.memo(function StudioTabBar({
   tabs,
   activeTabId,
   editingTabId,
@@ -234,4 +235,4 @@ export function StudioTabBar({
       </button>
     </div>
   );
-}
+});

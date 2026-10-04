@@ -4,13 +4,14 @@ import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
 import { consumeRateLimit, RateLimitError } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
+import { sessionRequiredBody } from "@/lib/api/session-ended";
 import { logger } from "@/lib/logger";
 
 /**
  * The single guard for routes that reach a database or an LLM provider: session check, rate limit
  * and permission_denied auditing behind one seam.
  *
- * src/proxy.ts already redirects unauthenticated requests, but middleware is an optimisation, not
+ * src/proxy.ts already refuses unauthenticated requests, but middleware is an optimisation, not
  * an authorization boundary: a matcher gap (the matcher exempts any path containing a dot) or a
  * framework-level bypass would expose every route that relies on it alone. Routes that reach a
  * database or an LLM provider verify the session themselves.
@@ -55,7 +56,7 @@ export async function guardRoute(opts: {
         logger.error("Failed to record permission_denied audit event", auditError, { route: opts.route });
       }
     }
-    return { response: NextResponse.json({ error: "Authentication required" }, { status: 401 }) };
+    return { response: NextResponse.json(sessionRequiredBody("Authentication required"), { status: 401 }) };
   }
 
   // Keyed on username, the JWT payload's only stable identity field. role is available but is

@@ -31,8 +31,8 @@ let sourceReads: Array<{ path: unknown; kind: unknown }> = [];
 let sourceAnswer: { status: number; body: unknown } = { status: 200, body: {} };
 /** A source read that never settles, so a pane can be caught with NOTHING in hand. */
 let sourceHangs = false;
-/** Every render of the active tab's source state, in order, for the clear the apply writes. */
-let sourceStates: Array<{ id: string; source: SourceTabState }> = [];
+/** The Source tab's document, once per Monaco render, in order, for the clear the apply writes. */
+const sourceDocuments: string[] = [];
 
 const DEFINITION = "CREATE OR REPLACE FUNCTION app.order_total(integer)\n  RETURNS numeric AS $$ SELECT 1 $$;";
 
@@ -56,6 +56,7 @@ mock.module("@monaco-editor/react", () => ({
     onChange?: (value: string | undefined) => void;
   }) {
     editorProbe.change = props.onChange;
+    sourceDocuments.push(props.value ?? "");
     return (
       <textarea
         data-testid="source-editor"
@@ -84,6 +85,38 @@ mock.module("@monaco-editor/react", () => ({
     );
   },
 }));
+
+/**
+ * The viewer's own props, captured while the REAL viewer still renders underneath, for the clear
+ * the apply writes (#789 Phase 3). The barrel is doubled rather than the module, and the real
+ * `ObjectSourceView` is reached by its own path, so the mocked barrel cannot replace the one thing
+ * this file needs to be real — the same trick `embedded-source.test.tsx` uses for `refreshToken`.
+ */
+let capturedSourceViewProps: Record<string, unknown> = {};
+/** The ACTIVE Source tab's source state, once per viewer render, keyed by its address. */
+const sourceViewStates: Array<{ path: unknown; document: unknown; failure: unknown; readAtToken: unknown }> = [];
+mock.module("@/components/object-source", () => {
+  /* eslint-disable @typescript-eslint/no-require-imports */
+  const React = require("react");
+  const { ObjectSourceView } = require("@/components/object-source/ObjectSourceView");
+  const applier = require("@/components/object-source/source-applier");
+  const reader = require("@/components/object-source/source-reader");
+  /* eslint-enable @typescript-eslint/no-require-imports */
+  return {
+    ...applier,
+    ...reader,
+    ObjectSourceView: (props: Record<string, unknown>) => {
+      capturedSourceViewProps = props;
+      sourceViewStates.push({
+        path: props.path,
+        document: props.document,
+        failure: props.failure,
+        readAtToken: props.readAtToken,
+      });
+      return React.createElement(ObjectSourceView, props);
+    },
+  };
+});
 
 let capturedSidebarProps: Record<string, unknown> = {};
 let capturedPaletteProps: Record<string, unknown> = {};
@@ -232,6 +265,8 @@ mock.module("@/lib/storage", () => ({
     toggleFavoriteConnection: () => [] as string[],
     getConnectionOrder: () => [] as string[],
     setConnectionOrder: () => {},
+    getConnectionGroups: () => [] as unknown[],
+    setConnectionGroups: () => {},
   },
 }));
 
@@ -277,7 +312,14 @@ mock.module("@/components/DataProfiler", () => ({ DataProfiler: () => null }));
 mock.module("@/components/CodeGenerator", () => ({ CodeGenerator: () => null }));
 mock.module("@/components/TestDataGenerator", () => ({ TestDataGenerator: () => null }));
 mock.module("@/components/CreateTableModal", () => ({ CreateTableModal: () => null }));
-mock.module("@/components/SaveQueryModal", () => ({ SaveQueryModal: () => null }));
+/** The Save dialog's `defaultQuery`, which the shell hands the ACTIVE tab's query on every render. */
+let savedDefaultQuery: string | undefined;
+mock.module("@/components/SaveQueryModal", () => ({
+  SaveQueryModal: (props: { defaultQuery?: string }) => {
+    savedDefaultQuery = props.defaultQuery;
+    return null;
+  },
+}));
 mock.module("@/components/agent/AgentRail", () => ({
   AgentRail: (props: Record<string, unknown>) => {
     capturedAgentRailProps = props;
@@ -316,15 +358,6 @@ mock.module("@/components/studio/index", () => {
      */
     BottomPanel: (props: Record<string, unknown>) => {
       capturedBottomPanelProps = props;
-      /*
-       * The ACTIVE tab's source state, recorded once per render (#789 Phase 3).
-       *
-       * `currentTab` is a prop this shell already hands out, so recording it introduces no seam
-       * the product does not have: the apply's clear is a write onto the tab, and this is where
-       * a test can watch the tab from outside the component that owns it.
-       */
-      const tab = props.currentTab as QueryTab | undefined;
-      if (tab?.source !== undefined) sourceStates.push({ id: tab.id, source: tab.source });
       return <div data-testid="bottom-panel" />;
     },
     BottomPanelMode: {},
@@ -338,14 +371,14 @@ mock.module("@/components/ui/resizable", () => ({
 }));
 
 const { default: Studio } = await import("@/components/Studio");
+const { PREVIEW_PAGE_SIZE } = await import("@/hooks/use-tab-manager");
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { DatabaseObject } from "@/lib/db/types";
-import type { QueryTab, SourceTabState } from "@/lib/types";
 import { StudioTabBar } from "@/components/studio/StudioTabBar";
+import type { StudioTabSummary } from "@/hooks/use-tab-summaries";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
-import { pathKey } from "@/lib/db/object-path";
 
 const ROUTINE: DatabaseObject = { path: ["app", "order_total(integer)"], name: "order_total", kind: "function" };
 const TABLE: DatabaseObject = { path: ["app", "orders"], name: "orders", kind: "table" };
@@ -482,20 +515,37 @@ function tabNames(): string[] {
   return screen.getAllByRole("tab").map((tab) => tab.textContent ?? "");
 }
 
+/**
+ * Resolves once the data preview that opening a relation's tab schedules has run.
+ *
+ * `handleTableClick` runs the new tab's statement on a 100 ms timer that nothing clears, and
+ * `mockExecuteQuery` is one mock for the whole file, so a test that ends first hands its run to
+ * whichever test is on when the timer fires. A test that opens a data tab waits here for its own.
+ * The wait is ORDERED rather than timed: this timer is set after that one with a longer delay, so
+ * it fires after it however starved the process is, and a count read after it is final. The hook's
+ * own suite waits for the same run the same way (`settle` in `tests/hooks/use-tab-manager.test.ts`).
+ */
+function afterPreviewRuns(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 150));
+}
+
 beforeEach(() => {
+  savedDefaultQuery = undefined;
   localStorage.clear();
   capturedSidebarProps = {};
   capturedPaletteProps = {};
   capturedMobileHeaderProps = {};
   capturedBottomPanelProps = {};
   capturedAgentRailProps = {};
+  capturedSourceViewProps = {};
   agentCapabilityAnswer = false;
   capabilitiesOverride = { objectKinds: KINDS };
   buildMetadata();
   sourceReads = [];
   sourceAnswer = { status: 200, body: readableDocument };
   sourceHangs = false;
-  sourceStates = [];
+  sourceDocuments.length = 0;
+  sourceViewStates.length = 0;
   editRequests = [];
   applyAnswer = { status: 200, body: APPLIED };
   applyHangs = false;
@@ -737,12 +787,12 @@ describe("no statement runs while the tab on screen is a definition", () => {
     fire(capturedPaletteProps, "onLoadHistoryQuery", "DROP TABLE app.customers;");
 
     /*
-     * `currentQuery` is the mobile header's own prop and it is the active tab's query, which
-     * is the only place a reader of this suite can see what a Source tab is holding: the pane
-     * deliberately does not display it. An empty string here is the statement never arriving,
-     * which is the half that makes the Run assertion below more than a statement about Run.
+     * `query` is the active tab's query, which is the only place a reader of this suite can
+     * see what a Source tab is holding: the pane deliberately does not display it. An empty
+     * string here is the statement never arriving, which is the half that makes the Run
+     * assertion below more than a statement about Run.
      */
-    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+    expect(activeQuery()).toBe("");
     fire(capturedPaletteProps, "onExecuteQuery");
     expect(mockExecuteQuery).not.toHaveBeenCalled();
     expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION);
@@ -778,7 +828,7 @@ describe("no statement runs while the tab on screen is a definition", () => {
     await openSourceTab();
     fire(capturedBottomPanelProps, "onLoadQuery", "DROP TABLE app.orders;");
 
-    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+    expect(activeQuery()).toBe("");
     expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION);
     expect(screen.queryByTestId("query-editor")).toBeNull();
   });
@@ -803,7 +853,7 @@ describe("no statement runs while the tab on screen is a definition", () => {
 
     await openSourceTab();
     fire(capturedAgentRailProps, "onApplyStatement", "DROP TABLE app.orders;");
-    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+    expect(activeQuery()).toBe("");
 
     act(() =>
       (capturedAgentRailProps.onRunStatement as (sql: string, runId: string) => void)(
@@ -811,7 +861,7 @@ describe("no statement runs while the tab on screen is a definition", () => {
         "run-2",
       ),
     );
-    expect(capturedMobileHeaderProps.currentQuery).toBe("");
+    expect(activeQuery()).toBe("");
     expect(mockExecuteHandedOverStatement).toHaveBeenCalledTimes(1);
     expect(mockExecuteHandedOverStatement).toHaveBeenLastCalledWith("run-1", "SELECT 6;");
     expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe(DEFINITION);
@@ -948,6 +998,24 @@ describe("activation splits by what the row IS", () => {
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "orders", "order_summary"]));
     // Neither opened a Source tab, and neither read the source route.
     expect(sourceReads).toEqual([]);
+
+    /*
+     * And both RAN, each on the tab it opened: the half of this test's name nothing asserted.
+     *
+     * MEASURED before the wait existed: these two runs were still pending when this test ended,
+     * and with this file pinned to one core beside three, six or ten busy loops they fired inside
+     * the key browser's "nothing runs" below, which failed 39 runs in 40. The wait is what keeps
+     * them this test's.
+     */
+    await afterPreviewRuns();
+    const [, ordersTab, viewTab] = screen.getAllByRole("tab").map((tab) => tab.getAttribute("data-tab-id"));
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(2);
+    expect(mockExecuteQuery).toHaveBeenNthCalledWith(1, "SELECT * FROM app.orders;", ordersTab, false, {
+      limit: PREVIEW_PAGE_SIZE,
+    });
+    expect(mockExecuteQuery).toHaveBeenNthCalledWith(2, "SELECT * FROM app.order_summary;", viewTab, false, {
+      limit: PREVIEW_PAGE_SIZE,
+    });
   });
 
   test("a kind with neither a data preview nor a source still does nothing", async () => {
@@ -962,6 +1030,79 @@ describe("activation splits by what the row IS", () => {
     act(() => activate({ path: ["app", "mystery"], name: "mystery", kind: "not-declared" }));
     expect(tabNames()).toEqual(["Query 1"]);
     expect(sourceReads).toEqual([]);
+  });
+});
+
+/**
+ * Keys-panel activation on an engine that declares a key kind (spec 4.6).
+ *
+ * What is real here is what `tests/components/Studio.test.tsx` stubs: the tab manager, the pane and the
+ * source route. The key's tab is the declared kind's Source tab, addressed by the key alone, and
+ * nothing runs; and it is refused while an apply is in flight, as every gesture that opens a tab is
+ * (D82, the last describe of this file).
+ */
+const KEY_KIND = {
+  id: "key",
+  role: "config",
+  label: "Key",
+  labelPlural: "Keys",
+  enumeratedBy: "key-browser",
+  hasSource: true,
+  sourceLanguage: "json",
+};
+const ETCD_SCAN = {
+  defaultCount: 500,
+  maxCount: 1000,
+  separator: "/",
+  cursor: "opaque",
+  pattern: "prefix",
+  totalScope: "walk",
+};
+const KEY_DOCUMENT = {
+  path: ["/app/cfg"],
+  kind: "key",
+  parts: [
+    { id: "value", label: "Value", text: '{"mode":"on"}', language: "json", form: "complete", origin: "rendered" },
+  ],
+};
+
+/** A key activated in the key browser, as the sidebar hands it to this shell. */
+function openKey(key: string): void {
+  (capturedSidebarProps.onOpenKey as (key: string, type: string | null, database: number | null) => void)(
+    key,
+    null,
+    null,
+  );
+}
+
+describe("a key activated in the key browser opens its Source tab", () => {
+  beforeEach(() => {
+    capabilitiesOverride = { objectKinds: [...KINDS, KEY_KIND], keyScan: ETCD_SCAN };
+    buildMetadata();
+    sourceAnswer = { status: 200, body: KEY_DOCUMENT };
+  });
+
+  test("the key's value is read into a Source tab named after it, and nothing runs", async () => {
+    render(<Studio />);
+    act(() => openKey("/app/cfg"));
+
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]));
+    await waitFor(() => expect(sourceReads).toEqual([{ path: ["/app/cfg"], kind: "key" }]));
+    await waitFor(() =>
+      expect((screen.getByTestId("source-editor") as HTMLTextAreaElement).value).toBe('{"mode":"on"}'),
+    );
+    expect(mockExecuteQuery).not.toHaveBeenCalled();
+  });
+
+  test("a second activation of the same key focuses its tab instead of reading again", async () => {
+    render(<Studio />);
+    act(() => openKey("/app/cfg"));
+    await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]));
+
+    act(() => openKey("/app/cfg"));
+
+    expect(tabNames()).toEqual(["Query 1", "Source: /app/cfg"]);
+    await waitFor(() => expect(sourceReads).toHaveLength(1));
   });
 });
 
@@ -985,13 +1126,13 @@ describe("the tab bar tells a Source tab apart", () => {
   });
 
   test("all three arms, driven at once: source, sql, and every other dialect", () => {
-    const base: QueryTab = { id: "t", name: "n", query: "", result: null, isExecuting: false, type: "sql" };
+    const base: StudioTabSummary = { id: "t", name: "n", type: "sql", isSource: false, dirty: false };
     render(
       <StudioTabBar
         tabs={[
           { ...base, id: "sql", name: "A query" },
           { ...base, id: "json", name: "A document query", type: "mongodb" },
-          { ...base, id: "src", name: "Source: app.f", source: { path: ["app", "f"], kind: "function" } },
+          { ...base, id: "src", name: "Source: app.f", isSource: true },
           // A Source tab whose dialect is NOT sql: the first arm has to win over the second,
           // or a Redis or MongoDB connection's Source tab takes the document icon.
           {
@@ -999,7 +1140,7 @@ describe("the tab bar tells a Source tab apart", () => {
             id: "src-json",
             name: "Source: db.view",
             type: "mongodb",
-            source: { path: ["db", "view"], kind: "view" },
+            isSource: true,
           },
         ]}
         activeTabId="sql"
@@ -1019,10 +1160,10 @@ describe("the tab bar tells a Source tab apart", () => {
   });
 
   test("the ladder is the same one the rename input draws, so the icon does not change under a rename", () => {
-    const base: QueryTab = { id: "t", name: "n", query: "", result: null, isExecuting: false, type: "sql" };
+    const base: StudioTabSummary = { id: "t", name: "n", type: "sql", isSource: false, dirty: false };
     render(
       <StudioTabBar
-        tabs={[{ ...base, id: "src", name: "Source: app.f", source: { path: ["app", "f"], kind: "function" } }]}
+        tabs={[{ ...base, id: "src", name: "Source: app.f", isSource: true }]}
         activeTabId="src"
         editingTabId="src"
         editingTabName="Source: app.f"
@@ -1078,18 +1219,29 @@ const WITH_EDIT_DECLARATION = KINDS.map((kind) =>
   kind.id === "function" ? { ...kind, acceptsSourceEdits: true } : kind,
 );
 
-const SOURCE_TAB_ID = `source:function:${encodeURIComponent(pathKey([...ROUTINE.path]))}`;
+/**
+ * The active tab's query, read off the Save dialog's `defaultQuery`: the shell hands that
+ * prop the active tab's query on every render, and it is a prop the product already has, so
+ * reading it adds no seam. The panel is no longer handed the statement outside the explain
+ * view (X5), and the mobile header no longer receives it at all.
+ */
+function activeQuery(): string {
+  if (savedDefaultQuery === undefined) throw new Error("the Save dialog was never rendered");
+  return savedDefaultQuery;
+}
+
+/** The states the addressed Source tab's `source` passed through, in viewer-render order. */
+function statesForPath(path: readonly string[]): Array<{ document: unknown; failure: unknown; readAtToken: unknown }> {
+  return sourceViewStates
+    .filter((entry) => JSON.stringify(entry.path) === JSON.stringify(path))
+    .map(({ document, failure, readAtToken }) => ({ document, failure, readAtToken }));
+}
 
 async function click(testId: string): Promise<void> {
   await act(async () => {
     (screen.getByTestId(testId) as HTMLElement).click();
     await Promise.resolve();
   });
-}
-
-/** The states the named tab's `source` passed through, in render order. */
-function statesFor(tabId: string): SourceTabState[] {
-  return sourceStates.filter((entry) => entry.id === tabId).map((entry) => entry.source);
 }
 
 /** Open the function's Source tab and wait for the definition to be on screen. */
@@ -1154,7 +1306,7 @@ describe("a successful apply in the standalone shell", () => {
     await applySuccessfully();
 
     // The clear landed on the tab, AFTER that tab had a document in hand.
-    const states = statesFor(SOURCE_TAB_ID);
+    const states = statesForPath([...ROUTINE.path]);
     const held = states.findIndex((state) => state.document !== undefined && state.readAtToken !== undefined);
     expect(held).toBeGreaterThanOrEqual(0);
     const cleared = states.findIndex(
@@ -1251,7 +1403,7 @@ describe("a successful apply in the standalone shell", () => {
     await waitFor(() => expect(screen.getByTestId("object-source-apply-outcome")).toBeTruthy());
     expect(sourceReads).toHaveLength(1);
     expect(mockToast).not.toHaveBeenCalled();
-    expect(statesFor(SOURCE_TAB_ID).at(-1)?.document).toBeDefined();
+    expect(statesForPath([...ROUTINE.path]).at(-1)?.document).toBeDefined();
   });
 });
 
@@ -1539,5 +1691,42 @@ describe("the new-tab shortcut cannot unmount an apply that is in flight", () =>
     openTableFromPalette();
 
     await waitFor(() => expect(tabNames()).toEqual(["Query 1", "Source: app.order_total(integer)", "orders"]));
+    // The table's preview ran too, and waiting for it keeps that run this test's (`afterPreviewRuns`).
+    await afterPreviewRuns();
+    expect(mockExecuteQuery).toHaveBeenCalledTimes(1);
+  });
+
+  test("a key activated in the key browser is refused in the same window, and opens once the answer is on screen", async () => {
+    /*
+     * The third door into this window (spec 4.6). On an engine that declares a key kind, a key's
+     * activation opens that kind's Source tab, which ends in `setActiveTabId` exactly as a table's
+     * activation does, and so would unmount the pane the dialog lives in with the statement sent.
+     */
+    capabilitiesOverride = { objectKinds: [...KINDS, KEY_KIND], keyScan: ETCD_SCAN };
+    buildMetadata();
+    applyAnswer = { status: 200, body: CONFLICT };
+    await confirmAndHold();
+
+    act(() => openKey("/app/cfg"));
+
+    expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)"]);
+    expect(screen.getByTestId("object-source-apply-dialog")).toBeTruthy();
+    expect(mockToast).toHaveBeenCalledWith({
+      title: "Waiting for the apply to answer",
+      description:
+        "Opening a tab would close this dialog before the apply reports. Try again once you have read the answer.",
+    });
+
+    await act(async () => {
+      releaseApply?.();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(screen.getByTestId("object-source-apply-conflict")).toBeTruthy());
+
+    // The control: the refusal is the apply window, not "a key cannot be opened from a Source tab".
+    act(() => openKey("/app/cfg"));
+    await waitFor(() =>
+      expect(tabNamesInDom()).toEqual(["Query 1", "Source: app.order_total(integer)", "Source: /app/cfg"]),
+    );
   });
 });

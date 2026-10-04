@@ -1,0 +1,20 @@
+{
+  "$captured": {
+    "service": "milvus-mtls",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "node 24.14.0",
+    "rpc": "GetVersion",
+    "user": "root",
+    "surface": "a client key that is not the certificate's",
+    "request": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "name": "Error",
+      "message": "error:05800074:x509 certificate routines::key values mismatch"
+    }
+  }
+}

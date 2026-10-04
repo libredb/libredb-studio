@@ -1,0 +1,15 @@
+{
+ "$captured": {
+  "image": null,
+  "clusterId": null,
+  "date": "2026-09-24T18:56:39.621Z",
+  "surface": "admin.metadata({ topics: [] }) to a listener that destroys each socket"
+ },
+ "outcome": "fail",
+ "payload": {
+  "message": "Connection closed",
+  "code": "PLT_KFK_NETWORK",
+  "canRetry": true,
+  "class": "NetworkError"
+ }
+}

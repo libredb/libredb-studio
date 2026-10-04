@@ -1,0 +1,21 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "node 24.14.0",
+    "rpc": "GetVersion",
+    "user": "root",
+    "surface": "TLS to the plaintext port",
+    "request": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "code": 14,
+      "details": "No connection established. Last error: Error: 00020824F27A0000:error:0A0000C6:SSL routines:tls_get_more_records:packet length too long:../deps/openssl/openssl/ssl/record/methods/tls_common.c:660:\n. Resolution note: ",
+      "message": "14 UNAVAILABLE: No connection established. Last error: Error: 00020824F27A0000:error:0A0000C6:SSL routines:tls_get_more_records:packet length too long:../deps/openssl/openssl/ssl/record/methods/tls_common.c:660:\n. Resolution note: "
+    }
+  }
+}

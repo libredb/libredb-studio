@@ -3,7 +3,7 @@ import "../helpers/mock-navigation";
 
 import { mockToastError } from "../helpers/mock-sonner";
 
-import { mock } from "bun:test";
+import { mock, type Mock } from "bun:test";
 import React from "react";
 
 // ─── Module-level capture variables for mock editor callbacks ─────────────────
@@ -103,7 +103,11 @@ mock.module("@monaco-editor/react", () => ({
             capturedLanguageRegistrations.push(language.id);
           }),
           setMonarchTokensProvider: mock(() => {}),
+          // The etcd language's tokens provider is the provider's own lexer, not a Monarch grammar (#1089).
+          setTokensProvider: mock(() => {}),
           setLanguageConfiguration: mock(() => {}),
+          // The Milvus and Qdrant console languages register their route completion before the editor mounts (vector-family spec 3.5).
+          registerCompletionItemProvider: mock(() => ({ dispose: () => {} })),
         },
       };
 
@@ -226,8 +230,16 @@ mock.module("@/lib/editor/sql-completions", () => ({
 }));
 
 // ── Mock editor/mongodb-completions ─────────────────────────────────────────
+// Named, so a test can read which editors register the MongoDB completion provider (#1088): each
+// registration answers its own dispose, so a test can also read that one was taken down.
+const mockMongoDBCompletionDisposals: Array<Mock<() => void>> = [];
+const mockRegisterMongoDBCompletionProvider = mock<(...args: unknown[]) => { dispose: () => void }>(() => {
+  const dispose = mock(() => {});
+  mockMongoDBCompletionDisposals.push(dispose);
+  return { dispose };
+});
 mock.module("@/lib/editor/mongodb-completions", () => ({
-  registerMongoDBCompletionProvider: mock(() => ({ dispose: mock(() => {}) })),
+  registerMongoDBCompletionProvider: mockRegisterMongoDBCompletionProvider,
 }));
 
 // ── Mock lucide-react icons ─────────────────────────────────────────────────
@@ -248,7 +260,9 @@ mock.module("lucide-react", () => {
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import { QueryEditor } from "@/components/QueryEditor";
+import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import type { MaintenanceType } from "@/lib/db/types";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 
 // =============================================================================
 // QueryEditor Tests
@@ -647,6 +661,53 @@ describe("QueryEditor", () => {
     expect(onChange).toHaveBeenCalled();
   });
 
+  /*
+    #1088. A Kafka tab formats through the same JSON branch, and that is correct as is: Format
+    writes `JSON.stringify(JSON.parse(text), null, 2)` and the read request's parser reads nothing
+    but `JSON.parse`'s value, so a formatted request reads what the typed one reads. A digit-string
+    offset stays a string, and a JSON-number offset past 2^53, which the first parse has already
+    rounded, is refused before formatting and after it, with the advice to write it as a string.
+  */
+  describe("FORMAT on a Kafka read request (#1088)", () => {
+    const formatted = (typed: string): string => {
+      const { queryByText, queryByTestId } = render(
+        React.createElement(QueryEditor, createDefaultProps({ value: typed, language: "json" })),
+      );
+      fireEvent.click(queryByText("Format")!);
+      return (queryByTestId("mock-monaco-editor") as HTMLTextAreaElement).value;
+    };
+
+    test.each([
+      ['{"topic":"orders"}'],
+      ['{"topic":"orders","from":"earliest","limit":20}'],
+      ['{"topic":"orders","partition":0,"from":{"offset":120}}'],
+      ['{"topic":"orders","partition":2,"from":{"offset":"9007199254740993"}}'],
+      ['{"topic":"orders","from":{"timestamp":"2026-09-23T03:00:00+03:00"}}'],
+    ])("leaves %s a request the parser reads as the typed one", (typed) => {
+      const text = formatted(typed);
+      // It did format: the typed text is on one line, and Format writes two-space indentation.
+      expect(text).toBe(JSON.stringify(JSON.parse(typed), null, 2));
+      expect(text).not.toBe(typed);
+      expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT)).toEqual(parseReadRequest(typed, DEFAULT_QUERY_LIMIT));
+    });
+
+    test("keeps a digit-string offset past 2^53 the offset it names", () => {
+      const text = formatted('{"topic":"orders","partition":0,"from":{"offset":"9007199254740993"}}');
+      expect(parseReadRequest(text, DEFAULT_QUERY_LIMIT).from).toEqual({
+        kind: "offset",
+        offset: BigInt("9007199254740993"),
+      });
+    });
+
+    test("cannot make a JSON-number offset past 2^53 readable: it is refused typed and formatted", () => {
+      const typed = '{"topic":"orders","partition":0,"from":{"offset":9007199254740993}}';
+      const text = formatted(typed);
+      expect(text).not.toBe(typed);
+      expect(() => parseReadRequest(typed, DEFAULT_QUERY_LIMIT)).toThrow("write it as a digit string");
+      expect(() => parseReadRequest(text, DEFAULT_QUERY_LIMIT)).toThrow("write it as a digit string");
+    });
+  });
+
   test("FORMAT with invalid JSON does not crash", () => {
     const onChange = mock(() => {});
     const { queryByText, queryByTestId } = render(
@@ -746,6 +807,27 @@ describe("QueryEditor", () => {
     const { queryByText } = render(React.createElement(QueryEditor, createDefaultProps({ language: "json" })));
     const formatBtn = queryByText("Format")!.closest("button");
     expect(formatBtn?.getAttribute("title")).toContain("Format JSON");
+  });
+
+  test("FORMAT button names a Milvus request in milvus mode, never SQL (vector-family spec 5.7)", () => {
+    const { queryByText } = render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ language: "milvus", value: 'POST /v2/vectordb/collections/list\n{"dbName": "default"}' }),
+      ),
+    );
+    const formatBtn = queryByText("Format")!.closest("button");
+    expect(formatBtn?.getAttribute("title")).toContain("Format Milvus request");
+    expect(formatBtn?.getAttribute("title")).not.toContain("SQL");
+  });
+
+  test("FORMAT button names a Qdrant request in qdrant mode, never SQL (vector-family spec 6.7)", () => {
+    const { queryByText } = render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "qdrant", value: "GET /collections" })),
+    );
+    const formatBtn = queryByText("Format")!.closest("button");
+    expect(formatBtn?.getAttribute("title")).toContain("Format Qdrant request");
+    expect(formatBtn?.getAttribute("title")).not.toContain("SQL");
   });
 
   // -----------------------------------------------------------------------
@@ -1200,6 +1282,27 @@ describe("QueryEditor", () => {
     expect(editor.value).toBe("SELECT 1 FROM t");
   });
 
+  test("an external value the buffer already holds is not re-applied (equal text is a no-op)", () => {
+    // The external-write arm of the value-sync effect: with no echo outstanding, an
+    // incoming `value` the buffer already holds would still replace the model's content
+    // and drop the undo stack, so the arm must skip equal text the same way the
+    // document-change arm does.
+    const props = createDefaultProps({ value: "SELECT 1" });
+    const { queryByTestId, rerender } = render(React.createElement(QueryEditor, props));
+    const editor = queryByTestId("mock-monaco-editor") as HTMLTextAreaElement;
+
+    act(() => {
+      fireEvent.change(editor, { target: { value: "SELECT 2" } });
+    });
+    capturedSetValues = [];
+
+    act(() => {
+      rerender(React.createElement(QueryEditor, { ...props, value: "SELECT 2" }));
+    });
+    expect(capturedSetValues).toEqual([]);
+    expect(editor.value).toBe("SELECT 2");
+  });
+
   test("text this editor sent up earlier still applies when it comes back as an external change", () => {
     // Loading the same statement again from history or the saved list is an external
     // write that happens to carry text the user typed a moment ago. Once the parent has
@@ -1462,6 +1565,85 @@ describe("QueryEditor", () => {
     mockUseMonacoReturn = { Range: class {} };
     const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ language: "json" })));
     unmount();
+  });
+
+  /*
+    #1088. A Kafka tab renders in Monaco's json mode, and the MongoDB completion provider registers
+    for that mode: its snippets are MongoDB documents (`find`, `aggregate`, `insertOne`, keyed by
+    `collection` and `operation`), which the read request's parser refuses, and its field items
+    offer a topic's result columns as if they were keys of the request. So it registers only where
+    the declared capabilities name no JSON dialect, and, for the published component's callers,
+    where none are passed.
+  */
+  describe("the MongoDB completion provider registers for MongoDB's JSON only (#1088)", () => {
+    const jsonCapabilities = { ...defaultCapabilities, queryLanguage: "json" as const, supportsExplain: false };
+    const kafkaCapabilities = { ...jsonCapabilities, queryDialect: "kafka" as const };
+
+    beforeEach(() => {
+      mockUseMonacoReturn = { Range: class {} };
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockMongoDBCompletionDisposals.length = 0;
+    });
+
+    test("a json editor on a Kafka connection registers none", () => {
+      render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: kafkaCapabilities })),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
+    test("the control: a json editor on MongoDB's JSON, with no dialect, registers it", () => {
+      render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: jsonCapabilities })),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+    });
+
+    test("a json editor handed no capabilities still registers it, as the published component always has", () => {
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: undefined })));
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+    });
+
+    test("the rule is any declared dialect, not Kafka's name: a json editor on another dialect registers none", () => {
+      // Reachable for a render while a tab is retyped after a connection switch, and the shape a
+      // JSON dialect added later arrives in: MongoDB's snippets are no more its grammar than Kafka's.
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "json", capabilities: { ...jsonCapabilities, queryDialect: "redis" } }),
+        ),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
+    test("a json editor on an etcd connection registers none, by the same rule (#1089)", () => {
+      // Reachable for a render while a tab is retyped after a connection switch: an etcdctl command is
+      // no MongoDB document, and the gate refuses it because a dialect is declared, with no etcd branch.
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "json", capabilities: { ...jsonCapabilities, queryDialect: "etcd" } }),
+        ),
+      );
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
+    test("a sql editor registers none, whatever its capabilities", () => {
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", capabilities: jsonCapabilities })));
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+    });
+
+    test("a switch from MongoDB to Kafka takes the registration down, and registers none in its place", () => {
+      const props = createDefaultProps({ language: "json", capabilities: jsonCapabilities });
+      const { rerender } = render(React.createElement(QueryEditor, props));
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+
+      rerender(React.createElement(QueryEditor, { ...props, capabilities: kafkaCapabilities }));
+
+      expect(mockMongoDBCompletionDisposals).toHaveLength(1);
+      expect(mockMongoDBCompletionDisposals[0]).toHaveBeenCalledTimes(1);
+      expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -----------------------------------------------------------------------
@@ -1769,6 +1951,248 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("promql");
   });
 
+  test("registers the oxia language before the editor mounts, beside etcd (SB2-4.6)", () => {
+    render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "oxia", value: "get /admin/policies/public" })),
+    );
+
+    // etcd's registration is the control: it reaches the same capture, so a missing "oxia" is the component.
+    expect(capturedLanguageRegistrations).toContain("etcd");
+    expect(capturedLanguageRegistrations).toContain("oxia");
+  });
+
+  test("registers the etcd language before the editor mounts, beside LibreDB, Redis and PromQL (#1089)", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ language: "etcd", value: "get /app/ --prefix" })));
+
+    // The three languages registered before #1089 are the control: they reach the same capture, so a
+    // missing "etcd" is the component and not the mock.
+    expect(capturedLanguageRegistrations).toContain("libredb");
+    expect(capturedLanguageRegistrations).toContain("redis");
+    expect(capturedLanguageRegistrations).toContain("promql");
+    expect(capturedLanguageRegistrations).toContain("etcd");
+  });
+
+  // -----------------------------------------------------------------------
+  // Cypher (Neo4j spec 6.5)
+  // -----------------------------------------------------------------------
+
+  test("registers the graph-cypher language before the editor mounts, beside the other custom languages", () => {
+    render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "graph-cypher", value: "MATCH (n) RETURN n" })),
+    );
+    // The languages registered before it are the control: a missing "graph-cypher" is the component.
+    expect(capturedLanguageRegistrations).toContain("etcd");
+    expect(capturedLanguageRegistrations).toContain("graph-cypher");
+  });
+
+  test("registers the Milvus and Qdrant console languages after the custom languages, before the editor mounts (vector-family spec 3.8)", () => {
+    render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", value: "SELECT 1" })));
+
+    // registerDialectConsoles runs on every mount, and the Milvus and Qdrant records are the ones that carry a console
+    // language, registered in the record's order.
+    expect(capturedLanguageRegistrations).toEqual([
+      "libredb",
+      "redis",
+      "promql",
+      "etcd",
+      "oxia",
+      "graph-cypher",
+      "influxql",
+      "milvus",
+      "qdrant",
+    ]);
+  });
+
+  describe("the Cypher completion provider registers for a graph-cypher editor only", () => {
+    type Provider = {
+      triggerCharacters?: string[];
+      provideCompletionItems: (model: unknown, position: unknown) => { suggestions: Array<{ label: string }> };
+    };
+    let cypherRegistrations: Array<{ languageId: string; provider: Provider; dispose: Mock<() => void> }> = [];
+    const graphSchema = JSON.stringify([
+      { name: "Person", kind: "label", path: ["neo4j", "(:Person)"], columns: [{ name: "name", type: "STRING" }] },
+      { name: "ACTED_IN", kind: "relationship_type", path: ["neo4j", "[:ACTED_IN]"], columns: [] },
+    ]);
+    const modelOf = (text: string) => ({
+      getValue: () => text,
+      getOffsetAt: () => text.length,
+      getPositionAt: (offset: number) => ({ lineNumber: 1, column: offset + 1 }),
+    });
+
+    beforeEach(() => {
+      cypherRegistrations = [];
+      mockRegisterSQLCompletionProvider.mockClear();
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockUseMonacoReturn = {
+        Range: class {},
+        languages: {
+          CompletionItemKind: { Keyword: 17, Class: 5, Struct: 6, Field: 3, Function: 1 },
+          registerCompletionItemProvider: (languageId: string, provider: Provider) => {
+            const dispose = mock(() => {});
+            cypherRegistrations.push({ languageId, provider, dispose });
+            return { dispose };
+          },
+        },
+      };
+    });
+
+    test("a graph-cypher editor completes labels from the schema it holds and procedures from its engine's profile", () => {
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "graph-cypher", databaseType: "neo4j", schemaContext: graphSchema }),
+        ),
+      );
+      expect(cypherRegistrations.map((entry) => entry.languageId)).toEqual(["graph-cypher"]);
+      expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+      const provider = cypherRegistrations[0]!.provider;
+      const at = (text: string) =>
+        provider
+          .provideCompletionItems(modelOf(text), { lineNumber: 1, column: text.length + 1 })
+          .suggestions.map((item) => item.label);
+      expect(at("MATCH (n:")).toEqual(["Person"]);
+      expect(at("MATCH ()-[r:")).toEqual(["ACTED_IN"]);
+      expect(at("CALL ")).toContain("db.labels");
+    });
+
+    test("without a graph engine's type, CALL offers nothing, and a sql editor registers no Cypher completion", () => {
+      const { unmount } = render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "graph-cypher", schemaContext: graphSchema })),
+      );
+      const provider = cypherRegistrations[0]!.provider;
+      expect(provider.provideCompletionItems(modelOf("CALL "), { lineNumber: 1, column: 6 }).suggestions).toEqual([]);
+      unmount();
+      expect(cypherRegistrations[0]!.dispose).toHaveBeenCalledTimes(1);
+
+      cypherRegistrations = [];
+      render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", databaseType: "neo4j" })));
+      expect(cypherRegistrations).toEqual([]);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // InfluxQL (InfluxDB spec 6.7)
+  // -----------------------------------------------------------------------
+
+  test("registers the influxql language before the editor mounts, beside the other custom languages", () => {
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ language: "influxql", value: 'SELECT * FROM "home".."home"' }),
+      ),
+    );
+    // The languages registered before it are the control: a missing "influxql" is the component.
+    expect(capturedLanguageRegistrations).toContain("graph-cypher");
+    expect(capturedLanguageRegistrations).toContain("influxql");
+  });
+
+  describe("the InfluxQL completion provider registers for an influxql editor only", () => {
+    type Provider = {
+      triggerCharacters?: string[];
+      provideCompletionItems: (
+        model: unknown,
+        position: unknown,
+      ) => { suggestions: Array<{ label: string; insertText: string }> };
+    };
+    let influxqlRegistrations: Array<{ languageId: string; provider: Provider; dispose: Mock<() => void> }> = [];
+    const measurementSchema = JSON.stringify([
+      {
+        name: "home",
+        kind: "measurement",
+        path: ["home", "home"],
+        columns: [
+          { name: "time", type: "time" },
+          { name: "room", type: "tag" },
+          { name: "temp", type: "float" },
+        ],
+      },
+    ]);
+    const modelOf = (text: string) => ({ getValue: () => text, getOffsetAt: () => text.length });
+
+    beforeEach(() => {
+      influxqlRegistrations = [];
+      mockRegisterSQLCompletionProvider.mockClear();
+      mockRegisterMongoDBCompletionProvider.mockClear();
+      mockUseMonacoReturn = {
+        Range: class {},
+        languages: {
+          CompletionItemKind: { Keyword: 17, Class: 5, Field: 3, Property: 9 },
+          registerCompletionItemProvider: (languageId: string, provider: Provider) => {
+            const dispose = mock(() => {});
+            influxqlRegistrations.push({ languageId, provider, dispose });
+            return { dispose };
+          },
+        },
+      };
+    });
+
+    test("an influxql editor completes sources and keys from the schema it holds, and nothing else registers", () => {
+      const { unmount } = render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "influxql", databaseType: "influxdb", schemaContext: measurementSchema }),
+        ),
+      );
+      expect(influxqlRegistrations.map((entry) => entry.languageId)).toEqual(["influxql"]);
+      expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+      expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
+      const provider = influxqlRegistrations[0]!.provider;
+      const inserts = (text: string) =>
+        provider
+          .provideCompletionItems(modelOf(text), { lineNumber: 1, column: text.length + 1 })
+          .suggestions.map((item) => item.insertText);
+      expect(inserts("SELECT * FROM ")).toEqual(['"home".."home"']);
+      expect(inserts('SELECT * FROM "home".."home" WHERE ')).toContain('"room"');
+      unmount();
+      expect(influxqlRegistrations[0]!.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    test("a sql editor registers no InfluxQL completion", () => {
+      render(
+        React.createElement(QueryEditor, createDefaultProps({ language: "sql", schemaContext: measurementSchema })),
+      );
+      expect(influxqlRegistrations).toEqual([]);
+    });
+  });
+
+  test("an etcd buffer runs whole, and draws no Format control and no SQL completions (#1089)", () => {
+    // The provider reads the whole buffer as one command (#1089 5.1.2): a `;` inside a quoted value is
+    // data, and a leading comment line is skipped, where the SQL splitter would cut the text at the `;`.
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    mockRegisterSQLCompletionProvider.mockClear();
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+    const buffer = "# set the flag; then read it back\nput /cfg/flag 'on; for now'";
+
+    const { queryByText } = render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ value: buffer, language: "etcd", databaseType: "postgres" }),
+      ),
+    );
+    act(() => {
+      capturedCommands[0].handler();
+    });
+    window.removeEventListener("execute-query", handler);
+
+    expect(eventDetail!.query).toBe(buffer);
+    expect(queryByText("Format")).toBeNull();
+    expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+  });
+
   test("a PromQL buffer runs whole, and draws no Format control and no SQL completions (#1085)", () => {
     // A PromQL text is one expression and `#` starts a comment in it. Under a SQL grammar the `;`
     // inside the comment below is a statement separator, which is what the control next door shows.
@@ -1931,6 +2355,10 @@ describe("QueryEditor", () => {
       ["json", false],
       ["redis", false],
       ["libredb", false],
+      ["etcd", false],
+      ["oxia", false],
+      ["graph-cypher", false],
+      ["influxql", false],
       ["sql", true],
     ] as const;
     for (const [language, offered] of steps) {
@@ -2094,6 +2522,77 @@ describe("QueryEditor", () => {
     // Should NOT be the whitespace selection — falls through to statement finder
     expect(eventDetail!.query).not.toBe("   \n  ");
     expect(eventDetail!.query).toBe("SELECT whitespace_test");
+    window.removeEventListener("execute-query", handler);
+  });
+
+  test.each([
+    // A batch that is a run of statements: the caret's own statement, never the DELETE after it.
+    ["SELECT 1 AS a; DELETE FROM t\nGO\nSELECT 2", 3, "SELECT 1 AS a"],
+    // A batch that is a procedure body: the whole definition, the only statement it holds.
+    [
+      "CREATE PROCEDURE p AS BEGIN SET NOCOUNT ON; SELECT 1; END\nGO\nSELECT 2",
+      50,
+      "CREATE PROCEDURE p AS BEGIN SET NOCOUNT ON; SELECT 1; END",
+    ],
+  ])("getEffectiveQuery on SQL Server: %j at %d runs %j (#1312)", (value, offset, expected) => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    mockCursorOffset = offset;
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+
+    render(React.createElement(QueryEditor, createDefaultProps({ value, databaseType: "mssql" as const })));
+    act(() => {
+      capturedCommands[0].handler();
+    });
+
+    expect(eventDetail!.query).toBe(expected);
+    window.removeEventListener("execute-query", handler);
+  });
+
+  test("getEffectiveQuery: on SQL Server a caret runs its own statement, not the DECLARE before it (#1312)", () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    mockCursorOffset = 22; // Inside `SELECT @x`, after the DECLARE that gives it a value
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ value: "DECLARE @x INT = 5; SELECT @x\nGO\nSELECT 2", databaseType: "mssql" as const }),
+      ),
+    );
+    act(() => {
+      capturedCommands[0].handler();
+    });
+
+    // The two statements share @x only when sent together, which a selection does.
+    expect(eventDetail!.query).toBe("SELECT @x");
     window.removeEventListener("execute-query", handler);
   });
 

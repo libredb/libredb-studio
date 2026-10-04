@@ -7,6 +7,7 @@ import type { BottomPanelMode } from "@/components/studio/BottomPanel";
 import { useToast } from "@/hooks/use-toast";
 import { newLocalId } from "@/lib/ids";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { statementRefusal } from "@/lib/db/destructive-commands";
 import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
 
 /**
@@ -22,16 +23,28 @@ import { maybeInviteToStar } from "@/lib/community/star-prompt-toast";
  * Both stay ABSENT when the host sent nothing: the grid decides whether to render
  * from the field's presence, so an empty array would announce a section with
  * nothing in it.
+ *
+ * The host's vector columns ride the same channel (vector-family spec 3.10), so
+ * every path that builds a tab result carries them: a run, a confirmed run, a page
+ * and an unlimited run. A page of the same statement names the same columns, so a
+ * page that declares none keeps the declaration of the rows already on screen
+ * (`previous`), which is what keeps a vector column from turning back into JSON
+ * after Load More; a page that declares its own is believed.
  */
-function carriedChannels(result: WorkspaceQueryResult): Pick<QueryTab["result"] & object, "warnings" | "columnTypes"> {
+function carriedChannels(
+  result: WorkspaceQueryResult,
+  previous?: QueryTab["result"],
+): Pick<QueryTab["result"] & object, "warnings" | "columnTypes" | "vectorColumns"> {
   // A column the host declared without a type contributes no entry rather than an
   // undefined one every reader would have to test for.
   const declared = (result.columns ?? []).filter((column) => column.type !== undefined);
+  const vectorColumns = result.vectorColumns ?? previous?.vectorColumns;
   return {
     ...(result.warnings && { warnings: result.warnings }),
     ...(declared.length > 0 && {
       columnTypes: Object.fromEntries(declared.map((column) => [column.name, column.type as string])),
     }),
+    ...(vectorColumns !== undefined && { vectorColumns }),
   };
 }
 
@@ -127,6 +140,37 @@ export function useQueryAdapter({
 
   const { toast } = useToast();
 
+  /**
+   * Shows a statement this connection type's editor refuses on the tab it was run in, and hands the host nothing.
+   *
+   * It counts as the tab's newest run, so `beginRun` disowns a run still in flight there and that run's late answer
+   * cannot land over the sentence. The failure takes the place of the rows on screen because this shell mounts no
+   * Toaster: `runError` is the signal a host's user sees, and the toast reaches only a host that mounts one.
+   */
+  const refuseRun = useCallback(
+    (tabId: string, sentence: string) => {
+      beginRun(tabId);
+      setTabs((prev) =>
+        prev.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                result: null,
+                resultQuery: undefined,
+                allRows: undefined,
+                currentOffset: 0,
+                runError: sentence,
+                isExecuting: false,
+                isLoadingMore: false,
+              }
+            : t,
+        ),
+      );
+      toast({ title: "Statement Refused", description: sentence, variant: "destructive" });
+    },
+    [beginRun, setTabs, toast],
+  );
+
   const executeQuery = useCallback(
     async (
       overrideQuery?: string,
@@ -152,6 +196,13 @@ export function useQueryAdapter({
 
       if (!activeConnection) {
         toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        return;
+      }
+
+      // Before the gate and before anything reaches the host, which owns the fetch.
+      const refusal = statementRefusal(queryToExecute, activeConnection.type);
+      if (refusal !== undefined) {
+        refuseRun(targetTabId, refusal);
         return;
       }
 
@@ -237,6 +288,7 @@ export function useQueryAdapter({
               currentOffset: result.rows.length,
               isExecuting: false,
               isLoadingMore: false,
+              runError: undefined,
             };
           }),
         );
@@ -253,11 +305,21 @@ export function useQueryAdapter({
         // flags or raising a toast for a run nobody is waiting for is the same write.
         if (cancelledRef.current || !ownsTab()) return;
 
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        // The failure REPLACES the previous result, as it does in `use-query-execution`: the
+        // rows on screen were fetched by another statement, and a reader of one must never be
+        // handed the other's (#881). This shell mounts no Toaster, so the inline block the
+        // results panel renders for `runError` is the only failure signal a host's user sees.
         setTabs((prev) =>
           prev.map((t) =>
             t.id === targetTabId
               ? {
                   ...t,
+                  result: null,
+                  resultQuery: undefined,
+                  allRows: undefined,
+                  currentOffset: 0,
+                  runError: errorMessage,
                   isExecuting: false,
                   isLoadingMore: false,
                 }
@@ -265,11 +327,10 @@ export function useQueryAdapter({
           ),
         );
 
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
       }
     },
-    [activeConnection, tabs, currentTab, activeTabId, toast, onQueryExecute, setTabs, beginRun],
+    [activeConnection, tabs, currentTab, activeTabId, toast, onQueryExecute, setTabs, beginRun, refuseRun],
   );
 
   // Force execute (bypass safety check)
@@ -279,6 +340,13 @@ export function useQueryAdapter({
 
       if (!activeConnection) {
         toast({ title: "No Connection", description: "Select a connection first.", variant: "destructive" });
+        return;
+      }
+
+      // Proceed skips the gate, never this check.
+      const refusal = statementRefusal(query, activeConnection.type);
+      if (refusal !== undefined) {
+        refuseRun(activeTabId, refusal);
         return;
       }
 
@@ -342,6 +410,7 @@ export function useQueryAdapter({
                 currentOffset: result.rows.length,
                 isExecuting: false,
                 isLoadingMore: false,
+                runError: undefined,
               };
             }),
           );
@@ -352,11 +421,18 @@ export function useQueryAdapter({
         .catch((error) => {
           if (cancelledRef.current || !ownsTab()) return;
 
+          // Replaces the previous result, for the reason the catch in `executeQuery` states.
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
           setTabs((prev) =>
             prev.map((t) =>
               t.id === activeTabId
                 ? {
                     ...t,
+                    result: null,
+                    resultQuery: undefined,
+                    allRows: undefined,
+                    currentOffset: 0,
+                    runError: errorMessage,
                     isExecuting: false,
                     isLoadingMore: false,
                   }
@@ -364,11 +440,10 @@ export function useQueryAdapter({
             ),
           );
 
-          const errorMessage = error instanceof Error ? error.message : "Unknown error";
           toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
         });
     },
-    [activeConnection, activeTabId, toast, onQueryExecute, setTabs, beginRun],
+    [activeConnection, activeTabId, toast, onQueryExecute, setTabs, beginRun, refuseRun],
   );
 
   // Cancel running query (best-effort via ref flag)
@@ -415,6 +490,14 @@ export function useQueryAdapter({
     // pass. It is a second line behind the disabled control, not a replacement for it, and
     // a caller that renders no such control has to enforce the invariant itself (#816).
     if (currentTab.isLoadingMore) return;
+
+    // The statement this page would re-run, checked here because paging calls the host itself and never re-enters
+    // `executeQuery`.
+    const pageRefusal = statementRefusal(currentTab.resultQuery ?? currentTab.query, activeConnection.type);
+    if (pageRefusal !== undefined) {
+      refuseRun(currentTab.id, pageRefusal);
+      return;
+    }
 
     // The same reset `executeQuery`, `forceExecuteQuery` and `handleUnlimitedQuery` make,
     // and for the same reason: `cancelledRef` is one sticky hook-wide boolean, and a page
@@ -496,7 +579,7 @@ export function useQueryAdapter({
                 // The first-page commit above carries these, and this one did not: a
                 // paged result silently lost the engine warnings and the declared column
                 // types the first page had shown (#285's class, on the paging path).
-                ...carriedChannels(result),
+                ...carriedChannels(result, t.result),
               },
               resultQuery: pagedStatement,
               allRows: newAllRows,
@@ -527,7 +610,7 @@ export function useQueryAdapter({
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
         toast({ title: "Load More Error", description: errorMessage, variant: "destructive" });
       });
-  }, [currentTab, activeConnection, onQueryExecute, setTabs, toast, beginRun]);
+  }, [currentTab, activeConnection, onQueryExecute, setTabs, toast, beginRun, refuseRun]);
 
   // Unlimited query handler
   const handleUnlimitedQuery = useCallback(() => {
@@ -535,6 +618,14 @@ export function useQueryAdapter({
     if (!activeConnection) return;
 
     const { query, tabId } = pendingUnlimitedQuery;
+
+    const refusal = statementRefusal(query, activeConnection.type);
+    if (refusal !== undefined) {
+      refuseRun(tabId, refusal);
+      setUnlimitedWarningOpen(false);
+      setPendingUnlimitedQuery(null);
+      return;
+    }
 
     cancelledRef.current = false;
     const ownsTab = beginRun(tabId);
@@ -579,6 +670,10 @@ export function useQueryAdapter({
                 rowCount: result.rowCount,
                 executionTime: result.executionTime,
                 pagination: result.pagination,
+                // The other three paths carry these and this one did not: an unlimited run
+                // dropped the host's warnings and declared types (#285's class), and would
+                // have dropped its vector columns.
+                ...carriedChannels(result),
               },
               // The rows and the statement that fetched them are committed together, the way
               // `use-query-execution` does it: a reader of one must never be handed the other's
@@ -589,6 +684,7 @@ export function useQueryAdapter({
               currentOffset: result.rows.length,
               isExecuting: false,
               isLoadingMore: false,
+              runError: undefined,
             };
           }),
         );
@@ -599,11 +695,18 @@ export function useQueryAdapter({
       .catch((error) => {
         if (cancelledRef.current || !ownsTab()) return;
 
+        // Replaces the previous result, for the reason the catch in `executeQuery` states.
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         setTabs((prev) =>
           prev.map((t) =>
             t.id === tabId
               ? {
                   ...t,
+                  result: null,
+                  resultQuery: undefined,
+                  allRows: undefined,
+                  currentOffset: 0,
+                  runError: errorMessage,
                   isExecuting: false,
                   isLoadingMore: false,
                 }
@@ -611,13 +714,12 @@ export function useQueryAdapter({
           ),
         );
 
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
         toast({ title: "Query Error", description: errorMessage, variant: "destructive" });
       });
 
     setUnlimitedWarningOpen(false);
     setPendingUnlimitedQuery(null);
-  }, [pendingUnlimitedQuery, activeConnection, onQueryExecute, setTabs, toast, beginRun]);
+  }, [pendingUnlimitedQuery, activeConnection, onQueryExecute, setTabs, toast, beginRun, refuseRun]);
 
   return {
     executeQuery,

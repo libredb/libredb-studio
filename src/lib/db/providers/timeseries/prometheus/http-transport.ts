@@ -135,6 +135,8 @@ const PARAMS = Object.freeze({
   QUERY: "query",
   TIMEOUT: "timeout",
   LIMIT: "limit",
+  // VictoriaMetrics' name for the TSDB status's cut, which it reads in place of `limit`.
+  TOP_N: "topN",
   START: "start",
   END: "end",
   MATCH: "match[]",
@@ -1021,8 +1023,17 @@ class PrometheusHttpTransport implements PrometheusTransport {
     return textRecord(PATHS.FLAGS, data, "the flags");
   }
 
+  /**
+   * The cut is sent under both names: Prometheus reads `limit` and ignores `topN`, and VictoriaMetrics
+   * reads `topN` and ignores `limit`, answering its default ten without it (measured on v3.13.3 and
+   * v1.152.0, `tsdb-status-50-topn` in the fixtures).
+   */
   async tsdbStatus(limit: number): Promise<PrometheusTsdbStatus> {
-    const { data } = await this.call(PATHS.TSDB, [[PARAMS.LIMIT, String(limit)]]);
+    const cut = String(limit);
+    const { data } = await this.call(PATHS.TSDB, [
+      [PARAMS.LIMIT, cut],
+      [PARAMS.TOP_N, cut],
+    ]);
     return tsdbStatus(data);
   }
 

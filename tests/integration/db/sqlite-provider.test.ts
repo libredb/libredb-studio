@@ -7,9 +7,11 @@
  *   forced deterministically via LIBREDB_SQLITE_DRIVER=node
  */
 
-import { describe, test, expect, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
+import { describe, test, expect, afterEach, beforeAll, beforeEach, afterAll, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { Database as BunDatabase, constants as sqliteConstants } from "bun:sqlite";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -62,6 +64,8 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { buildResultExport } from "@/lib/export/result-export";
 import { comparePaths } from "@/lib/db/object-path";
 import { readFixtureStatements } from "../../../docker/sqlite-init/build-fixture";
+import { logger } from "@/lib/logger";
+import { MISSING_POSIX_FILE_MODES, describeIf, testIf } from "../../helpers/posix-tools";
 
 // ============================================================================
 // Helpers
@@ -309,10 +313,11 @@ describe("SQLiteProvider", () => {
       expect(result.rowCount).toBe(0);
     });
 
-    // The provider picks `all()` vs `run()` from `isReadOnlyQuery`, so a SELECT
-    // misread as a write used to come back with no rows and `changes: 0` - the
-    // same comment-blind classification as the missing LIMIT in #275, with a
-    // worse symptom: the user sees an empty grid for a query that has data.
+    // The provider used to pick `all()` vs `run()` from `isReadOnlyQuery`, so a SELECT
+    // misread as a write came back with no rows and `changes: 0` - the same
+    // comment-blind classification as the missing LIMIT in #275, with a worse
+    // symptom: the user sees an empty grid for a query that has data. It now asks
+    // the driver for the result column count, which no comment can hide.
     test("a comment-led SELECT returns its rows instead of an empty write result", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
@@ -420,6 +425,9 @@ describe("SQLiteProvider", () => {
       // one, so POST /api/db/transaction refuses the call and the controls must not
       // be offered (#464). The flag describes the provider's surface, not the engine.
       expect(caps.supportsTransactions).toBe(false);
+      // Both drivers are synchronous, so a running statement holds the server's thread and
+      // the editor disables Cancel rather than offering "Stop waiting" (#1364).
+      expect(caps.blocksServerWhileRunning).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).
@@ -539,6 +547,19 @@ describe("SQLiteProvider", () => {
 
       const tables = await provider.query("SELECT name FROM sqlite_master WHERE type='table' AND name='victim'");
       expect(tables.rows.length).toBe(1);
+    });
+
+    test("a container changes nothing here, because the file has no second namespace", async () => {
+      // #772: SQLite always resolves against the attached `main`, so the container is
+      // deliberately ignored rather than becoming a qualifier that cannot exist.
+      provider = new SQLiteProvider(makeSQLiteConfig());
+      await provider.connect();
+      await provider.query("CREATE TABLE mt (id INTEGER PRIMARY KEY, v TEXT)");
+
+      const result = await provider.runMaintenance("analyze", "mt", "main");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain("ANALYZE");
     });
 
     test("reindex does not execute a statement smuggled through the target identifier", async () => {
@@ -798,6 +819,7 @@ describe("SQLiteProvider", () => {
           get: () => null,
           run: () => ({ changes: 0 }),
           declaredColumns: () => [],
+          returnsRows: () => true,
         }),
       };
 
@@ -1400,6 +1422,7 @@ function answerReadsMatching(provider: SQLiteProvider, match: string, rows: read
     get: () => rows[0] ?? null,
     run: () => ({ changes: 0 }),
     declaredColumns: () => [],
+    returnsRows: () => true,
   }));
 }
 
@@ -1427,6 +1450,7 @@ function captureReadsMatching(
       get: () => rows[0] ?? null,
       run: () => ({ changes: 0 }),
       declaredColumns: () => [],
+      returnsRows: () => true,
     };
   });
   return captured;
@@ -3371,6 +3395,124 @@ describe("resolveSQLiteDriverName()", () => {
 });
 
 // ============================================================================
+// Statements that return rows without starting with SELECT
+// ============================================================================
+// The provider chose `all()` or `run()` from the leading keyword, and the keyword set
+// had no WITH, no VALUES and no way to see a RETURNING clause, so all three came back
+// as an empty "success" carrying the connection's previous change count. Measured
+// 2026-10-03 on node:sqlite (SQLite 3.50.4): the CTE answered `rows: [], rowCount: 3`,
+// and the RETURNING insert landed with its row dropped. Run on both drivers in-process
+// (Bun 1.4 ships node:sqlite), so the two answers are compared rather than assumed.
+
+describe.each(["bun", "node"] as const)("SQLiteProvider row-returning statements on the %s driver", (driver) => {
+  const originalDriverEnv = process.env.LIBREDB_SQLITE_DRIVER;
+  let rowsProvider: SQLiteProvider;
+
+  beforeEach(async () => {
+    process.env.LIBREDB_SQLITE_DRIVER = driver;
+    rowsProvider = new SQLiteProvider(makeSQLiteConfig({ id: `rows-${driver}` }));
+    await rowsProvider.connect();
+    await rowsProvider.query("CREATE TABLE dept (id INTEGER PRIMARY KEY, name TEXT)");
+    // Three rows changed, so a statement that wrongly reports the connection's last
+    // change count is told apart from one that reports its own.
+    await rowsProvider.query("INSERT INTO dept VALUES (1, 'Ops'), (2, 'Eng'), (3, 'Sales')");
+  });
+
+  afterEach(async () => {
+    await rowsProvider.disconnect();
+    if (originalDriverEnv === undefined) delete process.env.LIBREDB_SQLITE_DRIVER;
+    else process.env.LIBREDB_SQLITE_DRIVER = originalDriverEnv;
+  });
+
+  test("a CTE returns its rows", async () => {
+    const result = await rowsProvider.query("WITH x AS (SELECT 1 AS a UNION ALL SELECT 2) SELECT a FROM x");
+
+    expect(result.rows).toEqual([{ a: 1 }, { a: 2 }]);
+    expect(result.fields).toEqual(["a"]);
+    expect(result.rowCount).toBe(2);
+  });
+
+  test("a recursive CTE returns its rows", async () => {
+    const result = await rowsProvider.query(
+      "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 4) SELECT n FROM c",
+    );
+
+    expect(result.rows).toEqual([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]);
+  });
+
+  test("a bare VALUES list returns its rows", async () => {
+    const result = await rowsProvider.query("VALUES (1, 'a'), (2, 'b')");
+
+    expect(result.rows).toEqual([
+      { column1: 1, column2: "a" },
+      { column1: 2, column2: "b" },
+    ]);
+    expect(result.rowCount).toBe(2);
+  });
+
+  test("INSERT ... RETURNING writes the row and returns it", async () => {
+    const result = await rowsProvider.query("INSERT INTO dept VALUES (7, 'R&D') RETURNING id, name");
+
+    expect(result.rows).toEqual([{ id: 7, name: "R&D" }]);
+    expect(result.fields).toEqual(["id", "name"]);
+    expect(result.rowCount).toBe(1);
+    const stored = await rowsProvider.query("SELECT name FROM dept WHERE id = 7");
+    expect(stored.rows).toEqual([{ name: "R&D" }]);
+  });
+
+  test("UPDATE ... RETURNING and DELETE ... RETURNING return the rows they touched", async () => {
+    const updated = await rowsProvider.query("UPDATE dept SET name = upper(name) WHERE id <= 2 RETURNING id, name");
+    expect(updated.rows).toEqual([
+      { id: 1, name: "OPS" },
+      { id: 2, name: "ENG" },
+    ]);
+    expect(updated.rowCount).toBe(2);
+
+    const deleted = await rowsProvider.query("DELETE FROM dept WHERE id = 3 RETURNING *");
+    expect(deleted.rows).toEqual([{ id: 3, name: "Sales" }]);
+    expect((await rowsProvider.query("SELECT COUNT(*) AS n FROM dept")).rows).toEqual([{ n: 2 }]);
+  });
+
+  test("a RETURNING statement that matches nothing answers no rows and a zero count", async () => {
+    const result = await rowsProvider.query("DELETE FROM dept WHERE id = 99 RETURNING id");
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(0);
+  });
+
+  test("a parameterized RETURNING statement binds its parameters", async () => {
+    const result = await rowsProvider.query("INSERT INTO dept VALUES (?, ?) RETURNING name", [8, "Legal"]);
+
+    expect(result.rows).toEqual([{ name: "Legal" }]);
+  });
+
+  test("a plain INSERT, UPDATE and DELETE still report the rows they changed", async () => {
+    expect((await rowsProvider.query("INSERT INTO dept VALUES (4, 'HR'), (5, 'IT')")).rowCount).toBe(2);
+    const update = await rowsProvider.query("UPDATE dept SET name = 'x' WHERE id IN (1, 2, 4)");
+    expect(update.rows).toEqual([]);
+    expect(update.rowCount).toBe(3);
+    expect((await rowsProvider.query("DELETE FROM dept WHERE id = 5")).rowCount).toBe(1);
+  });
+
+  test("a value-setting PRAGMA answers no rows, and reading it back answers the value", async () => {
+    const set = await rowsProvider.query("PRAGMA user_version = 3");
+    expect(set.rows).toEqual([]);
+
+    const read = await rowsProvider.query("PRAGMA user_version");
+    expect(read.rows).toEqual([{ user_version: 3 }]);
+  });
+
+  test("a CTE-led DELETE without RETURNING is still a write", async () => {
+    const result = await rowsProvider.query(
+      "WITH d AS (SELECT 2 AS id) DELETE FROM dept WHERE id IN (SELECT id FROM d)",
+    );
+
+    expect(result.rows).toEqual([]);
+    expect(result.rowCount).toBe(1);
+  });
+});
+
+// ============================================================================
 // Node driver (LIBREDB_SQLITE_DRIVER=node -> node:sqlite)
 //
 // Bun refuses to load better-sqlite3 and does not implement node:sqlite, so
@@ -3458,6 +3600,22 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     expect(report.updateRowCount).toBe(1);
     expect(report.deleteRowCount).toBe(1);
 
+    // Row-returning statements that do not start with SELECT: the same answers the
+    // in-process runs of both drivers give above.
+    expect(report.rowReturning).toEqual({
+      cte: { rows: [{ a: 1 }, { a: 2 }], rowCount: 2 },
+      values: {
+        rows: [
+          { column1: 1, column2: "a" },
+          { column1: 2, column2: "b" },
+        ],
+        rowCount: 2,
+      },
+      insertReturning: { rows: [{ id: 3, name: "Cy" }], rowCount: 1 },
+      updateReturning: { rows: [{ name: "Cyd" }], rowCount: 1 },
+      deleteReturning: { rows: [{ id: 3 }], rowCount: 1 },
+    });
+
     // 64-bit ids: the same answer the bun driver gives in-process above.
     // Before the fix this run did not reach here at all - node:sqlite threw
     // ERR_OUT_OF_RANGE on the first read of 9007199254740993.
@@ -3469,6 +3627,11 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
     ]);
     expect(report.bigSmallInteger).toEqual([{ one: 1 }]);
     expect(report.bigCount).toEqual([{ count: 2 }]);
+
+    // A BLOB reaches the wire as the Buffer form `asBytes` reads, as under bun.
+    expect(report.blobWire).toEqual([
+      { bin: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] }, empty: { type: "Buffer", data: [] } },
+    ]);
 
     // #42: on a column with NO affinity the same id used to match nothing at all, so the
     // row was uneditable. One row changes, and it is the one that was read.
@@ -4468,5 +4631,321 @@ describe("SQLiteProvider column defaults (#1029)", () => {
       }
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// ============================================================================
+// A database file this process cannot write
+// ----------------------------------------------------------------------------
+// A read-only Docker mount, or a file owned by another user. The editor used to open
+// every file read-write with `create` and `PRAGMA journal_mode = WAL`, so such a file
+// could not be opened at all: health, inventory and counts all answered 503 with
+// "attempt to write a readonly database", while the agent's read-only handle read it
+// fine (reproduced 2026-09-26 in Docker as uid 1001 with the file mounted `:ro`).
+//
+// The mode bits are the fixture, so the test cannot run where they mean nothing: root
+// passes every permission check, and Windows enforces no directory mode. The Linux CI job
+// runs as an ordinary user, which is where these lines are covered.
+// ============================================================================
+
+const MISSING_UNWRITABLE_FILE: string | null =
+  MISSING_POSIX_FILE_MODES ??
+  (process.getuid?.() === 0 ? "running as root: file modes do not restrict root, so nothing is unwritable" : null);
+
+/**
+ * A database of three orders in `dir`, then made unwritable: 0444 on the file and 0555 on
+ * the directory. Written with the driver directly rather than through the provider, because
+ * the provider leaves a file in WAL mode, and that is its own fixture (see "a WAL-mode file"
+ * below).
+ *
+ * A WAL fixture is the file alone, with no `-wal` or `-shm` beside it, unless `keepWal`
+ * leaves its `-wal`. Closing removes both on Linux and Windows but not on macOS, where
+ * bun:sqlite links Apple's libsqlite3, which keeps them (docs/providers/sqlite.md §3.2);
+ * with them left in place the read-only open succeeded on the macos-latest runner
+ * (2026-09-26). So the checkpoint moves every row into the file, `PERSIST_WAL` makes every
+ * platform keep the `-wal` alike, and what is not kept goes by hand.
+ */
+function writeUnwritableFixture(dir: string, journalMode: "delete" | "wal", keepWal = false): string {
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "shop.db");
+  const db = new BunDatabase(file, { create: true, readwrite: true });
+  db.exec(`PRAGMA journal_mode = ${journalMode}`);
+  db.exec("CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL, total REAL)");
+  db.exec("INSERT INTO orders VALUES (1, 'ada', 10.5), (2, 'bob', 20), (3, 'cy', 30.25)");
+  if (journalMode === "wal") {
+    db.fileControl(sqliteConstants.SQLITE_FCNTL_PERSIST_WAL, 1);
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  }
+  db.close(true);
+  if (!keepWal) rmSync(`${file}-wal`, { force: true });
+  rmSync(`${file}-shm`, { force: true });
+  chmodSync(file, 0o444);
+  chmodSync(dir, 0o555);
+  return file;
+}
+
+/** Bundle sqlite-node-harness.ts for Node and run one scenario with the node driver forced. */
+function runNodeHarness(dbPath: string, scenario: string): Record<string, unknown> {
+  const bundleDir = mkdtempSync(join(tmpdir(), "libredb-sqlite-node-unwritable-"));
+  try {
+    const bundlePath = join(bundleDir, "sqlite-node-harness.mjs");
+    const build = spawnSync(
+      process.execPath,
+      [
+        "build",
+        join(import.meta.dir, "sqlite-node-harness.ts"),
+        "--target=node",
+        "--format=esm",
+        "--external",
+        "bun:sqlite",
+        "--outfile",
+        bundlePath,
+      ],
+      { timeout: 60_000 },
+    );
+    if (build.error) throw new Error(`bun build could not run: ${build.error.message}`);
+    if (build.status !== 0) throw new Error(`bun build failed: ${build.stderr?.toString()}`);
+    const run = spawnSync("node", [bundlePath, dbPath, scenario], {
+      env: { ...process.env, LIBREDB_SQLITE_DRIVER: "node" },
+      timeout: 60_000,
+    });
+    if (run.error) throw new Error(`node harness could not run: ${run.error.message}`);
+    if (run.status !== 0) throw new Error(`node harness failed: ${run.stderr?.toString()}`);
+    // The report is the last line; the logger writes to stdout too, and its lines come back
+    // beside the report as `logLines`.
+    const lines = run.stdout.toString().trim().split("\n");
+    const report = JSON.parse(lines.pop()!) as Record<string, unknown>;
+    return { ...report, logLines: lines };
+  } finally {
+    rmSync(bundleDir, { recursive: true, force: true });
+  }
+}
+
+/** The reason a refused WAL-mode file is given, before SQLite's own words. */
+const WAL_REFUSAL = (file: string) =>
+  `Failed to open SQLite database: ${file} is open read-only because this process cannot write the file or its directory, and a file in WAL journal mode cannot be read without a -shm file beside it; switch it to a rollback journal (PRAGMA journal_mode = DELETE) where it is writable, or make its directory writable: `;
+
+const READ_ONLY_INSERT_MESSAGE = (file: string) =>
+  `SQLite database ${file} is open read-only because this process cannot write the file or its directory: attempt to write a readonly database`;
+
+describe("SQLiteProvider on a database file this process cannot write", () => {
+  let root: string;
+  let infoSpy: { mockRestore(): void } | undefined;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "libredb-sqlite-unwritable-"));
+  });
+
+  afterAll(() => {
+    // The fixtures took the write bit off their directories, and rmSync needs it back.
+    for (const entry of readdirSync(root)) chmodSync(join(root, entry), 0o755);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    infoSpy?.mockRestore();
+    infoSpy = undefined;
+  });
+
+  /** The info lines that announced a read-only open. */
+  function readOnlyDecisions(spy: { mock: { calls: unknown[][] } }): string[] {
+    return spy.mock.calls.map(([message]) => String(message)).filter((message) => message.includes("read-only"));
+  }
+
+  describeIf(MISSING_UNWRITABLE_FILE, "with file mode 0444 in a directory with mode 0555", () => {
+    test("connects read-only, answers health, lists objects and runs a SELECT", async () => {
+      const dir = join(root, "readonly");
+      const file = writeUnwritableFixture(dir, "delete");
+      const spy = spyOn(logger, "info");
+      infoSpy = spy;
+      const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
+      try {
+        await db.connect();
+        expect(db.isConnected()).toBe(true);
+
+        // The decision is logged once, with the path, at info.
+        const decisions = readOnlyDecisions(spy);
+        expect(decisions).toHaveLength(1);
+        expect(decisions[0]).toContain(file);
+
+        const health = await db.getHealth();
+        expect(health.slowQueries.find((sq) => sq.query.includes("Integrity"))!.query).toContain("OK");
+        // Still the file's own rollback journal: nothing tried to switch it to WAL.
+        expect((await db.query("PRAGMA journal_mode")).rows).toEqual([{ journal_mode: "delete" }]);
+
+        expect((await db.listObjects([], "table")).map((object) => object.name)).toEqual(["orders"]);
+        expect((await db.countObjects([])).table).toEqual({ count: 1 });
+
+        const select = await db.query("SELECT customer, total FROM orders ORDER BY id");
+        expect(select.rows).toEqual([
+          { customer: "ada", total: 10.5 },
+          { customer: "bob", total: 20 },
+          { customer: "cy", total: 30.25 },
+        ]);
+      } finally {
+        await db.disconnect();
+      }
+      // A read-only open leaves no sidecar behind, and could not create one anyway.
+      expect(readdirSync(dir)).toEqual(["shop.db"]);
+    });
+
+    test("an INSERT fails with SQLite's read-only error, named as such", async () => {
+      const file = join(root, "readonly", "shop.db");
+      const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
+      try {
+        await db.connect();
+        const insert = db.query("INSERT INTO orders VALUES (4, 'dee', 1)");
+        await expect(insert).rejects.toBeInstanceOf(QueryError);
+        await expect(insert).rejects.toThrow(READ_ONLY_INSERT_MESSAGE(file));
+        expect((await db.query("SELECT COUNT(*) AS n FROM orders")).rows).toEqual([{ n: 3 }]);
+      } finally {
+        await db.disconnect();
+      }
+    });
+
+    // SQLite reads a WAL-mode file only with a `-shm` file beside it, and a directory it
+    // cannot write gives it nowhere to make one, so even a read-only handle is refused
+    // (measured on bun:sqlite and node:sqlite, 2026-09-26). The provider cannot change
+    // that, but it can say why instead of passing on SQLite's bare refusal. SQLite words
+    // that refusal two ways: Linux's bundled library answers the file alone with
+    // SQLITE_READONLY, and Apple's with SQLITE_CANTOPEN (macos-latest, 2026-09-26). So the
+    // reason is read from the file's header, and SQLite's own words follow it.
+    test("a WAL-mode file is refused with the reason and the way out", async () => {
+      const file = writeUnwritableFixture(join(root, "wal"), "wal");
+      const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
+      const connect = db.connect();
+      await expect(connect).rejects.toBeInstanceOf(ConnectionError);
+      await expect(connect).rejects.toThrow(
+        WAL_REFUSAL(file) +
+          (process.platform === "darwin" ? "unable to open database file" : "attempt to write a readonly database"),
+      );
+      expect(db.isConnected()).toBe(false);
+    });
+
+    // A `-wal` left beside the file with no `-shm` is SQLITE_CANTOPEN on Linux too.
+    test("a WAL-mode file with its -wal left and no -shm is refused with the same reason", async () => {
+      const dir = join(root, "wal-left");
+      const file = writeUnwritableFixture(dir, "wal", true);
+      expect(readdirSync(dir).sort()).toEqual(["shop.db", "shop.db-wal"]);
+      const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
+      const connect = db.connect();
+      await expect(connect).rejects.toBeInstanceOf(ConnectionError);
+      await expect(connect).rejects.toThrow(`${WAL_REFUSAL(file)}unable to open database file`);
+      expect(db.isConnected()).toBe(false);
+    });
+
+    // The control: a refusal that has nothing to do with WAL keeps SQLite's words alone.
+    test("a file this process cannot read is refused without the WAL reason", async () => {
+      const dir = join(root, "unreadable");
+      const file = writeUnwritableFixture(dir, "delete");
+      chmodSync(dir, 0o755);
+      chmodSync(file, 0o000);
+      chmodSync(dir, 0o555);
+      const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
+      const connect = db.connect();
+      await expect(connect).rejects.toBeInstanceOf(ConnectionError);
+      await expect(connect).rejects.toThrow(/^Failed to open SQLite database: unable to open database file$/);
+      expect(db.isConnected()).toBe(false);
+    });
+
+    testIf(
+      nodeDriverTestable ? null : "`node` with node:sqlite is not available on this machine",
+      "the same file under LIBREDB_SQLITE_DRIVER=node (node:sqlite)",
+      () => {
+        const dir = join(root, "readonly");
+        const file = join(dir, "shop.db");
+        const report = runNodeHarness(file, "unwritable");
+        expect(report.runtime).toBe("node");
+        expect(report.driverEnv).toBe("node");
+        expect(report.connected).toBe(true);
+        const decisions = (report.logLines as string[]).filter((line) => line.includes("read-only"));
+        expect(decisions).toHaveLength(1);
+        expect(decisions[0]).toContain(file);
+        expect(report.integrity).toContain("OK");
+        expect(report.journalMode).toEqual([{ journal_mode: "delete" }]);
+        expect(report.tables).toEqual(["orders"]);
+        expect(report.count).toEqual([{ n: 3 }]);
+        expect(report.insertError).toBe(`QueryError: ${READ_ONLY_INSERT_MESSAGE(file)}`);
+        expect(readdirSync(dir)).toEqual(["shop.db"]);
+      },
+    );
+  });
+
+  // The control: the write check must not turn an ordinary file read-only.
+  test("a writable file still opens read-write in WAL mode", async () => {
+    const dir = join(root, "writable");
+    mkdirSync(dir);
+    const spy = spyOn(logger, "info");
+    infoSpy = spy;
+    const db = new SQLiteProvider(makeSQLiteConfig({ database: join(dir, "shop.db") }));
+    try {
+      await db.connect();
+      expect((await db.query("PRAGMA journal_mode")).rows).toEqual([{ journal_mode: "wal" }]);
+      await db.query("CREATE TABLE t (id INTEGER PRIMARY KEY)");
+      expect((await db.query("INSERT INTO t VALUES (1)")).rowCount).toBe(1);
+      expect(readOnlyDecisions(spy)).toEqual([]);
+    } finally {
+      await db.disconnect();
+    }
+  });
+
+  // The write check only turns "you may not write this" into a read-only open. Any other
+  // answer from the filesystem is a real failure and surfaces as one.
+  test("a write check that fails for another reason is raised, not read as read-only", async () => {
+    const dir = join(root, "eio");
+    mkdirSync(dir);
+    const file = join(dir, "shop.db");
+    writeFileSync(file, "");
+    const accessSpy = spyOn(fsNode, "accessSync").mockImplementation(() => {
+      throw Object.assign(new Error("EIO: i/o error, access"), { code: "EIO" });
+    });
+    const db = new SQLiteProvider(makeSQLiteConfig({ database: file }));
+    try {
+      await expect(db.connect()).rejects.toThrow("Failed to open SQLite database: EIO: i/o error, access");
+      expect(db.isConnected()).toBe(false);
+    } finally {
+      accessSpy.mockRestore();
+    }
+  });
+});
+
+// ============================================================================
+// A BLOB round trip: provider, wire, export, replay
+// ============================================================================
+// The whole path a BLOB takes to a user's file and back, on the real bun:sqlite driver.
+// The rows cross `JSON.stringify` and `JSON.parse` exactly as `POST /api/db/query` and
+// the browser do. Before the driver seam handed back a Buffer, the bytes arrived as
+// `{"0":222,...}`, the SQL export wrote that object as quoted text, and the replay
+// below stored a TEXT value in place of the six bytes.
+
+describe("a BLOB survives the wire, the export and a replay", () => {
+  test("the SQL INSERT export writes X'..' and replays to identical bytes", async () => {
+    const provider = new SQLiteProvider(makeSQLiteConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE src (id INTEGER PRIMARY KEY, bin BLOB)");
+    await provider.query("INSERT INTO src VALUES (1, x'DEADBEEF00FF'), (2, x'')");
+
+    const read = await provider.query("SELECT id, bin FROM src ORDER BY id");
+    const wire = JSON.parse(JSON.stringify(read.rows)) as Record<string, unknown>[];
+    expect(wire[0]?.bin).toEqual({ type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] });
+
+    const source = { rows: wire, fields: read.fields, tabName: "dst", dialect: "sqlite" as const };
+    expect(buildResultExport("csv", source).content).toContain("1,\\xdeadbeef00ff");
+    const insert = buildResultExport("sql-insert", source).content;
+    expect(insert.split("\n")).toEqual([
+      `INSERT INTO dst ("id", "bin") VALUES (1, X'deadbeef00ff');`,
+      `INSERT INTO dst ("id", "bin") VALUES (2, X'');`,
+    ]);
+
+    await provider.query("CREATE TABLE dst (id INTEGER PRIMARY KEY, bin BLOB)");
+    await Promise.all(insert.split("\n").map((statement) => provider.query(statement)));
+    const replayed = await provider.query(
+      "SELECT d.id, typeof(d.bin) AS kind, hex(d.bin) AS hex, d.bin = s.bin AS same FROM dst d JOIN src s USING (id) ORDER BY d.id",
+    );
+    expect(replayed.rows).toEqual([
+      { id: 1, kind: "blob", hex: "DEADBEEF00FF", same: 1 },
+      { id: 2, kind: "blob", hex: "", same: 1 },
+    ]);
+    await provider.disconnect();
   });
 });

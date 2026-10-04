@@ -26,6 +26,8 @@ describe("quoteLiteral", () => {
     expect(quoteLiteral("O'Brien", "trino")).toBe("'O''Brien'");
     // Measured on DuckDB v1.5.5: `SELECT 'it''s'` answers `it's`.
     expect(quoteLiteral("O'Brien", "duckdb")).toBe("'O''Brien'");
+    // Measured on Db2 LUW 12.1.0.0: `VALUES 'O''Brien'` answers `O'Brien`.
+    expect(quoteLiteral("O'Brien", "db2")).toBe("'O''Brien'");
   });
 
   test("prefixes the SQL Server literal with N, so the value is read as Unicode", () => {
@@ -72,6 +74,9 @@ describe("quoteLiteral", () => {
     // Measured on Trino 476: `SELECT 'a\b' AS a` answers the two characters `a\b`, so
     // the backslash is data and doubling it would put a second one in the value.
     expect(quoteLiteral("a\\b", "trino")).toBe("'a\\b'");
+    // Measured on Db2 LUW 12.1.0.0 through db2-node 1.0.22: `VALUES 'a\b'` answers `a\b` and
+    // `VALUES LENGTH('a\b')` answers 3, so the backslash is data (#786).
+    expect(quoteLiteral("a\\b", "db2")).toBe("'a\\b'");
   });
 
   test("gives the standard form to an engine that has no SQL of its own", () => {
@@ -86,6 +91,36 @@ describe("quoteLiteral", () => {
     // Prometheus writes PromQL, and no SQL statement is ever built for it either, so the same
     // portable claim holds for it (#1085).
     expect(quoteLiteral("a\\b", "prometheus")).toBe("'a\\b'");
+    // A Kafka read request is JSON of its own dialect (#1088), and no SQL statement is built for
+    // it either.
+    expect(quoteLiteral("a\\b", "kafka")).toBe("'a\\b'");
+    // Nor for an etcdctl command (#1089).
+    expect(quoteLiteral("a\\b", "etcd")).toBe("'a\\b'");
+    // Nor for a Milvus request (vector-family spec 5.4): its body is JSON, and no SQL statement is built for it.
+    expect(quoteLiteral("a\\b", "milvus")).toBe("'a\\b'");
+    // Nor for a Qdrant request (vector-family spec 6.4): its body is JSON, and no SQL statement is built for it.
+    expect(quoteLiteral("a\\b", "qdrant")).toBe("'a\\b'");
+    // Nor for an `oxia client` command (SB2-4.3): the command table's own quoting writes every word.
+    expect(quoteLiteral("a\\b", "oxia")).toBe("'a\\b'");
+    expect(quoteLiteral("O'Brien", "kafka")).toBe("'O''Brien'");
+  });
+
+  test("escapes with a backslash for InfluxQL and doubles the quote for InfluxDB 3's SQL", () => {
+    // Measured on InfluxDB 1.13.1: `... WHERE room = 'it\'s'` parses and `'it''s'` does not, so the
+    // quote and the backslash are both spelled with a backslash.
+    expect(quoteLiteral("it's", "influxdb")).toBe("'it\\'s'");
+    expect(quoteLiteral("a\\b", "influxdb")).toBe("'a\\\\b'");
+    // Measured on InfluxDB 3.12.0: `SELECT 'a\b'` answers the three characters `a\b`, so a backslash is data.
+    expect(quoteLiteral("a\\b", "influxdb3")).toBe("'a\\b'");
+    expect(quoteLiteral("it's", "influxdb3")).toBe("'it''s'");
+  });
+
+  test("escapes with a backslash for Cypher, where a doubled quote is not an escape (Neo4j)", () => {
+    // Cypher's string grammar has backslash escapes and no doubling, the reading the graph lexer
+    // (`src/lib/db/graph/cypher/lexer.ts`) decodes, so a quote and a backslash are both spelled with one.
+    expect(quoteLiteral("O'Brien", "neo4j")).toBe("'O\\'Brien'");
+    expect(quoteLiteral("a\\b", "neo4j")).toBe("'a\\\\b'");
+    expect(unquoteLiteral("'O\\'Brien'", "neo4j")).toBe("O'Brien");
   });
 
   test("falls back to the standard form when no dialect is known", () => {
@@ -128,6 +163,10 @@ describe("positionalPlaceholder", () => {
     // because `$` also opens a dollar-quoted literal in this dialect.
     expect(positionalPlaceholder("duckdb", 1)).toBe("?");
     expect(positionalPlaceholder("duckdb", 2)).toBe("?");
+    // db2-node binds a params array against `?`, measured on Db2 LUW 12.1.0.0 with
+    // `SELECT TABNAME FROM SYSCAT.TABLES WHERE TABSCHEMA = ? AND TABNAME = ?` (#786).
+    expect(positionalPlaceholder("db2", 1)).toBe("?");
+    expect(positionalPlaceholder("db2", 2)).toBe("?");
   });
 
   test("trino has no positional placeholder, because its provider refuses to bind one", () => {
@@ -152,6 +191,22 @@ describe("positionalPlaceholder", () => {
     expect(positionalPlaceholder("libredb", 1)).toBeNull();
     // PromQL binds nothing at all (#1085 5.1), so there is no placeholder to emit.
     expect(positionalPlaceholder("prometheus", 1)).toBeNull();
+    // Nor does a Kafka read request: the provider refuses bound params outright (#1088 5.1).
+    expect(positionalPlaceholder("kafka", 1)).toBeNull();
+    // Nor an etcdctl command: the provider refuses bound params outright (#1089 5.4).
+    expect(positionalPlaceholder("etcd", 1)).toBeNull();
+    // Nor a Milvus request: its values are typed into the JSON body, and the provider binds nothing.
+    expect(positionalPlaceholder("milvus", 1)).toBeNull();
+    // Nor a Qdrant request: its values are typed into the JSON body, and the provider binds nothing.
+    expect(positionalPlaceholder("qdrant", 1)).toBeNull();
+    // Nor a Cypher statement: Cypher binds named `$name` parameters only, and the provider sends none in
+    // this version, so the read policy refuses a parameter in the text before it is sent.
+    expect(positionalPlaceholder("neo4j", 1)).toBeNull();
+    // Nor InfluxQL: it is not SQL and nothing binds.
+    expect(positionalPlaceholder("influxdb", 1)).toBeNull();
+    // Nor InfluxDB 3: the engine has placeholders, but the route body is exactly `db`, `q` and
+    // `format`, so the provider refuses bound params and a placeholder would go unfilled.
+    expect(positionalPlaceholder("influxdb3", 1)).toBeNull();
   });
 });
 

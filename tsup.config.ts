@@ -39,11 +39,19 @@ export default defineConfig({
     // addon into the published ESM/CJS bundles.
     "@duckdb/node-api",
     "@duckdb/node-bindings",
+    // The Db2 driver's loader ends in a native `require('./db2-node.<triple>.node')`.
+    "db2-node",
     // Pure JS, but external for the same reason it is in `serverExternalPackages`:
     // its optional `require('kerberos')` is unresolvable at build time.
     "cassandra-driver",
     "mongodb",
     "ioredis",
+    "@platformatic/kafka",
+    // The etcd provider's gRPC client and the loader that reads its generated descriptor.
+    "@grpc/grpc-js",
+    "@grpc/proto-loader",
+    // The neo4j provider's Bolt driver; consumers install it like the other drivers.
+    "neo4j-driver-lite",
     "@libredb/libredb",
     // SSH and crypto
     "ssh2",
@@ -60,6 +68,10 @@ export default defineConfig({
     // Tailwind 4 computed styles); external like every other UI lib - it is
     // a regular dependency, so consumers resolve it via npm.
     "@zumer/snapdom",
+    // The Graph tab's canvas and layout, loaded by a dynamic import in
+    // cytoscape-host.ts; both are regular dependencies, exact-pinned.
+    "cytoscape",
+    "cytoscape-fcose",
     "@tanstack/react-table",
     "@tanstack/react-virtual",
     "react-resizable-panels",

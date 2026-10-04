@@ -79,6 +79,15 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     label: "libSQL",
     reason: "SQLite cannot retype a column; recreate the table and copy the rows.",
   },
+  // Db2 retypes a column with its own `ALTER COLUMN … SET DATA TYPE`, which the PostgreSQL branch
+  // this id would otherwise inherit does not emit, and several such changes leave the table
+  // REORG-pending until a REORG runs, which a flat migration file cannot schedule (#786). ADD and
+  // DROP COLUMN take the standard spelling, both measured on Db2 LUW 12.1.0.0.
+  db2: {
+    label: "Db2 LUW",
+    reason:
+      "Db2 changes a column with ALTER COLUMN ... SET DATA TYPE and may leave the table REORG-pending; write the change by hand.",
+  },
   couchbase: {
     label: "Couchbase",
     reason: "Collections hold schemaless JSON documents, so there is no column definition to change.",
@@ -147,7 +156,77 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "A metric is written by scrapes and recording rules, not declared with columns, so there is no column definition to change.",
   },
+  // Not a table store either (#1088): a topic holds messages whose keys and values are bytes the
+  // producers chose, and the broker declares no column anywhere; the columns the object browser
+  // shows are the fixed shape of a read result. The sentence is the one `NO_TABLE_DDL` below
+  // prints when it declines the whole diff.
+  kafka: {
+    label: "Apache Kafka",
+    reason: "A topic holds messages, not rows with declared columns, so there is no column definition to change.",
+  },
+  // Not a table store either (#1089): a key's value is bytes, and a key-prefix group is derived from the
+  // key space's shape rather than declared; the columns the object browser shows are the fixed shape of a
+  // `get` row. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  etcd: {
+    label: "etcd",
+    reason:
+      "A key-prefix group holds keys whose values are bytes, not rows with declared columns, so there is no column definition to change.",
+  },
+  // Not a table store either: a label groups nodes, each carrying whatever properties it was written with,
+  // and the columns the object browser shows are the property keys the server reports for that label. The
+  // provider is read-only besides. The sentence is the one `NO_TABLE_DDL` below prints when it declines the
+  // whole diff.
+  neo4j: {
+    label: "Neo4j",
+    reason:
+      "A node label groups nodes whose properties are not declared columns, so there is no column definition to change.",
+  },
+  // Not a table store either (vector-family spec 5.3): a collection's schema is declared through Milvus's own
+  // collection API, and the columns the object browser shows are its fields. The sentence is the one
+  // `NO_TABLE_DDL` below prints when it declines the whole diff.
+  milvus: {
+    label: "Milvus",
+    reason:
+      "A collection's schema is declared through Milvus's own collection API, not SQL DDL, so there is no column definition to change.",
+  },
+  // Not a table store either (vector-family spec 6.3): a collection holds points whose payloads are schemaless, and
+  // the columns the object browser shows are its vectors, its payload indexes and a sample of its payload keys.
+  // The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  qdrant: {
+    label: "Qdrant",
+    reason:
+      "A collection's payloads are schemaless and its vectors are declared through Qdrant's own collection API, not SQL DDL, so there is no column definition to change.",
+  },
+  // Not a table store either: a measurement's tags and fields come into being with the points written to it, and
+  // the provider is read-only. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  influxdb: {
+    label: "InfluxDB (InfluxQL)",
+    reason:
+      "A measurement's tags and fields are created by the points written to it, not declared with columns, so there is no column definition to change.",
+  },
+  // The same for InfluxDB 3, whose SQL is a read surface: the 3.x planner refuses DDL and DML. The sentence is the
+  // one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  influxdb3: {
+    label: "InfluxDB 3 (SQL)",
+    reason:
+      "A table's tags and fields are created by the line protocol written to it, and InfluxDB 3's SQL takes no DDL, so there is no column definition to change.",
+  },
+  // Not a table store either (SB2-4.3): a key holds opaque bytes, and the columns a read shows are a record's fixed
+  // shape. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  oxia: {
+    label: "Oxia",
+    reason:
+      "Oxia stores opaque values under string keys and has no schema, so there is no column definition to change.",
+  },
 };
+
+/**
+ * The dialects with no `IF EXISTS` on `DROP CONSTRAINT` or `DROP INDEX`, so a dropped foreign key or
+ * index is written bare. Oracle has neither form; Db2 (#786) neither, measured on Db2 LUW 12.1.0.0:
+ * `ALTER TABLE "C" DROP CONSTRAINT IF EXISTS "fk_c"` and `DROP INDEX IF EXISTS "ix_c"` are both
+ * SQL0104N at `EXISTS`, while the bare statements run.
+ */
+const NO_DROP_IF_EXISTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["oracle", "db2"]);
 
 /**
  * Canonical type ids whose migration text carries no transaction wrapper, because no
@@ -185,14 +264,23 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
  * than a safe default — this set is what removes it from the wrapper it used to inherit.
  *
  * Oracle DDL commits implicitly and BEGIN opens a PL/SQL block, not a transaction.
+ * Db2 (#786) is excluded for the Oracle reason: it has no standalone `BEGIN;`, and BEGIN opens a
+ * compound SQL block.
  * SQL Server is handled separately with BEGIN TRANSACTION.
  *
  * `prometheus` (#1085) joined later, on the fact `mongodb` and `redis` already rest on: its
  * text is PromQL, not SQL (`NON_SQL_DIALECTS`). `NO_TABLE_DDL` declines its whole diff before
  * any wrapper is written, so this entry keeps the two sets agreeing rather than changing output.
+ * `kafka` (#1088) joined on the same fact and for the same reason: its text is a JSON read
+ * request, not SQL. `etcd` (#1089) joined the same way: its text is an etcdctl command line, and
+ * `neo4j` too: its text is a Cypher statement, `milvus`: its text is a Milvus console request, and `qdrant`: its
+ * text is a Qdrant console request. `influxdb` joined on the same fact: its text is an InfluxQL statement, and
+ * `influxdb3` on `NO_TABLE_DDL`'s: its text is SQL, but the 3.x planner takes no DDL, so there is no table DDL
+ * to wrap. `oxia` joined on the first fact: its text is one `oxia client` read command.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
+  "db2",
   "sqlite",
   "libsql",
   "cassandra",
@@ -206,6 +294,14 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "opensearch",
   "trino",
   "prometheus",
+  "kafka",
+  "etcd",
+  "neo4j",
+  "milvus",
+  "qdrant",
+  "influxdb",
+  "influxdb3",
+  "oxia",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -220,6 +316,14 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "elasticsearch",
   "opensearch",
   "prometheus",
+  "kafka",
+  "etcd",
+  "neo4j",
+  "milvus",
+  "qdrant",
+  "influxdb",
+  "influxdb3",
+  "oxia",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,
@@ -465,7 +569,7 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         // `DROP CONSTRAINT IF EXISTS fk_x` is "mismatched input 'IF' expecting EOF"
         // (measured), and dropping what was never declarable is not a statement.
         lines.push(`-- Apache Cassandra: Cannot drop a foreign key. CQL never declared one.`);
-      } else if (dialect === "oracle") {
+      } else if (NO_DROP_IF_EXISTS.has(dialect)) {
         lines.push(`ALTER TABLE ${id} DROP CONSTRAINT ${constraintName};`);
       } else {
         lines.push(`ALTER TABLE ${id} DROP CONSTRAINT IF EXISTS ${constraintName};`);
@@ -486,7 +590,7 @@ function generateAlterTable(table: TableDiff, dialect: DatabaseType): string {
         lines.push(`DROP INDEX ${escapeIdentifier(idx.indexName, dialect)} ON ${id};`);
       } else if (dialect === "mssql") {
         lines.push(`DROP INDEX IF EXISTS ${escapeIdentifier(idx.indexName, dialect)} ON ${id};`);
-      } else if (dialect === "oracle") {
+      } else if (NO_DROP_IF_EXISTS.has(dialect)) {
         lines.push(`DROP INDEX ${escapeIdentifier(idx.indexName, dialect)};`);
       } else {
         lines.push(`DROP INDEX IF EXISTS ${escapeIdentifier(idx.indexName, dialect)};`);

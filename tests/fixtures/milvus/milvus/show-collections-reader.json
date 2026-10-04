@@ -1,0 +1,93 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "ShowCollections",
+    "user": "reader",
+    "surface": "ShowCollections as reader",
+    "request": {
+      "db_name": "default"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "collection_names": [
+      "edge_values",
+      "large_topk",
+      "wide_768",
+      "docs_int64",
+      "docs_varchar",
+      "fts",
+      "pk_partitioned",
+      "shadowed",
+      "libredb_evidence_load",
+      "unloaded_big",
+      "scratch"
+    ],
+    "collection_ids": [
+      "469506719194100380",
+      "469506719199212076",
+      "469506719199382212",
+      "469506719193499070",
+      "469506719193820137",
+      "469506719193920230",
+      "469506719194210472",
+      "469506719199262149",
+      "469509774981989601",
+      "469506719194000287",
+      "469506719194100334"
+    ],
+    "created_timestamps": [
+      "469506748516401170",
+      "469506752920420370",
+      "469506755174858770",
+      "469506742749233170",
+      "469506743902666770",
+      "469506745632817170",
+      "469506750194122770",
+      "469506754021425170",
+      "469509777986682897",
+      "469506746628964372",
+      "469506747939684370"
+    ],
+    "created_utc_timestamps": [
+      "1791026109758",
+      "1791026126558",
+      "1791026135158",
+      "1791026087758",
+      "1791026092158",
+      "1791026098758",
+      "1791026116158",
+      "1791026130758",
+      "1791037666270",
+      "1791026102558",
+      "1791026107558"
+    ],
+    "inMemory_percentages": [],
+    "query_service_available": [],
+    "shards_num": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

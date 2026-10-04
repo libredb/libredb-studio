@@ -8,6 +8,8 @@ import { cleanup, render, within, fireEvent, act, waitFor } from "@testing-libra
 import { DataImportModal } from "@/components/DataImportModal";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { pathKey } from "@/lib/db/object-path";
+import { INFLUXQL_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
+import { INFLUXDB3_OBJECT_KINDS } from "@/lib/db/providers/timeseries/influxdb/sql-objects";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 // The insecure-context harness, as in tests/components/copy-button.test.tsx: an absent
@@ -1096,7 +1098,13 @@ describe("DataImportModal on a PromQL connection (#1085)", () => {
   });
 
   const metricKind = { id: "metric", role: "relation", label: "Metric", labelPlural: "Metrics", hasColumns: true };
-  const promqlCapabilities = { queryLanguage: "promql", objectKinds: [metricKind] } as unknown as ProviderCapabilities;
+  // `supportsCreateTable` keeps the dialog's target step reachable, so the filter is what is pinned;
+  // the real Prometheus declaration takes no import at all, pinned with the Db2 shape below.
+  const promqlCapabilities = {
+    queryLanguage: "promql",
+    supportsCreateTable: true,
+    objectKinds: [metricKind],
+  } as unknown as ProviderCapabilities;
   const metrics: DetailedObject[] = [
     { name: "http_requests_total", kind: "metric", path: ["http_requests_total"], columns: [], indexes: [] },
     { name: "up", kind: "metric", path: ["up"], columns: [], indexes: [] },
@@ -1129,6 +1137,58 @@ describe("DataImportModal on a PromQL connection (#1085)", () => {
       objectKinds: [{ ...metricKind, acceptsRowWrites: true }],
     } as unknown as ProviderCapabilities;
     expect(metricTargetNames(writable)).toEqual(["http_requests_total", "up"]);
+  });
+});
+
+// =============================================================================
+// An InfluxDB measurement or table is never an import target (InfluxDB spec I1)
+// =============================================================================
+
+/**
+ * Both InfluxDB types are read-only in v1: neither the `measurement` kind of `influxdb` nor the `table` kind of
+ * `influxdb3` declares `acceptsRowWrites`, so the dialog offers no object of either as an import target, and the
+ * InfluxQL quoting is never asked of an import. The kinds below are the providers' own declarations, so this pins
+ * the real ones, beside the control where the same objects take row writes.
+ */
+describe("DataImportModal on an InfluxDB connection (InfluxDB spec I1)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const objects: DetailedObject[] = [
+    { name: "cpu", kind: "measurement", path: ["telegraf", "cpu"], columns: [], indexes: [] },
+    { name: "home", kind: "table", path: ["home"], columns: [], indexes: [] },
+  ];
+
+  function targetNamesOver(capabilities: ProviderCapabilities): string[] {
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={noop} onImport={noop} tables={objects} capabilities={capabilities} />,
+    );
+    act(() => {
+      simulateFileUpload(baseElement, "room,temp\nkitchen,21", "data.csv");
+    });
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    return Array.from(select.options)
+      .map((option) => option.textContent ?? "")
+      .filter((text) => text !== "-- Select a table --");
+  }
+
+  test.each([
+    ["influxdb", "influxql", INFLUXQL_OBJECT_KINDS],
+    ["influxdb3", "sql", INFLUXDB3_OBJECT_KINDS],
+  ] as const)("no %s object is offered as an import target", (_type, queryLanguage, objectKinds) => {
+    const capabilities = { queryLanguage, supportsCreateTable: true, objectKinds } as unknown as ProviderCapabilities;
+    expect(targetNamesOver(capabilities)).toEqual([]);
+    // The control: the same objects under kinds that take row writes are offered.
+    cleanup();
+    const writable = {
+      ...capabilities,
+      objectKinds: objectKinds.map((kind) => ({ ...kind, acceptsRowWrites: true })),
+    } as unknown as ProviderCapabilities;
+    expect(targetNamesOver(writable).length).toBeGreaterThan(0);
   });
 });
 
@@ -1226,5 +1286,67 @@ describe("DataImportModal target addressing", () => {
     act(() => fireEvent.change(select, { target: { value: pathKey(["shop", "dbo", "customers"]) } }));
     act(() => fireEvent.click(within(baseElement).getByText("Review SQL")));
     expect(baseElement.textContent).toContain("1 rows into shop.dbo.customers");
+  });
+});
+
+// =============================================================================
+// An engine that declares nothing an import could write into takes no import (#786)
+// =============================================================================
+
+describe("DataImportModal on an engine that takes no import (#786)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  // Db2-shaped: no kind accepts a row write and no create-table is declared.
+  const noImport = {
+    queryLanguage: "sql",
+    supportsCreateTable: false,
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", hasColumns: true },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views", hasColumns: true },
+    ],
+  } as unknown as ProviderCapabilities;
+  const inventory: DetailedObject[] = [
+    { name: "ORDERS", kind: "table", path: ["APP", "ORDERS"], columns: [], indexes: [] },
+  ];
+
+  test("the dialog refuses up front and offers no upload", () => {
+    const onClose = mock(() => {});
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={onClose} onImport={noop} tables={inventory} capabilities={noImport} />,
+    );
+    const body = within(baseElement);
+
+    expect(body.getByTestId("import-refused").textContent).toContain("takes no imported data");
+    expect(baseElement.querySelector('input[type="file"]')).toBeNull();
+    expect(body.queryByText("New Table")).toBeNull();
+
+    act(() => {
+      // The dialog's own corner close is labelled "Close" too; this is the refusal's button.
+      fireEvent.click(body.getByTestId("import-refused-close"));
+    });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  test("an engine with writable kinds and no create-table offers existing targets and no New Table", () => {
+    const writableNoCreate = {
+      ...noImport,
+      objectKinds: [{ id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true }],
+    } as unknown as ProviderCapabilities;
+    const { baseElement } = render(
+      <DataImportModal isOpen onClose={noop} onImport={noop} tables={inventory} capabilities={writableNoCreate} />,
+    );
+    act(() => {
+      simulateFileUpload(baseElement, "name,age\nAlice,30", "data.csv");
+    });
+    act(() => {
+      fireEvent.click(within(baseElement).getByText("Configure Import"));
+    });
+
+    expect(within(baseElement).queryByText("Existing Table")).not.toBeNull();
+    expect(within(baseElement).queryByText("New Table")).toBeNull();
+    const select = within(baseElement).getByLabelText("Select Table") as HTMLSelectElement;
+    expect(Array.from(select.options).map((option) => option.textContent)).toContain("ORDERS");
   });
 });

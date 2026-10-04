@@ -133,10 +133,46 @@ describe("PoolTab", () => {
     // One "N/A" per card: Total, Active, Idle, Waiting.
     expect(queryAllByText("N/A").length).toBe(4);
     // The sub-labels each assert a fact about a pool nobody inspected.
-    expect(queryByText("Max pool size")).toBeNull();
+    expect(queryByText("Open clients")).toBeNull();
     expect(queryByText("Available")).toBeNull();
     expect(queryByText("0% utilized")).toBeNull();
     expect(queryByText("No queue")).toBeNull();
+  });
+
+  // The first card counts the clients open right now, which is not the pool's ceiling.
+  // Utilization is against the ceiling when the provider reports one (2 busy of 10
+  // allowed is 20%, not 100% of the 2 open) and against the open count when it does not.
+  test("captions the Total card as open clients and shows the configured maximum apart", async () => {
+    mockFetch.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ total: 2, max: 10, idle: 0, active: 2, waiting: 0 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const { queryByText } = render(<PoolTab connection={conn} />);
+    await waitFor(() => {
+      expect(queryByText("Open clients · Max pool size 10")).not.toBeNull();
+    });
+    expect(queryByText("20% utilized")).not.toBeNull();
+  });
+
+  test("computes utilization against the open count when no maximum is reported", async () => {
+    mockFetch.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ total: 4, idle: 2, active: 2, waiting: 0 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    const { queryByText } = render(<PoolTab connection={conn} />);
+    await waitFor(() => {
+      expect(queryByText("Open clients")).not.toBeNull();
+    });
+    expect(queryByText("50% utilized")).not.toBeNull();
+    expect(queryByText(/Max pool size/)).toBeNull();
   });
 
   // The pin for the other input: postgres with no pool opened yet returns a real
@@ -153,7 +189,7 @@ describe("PoolTab", () => {
     );
     const { queryAllByText, queryByText } = render(<PoolTab connection={conn} />);
     await waitFor(() => {
-      expect(queryByText("Max pool size")).not.toBeNull();
+      expect(queryByText("Open clients")).not.toBeNull();
     });
     expect(queryByText("Available")).not.toBeNull();
     expect(queryByText("0% utilized")).not.toBeNull();

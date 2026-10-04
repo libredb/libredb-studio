@@ -59,6 +59,10 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   libsql: unconnected("libsql"),
   duckdb: unconnected("duckdb"),
   oracle: unconnected("oracle"),
+  // Without the shared MongoDB string: the Db2 provider reads a stored connection string at
+  // construction and refuses one that is not db2:// (#786), which is the behaviour a census must
+  // not have to route around.
+  db2: { ...unconnected("db2"), connectionString: undefined },
   mssql: unconnected("mssql"),
   clickhouse: unconnected("clickhouse"),
   druid: unconnected("druid"),
@@ -70,5 +74,21 @@ export const CENSUS_CONNECTION: Readonly<Record<DatabaseType, DatabaseConnection
   redis: unconnected("redis"),
   couchbase: unconnected("couchbase"),
   prometheus: unconnected("prometheus"),
+  kafka: unconnected("kafka"),
+  // No field beyond UNCONNECTED (#1089 3.1): the provider validates nothing in its constructor, so its
+  // declarations answer for this connection whatever it holds.
+  etcd: unconnected("etcd"),
+  // No field beyond UNCONNECTED: the constructor validates nothing and opens nothing (Neo4j spec 6.1).
+  neo4j: unconnected("neo4j"),
+  // No field beyond UNCONNECTED (vector-family spec 5.7): the constructor validates nothing and opens nothing.
+  milvus: unconnected("milvus"),
+  // No field beyond UNCONNECTED (vector-family spec 6.2): the constructor validates nothing and opens nothing; a user is refused at connect, which no census reaches.
+  qdrant: unconnected("qdrant"),
+  // No field beyond UNCONNECTED (InfluxDB spec 3.3): both constructors validate nothing and open nothing; the
+  // connection's rules, influxdb3's refusal of a user among them, run in connect(), which no census reaches.
+  influxdb: unconnected("influxdb"),
+  influxdb3: unconnected("influxdb3"),
+  // No field beyond UNCONNECTED (SB3-1.3): the constructor validates nothing and opens nothing; the fields are read at connect, which no census reaches.
+  oxia: unconnected("oxia"),
   libredb: unconnected("libredb"),
 });

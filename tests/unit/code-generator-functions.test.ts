@@ -19,17 +19,22 @@ import type { DetailedObject } from "@/lib/db/detailed-object";
 // ============================================================================
 
 describe("toPascalCase", () => {
-  test("simple table name", () => expect(toPascalCase("users")).toBe("User"));
-  test("underscore name", () => expect(toPascalCase("order_items")).toBe("OrderItem"));
-  test("hyphenated name", () => expect(toPascalCase("user-roles")).toBe("UserRole"));
+  // Case only: it also names Go fields, so it must not singularize (#1138).
+  test("simple name", () => expect(toPascalCase("email")).toBe("Email"));
+  test("underscore name", () => expect(toPascalCase("order_items")).toBe("OrderItems"));
+  test("hyphenated name", () => expect(toPascalCase("user-roles")).toBe("UserRoles"));
+  test("a trailing s is kept", () => expect(toPascalCase("status")).toBe("Status"));
   test("already pascal", () => expect(toPascalCase("User")).toBe("User"));
   test("single char", () => expect(toPascalCase("a")).toBe("A"));
   test("non-plural name", () => expect(toPascalCase("data")).toBe("Data"));
 });
 
 describe("toCamelCase", () => {
-  test("simple table name", () => expect(toCamelCase("users")).toBe("user"));
-  test("underscore name", () => expect(toCamelCase("order_items")).toBe("orderItem"));
+  test("a trailing s is kept", () => expect(toCamelCase("status")).toBe("status"));
+  // This case expected `user` before #1138. That was the defect itself: `toCamelCase()` names
+  // fields, so a column `users` must stay `users`. Only a TYPE name is singularized.
+  test("plural name", () => expect(toCamelCase("users")).toBe("users"));
+  test("underscore name", () => expect(toCamelCase("order_items")).toBe("orderItems"));
   test("already camel", () => expect(toCamelCase("email")).toBe("email"));
 });
 
@@ -285,6 +290,43 @@ describe("generateCode", () => {
     expect(code).not.toContain("import java.time.LocalDateTime");
   });
 
+  describe("a column name that ends in `s` keeps its `s` (#1138)", () => {
+    // Only the TYPE name is singularized. A field is the name of a key in a real row, so a
+    // Zod schema that requires `statu` rejects every row, because the row has `status`.
+    const orders: DetailedObject = {
+      name: "orders",
+      kind: "table",
+      path: ["orders"],
+      indexes: [],
+      columns: [
+        { name: "id", type: "INTEGER", nullable: false, isPrimary: true },
+        { name: "status", type: "TEXT", nullable: false, isPrimary: false },
+        { name: "address", type: "TEXT", nullable: true, isPrimary: false },
+      ],
+    };
+
+    test.each([
+      ["typescript", ["  status: string;", "  address: string | null;"]],
+      ["zod", ["  status: z.string(),", "  address: z.string().nullable(),"]],
+      ["go", ["\tStatus string ", "\tAddress *string "]],
+      ["java", ["    private String status;", "    private String address;"]],
+    ] as const)("%s", (lang, fields) => {
+      const code = generateCode(lang, orders);
+      for (const field of fields) expect(code).toContain(field);
+    });
+
+    test.each([
+      ["typescript", "export interface Order {"],
+      ["zod", "export const OrderSchema = z.object({"],
+      ["prisma", "model Order {"],
+      ["go", "type Order struct {"],
+      ["python", "class Order:"],
+      ["java", "public class Order {"],
+    ] as const)("the %s type name is still singular", (lang, declaration) => {
+      expect(generateCode(lang, orders)).toContain(declaration);
+    });
+  });
+
   test("empty columns produces empty body", () => {
     const schema: DetailedObject = { name: "empty", kind: "table", path: ["empty"], indexes: [], columns: [] };
     const code = generateCode("typescript", schema);
@@ -306,6 +348,8 @@ describe("toIdentifier", () => {
   test("a name with no alphanumerics falls back to Record", () => expect(toIdentifier(":*")).toBe("Record"));
   test("an empty name falls back to Record", () => expect(toIdentifier("")).toBe("Record"));
   test("an ordinary SQL table name is unaffected (regression)", () => expect(toIdentifier("users")).toBe("User"));
+  test("an underscore table name is singularized", () => expect(toIdentifier("order_items")).toBe("OrderItem"));
+  test("a hyphenated table name is singularized", () => expect(toIdentifier("user-roles")).toBe("UserRole"));
   test("a leading digit is prefixed rather than left illegal", () => expect(toIdentifier("2fa:*")).toBe("T2fa"));
 
   // Non-ASCII names were ALREADY legal identifiers in all six target languages,

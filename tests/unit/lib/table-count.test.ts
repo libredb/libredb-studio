@@ -56,6 +56,9 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   libsql: 'SELECT COUNT(*) AS row_count\nFROM "Order""Items";',
   duckdb: 'SELECT COUNT(*) AS row_count\nFROM c0.c1."Order""Items";',
   oracle: 'SELECT COUNT(*) AS row_count\nFROM "c0"."Order""Items"',
+  // COUNT answers an INTEGER on Db2 too and overflows past 2,147,483,647 rows; v1 keeps COUNT(*),
+  // see docs/providers/db2.md. The declared `double` quoting leaves a lower-case name bare (#786).
+  db2: 'SELECT COUNT(*) AS row_count\nFROM c0."Order""Items";',
   // COUNT answers an int on SQL Server and overflows past 2,147,483,647 rows.
   mssql: 'SELECT COUNT_BIG(*) AS row_count\nFROM c0.c1.[Order"Items];',
   clickhouse: 'SELECT COUNT(*) AS row_count\nFROM c0."Order""Items";',
@@ -71,6 +74,24 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   redis: null,
   libredb: null,
   prometheus: null,
+  // A read request is JSON of its own dialect (#1088), and its grammar has no count to write.
+  kafka: null,
+  // An etcdctl command line (#1089): the dialect is declared and a key-prefix group is a derived grouping,
+  // either of which withholds the action (`offersCountQuery`).
+  etcd: null,
+  // Cypher (Neo4j spec 6.5): `offersCountQuery` answers false for the language, so no Count appears.
+  neo4j: null,
+  // A Milvus console request (vector-family spec 5.7): the dialect's record withholds the action; a count is the documented count(*) request.
+  milvus: null,
+  // A Qdrant console request (vector-family spec 6.7): the dialect's record withholds the action; a count is the documented count request.
+  qdrant: null,
+  // InfluxQL (InfluxDB spec I12): `offersCountQuery` answers false for the language, so no Count appears.
+  influxdb: null,
+  // DataFusion SQL with no container level (R16) and `double-always` quoting (R41): every segment double-quoted, no
+  // terminator. Unwindowed (R9): past the file limit on Core it meets the file-limit sentence, which names the fix.
+  influxdb3: 'SELECT COUNT(*) AS row_count\nFROM "Order""Items"',
+  // One `oxia client` read command (SB2-4.3): the dialect's record withholds the action, and Oxia has no count.
+  oxia: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

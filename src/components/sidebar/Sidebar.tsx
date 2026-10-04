@@ -2,7 +2,7 @@
 
 import React from "react";
 import { DatabaseConnection } from "@/lib/types";
-import type { DatabaseObject } from "@/lib/db/types";
+import { keyScanShape, offersSchemaDiagram, type DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { Plus, Zap, Layers, LoaderCircle, CircleAlert } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -14,6 +14,7 @@ import { GitHubRepoLink } from "@/components/github-repo-link";
 import { getAppVersion } from "@/lib/app-version";
 import { cn } from "@/lib/utils";
 import { ConnectionsList } from "./ConnectionsList";
+import type { ConnectionGroup } from "@/lib/storage/types";
 
 interface SidebarProps {
   connections: DatabaseConnection[];
@@ -28,6 +29,13 @@ interface SidebarProps {
   /** The user's saved custom order (#748). Absent means reordering is not wired up. */
   connectionOrder?: string[];
   onReorderConnections?: (order: string[]) => void;
+  /** The user's own connection groups (#1170) and the callbacks that manage them; see `ConnectionsList`. */
+  connectionGroups?: ConnectionGroup[];
+  onCreateGroup?: (name: string) => string | null;
+  onRenameGroup?: (id: string, name: string) => void;
+  onDeleteGroup?: (id: string) => void;
+  onToggleGroupCollapsed?: (id: string) => void;
+  onMoveConnectionToGroup?: (connectionId: string, groupId: string | null) => void;
   onAddConnection: () => void;
   /** A row the reader activated, handed over whole: path, kind and the fields the tree loaded. */
   onObjectClick?: (object: DatabaseObject) => void;
@@ -94,7 +102,7 @@ interface SidebarProps {
   onOpenKey?: (key: string, type: string | null, database: number | null) => void;
 }
 
-export function Sidebar({
+export const Sidebar = React.memo(function Sidebar({
   connections,
   activeConnection,
   onSelectConnection,
@@ -105,6 +113,12 @@ export function Sidebar({
   onToggleFavoriteConnection,
   connectionOrder,
   onReorderConnections,
+  connectionGroups,
+  onCreateGroup,
+  onRenameGroup,
+  onDeleteGroup,
+  onToggleGroupCollapsed,
+  onMoveConnectionToGroup,
   onAddConnection,
   onObjectClick,
   onShowDiagram,
@@ -163,6 +177,12 @@ export function Sidebar({
   const keyScan = objectSource === undefined ? metadata?.capabilities.keyScan : undefined;
   const showingKeys = keyScan !== undefined && view === "keys";
   /**
+   * The walk's shape, read once through `keyScanShape`, so the handover below builds the pattern the
+   * engine's walk reads (spec 3.4, 4.6). Undefined where no walk is shown, which is also where no row
+   * offers Browse Keys.
+   */
+  const keyShape = React.useMemo(() => (keyScan === undefined ? undefined : keyScanShape(keyScan)), [keyScan]);
+  /**
    * The container level the walk is pointed at, when the engine declares one.
    *
    * The FIRST declared level is the one a key space belongs to — on Redis that is its numbered
@@ -203,17 +223,20 @@ export function Sidebar({
       const capabilities = metadata?.capabilities;
       const database = capabilities !== undefined && containerDepth(capabilities) > 0 ? object.path[0] : undefined;
       setKeyPatternRequest({
+        // IN THE WALK'S OWN SHAPE, from `prefixPattern`, which reads the row's NAME. The scoped walk
+        // holds a path and asks `pathPattern`, which is this helper under `glob`, so the two cannot
+        // drift there (#427), and the same rule with no name to read under `prefix`. Under `glob` it is
         // ESCAPED, and only in its prefix half: a key prefix is data that may itself contain a glob
         // metacharacter, while the `*` the row is advertised with is the one the pattern exists for.
-        // `prefixPattern` is the same helper the scoped walk builds its pattern with, so the two
-        // cannot drift (#427).
-        pattern: prefixPattern(object.name),
+        // Under `prefix` it is the bare prefix and its separator, unescaped, so `/apisix/routes/*` hands
+        // over `/apisix/routes/` (spec 4.6).
+        pattern: prefixPattern(object.name, keyShape),
         ...(database === undefined ? {} : { database }),
       });
       setView("keys");
       setKeysPanelFor(connectionId);
     },
-    [connectionId, metadata],
+    [connectionId, keyShape, metadata],
   );
   const actions = React.useMemo<TreeRowActionHandlers>(
     // The panel's own item is offered only where the panel exists: the row menu's gate asks the
@@ -234,7 +257,8 @@ export function Sidebar({
           </span>
         </div>
         <div className="flex items-center gap-1">
-          {activeConnection && (
+          {/* Not on a Cypher connection: its relationship types are no tables (SR20). */}
+          {activeConnection && offersSchemaDiagram(metadata?.capabilities) && (
             <button
               className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
               onClick={onShowDiagram}
@@ -273,6 +297,12 @@ export function Sidebar({
           onToggleFavoriteConnection={onToggleFavoriteConnection}
           connectionOrder={connectionOrder}
           onReorderConnections={onReorderConnections}
+          connectionGroups={connectionGroups}
+          onCreateGroup={onCreateGroup}
+          onRenameGroup={onRenameGroup}
+          onDeleteGroup={onDeleteGroup}
+          onToggleGroupCollapsed={onToggleGroupCollapsed}
+          onMoveConnectionToGroup={onMoveConnectionToGroup}
           onAddConnection={onAddConnection}
         />
       </ScrollArea>
@@ -412,4 +442,4 @@ export function Sidebar({
       </div>
     </div>
   );
-}
+});

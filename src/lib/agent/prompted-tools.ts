@@ -141,6 +141,81 @@ function objectsIn(text: string): string[] {
   return found;
 }
 
+/**
+ * A candidate read as JSON, repairing a closing run the model got wrong.
+ *
+ * The mirror of the truncation `objectsIn` already tolerates. There the payload was cut short;
+ * here it is closed WRONG — `"evidence": [{…}]]}]}}`, an extra `]` where a `}` was owed — and the
+ * finished report behind it, claim and artifact id and all, was thrown away on the one character.
+ *
+ * Counted over the ledgers: of the runs ending in prose that held a tool-call-shaped object, 113
+ * held one that would not parse. This recovers 22 of them and every single one cites an id its own
+ * run produced; `command-r7b:7b` wrote 16.
+ *
+ * Two rules keep it from inventing anything, and they are the same rule twice:
+ *
+ *  - A closer that matches nothing on the stack is DROPPED, and a closer still owed is APPENDED.
+ *    Neither touches a value — it is the truncation repair's licence, applied to the other defect.
+ *  - A string left open is NOT closed. Supplying the quote would decide where a value ends, and
+ *    measured against the ledgers it is exactly that: closing them recovers nine more objects, two
+ *    of which cite nothing the run ever read.
+ *
+ * Tried only after `JSON.parse` has failed, so a well-formed reply is read byte for byte as before
+ * and this can only add a reading where there was none. What it returns is still unvalidated: it
+ * goes through the same tool schema and the same audited pipeline, and the citation contract
+ * refuses a recovered report resting on an id this run never produced.
+ */
+function parseTolerantly(candidate: string): unknown {
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    // fall through to the repair
+  }
+
+  const kept: string[] = [];
+  const open: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (const char of candidate) {
+    if (inString) {
+      kept.push(char);
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      kept.push(char);
+      continue;
+    }
+    if (char === "{" || char === "[") {
+      open.push(char);
+      kept.push(char);
+      continue;
+    }
+    if (char === "}" || char === "]") {
+      if (open[open.length - 1] === (char === "}" ? "{" : "[")) {
+        open.pop();
+        kept.push(char);
+      }
+      // A closer matching nothing is dropped; it cannot belong to this structure.
+      continue;
+    }
+    kept.push(char);
+  }
+
+  if (inString) return undefined;
+  for (let i = open.length - 1; i >= 0; i -= 1) kept.push(open[i] === "{" ? "}" : "]");
+
+  try {
+    return JSON.parse(kept.join(""));
+  } catch {
+    return undefined;
+  }
+}
+
 /** An object shaped like an action: a non-empty name, and arguments that are an object. */
 const actionSchema = z.object({
   action: z.string().min(1),
@@ -205,18 +280,69 @@ function withStrayFields(parsed: unknown, args: Record<string, unknown> | undefi
  */
 export function readPromptedAction(text: string, tools: readonly AgentToolDefinition[] = []): PromptedAction | null {
   for (const candidate of objectsIn(text).reverse()) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      continue;
-    }
+    const parsed = parseTolerantly(candidate);
+    if (parsed === undefined) continue;
     const action = actionSchema.safeParse(parsed);
     if (action.success) return { name: action.data.action, input: withStrayFields(parsed, action.data.arguments) };
+    const named = readNamedCall(parsed, tools);
+    if (named !== null) return named;
     const enveloped = readEnvelope(parsed, tools);
     if (enveloped !== null) return enveloped;
   }
   return null;
+}
+
+/**
+ * The words a model reaches for when it names the tool it is calling.
+ *
+ * Exported because two places need the same list and drifted apart while they each kept
+ * their own: the notice path recognised `{"name": "compose_report", …}` well enough to tell
+ * the model it had used the wrong channel, and this reader could not recover it. One list,
+ * so a shape either reads or is not recognised at all.
+ */
+export const CALL_NAMING_KEYS = ["name", "action", "tool", "tool_name", "function", "function_name"] as const;
+
+/** Where the arguments sit once the tool has been named, in the order models reach for them. */
+const ARGUMENT_KEYS = ["arguments", "parameters", "input", "args"] as const;
+
+/**
+ * A call in the wire form: the tool named as a VALUE, the arguments beside it.
+ *
+ *     {"name": "compose_report", "parameters": {"claims": […]}}
+ *
+ * The most common tool-call-shaped thing the fleet writes into prose, and the one shape
+ * none of the three readers here could see — `actionSchema` wants the key `action`,
+ * `readEnvelope` wants the tool as a key, `readPromptedPayload` matches bare arguments and
+ * the wrapper fits no tool's schema. Counted over the open cells: 45 of 46 tool-call-shaped
+ * stops, from three models, every payload complete and citing ids from its own run.
+ *
+ * It is the OpenAI function-call form, which is why so many models produce it: it is what
+ * their tool-calling data looks like, emitted through the text channel when the native path
+ * did not engage.
+ *
+ * Absent arguments read as the siblings, the same latitude `readEnvelope` gives — a model
+ * that wrote `{"tool": "inspect_schema", "kind": "columns"}` named its tool and passed its
+ * argument, in one object instead of two.
+ *
+ * The held-tool rule is the bound, as everywhere else in this file: an unheld name is a
+ * model inventing a capability, and picking the nearest real tool would be this reader
+ * deciding what it meant.
+ */
+function readNamedCall(parsed: unknown, tools: readonly AgentToolDefinition[]): PromptedAction | null {
+  if (tools.length === 0 || typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  const held = new Set<string>(tools.map((definition) => definition.name));
+
+  const namingKey = CALL_NAMING_KEYS.find((key) => typeof record[key] === "string" && held.has(record[key] as string));
+  if (namingKey === undefined) return null;
+
+  const args = ARGUMENT_KEYS.map((alias) => record[alias]).find(
+    (candidate) => typeof candidate === "object" && candidate !== null && !Array.isArray(candidate),
+  );
+  const siblings = Object.fromEntries(
+    Object.entries(record).filter(([key]) => !(CALL_NAMING_KEYS as readonly string[]).includes(key)),
+  );
+  return { name: record[namingKey] as PromptedAction["name"], input: args ?? siblings };
 }
 
 /**
@@ -302,12 +428,8 @@ function readEnvelope(parsed: unknown, tools: readonly AgentToolDefinition[]): P
 export function readPromptedPayload(text: string, tools: readonly AgentToolDefinition[]): PromptedAction | null {
   if (tools.length === 0) return null;
   for (const candidate of objectsIn(text).reverse()) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      continue;
-    }
+    const parsed = parseTolerantly(candidate);
+    if (parsed === undefined) continue;
     const fits = tools.filter((definition) => (definition.inputSchema as z.ZodType).safeParse(parsed).success);
     // Exactly one, or nothing. A schema loose enough to accept two tools' payloads is a
     // fact about the tools, and the reader's job is to notice it rather than pick.

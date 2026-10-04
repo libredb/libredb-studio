@@ -92,10 +92,10 @@ const STRING_TOKENS = ["warnings", "infos", "scrapePool", "numSeries", "chunkCou
 const WIRE_VOCABULARY = [...WIRE_TOKENS, ...STRING_TOKENS];
 
 /**
- * Identifiers matched exactly: `fetchMetricNames` is an ordinary helper name, while a bare `fetch`, called
- * or read off `globalThis`, is the network.
+ * Identifiers matched exactly: `fetchMetricNames` is an ordinary helper name, while a bare `fetch`
+ * or `httpTransportFetch` sends a request and belongs only in the request module.
  */
-const NETWORK_IDENTIFIERS = ["fetch"];
+const NETWORK_IDENTIFIERS = ["fetch", "httpTransportFetch"];
 
 /**
  * The modules a request or a socket can leave the process through. A module name is matched only where a
@@ -109,7 +109,7 @@ const NETWORK_BUILTINS = ["http", "https", "http2", "net", "tls"];
 const NETWORK_PACKAGES = ["undici"];
 
 /** The two ways request.ts sends, each of which it must spell. */
-const REQUEST_VOCABULARY = ["fetch", "node:https"];
+const REQUEST_VOCABULARY = ["httpTransportFetch", "node:https"];
 
 /**
  * Why each rule exists, printed on failure. Whoever trips it needs to see the boundary they are crossing,
@@ -449,6 +449,7 @@ export async function readTargets(origin: string, token: string) {
 
   test.each<[string, string, string]>([
     ["a direct fetch", 'await fetch(url, { method: "POST" });', "fetch"],
+    ["a guarded fetch outside the request module", "await httpTransportFetch(url);", "httpTransportFetch"],
     ["a fetch off globalThis", "await globalThis.fetch(url);", "fetch"],
     ["a fetch read by key", 'const send = globalThis["fetch"];', "fetch"],
     ["an https import", 'import { request } from "node:https";', "node:https"],

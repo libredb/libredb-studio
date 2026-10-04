@@ -2112,7 +2112,7 @@ describe("the object surface declaration", () => {
    * The source declaration, both directions (#789).
    *
    * `sql` and NOT `cql` on every one of the six. MEASURED in this epic's Monaco census: the
-   * installed monaco-editor 0.56.0 bundle registers 89 language ids and `cql` is not among
+   * installed monaco-editor 0.57.0 bundle registers 89 language ids and `cql` is not among
    * them, and an unregistered id degrades to plain text with no throw and nothing observable.
    * `docs/providers/cassandra.md` states that as a limitation rather than hiding it.
    *

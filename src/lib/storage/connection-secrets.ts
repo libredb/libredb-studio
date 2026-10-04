@@ -42,11 +42,21 @@ export const CONNECTION_FIELDS: Record<keyof DatabaseConnection, FieldClass> = {
   // A DATABASE NAME (`admin`), not a credential. The password that authenticates
   // against it is the secret, and it is classified above.
   authSource: "public",
+  // A SASL MECHANISM NAME (`SCRAM-SHA-512`), which a broker's own configuration lists in the
+  // clear. It says how the password is checked; the password is the secret, classified above.
+  saslMechanism: "public",
   schema: "public",
   queryTimeout: "public",
   // A display preference: whether this browser reads the catalog when the connection
   // opens. It grants nothing and unlocks nothing.
   skipObjectScan: "public",
+  // Whether the provider refuses writes on this connection (#1089). A mode, not a credential: it
+  // grants nothing, and the browser reads it to draw the Read-only marker.
+  readOnly: "public",
+  // Db2's acceptance of a cleartext password (#786). A choice about the transport, not a credential.
+  allowInsecureAuth: "public",
+  // Addresses, as `host` is. The token they receive is the secret, classified above.
+  dataServers: "public",
   managed: "public",
   seedId: "public",
   agentUser: "public",

@@ -30,11 +30,26 @@ function assertApiKeyPairIsElasticsearch(conn: SeedConnection): void {
   );
 }
 
+/**
+ * A read-only seed must be managed (#1089). The seed schema already refuses the pair at load, with
+ * `defaults.managed` taken into account; this is the mapper's own gate, checked on the connection
+ * `mergeDefaults` produced, so a SeedConnection built in memory (bypassing zod) cannot be projected as
+ * a read-only connection whose password and client key reach the browser, where a duplicate of it
+ * can clear the mode.
+ */
+function assertReadOnlySeedIsManaged(conn: SeedConnection): void {
+  if (conn.readOnly !== true || conn.managed !== false) return;
+  throw new Error(
+    `Seed connection "${conn.id}" sets readOnly: true with managed: false. A read-only seed stays managed, because an unmanaged one is copied into the browser with its credentials, where a duplicate of it can clear the mode; the seed is refused rather than projected as a read-only connection that is not.`,
+  );
+}
+
 export function filterByRoles(connections: SeedConnection[], userRoles: string[]): ManagedConnection[] {
   return connections
     .filter((conn) => rolesMatch(conn.roles, userRoles))
     .map((conn) => {
       assertApiKeyPairIsElasticsearch(conn);
+      assertReadOnlySeedIsManaged(conn);
       return {
         id: `seed:${conn.id}`,
         name: conn.name,
@@ -63,12 +78,27 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
         // about for skipObjectScan below.
         apiKeyId: conn.apiKeyId,
         apiKeySecret: conn.apiKeySecret,
+        // Kafka's SASL mechanism (#1088). Dropping it here would list a seeded SCRAM connection
+        // with its user and password and no mechanism to send them by, which the provider refuses.
+        saslMechanism: conn.saslMechanism,
         schema: conn.schema,
         // The second half of the seed round-trip, and the half a zod field cannot cover:
         // this mapper is a hand-written field list, so a field validated above and not
         // copied here reaches the browser as `undefined` and the seeded connection scans
         // the catalog the deployment asked it not to (#765).
         skipObjectScan: conn.skipObjectScan,
+        // The MCP opt-in (#246), copied for the reason skipObjectScan is: dropped here, a seed that
+        // opted in would reach the MCP context without its opt-in and never be visible.
+        mcp: conn.mcp,
+        // The read-only mode (#1089), copied for the reason skipObjectScan is: dropped here, a seed the
+        // operator declared read-only would be listed and opened as a connection that writes.
+        readOnly: conn.readOnly,
+        // Db2's consent to a cleartext password (#786), copied for the reason skipObjectScan is:
+        // dropped here, a seed the operator declared it for would be refused by the provider.
+        allowInsecureAuth: conn.allowInsecureAuth,
+        // Oxia's data servers (O6), copied for the reason skipObjectScan is: dropped here, a seeded cluster would be
+        // refused by the provider for leaders the file did list.
+        dataServers: conn.dataServers,
         createdAt: new Date(),
         managed: conn.managed ?? true,
         roles: conn.roles,

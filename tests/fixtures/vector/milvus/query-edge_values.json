@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T14:40:45.547Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/query of every edge_values row with every vector field",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/query",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"edge_values\",\"filter\":\"id >= 1\",\"outputFields\":[\"id\",\"label\",\"f32\",\"f16\",\"bf16\",\"bin\",\"i8\",\"sp\"],\"limit\":10}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 799,
+    "body": "{\"code\":0,\"cost\":0,\"data\":[{\"bf16\":\"f3+AgM09AMA=\",\"bin\":\"AAA=\",\"f16\":\"/3v/+wAEAQA=\",\"f32\":[3.4028235e+38,-1e-45,1.1754944e-38,0.1],\"i8\":\"gH8A/w==\",\"id\":1,\"label\":\"range-ends\",\"sp\":{\"0\":1e-30,\"4294967294\":0.5}},{\"bf16\":\"zT1NPpo+zT4=\",\"bin\":\"//8=\",\"f16\":\"Zi5mMs00ZjY=\",\"f32\":[0.1,0.2,0.3,0.4],\"i8\":\"AQIDBA==\",\"id\":2,\"label\":\"all-ones\",\"sp\":{\"7\":0.1,\"8\":0.2}},{\"bf16\":\"AICAP4C/1zM=\",\"bin\":\"Vao=\",\"f16\":\"AIAAPAC8CAg=\",\"f32\":[-0,1,-1,1e-7],\"i8\":\"gIB/fw==\",\"id\":3,\"label\":\"non-finite-score\",\"sp\":{\"1\":3.4e+38}},{\"bf16\":\"gEOqPiBA4MA=\",\"bin\":\"AYA=\",\"f16\":\"AGhUNQBBAMc=\",\"f32\":[16777216,0.33333334,2.5,-7],\"i8\":\"AAAAAQ==\",\"id\":4,\"label\":\"precision\",\"sp\":{\"100\":1.0000001}},{\"bf16\":\"QECAQAAAAAA=\",\"bin\":\"D/A=\",\"f16\":\"AEIARAAAAAA=\",\"f32\":[3,4,0,0],\"i8\":\"AwQAAA==\",\"id\":5,\"label\":\"metric-probe\",\"sp\":{\"2\":1}}]}\n"
+  }
+}

@@ -1,0 +1,27 @@
+pkgbase = libredb-studio-bin
+	pkgdesc = Web-based SQL IDE for twenty-six database engines with AI query assistance (prebuilt standalone server)
+	pkgver = 0.17.0
+	pkgrel = 1
+	url = https://github.com/libredb/libredb-studio
+	install = libredb-studio-bin.install
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = nodejs-lts-krypton
+	provides = libredb-studio=0.17.0
+	conflicts = libredb-studio
+	options = !strip
+	options = !debug
+	backup = etc/libredb-studio/env
+	source = libredb-studio-launcher-0.17.0::https://github.com/libredb/libredb-studio/raw/0.17.0/packaging/linux/libredb-studio
+	source = libredb-studio-0.17.0.service::https://github.com/libredb/libredb-studio/raw/0.17.0/packaging/linux/libredb-studio.service
+	source = libredb-studio-0.17.0.env::https://github.com/libredb/libredb-studio/raw/0.17.0/packaging/linux/env
+	sha256sums = b2cf488646ed67110d5bb4474a533d8fac1f4285f6432d737fc1a99fe04dcbeb
+	sha256sums = 559b7c97cb0e90e9eedeacfb9c9367052579b811373cf6892dcdfa2336375782
+	sha256sums = eae8a1d432e523012458872cefa56f7f722520657dfa1f95bd97e580010b87ad
+	source_x86_64 = libredb-studio-standalone-0.17.0-linux-x64.tar.gz::https://github.com/libredb/libredb-studio/releases/download/0.17.0/libredb-studio-standalone-0.17.0-linux-x64.tar.gz
+	sha256sums_x86_64 = ab64b3c1a8ed00f3e023c5bdafdcbcfaddd5d4b9c992a934c09d528dbbf5c6f0
+	source_aarch64 = libredb-studio-standalone-0.17.0-linux-arm64.tar.gz::https://github.com/libredb/libredb-studio/releases/download/0.17.0/libredb-studio-standalone-0.17.0-linux-arm64.tar.gz
+	sha256sums_aarch64 = 3fd5d51cfd0a6b3c114b2cfd47b3f8f2b9f0d11062ede218002d593c202ff3cb
+
+pkgname = libredb-studio-bin

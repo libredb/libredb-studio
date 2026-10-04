@@ -34,16 +34,16 @@ channel count.
 
 ## Coverage snapshot
 
-**39 channels · 33 live · 5 pending · 1 deprecated**
+**42 channels · 34 live · 7 pending · 1 deprecated**
 
-Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · Kubernetes 4 · Cloud 13**
+Live channels by platform: **Linux 9 · macOS 3 · Windows 5 · Container 6 · Kubernetes 4 · Cloud 13**
 
 | Category | Live | Pending | Deprecated |
 | --- | ---: | ---: | ---: |
 | Registries & releases | 2 | 0 | 0 |
 | Containers | 2 | 0 | 0 |
-| Kubernetes & operators | 3 | 0 | 0 |
-| Package managers | 5 | 0 | 1 |
+| Kubernetes & operators | 3 | 1 | 0 |
+| Package managers | 6 | 1 | 1 |
 | OS / desktop packages | 3 | 0 | 0 |
 | PaaS catalogs (listed) | 11 | 3 | 0 |
 | Deploy recipes | 3 | 0 | 0 |
@@ -64,11 +64,14 @@ Live channels by platform: **Linux 9 · macOS 3 · Windows 4 · Container 6 · K
 | [Helm chart](https://artifacthub.io/packages/helm/libredb-studio/libredb-studio) | Kubernetes & operators | Kubernetes | live | Automated, every release | [HELM_CHART.md](HELM_CHART.md) |
 | [OperatorHub / OpenShift](https://operatorhub.io/operator/libredb-studio-operator) | Kubernetes & operators | Kubernetes | live | Automated PR, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Rancher Partner Charts](https://www.suse.com/pcsc/viewVersionPage?versionID=26969) | Kubernetes & operators | Kubernetes | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [ZopDev Helm Charts](https://github.com/zopdev/helm-charts) | Kubernetes & operators | Kubernetes | pending | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Chocolatey](https://community.chocolatey.org/packages/libredb-studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [FlatPark (Flatpak)](https://flatpark.org/) | Package managers | Linux | live | Manual, every release | [packaging/flatpark/README.md](../packaging/flatpark/README.md) |
 | [Homebrew tap](https://github.com/libredb/homebrew-tap) | Package managers | Linux, macOS | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [Scoop](https://github.com/ScoopInstaller/Extras/blob/master/bucket/libredb-studio.json) | Package managers | Windows | live | Manual, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [Snap Store](https://snapcraft.io/libredb-studio) | Package managers | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [winget](https://github.com/microsoft/winget-pkgs/tree/master/manifests/l/LibreDB/Studio) | Package managers | Windows | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [AUR](https://aur.archlinux.org/packages/libredb-studio-bin) | Package managers | Linux | pending | Automated, every release | [packaging/aur/README.md](../packaging/aur/README.md) |
 | Flathub | Package managers | Linux | deprecated | — | [packaging/flatpak/README.md](../packaging/flatpak/README.md) |
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [AppImageHub](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Manual, on demand | [desktop/README.md](../desktop/README.md) |

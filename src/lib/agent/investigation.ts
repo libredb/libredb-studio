@@ -78,6 +78,7 @@ import { erDetailForWorkflow, renderErDiagram } from "./er-diagram";
 import { type AgentGoalShortfall, verifyRunGoal } from "./goal-verifier";
 import { type AgentInventoryNoun, inventoryNoun } from "./inventory-noun";
 import {
+  CALL_NAMING_KEYS,
   PROMPTED_ACTION_SHAPE,
   PROMPTED_PROTOCOL_REMINDER,
   promptedToolContract,
@@ -141,6 +142,7 @@ import {
 } from "./types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END, fenceUntrustedContent } from "./untrusted-content";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
 import type { DatabaseType } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
@@ -280,6 +282,29 @@ const AGENT_RULES = [
  * event log — which is why it repeats `AGENT_CITATION_RULE` verbatim rather than
  * softening it: a forced report is a cited report or it is no report.
  */
+/**
+ * What an optimization run is told the moment it reads a plan.
+ *
+ * Every other sentence about this bar is delivered by HOLDING `compose_report`, and holds are
+ * suppressed inside the report reserve for a reason that is right: a run held on its last turn
+ * files no report at all, which is a worse verdict than the one the hold was avoiding. The
+ * consequence, unmeasured until now, is that a run which spends its turns READING is never told
+ * at all - the one sentence it needed is timed to arrive only after it can no longer be used.
+ *
+ * `laguna-xs-2.1` loses this cell five times out of five exactly there: eleven tool calls, THREE
+ * plans inspected, two reserve notices, a report, `no-plan-comparison`. It holds everything a
+ * comparison needs and stops, because nothing said a comparison was what the report rests on.
+ *
+ * So it is said when the plan arrives instead, riding on the turn that was about to be taken -
+ * the `report-reserve` pattern, which spends no turn and changes no rule. Early is safe here
+ * precisely because it costs nothing: the run that would have compared anyway loses nothing by
+ * being told, and the run that would not is told while it still has turns to act.
+ */
+const AGENT_PLAN_BAR_NOTICE = [
+  "You have a plan in hand, and this workflow is judged on a comparison rather than on the plan alone: a report answers when two plans have been compared, or when an index is recommended citing the plan whose access path it would change.",
+  "Neither is recorded yet. Before you call compose_report, either call inspect_plan on a rewritten form of the statement and then compare_plans with the two artifact ids, or call recommend_change for an index citing the plan artifact you already hold.",
+].join(" ");
+
 export const AGENT_REPORT_RESERVE_NOTICE = [
   "This run is nearly out of room: treat this as your last turn.",
   "Call compose_report now with what you have already established, and leave out what you have not.",
@@ -776,6 +801,77 @@ function citedArtifactIds(input: unknown): readonly string[] {
  * asking for the impossible — the mistake the reverted `ANSWER_NOT_PRESENTED` refusal
  * made, which cost those runs their report as well as their answer.
  */
+/**
+ * Whether a stopping turn's TEXT is a tool call the run could have made.
+ *
+ * Measured on `llama3.1:8b`, the most-pulled tool-capable model on Ollama, whose analyze cell sat
+ * at 4/5 across eight rolls and lost the same run every time. The losing turn is not prose: it is
+ * `{"name":"present_answer","parameters":{...}}` - a complete call for a tool the run holds,
+ * naming an artifact this run produced - written into the assistant's text channel. Nothing runs,
+ * the drive sees a model that stopped talking, and the run ends `no-report` having done every part
+ * of the work except the transport.
+ *
+ * Recognised, never EXECUTED. A server that ran what a model typed would be taking a tool call
+ * from outside the channel the transport authenticates, and the ledger could no longer say where a
+ * call came from. All this decides is whether the model is told what happened to it.
+ *
+ * Narrow on purpose, but narrower than the fault for its first two months, and the widening is
+ * measured. Across the 2026-09-16 sweep: 69 stopping turns, 27 of them carrying a complete call
+ * for a tool the run held, 18 of those `compose_report` - the tool whose absence IS `no-report`.
+ * The reader saw none of the 27, because it asked two things the fault does not respect:
+ *
+ *   that the object say `name`. Twenty said `name`; SEVEN said `action`.
+ *
+ *   that the text parse. Not one of the 27 parsed. Twenty-four failed the same way,
+ *   `Expecting ',' delimiter`, on a claims array whose last member closes twice. Everything
+ *   else about those calls was right - true claims, populated evidence arrays, correlation
+ *   ids the run had genuinely produced. A model that writes a perfect call into the wrong
+ *   channel and drops one brace has made one mistake, and the brace is not it.
+ *
+ * So the JSON arm reads the NAMING rather than the document: a key that introduces a call, a
+ * colon, a quoted tool this run holds. Still not prose - prose does not write `"name": "x"` - and
+ * still nothing is executed or repaired. All this decides is whether the model is told what
+ * happened to its call.
+ */
+/*
+  One list, shared with the reader that RECOVERS these calls. They were written separately and
+  drifted: this path recognised `{"name": "compose_report", …}` well enough to tell the model it
+  had used the wrong channel, while `readPromptedAction` could not read it and the finished report
+  was discarded. A shape now either reads or is not recognised at all.
+*/
+const NAMING_KEY_PATTERN = CALL_NAMING_KEYS.join("|");
+
+function stoppedWithAToolCall(text: string, holds: (name: string) => boolean): boolean {
+  const body = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+  if (body.startsWith("{")) {
+    const named = new RegExp(`"(?:${NAMING_KEY_PATTERN})"\\s*:\\s*"([A-Za-z_][A-Za-z0-9_]*)"`).exec(body);
+    return named !== null && holds(named[1] as string);
+  }
+  /*
+    The other dress the same mistake wears, and the FENCE is what makes it recognisable.
+
+    Measured on `cogito:8b`, investigate, five runs at one sitting with zero tools invoked between
+    them. The model does not narrate vaguely - it writes the calls out, fenced, one per block:
+    "```sql\ninspect_schema(kind=\"columns\")\n```" - and then reports "based on the schema
+    inspection" on a run that inspected nothing.
+
+    Only inside a fence, and only where the block's first token is a tool this run HOLDS followed
+    by an opening parenthesis. A fenced block is a deliberate emission of code; prose that merely
+    mentions a tool by name is a model thinking aloud, and telling that run it made a tool call
+    would be answering a sentence with a sentence. The test beside this one pins that line.
+  */
+  for (const block of text.matchAll(/```[a-z]*\s*\n?([\s\S]*?)```/gi)) {
+    const first = (block[1] ?? "").trim();
+    const called = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/.exec(first);
+    if (called !== null && holds(called[1] as string)) return true;
+  }
+  return false;
+}
+
 function citeWhatYouReadNotice(ids: readonly string[], everythingCitedWasEmpty: boolean): string {
   const named = ids
     .slice(0, 4)
@@ -2542,11 +2638,13 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
     "plan-statement": 0,
     "turn-cut-off": 0,
     "report-reserve": 0,
+    "plan-bar": 0,
     "unread-stop": 0,
     "present-before-report": 0,
     "cite-what-you-read": 0,
     "compare-before-report": 0,
     "tool-call-unreadable": 0,
+    "tool-call-as-text": 0,
   };
   for (const event of events) {
     if (event.kind === "guidance-issued") counts[event.notice] += 1;
@@ -2778,6 +2876,8 @@ export async function runInvestigation(
      * rather than by the model.
      */
     let unreadableToolCallAnswers = delivered["tool-call-unreadable"];
+    /** The call written into the text channel; see `stoppedWithAToolCall`. */
+    let toolCallAsTextAnswers = delivered["tool-call-as-text"];
     const priorProgress = describePriorProgress(record);
     if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
@@ -3135,6 +3235,8 @@ export async function runInvestigation(
     */
     /** The reserve notice is a one-shot: a run is told once that it is out of room. */
     let reserveAnnounced = delivered["report-reserve"] > 0;
+    // Read from the ledger for the reason the line above is: a resumed run has already heard it.
+    let planBarAnnounced = delivered["plan-bar"] > 0;
     /** Whether a tool this run HOLDS has been called; see `remindToReport`. */
     let anyToolCalled = false;
     /**
@@ -3201,6 +3303,23 @@ export async function runInvestigation(
       reserveAnnounced = true;
       messages.push({ role: "user", content: notice(AGENT_REPORT_RESERVE_NOTICE) });
       await issueGuidance("report-reserve");
+    };
+
+    /**
+     * Tells an optimization run, once, what its report is judged on - at the moment it reads a
+     * plan, which is the moment it can still act on the answer.
+     *
+     * Safe for the same three reasons `announceReserve` is: it rides on a turn already being
+     * taken, it spends no statement and consults no deadline, and it touches neither the policy
+     * version nor the verifier. `holdsTool("compare_plans")` is the workflow test, the same
+     * proxy the compose-time hold uses - a run whose verdict does not want a comparison is not
+     * handed the tool, so it is never told about one.
+     */
+    const announcePlanBar = async (tool: string): Promise<void> => {
+      if (planBarAnnounced || tool !== "inspect_plan" || !holdsTool("compare_plans")) return;
+      planBarAnnounced = true;
+      messages.push({ role: "user", content: notice(AGENT_PLAN_BAR_NOTICE) });
+      await issueGuidance("plan-bar");
     };
 
     /**
@@ -3369,6 +3488,9 @@ export async function runInvestigation(
         // The engine this drive was given, not one read off the record: a statement is
         // written for the connection it would actually be run against.
         dialect: context.connection.type,
+        // The language its editor renders it in, from the capabilities this drive holds, because the
+        // rail's answer card has none to read it from and tinted every etcd draft "unknown" (#1089).
+        language: editorLanguageForTabType(resolveTabType(context.capabilities)),
         // The engine's own query language goes in beside the inventory (#414): both
         // halves of this validation are SQL readers, and on an engine that speaks no SQL
         // both were wrong at once — the guard marking every correct draft as not
@@ -3589,6 +3711,34 @@ export async function runInvestigation(
       if (calls.length === 0) {
         // A run that used its tools and then narrated is one call short of a report;
         // one that established nothing has nothing to be reminded about.
+        /*
+          The stop whose TEXT is a tool call, which is a transport mistake wearing the shape of a
+          model that gave up. `stoppedWithAToolCall` carries the measurement; what matters here is
+          that nothing is executed - the model is told the channel it used and given the turn to
+          use the other one.
+
+          Free on the same argument as its neighbours: the run is about to conclude on
+          `model-stopped`, so it has already earned `no-report` and this turn cannot cost a pass.
+          Once, because a model that writes its calls out twice is not going to stop.
+
+          BEFORE `remindToReport`, and that ordering is the point. The reminder would fire here too
+          - the run has called tools - and what it says is "file your report", which is the wrong
+          sentence for a turn that was not narrating at all. The specific reading goes first; the
+          general one keeps every turn it had.
+        */
+        if (
+          record.mode === "agent" &&
+          toolCallAsTextAnswers < 1 &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > 0 &&
+          stoppedWithAToolCall(turn.text, holdsTool)
+        ) {
+          toolCallAsTextAnswers += 1;
+          messages.push(...turn.assistantMessages);
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.toolCallAsText) });
+          await issueGuidance("tool-call-as-text");
+          return null;
+        }
         if (await remindToReport(turn.assistantMessages)) return null;
         // A plan that answered the question and skipped the deliverable, where this model was
         // measured needing the reminder. Before `conclude`, because conclude is where the prose
@@ -3974,6 +4124,7 @@ export async function runInvestigation(
         }
         if (outcome.kind === "reported") return conclude("succeeded", "report-composed");
         messages.push(prompted ? promptedResultMessage(call, outcome.text) : toolResultMessage(call, outcome.text));
+        await announcePlanBar(call.toolName);
       }
       return null;
     };

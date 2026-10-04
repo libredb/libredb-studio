@@ -38,6 +38,10 @@ interface ChunkBoundaryProps {
   /** What failed, named the way the user knows it — "Charts", "the diagram". */
   label: string;
   children: React.ReactNode;
+  /** Where the notice sits, for a view with no place of its own in the layout (a dialog). */
+  className?: string;
+  /** Takes the failed view away, for a caller that can: the notice then offers Close. */
+  onDismiss?: () => void;
 }
 
 /**
@@ -68,20 +72,34 @@ export class ChunkBoundary extends React.Component<ChunkBoundaryProps, { failed:
     return (
       <div
         data-testid="chunk-error"
-        className="h-full w-full flex flex-col items-center justify-center gap-3 bg-sunken px-6 text-center"
+        className={cn(
+          "h-full w-full flex flex-col items-center justify-center gap-3 bg-sunken px-6 text-center",
+          this.props.className,
+        )}
       >
         <p className="text-xs font-medium text-fg-secondary">{this.props.label} could not be loaded.</p>
         <p className="text-xs text-fg-muted max-w-sm">
           This view is fetched when it is first opened, and the request did not complete. If the server was upgraded
           while this page was open, reloading picks up the new one.
         </p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="h-7 px-3 rounded border border-hairline-strong text-xs font-medium text-fg-secondary hover:text-fg-bright"
-        >
-          Reload
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="h-7 px-3 rounded border border-hairline-strong text-xs font-medium text-fg-secondary hover:text-fg-bright"
+          >
+            Reload
+          </button>
+          {this.props.onDismiss && (
+            <button
+              type="button"
+              onClick={this.props.onDismiss}
+              className="h-7 px-3 rounded text-xs font-medium text-fg-muted hover:text-fg-bright"
+            >
+              Close
+            </button>
+          )}
+        </div>
       </div>
     );
   }

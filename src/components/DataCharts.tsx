@@ -248,6 +248,59 @@ export function formatNumber(value: number): string {
   return value.toLocaleString();
 }
 
+const ISO_DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)?$/;
+
+/**
+ * Tick text for a rotated category axis.
+ *
+ * An ISO date-time loses its fractional seconds and its zone, and a space
+ * replaces the T, so a timestamp fits the plot. The year and the seconds stay,
+ * or two ticks a year or a few seconds apart would read the same. The row
+ * itself is unchanged, which is what the tooltip reads. Every other value,
+ * including a plain date, is returned whole.
+ */
+function formatAxisTick(value: unknown, shortenDates: boolean): string {
+  const text = value == null ? "" : String(value);
+  if (!shortenDates) return text;
+  const match = ISO_DATE_TIME.exec(text);
+  return match ? `${match[1]} ${match[2]}` : text;
+}
+
+/** The identity, for an axis whose data key already holds the text to show. */
+const ownLabel = (tick: unknown): unknown => tick;
+
+function RotatedXAxis({
+  dataKey,
+  fill,
+  fontSize,
+  shortenDates,
+  labelOf = ownLabel,
+}: {
+  dataKey: string;
+  fill: string;
+  fontSize: number;
+  shortenDates: boolean;
+  /** The category a tick stands for, when the axis is keyed by row position. */
+  labelOf?: (tick: unknown) => unknown;
+}) {
+  return (
+    <XAxis
+      dataKey={dataKey}
+      tick={{ fill, fontSize }}
+      angle={-45}
+      textAnchor="end"
+      height="auto"
+      padding={{ left: 24 }}
+      tickFormatter={(tick) => formatAxisTick(labelOf(tick), shortenDates)}
+    />
+  );
+}
+
+// Recharts draws the legend `margin.bottom` above the chart's edge, and a
+// rotated axis measures its own labels, so a larger bottom margin is only an
+// empty band the plot pays for.
+const ROTATED_AXIS_MARGIN = { top: 20, right: 30, left: 20, bottom: 10 };
+
 interface TooltipProps {
   active?: boolean;
   payload?: Array<{
@@ -255,15 +308,17 @@ interface TooltipProps {
     value: number;
     color: string;
   }>;
-  label?: string;
+  label?: string | number;
+  /** The category the hovered position stands for; see `CHART_ROW_KEY`. */
+  labelOf?: (label: unknown) => unknown;
 }
 
-const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
+const CustomTooltip = ({ active, payload, label, labelOf = ownLabel }: TooltipProps) => {
   if (!active || !payload || !payload.length) return null;
 
   return (
     <div className="bg-overlay border border-hairline-strong rounded-lg px-3 py-2 shadow-xl">
-      <p className="text-fg-tertiary text-xs mb-1">{label}</p>
+      <p className="text-fg-tertiary text-xs mb-1">{String(labelOf(label) ?? "")}</p>
       {payload.map((entry, index) => (
         // The series colour rides a swatch, never the text. Some slots sit at
         // 2.07:1 against the light surface — legible as a mark, unreadable as a
@@ -313,6 +368,17 @@ export function PieSliceLabel({ ink, x, y, textAnchor, name = "", percent = 0 }:
   );
 }
 
+/**
+ * A cell as a number the chart can draw. NaN and the infinities, as numbers or as the
+ * words the server writes them as (`src/lib/non-finite.ts`), are drawn like a null, at
+ * 0: `Number("Infinity")` passes a NaN check, and in a histogram it made a bin index of
+ * NaN, which threw during render.
+ */
+export function chartNumber(value: unknown): number {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
 // Histogram bin calculation
 export function computeHistogramBins(
   values: number[],
@@ -337,6 +403,49 @@ export function computeHistogramBins(
   return bins;
 }
 
+/** What a NULL category is called on the axis, the legend and the tooltip: the grid's word. */
+export const NULL_CATEGORY_LABEL = "NULL";
+
+/**
+ * The key a category chart's x axis is drawn by: the point's position in the data.
+ *
+ * Two rows with the same category (two NULLs, or "Ankara" twice) are two bars, but
+ * recharts finds the axis tooltip's row by the hovered category's VALUE, so every
+ * later duplicate showed the first one's numbers. Keyed by position, each tick is its
+ * own row; the tick text and the tooltip title read the category back from that row.
+ */
+export const CHART_ROW_KEY = "__libredb_chart_row";
+
+/**
+ * The x value a category chart is handed for one cell.
+ *
+ * Recharts builds a category axis from the strings, finite numbers and dates among
+ * the x values and drops everything else, but it still draws the marks by row index.
+ * A NULL category therefore shortened the axis by one and slid every later value onto
+ * the next row's category, the last value off the end (and a pie slice lost its name).
+ * Every cell gets a label of its own instead: NULL as the grid shows it, and any other
+ * value recharts would drop spelled as text. Strings and finite numbers pass unchanged,
+ * so an ordinary chart is exactly what it was.
+ */
+export function chartCategory(value: unknown): string | number {
+  if (value === null || value === undefined) return NULL_CATEGORY_LABEL;
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  // A Date stays readable as its ISO text, which the date ticks shorten; an invalid one has none.
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  if (typeof value === "object") return objectCategory(value);
+  return String(value);
+}
+
+/** An object's JSON, or its plain text when it has none (a bigint inside it, or a cycle). */
+function objectCategory(value: object): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
 // Data aggregation helper
 export function aggregateData(
   rows: Record<string, unknown>[],
@@ -346,9 +455,12 @@ export function aggregateData(
 ): Record<string, unknown>[] {
   if (metrics.every((m) => m.aggregation === "none")) return rows;
 
-  const groups = new Map<string, Record<string, unknown>[]>();
+  // A NULL category is a group of its own, under `null` rather than "", so it neither
+  // merges with an empty string nor loses the label `chartCategory` gives it.
+  const groups = new Map<string | null, Record<string, unknown>[]>();
   rows.forEach((row) => {
-    let key = String(row[groupByField] ?? "");
+    const value = row[groupByField];
+    let key = value === null || value === undefined ? null : String(value);
     if (dateGrouping && key) {
       key = groupByDate(key, dateGrouping);
     }
@@ -385,7 +497,10 @@ export function aggregateData(
 }
 
 export function groupByDate(dateStr: string, grouping: DateGrouping): string {
-  const date = new Date(dateStr);
+  // A bare ISO date ("2026-09-01", how PostgreSQL hands over a `date`) parses as UTC
+  // midnight, the previous evening west of UTC, while the local getters below read the
+  // viewer's zone. Spelling it as local midnight keeps the calendar day it names.
+  const date = new Date(/^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? `${dateStr}T00:00:00` : dateStr);
   if (isNaN(date.getTime())) return dateStr;
   switch (grouping) {
     case "hour":
@@ -499,7 +614,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
 
     // Histogram: special data preparation
     if (chartType === "histogram" && yAxis.length > 0) {
-      const values = result.rows.map((r) => Number(r[yAxis[0]]) || 0).filter((v) => !isNaN(v));
+      const values = result.rows.map((r) => chartNumber(r[yAxis[0]]));
       return computeHistogramBins(values, histogramBuckets);
     }
 
@@ -507,35 +622,35 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
     if (chartType === "scatter") {
       if (!xAxis || !scatterY) return [];
       return result.rows.map((row) => ({
-        [xAxis]: typeof row[xAxis] === "number" ? row[xAxis] : Number(row[xAxis]) || 0,
-        [scatterY]: typeof row[scatterY] === "number" ? row[scatterY] : Number(row[scatterY]) || 0,
+        [xAxis]: chartNumber(row[xAxis]),
+        [scatterY]: chartNumber(row[scatterY]),
       }));
     }
 
     if (!xAxis) return [];
 
+    // The category is labelled last, after any grouping, so a NULL group stays apart from
+    // a cell that holds the text "NULL" until both are drawn.
     const baseData = result.rows.map((row) => {
       const dataPoint: Record<string, unknown> = { [xAxis]: row[xAxis] };
       yAxis.forEach((field) => {
-        const value = row[field];
-        dataPoint[field] = typeof value === "number" ? value : Number(value) || 0;
+        dataPoint[field] = chartNumber(row[field]);
       });
       return dataPoint;
     });
 
-    // Apply aggregation if set
+    let categoryData = baseData;
     if (aggregation !== "none" && yAxis.length > 0) {
-      return aggregateData(
+      // Apply aggregation if set
+      categoryData = aggregateData(
         baseData,
         xAxis,
         yAxis.map((f) => ({ field: f, aggregation })),
         dateGrouping || undefined,
       );
-    }
-
-    // Apply date grouping even without aggregation
-    if (dateGrouping) {
-      return aggregateData(
+    } else if (dateGrouping) {
+      // Apply date grouping even without aggregation
+      categoryData = aggregateData(
         baseData,
         xAxis,
         yAxis.map((f) => ({ field: f, aggregation: "sum" })),
@@ -543,7 +658,12 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
       );
     }
 
-    return baseData;
+    // Every point here was built by this memo, so labelling it in place touches no row of the result.
+    categoryData.forEach((point, row) => {
+      point[xAxis] = chartCategory(point[xAxis]);
+      point[CHART_ROW_KEY] = row;
+    });
+    return categoryData;
   }, [result, xAxis, yAxis, chartType, scatterY, histogramBuckets, aggregation, dateGrouping]);
 
   // Save chart config
@@ -680,6 +800,25 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         return <CircleAlert strokeWidth={1.5} className="w-3 h-3" />;
     }
   };
+
+  // The category a row-position tick stands for (`CHART_ROW_KEY`). A tick that names
+  // no row is shown as it came.
+  const categoryAt = (tick: unknown): unknown => {
+    const point = (typeof tick === "number" ? chartData[tick] : undefined) as Record<string, unknown> | undefined;
+    return point === undefined ? tick : point[xAxis];
+  };
+
+  // The x axis and tooltip every category chart (bar, line, area and both stacked forms) shares.
+  const categoryXAxis = (
+    <RotatedXAxis
+      dataKey={CHART_ROW_KEY}
+      fill={viz.axis}
+      fontSize={11}
+      shortenDates={analysis.dateFields.includes(xAxis)}
+      labelOf={categoryAt}
+    />
+  );
+  const categoryTooltip = <Tooltip content={<CustomTooltip labelOf={categoryAt} />} />;
 
   const plottedYAxis = yAxis.slice(0, MAX_SERIES);
   const droppedYAxisCount = yAxis.length - plottedYAxis.length;
@@ -946,34 +1085,22 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             {chartType === "bar" ? (
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Bar key={field} dataKey={field} fill={CHART_COLORS[index]} radius={[4, 4, 0, 0]} />
                 ))}
               </BarChart>
             ) : chartType === "line" ? (
-              <LineChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <LineChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Line
@@ -988,17 +1115,11 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 ))}
               </LineChart>
             ) : chartType === "area" ? (
-              <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Area
@@ -1034,15 +1155,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <Scatter name={`${xAxis} vs ${scatterY}`} data={chartData} fill={CHART_COLORS[0]} shape="circle" />
               </ScatterChart>
             ) : chartType === "histogram" ? (
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey="range"
-                  tick={{ fill: viz.axis, fontSize: 10 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                />
+                <RotatedXAxis dataKey="range" fill={viz.axis} fontSize={10} shortenDates={false} />
                 <YAxis
                   tick={{ fill: viz.axis, fontSize: 11 }}
                   label={{ value: "Count", angle: -90, position: "insideLeft", fill: viz.axis, fontSize: 11 }}
@@ -1051,34 +1166,22 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
                 <Bar dataKey="count" fill={CHART_COLORS[0]} radius={[4, 4, 0, 0]} />
               </BarChart>
             ) : chartType === "stacked-bar" ? (
-              <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Bar key={field} dataKey={field} stackId="stack" fill={CHART_COLORS[index]} />
                 ))}
               </BarChart>
             ) : chartType === "stacked-area" ? (
-              <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 60 }}>
+              <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <XAxis
-                  dataKey={xAxis}
-                  tick={{ fill: viz.axis, fontSize: 11 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={60}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Area

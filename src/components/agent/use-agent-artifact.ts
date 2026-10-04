@@ -2,6 +2,7 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { useCallback, useRef, useState } from "react";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 import type { AgentChartSpec } from "@/lib/agent/types";
 import type { ExplainFormat } from "@/lib/db/types";
 import { type AgentArtifactHydration, hydrateAgentArtifact } from "./hydration";
@@ -66,7 +67,9 @@ export function useAgentArtifact(options: AgentArtifactOptions): AgentArtifactHo
   */
   const latestAsk = useRef(0);
 
-  const show = async ({ runId, correlationId, chartSpec }: AgentArtifactReference): Promise<void> => {
+  // One identity for the hook's life, like `dismiss` below: the shell hands this to the
+  // memoized rail, and a new function per render re-rendered it on every keystroke (X5).
+  const show = useStableCallback(async ({ runId, correlationId, chartSpec }: AgentArtifactReference): Promise<void> => {
     const ask = latestAsk.current + 1;
     latestAsk.current = ask;
     try {
@@ -85,7 +88,7 @@ export function useAgentArtifact(options: AgentArtifactOptions): AgentArtifactHo
     } catch (error) {
       options.onError(messageFor(error));
     }
-  };
+  });
 
   /*
     Dismissing INVALIDATES whatever is in flight, and that is the half that makes it a

@@ -1,0 +1,10 @@
+version: "1"
+
+connections:
+  - id: "test-readonly"
+    name: "Test Read-only"
+    type: postgres
+    host: db.internal
+    port: 5432
+    readOnly: "${TEST_READ_ONLY}"
+    roles: ["*"]

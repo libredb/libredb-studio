@@ -336,6 +336,58 @@ const REDIS_PLAN: ObjectEditPlan = {
   session: [],
 };
 
+/**
+ * etcd's value edit (etcd spec 3.4, 4.5): one `Txn` in etcdctl's txn words, compares, success,
+ * failure. The failure branch's read comes AFTER the payload, so the unit carries it as
+ * `trailing`, and it names its payload `value` rather than inheriting Redis's "library code".
+ */
+const ETCD_VALUE = '{"feature":true}';
+
+const ETCD_PLAN: ObjectEditPlan = {
+  ...PLAN,
+  planId: "plan-etcd",
+  type: "etcd",
+  path: ["/app/cfg"],
+  kind: "key",
+  partId: "value",
+  strategy: "guarded-atomic-batch",
+  unit: {
+    medium: "command",
+    name: "txn",
+    arguments: ['mod("/app/cfg") = "7"', "put", "--ignore-lease", "/app/cfg"],
+    payload: {
+      text: ETCD_VALUE,
+      language: "json",
+      segments: [{ from: "user", start: 0, end: ETCD_VALUE.length }],
+    },
+    trailing: ["get", "/app/cfg"],
+    payloadLabel: "value",
+  },
+  session: [],
+  revision: { check: "guarded", token: "7", basis: "mod_revision", scope: "server" },
+};
+
+/** Redis's command unit with one of the two optional fields set, the only way to see each one alone. */
+function redisPlanWith(extra: {
+  readonly trailing?: readonly string[];
+  readonly payloadLabel?: string;
+}): ObjectEditPlan {
+  return {
+    ...REDIS_PLAN,
+    unit: {
+      medium: "command",
+      name: "FUNCTION",
+      arguments: ["LOAD", "REPLACE"],
+      payload: {
+        text: REDIS_PAYLOAD_TEXT,
+        language: "lua",
+        segments: [{ from: "user", start: 0, end: REDIS_PAYLOAD_TEXT.length }],
+      },
+      ...extra,
+    },
+  };
+}
+
 const COLLATERAL: ObjectEditConsequence = {
   loses: "replaces-whole-container",
   fact: {
@@ -822,6 +874,30 @@ describe("ApplyPreviewDialog", () => {
     // The identity line belongs to the statement arm: on a command the payload block is what
     // carries the length, and a sentence about "the right side" would be describing the argument.
     expect(query("-identity")).toBeNull();
+  });
+
+  test("an etcd txn unit names its payload and draws the failure branch's read after it", () => {
+    // Every operation etcd receives is on this line, in the order the apply sends them, so a
+    // reader approves the compare and the read-back as well as the put.
+    draw({ kind: "preview", plan: ETCD_PLAN, preimage: { text: '{"feature":false}', language: "json" } });
+    expect(text("-payload")).toBe(
+      'txn mod("/app/cfg") = "7" put --ignore-lease /app/cfg <value, 16 characters> get /app/cfg',
+    );
+    expect(diffProps?.modified).toBe(ETCD_VALUE);
+    expect(query("-identity")).toBeNull();
+  });
+
+  test("each optional field acts alone: the label renames the payload, the tokens follow the summary", () => {
+    draw({ kind: "preview", plan: redisPlanWith({ payloadLabel: "script" }), preimage: PREIMAGE });
+    expect(text("-payload")).toBe("FUNCTION LOAD REPLACE <script, 1,234 characters>");
+    cleanup();
+    draw({ kind: "preview", plan: redisPlanWith({ trailing: ["LIBRARYNAME", "orders"] }), preimage: PREIMAGE });
+    expect(text("-payload")).toBe("FUNCTION LOAD REPLACE <library code, 1,234 characters> LIBRARYNAME orders");
+  });
+
+  test("no trailing tokens draw nothing after the summary, not even a space", () => {
+    draw({ kind: "preview", plan: redisPlanWith({ trailing: [] }), preimage: PREIMAGE });
+    expect(text("-payload")).toBe("FUNCTION LOAD REPLACE <library code, 1,234 characters>");
   });
 
   test("applying freezes the body, disables the primary and BLOCKS every way out", () => {

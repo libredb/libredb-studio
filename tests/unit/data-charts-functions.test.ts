@@ -1,5 +1,5 @@
 import "../setup";
-import { describe, test, expect } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import {
   analyzeField,
   analyzeData,
@@ -7,6 +7,8 @@ import {
   computeHistogramBins,
   aggregateData,
   groupByDate,
+  chartCategory,
+  NULL_CATEGORY_LABEL,
 } from "@/components/DataCharts";
 
 // ---------------------------------------------------------------------------
@@ -399,9 +401,85 @@ describe("aggregateData", () => {
     expect(result[0].value).toBe(0);
   });
 
+  // A NULL key is its own group, apart from an empty string, and keeps its null so the
+  // label is chosen in one place (`chartCategory`) for the plain and the grouped chart.
+  test("groups a null or absent category apart from an empty string", () => {
+    const nullRows = [
+      { city: null, n: 1 },
+      { city: "", n: 2 },
+      { city: undefined, n: 4 },
+      { city: "A", n: 8 },
+    ];
+    const result = aggregateData(nullRows, "city", [{ field: "n", aggregation: "sum" }]);
+    expect(result).toEqual([
+      { city: null, n: 5 },
+      { city: "", n: 2 },
+      { city: "A", n: 8 },
+    ]);
+  });
+
+  test("a null category under a date grouping stays null", () => {
+    const result = aggregateData(
+      [
+        { d: null, n: 1 },
+        { d: "2025-01-15T10:00:00Z", n: 2 },
+      ],
+      "d",
+      [{ field: "n", aggregation: "sum" }],
+      "year",
+    );
+    expect(result[0]).toEqual({ d: null, n: 1 });
+  });
+
   test("avg returns 0 for empty group (should not happen but safe)", () => {
     const result = aggregateData([{ cat: "A", val: 10 }], "cat", [{ field: "val", aggregation: "avg" }]);
     expect(result[0].val).toBe(10);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// chartCategory
+// ---------------------------------------------------------------------------
+
+/*
+  Recharts builds a category axis only from the strings, numbers and dates among the
+  x values and still draws the marks by row index, so any other value shortened the
+  axis and slid every later mark onto the next row's category.
+*/
+describe("chartCategory", () => {
+  test("labels null and undefined as the grid does", () => {
+    expect(NULL_CATEGORY_LABEL).toBe("NULL");
+    expect(chartCategory(null)).toBe("NULL");
+    expect(chartCategory(undefined)).toBe("NULL");
+  });
+
+  test("passes strings and finite numbers through unchanged", () => {
+    expect(chartCategory("Ankara")).toBe("Ankara");
+    expect(chartCategory("")).toBe("");
+    expect(chartCategory(0)).toBe(0);
+    expect(chartCategory(42.5)).toBe(42.5);
+  });
+
+  test("spells every value recharts would drop as text", () => {
+    expect(chartCategory(true)).toBe("true");
+    expect(chartCategory(false)).toBe("false");
+    expect(chartCategory(Number.NaN)).toBe("NaN");
+    expect(chartCategory(Number.POSITIVE_INFINITY)).toBe("Infinity");
+    expect(chartCategory(BigInt("9007199254740993"))).toBe("9007199254740993");
+    expect(chartCategory({ a: 1 })).toBe('{"a":1}');
+    expect(chartCategory([1, 2])).toBe("[1,2]");
+  });
+
+  test("names a Date by its ISO text, and an invalid one by its own text", () => {
+    expect(chartCategory(new Date("2026-09-26T22:34:00.000Z"))).toBe("2026-09-26T22:34:00.000Z");
+    expect(chartCategory(new Date("not a date"))).toBe("Invalid Date");
+  });
+
+  test("falls back to plain text for an object JSON cannot write", () => {
+    expect(chartCategory({ id: BigInt(1) })).toBe("[object Object]");
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(chartCategory(cycle)).toBe("[object Object]");
   });
 });
 
@@ -411,6 +489,17 @@ describe("aggregateData", () => {
 
 describe("groupByDate", () => {
   const iso = "2025-06-15T14:30:45Z";
+  // groupByDate reads local fields, so these UTC fixtures name the expected day only at UTC.
+  // Held there rather than inherited: off CI's UTC they failed, "day with zero-padding" in
+  // every zone west of UTC and "hour" and "day" at UTC+14.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "UTC";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
 
   test("groups by hour", () => {
     const result = groupByDate(iso, "hour");
@@ -451,5 +540,56 @@ describe("groupByDate", () => {
   test("handles day with zero-padding", () => {
     const result = groupByDate("2025-03-05T00:00:00Z", "day");
     expect(result).toBe("2025-03-05");
+  });
+});
+
+describe("groupByDate - a date-only value west of UTC", () => {
+  // PostgreSQL now hands a `date` column over as its own text, "2026-09-01". A bare
+  // ISO date parses as UTC midnight, which is the previous evening in any zone west
+  // of UTC, so reading local fields off it put every bucket one day early. CI runs
+  // at UTC, where the two readings agree, so this block holds a real western offset.
+  const runnerZone = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/Los_Angeles";
+  });
+  afterAll(() => {
+    if (runnerZone === undefined) delete process.env.TZ;
+    else process.env.TZ = runnerZone;
+  });
+
+  test("keeps the calendar day", () => {
+    expect(groupByDate("2026-09-01", "day")).toBe("2026-09-01");
+  });
+
+  test("keeps the first of the month in its own month", () => {
+    expect(groupByDate("2026-09-01", "month")).toBe("2026-09");
+  });
+
+  test("starts the week on a Sunday date itself, not the Sunday before it", () => {
+    expect(groupByDate("2026-08-30", "week")).toBe("W2026-08-30");
+  });
+
+  test("keeps the first of January in its own year", () => {
+    expect(groupByDate("2026-01-01", "year")).toBe("2026");
+  });
+
+  test("still reads a timestamp with an offset as that instant in the local zone", () => {
+    expect(groupByDate("2026-09-01T03:00:00Z", "day")).toBe("2026-08-31");
+  });
+
+  test("buckets date rows by month through aggregateData", () => {
+    const rows = [
+      { order_date: "2026-09-01", n: 2 },
+      { order_date: "2026-09-30", n: 3 },
+      { order_date: "2026-08-31", n: 5 },
+    ];
+    expect(aggregateData(rows, "order_date", [{ field: "n", aggregation: "sum" }], "month")).toEqual([
+      { order_date: "2026-09", n: 5 },
+      { order_date: "2026-08", n: 5 },
+    ]);
+  });
+
+  test("returns an impossible date-only value unchanged", () => {
+    expect(groupByDate("2026-13-45", "day")).toBe("2026-13-45");
   });
 });

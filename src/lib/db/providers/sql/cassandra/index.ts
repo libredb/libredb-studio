@@ -1,7 +1,7 @@
 /**
  * Apache Cassandra Database Provider (issue #424, Phase 4)
  *
- * CQL over the native protocol through `cassandra-driver` 4.9.0, with every
+ * CQL over the native protocol through `cassandra-driver` 4.10.0, with every
  * statement, catalog read and metric going through the `CassandraTransport` seam -
  * so this file names no driver class and `seam-guard.test.ts` fails the build if it
  * starts to. The driver lives in `driver-transport.ts`; the catalog and
@@ -39,9 +39,10 @@
  * - THERE IS NO CANCELLATION, so `cancelQuery` is deliberately NOT implemented. The
  *   native protocol has no cancellation frame, CQL has no `KILL`, and the driver's own
  *   client publishes no cancel, abort or kill method (checked against its API
- *   surface). Both routes detect the method by name (`"cancelQuery" in provider`), so
+ *   surface). Both routes detect the method by presence (`supportsQueryCancel`), so
  *   its ABSENCE is what makes them answer "cancellation is not supported for this
- *   database type" - which is true - rather than reporting a cancellation that failed.
+ *   database type" - which is true - rather than reporting a cancellation that failed,
+ *   and what makes the editor's control read "Stop waiting" here (#1364).
  *   `search/index.ts` declined the same method for the same reason (#424 Phase 1).
  *   The only bound on a running statement is the client-side `readTimeout`, after
  *   which this client stops WAITING and the coordinator carries on.
@@ -290,6 +291,9 @@ export class CassandraProvider extends SQLBaseProvider {
       // holding the committed fixture. The declaration and the four methods that read
       // it live in `objects.ts`, which carries the measurements (issue #789).
       containerLevels: CASSANDRA_CONTAINER_LEVELS,
+      // Only the declared depth is an address: a partial path would leave a level unbound and
+      // answer an empty folder. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: CASSANDRA_OBJECT_KINDS,
     };
   }

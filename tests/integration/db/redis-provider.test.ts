@@ -478,6 +478,30 @@ let infoOverride: string | null = null;
 let clusterInfoReply: unknown = MOCK_PLAIN_CLUSTER_INFO;
 let pagePipelineMode: "ok" | "error" | "null" = "ok";
 
+const NO_OVERRIDE = Symbol("no override");
+
+/**
+ * What `dbsize()` answers instead of the driver-shaped 42, when set: a JS number is what a
+ * client without `stringNumbers` hands over, and anything else is a reply that is not a count.
+ */
+let dbsizeOverride: unknown = NO_OVERRIDE;
+
+/**
+ * When set, `connect()` fails the way ioredis 5.11.1 fails it: every error in the list is EMITTED
+ * as an `error` event, in order, and the promise then rejects with the plain "Connection is
+ * closed." (#1356).
+ *
+ * Measured 2026-10-04 through ioredis 5.11.1 against redis 8.10.2 and valkey 9.1.2: a wrong
+ * password, a refused port, an unknown host and a self-signed certificate ALL reject `connect()`
+ * with that one sentence, and the reason travels only on the event: a `ReplyError` "WRONGPASS
+ * ...", an `Error` with `code` ECONNREFUSED / ENOTFOUND / SELF_SIGNED_CERT_IN_CHAIN. A plaintext
+ * client on a TLS-only port emits nothing at all, which an empty list stands for.
+ */
+let connectFailure: Error[] | null = null;
+
+/** Every `error` listener each opened connection carries, in the order the connections opened. */
+const errorListeners: Array<Array<(error: Error) => void>> = [];
+
 /** Every pipelined batch the provider sent, by command name, in the order it sent it. */
 const pipelineBatches: string[][] = [];
 
@@ -504,7 +528,20 @@ mock.module("ioredis", () => {
     /** This connection's entry in `openedClients`, kept current as it moves and closes. */
     private readonly _state = { database: 0, disconnected: false };
 
+    /** This connection's `error` listeners, registered through `on`: the one event read. */
+    private readonly _errorListeners: Array<(error: Error) => void> = [];
+
+    on(event: string, listener: (error: Error) => void) {
+      if (event === "error") this._errorListeners.push(listener);
+      return this;
+    }
+
     async connect() {
+      errorListeners.push(this._errorListeners);
+      if (connectFailure !== null) {
+        for (const error of connectFailure) for (const listener of this._errorListeners) listener(error);
+        throw new Error("Connection is closed.");
+      }
       this._state.database = this._db;
     }
 
@@ -529,7 +566,40 @@ mock.module("ioredis", () => {
     }
 
     async dbsize() {
-      return 42;
+      return dbsizeOverride === NO_OVERRIDE ? this.integerReply(42) : dbsizeOverride;
+    }
+
+    /**
+     * An integer reply as ioredis hands it over: a JS number by default, and its digit
+     * string under `stringNumbers`, which the provider sets so a 64-bit counter is exact.
+     * Measured on redis 8.10.2 through ioredis 5.11.1: `INCR` on 9223372036854775806 answers
+     * 9223372036854778000 by default and "9223372036854775807" under the option. Modelled
+     * here so a provider reading a count with `typeof x === "number"` fails as it would live.
+     */
+    private integerReply(value: number | bigint): number | string {
+      const options = (this._config ?? {}) as Record<string, unknown>;
+      return options.stringNumbers === true ? String(value) : Number(value);
+    }
+
+    /**
+     * A canned reply on its way through the driver: strings become Buffers for `callBuffer`
+     * and stay strings for `call`, integers become what {@link integerReply} says, and a bigint
+     * in a canned reply is how a test spells an integer past 2^53.
+     */
+    private encodeReply(value: unknown, asBuffers: boolean): unknown {
+      if (typeof value === "string") return asBuffers ? Buffer.from(value) : value;
+      if (typeof value === "number" || typeof value === "bigint") return this.integerReply(value);
+      if (Array.isArray(value)) return value.map((item) => this.encodeReply(item, asBuffers));
+      return value;
+    }
+
+    /** ioredis's `callBuffer`: the reply before any decoding, bulk and status strings as Buffers. */
+    async callBuffer(command: string, ...args: string[]) {
+      return this.encodeReply(await this.answer(command, ...args), true);
+    }
+
+    async call(command: string, ...args: string[]) {
+      return this.encodeReply(await this.answer(command, ...args), false);
     }
 
     async scan(cursor: string | number, ...args: (string | number)[]): Promise<[string, string[]]> {
@@ -594,7 +664,7 @@ mock.module("ioredis", () => {
           return Promise.all(
             commands.map(async ({ name, args }): Promise<[Error | null, unknown]> => {
               if (mode === "error") return [new Error("ERR pipeline command failed"), null];
-              if (name === "DBSIZE") return [null, 42];
+              if (name === "DBSIZE") return [null, this.integerReply(42)];
               if (name === "INFO") return [null, clusterInfoReply];
               return [null, await this.type(String(args[0]))];
             }),
@@ -609,7 +679,8 @@ mock.module("ioredis", () => {
       return "OK";
     }
 
-    async call(command: string, ...args: string[]) {
+    /** The server's canned answer to one command, before the driver decodes it. */
+    private async answer(command: string, ...args: string[]): Promise<unknown> {
       const cmd = command.toUpperCase();
       capturedCalls.push({ command: cmd, args });
       // Simulate a Redis-side error (e.g. unknown command / wrong arity)
@@ -628,6 +699,9 @@ mock.module("ioredis", () => {
         this._inMulti = false;
         return "OK";
       }
+      // A server's `SELECT` moves THIS connection, the same as the method form above, so a
+      // provider that let it through `query()` would move the session here too (#1107).
+      if (cmd === "SELECT" && !this._inMulti) return this.select(Number(args[0]));
       if (cmd === "PING" && pingFailure !== null) throw pingFailure;
       // Inside a `MULTI` the server answers the status "QUEUED" INSTEAD of the command's
       // own reply and runs nothing, every command alike except the ones above. Measured on
@@ -662,7 +736,10 @@ mock.module("ioredis", () => {
 // ============================================================================
 
 const { RedisProvider } = await import("@/lib/db/providers/keyvalue/redis");
-const { DatabaseConfigError, QueryError } = await import("@/lib/db/errors");
+const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, isRetryableError } = await import(
+  "@/lib/db/errors"
+);
+const { logger } = await import("@/lib/logger");
 
 // ============================================================================
 // Test Config
@@ -764,6 +841,150 @@ describe("RedisProvider", () => {
 
       await provider.connect();
       expect(openedDatabases()).toEqual([2]);
+    });
+
+    /*
+     * THE REASON A CONNECT FAILED IS THE DRIVER'S FIRST `error` EVENT (#1356).
+     *
+     * ioredis rejects `connect()` with "Connection is closed." whatever went wrong and emits the
+     * reason as an `error` event; with no listener that reason reached only the server log, as
+     * "[ioredis] Unhandled error event". Each event below is one measured on 2026-10-04 through
+     * ioredis 5.11.1 against redis 8.10.2 and valkey 9.1.2.
+     */
+    describe("a refused connect names its reason", () => {
+      afterEach(() => {
+        connectFailure = null;
+      });
+
+      const refusal = async (events: Error[], config: Partial<DatabaseConnection> = {}): Promise<Error> => {
+        connectFailure = events;
+        provider = new RedisProvider({ ...baseConfig, ...config });
+        const raised = await provider.connect().then(
+          () => new Error("connect() resolved"),
+          (error: Error) => error,
+        );
+        expect(provider.isConnected()).toBe(false);
+        return raised;
+      };
+
+      const networkError = (message: string, code: string): Error => Object.assign(new Error(message), { code });
+
+      /**
+       * A refused `AUTH` reply as ioredis 5.11.1 emits it: `DataHandler` sets `command` to the
+       * command the reply answered, so the password the user typed rides on the error object.
+       */
+      const authReply = (message: string): Error =>
+        Object.assign(replyError(message), { command: { name: "auth", args: ["not-the-password"] } });
+
+      test("a wrong password is an AuthenticationError in the server's words, and not retryable", async () => {
+        const error = await refusal([authReply("WRONGPASS invalid username-password pair or user is disabled.")], {
+          password: "not-the-password",
+        });
+        expect(error).toBeInstanceOf(AuthenticationError);
+        expect(error.message).toBe(
+          "Failed to connect to Redis: WRONGPASS invalid username-password pair or user is disabled.",
+        );
+        expect(isRetryableError(error)).toBe(false);
+        // The driver's error, and with it the AUTH command, is carried nowhere.
+        expect(error.message).not.toContain("not-the-password");
+        expect(JSON.stringify(error)).not.toContain("not-the-password");
+        expect(error.cause).toBeUndefined();
+        expect(Object.values(error).some((value) => JSON.stringify(value)?.includes("not-the-password"))).toBe(false);
+      });
+
+      // Measured on redis 5.0.14 with `--requirepass`: no ACL, and the refusal's first word is ERR.
+      test("a wrong password on a server without ACLs (Redis 5) is an AuthenticationError too", async () => {
+        const error = await refusal([authReply("ERR invalid password")], { password: "not-the-password" });
+        expect(error).toBeInstanceOf(AuthenticationError);
+        expect(error.message).toBe("Failed to connect to Redis: ERR invalid password");
+      });
+
+      // Measured: a connect that never answers emits "connect ETIMEDOUT" with code ETIMEDOUT.
+      test("a connect timeout is a ConnectionError, retryable", async () => {
+        const error = await refusal([networkError("connect ETIMEDOUT", "ETIMEDOUT")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: connect ETIMEDOUT");
+        expect(isRetryableError(error)).toBe(true);
+      });
+
+      test("no password against a server that requires one is an AuthenticationError", async () => {
+        const error = await refusal([replyError("NOAUTH Authentication required.")]);
+        expect(error).toBeInstanceOf(AuthenticationError);
+        expect(error.message).toBe("Failed to connect to Redis: NOAUTH Authentication required.");
+      });
+
+      test("a refused port is a ConnectionError naming the address", async () => {
+        const error = await refusal([networkError("connect ECONNREFUSED 127.0.0.1:40009", "ECONNREFUSED")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: connect ECONNREFUSED 127.0.0.1:40009");
+        expect(isRetryableError(error)).toBe(true);
+      });
+
+      test("an unknown host is a ConnectionError naming the host", async () => {
+        const error = await refusal([networkError("getaddrinfo ENOTFOUND nonexistent.invalid", "ENOTFOUND")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: getaddrinfo ENOTFOUND nonexistent.invalid");
+      });
+
+      test("a certificate the chain check refuses is a ConnectionError with the TLS reason", async () => {
+        const error = await refusal(
+          [networkError("self-signed certificate in certificate chain", "SELF_SIGNED_CERT_IN_CHAIN")],
+          { ssl: { mode: "verify-full" } },
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: self-signed certificate in certificate chain");
+      });
+
+      test("a server error reply that is not about credentials stays a ConnectionError", async () => {
+        const error = await refusal([replyError("LOADING Redis is loading the dataset in memory")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: LOADING Redis is loading the dataset in memory");
+      });
+
+      test("the FIRST event is the reason, not a later one", async () => {
+        const error = await refusal([
+          replyError("WRONGPASS invalid username-password pair or user is disabled."),
+          networkError("connect ECONNREFUSED 127.0.0.1:6379", "ECONNREFUSED"),
+        ]);
+        expect(error).toBeInstanceOf(AuthenticationError);
+      });
+
+      // Measured: a plaintext client on a TLS-only port has its socket closed with no event at all.
+      test("with no event the driver's own sentence is all there is", async () => {
+        const error = await refusal([]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: Connection is closed.");
+      });
+
+      test("every connection carries an error listener, so no event is left unhandled", async () => {
+        errorListeners.length = 0;
+        await provider.connect();
+        expect(errorListeners).toHaveLength(1);
+        expect(errorListeners[0]).toHaveLength(1);
+      });
+
+      test("an event after the connect is logged as a warning with its message only", async () => {
+        errorListeners.length = 0;
+        await provider.connect();
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        try {
+          const late = Object.assign(replyError("NOAUTH Authentication required."), {
+            command: { name: "auth", args: ["not-the-password"] },
+          });
+          expect(() => errorListeners[0][0](late)).not.toThrow();
+          expect(warn).toHaveBeenCalledTimes(1);
+          expect(warn.mock.calls[0]).toEqual(["[Redis] NOAUTH Authentication required.", { provider: "redis" }]);
+          expect(JSON.stringify(warn.mock.calls)).not.toContain("not-the-password");
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      test("an object read on its own connection raises the same typed error", async () => {
+        await provider.connect();
+        connectFailure = [replyError("WRONGPASS invalid username-password pair or user is disabled.")];
+        await expect(provider.countObjects(["0"])).rejects.toBeInstanceOf(AuthenticationError);
+      });
     });
   });
 
@@ -1243,6 +1464,75 @@ describe("RedisProvider", () => {
       expect(result.rows[0].result).toBe("hello-world");
     });
 
+    // Every statement runs on the ONE client every later request shares, so a statement that would
+    // leave it in another database, as another user, no longer answering, or blocked is refused
+    // before it reaches the server. The NUL forms are here because the server can match a command
+    // word only up to a NUL (§5.2b), and the label is JSON so the NUL shows in the test name (#1107).
+    test.each(
+      [
+        "SELECT 0",
+        '{"command":"select","args":["0"]}',
+        "SELECT\u0000 0",
+        '{"command":"SELECT\\u0000","args":["0"]}',
+        "RESET",
+        "AUTH default x",
+        "HELLO 3",
+        "QUIT",
+        "SUBSCRIBE news",
+        "PSUBSCRIBE news:*",
+        "SSUBSCRIBE news",
+        "MONITOR",
+        "CLIENT REPLY OFF",
+        "client reply skip",
+        "CLIENT REPLY\u0000 OFF",
+        "BLPOP queue 0",
+        "BRPOP queue 5",
+        "BRPOPLPUSH queue done 0",
+        "BLMOVE queue done LEFT RIGHT 0",
+        "BLMPOP 0 1 queue LEFT",
+        "BZPOPMIN ranks 0",
+        "BZPOPMAX ranks 0",
+        "BZMPOP 0 1 ranks MIN",
+        "WAIT 1 0",
+        "WAITAOF 0 1 0",
+        "XREAD BLOCK 0 STREAMS events $",
+        "XREAD COUNT 10 block 100 STREAMS events $",
+        "XREADGROUP GROUP readers r1 BLOCK 0 STREAMS events >",
+      ].map((statement) => [JSON.stringify(statement), statement]),
+    )("%s is refused before it reaches the shared client (#1107)", async (_label, statement) => {
+      await provider.disconnect();
+      provider = new RedisProvider({ ...baseConfig, database: "2" });
+      await provider.connect();
+      capturedCalls.length = 0;
+
+      await expect(provider.query(statement)).rejects.toThrow(/shared connection/);
+      expect(capturedCalls).toEqual([]);
+
+      await provider.query("GET mykey");
+      expect(openedClients.at(-1)!.database).toBe(2);
+    });
+
+    // The controls for the refusal above: the same words where they leave the shared client as it
+    // was. A stream KEY or a GROUP named BLOCK is not the BLOCK option, an XREAD without STREAMS is
+    // the server's to refuse, and UNSUBSCRIBE outside subscriber mode answers 0 and changes nothing
+    // (measured, §5.2b).
+    test.each([
+      "XREAD COUNT 1 STREAMS events 0",
+      "XREAD COUNT 1",
+      "XREAD STREAMS BLOCK 0",
+      "XREADGROUP GROUP BLOCK r1 STREAMS events >",
+      "CLIENT INFO",
+      "LPOP queue",
+      "UNSUBSCRIBE",
+    ])("%s still runs (#1107)", async (statement) => {
+      capturedCalls.length = 0;
+
+      await provider.query(statement);
+
+      const [command, ...args] = statement.split(" ");
+      expect(capturedCalls).toEqual([{ command, args }]);
+    });
+
     test("empty command throws QueryError", async () => {
       await expect(provider.query("   ")).rejects.toThrow();
     });
@@ -1313,8 +1603,21 @@ describe("RedisProvider", () => {
       await expect(provider.query("# just a note\n\n# and another")).rejects.toThrow(/only comments|no command/i);
     });
 
-    test("a line that tokenizes to nothing throws Empty command", async () => {
-      await expect(provider.query('""')).rejects.toThrow(/Empty command/);
+    // --- A quoted empty argument is an argument (redis-cli reads it so) ---
+
+    test.each<[string, string, string[]]>([
+      ['SET k ""', "SET", ["k", ""]],
+      ["SET k ''", "SET", ["k", ""]],
+      ['LPUSH l "" x', "LPUSH", ["l", "", "x"]],
+      ['HSET h f ""', "HSET", ["h", "f", ""]],
+      ['SET k ""x', "SET", ["k", "x"]],
+      ['""', "", []],
+    ])("%s sends every quoted empty argument", async (text, command, args) => {
+      // Measured on Redis 8.10.2 before this: `SET k ""` answered "wrong number of arguments" and
+      // `LPUSH l "" x` pushed only `x`, because a token was kept only when it held a character.
+      capturedCalls.length = 0;
+      await provider.query(text);
+      expect(capturedCalls).toEqual([{ command, args }]);
     });
 
     test("a pretty-printed multi-line JSON command still parses", async () => {
@@ -1332,8 +1635,43 @@ describe("RedisProvider", () => {
       expect(result.rows[0].result).toBe("hello-world");
     });
 
-    test("trailing non-comment text after a JSON body is still an Invalid JSON command format", async () => {
+    test("trailing text on the JSON body's own line is still an Invalid JSON command format", async () => {
+      await expect(provider.query('{"command":"GET","args":["mykey"]} trailing note')).rejects.toThrow(
+        /Invalid JSON command format/,
+      );
+    });
+
+    test("a line after a balanced JSON body is a second command, and nothing is sent", async () => {
+      capturedCalls.length = 0;
       await expect(provider.query('{"command":"GET","args":["mykey"]}\ntrailing note')).rejects.toThrow(
+        'Line 2 holds a second command, which begins with "trailing"',
+      );
+      expect(capturedCalls).toEqual([]);
+    });
+
+    test("a pretty-printed JSON command is read until its braces balance, not past them", async () => {
+      capturedCalls.length = 0;
+      const json = JSON.stringify({ command: "SET", args: ["k", "a } ] { [", 'say "hi" \\'] }, null, 2);
+      await provider.query(json);
+      expect(capturedCalls).toEqual([{ command: "SET", args: ["k", "a } ] { [", 'say "hi" \\'] }]);
+
+      await expect(provider.query(`${json}\nDEL k`)).rejects.toThrow(/Line 9 holds a second command/);
+    });
+
+    test("a comment line inside a pretty-printed JSON command is dropped", async () => {
+      capturedCalls.length = 0;
+      await provider.query('{\n  "command": "GET",\n  # the key\n  "args": ["mykey"]\n}');
+      expect(capturedCalls).toEqual([{ command: "GET", args: ["mykey"] }]);
+    });
+
+    test("a blank line ends an unfinished JSON command, which then fails to parse", async () => {
+      await expect(provider.query('{\n  "command": "GET",\n\n  "args": ["mykey"]\n}')).rejects.toThrow(
+        /Invalid JSON command format/,
+      );
+    });
+
+    test("a JSON command that never closes runs to the end of the text and fails to parse", async () => {
+      await expect(provider.query('{\n  "command": "GET",\n  "args": ["mykey"]')).rejects.toThrow(
         /Invalid JSON command format/,
       );
     });
@@ -1365,9 +1703,9 @@ describe("RedisProvider", () => {
      * "Run Selected" would leave them out.
      *
      * NOTE: this helper strips comments and blank lines ITSELF and runs each line
-     * on its own, so it exercises the per-line paths and NOT `commandBody`'s block
+     * on its own, so it exercises the per-line paths and NOT the whole-text reading
      * logic — which is how a comment-stripping defect survived two reviews (#427).
-     * The whole-buffer suite below is the one that covers `commandBody`.
+     * The whole-buffer suite below is the one that covers `readRedisCommandText()`.
      */
     async function runGeneratedLines(buffer: string): Promise<Array<{ command: string; args: string[] }>> {
       capturedCalls.length = 0;
@@ -1434,26 +1772,114 @@ describe("RedisProvider", () => {
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\\[b:*", "COUNT", "50"] }]);
     });
 
-    // --- Multi-line bodies (#427 F2 regression) ---
+    // --- Each line is its own command (docs/providers/redis.md 3.4a) ---
+    //
+    // Until this rule a newline outside quotes was ordinary whitespace, so the first
+    // blank-line-delimited block ran as ONE command. Measured on Redis 8.10.2 and Valkey
+    // 9.1.2: `RPUSH mq x` / `RPUSH mq y` answered `(integer) 4` and the list held
+    // `x, RPUSH, mq, y`. A second command is now refused and nothing reaches the driver.
 
-    test("a plain command wrapped across lines still runs whole", async () => {
-      // On main the tokenizer treated a newline as ordinary whitespace, so this
-      // wrote BOTH fields. First-line-only picking silently dropped the second.
+    test.each<[string, string, string]>([
+      [
+        "two pushes on consecutive lines",
+        "RPUSH mq x\nRPUSH mq y",
+        'Line 2 holds a second command, which begins with "RPUSH"',
+      ],
+      ["two set adds", "SADD s2 a\nSADD s2 b", 'Line 2 holds a second command, which begins with "SADD"'],
+      ["a command once wrapped across lines", "HSET user:1 name alice\nemail a@b.c", 'which begins with "email"'],
+      ["a second command after a comment line", "DEL a\n# then\nDEL b", "Line 3 holds a second command"],
+      [
+        "a second command after leading chrome",
+        "# note\n\nGET a\n  GET b",
+        'Line 4 holds a second command, which begins with "GET"',
+      ],
+      ["a key whose brace would hold a JSON line open", "SET a{b 1\nSET c 2", "Line 2 holds a second command"],
+      [
+        "a second command after a closed multi-line value",
+        'SET note "a\nb"\nGET note',
+        "Line 3 holds a second command",
+      ],
+    ])("%s is refused, naming the line, and nothing is sent", async (_label, text, sentence) => {
       capturedCalls.length = 0;
-      await provider.query("HSET user:1 name alice\nemail a@b.c");
-      expect(capturedCalls).toEqual([{ command: "HSET", args: ["user:1", "name", "alice", "email", "a@b.c"] }]);
+      await expect(provider.query(text)).rejects.toThrow(sentence);
+      expect(capturedCalls).toEqual([]);
     });
 
-    test("a blank line ends the command: the cheatsheet runs only its first block", async () => {
+    test("the refusal says how to run the line and when a command continues", async () => {
+      await expect(provider.query("RPUSH mq x\nRPUSH mq y")).rejects.toThrow(
+        "Select the line to run it, and the editor sends the selection. A command continues onto the next line " +
+          "only inside a quoted argument or an unfinished JSON command.",
+      );
+    });
+
+    test("the refusal quotes at most forty characters of the second command's first word", async () => {
+      const word = "x".repeat(60);
+      await expect(provider.query(`GET a\n${word} b`)).rejects.toThrow(`begins with "${"x".repeat(40)}..."`);
+    });
+
+    test("a blank line ends what a run reads: the cheatsheet runs only its first command", async () => {
       capturedCalls.length = 0;
       await provider.query(generateSelectQuery(["user:*"], KEY_COLUMNS("string"), provider.getCapabilities()));
       expect(capturedCalls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "user:*", "COUNT", "50"] }]);
     });
 
-    test("comment lines between the wrapped lines of one command are dropped", async () => {
+    test("a command after a blank line is an alternative and does not run", async () => {
       capturedCalls.length = 0;
-      await provider.query("HSET user:1 name alice\n# a note\nemail a@b.c");
-      expect(capturedCalls).toEqual([{ command: "HSET", args: ["user:1", "name", "alice", "email", "a@b.c"] }]);
+      await provider.query("RPUSH mq x\n\nRPUSH mq y");
+      expect(capturedCalls).toEqual([{ command: "RPUSH", args: ["mq", "x"] }]);
+    });
+
+    test("trailing comment lines after the command are dropped", async () => {
+      capturedCalls.length = 0;
+      await provider.query("GET mykey\n# a note\n   # another");
+      expect(capturedCalls).toEqual([{ command: "GET", args: ["mykey"] }]);
+    });
+
+    // --- Multi-line scripts continue inside their quoted argument ---
+
+    test("an EVAL script spanning lines runs as one command", async () => {
+      capturedCalls.length = 0;
+      await provider.query('EVAL "local a = 1\nlocal b = 2\n\n-- a comment\nreturn a + b" 0');
+      expect(capturedCalls).toEqual([
+        { command: "EVAL", args: ["local a = 1\nlocal b = 2\n\n-- a comment\nreturn a + b", "0"] },
+      ]);
+    });
+
+    test("a FUNCTION LOAD library spanning lines runs as one command", async () => {
+      const library = [
+        "#!lua name=mylib",
+        "redis.register_function('hi', function(keys, args)",
+        "  # not a comment here",
+        "  return 'hi'",
+        "end)",
+      ].join("\n");
+      capturedCalls.length = 0;
+      await provider.query(`FUNCTION LOAD REPLACE "${library}"`);
+      expect(capturedCalls).toEqual([{ command: "FUNCTION", args: ["LOAD", "REPLACE", library] }]);
+    });
+
+    // A quote still open at the end of the text would take every later line as data: measured,
+    // `SET greeting it's` / `GET greeting` stored "its\nGET greeting". It is refused instead,
+    // naming the line the quote opened on.
+    test.each<[string, string, string]>([
+      ["an apostrophe in an unquoted word", "SET greeting it's\nGET greeting", "Line 1 opens a quoted argument with '"],
+      [
+        "a backslash-escaped quote, which has no escape here",
+        'SET k "a\\"b"\nGET k',
+        'Line 1 opens a quoted argument with "',
+      ],
+      [
+        "a quote that swallows a blank-line alternative",
+        'SET k "abc\nDEL x\n\nGET k',
+        'Line 1 opens a quoted argument with "',
+      ],
+      ["a quote opened after leading chrome", '# note\n\nSET k "abc', 'Line 3 opens a quoted argument with "'],
+      ["a quote reopened on a continuation line", 'SET k "a\nb" "c\nd', 'Line 2 opens a quoted argument with "'],
+    ])("%s is refused, and nothing is sent", async (_label, text, sentence) => {
+      capturedCalls.length = 0;
+      await expect(provider.query(text)).rejects.toThrow(sentence);
+      await expect(provider.query(text)).rejects.toThrow("that never closes");
+      expect(capturedCalls).toEqual([]);
     });
 
     // --- A node name may not smuggle a command through the header comment (#427) ---
@@ -1500,12 +1926,12 @@ describe("RedisProvider", () => {
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\nDEL user:1 x:*", "COUNT", "50"] }]);
     });
 
-    // --- The WHOLE generated buffer through commandBody (#427 S4) ---
+    // --- The WHOLE generated buffer through readRedisCommandText() (#427 S4) ---
     //
     // `runGeneratedLines` above pre-strips comments and blank lines, so it never
-    // reaches `commandBody`. These hand the buffer over UNMODIFIED — what a user
-    // gets by pressing Run with nothing selected — and assert the args the driver
-    // received for the FIRST block, which is the only command that may run.
+    // reaches the whole-text reading. These hand the buffer over UNMODIFIED, what a user
+    // gets by pressing Run with nothing selected, and assert the args the driver
+    // received for the FIRST command, which is the only command that may run.
     const wholeBufferCases: {
       name: string;
       node: string;
@@ -2003,6 +2429,96 @@ describe("RedisProvider", () => {
     test("DBSIZE returns integer key count", async () => {
       const result = await provider.query(JSON.stringify({ command: "DBSIZE", args: [] }));
       expect(result.rows[0].result).toBe("(integer) 42");
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // Integer replies past 2^53
+  // --------------------------------------------------------------------------
+
+  describe("integer replies past 2^53", () => {
+    /** Answer `command` with `reply` for one test, the way a live server would. */
+    const answering = async (command: string, reply: unknown, run: () => Promise<void>) => {
+      mockCallResults[command] = reply;
+      try {
+        await run();
+      } finally {
+        delete mockCallResults[command];
+      }
+    };
+
+    beforeEach(async () => {
+      pagePipelineMode = "ok";
+      clusterInfoReply = MOCK_PLAIN_CLUSTER_INFO;
+      await provider.connect();
+    });
+
+    // Measured on redis 8.10.2 through ioredis 5.11.1 on 2026-10-04: by default the driver
+    // parses an integer reply into a JS number, so `INCR` on 9223372036854775806 showed
+    // `(integer) 9223372036854778000`. Under `stringNumbers` it hands over the digits.
+    test("asks ioredis for integer replies as digit strings", () => {
+      expect(capturedRedisOptions[capturedRedisOptions.length - 1]).toMatchObject({ stringNumbers: true });
+    });
+
+    test("shows INCR's 64-bit result exactly", async () => {
+      await answering("INCR", BigInt("9223372036854775807"), async () => {
+        const result = await provider.query("INCR big:int");
+        expect(result.rows).toEqual([{ result: "(integer) 9223372036854775807" }]);
+      });
+    });
+
+    test("shows 2^53 + 1 and a negative 64-bit integer exactly", async () => {
+      await answering("INCRBY", BigInt("9007199254740993"), async () => {
+        expect((await provider.query("INCRBY big2 0")).rows).toEqual([{ result: "(integer) 9007199254740993" }]);
+      });
+      await answering("DECRBY", -BigInt("9223372036854775808"), async () => {
+        expect((await provider.query("DECRBY big3 1")).rows).toEqual([{ result: "(integer) -9223372036854775808" }]);
+      });
+    });
+
+    test("keeps an integer exact inside an array reply and a nested one", async () => {
+      // `EVAL "return {1, 9007199254740993, {2, 9223372036854775807}}" 0` answers this shape:
+      // an array of integers and a nested array. A nested value is shown as JSON, where the
+      // safe integer stays a number and the unsafe ones are their digits.
+      await answering("EVAL", [1, BigInt("9007199254740993"), [2, BigInt("9223372036854775807"), "x"]], async () => {
+        const result = await provider.query('EVAL "return 1" 0');
+        expect(result.rows).toEqual([
+          { index: 1, value: "1" },
+          { index: 2, value: "9007199254740993" },
+          { index: 3, value: '[2,"9223372036854775807","x"]' },
+        ]);
+      });
+    });
+
+    test("still reads a small integer reply as an ordinary count", async () => {
+      // The counts the provider reads for itself arrive as digit strings too now, and still
+      // reach the overview and the key-space page as numbers.
+      const overview = await provider.getOverview();
+      const page = await provider.scanKeysPage({ cursor: "0", count: 100 });
+
+      expect(overview.tableCount).toBe(42);
+      expect(page.total).toBe(42);
+    });
+
+    test("reads a count a client hands over as a JS number the same way", async () => {
+      dbsizeOverride = 42;
+      try {
+        expect((await provider.getOverview()).tableCount).toBe(42);
+      } finally {
+        dbsizeOverride = NO_OVERRIDE;
+      }
+    });
+
+    test.each<[string, unknown]>([
+      ["a fraction", 1.5],
+      ["text that is not a count", "OK"],
+    ])("refuses an overview whose DBSIZE answered %s, rather than showing 0 keys", async (_label, reply) => {
+      dbsizeOverride = reply;
+      try {
+        await expect(provider.getOverview()).rejects.toThrow("Redis answered no key count for the overview");
+      } finally {
+        dbsizeOverride = NO_OVERRIDE;
+      }
     });
   });
 

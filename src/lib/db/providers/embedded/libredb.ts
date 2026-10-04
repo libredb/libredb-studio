@@ -48,9 +48,11 @@ import {
   type ObjectKindSpec,
 } from "../../types";
 import {
+  assertContainerPathShape,
   assertObjectPathShape,
   callerBoundTruncationReason,
   containerDepth,
+  type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
   type ObjectPathShapeEngine,
@@ -58,9 +60,22 @@ import {
 import { comparePaths } from "../../object-path";
 import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
+import { carriesLossyNumber } from "../../utils/json-integers";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import * as path from "path";
+
+/**
+ * LibreDB's identity for the shared container-path renderer.
+ *
+ * Which paths this engine accepts is not a field here: it is `containerPathShapes` in
+ * `getCapabilities()`, which the object routes read too (#1147).
+ */
+const LIBREDB_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
+  code: "libredb",
+  label: "A LibreDB",
+  shapeNames: "label",
+};
 
 // ============================================================================
 // Lazy package loader (mirrors sqlite.ts loading bun:sqlite)
@@ -309,10 +324,7 @@ function declaredLevels(capabilities: ProviderCapabilities): readonly ContainerL
  * database holding nothing.
  */
 function assertContainerPath(capabilities: ProviderCapabilities, container: readonly string[]): void {
-  const levels = declaredLevels(capabilities);
-  if (container.length === levels.length) return;
-  const shape = levels.length === 0 ? "empty" : `[${levels.map((level) => level.label.toLowerCase()).join(", ")}]`;
-  throw new QueryError(`A LibreDB container path is ${shape}, received ${JSON.stringify(container)}`, "libredb");
+  assertContainerPathShape(capabilities, container, LIBREDB_CONTAINER_PATH_ENGINE);
 }
 
 /** One enumerated object, with the two things `describeObject` needs to describe it. */
@@ -384,6 +396,9 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // database is ONE FILE holding one flat namespace, with nothing above it to list.
       // `containerLevels` is therefore absent, which `containerDepth()` reads as 0 -
       // absent and `[]` are the same fact and only that helper is allowed to decide it.
+      // `exact` over no level: the empty path is the only address, so any segment at all is a
+      // caller holding another engine's model. Read through `acceptedContainerShapes()` (#1147).
+      containerPathShapes: "exact",
       objectKinds: LIBREDB_OBJECT_KINDS,
       // `lib.open({ path })` takes an exclusive `<path>.lock` sidecar, so a second
       // open of a file this process already holds throws `LOCKED` rather than
@@ -788,8 +803,16 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return parts;
   }
 
-  /** Pretty-print a JSON value; leave non-JSON strings as-is. */
+  /**
+   * Pretty-print a JSON value; leave non-JSON strings as-is.
+   *
+   * A value holding a number the round trip through JSON.parse would print differently is
+   * left as stored too: measured on 0.2.2, a stored `{"n":9007199254740993}` was shown as
+   * `"n": 9007199254740992`, `12345678901234567890.12` as 12345678901234567000 and `1e400`
+   * as null, and Copy, every export and an edit-and-put cycle then carried the rounded value.
+   */
   private renderValue(value: string): string {
+    if (carriesLossyNumber(value)) return value;
     try {
       return JSON.stringify(JSON.parse(value), null, 2);
     } catch {

@@ -18,8 +18,18 @@ import {
   LibSQLIcon,
   DuckDBIcon,
   PrometheusIcon,
+  KafkaIcon,
+  EtcdIcon,
+  Db2Icon,
+  Neo4jIcon,
+  QdrantIcon,
+  MilvusIcon,
+  InfluxDBIcon,
+  OxiaIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
+import type { HostUriScheme } from "@/lib/connection-host-uri";
+import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 
 // DB brand icons share the same interface as LucideIcon (className + SVG props)
 export type DBIcon = LucideIcon | React.FC<React.SVGAttributes<SVGSVGElement> & { className?: string }>;
@@ -50,6 +60,15 @@ export interface DatabaseUIConfig {
     // Elasticsearch only (#708): an API key pair, sent in preference to user/password.
     | "apiKeyId"
     | "apiKeySecret"
+    // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
+    // `fieldOptions` below declares.
+    | "saslMechanism"
+    // Db2 (#786), both InfluxDB types (InfluxDB spec I7), and Oxia for its token: the consent to send the password
+    // without TLS, drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in
+    // `fieldHints`. The provider refuses a connection with no TLS unless it is set.
+    | "allowInsecureAuth"
+    // Oxia only (O6): a cluster's data-server addresses, one text box.
+    | "dataServers"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -64,6 +83,45 @@ export interface DatabaseUIConfig {
    * the user reaches an error (#1085). Read through `connectionFieldHint`.
    */
   fieldHints?: Partial<Record<ConnectionField, string>>;
+  /**
+   * The connection dialog's placeholder for a field, where this engine's example differs from the dialog's own.
+   * Read through `connectionFieldPlaceholder`; only the `database` box reads it so far.
+   */
+  fieldPlaceholders?: Partial<Record<ConnectionField, string>>;
+  /**
+   * The sentence under the connection dialog's Read-only toggle, where this engine's mode differs from
+   * the dialog's own sentence, which says the mode can be turned off. Neo4j declares one because its
+   * connections are read-only whether or not the box is ticked (spec A7). Read through `readOnlyHint`.
+   */
+  readOnlyHint?: string;
+  /**
+   * The choices of a field the connection dialog draws as a select rather than a text box, each a
+   * stored value and its label, offered after an empty "None" choice that stores nothing (#1088).
+   * The dialog draws the select where the engine takes the field, the same condition
+   * `buildConnection` writes it on, so an entry that declares options names the field in
+   * `connectionFields` too. Only Kafka's SASL mechanism is declared this way; a per-type boolean in
+   * `ConnectionModal.tsx` is what this replaces.
+   */
+  fieldOptions?: Partial<Record<ConnectionField, readonly { readonly value: string; readonly label: string }[]>>;
+  /**
+   * `false` where this engine's connections may not carry an SSH tunnel (#1088), absent meaning the
+   * dialog offers the tunnel. Read through `offersSshTunnel`, never directly.
+   */
+  showSshTunnel?: false;
+  /**
+   * The schemes the connection dialog's Host box takes as a whole address, split into Host and Port on paste
+   * and at save (src/lib/connection-host-uri.ts), absent meaning the box takes a host alone, as it always has.
+   * Read through `hostUriSchemes`, never directly. The connection-string box is a different reader and keeps
+   * `http://` and `https://` for ClickHouse.
+   */
+  hostAcceptsUri?: readonly HostUriScheme[];
+  /**
+   * The credentials this engine warns about, taken by reference from `CREDENTIAL_WARNINGS` in
+   * src/lib/db/credential-warnings.ts through a getter every entry is given below, and never written out in an
+   * entry, so the dialog's warning and the seed loader's refusal read one record. That module holds the data because this one imports React icons, which the seed
+   * loader must not.
+   */
+  credentialWarnings?: readonly CredentialWarning[];
 }
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
@@ -165,6 +223,22 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "1521",
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password", "database", "serviceName"],
+  },
+  // IBM Db2 LUW (#786). No connection-string toggle: a `db2://` paste fills the fields, the Oracle
+  // precedent. No password hint: a declared hint is drawn whatever SSL Mode says, and the cleartext
+  // warning belongs only to a connection without TLS, where the `allowInsecureAuth` box carries it.
+  // The consent box's sentence is declared here too, so a second engine that takes the box says its own.
+  db2: {
+    icon: Db2Icon,
+    color: "text-hue-purple",
+    label: "Db2 LUW",
+    defaultPort: "50000",
+    showConnectionStringToggle: false,
+    connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    fieldHints: {
+      allowInsecureAuth:
+        "With no SSL mode this driver sends the password in cleartext, so the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
   },
   mssql: {
     icon: MSSQLIcon,
@@ -331,6 +405,214 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     fieldLabels: { user: "User", password: "Password or token" },
     fieldHints: { password: "Leave User empty to send this as a bearer token." },
   },
+  kafka: {
+    icon: KafkaIcon,
+    // Kafka's own mark is black, which is no identity hue at all. `hue-green` is a declared base
+    // identity hue no engine here carries (purple, the other free one, is VisualExplain's AI accent),
+    // and the distinct-colour assertion in tests/unit/lib/db-ui-config.test.ts rules a duplicate out.
+    color: "text-hue-green",
+    label: "Apache Kafka",
+    // The broker port a stock install listens on, and the same number under TLS: a secured
+    // listener serves on whatever port its operator chose.
+    defaultPort: "9092",
+    // No URI convention to paste: a Kafka client takes a bootstrap address, and nothing in
+    // connection-string-parser.ts reads a Kafka URI.
+    showConnectionStringToggle: false,
+    // No SSH tunnel: a tunnel forwards one address, and a Kafka client reads from every broker at
+    // the address the broker advertises (docs/providers/kafka.md). Read through offersSshTunnel, so
+    // the dialog neither offers a tunnel nor sends one left in its state; the provider still
+    // refuses a tunnelled connection that arrives another way.
+    showSshTunnel: false,
+    // No database field: one connection is one cluster (docs/providers/kafka.md). The SASL
+    // mechanism is a select declared here, not an isKafka branch in the dialog.
+    connectionFields: ["host", "port", "saslMechanism", "user", "password"],
+    fieldLabels: { saslMechanism: "SASL mechanism" },
+    fieldHints: { saslMechanism: "PLAIN and SCRAM require TLS" },
+    fieldOptions: {
+      saslMechanism: [
+        { value: "PLAIN", label: "PLAIN" },
+        { value: "SCRAM-SHA-256", label: "SCRAM-SHA-256" },
+        { value: "SCRAM-SHA-512", label: "SCRAM-SHA-512" },
+      ],
+    },
+  },
+  etcd: {
+    icon: EtcdIcon,
+    // etcd's own mark is a mid blue (#419EDA). `hue-blue` is PostgreSQL's; its `-alt` step is a
+    // second identity only if it clears the separation test, which is why `blue` joined
+    // IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry (KE9).
+    color: "text-hue-blue-alt",
+    label: "etcd",
+    // The client port etcd listens on.
+    defaultPort: "2379",
+    // No URI convention to paste: etcdctl takes endpoints, which Host and Port hold (#1089 6.1).
+    showConnectionStringToggle: false,
+    // No database field: one connection is one cluster. User and Password are etcd's password sign-in; with
+    // both empty, a client certificate under SSL / TLS signs in as its Common Name. The hints below say which
+    // field decides which, since a refusal of E1 or E2 is otherwise the first the user hears of it.
+    connectionFields: ["host", "port", "user", "password"],
+    fieldHints: {
+      host: "A name or address only. For etcdctl's --endpoints=https://10.0.0.5:2379, type 10.0.0.5 here, 2379 in Port, and choose an SSL mode under SSL / TLS.",
+      user: "Leave User and Password empty to sign in with the client certificate under SSL / TLS (shown in verify-ca and verify-full): etcd uses its Common Name as the user when the server runs with --client-cert-auth. When both are set, etcd uses the password.",
+      password:
+        "etcd receives the password, then a token on every call, so a password needs an SSL mode other than disable, with or without an SSH tunnel.",
+    },
+  },
+  neo4j: {
+    // A generic graph glyph, never Neo4j's logo (spec E12).
+    icon: Neo4jIcon,
+    // No identity hue is free. `hue-fuchsia` is Prometheus's; its `-alt` step is a second identity only
+    // because it clears the separation test, which is why `fuchsia` joined IDENTITY_ALTS in
+    // tests/unit/theme-accent-contrast.test.ts with this entry, as `blue` did with etcd's.
+    color: "text-hue-fuchsia-alt",
+    label: "Neo4j",
+    // The Bolt port. The HTTP port (7474) serves the browser and the HTTP API, which this provider never uses.
+    defaultPort: "7687",
+    // No URI scheme to paste: the provider builds its bolt:// URI from Host, Port and the SSL panel, and
+    // connection-string-parser.ts reads no Neo4j URI (spec 6.1).
+    showConnectionStringToggle: false,
+    // The SSL panel and the SSH tunnel stay offered: a bolt:// URI dials the one server it names, unlike a
+    // routing neo4j:// URI, which this provider never builds. An empty database is the server's home database.
+    connectionFields: ["host", "port", "user", "password", "database"],
+    fieldHints: { database: "Leave empty to use the server's home database." },
+    // The dialog's own sentence says the mode can be turned off, which is false here (spec A7).
+    readOnlyHint:
+      "Neo4j connections are read-only in this version, whether or not this is ticked: this user's write privileges are never used.",
+  },
+  milvus: {
+    // A mark drawn for Studio, never the project's logo or any vendor or Attu asset (vector-family spec 10.3).
+    icon: MilvusIcon,
+    // Milvus's own mark is a blue. `hue-blue` is PostgreSQL's and its `-alt` etcd's, and `hue-sky` and its `-alt`
+    // are taken; `hue-cyan-alt` fails the separation test and `hue-indigo-alt` clears it, which is why `indigo`
+    // joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry (vector-family spec 10.3).
+    color: "text-hue-indigo-alt",
+    label: "Milvus",
+    // One endpoint carries gRPC with TLS on or off (vector-family spec 5.2); 9091 is the management port, never dialled.
+    defaultPort: "19530",
+    // The connection-string box reads http:// and https:// as ClickHouse, so a pasted vendor address belongs in the
+    // Host box, which splits it (hostAcceptsUri below, vector-family spec 3.12).
+    showConnectionStringToggle: false,
+    // The database is optional and sent with every call; the provider reads `config.user` and `config.database`,
+    // which the write-list test of tests/unit/lib/db-ui-config.test.ts holds.
+    connectionFields: ["host", "port", "user", "password", "database"],
+    // The Prometheus precedent: one password box also carries a token when User is empty (vector-family spec 5.2).
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as a Zilliz Cloud endpoint, which is split into Host and Port. Port 9091 is Milvus's management port, which Studio never dials.",
+      database: "Optional; empty means default. A dbName in a request body overrides it.",
+      user: "Optional. At most 32 characters, starting with a letter. Leave it empty to put a token in Password or token.",
+      password:
+        "Milvus receives the password or token on every call, so a password needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+    },
+    hostAcceptsUri: ["http", "https"],
+  },
+  qdrant: {
+    // A mark drawn for Studio, never the vendor's logo (vector-family spec 10.3).
+    icon: QdrantIcon,
+    // Qdrant's own mark is a crimson. `hue-rose` is Redis's; its `-alt` step is a second identity only because it
+    // clears the separation test, which is why `rose` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts
+    // with this entry, as `fuchsia` did with Neo4j's.
+    color: "text-hue-rose-alt",
+    label: "Qdrant",
+    // The REST port. 6334 is gRPC and 6335 the cluster's internal port, neither of which the provider dials (vector-family spec 4.4).
+    defaultPort: "6333",
+    // The connection-string box reads http:// and https:// as ClickHouse, so the vendor's address belongs in the
+    // Host box, which splits it (hostAcceptsUri below, vector-family spec 3.12).
+    showConnectionStringToggle: false,
+    // No Database box: Qdrant has no container level. No User field: Qdrant has no user name, and the provider
+    // refuses a non-empty one from a seed or the API naming the field (vector-family spec 4.4). The key or JWT is the password.
+    connectionFields: ["host", "port", "password"],
+    fieldLabels: { password: "API key or JWT" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address such as http://localhost:6333, which is split into Host and Port. Studio dials this REST port only, never Qdrant's gRPC port 6334 or its cluster port 6335.",
+      password:
+        "Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice.",
+    },
+    hostAcceptsUri: ["http", "https"],
+  },
+  influxdb: {
+    // A generic time-series mark drawn for Studio, never InfluxData's logo (InfluxDB spec E19), shared by both types.
+    icon: InfluxDBIcon,
+    // `hue-purple` is Db2's; its `-alt` step is a second identity only because it clears the separation test, which
+    // is why `purple` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry.
+    color: "text-hue-purple-alt",
+    // One connection type per query language: this one sends InfluxQL over the v1 /query API of 1.x, 2.x and 3.x.
+    label: "InfluxDB (InfluxQL)",
+    defaultPort: "8086",
+    // The connection-string box reads http:// and https:// as ClickHouse, so a pasted address belongs in the Host
+    // box, which splits it (hostAcceptsUri below).
+    showConnectionStringToggle: false,
+    // The Prometheus precedent: one password box carries a 1.x password or, with User empty, a 2.x or 3.x token. The
+    // last field is the consent to send it without TLS, drawn while SSL Mode is disable (InfluxDB spec I7).
+    connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
+    fieldLabels: { password: "Password or token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password: "1.x: the user's password. 2.x and InfluxDB 3: an API token, with User empty.",
+      database:
+        'A 1.x database, a 2.x bucket, or an InfluxDB 3 database: the default for a run, not a filter. Empty: the only database the credential can list, or name it in the statement as "db".."measurement".',
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    // The dialog's own sentence says the mode can be turned off, which is false here: Studio sends no write.
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+    hostAcceptsUri: ["http", "https"],
+  },
+  influxdb3: {
+    // The same mark as the InfluxQL type: one product, two connection types.
+    icon: InfluxDBIcon,
+    // The first hue with no identity `-alt` before it whose `-alt` step clears the separation test, which is why
+    // `violet` joined IDENTITY_ALTS in tests/unit/theme-accent-contrast.test.ts with this entry (InfluxDB spec K-D4).
+    color: "text-hue-violet-alt",
+    // InfluxDB 3 Core's SQL over /api/v3/query_sql.
+    label: "InfluxDB 3 (SQL)",
+    defaultPort: "8181",
+    showConnectionStringToggle: false,
+    // No User field: InfluxDB 3 has no user name, its token is the password, and the connection layer refuses a user
+    // from a seed or the API naming the field.
+    connectionFields: ["host", "port", "password", "database", "allowInsecureAuth"],
+    fieldLabels: { password: "Token" },
+    fieldHints: {
+      host: "A name or address, or a pasted http:// or https:// address, which is split into Host and Port. InfluxDB Cloud endpoints are https on port 443.",
+      password:
+        "Empty only for a server started with --without-auth. On InfluxDB 3 Core every token is an admin token.",
+      database:
+        "The one InfluxDB 3 database this connection reads. Empty: the only database the token can list; with more than one, set it here.",
+      allowInsecureAuth:
+        "Ticked, the password or token crosses the network in cleartext to this host. On InfluxDB 3 Core every token is an admin token that reaches server-side code. Prefer TLS or an SSH tunnel; SSL mode require sends the token to a server whose certificate is not checked.",
+    },
+    readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
+    hostAcceptsUri: ["http", "https"],
+  },
+  oxia: {
+    // A mark drawn for Studio, never Oxia's logo (DECISIONS O16).
+    icon: OxiaIcon,
+    // `hue-orange` is Couchbase's; its `-alt` step joins IDENTITY_ALTS with this entry, measured in
+    // tests/unit/theme-accent-contrast.test.ts next to InfluxDB's `purple-alt` and `violet-alt` (O16, O17).
+    color: "text-hue-orange-alt",
+    label: "Oxia",
+    // The client port of `oxia standalone` and of every data server's public listener (R01, R02 12).
+    defaultPort: "6648",
+    // No URI convention: the CLI takes `-a host:port`, which Host and Port hold (DECISIONS O5).
+    showConnectionStringToggle: false,
+    connectionFields: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
+    fieldLabels: { password: "Token", database: "Namespace", dataServers: "Data servers" },
+    // The namespace an empty Namespace means, where the dialog would show "db" (ruling R34).
+    fieldPlaceholders: { database: "default" },
+    fieldHints: {
+      host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration.",
+      dataServers:
+        "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
+      allowInsecureAuth:
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
+    readOnlyHint:
+      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
+  },
   libredb: {
     icon: LibreDBIcon,
     color: "text-hue-violet",
@@ -340,6 +622,15 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ["database"],
   },
 };
+
+// Every entry's `credentialWarnings` reads its type's array from the shared record on each access, so no entry
+// writes one out or holds a copy, and a declaration added to the record is the entry's at once.
+for (const type of Object.keys(DB_UI_CONFIG) as DatabaseType[]) {
+  Object.defineProperty(DB_UI_CONFIG[type], "credentialWarnings", {
+    get: () => CREDENTIAL_WARNINGS[type],
+    enumerable: true,
+  });
+}
 
 export function getDBConfig(type: DatabaseType): DatabaseUIConfig {
   return DB_UI_CONFIG[type];
@@ -376,6 +667,37 @@ export function takesConnectionField(type: DatabaseType, field: ConnectionField)
   return DB_UI_CONFIG[type].connectionFields.includes(field);
 }
 
+const NO_HOST_URI_SCHEMES: readonly HostUriScheme[] = Object.freeze([]);
+
+/**
+ * The schemes the Host box takes as a whole address for this engine: its `hostAcceptsUri`, or none.
+ *
+ * One rule, two readers in `useConnectionForm`, as `offersSshTunnel` has: the host setter it returns, which
+ * splits a pasted address on arrival, and `buildConnection`, which splits one that was typed and which no path
+ * to a tested or saved connection bypasses. Loading a connection to edit reads neither, so its host shows as it
+ * was saved.
+ */
+export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
+  return DB_UI_CONFIG[type].hostAcceptsUri ?? NO_HOST_URI_SCHEMES;
+}
+
+/**
+ * Whether this engine's connections may carry an SSH tunnel: false only where the entry
+ * declares `showSshTunnel: false`, which Kafka does, because a tunnel forwards one address and
+ * a Kafka client reaches every broker at the address the broker advertises.
+ *
+ * One rule, two readers, as `takesConnectionField` is: the connection modal renders the SSH
+ * toggle only when this says so, and `buildConnection` writes `sshTunnel` only when this says
+ * so. The second reader is the one that matters: the dialog keeps a tunnel switched on under
+ * another type in its state, and a hidden panel would leave no control to turn it off. A
+ * file-based engine answers true and has its panel hidden by `isFileBased` instead; a tunnel
+ * left in the dialog's state is saved on it but inert, because no tunnel opens for a
+ * connection without a host and port (docs/BACKLOG.md records the dialog's SSH state).
+ */
+export function offersSshTunnel(type: DatabaseType): boolean {
+  return DB_UI_CONFIG[type].showSshTunnel !== false;
+}
+
 /**
  * The connection dialog's label for one field: the engine's declared `fieldLabels` entry, or the
  * dialog's own word when the engine declares none (#1085).
@@ -390,6 +712,11 @@ export function connectionFieldLabel(config: DatabaseUIConfig, field: Connection
   return config.fieldLabels?.[field] ?? fallback;
 }
 
+/** The connection dialog's placeholder for one field: the engine's declared one, or the dialog's own example. */
+export function connectionFieldPlaceholder(config: DatabaseUIConfig, field: ConnectionField, fallback: string): string {
+  return config.fieldPlaceholders?.[field] ?? fallback;
+}
+
 /**
  * The sentence the connection dialog draws under one field, or `undefined` where the engine
  * declares none (#1085). There is no fallback: a field with no declared hint draws nothing new,
@@ -397,4 +724,12 @@ export function connectionFieldLabel(config: DatabaseUIConfig, field: Connection
  */
 export function connectionFieldHint(config: DatabaseUIConfig, field: ConnectionField): string | undefined {
   return config.fieldHints?.[field];
+}
+
+/** The sentence under the Read-only toggle: the engine's own where it declares one, else the dialog's. */
+export function readOnlyHint(config: DatabaseUIConfig): string {
+  return (
+    config.readOnlyHint ??
+    "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission."
+  );
 }

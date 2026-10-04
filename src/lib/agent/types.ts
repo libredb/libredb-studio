@@ -48,6 +48,7 @@ import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
 import type { AgentChartSpec, ColumnSchema, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 import type { ObjectRole } from "@/lib/db/types";
+import type { editorLanguageForTabType } from "@/lib/editor/tab-language";
 import type { AgentContextCharge, AgentContextRowBudget, AgentContextUnavailableCode } from "./context-snapshot";
 import type { AgentGoalShortfall, AgentGoalVerifierId } from "./goal-verifier";
 import type { AgentToolName } from "./tools";
@@ -539,13 +540,24 @@ export interface AgentInventoryObject {
    * the bare name - so the label is carried beside the address rather than instead of it.
    */
   readonly label?: string;
+  /**
+   * Present where this connection may read only part of the object, so a read of the whole object
+   * is refused: a listed object that carried `DatabaseObject.readRanges` (#1089 4.7), which is an
+   * etcd group the user's grants do not cover. Absent means only that the listing carried no
+   * `readRanges`: on etcd, the user's grants cover the group. No other engine declares a partial
+   * read, so on any other engine absence does not state that a read is granted.
+   *
+   * A mark and never the ranges: they are the connection's grants and a piece may name a key, so
+   * the walk derives this from them and copies none of them (E13).
+   */
+  readonly partlyReadable?: true;
 }
 
 /**
  * A kind the engine declared, as the run's prose needs it.
  *
- * The `ObjectKindSpec` fields a renderer needs, plus the two facts that decide whether
- * what the model is told about this kind is TRUE, neither of which lives on the spec:
+ * The `ObjectKindSpec` fields a renderer needs, plus the three facts that decide whether
+ * what the model is told about this kind is TRUE, none of which lives on the spec:
  *
  *  - `sampledFrom` is the provider's own sentence from `KindCount`'s fourth state, and its
  *    presence means every count and every listing of this kind is a FLOOR. Redis counts
@@ -557,6 +569,11 @@ export interface AgentInventoryObject {
  *    `ProviderCapabilities.tablesAreDerivedGroupings`, which is still the flag that
  *    carries the refusal (`src/components/object-tree/row-actions.ts` reads the same one),
  *    resolved to a boolean at the edge and attached to the relation kinds it is about.
+ *  - `unavailable` is the provider's own sentence for a kind the walk could not read at all: a
+ *    kind that declares `countIsListing` and whose count was refused, so its listing was never
+ *    sent (#1089 4.7). Its presence means none of the kind is among the objects, and that
+ *    absence is no absence in the database; it is what lets plan mode ground an etcd user who
+ *    is not root, where listing that kind would have lost the whole capture.
  */
 export interface AgentInventoryKind {
   readonly id: string;
@@ -568,6 +585,8 @@ export interface AgentInventoryKind {
   readonly sampledFrom?: string;
   /** These rows are groupings this server derived; nothing can be addressed by such a name. */
   readonly derivedGroupings?: boolean;
+  /** The provider's sentence for a kind that could not be read. Present means none of it is listed. */
+  readonly unavailable?: string;
 }
 
 /**
@@ -778,6 +797,18 @@ export type AgentGuidanceNotice =
    */
   | "report-reserve"
   /**
+   * An optimization run that has just READ a plan, told what its report will be judged on.
+   * Delivered as a `user` message riding on the turn that was about to be taken, so it spends
+   * no turn of its own; once per run, and bounded across a resume by the ledger.
+   *
+   * Every other sentence about this bar is delivered by holding `compose_report`, and a hold
+   * inside the report reserve is suppressed - a run held with no turn left files no report at
+   * all. So a run that spends its turns reading is never told: `laguna-xs-2.1` lost this cell
+   * five times out of five holding THREE plans, everything a comparison needs, having heard
+   * nothing about what one was for.
+   */
+  | "plan-bar"
+  /**
    * A run that stopped having read nothing, on a set holding both reading tools.
    * Delivered as a `user` message; once per run, and only where the model's profile
    * says the retry earned its turn.
@@ -804,7 +835,8 @@ export type AgentGuidanceNotice =
    * A `compose_report` from a run holding the two plans a comparison would use.
    * Delivered as a TOOL RESULT instead of running the call; once per run.
    */
-  | "compare-before-report";
+  | "compare-before-report"
+  | "tool-call-as-text";
 
 /**
  * The semantic events one run emits, in the vocabulary a user reads in the rail
@@ -1225,6 +1257,15 @@ export type AgentRunEvent =
       readonly sql: string;
       /** The engine it was written for — the connection this drive was given. */
       readonly dialect: DatabaseType;
+      /**
+       * The editor language this connection's statements render in, resolved from the drive's
+       * capabilities by the ladder `tab-language.ts` walks (#1089).
+       *
+       * Recorded because the rail renders the answer card with no capabilities, so without it the
+       * card had only `guardApplicable` to go on and drew every etcd or PromQL draft as "unknown".
+       * OPTIONAL for the reason `guardApplicable` is: a ledger recorded before it carries none.
+       */
+      readonly language?: ReturnType<typeof editorLanguageForTabType>;
       readonly readOnly: boolean;
       /**
        * Whether the guard could read this draft's language at all (#414).

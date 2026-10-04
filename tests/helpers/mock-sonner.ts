@@ -17,6 +17,8 @@ export const mockToastSuccess = mock(() => {});
 export const mockToastError = mock(() => {});
 export const mockToastDefault = mock(() => {});
 export const mockToastDismiss = mock((_id?: string | number) => {});
+/** Answers an id, as sonner's own `toast.loading` does, so a caller can replace the toast. */
+export const mockToastLoading = mock((_title?: string, _options?: Record<string, unknown>) => "loading-toast");
 export const mockToaster = mock((props: Record<string, unknown>) =>
   React.createElement("div", { "data-testid": "toaster", className: props.className }),
 );
@@ -26,6 +28,7 @@ mock.module("sonner", () => ({
   toast: Object.assign(mockToastDefault, {
     success: mockToastSuccess,
     error: mockToastError,
+    loading: mockToastLoading,
     dismiss: mockToastDismiss,
   }),
 }));

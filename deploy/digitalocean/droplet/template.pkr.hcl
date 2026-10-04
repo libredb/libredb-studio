@@ -52,6 +52,11 @@ build {
     destination = "/var/"
   }
 
+  provisioner "file" {
+    source      = "files/usr/"
+    destination = "/usr/"
+  }
+
   provisioner "shell" {
     script           = "scripts/02-configure.sh"
     environment_vars = ["VERSION=${var.version}"]

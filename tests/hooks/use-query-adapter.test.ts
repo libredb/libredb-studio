@@ -1,7 +1,11 @@
 import "../setup-dom";
 import "../helpers/mock-sonner";
 
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
+import qdrantDocs from "../fixtures/vector/corpus/qdrant-docs.json";
+import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
+import { influxqlRefusal } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { renderHook, act } from "@testing-library/react";
 
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
@@ -171,6 +175,155 @@ describe("useQueryAdapter", () => {
 
     expect(params.tabs[0].result?.warnings).toEqual([{ message: "truncated" }]);
     expect(params.tabs[0].result?.columnTypes).toEqual({ id: "INTEGER" });
+  });
+
+  // ── Vector columns reach the tab result on every path (vector-family spec 3.10) ──
+  //
+  // A host declares its vector columns on the result, and the grid draws a declared column's cells as vector
+  // cells. The adapter builds the tab result at four sites, so the declaration has to survive each one.
+
+  const VECTOR_COLUMNS: NonNullable<WorkspaceQueryResult["vectorColumns"]> = {
+    embedding: { kind: "dense", dtype: "float32", dimension: 3 },
+  };
+
+  test("executeQuery carries the host's vector columns", async () => {
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(makeQueryResult({ vectorColumns: VECTOR_COLUMNS }))),
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    expect(params.tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+  });
+
+  test("forceExecuteQuery carries them too", async () => {
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(makeQueryResult({ vectorColumns: VECTOR_COLUMNS }))),
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      result.current.forceExecuteQuery("DELETE FROM users");
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(params.tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+  });
+
+  test("a page that declares none keeps the rows' declaration, so Load More does not turn vectors back into JSON", async () => {
+    const firstPage = makeTab({
+      result: {
+        rows: [{ id: 1, embedding: [0.1, 0.2, 0.3] }],
+        fields: ["id", "embedding"],
+        rowCount: 1,
+        executionTime: 1,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+        vectorColumns: VECTOR_COLUMNS,
+      },
+    });
+    const { tabs, setTabs } = createMutableTabs([firstPage]);
+    const nextPage = makeQueryResult({
+      rows: [{ id: 2, embedding: [0.4, 0.5, 0.6] }],
+      fields: ["id", "embedding"],
+      pagination: { limit: 1, offset: 1, hasMore: false, totalReturned: 2, wasLimited: false },
+    });
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(nextPage)),
+      tabs,
+      setTabs,
+      currentTab: firstPage,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    await act(async () => {
+      result.current.handleLoadMore();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(tabs[0].result?.rows).toHaveLength(2);
+    expect(tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+  });
+
+  test("a page that declares its own is believed", async () => {
+    const pageColumns: NonNullable<WorkspaceQueryResult["vectorColumns"]> = {
+      embedding: { kind: "dense", dtype: "float16", dimension: 3 },
+    };
+    const firstPage = makeTab({
+      result: {
+        rows: [{ id: 1 }],
+        fields: ["id", "embedding"],
+        rowCount: 1,
+        executionTime: 1,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+        vectorColumns: VECTOR_COLUMNS,
+      },
+    });
+    const { tabs, setTabs } = createMutableTabs([firstPage]);
+    const nextPage = makeQueryResult({
+      rows: [{ id: 2 }],
+      fields: ["id", "embedding"],
+      pagination: { limit: 1, offset: 1, hasMore: false, totalReturned: 2, wasLimited: false },
+      vectorColumns: pageColumns,
+    });
+    const params = makeHookParams({
+      onQueryExecute: mock(() => Promise.resolve(nextPage)),
+      tabs,
+      setTabs,
+      currentTab: firstPage,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    await act(async () => {
+      result.current.handleLoadMore();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(tabs[0].result?.vectorColumns).toEqual(pageColumns);
+  });
+
+  test("handleUnlimitedQuery carries the vector columns, and the warnings and declared types it used to drop", async () => {
+    const targetTab = makeTab();
+    const { tabs, setTabs } = createMutableTabs([targetTab]);
+    const onQueryExecute = mock(() =>
+      Promise.resolve(
+        makeQueryResult({
+          vectorColumns: VECTOR_COLUMNS,
+          warnings: [{ message: "truncated" }],
+          columns: [{ name: "id", type: "INTEGER" }],
+        }),
+      ),
+    );
+    const params = makeHookParams({ onQueryExecute, tabs, setTabs, currentTab: targetTab });
+    const { result } = renderHook(() => useQueryAdapter(params));
+
+    act(() => {
+      result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM big", tabId: "tab-1" });
+    });
+    await act(async () => {
+      result.current.handleUnlimitedQuery();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(tabs[0].result?.vectorColumns).toEqual(VECTOR_COLUMNS);
+    expect(tabs[0].result?.warnings).toEqual([{ message: "truncated" }]);
+    expect(tabs[0].result?.columnTypes).toEqual({ id: "INTEGER" });
+  });
+
+  test("a result that declares no vector column leaves the field absent, never an empty object", async () => {
+    const params = makeHookParams();
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+
+    expect(params.tabs[0].result).not.toBeNull();
+    expect(Object.hasOwn(params.tabs[0].result as object, "vectorColumns")).toBe(false);
   });
 
   // ── executeQuery calls onQueryExecute with correct connectionId and sql ────
@@ -912,6 +1065,111 @@ describe("useQueryAdapter", () => {
     expect(tabs[0].allRows).toHaveLength(2);
     expect(tabs[0].currentOffset).toBe(50);
     expect(tabs[0].isLoadingMore).toBe(false);
+    // The page is what failed, so nothing is said inline over rows that are intact.
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  /**
+   * A failed NEW run, on each of the three entry points that replace the grid, is the
+   * mirror of the standalone test of the same name in `use-query-execution.test.ts`.
+   * It matters more here: the embedded shell mounts no Toaster, so before this the
+   * failure left the previous rows up and said nothing at all.
+   */
+  describe("a failed new run replaces the previous result with its error", () => {
+    const shownTab = () =>
+      makeTab({
+        result: {
+          rows: [{ id: 1 }],
+          fields: ["id"],
+          rowCount: 1,
+          executionTime: 1,
+          pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 1, wasLimited: false },
+        },
+        resultQuery: "SELECT * FROM users",
+        allRows: [{ id: 1 }],
+        currentOffset: 1,
+      });
+
+    /** One host that refuses `SELEC` and answers everything else. */
+    const hostRefusingTypos = () =>
+      mock((_id: string, sql: string) =>
+        sql.startsWith("SELEC ")
+          ? Promise.reject(new Error('near "SELEC": syntax error'))
+          : Promise.resolve(makeQueryResult()),
+      );
+
+    function expectFailureShown(tab: QueryTab) {
+      expect(tab.isExecuting).toBe(false);
+      expect(tab.runError).toBe('near "SELEC": syntax error');
+      expect(tab.result).toBeNull();
+      expect(tab.resultQuery).toBeUndefined();
+      expect(tab.allRows).toBeUndefined();
+      expect(tab.currentOffset).toBe(0);
+    }
+
+    test("on executeQuery, and the next success clears it", async () => {
+      const tab = shownTab();
+      const { tabs, setTabs } = createMutableTabs([tab]);
+      const params = makeHookParams({ onQueryExecute: hostRefusingTypos(), tabs, setTabs, currentTab: tab });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      await act(async () => {
+        await result.current.executeQuery("SELEC * FROM x");
+      });
+      expectFailureShown(tabs[0]);
+
+      await act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+      expect(tabs[0].runError).toBeUndefined();
+      expect(tabs[0].result?.rows).toHaveLength(2);
+    });
+
+    test("on forceExecuteQuery, and the next success clears it", async () => {
+      const tab = shownTab();
+      const { tabs, setTabs } = createMutableTabs([tab]);
+      const params = makeHookParams({ onQueryExecute: hostRefusingTypos(), tabs, setTabs, currentTab: tab });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      await act(async () => {
+        result.current.forceExecuteQuery("SELEC * FROM x");
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expectFailureShown(tabs[0]);
+
+      await act(async () => {
+        result.current.forceExecuteQuery("SELECT * FROM users");
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(tabs[0].runError).toBeUndefined();
+      expect(tabs[0].result?.rows).toHaveLength(2);
+    });
+
+    test("on handleUnlimitedQuery, and the next success clears it", async () => {
+      const tab = shownTab();
+      const { tabs, setTabs } = createMutableTabs([tab]);
+      const params = makeHookParams({ onQueryExecute: hostRefusingTypos(), tabs, setTabs, currentTab: tab });
+      const { result } = renderHook(() => useQueryAdapter(params));
+
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELEC * FROM x", tabId: "tab-1" });
+      });
+      await act(async () => {
+        result.current.handleUnlimitedQuery();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expectFailureShown(tabs[0]);
+
+      act(() => {
+        result.current.setPendingUnlimitedQuery({ query: "SELECT * FROM users", tabId: "tab-1" });
+      });
+      await act(async () => {
+        result.current.handleUnlimitedQuery();
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      expect(tabs[0].runError).toBeUndefined();
+      expect(tabs[0].result?.rows).toHaveLength(2);
+    });
   });
 
   /**
@@ -1273,5 +1531,321 @@ describe("useQueryAdapter", () => {
     });
 
     expect(params.tabs[0].resultQuery).toBe("SELECT * FROM users");
+  });
+});
+
+// =============================================================================
+// A statement the connection type's editor refuses
+// =============================================================================
+//
+// This shell mounts no Toaster, so `runError` is the signal; the host owns the fetch behind `onQueryExecute`, which
+// is never called. `handleLoadMore` calls `onQueryExecute` itself and never re-enters `executeQuery`, so it makes the
+// check on its own, on the statement it pages.
+describe("a statement the connection type's editor refuses", () => {
+  const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";
+  const REFUSED = '{"FORBIDDEN": true}';
+  let remove: () => void = () => {};
+
+  beforeEach(() => {
+    remove = installStandInVocabulary({
+      refuse: (text) => (text.includes("FORBIDDEN") ? REFUSAL : undefined),
+      maxTextBytes: 64,
+    });
+    mockToastError.mockClear();
+  });
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  function mount(
+    tab: QueryTab = makeTab({
+      query: REFUSED,
+      result: { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 },
+    }),
+    onQueryExecute = mock(() => Promise.resolve(makeQueryResult())),
+  ) {
+    const { tabs, setTabs } = createMutableTabs([tab]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: STAND_IN_TYPE }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+    return { result, tabs, onQueryExecute };
+  }
+
+  function expectRefused(tabs: QueryTab[], onQueryExecute: ReturnType<typeof mock>, sentence = REFUSAL) {
+    expect(onQueryExecute).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+    expect(tabs[0].result).toBeNull();
+    expect(tabs[0].isExecuting).toBe(false);
+    expect(tabs[0].isLoadingMore).toBe(false);
+  }
+
+  test("executeQuery hands the host nothing and writes the sentence to the tab", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+    expectRefused(tabs, onQueryExecute);
+    expect(mockToastError).toHaveBeenCalledWith("Statement Refused", { description: REFUSAL });
+  });
+
+  test("forceExecuteQuery, the dialog's Proceed, hands the host nothing either", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      result.current.forceExecuteQuery(REFUSED);
+    });
+    expectRefused(tabs, onQueryExecute);
+  });
+
+  test("the unlimited run hands the host nothing and closes its dialog", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      result.current.setUnlimitedWarningOpen(true);
+      result.current.setPendingUnlimitedQuery({ query: REFUSED, tabId: "tab-1" });
+    });
+    await act(async () => {
+      result.current.handleUnlimitedQuery();
+    });
+    expectRefused(tabs, onQueryExecute);
+    expect(result.current.unlimitedWarningOpen).toBe(false);
+    expect(result.current.pendingUnlimitedQuery).toBeNull();
+  });
+
+  test("Load More refuses the statement it pages", async () => {
+    const tab = makeTab({
+      query: "SELECT 1",
+      resultQuery: REFUSED,
+      result: {
+        rows: [{ id: 1 }],
+        fields: ["id"],
+        rowCount: 1,
+        executionTime: 1,
+        pagination: { limit: 1, offset: 0, hasMore: true, totalReturned: 1, wasLimited: true },
+      },
+    });
+    const { result, tabs, onQueryExecute } = mount(tab);
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+    expectRefused(tabs, onQueryExecute);
+  });
+
+  test("a text over the declared byte bound is refused with its size", async () => {
+    const { result, tabs, onQueryExecute } = mount();
+    await act(async () => {
+      await result.current.executeQuery("x".repeat(65));
+    });
+    expectRefused(
+      tabs,
+      onQueryExecute,
+      "The statement is 65 bytes in UTF-8, over the 64-byte limit for this connection type. Shorten it to run it.",
+    );
+  });
+
+  test("an accepted statement still reaches the host once", async () => {
+    const { result, tabs, onQueryExecute } = mount(makeTab({ query: "SELECT 1" }));
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1");
+    });
+    expect(onQueryExecute).toHaveBeenCalledTimes(1);
+    expect(tabs[0].runError).toBeUndefined();
+  });
+
+  test("a refusal disowns a run still in flight on the tab, so its late answer does not land over the sentence", async () => {
+    let answerFirst: (result: WorkspaceQueryResult) => void = () => {};
+    const onQueryExecute = mock(
+      () =>
+        new Promise<WorkspaceQueryResult>((resolve) => {
+          answerFirst = resolve;
+        }),
+    );
+    const { result, tabs } = mount(makeTab({ query: "SELECT 1" }), onQueryExecute);
+    let first: Promise<void> | undefined;
+    act(() => {
+      first = result.current.executeQuery("SELECT 1");
+    });
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+    await act(async () => {
+      answerFirst(makeQueryResult());
+      await first;
+    });
+    expect(onQueryExecute).toHaveBeenCalledTimes(1);
+    expect(tabs[0].runError).toBe(REFUSAL);
+    expect(tabs[0].result).toBeNull();
+  });
+
+  test("a refusal leaves every other tab as it was", async () => {
+    const other = makeTab({ id: "tab-2", name: "Query 2" });
+    const onQueryExecute = mock(() => Promise.resolve(makeQueryResult()));
+    const { tabs, setTabs } = createMutableTabs([makeTab({ query: REFUSED }), other]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: STAND_IN_TYPE }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+
+    await act(async () => {
+      await result.current.executeQuery(REFUSED);
+    });
+
+    expectRefused(tabs, onQueryExecute);
+    expect(tabs[1]).toBe(other);
+  });
+});
+
+// =============================================================================
+// The real qdrant row in the embedded workspace (vector-family spec 4.2)
+// =============================================================================
+//
+// The host owns the fetch behind `onQueryExecute`, so a refused statement must never reach it, on any of the four
+// paths a host's user can take.
+describe("the real qdrant row in the embedded workspace", () => {
+  const NON_LOCAL_MODEL = /"model"\s*:\s*"(?!(?:qdrant\/bm25|bm25)")/;
+  const HOSTED = (qdrantDocs as { blocks: { text: string }[] }).blocks.find(
+    (block) => NON_LOCAL_MODEL.test(block.text) && /^\s*POST /.test(block.text),
+  )?.text;
+  if (HOSTED === undefined) throw new Error("the corpus holds no hosted-model request");
+  const sentence = qdrantRefusal(HOSTED);
+
+  function mount(tab: QueryTab = makeTab({ query: HOSTED, type: "qdrant" })) {
+    const onQueryExecute = mock(() => Promise.resolve(makeQueryResult()));
+    const { tabs, setTabs } = createMutableTabs([tab]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: "qdrant" }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+    return { result, tabs, onQueryExecute };
+  }
+
+  test.each(["executeQuery", "forceExecuteQuery", "unlimited"] as const)(
+    "%s hands the host nothing and writes Studio's sentence to the tab",
+    async (run) => {
+      expect(sentence).toBeDefined();
+      const { result, tabs, onQueryExecute } = mount();
+      await act(async () => {
+        if (run === "executeQuery") await result.current.executeQuery(HOSTED);
+        else if (run === "forceExecuteQuery") result.current.forceExecuteQuery(HOSTED);
+        else {
+          result.current.setUnlimitedWarningOpen(true);
+          result.current.setPendingUnlimitedQuery({ query: HOSTED, tabId: "tab-1" });
+        }
+      });
+      if (run === "unlimited") {
+        await act(async () => {
+          result.current.handleUnlimitedQuery();
+        });
+      }
+      expect(onQueryExecute).not.toHaveBeenCalled();
+      expect(tabs[0].runError).toBe(sentence);
+    },
+  );
+
+  test("Load More refuses the request it pages", async () => {
+    const { result, tabs, onQueryExecute } = mount(
+      makeTab({
+        query: "GET /collections",
+        resultQuery: HOSTED,
+        type: "qdrant",
+        result: {
+          rows: [{ id: 1 }],
+          fields: ["id"],
+          rowCount: 1,
+          executionTime: 1,
+          pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true },
+        },
+        currentOffset: 50,
+      }),
+    );
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+    expect(onQueryExecute).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+  });
+});
+
+// =============================================================================
+// The real influxdb row in the embedded workspace (InfluxDB spec E2)
+// =============================================================================
+//
+// The InfluxQL policy is the influxdb row's `refuse`, so the embedded surface must stop a refused statement before
+// the host's fetch on the same four paths as the qdrant row above; influxdb3 is SQL and its provider refuses it.
+describe("the real influxdb row in the embedded workspace", () => {
+  const REFUSED = 'SHOW DATABASES DROP MEASUREMENT "home"';
+  const sentence = influxqlRefusal(REFUSED);
+
+  function mount(tab: QueryTab = makeTab({ query: REFUSED, type: "influxql" })) {
+    const onQueryExecute = mock(() => Promise.resolve(makeQueryResult()));
+    const { tabs, setTabs } = createMutableTabs([tab]);
+    const params = makeHookParams({
+      activeConnection: makeConnection({ type: "influxdb" }),
+      tabs,
+      currentTab: tabs[0],
+      setTabs,
+      onQueryExecute,
+    });
+    const { result } = renderHook(() => useQueryAdapter(params as never));
+    return { result, tabs, onQueryExecute };
+  }
+
+  test.each(["executeQuery", "forceExecuteQuery", "unlimited"] as const)(
+    "%s hands the host nothing and writes Studio's sentence to the tab",
+    async (run) => {
+      expect(sentence).toBeDefined();
+      const { result, tabs, onQueryExecute } = mount();
+      await act(async () => {
+        if (run === "executeQuery") await result.current.executeQuery(REFUSED);
+        else if (run === "forceExecuteQuery") result.current.forceExecuteQuery(REFUSED);
+        else {
+          result.current.setUnlimitedWarningOpen(true);
+          result.current.setPendingUnlimitedQuery({ query: REFUSED, tabId: "tab-1" });
+        }
+      });
+      if (run === "unlimited") {
+        await act(async () => {
+          result.current.handleUnlimitedQuery();
+        });
+      }
+      expect(onQueryExecute).not.toHaveBeenCalled();
+      expect(tabs[0].runError).toBe(sentence);
+    },
+  );
+
+  test("Load More refuses the statement it pages", async () => {
+    const { result, tabs, onQueryExecute } = mount(
+      makeTab({
+        query: "SHOW DATABASES",
+        resultQuery: REFUSED,
+        type: "influxql",
+        result: {
+          rows: [{ name: "home" }],
+          fields: ["name"],
+          rowCount: 1,
+          executionTime: 1,
+          pagination: { limit: 50, offset: 0, hasMore: true, totalReturned: 50, wasLimited: true },
+        },
+        currentOffset: 50,
+      }),
+    );
+    await act(async () => {
+      result.current.handleLoadMore();
+    });
+    expect(onQueryExecute).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
   });
 });

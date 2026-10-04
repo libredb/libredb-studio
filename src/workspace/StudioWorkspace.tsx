@@ -7,22 +7,18 @@ import { createPortal } from "react-dom";
 import { Sidebar } from "@/components/sidebar";
 import { type TreeRowActionHandlers } from "@/components/object-tree";
 import { ObjectSourceView, type ObjectSourcePatch } from "@/components/object-source";
-import { objectAtPath } from "@/lib/db/detailed-object";
 // MobileNav and mobile tab panels excluded in embedded mode — platform provides its own navigation
 import { QueryEditor, QueryEditorRef } from "@/components/QueryEditor";
-import { DataImportModal } from "@/components/DataImportModal";
-import { QuerySafetyDialog } from "@/components/QuerySafetyDialog";
-import { DataProfiler } from "@/components/DataProfiler";
-import { CodeGenerator } from "@/components/CodeGenerator";
-import { TestDataGenerator } from "@/components/TestDataGenerator";
-import { SaveQueryModal } from "@/components/SaveQueryModal";
 import { StudioTabBar, QueryToolbar, BottomPanel } from "@/components/studio/index";
-import type { MaskingConfig } from "@/lib/data-masking";
+import { StudioModals } from "@/components/studio/StudioModals";
+import { DEFAULT_MASKING_CONFIG, type MaskingConfig } from "@/lib/data-masking";
 import type { DatabaseObject } from "@/lib/db/types";
 import { findKind, kindHasSource, relationKindIds } from "@/lib/db/object-kinds";
 import { objectPathLabel } from "@/lib/db/object-path";
 import { useToast } from "@/hooks/use-toast";
 import { useTabManager } from "@/hooks/use-tab-manager";
+import { useTabSummaries } from "@/hooks/use-tab-summaries";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 import { useConnectionAdapter } from "@/workspace/hooks/use-connection-adapter";
 import { useQueryAdapter } from "@/workspace/hooks/use-query-adapter";
 import { type StudioWorkspaceProps, DEFAULT_WORKSPACE_FEATURES } from "@/workspace/types";
@@ -148,17 +144,8 @@ function useStudioTheme() {
     };
   }, []);
 }
-import { TriangleAlert } from "lucide-react";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { AnimatePresence } from "framer-motion";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 // No-op masking config for embedded mode (masking disabled)
 const NOOP_MASKING_CONFIG: MaskingConfig = {
@@ -306,28 +293,56 @@ export function StudioWorkspace({
   const [testDataPath, setTestDataPath] = useState<readonly string[] | null>(null);
 
   // === Save query handler ===
-  const handleSaveQuery = useCallback(
-    async (name: string, description: string, tags: string[]) => {
-      if (!conn.activeConnection) return;
+  const handleSaveQuery = useStableCallback(async (name: string, description: string, tags: string[]) => {
+    if (!conn.activeConnection) return;
 
-      if (onSaveQueryProp) {
-        try {
-          await onSaveQueryProp({
-            name,
-            query: tabMgr.currentTab.query,
-            description,
-            connectionType: conn.activeConnection.type,
-            tags,
-          });
-          setSavedKey((prev) => prev + 1);
-          toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : "Failed to save query";
-          toast({ title: "Save Failed", description: msg, variant: "destructive" });
-        }
+    if (onSaveQueryProp) {
+      try {
+        await onSaveQueryProp({
+          name,
+          query: tabMgr.currentTab.query,
+          description,
+          connectionType: conn.activeConnection.type,
+          tags,
+        });
+        setSavedKey((prev) => prev + 1);
+        toast({ title: "Query Saved", description: `"${name}" has been added to your saved queries.` });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : "Failed to save query";
+        toast({ title: "Save Failed", description: msg, variant: "destructive" });
       }
-    },
-    [conn.activeConnection, tabMgr.currentTab.query, onSaveQueryProp, toast],
+    }
+  });
+
+  // === Modal handlers (handed to `StudioModals`) ===
+  const closeSaveQuery = useCallback(() => setIsSaveQueryModalOpen(false), []);
+  const closeImport = useCallback(() => setIsImportModalOpen(false), []);
+  const closeSafety = useCallback(() => queryExec.setSafetyCheckQuery(null), [queryExec.setSafetyCheckQuery]);
+  const proceedSafety = useCallback(() => {
+    if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
+  }, [queryExec.safetyCheckQuery, queryExec.forceExecuteQuery]);
+  const closeProfiler = useCallback(() => setProfilerPath(null), []);
+  const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
+  const closeTestData = useCallback(() => setTestDataPath(null), []);
+  const runModalStatement = useCallback((sql: string) => queryExec.executeQuery(sql), [queryExec.executeQuery]);
+  // The embedded shell never talks to the AI safety route; it answers its own analysis.
+  const analyzeSafety = useCallback(
+    async () => ({
+      riskLevel: "high" as const,
+      summary: "Potentially dangerous query detected",
+      warnings: [
+        {
+          type: "destructive",
+          severity: "high",
+          message: "This query may modify or delete data",
+          detail: "Review carefully before proceeding.",
+        },
+      ],
+      affectedRows: "unknown",
+      cascadeEffects: "unknown",
+      recommendation: "Review this query carefully before proceeding.",
+    }),
+    [],
   );
 
   // === Export results (shared writers; this shell applies no masking) ===
@@ -628,6 +643,9 @@ export function StudioWorkspace({
    * deleting the counter killed one. What announces the re-read here is the pane's own
    * `object-source-loading` region, which is an `output` element carrying an implicit
    * `role="status"`, so a screen reader is told the same thing by the surface that knows it.
+   * A failed query run follows the same rule: `useQueryAdapter` still raises its toast, and what a
+   * host's user actually sees is the results panel's own `run-failure` block, rendered from the
+   * tab's `runError` in place of the previous run's rows.
    *
    * The DRAFT is not dropped here either. The pane drops it itself, keyed on the part its plan
    * was built for, which is a key this shell does not hold and must not guess.
@@ -700,7 +718,7 @@ export function StudioWorkspace({
    *
    * - `src/components/studio/StudioTabBar.tsx:115`, on `document`: the new-tab shortcut, which is
    *   the one this handler guards. It opens a tab and `addTab` activates it.
-   * - `src/components/DataProfiler.tsx:210`, on `document`, and MOUNTED BY THIS SHELL below. It is
+   * - `src/components/DataProfiler.tsx` (its Escape effect), on `document`, and MOUNTED BY THIS SHELL below. It is
    *   bound only while the profiler is open, it answers Escape alone, and all it does is call the
    *   profiler's `onClose`. It moves no tab, and it cannot unmount this pane.
    * - `src/components/CodeGenerator.tsx`, on `document`, and MOUNTED BY THIS SHELL below. It is
@@ -800,6 +818,18 @@ export function StudioWorkspace({
 
   const noop = useCallback(() => {}, []);
 
+  // Stable across keystrokes (X5): the loader gates on a boolean and writes through
+  // `updateCurrentTab`, whose identity depends only on the active tab id.
+  const handleLoadQuery = useCallback(
+    (q: string) => {
+      if (!runsTheActiveTab) return;
+      tabMgr.updateCurrentTab({ query: q });
+    },
+    [runsTheActiveTab, tabMgr.updateCurrentTab],
+  );
+
+  const tabBarTabs = useTabSummaries(tabMgr.tabs);
+
   return (
     <div
       data-studio-workspace=""
@@ -847,7 +877,7 @@ export function StudioWorkspace({
             {/* No desktop/mobile headers — platform provides its own */}
 
             <StudioTabBar
-              tabs={tabMgr.tabs}
+              tabs={tabBarTabs}
               activeTabId={tabMgr.activeTabId}
               editingTabId={tabMgr.editingTabId}
               editingTabName={tabMgr.editingTabName}
@@ -1045,7 +1075,11 @@ export function StudioWorkspace({
                       <BottomPanel
                         mode={queryExec.bottomPanelMode}
                         onSetMode={queryExec.setBottomPanelMode}
-                        currentTab={tabMgr.currentTab}
+                        result={tabMgr.currentTab.result}
+                        explainPlan={tabMgr.currentTab.explainPlan}
+                        explainQuery={queryExec.bottomPanelMode === "explain" ? tabMgr.currentTab.query : undefined}
+                        resultQuery={tabMgr.currentTab.resultQuery}
+                        runError={tabMgr.currentTab.runError}
                         schema={conn.schema}
                         schemaContext={conn.schemaContext}
                         activeConnection={conn.activeConnection}
@@ -1061,10 +1095,7 @@ export function StudioWorkspace({
                         onCellChange={noop as never}
                         onApplyChanges={noop}
                         onDiscardChanges={noop}
-                        onLoadQuery={(q) => {
-                          if (!runsTheActiveTab) return;
-                          tabMgr.updateCurrentTab({ query: q });
-                        }}
+                        onLoadQuery={handleLoadQuery}
                         onLoadMore={
                           tabMgr.currentTab.result?.pagination?.hasMore ? queryExec.handleLoadMore : undefined
                         }
@@ -1081,122 +1112,44 @@ export function StudioWorkspace({
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      {/* Modals — only render those that are feature-enabled */}
-
-      {onSaveQueryProp && (
-        <SaveQueryModal
-          isOpen={isSaveQueryModalOpen}
-          onClose={() => setIsSaveQueryModalOpen(false)}
-          onSave={handleSaveQuery}
-          defaultQuery={tabMgr.currentTab.query}
-        />
-      )}
-
-      {features.dataImport && (
-        <DataImportModal
-          isOpen={isImportModalOpen}
-          onClose={() => setIsImportModalOpen(false)}
-          onImport={(sql) => queryExec.executeQuery(sql)}
-          tables={conn.schema}
-          capabilities={conn.metadata?.capabilities}
-          databaseType={conn.activeConnection?.type}
-        />
-      )}
-
-      {/* Safety dialog — stub AI analysis to prevent internal fetch */}
-      <QuerySafetyDialog
-        isOpen={!!queryExec.safetyCheckQuery}
-        query={queryExec.safetyCheckQuery || ""}
+      {/* Modals — only render those that are feature-enabled. */}
+      <StudioModals
+        activeConnection={conn.activeConnection}
+        schema={conn.schema}
         schemaContext={conn.schemaContext}
+        capabilities={conn.metadata?.capabilities}
         databaseType={conn.activeConnection?.type}
-        onClose={() => queryExec.setSafetyCheckQuery(null)}
-        onProceed={() => {
-          if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
-        }}
-        onAnalyzeSafety={async () => ({
-          riskLevel: "high" as const,
-          summary: "Potentially dangerous query detected",
-          warnings: [
-            {
-              type: "destructive",
-              severity: "high",
-              message: "This query may modify or delete data",
-              detail: "Review carefully before proceeding.",
-            },
-          ],
-          affectedRows: "unknown",
-          cascadeEffects: "unknown",
-          recommendation: "Review this query carefully before proceeding.",
-        })}
+        connectionName={conn.activeConnection?.name}
+        showSaveQuery={!!onSaveQueryProp}
+        saveQueryModalOpen={isSaveQueryModalOpen}
+        onCloseSaveQuery={closeSaveQuery}
+        onSaveQuery={handleSaveQuery}
+        defaultQuery={tabMgr.currentTab.query}
+        showImport={features.dataImport}
+        importModalOpen={isImportModalOpen}
+        onCloseImport={closeImport}
+        onImport={runModalStatement}
+        safetyCheckQuery={queryExec.safetyCheckQuery}
+        onCloseSafety={closeSafety}
+        onProceedSafety={proceedSafety}
+        onAnalyzeSafety={analyzeSafety}
+        showCodeGenerator={features.codeGenerator}
+        profilerPath={profilerPath}
+        onCloseProfiler={closeProfiler}
+        // NOT the grid's no-op configuration: this profiler has always masked the built-in kinds,
+        // in the summary it hands a host's onDescribeSchema too, and #1421 keeps that. Parity
+        // with this shell's grid, which masks nothing, is a separate decision.
+        profilerMasking={{ config: DEFAULT_MASKING_CONFIG, enabled: true, role: currentUser?.role }}
+        codeGenPath={codeGenPath}
+        onCloseCodeGen={closeCodeGen}
+        showTestDataGenerator={features.testDataGenerator}
+        testDataPath={testDataPath}
+        onCloseTestData={closeTestData}
+        onExecuteTestData={runModalStatement}
+        unlimitedWarningOpen={queryExec.unlimitedWarningOpen}
+        onUnlimitedWarningChange={queryExec.setUnlimitedWarningOpen}
+        onLoadAll={queryExec.handleUnlimitedQuery}
       />
-
-      {/* Data Profiler */}
-      {features.codeGenerator && (
-        <DataProfiler
-          isOpen={profilerPath !== null}
-          onClose={() => setProfilerPath(null)}
-          tablePath={profilerPath ?? []}
-          tableSchema={objectAtPath(conn.schema, profilerPath)}
-          connection={conn.activeConnection}
-          schemaContext={conn.schemaContext}
-          databaseType={conn.activeConnection?.type}
-        />
-      )}
-
-      {/* Code Generator */}
-      {features.codeGenerator && (
-        <CodeGenerator
-          isOpen={codeGenPath !== null}
-          onClose={() => setCodeGenPath(null)}
-          tablePath={codeGenPath ?? []}
-          tableSchema={objectAtPath(conn.schema, codeGenPath)}
-          databaseType={conn.activeConnection?.type}
-        />
-      )}
-
-      {/* Test Data Generator */}
-      {features.testDataGenerator && (
-        <TestDataGenerator
-          isOpen={testDataPath !== null}
-          onClose={() => setTestDataPath(null)}
-          tablePath={testDataPath ?? []}
-          tableSchema={objectAtPath(conn.schema, testDataPath)}
-          databaseType={conn.activeConnection?.type}
-          capabilities={conn.metadata?.capabilities}
-          onExecuteQuery={(q) => queryExec.executeQuery(q)}
-        />
-      )}
-
-      {/* Unlimited Query Warning */}
-      <AlertDialog open={queryExec.unlimitedWarningOpen} onOpenChange={queryExec.setUnlimitedWarningOpen}>
-        <AlertDialogContent className="bg-overlay border-hairline max-w-sm p-0 gap-0 overflow-hidden">
-          <div className="px-6 pt-6 pb-4">
-            <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-500/20 to-red-500/10 flex items-center justify-center shrink-0">
-                <TriangleAlert strokeWidth={1.5} className="w-5 h-5 text-warning" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <AlertDialogTitle className="text-xs font-medium text-fg mb-1">Load all results?</AlertDialogTitle>
-                <AlertDialogDescription className="text-xs text-fg-muted leading-relaxed">
-                  This may slow down your browser. Max <span className="text-fg-tertiary">100K</span> rows will be
-                  loaded.
-                </AlertDialogDescription>
-              </div>
-            </div>
-          </div>
-          <div className="px-6 pb-6 flex gap-2">
-            <AlertDialogCancel className="flex-1 h-9 bg-fill border-0 text-fg-tertiary text-xs font-medium hover:bg-fill-strong hover:text-fg">
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={queryExec.handleUnlimitedQuery}
-              className="flex-1 h-9 bg-warning-solid border-0 text-white text-xs font-medium hover:bg-warning-solid-hover"
-            >
-              Load All
-            </AlertDialogAction>
-          </div>
-        </AlertDialogContent>
-      </AlertDialog>
 
       {/*
         The refusal, said where an adopter can actually read it AND where it can be announced (D82).
@@ -1213,11 +1166,13 @@ export function StudioWorkspace({
         exist when the dialog opens and installs no observer (`node_modules/aria-hidden` carries no
         `MutationObserver`), so a body child created afterwards - which is exactly when this renders
         - is not marked: portaled, the same measurement answers `[]` and the region IS returned by
-        `byRole("status")`. A portal is NOT this shell's house style for a float: `QuerySafetyDialog`
-        and `DataProfiler`, both mounted below, are in-place `fixed inset-0 z-50` divs
-        (`src/components/QuerySafetyDialog.tsx:216`, `src/components/DataProfiler.tsx:217`), and
-        `DataProfiler.tsx:186-196` records staying inside the subtree as a deliberate choice. This
-        one leaves the box because the live region needs it to, and for nothing else.
+        `byRole("status")`. A portal is NOT this shell's house style for a float of its own:
+        `DataProfiler`, mounted above, is an in-place `fixed inset-0 z-50` div, and its Escape
+        docblock in `src/components/DataProfiler.tsx` records staying inside the subtree as a
+        deliberate choice, while `QuerySafetyDialog`, mounted above too, portals only because it has
+        been the Radix alert dialog since #1191, whose `AlertDialogContent` renders through
+        `AlertDialogPortal` (`src/components/ui/alert-dialog.tsx`). This one leaves the box because
+        the live region needs it to, and for nothing else.
 
         FIXED, and that is a cost paid on purpose in an embeddable surface. This is the only
         viewport-fixed element the shell renders itself, so it paints in the HOST's chrome rather
@@ -1246,7 +1201,7 @@ export function StudioWorkspace({
         at `letter-spacing: normal` on the body. The `--studio-*` colour tokens are declared on
         `:root` and `.dark` in `src/styles/theme.css`, which `build:lib` ships, so `bg-overlay`,
         `border-hairline` and `text-fg` read the same either side. That font hazard is the one
-        `DataProfiler.tsx:186-196` weighs the other way; here two sentences of chrome in the host's
+        the Escape docblock in `DataProfiler.tsx` weighs the other way; here two sentences of chrome in the host's
         own font is the smaller loss against a refusal no screen reader is told about.
 
         Rendered only while the refusal is live: the mirror above clears it the moment the apply

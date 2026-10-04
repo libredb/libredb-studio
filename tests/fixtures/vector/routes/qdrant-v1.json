@@ -1,0 +1,221 @@
+{
+  "$generated": {
+    "by": "tests/live/vector-routes.ts",
+    "source": "github.com/qdrant/qdrant docs/redoc/master/openapi.json at tag v1.19.1",
+    "sha256": "eb3e5d71ba74e1d99124ca1a77d563bbfa47084f04a13ef9b197e339f5a4ce0a",
+    "scope": "v1"
+  },
+  "engine": "qdrant",
+  "prefix": "/",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/",
+      "op": "root",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections",
+      "op": "get_collections",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}",
+      "op": "get_collection",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/exists",
+      "op": "collection_exists",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/cluster",
+      "op": "collection_cluster_info",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/optimizations",
+      "op": "get_optimizations",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "with",
+        "completed_limit"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/aliases",
+      "op": "get_collection_aliases",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/aliases",
+      "op": "get_collections_aliases",
+      "params": {},
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/snapshots",
+      "op": "list_snapshots",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "GET",
+      "path": "/collections/{collection_name}/points/{id}",
+      "op": "get_point",
+      "params": {
+        "collection_name": "name",
+        "id": "point-id"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "none",
+      "bodySchema": null
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points",
+      "op": "get_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "PointRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/scroll",
+      "op": "scroll_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "ScrollRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/count",
+      "op": "count_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "CountRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/facet",
+      "op": "facet",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "FacetRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query",
+      "op": "query_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "QueryRequest"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/batch",
+      "op": "query_batch_points",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "QueryRequestBatch"
+    },
+    {
+      "method": "POST",
+      "path": "/collections/{collection_name}/points/query/groups",
+      "op": "query_points_groups",
+      "params": {
+        "collection_name": "name"
+      },
+      "query": [
+        "consistency",
+        "timeout"
+      ],
+      "body": "optional",
+      "bodySchema": "QueryGroupsRequest"
+    }
+  ]
+}

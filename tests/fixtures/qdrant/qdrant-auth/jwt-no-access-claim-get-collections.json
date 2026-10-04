@@ -1,0 +1,31 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant-auth",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:29.332Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections with jwt-no-access-claim",
+    "op": "get_collections",
+    "credential": "jwt-no-access-claim",
+    "attempts": 1,
+    "request": {
+      "method": "GET",
+      "path": "/collections",
+      "headers": {
+        "api-key": "<token>"
+      },
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 206,
+    "body": "{\"result\":{\"collections\":[{\"name\":\"docs\"},{\"name\":\"edge_values\"},{\"name\":\"empty_novec\"},{\"name\":\"payload_spread\"},{\"name\":\"plain\"},{\"name\":\"scratch\"},{\"name\":\"small_dtypes\"}]},\"status\":\"ok\",\"time\":3.493e-6}"
+  }
+}

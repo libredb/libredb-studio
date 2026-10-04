@@ -2,7 +2,7 @@
  * The assertions every provider's object surface must satisfy, in one place.
  *
  * Eight invariants, each of which a provider has a real way to get wrong:
- *   1. every declared kind appears in countObjects, so a folder never silently vanishes;
+ *   1. every kind the object surface enumerates appears in countObjects, so a folder never silently vanishes;
  *   2. countObjects never answers for a kind the provider did not declare;
  *   3. every kind counted non-empty LISTS something, so no folder opens onto nothing;
  *   4. every object's path starts with its container's path, so the tree can address it;
@@ -12,6 +12,11 @@
  *      matched on path, and reports its own truncation when a bound bites;
  *   8. what describeObject answers agrees with the kind's own `hasColumns` DECLARATION, in
  *      both directions, for an object listObjects produced.
+ *
+ * **A kind only the Keys panel enumerates is declared and never counted or listed** (#1089 3.4),
+ * because the provider leaves it out of `countObjects` and refuses it in `listObjects`. So invariant
+ * 1 reads `enumerableKinds()`, and the source walk reaches that kind's one object through
+ * `keyBrowserSample`, a path the test author writes, since no listing can produce it.
  *
  * **Invariant 5 stops at the kind boundary, and that is a decision rather than an
  * oversight.** A tree row is identified by path PLUS kind id, not by path alone, which is
@@ -52,7 +57,10 @@
  * narrower: a provider that declares `hasColumns` on every kind it listed runs the negative
  * direction zero times, so its expectation must SAY so with `noAbstainingKinds`, and an
  * expectation that says so while a listed kind does abstain is refused in the other
- * direction. Exactly three engines are the former (druid, mongodb, libredb).
+ * direction. Exactly three engines are the former (druid, mongodb, libredb). The third guard's
+ * mirror is `noColumnKinds`: a provider with no column-bearing kind can never answer the column
+ * set invariant 7's guard asks for, so its expectation says so, and the bulk read then holds every
+ * listed kind to an empty answer instead. Exactly one engine is that (oxia).
  *
  * Invariant 4 replaced an assertion that `name` equals the last path segment. That is no
  * longer true and must not be: `DatabaseObject.path` addresses, `DatabaseObject.name`
@@ -63,7 +71,7 @@
  * Invariant 7 is skipped entirely for a provider that does not declare `describeObjects`. What it
  * asserts, and why each part of it is not vacuous, is in `assertBulkColumnRead()` below.
  *
- * Three further checks guard the caller rather than the provider. An expectation naming a
+ * Four further checks guard the caller rather than the provider. An expectation naming a
  * kind countObjects never answered for is reported by name. That is a caller-side
  * mistake, a kind id written into the expectation that this engine never declares, and
  * without the explicit throw it surfaces as `Cannot use 'in' operator ... in undefined`,
@@ -73,6 +81,8 @@
  * entry that excused nothing is reported by name, for the reason `assertNoStaleReason()`
  * refuses a stale `emptyKinds` sentence: an exemption may not outlive the empty answer it was
  * written about, or it goes on excusing a kind long after the provider stopped needing it.
+ * And a `keyBrowserSample` is required exactly where a kind only the Keys panel enumerates is
+ * declared, and refused where none is or where it names another kind, for that same reason.
  */
 import { expect } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
@@ -89,9 +99,11 @@ import type {
 import {
   callerBoundTruncationReason,
   declaredKinds,
+  enumerableKinds,
   findKind,
   isCountUnavailable,
   isSourcePartUnavailable,
+  keyBrowserKind,
   kindAcceptsSourceEdits,
   kindHasColumns,
   relationKindIds,
@@ -197,6 +209,27 @@ export interface ObjectSurfaceExpectation {
    * (`table`, `collection`, `keyspace`).
    */
   readonly noAbstainingKinds?: true;
+  /**
+   * This provider declares `hasColumns` on NO kind, so invariant 7's vacuity guard, which wants a
+   * listed kind answering a column set, can never be met. The mirror of `noAbstainingKinds`, stated
+   * rather than silent for the same reason. True of exactly one engine: oxia, whose only listed kind,
+   * `shard`, answers `{ details: [] }`. When set, the bulk read holds every listed kind to an empty
+   * answer with no truncation, unbounded and with limit 1, and the field is refused by name when any
+   * kind the provider declares carries `hasColumns`.
+   */
+  readonly noColumnKinds?: true;
+  /**
+   * The one object of a kind only the Keys panel enumerates, AUTHORED, with the kind it is read
+   * under (#1089 3.4).
+   *
+   * Authored for the reason `absentSource` is: no listing can produce it, because the provider
+   * leaves that kind out of `countObjects` and refuses it by name in `listObjects`, so the path the
+   * test author writes is the only way the kind's `readObjectSource` and `buildObjectEdit` are
+   * driven at all. Required exactly when the provider declares such a kind, and refused when it
+   * declares none or when it names another kind, so it cannot outlive the declaration it was
+   * written for. Its document is held to every rule a listed object's is.
+   */
+  readonly keyBrowserSample?: { readonly path: readonly string[]; readonly kind: string };
 }
 
 function startsWith(path: readonly string[], prefix: readonly string[]): boolean {
@@ -270,8 +303,10 @@ export async function assertObjectSurface(
   for (const id of Object.keys(counts)) {
     if (!declared.includes(id)) throw new Error(`countObjects answered for undeclared kind "${id}"`);
   }
-  for (const id of declared) {
-    if (!(id in counts)) throw new Error(`declared kind "${id}" is missing from countObjects`);
+  // The kinds a folder is drawn for, which is what countObjects must answer. A kind only the Keys
+  // panel enumerates is declared and never counted, so the provider leaves it out (#1089 3.4).
+  for (const kind of enumerableKinds(capabilities)) {
+    if (!(kind.id in counts)) throw new Error(`declared kind "${kind.id}" is missing from countObjects`);
   }
   for (const [id, want] of Object.entries(expected.kinds)) {
     if (!(id in counts)) throw new Error(`countObjects returned nothing for expected kind "${id}"`);
@@ -355,7 +390,8 @@ export async function assertObjectSurface(
   const detail = await provider.describeObject!(sample.path, sample.kind);
   expect(detail.path).toEqual([...sample.path]);
 
-  await assertBulkColumnRead(provider, container, listings);
+  if (expected.noColumnKinds === true) await assertNoColumnRead(provider, container, listings);
+  else await assertBulkColumnRead(provider, container, listings);
   // The answer just read is handed on rather than asked for again: it is the sample's kind
   // described at the object THIS EXPECTATION chose, which is the strongest object of that
   // kind to hold the declaration against, and a second read would probe a different one.
@@ -540,6 +576,43 @@ async function assertBulkColumnRead(
 }
 
 /**
+ * Invariant 7 for a provider with no column-bearing kind (`noColumnKinds`).
+ *
+ * The flag is refused first when any declared kind carries `hasColumns`, so it cannot silence the
+ * vacuity guard of `assertBulkColumnRead()` on a provider that has columns to describe. Then every
+ * listed kind is read twice, unbounded and with limit 1, and each answer must be empty and report
+ * no truncation: an empty answer is the whole of what such a provider can say, and a truncation
+ * reason over nothing would tell a reader that something was withheld.
+ */
+async function assertNoColumnRead(
+  provider: DatabaseProvider,
+  container: readonly string[],
+  listings: ReadonlyMap<string, DatabaseObject[]>,
+): Promise<void> {
+  const bearing = declaredKinds(provider.getCapabilities())
+    .filter((kind) => kindHasColumns(kind))
+    .map((kind) => kind.id);
+  if (bearing.length > 0) {
+    throw new Error(
+      `the expectation sets noColumnKinds and the kind(s) ${bearing.join(", ")} declare hasColumns, ` +
+        "so the field states a fact this provider's own declarations contradict",
+    );
+  }
+  for (const kind of listings.keys()) {
+    for (const limit of [undefined, 1]) {
+      const batch = await provider.describeObjects(container, kind, limit);
+      const call = limit === undefined ? `describeObjects("${kind}")` : `describeObjects("${kind}", limit ${limit})`;
+      if (batch.details.length > 0) {
+        throw new Error(`${call} answered ${batch.details.length} column set(s) under noColumnKinds`);
+      }
+      if (batch.truncated !== undefined) {
+        throw new Error(`${call} reported a truncation under noColumnKinds: "${batch.truncated.reason}"`);
+      }
+    }
+  }
+}
+
+/**
  * Invariant 8: the `hasColumns` DECLARATION against the provider's own answer, both ways (#789).
  *
  * The declaration is the only thing that can decide this, and `role === "relation"` is not it.
@@ -695,14 +768,56 @@ function assertNoStaleReason(reasons: Readonly<Record<string, string>>, zeroed: 
 }
 
 /**
+ * The authored object of the one kind only the Keys panel enumerates, as the source walk reads it,
+ * or undefined where the provider declares no such kind (#1089 3.4).
+ *
+ * Refused in every direction a sample can be wrong, by name, for the reason a stale `emptyKinds`
+ * sentence is: a declared kind with no sample is read and built by nothing, a sample on a provider
+ * that declares no such kind drives nothing it says it does, and a sample naming another kind would
+ * read that kind twice and this one never.
+ */
+function keyBrowserTarget(
+  provider: DatabaseProvider,
+  expected: ObjectSurfaceExpectation,
+): { readonly kindId: string; readonly object: DatabaseObject } | undefined {
+  const kind = keyBrowserKind(provider.getCapabilities());
+  const sample = expected.keyBrowserSample;
+  if (kind === undefined) {
+    if (sample === undefined) return undefined;
+    throw new Error(
+      `the expectation names a keyBrowserSample under "${sample.kind}" and ${provider.type} declares no kind ` +
+        'enumeratedBy "key-browser", so the sample drives nothing',
+    );
+  }
+  if (sample === undefined) {
+    throw new Error(
+      `${provider.type} declares "${kind.id}" enumeratedBy "key-browser", which no listing produces, and the ` +
+        "expectation names no keyBrowserSample, so its source and edit are driven by nothing",
+    );
+  }
+  if (sample.kind !== kind.id) {
+    throw new Error(
+      `keyBrowserSample names the kind "${sample.kind}", and the kind ${provider.type} enumerates in the Keys ` +
+        `panel alone is "${kind.id}"`,
+    );
+  }
+  return {
+    kindId: kind.id,
+    object: { path: sample.path, name: sample.path[sample.path.length - 1], kind: kind.id },
+  };
+}
+
+/**
  * The optional sixth method, checked against the provider's OWN listing (#789 Phase 2).
  *
  * Every path driven here is one the PROVIDER produced, for the reason `assertBulkColumnRead`
  * records: the only thing that makes an assertion about a read non-vacuous is that it compares
- * two answers the provider gave, never one the test author typed. The single exception is
- * `absentSource`, which cannot be found by definition, and which therefore carries a POSITIVE
- * CONTROL in the same helper: the loop above must already have read a document for that kind,
- * so a rejection cannot be a connection failure or a bad bind.
+ * two answers the provider gave, never one the test author typed. There are two exceptions, each
+ * authored because it cannot be found. `absentSource` cannot exist by definition, and therefore
+ * carries a POSITIVE CONTROL in the same helper: the loop above must already have read a document
+ * for that kind, so a rejection cannot be a connection failure or a bad bind. `keyBrowserSample`
+ * is the object of a kind only the Keys panel enumerates, which no listing produces (#1089 3.4),
+ * and its document is held to every rule a listed object's is.
  *
  * The zero-iteration case of each loop is what the throws guard:
  *
@@ -732,14 +847,20 @@ async function assertSourceSurface(
   listings: ReadonlyMap<string, DatabaseObject[]>,
 ): Promise<void> {
   const capabilities = provider.getCapabilities();
-  const sourceKinds = declaredKinds(capabilities).filter((kind) => kind.hasSource === true);
+  // Two populations, split by the declaration (#1089 3.4). The PAIRING below reads every declared
+  // source-bearing kind, because a kind only the Keys panel enumerates still has a Source tab and
+  // needs the method behind it. The guards over what the EXPECTATION names read the enumerable ones,
+  // because an expectation can never name a kind no count or listing answers: that kind is driven
+  // through `keyBrowserSample` instead.
+  const declaredSourceKinds = declaredKinds(capabilities).filter((kind) => kind.hasSource === true);
+  const sourceKinds = enumerableKinds(capabilities).filter((kind) => kind.hasSource === true);
   const read = provider.readObjectSource;
 
   // The pairing, unconditional and outside every loop. A declaration with no method behind it
   // surfaces as a 400 at runtime rather than a red build, and this is what catches it.
-  if (sourceKinds.length > 0 !== (typeof read === "function")) {
+  if (declaredSourceKinds.length > 0 !== (typeof read === "function")) {
     throw new Error(
-      `${provider.type} declares ${sourceKinds.length} source-bearing kind(s) and ` +
+      `${provider.type} declares ${declaredSourceKinds.length} source-bearing kind(s) and ` +
         `${typeof read === "function" ? "implements readObjectSource" : "does not implement readObjectSource"}`,
     );
   }
@@ -772,8 +893,12 @@ async function assertSourceSurface(
   // nothing, so the loop in 9b would run zero times for it and certify the declaration in
   // silence. A well-formed absence REASON does not excuse it: a reason explains why a fixture
   // holds none of a READABLE kind, and this phase's whole safety argument is that every editable
-  // kind has its build driven.
-  for (const kind of editableKinds) {
+  // kind has its build driven. Over the ENUMERABLE editable kinds only: a kind only the Keys panel
+  // enumerates is never counted, and its build is driven through `keyBrowserSample` (#1089 3.4).
+  const countedEditableKinds = enumerableKinds(capabilities).filter((kind) =>
+    kindAcceptsSourceEdits(capabilities, kind.id),
+  );
+  for (const kind of countedEditableKinds) {
     if (!((expected.kinds[kind.id] ?? 0) > 0)) {
       throw new Error(
         `${provider.type} declares the editable kind "${kind.id}" and the expectation counts it at ` +
@@ -782,6 +907,11 @@ async function assertSourceSurface(
       );
     }
   }
+
+  // The authored object of a kind only the Keys panel enumerates, resolved BEFORE the early
+  // return for the reason the stale reason check below sits there: a sample left behind when its
+  // kind's declaration is dropped is refused on a provider that reads no source at all, too.
+  const browsed = keyBrowserTarget(provider, expected);
 
   // BEFORE the early return, which is where this guard was wrong: a provider bearing no
   // source at all left every reason unread, so a task that dropped a `hasSource` declaration
@@ -897,10 +1027,14 @@ async function assertSourceSurface(
 
   // `listings` and not `wanted` drives the walk, because `listings` is what the provider
   // actually produced. Every entry it holds for a kind the expectation counts above zero is
-  // known non-empty: the listing loop threw otherwise.
+  // known non-empty: the listing loop threw otherwise. The one authored entry follows them, the
+  // object of a kind only the Keys panel enumerates, which no listing produces (#1089 3.4).
+  const targets: { readonly kindId: string; readonly object: DatabaseObject }[] = [];
   for (const [kindId, objects] of listings) {
-    if (!wanted.has(kindId)) continue;
-    const object = objects[0];
+    if (wanted.has(kindId)) targets.push({ kindId, object: objects[0] });
+  }
+  if (browsed !== undefined) targets.push(browsed);
+  for (const { kindId, object } of targets) {
     const document = await read.call(provider, object.path, kindId);
     entered.add(kindId);
     assertSourceDocument(document, object, kindId, findKind(capabilities, kindId)?.sourceLanguage);
@@ -1036,6 +1170,18 @@ async function assertSourceSurface(
 }
 
 /**
+ * The one language a source part may carry in place of its kind's declared `sourceLanguage` (etcd spec
+ * 4.4, R13 D11): Monaco's own `plaintext`, for a part whose text is not in the declared language.
+ *
+ * etcd's `key` kind declares `json` and answers a value that is not JSON as `plaintext`, so a text value
+ * is shown as text and never drawn with JSON diagnostics. Exactly one id, so every other part is still
+ * held to its kind's declaration. `tests/isolated/monaco-language-ids.test.ts` reads it out of the
+ * installed editor's core, where Monaco registers it outside the two sets that census reads for the
+ * declared languages, and holds this constant to that reading.
+ */
+export const SOURCE_PART_FALLBACK_LANGUAGE = "plaintext";
+
+/**
  * One document's own shape.
  *
  * A part carrying BOTH `text` and `unavailable` IS checked here, and the reason is a
@@ -1079,9 +1225,14 @@ function assertSourceDocument(
     if (part.text.trim() === "") {
       throw new Error(`readObjectSource("${kindId}") answered a part with no text, which is not a definition`);
     }
-    if (declaredLanguage !== undefined && part.language !== declaredLanguage) {
+    if (
+      declaredLanguage !== undefined &&
+      part.language !== declaredLanguage &&
+      part.language !== SOURCE_PART_FALLBACK_LANGUAGE
+    ) {
       throw new Error(
-        `kind "${kindId}" declares sourceLanguage "${declaredLanguage}" and the part carries "${part.language}"`,
+        `kind "${kindId}" declares sourceLanguage "${declaredLanguage}" and the part carries "${part.language}", ` +
+          `which is neither that language nor the one fallback "${SOURCE_PART_FALLBACK_LANGUAGE}"`,
       );
     }
   }

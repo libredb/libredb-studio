@@ -15,6 +15,7 @@ import { createSSHTunnel, closeSSHTunnel, hasTunnel } from "@/lib/ssh/tunnel";
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { readSecret } from "@/lib/storage/encryption";
 import { providerCacheKey } from "./provider-cache-key";
+import { READ_ONLY_ENFORCED } from "./compatibility";
 import { TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
 import * as path from "path";
@@ -34,7 +35,8 @@ import * as path from "path";
  *   it. Providers whose read-only boundary is established at OPEN time read it
  *   (SQLite); the rest establish theirs per statement and ignore it.
  * @returns Promise<DatabaseProvider> instance
- * @throws DatabaseConfigError if connection type is not supported
+ * @throws DatabaseConfigError if connection type is not supported, or if its `readOnly` cannot be
+ *   honoured (see assertReadOnlyHonoured)
  *
  * @example
  * // SQL Database
@@ -75,11 +77,48 @@ import * as path from "path";
  */
 const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
 
+/**
+ * Refuse a `readOnly` this connection's engine cannot keep, before anything is built or dialled (#1089).
+ *
+ * A read-only connection is a promise its provider keeps by refusing every write before any request,
+ * so it is accepted only on an engine `READ_ONLY_ENFORCED` names. Anywhere else the connection would
+ * open able to write under a mode that says it cannot, which is refused rather than ignored. A value
+ * that is not a boolean is refused on every engine, because a string read as true on one path and as
+ * absent on another is two modes. The message names the field and never echoes the value.
+ *
+ * It reads the static map rather than `getCapabilities()` because it runs before a provider exists,
+ * and `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to every provider's
+ * `enforcesReadOnly`.
+ *
+ * WHERE IT RUNS. The first statement of `createDatabaseProvider` and `withOneShotTunnel`, and of
+ * `getOrCreateProvider` and `acquireExecutionProfileProvider`, ahead of their cache lookup and of
+ * `createSSHTunnel`: those two open the tunnel before they call `createDatabaseProvider`, outside the
+ * try that closes a fresh one, so a refusal raised only inside the factory would dial the bastion and
+ * leave the pooled tunnel open. Ahead of the lookup too, because a mode that is not a boolean keys as
+ * `read-write` (`providerCacheKey`), so the lookup would hand it the connection's cached read-write
+ * provider without refusing it. Exported for the tests; the published factory's three entry points
+ * raise it (`src/exports/providers.ts`).
+ */
+export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
+  const readOnly: unknown = connection.readOnly;
+  if (readOnly === undefined) return;
+  if (typeof readOnly !== "boolean") {
+    throw new DatabaseConfigError("readOnly must be true or false.", connection.type);
+  }
+  if (readOnly && READ_ONLY_ENFORCED[connection.type] !== true) {
+    throw new DatabaseConfigError(
+      `readOnly: true is refused for ${sanitize(connection.type)}: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.`,
+      connection.type,
+    );
+  }
+}
+
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  assertReadOnlyHonoured(connection);
   console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
 
   // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
@@ -115,6 +154,11 @@ export async function createDatabaseProvider(
     case "oracle": {
       const { OracleProvider } = await import("./providers/sql/oracle");
       return new OracleProvider(connection, options);
+    }
+
+    case "db2": {
+      const { Db2Provider } = await import("./providers/sql/db2/index");
+      return new Db2Provider(connection, options);
     }
 
     case "mssql": {
@@ -188,6 +232,20 @@ export async function createDatabaseProvider(
       return new RedisProvider(connection, options);
     }
 
+    case "etcd": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The
+      // execution context rides along, so an execution profile opens it read-only (#1089 E6).
+      const { EtcdProvider } = await import("./providers/keyvalue/etcd/index");
+      return new EtcdProvider(connection, options, execution);
+    }
+
+    case "oxia": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
+      // along, so a refusal names the read-only mode an execution profile set (O1).
+      const { OxiaProvider } = await import("./providers/keyvalue/oxia/index");
+      return new OxiaProvider(connection, options, execution);
+    }
+
     // Time-series stores - dynamically imported
     case "prometheus": {
       // The explicit /index specifier keeps this dynamic import statically
@@ -195,6 +253,53 @@ export async function createDatabaseProvider(
       // cannot trace into a chunk.
       const { PrometheusProvider } = await import("./providers/timeseries/prometheus/index");
       return new PrometheusProvider(connection, options);
+    }
+
+    // Two type-ids served by one directory, one per query language (InfluxDB spec I2, I23). Both are read-only
+    // whatever the flag says, so no execution context rides along, as for Neo4j.
+    case "influxdb": {
+      // The explicit /index specifier keeps this dynamic import statically analysable.
+      const { InfluxDBProvider } = await import("./providers/timeseries/influxdb/index");
+      return new InfluxDBProvider(connection, options);
+    }
+
+    case "influxdb3": {
+      // The explicit /index specifier keeps this dynamic import statically analysable.
+      const { InfluxDB3Provider } = await import("./providers/timeseries/influxdb/index");
+      return new InfluxDB3Provider(connection, options);
+    }
+
+    // Message logs - dynamically imported
+    case "kafka": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { KafkaProvider } = await import("./providers/stream/kafka/index");
+      return new KafkaProvider(connection, options);
+    }
+
+    // Graph databases - dynamically imported
+    case "neo4j": {
+      // The explicit /index specifier keeps this dynamic import statically
+      // analysable: a bare directory resolves only at runtime, which the bundler
+      // cannot trace into a chunk.
+      const { Neo4jProvider } = await import("./providers/graph/neo4j/index");
+      return new Neo4jProvider(connection, options);
+    }
+
+    // Vector databases - dynamically imported
+    case "milvus": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
+      // rides along, so an execution profile opens it read-only (vector-family spec E8).
+      const { MilvusProvider } = await import("./providers/vector/milvus/index");
+      return new MilvusProvider(connection, options, execution);
+    }
+
+    case "qdrant": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
+      // rides along, so an execution profile opens it read-only, as etcd's does.
+      const { QdrantProvider } = await import("./providers/vector/qdrant/index");
+      return new QdrantProvider(connection, options, execution);
     }
 
     // Embedded databases - dynamically imported
@@ -208,7 +313,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, prometheus, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, libredb`,
         connection.type,
       );
   }
@@ -296,6 +401,7 @@ export async function withOneShotTunnel<T>(
   connection: DatabaseConnection,
   run: (effective: DatabaseConnection) => Promise<T>,
 ): Promise<T> {
+  assertReadOnlyHonoured(connection);
   if (!connection.sshTunnel?.enabled || !connection.host || !connection.port) {
     return await run(connection);
   }
@@ -428,8 +534,11 @@ const profiledProviderCache = new Map<string, ProfiledCachedProvider>();
  *
  * The profile stays in the key because the two caches' isolation is per profile: an
  * `agent-read-only` acquisition may never be served what `agent-operations` opened.
+ *
+ * Exported for one caller that must join concurrent first acquisitions on exactly this key
+ * without deriving a second one: src/lib/mcp/context.ts.
  */
-async function profiledCacheKey(connection: DatabaseConnection, profile: ExecutionProfile): Promise<string> {
+export async function profiledCacheKey(connection: DatabaseConnection, profile: ExecutionProfile): Promise<string> {
   const key = await providerCacheKey(connection);
   return `${profile.length}:${profile}${key}`;
 }
@@ -543,6 +652,8 @@ export async function getOrCreateProvider(
   connection: DatabaseConnection,
   options: ProviderOptions = {},
 ): Promise<DatabaseProvider> {
+  // First, ahead of the cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
+  assertReadOnlyHonoured(connection);
   const cacheKey = await providerCacheKey(connection);
 
   // Check cache
@@ -626,7 +737,8 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
  * statements, so it is served only where the engine itself can bound one, and only
- * `postgres.ts` and `sqlite.ts` implement that. `agent-operations` sends no statement
+ * the providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite, DuckDB
+ * and SQL Server (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run
@@ -713,6 +825,8 @@ export async function acquireExecutionProfileProvider(
   profile: ExecutionProfile,
   options: ProviderOptions = {},
 ): Promise<DatabaseProvider> {
+  // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
+  assertReadOnlyHonoured(connection);
   if (!EXECUTION_PROFILES.has(profile)) {
     throw new ExecutionProfileError(`Unknown execution profile: ${String(profile)}`, "UNSUPPORTED_PROFILE");
   }

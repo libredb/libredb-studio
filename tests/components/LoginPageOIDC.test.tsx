@@ -21,31 +21,31 @@ describe("LoginPage (OIDC mode)", () => {
   });
 
   test("renders Login with SSO button", () => {
-    const { getByText } = render(<LoginForm authProvider="oidc" />);
+    const { getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(getByText("Login with SSO")).not.toBeNull();
   });
 
   test("does not render email/password form", () => {
-    const { container } = render(<LoginForm authProvider="oidc" />);
+    const { container } = render(<LoginForm authProvider="oidc" passkey={null} />);
     const form = container.querySelector("form");
     expect(form).toBeNull();
   });
 
   test("does not render quick access buttons", () => {
-    const { queryByText } = render(<LoginForm authProvider="oidc" />);
+    const { queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(queryByText("Admin")).toBeNull();
     expect(queryByText("User")).toBeNull();
   });
 
   test("renders LibreDB Studio title", () => {
     // The title appears twice: desktop hero and mobile header.
-    const { getAllByText } = render(<LoginForm authProvider="oidc" />);
+    const { getAllByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(getAllByText("LibreDB Studio").length).toBeGreaterThan(0);
   });
 
   test("shows error message when error param is present", () => {
     setMockSearchParams(new URLSearchParams("error=oidc_failed"));
-    const { getByText } = render(<LoginForm authProvider="oidc" />);
+    const { getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(getByText("Authentication failed. Please try again.")).not.toBeNull();
   });
 
@@ -55,21 +55,21 @@ describe("LoginPage (OIDC mode)", () => {
   // which is the right advice for those.
   test("tells the user to contact an administrator for oidc_config", () => {
     setMockSearchParams(new URLSearchParams("error=oidc_config"));
-    const { getByText } = render(<LoginForm authProvider="oidc" />);
+    const { getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     const message = getByText(/not configured correctly on this server/);
     expect(message.textContent).not.toMatch(/try again/i);
   });
 
   test("names the identity provider as unreachable for oidc_discovery", () => {
     setMockSearchParams(new URLSearchParams("error=oidc_discovery"));
-    const { getByText } = render(<LoginForm authProvider="oidc" />);
+    const { getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(getByText(/identity provider could not be reached/)).not.toBeNull();
   });
 
   test("renders the generic message for every other code", () => {
     for (const code of ["oidc_state_missing", "oidc_state_invalid", "oidc_no_claims", "constructor", "__proto__"]) {
       setMockSearchParams(new URLSearchParams(`error=${code}`));
-      const { getByText, unmount } = render(<LoginForm authProvider="oidc" />);
+      const { getByText, unmount } = render(<LoginForm authProvider="oidc" passkey={null} />);
       expect(getByText("Authentication failed. Please try again.")).not.toBeNull();
       unmount();
     }
@@ -80,14 +80,14 @@ describe("LoginPage (OIDC mode)", () => {
     // anything upstream ever put error text in the query, the page must still not echo it.
     const leaked = "ClientError: only requests to HTTPS are allowed";
     setMockSearchParams(new URLSearchParams({ error: leaked }));
-    const { container, getByText } = render(<LoginForm authProvider="oidc" />);
+    const { container, getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(getByText("Authentication failed. Please try again.")).not.toBeNull();
     expect(container.textContent).not.toContain("HTTPS");
     expect(container.textContent).not.toContain("ClientError");
   });
 
   test("does not show error message when no error param", () => {
-    const { queryByText } = render(<LoginForm authProvider="oidc" />);
+    const { queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(queryByText("Authentication failed. Please try again.")).toBeNull();
   });
 
@@ -102,7 +102,7 @@ describe("LoginPage (OIDC mode)", () => {
     });
 
     const user = userEvent.setup();
-    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" />);
+    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
 
     await user.click(getByText("Login with SSO"));
 
@@ -115,11 +115,26 @@ describe("LoginPage (OIDC mode)", () => {
     }
   });
 
+  test("SSO carries the return path to the OIDC login route, which keeps it in the signed state", async () => {
+    setMockSearchParams(new URLSearchParams({ next: "/admin?tab=audit" }));
+    const savedDescriptor = Object.getOwnPropertyDescriptor(window, "location");
+    const locationMock = { href: "" };
+    Object.defineProperty(window, "location", { value: locationMock, writable: true, configurable: true });
+    try {
+      const user = userEvent.setup();
+      const { getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+      await user.click(getByText("Login with SSO"));
+      expect(locationMock.href).toBe("/api/auth/oidc/login?next=%2Fadmin%3Ftab%3Daudit");
+    } finally {
+      if (savedDescriptor) Object.defineProperty(window, "location", savedDescriptor);
+    }
+  });
+
   test("renders the same derived showcase as the local login", () => {
     // The hero is outside the auth branch, so the SSO deployment must advertise the same
     // engines and the same channel count. Asserted here as well because the two forms have
     // drifted before - the OIDC branch is the one nobody opens while editing copy.
-    const { container } = render(<LoginForm authProvider="oidc" />);
+    const { container } = render(<LoginForm authProvider="oidc" passkey={null} />);
     for (const db of listShowcaseDatabases()) {
       expect(container.textContent).toContain(db.label);
     }
@@ -128,7 +143,7 @@ describe("LoginPage (OIDC mode)", () => {
   });
 
   test("states both agent modes on the SSO surface too", () => {
-    const { getAllByTestId } = render(<LoginForm authProvider="oidc" />);
+    const { getAllByTestId } = render(<LoginForm authProvider="oidc" passkey={null} />);
     const claims = getAllByTestId("agent-claim");
     expect(claims.length).toBeGreaterThanOrEqual(2);
     for (const claim of claims) {
@@ -144,7 +159,7 @@ describe("LoginPage (OIDC mode)", () => {
     // design (src/lib/storage/encryption.ts covers the sqlite/postgres store only).
     // The surviving sibling is asserted in the same test on purpose: without it, a later rename of
     // the badge row would leave this negative assertion passing forever while proving nothing.
-    const { queryByText, getByText } = render(<LoginForm authProvider="oidc" />);
+    const { queryByText, getByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
     expect(getByText("OIDC Protected")).not.toBeNull();
     expect(queryByText("Encrypted")).toBeNull();
   });

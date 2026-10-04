@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
-import { describeWarning, formatCellValue } from "@/components/results-grid/utils";
+import { describeWarning, formatCellCopy, formatCellValue, renderContextFor } from "@/components/results-grid/utils";
+import type { VectorColumn } from "@/lib/db/vector/types";
 
 // =============================================================================
 // formatCellValue — output parity pins (#96)
@@ -89,5 +90,56 @@ describe("describeWarning", () => {
 
   test("still reports an entry that carries neither message nor code", () => {
     expect(describeWarning({ message: "" })).toBe("Warning");
+  });
+});
+
+describe("formatCellCopy", () => {
+  test("a renderer with no copy form copies its compact display, as Copy Cell always did", () => {
+    expect(formatCellCopy("Alice")).toBe("Alice");
+    expect(formatCellCopy(42)).toBe("42");
+    expect(formatCellCopy({ a: 1 })).toBe('{"a":1}');
+    expect(formatCellCopy('{\n  "id": 1\n}')).toBe('{\n  "id": 1\n}');
+    expect(formatCellCopy(null)).toBe("NULL");
+  });
+
+  test("a binary value copies every byte, where its display is a preview", () => {
+    const bytes = { type: "Buffer", data: Array.from({ length: 100 }, (_, index) => index) };
+    const hex = bytes.data.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    expect(formatCellValue(bytes).display).toHaveLength(77);
+    expect(formatCellCopy(bytes)).toBe(`\\x${hex}`);
+    expect(formatCellCopy(new Uint8Array([1, 2, 171, 255]))).toBe("\\x0102abff");
+  });
+});
+
+describe("renderContextFor", () => {
+  const embedding: VectorColumn = { kind: "dense", dtype: "float32", dimension: 2 };
+
+  test("a declared column gets its declaration, and any other column none", () => {
+    expect(renderContextFor({ embedding }, "embedding")).toEqual({ vector: embedding });
+    expect(renderContextFor({ embedding }, "id")).toBeUndefined();
+    expect(renderContextFor(undefined, "embedding")).toBeUndefined();
+  });
+
+  test("a column named like an Object.prototype member finds no declaration", () => {
+    for (const field of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(renderContextFor({ embedding }, field)).toBeUndefined();
+    }
+  });
+});
+
+describe("formatCellValue and formatCellCopy with a column's declaration", () => {
+  const context = { vector: { kind: "dense", dtype: "float32", dimension: 2 } } as const;
+
+  test("a declared cell draws and copies as a vector", () => {
+    expect(formatCellValue([1, 0.5], context)).toEqual({
+      display: "[1.0, 0.5] 2 dims",
+      className: "text-hue-teal font-mono",
+    });
+    expect(formatCellCopy([1, 0.5], context)).toBe("[1.0,0.5]");
+  });
+
+  test("a masked cell's text in a declared column draws and copies as the text", () => {
+    expect(formatCellValue("***", context).display).toBe("***");
+    expect(formatCellCopy("***", context)).toBe("***");
   });
 });

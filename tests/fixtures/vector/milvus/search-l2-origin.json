@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T14:40:45.557Z",
+    "runtime": "bun 1.4.2",
+    "surface": "entities/search, L2, edge_values.f32, (3,4) of the metric-probe row against the origin",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/entities/search",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"collectionName\":\"edge_values\",\"annsField\":\"f32\",\"data\":[[0,0,0,0]],\"filter\":\"id == 5\",\"outputFields\":[\"id\"],\"limit\":1}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 64,
+    "body": "{\"code\":0,\"cost\":0,\"data\":[{\"distance\":25,\"id\":5}],\"topks\":[1]}\n"
+  }
+}

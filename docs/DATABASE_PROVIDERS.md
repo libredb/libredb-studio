@@ -20,6 +20,11 @@ src/lib/db/
 ├── errors.ts                   # Custom error classes
 ├── factory.ts                  # Provider Factory
 ├── base-provider.ts            # Abstract base class
+├── graph/                      # The graph layer (pure core shipped to the browser; bolt/ and the base server only)
+│   ├── cypher/                 #   lexer, statements, quote, read-policy, generators
+│   ├── bolt/                   #   GraphClient seam, uri, bolt-client (the one neo4j-driver-lite client), record-values
+│   ├── objects.ts, values.ts, profile.ts # kinds and path segments, graph JSON forms, policy profile types
+│   └── graph-base-provider.ts  #   GraphBaseProvider: policy, statement gate, READ session, object surface
 ├── providers/
 │   ├── sql/                    # SQL Database Providers
 │   │   ├── sql-base.ts         # SQL-specific base class
@@ -38,6 +43,12 @@ src/lib/db/
 │   │   │   ├── introspect.ts   #   duckdb_* table functions + pragma_storage_info -> schema, sizes, health
 │   │   │   └── values.ts       #   result -> QueryResult and DuckDB type text -> the product's own names
 │   │   ├── oracle.ts           # Oracle Strategy
+│   │   ├── db2/                # Db2 LUW Strategy (DRDA through db2-node, a native N-API driver)
+│   │   │   ├── index.ts        #   Db2Provider
+│   │   │   ├── driver.ts       #   The one file that imports db2-node
+│   │   │   ├── connection.ts   #   Target, TLS options and the CA temp file
+│   │   │   ├── catalog.ts      #   Every SYSCAT statement the provider sends
+│   │   │   └── objects.ts      #   Catalog rows -> the object surface
 │   │   ├── mssql.ts            # SQL Server Strategy
 │   │   ├── clickhouse/         # ClickHouse Strategy (SQL over HTTP, no driver)
 │   │   │   ├── index.ts        #   ClickHouseProvider
@@ -59,7 +70,7 @@ src/lib/db/
 │   │   │   ├── transport.ts    #   CassandraTransport seam + neutral result + fault categories
 │   │   │   ├── driver-transport.ts # The one file that imports cassandra-driver
 │   │   │   └── introspect.ts   #   system_schema + system_views -> schema and monitoring
-│   │   └── trino/              # Apache Trino Strategy (SQL over the client protocol, no driver)
+│   │   └── trino/              # Trino Strategy (SQL over the client protocol, no driver)
 │   │       ├── index.ts        #   TrinoProvider
 │   │       ├── transport.ts    #   TrinoTransport seam + error categories + the dialect descriptor
 │   │       ├── http-transport.ts # The one HTTP implementation (fetch); the nextUri page loop
@@ -73,9 +84,11 @@ src/lib/db/
 │   │       ├── keyspace.ts     #   display name <-> backtick-quoted keyspace path
 │   │       └── introspect.ts   #   system:* catalogs + INFER
 │   ├── keyvalue/               # Key-Value Providers
-│   │   └── redis.ts            # Redis Strategy
+│   │   ├── redis.ts            # Redis Strategy
+│   │   ├── etcd/               # etcd Strategy (client.ts, grpc-client.ts, lexer.ts, commands.ts, objects.ts, ... index.ts)
+│   │   └── oxia/               # Oxia Strategy (client.ts, grpc-client.ts, routing.ts, walks.ts, commands.ts, ... index.ts)
 │   ├── timeseries/             # Time-Series Providers
-│   │   └── prometheus/         # Prometheus Strategy (PromQL over the Prometheus HTTP API, no driver)
+│   │   ├── prometheus/         # Prometheus Strategy (PromQL over the Prometheus HTTP API, no driver)
 │   │       ├── index.ts        #   PrometheusProvider: lifecycle and composition only
 │   │       ├── transport.ts    #   PrometheusTransport seam + neutral result types + error categories
 │   │       ├── request.ts      #   fetch or node:https; byte cap, AbortSignal, no redirects
@@ -86,6 +99,48 @@ src/lib/db/
 │   │       ├── monitoring.ts   #   buildinfo, runtimeinfo, flags, TSDB status -> monitoring
 │   │       ├── errors.ts       #   transport error category -> the repository's error classes
 │   │       └── concurrency.ts  #   the per-connection limit on in-flight queries
+│   │   └── influxdb/           # InfluxDB Strategies: influxdb (InfluxQL over the v1 /query API) and influxdb3 (SQL over /api/v3/query_sql)
+│   │       ├── index.ts        #   the two provider classes and nothing else
+│   │       ├── influxql-provider.ts # InfluxDBProvider: every line, 1.x, 2.x and 3.x, read-only
+│   │       ├── sql-provider.ts #   InfluxDB3Provider: InfluxDB 3 Core and Enterprise, read-only, one session database
+│   │       ├── connection-options.ts # endpoint, the one Authorization header, TLS, the plaintext consent, bounds
+│   │       ├── routes.ts       #   the two closed route tables: every method, path and key that can be sent
+│   │       ├── client.ts       #   the route-table client over the shared node transport
+│   │       ├── versions.ts     #   the reported version and the per-generation table
+│   │       ├── run-database.ts #   the database a run reads, and the _internal rule
+│   │       ├── influxql-lexer.ts, influxql-policy.ts, influxql-quote.ts, influxql-generators.ts # browser-safe InfluxQL core
+│   │       ├── sql-policy.ts   #   the influxdb3 read policy under the DataFusion grammar row
+│   │       ├── influxql-results.ts, sql-results.ts # answers -> rows and fields
+│   │       ├── influxql-objects.ts, sql-objects.ts # kinds and the object surface of each type
+│   │       ├── monitoring.ts   #   /ping and /health -> the monitoring overview
+│   │       ├── errors.ts       #   every measured failure -> the repository's error classes
+│   │       └── labels.ts       #   the two label sets
+│   ├── stream/                 # Stream Providers
+│   │   └── kafka/              # Kafka Strategy (JSON read requests over the Kafka protocol, @platformatic/kafka)
+│   │       ├── index.ts        #   KafkaProvider: lifecycle and composition only
+│   │       ├── client.ts       #   KafkaReadClient seam (read methods only) + KafkaError categories
+│   │       ├── platformatic-client.ts # The only file that imports @platformatic/kafka
+│   │       ├── connection-options.ts #  bootstrap address, tls and sasl, validated first
+│   │       ├── request.ts      #   the editor JSON -> a read request
+│   │       ├── read.ts         #   start offsets and the bounded fetch loop
+│   │       ├── decode.ts       #   key, value and header decoding
+│   │       ├── results.ts      #   decoded records -> rows and fields
+│   │       ├── groups.ts       #   consumer groups and lag
+│   │       ├── objects.ts      #   kinds and the object surface: topics, groups, brokers
+│   │       ├── monitoring.ts   #   metadata, configs, log dirs -> monitoring
+│   │       └── errors.ts       #   KafkaError category -> the repository's error classes
+│   ├── graph/                  # Graph Providers, on the graph layer above
+│   │   └── neo4j/              # Neo4j Strategy (read-only Cypher over Bolt)
+│   │       ├── index.ts        #   Neo4jProvider: declarations, version read and monitoring delegation
+│   │       ├── profile.ts      #   NEO4J_POLICY_PROFILE: every list of the read policy (browser-safe)
+│   │       ├── statement-gate.ts #  EXPLAIN classification before a statement runs
+│   │       ├── catalog.ts      #   home database, kind listings, property and index reads
+│   │       ├── monitoring-reads.ts, monitoring.ts # the monitoring statements and their shaping
+│   │       ├── errors.ts       #   GraphClientError category -> the repository's error classes
+│   │       └── labels.ts       #   labels, and the plan-mode statement language
+│   ├── vector/                 # Vector Providers
+│   │   ├── milvus/             # Milvus Strategy (Milvus REST v2 requests run over its own gRPC client)
+│   │   └── qdrant/             # Qdrant Strategy (read-only REST over the shared node transport)
 │   └── embedded/               # Embedded (in-process) Providers
 │       └── libredb.ts          # LibreDB Strategy
 └── utils/
@@ -104,21 +159,33 @@ BaseDatabaseProvider (abstract)
 │   ├── LibSQLProvider                      │
 │   ├── DuckDBProvider                      │
 │   ├── OracleProvider                      │
+│   ├── Db2Provider                         │
 │   ├── MSSQLProvider                       │
 │   ├── ClickHouseProvider                  │
 │   ├── DruidProvider                       │
 │   ├── ElasticsearchProvider               │
 │   ├── OpenSearchProvider                  │
 │   ├── TrinoProvider                       │
-│   └── CassandraProvider                   │
+│   ├── CassandraProvider                   │
+│   └── InfluxDB3Provider                   │ (InfluxDB 3 SQL over HTTP, read-only)
 ├── MongoDBProvider ────────────────────────┤ Document Database
 ├── CouchbaseProvider ──────────────────────┤ Document Database (SQL++ over REST)
 ├── RedisProvider ──────────────────────────┤ Key-Value Store
 ├── PrometheusProvider ─────────────────────┤ Time series (PromQL over HTTP)
+├── InfluxDBProvider ───────────────────────┤ Time series (InfluxQL over HTTP, read-only)
+├── KafkaProvider ──────────────────────────┤ Stream (JSON read requests over the Kafka protocol)
+├── EtcdProvider ───────────────────────────┤ Key-Value Store (etcdctl commands over gRPC)
+├── OxiaProvider ───────────────────────────┤ Key-Value Store (oxia client read commands over gRPC)
+├── GraphBaseProvider (abstract)
+│   └── Neo4jProvider ──────────────────────┤ Graph (read-only Cypher over Bolt)
+├── MilvusProvider ─────────────────────────┤ Vector (Milvus REST v2 requests over gRPC)
+├── QdrantProvider ─────────────────────────┤ Vector (Qdrant REST requests, read-only)
 └── LibreDBProvider ────────────────────────┘ Embedded (key-value)
 ```
 
 `SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
+
+Neo4j extends `GraphBaseProvider`, which extends `BaseDatabaseProvider` and runs the query path every graph engine shares; the engine supplies a profile. See [ADDING_A_PROVIDER.md](./ADDING_A_PROVIDER.md#adding-a-graph-engine) and [providers/neo4j.md](./providers/neo4j.md).
 
 Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and expresses its SQL-ness through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
 
@@ -172,8 +239,8 @@ QueryEditor                      /api/db/query
 
 ## Supported Databases
 
-Eighteen type-ids are supported by seventeen provider modules — `elasticsearch` and `opensearch` share
-one, `providers/sql/search/`. The count is derived from the exhaustive `SHIPPED` record in
+Twenty-seven type-ids are supported by twenty-five provider modules: two pairs share one, `elasticsearch` and `opensearch` in `providers/sql/search/`, and `influxdb` and `influxdb3` in `providers/timeseries/influxdb/`.
+The count is derived from the exhaustive `SHIPPED` record in
 [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts) rather than written here twice. For
 the per-provider reference (driver, pooling, query format,
 monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./providers/README.md)**:
@@ -183,6 +250,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | PostgreSQL | `postgres` | SQL | [providers/postgres.md](./providers/postgres.md) |
 | MySQL | `mysql` | SQL | [providers/mysql.md](./providers/mysql.md) |
 | Oracle | `oracle` | SQL | [providers/oracle.md](./providers/oracle.md) |
+| Db2 LUW | `db2` | SQL | [providers/db2.md](./providers/db2.md) |
 | Microsoft SQL Server | `mssql` | SQL | [providers/mssql.md](./providers/mssql.md) |
 | SQLite | `sqlite` | SQL (embedded) | [providers/sqlite.md](./providers/sqlite.md) |
 | libSQL | `libsql` | SQL (SQLite over a network) | [providers/libsql.md](./providers/libsql.md) |
@@ -194,9 +262,17 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 | Apache Druid | `druid` | SQL (read-only) | [providers/druid.md](./providers/druid.md) |
 | Elasticsearch | `elasticsearch` | Search (SQL, read-only) | [providers/elasticsearch.md](./providers/elasticsearch.md) |
 | OpenSearch | `opensearch` | Search (SQL, read-only) | [providers/opensearch.md](./providers/opensearch.md) |
-| Apache Trino | `trino` | SQL (federated query engine) | [providers/trino.md](./providers/trino.md) |
+| Trino | `trino` | SQL (federated query engine) | [providers/trino.md](./providers/trino.md) |
 | Apache Cassandra | `cassandra` | SQL-shaped (CQL, wide-column) | [providers/cassandra.md](./providers/cassandra.md) |
 | Prometheus | `prometheus` | Time series (PromQL over HTTP, read-only) | [providers/prometheus.md](./providers/prometheus.md) |
+| InfluxDB (InfluxQL) | `influxdb` | Time series (InfluxQL over HTTP, read-only) | [providers/influxdb.md](./providers/influxdb.md) |
+| InfluxDB 3 (SQL) | `influxdb3` | Time series (SQL, Apache DataFusion, read-only) | [providers/influxdb3.md](./providers/influxdb3.md) |
+| Apache Kafka | `kafka` | Stream (JSON read requests over the Kafka protocol, read-only) | [providers/kafka.md](./providers/kafka.md) |
+| etcd | `etcd` | Key-Value (etcdctl commands over gRPC) | [providers/etcd.md](./providers/etcd.md) |
+| Neo4j | `neo4j` | Graph (Cypher over Bolt, read-only) | [providers/neo4j.md](./providers/neo4j.md) |
+| Milvus | `milvus` | Vector (Milvus REST v2 requests over gRPC) | [providers/milvus.md](./providers/milvus.md) |
+| Qdrant | `qdrant` | Vector (Qdrant REST requests, read-only) | [providers/qdrant.md](./providers/qdrant.md) |
+| Oxia | `oxia` | Key-Value (oxia client read commands over gRPC, read-only) | [providers/oxia.md](./providers/oxia.md) |
 | LibreDB | `libredb` | Embedded (key-value) | [providers/libredb.md](./providers/libredb.md) |
 
 ## Core Interface
@@ -226,7 +302,7 @@ interface DatabaseProvider {
   getHealth(): Promise<HealthInfo>;
 
   // Maintenance operations
-  runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult>;
+  runMaintenance(type: MaintenanceOperation, target?: string, container?: string): Promise<MaintenanceResult>;
 
   // Validation
   validate(): void;
@@ -293,18 +369,28 @@ await provider.disconnect();
 
 ## Non-SQL Query Formats
 
-The non-SQL providers take a JSON query rather than SQL. The full format, operation list, and worked
+The non-SQL providers take a query that is not SQL, in the format each bullet below names. The full format, operation list, and worked 
 examples live in their prime docs:
 
 - **MongoDB** (MQL — `{collection, operation, filter, pipeline, update, documents, options}`):
   [providers/mongodb.md](./providers/mongodb.md) and the
   [`API_DOCS.md` MongoDB Query Format](./API_DOCS.md) section.
 - **Redis** (plain command or `{command, args}`): [providers/redis.md](./providers/redis.md).
+- **Prometheus** (a PromQL expression): [providers/prometheus.md](./providers/prometheus.md).
+- **InfluxDB (InfluxQL)** (one read-only InfluxQL statement): [providers/influxdb.md](./providers/influxdb.md).
+- **Apache Kafka** (a JSON read request): [providers/kafka.md](./providers/kafka.md).
+- **etcd** (one etcdctl command): [providers/etcd.md](./providers/etcd.md).
+- **Neo4j** (one read-only Cypher statement): [providers/neo4j.md](./providers/neo4j.md).
+- **Milvus** (one Milvus REST v2 request): [providers/milvus.md](./providers/milvus.md).
+- **Qdrant** (one Qdrant REST request): [providers/qdrant.md](./providers/qdrant.md).
+- **LibreDB** (one command: `get`, `put`, `delete`, `prefix` or `range`): [providers/libredb.md](./providers/libredb.md).
+- **Oxia** (one oxia client read command): [providers/oxia.md](./providers/oxia.md).
 
 Couchbase is deliberately **not** in that list: SQL++ is a SQL dialect, so a Couchbase connection
 takes ordinary SQL in the `sql` field and inherits the SQL editor and the shared limiter.
 Its keyspaces are backtick-quoted three-part paths (`` `bucket`.`scope`.`collection` ``) — see
 [providers/couchbase.md](./providers/couchbase.md).
+InfluxDB 3 (SQL) is not in it either: its statement is SQL in the `sql` field, read under the Apache DataFusion grammar row, see [providers/influxdb3.md](./providers/influxdb3.md).
 
 ## Configuration
 
@@ -375,8 +461,9 @@ DatabaseError (base)
 Provider-specific behaviour — pooling model, SSL/encryption, pagination, monitoring sources,
 maintenance operations, and known limitations — is documented per provider under
 [`docs/providers/`](./providers/README.md). Start there for anything specific to PostgreSQL, MySQL,
-Oracle, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
-Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, Prometheus, or LibreDB.
+Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, Redis, MongoDB, Couchbase, ClickHouse, Apache Druid,
+Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL),
+Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia, or LibreDB.
 
 Not every provider has every feature, and the docs record the absences rather than glossing over
 them. Druid is the sharpest case: its SQL has no `UPDATE`, no `DELETE` and no `CREATE TABLE`, no

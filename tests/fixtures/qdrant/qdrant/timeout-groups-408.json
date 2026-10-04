@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "service": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T14:14:57.991Z",
+    "runtime": "bun 1.4.2",
+    "surface": "points/query/groups of docs answering 408, ?timeout=1",
+    "op": "query_points_groups",
+    "credential": "none",
+    "attempts": 5,
+    "request": {
+      "method": "POST",
+      "path": "/collections/docs/points/query/groups?timeout=1",
+      "headers": {},
+      "body": "<a 384-dimension query on docs.text, grouped by category, with a should filter of 4000 match.value conditions on title that match no point>"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "status": 408,
+    "contentType": "application/json",
+    "retryAfter": null,
+    "bodyBytes": 104,
+    "body": "{\"status\":{\"error\":\"Timeout: Timeout error: Operation 'GroupBy' timed out after 1s\"},\"time\":1.000940774}"
+  }
+}

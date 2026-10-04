@@ -1,7 +1,14 @@
 import { describe, test, expect } from "bun:test";
 import { rowActions, type TreeRowActionHandlers } from "@/components/object-tree/row-actions";
 import type { TreeRowModel } from "@/components/object-tree/flatten";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
+import { graphObjectSegment } from "@/lib/db/graph/objects";
+import { db2Capabilities } from "@/lib/db/providers/sql/db2/capabilities";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
+import { Wrench } from "lucide-react";
+import { SYNTHETIC_ENTITY_CAPABILITIES } from "../../fixtures/maintenance-entity-operations";
 
 /**
  * What one object row may be offered, and why (U22, #789).
@@ -21,6 +28,7 @@ type Model = Partial<
     | "queryDialect"
     | "objectKinds"
     | "supportsInlineRowEdit"
+    | "supportsCreateTable"
     | "supportsMaintenance"
     | "maintenanceOperations"
     | "maintenanceOperationSpecs"
@@ -41,6 +49,7 @@ const routine = { id: "function", role: "routine", label: "Function", labelPlura
 const postgres = capabilitiesOf({
   objectKinds: [table, view, routine],
   supportsInlineRowEdit: true,
+  supportsCreateTable: true,
   supportsMaintenance: true,
   maintenanceOperations: ["vacuum", "analyze"],
 });
@@ -145,6 +154,9 @@ describe("rowActions on an object row", () => {
       { ...postgres, queryDialect: "redis" as const },
       { ...postgres, queryDialect: "libredb" as const },
       { ...postgres, queryLanguage: "promql" as const },
+      { ...postgres, queryLanguage: "influxql" as const },
+      // A read request has no count grammar: it reads messages and counts none (#1088).
+      { ...postgres, queryDialect: "kafka" as const },
     ]) {
       expect(idsFor(objectRow("table"), capabilities, handlers)).not.toContain("generate-count");
     }
@@ -299,6 +311,28 @@ describe("rowActions and maintenance", () => {
     // The control: without the redirect the literal `vacuum` is not declared at all here.
     expect(idsFor(objectRow("table"), mysql)).not.toContain("maintenance-vacuum");
   });
+
+  test("an operation that names its kinds is offered on those kinds' rows only (#786)", () => {
+    // Db2-shaped: RUNSTATS and REORG run on a table and refuse a view, which is a relation too.
+    const db2 = capabilitiesOf({
+      objectKinds: [table, view],
+      supportsMaintenance: true,
+      maintenanceOperations: ["analyze", "optimize"],
+      maintenanceOperationSpecs: {
+        analyze: { global: false, perEntity: true, label: "Run Statistics", kinds: ["table"] },
+        optimize: { global: false, perEntity: true, label: "Reorganize Table", kinds: ["table"] },
+      },
+    });
+    const labels = { vacuumActionOperation: "optimize" } as ProviderLabels;
+    const ids = (kindId: string) =>
+      rowActions({ row: objectRow(kindId), object: orders, capabilities: db2, labels, handlers: allHandlers() }).map(
+        (action) => action.id,
+      );
+
+    expect(ids("table")).toEqual(expect.arrayContaining(["maintenance-analyze", "maintenance-vacuum"]));
+    expect(ids("view")).not.toContain("maintenance-analyze");
+    expect(ids("view")).not.toContain("maintenance-vacuum");
+  });
 });
 
 describe("rowActions on a folder row", () => {
@@ -338,8 +372,27 @@ describe("rowActions on a folder row", () => {
   test("the engine-wide row-edit flag does NOT gate creating a table", () => {
     // A different question again: `supportsInlineRowEdit` is the results grid's editor, and
     // three engines that declare it false still create tables.
-    const noGridEdit = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: false });
+    const noGridEdit = capabilitiesOf({
+      objectKinds: [table],
+      supportsInlineRowEdit: false,
+      supportsCreateTable: true,
+    });
     expect(idsFor(folderRow("table"), noGridEdit)).toEqual(["create"]);
+  });
+
+  test("an engine that declares no create-table support offers nothing, even on a writable kind", () => {
+    // `acceptsRowWrites` says the rows of a table can be written; it says nothing about
+    // whether `CreateTableModal` has a dialect for the engine. Db2 is the case that found
+    // this: its tables take row writes and it declares `supportsCreateTable: false`, and the
+    // folder menu offered a modal that wrote PostgreSQL DDL.
+    const noCreate = capabilitiesOf({ objectKinds: [table], supportsInlineRowEdit: true, supportsCreateTable: false });
+    expect(idsFor(folderRow("table"), noCreate)).toEqual([]);
+  });
+
+  test("the real Db2 declarations offer no create on the Tables folder", () => {
+    const db2 = db2Capabilities({} as ProviderCapabilities);
+    expect(db2.objectKinds?.find((kind) => kind.id === "table")?.acceptsRowWrites).toBe(true);
+    expect(idsFor(folderRow("table"), db2)).toEqual([]);
   });
 });
 
@@ -668,6 +721,17 @@ describe("the actions whose destination speaks only some query languages", () =>
     expect(idsFor(metricRow, promql, allHandlers(), up)).toEqual(["generate-select"]);
   });
 
+  test("an InfluxQL measurement is offered neither Profile nor Generate Code, and keeps Generate Query (InfluxDB spec 6.7)", () => {
+    const measurement = { ...metric, id: "measurement", label: "Measurement", labelPlural: "Measurements" } as const;
+    const cpu: DatabaseObject = { path: ["telegraf", "cpu"], name: "cpu", kind: "measurement" };
+    const row: TreeRowModel = { ...objectRow("measurement"), path: ["telegraf", "cpu"] };
+    const influxql = capabilitiesOf({ queryLanguage: "influxql", objectKinds: [measurement] });
+    expect(idsFor(row, influxql, allHandlers(), cpu)).toEqual(["generate-select"]);
+    // The control: the same declaration in SQL is offered both.
+    const sql = capabilitiesOf({ queryLanguage: "sql", objectKinds: [measurement] });
+    expect(idsFor(row, sql, allHandlers(), cpu)).toEqual(["generate-select", "profile", "generate-code"]);
+  });
+
   test("the control: the same declaration in SQL is offered both", () => {
     const sql = capabilitiesOf({ queryLanguage: "sql", objectKinds: [metric] });
     expect(idsFor(metricRow, sql, allHandlers(), up)).toEqual(["generate-select", "profile", "generate-code"]);
@@ -683,5 +747,143 @@ describe("the actions whose destination speaks only some query languages", () =>
   test("the control: MongoDB's JSON, with no dialect, is profiled and generates code", () => {
     const mongodb = capabilitiesOf({ queryLanguage: "json", objectKinds: [table] });
     expect(idsFor(objectRow("table"), mongodb)).toEqual(["generate-select", "profile", "generate-code"]);
+  });
+
+  test("a Kafka topic is offered Generate Query and View Source, and nothing that profiles, models, counts or writes its rows (#1088)", () => {
+    // The provider's own declaration, so the menu is the one a topic row is really offered: its
+    // text is a read request, which the profile route builds no statement in, whose fixed columns
+    // the generated models reject, which has no count grammar, and whose topic takes no row writes.
+    const kafka = new KafkaProvider({
+      id: "kafka-row-actions",
+      name: "Kafka",
+      type: "kafka",
+      host: "localhost",
+      port: 9092,
+      createdAt: new Date(0),
+    }).getCapabilities();
+    const topic: DatabaseObject = { path: ["orders"], name: "orders", kind: "topic" };
+    const topicRow: TreeRowModel = { ...objectRow("topic"), path: ["orders"] };
+    const handlers: TreeRowActionHandlers = { ...allHandlers(), onGenerateCount: () => {} };
+
+    expect(idsFor(topicRow, kafka, handlers, topic)).toEqual(["generate-select", "view-source"]);
+    // The control, in the one field under test: the same declaration with the dialect removed is
+    // MongoDB's JSON, which is profiled, counted and generates code, so the refusals above are the
+    // dialect's. Generate Test Data stays withheld there too: no Kafka kind declares row writes.
+    expect(idsFor(topicRow, { ...kafka, queryDialect: undefined }, handlers, topic)).toEqual([
+      "generate-select",
+      "generate-count",
+      "profile",
+      "generate-code",
+      "view-source",
+    ]);
+  });
+
+  test("a graph label or relationship type is offered Generate Query only: nothing profiles, models, counts or writes its rows (Neo4j spec 6.5)", () => {
+    // The provider's own declaration: Cypher is a language the profile route, the code generator and the
+    // count write nothing in, and no graph kind takes row writes, so Generate Test Data, the one caller of
+    // TestDataGenerator, whose fall-through would write SQL INSERTs, is never offered.
+    const neo4j = new Neo4jProvider({
+      id: "neo4j-row-actions",
+      name: "Neo4j",
+      type: "neo4j",
+      host: "127.0.0.1",
+      port: 7687,
+      createdAt: new Date(0),
+    }).getCapabilities();
+    const handlers: TreeRowActionHandlers = { ...allHandlers(), onGenerateCount: () => {} };
+    for (const kind of ["label", "relationship_type"] as const) {
+      const path = ["neo4j", graphObjectSegment(kind, "Person")];
+      const object: DatabaseObject = { path, name: "Person", kind };
+      expect({ kind, ids: idsFor({ ...objectRow(kind), path }, neo4j, handlers, object) }).toEqual({
+        kind,
+        ids: ["generate-select"],
+      });
+    }
+  });
+
+  test("an etcd key-prefix group is offered Generate Command and Browse Keys, and nothing that profiles, models, counts or writes its rows (#1089)", () => {
+    // The provider's own declaration (#1089, section 6.2): its text is an etcdctl command, which the profile
+    // route builds no statement in; a group's columns are a get row's fixed shape, which no model is written
+    // over; a declared dialect and a derived grouping each withhold the count; no etcd kind takes row writes,
+    // so Generate Test Data, the one caller of TestDataGenerator, is never offered; and its three maintenance
+    // operations are global, never per group.
+    const etcd = new EtcdProvider({
+      id: "etcd-row-actions",
+      name: "etcd",
+      type: "etcd",
+      host: "127.0.0.1",
+      port: 2379,
+      createdAt: new Date(0),
+    }).getCapabilities();
+    const group: DatabaseObject = { path: ["/app/config/*"], name: "/app/config/*", kind: "prefix" };
+    const groupRow: TreeRowModel = { ...objectRow("prefix"), path: ["/app/config/*"] };
+    const handlers: TreeRowActionHandlers = { ...allHandlers(), onGenerateCount: () => {} };
+
+    expect(idsFor(groupRow, etcd, handlers, group)).toEqual(["generate-select", "browse-keys"]);
+    // The control, in the one field under test: with the dialect removed, the declaration is MongoDB's JSON,
+    // which generates code, so that refusal is the dialect's. Profile and the count stay withheld there, by
+    // the derived grouping alone.
+    expect(idsFor(groupRow, { ...etcd, queryDialect: undefined }, handlers, group)).toEqual([
+      "generate-select",
+      "generate-code",
+      "browse-keys",
+    ]);
+  });
+});
+
+describe("rowActions and declared per-row operations (spec 3.11)", () => {
+  const declared = capabilitiesOf({ objectKinds: [table, view, routine], ...SYNTHETIC_ENTITY_CAPABILITIES });
+  const maintenanceIds = (ids: string[]) => ids.filter((id) => id.startsWith("maintenance-"));
+
+  test("a relation row offers each declared operation after the provider's own, in declaration order", () => {
+    expect(maintenanceIds(idsFor(objectRow("table"), declared))).toEqual([
+      "maintenance-analyze",
+      "maintenance-disarm",
+      "maintenance-compact",
+    ]);
+  });
+
+  test("each item carries the spec's label and a generic icon, and opens the maintenance page on the row's object", () => {
+    const opened: DatabaseObject[] = [];
+    const actions = rowActions({
+      row: objectRow("table"),
+      object: orders,
+      capabilities: declared,
+      handlers: { onOpenMaintenance: (object) => opened.push(object) },
+    });
+    const declaredItems = actions.filter((action) => ["maintenance-disarm", "maintenance-compact"].includes(action.id));
+
+    expect(declaredItems.map((action) => action.label)).toEqual(["Release Object", "Load Object"]);
+    expect(declaredItems.map((action) => action.icon)).toEqual([Wrench, Wrench]);
+    for (const action of declaredItems) action.run();
+    expect(opened).toEqual([orders, orders]);
+  });
+
+  test("a shell with no maintenance page, a routine row and a column row offer none of them", () => {
+    expect(maintenanceIds(idsFor(objectRow("table"), declared, { onGenerateSelect: () => {} }))).toEqual([]);
+    expect(maintenanceIds(idsFor(objectRow("function"), declared))).toEqual([]);
+    expect(idsFor(columnRow(), declared)).toEqual([]);
+  });
+
+  test("a declared operation that names its kinds is a row item on those kinds only, as the provider's own are (#786)", () => {
+    const kinded = capabilitiesOf({
+      objectKinds: [table, view, routine],
+      ...SYNTHETIC_ENTITY_CAPABILITIES,
+      maintenanceOperationSpecs: {
+        ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs,
+        compact: { ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs.compact, kinds: ["table"] },
+      },
+    });
+
+    expect(maintenanceIds(idsFor(objectRow("table"), kinded))).toEqual([
+      "maintenance-analyze",
+      "maintenance-disarm",
+      "maintenance-compact",
+    ]);
+    expect(maintenanceIds(idsFor(objectRow("view"), kinded))).toEqual(["maintenance-analyze", "maintenance-disarm"]);
+  });
+
+  test("a whole-database operation outside MaintenanceType is not a row item", () => {
+    expect(idsFor(objectRow("table"), declared)).not.toContain("maintenance-defragment");
   });
 });

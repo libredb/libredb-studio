@@ -1,0 +1,252 @@
+{
+  "$derived": {
+    "by": "tests/live/vector-evidence-derive.ts",
+    "from": "manifest.json"
+  },
+  "fields": {
+    "default/docs_int64": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 8,
+        "metric": "cosine",
+        "nativeMetric": "COSINE",
+        "indexKind": "hnsw",
+        "nativeType": "FloatVector(8)"
+      }
+    ],
+    "default/docs_varchar": [
+      {
+        "name": "f16",
+        "kind": "dense",
+        "dtype": "float16",
+        "dimension": 8,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "hnsw",
+        "nativeType": "Float16Vector(8)"
+      },
+      {
+        "name": "bf16",
+        "kind": "dense",
+        "dtype": "bfloat16",
+        "dimension": 8,
+        "metric": "dot",
+        "nativeMetric": "IP",
+        "indexKind": "hnsw",
+        "nativeType": "BFloat16Vector(8)"
+      },
+      {
+        "name": "bin",
+        "kind": "dense",
+        "dtype": "binary",
+        "dimension": 16,
+        "metric": "hamming",
+        "nativeMetric": "HAMMING",
+        "indexKind": "ivf",
+        "nativeType": "BinaryVector(16)"
+      },
+      {
+        "name": "sparse",
+        "kind": "sparse",
+        "dtype": "float32",
+        "dimension": null,
+        "metric": "dot",
+        "nativeMetric": "IP",
+        "indexKind": "opaque",
+        "nativeType": "SparseFloatVector"
+      },
+      {
+        "name": "i8",
+        "kind": "dense",
+        "dtype": "int8",
+        "dimension": 8,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "hnsw",
+        "nativeType": "Int8Vector(8)"
+      }
+    ],
+    "default/edge_values": [
+      {
+        "name": "f32",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "flat",
+        "nativeType": "FloatVector(4)"
+      },
+      {
+        "name": "f16",
+        "kind": "dense",
+        "dtype": "float16",
+        "dimension": 4,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "hnsw",
+        "nativeType": "Float16Vector(4)"
+      },
+      {
+        "name": "bf16",
+        "kind": "dense",
+        "dtype": "bfloat16",
+        "dimension": 4,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "hnsw",
+        "nativeType": "BFloat16Vector(4)"
+      },
+      {
+        "name": "bin",
+        "kind": "dense",
+        "dtype": "binary",
+        "dimension": 16,
+        "metric": "hamming",
+        "nativeMetric": "HAMMING",
+        "indexKind": "flat",
+        "nativeType": "BinaryVector(16)"
+      },
+      {
+        "name": "i8",
+        "kind": "dense",
+        "dtype": "int8",
+        "dimension": 4,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "hnsw",
+        "nativeType": "Int8Vector(4)"
+      },
+      {
+        "name": "sp",
+        "kind": "sparse",
+        "dtype": "float32",
+        "dimension": null,
+        "metric": "dot",
+        "nativeMetric": "IP",
+        "indexKind": "opaque",
+        "nativeType": "SparseFloatVector"
+      }
+    ],
+    "default/emb_list": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "flat",
+        "nativeType": "FloatVector(4)"
+      },
+      {
+        "name": "chunks[emb]",
+        "kind": "multi",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "other",
+        "nativeMetric": "MAX_SIM_COSINE",
+        "indexKind": "hnsw",
+        "nativeType": "ArrayOfVector(FloatVector(4))"
+      }
+    ],
+    "default/fts": [
+      {
+        "name": "text_sparse",
+        "kind": "sparse",
+        "dtype": "float32",
+        "dimension": null,
+        "metric": "other",
+        "nativeMetric": "BM25",
+        "indexKind": "opaque",
+        "nativeType": "SparseFloatVector"
+      }
+    ],
+    "default/large_topk": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 8,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "hnsw",
+        "nativeType": "FloatVector(8)"
+      }
+    ],
+    "default/pk_partitioned": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 8,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "flat",
+        "nativeType": "FloatVector(8)"
+      }
+    ],
+    "default/scratch": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 8,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "opaque",
+        "nativeType": "FloatVector(8)"
+      }
+    ],
+    "default/shadowed": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "flat",
+        "nativeType": "FloatVector(4)"
+      }
+    ],
+    "default/unloaded_big": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 128,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "ivf",
+        "nativeType": "FloatVector(128)"
+      }
+    ],
+    "default/wide_768": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 768,
+        "metric": "cosine",
+        "nativeMetric": "COSINE",
+        "indexKind": "hnsw",
+        "nativeType": "FloatVector(768)"
+      }
+    ],
+    "probe_db/notes": [
+      {
+        "name": "vec",
+        "kind": "dense",
+        "dtype": "float32",
+        "dimension": 4,
+        "metric": "euclidean_squared",
+        "nativeMetric": "L2",
+        "indexKind": "flat",
+        "nativeType": "FloatVector(4)"
+      }
+    ]
+  }
+}

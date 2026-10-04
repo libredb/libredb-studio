@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "service": "etcd-auth",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "none",
+    "memberId": "none",
+    "date": "2026-09-30T16:30:12.643Z",
+    "runtime": "node 24.14.0",
+    "rpc": "Maintenance/Status",
+    "surface": "status over TLS trusting another CA (other-ca.pem)",
+    "request": {},
+    "match": {},
+    "metadata": {}
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "14 UNAVAILABLE: No connection established. Last error: Error: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca. Resolution note: ",
+    "code": 14,
+    "details": "No connection established. Last error: Error: unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca. Resolution note: "
+  }
+}

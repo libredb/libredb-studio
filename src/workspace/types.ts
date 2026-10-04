@@ -3,6 +3,7 @@ import type { Ref } from "react";
 
 import type { DatabaseType, SavedQuery, QueryWarning } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import type { VectorColumn } from "@/lib/db/vector/types";
 import type {
   Container,
   DatabaseObject,
@@ -45,7 +46,7 @@ export interface WorkspaceConnection {
    * More control. That is deliberate rather than an omission: only the host knows whether
    * its `onQueryExecute` really applies a positive `offset`, and a control that re-fetches
    * page one is worse than none. Declare it `true` once your implementation pages, and
-   * report `pagination.wasLimited` honestly — the control also requires that.
+   * report `pagination.hasMore` honestly: the control also requires `hasMore: true`.
    */
   capabilities?: ProviderCapabilities;
   /** This provider's UI wording, as `getLabels()` reports it. See `capabilities`. */
@@ -99,7 +100,10 @@ export interface WorkspaceObjectReader {
    */
   listContainers(connectionId: string, parent?: readonly string[]): Promise<readonly Container[]>;
   /**
-   * How many objects of each declared kind this container holds.
+   * How many objects of each kind the object surface enumerates (`enumerableKinds()` in
+   * `src/lib/db/object-kinds.ts`) this container holds; a kind only the Keys panel enumerates
+   * (`ObjectKindSpec.enumeratedBy`) is left out, as the provider leaves it out of `countObjects`
+   * (#1089 3.4).
    *
    * The key is the kind id from the connection's declaration. A kind the engine refused to count
    * answers `{ unavailable: <the engine's own sentence> }` rather than a zero, and a real number
@@ -251,6 +255,16 @@ export interface WorkspaceQueryResult {
     totalReturned: number;
     wasLimited: boolean;
   };
+  /**
+   * The columns of this result that hold vectors, keyed by their names in `fields`, exactly as
+   * `QueryResult.vectorColumns` declares them: a declared column renders as a vector cell and Copy Cell copies it
+   * whole in the engine's own encoding, and an undeclared column renders as before.
+   *
+   * Absent when the result has no vector column, never an empty object. Additive and optional, as `warnings` is,
+   * because hosts outside this repository implement this interface. A page fetched by Load More that carries none
+   * keeps the declaration of the rows already on screen.
+   */
+  vectorColumns?: Readonly<Record<string, VectorColumn>>;
 }
 
 // === Feature flags ===
@@ -407,8 +421,10 @@ export interface StudioWorkspaceProps {
    * after the first can be requested for.
    *
    * `offset` is what a Load More click asks for, and `limit` on that call is the size of the page
-   * already on screen. A host that cannot apply a positive `offset` should report
-   * `pagination.wasLimited: false`, which is what keeps the control from being offered at all.
+   * already on screen. A host that cannot apply a positive `offset` should leave
+   * `capabilities.supportsResultPagination` undeclared and report `pagination.hasMore: false`:
+   * `pageOfferFor` offers the control only when both are true, and `pagination.wasLimited`
+   * drives only the "limited" badge.
    */
   onQueryExecute: (
     connectionId: string,

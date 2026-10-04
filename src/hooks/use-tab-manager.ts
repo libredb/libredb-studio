@@ -11,6 +11,7 @@ import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { resolveTabType } from "@/lib/editor/tab-language";
 import { logger } from "@/lib/logger";
 import { newLocalId } from "@/lib/ids";
+import { useStableCallback } from "@/hooks/use-stable-callback";
 
 /** A tab `closeTab` removed, where it sat, and the workspace it sat in, so its Undo can put it back (#747). */
 interface ClosedTab {
@@ -349,33 +350,34 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
     setActiveTabId(closed.tab.id);
   }, []);
 
-  const closeTab = useCallback(
-    (id: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      if (tabs.length === 1) return;
-      const index = tabs.findIndex((t) => t.id === id);
-      if (index === -1) return;
-      const closed: ClosedTab = { tab: tabs[index], index, nextTabId: tabs[index + 1]?.id ?? null, workspaceKey };
+  // One identity for the strip, whose memoized bar must not re-render on a keystroke (X5):
+  // the handler reads `tabs` and `activeTabId`, both of which change with the query on
+  // every keystroke, so a plain `useCallback` would mint a new function each time.
+  const closeTab = useStableCallback((id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (tabs.length === 1) return;
+    const index = tabs.findIndex((t) => t.id === id);
+    if (index === -1) return;
+    const closed: ClosedTab = { tab: tabs[index], index, nextTabId: tabs[index + 1]?.id ?? null, workspaceKey };
 
-      // The last-tab guard is evaluated again inside the updater, against the state actually
-      // being written: two closes batched into one commit both pass the check above.
-      setTabs((prev) => (prev.length === 1 ? prev : prev.filter((t) => t.id !== id)));
-      if (activeTabId === id) {
-        const remaining = tabs.filter((t) => t.id !== id);
-        setActiveTabId(remaining[remaining.length - 1].id);
-      }
+    // The last-tab guard is evaluated again inside the updater, against the state actually
+    // being written: two closes batched into one commit both pass the check above.
+    setTabs((prev) => (prev.length === 1 ? prev : prev.filter((t) => t.id !== id)));
+    if (activeTabId === id) {
+      const remaining = tabs.filter((t) => t.id !== id);
+      setActiveTabId(remaining[remaining.length - 1].id);
+    }
 
-      const toastId = toast(`Closed "${closed.tab.name}"`, {
-        action: { label: "Undo", onClick: () => reopenClosedTab(closed) },
-      });
-      undoToastIdsRef.current.push(toastId);
-    },
-    [tabs, activeTabId, workspaceKey, reopenClosedTab],
-  );
+    const toastId = toast(`Closed "${closed.tab.name}"`, {
+      action: { label: "Undo", onClick: () => reopenClosedTab(closed) },
+    });
+    undoToastIdsRef.current.push(toastId);
+  });
 
   /**
-   * Open a tab holding the statement for one object and RUN it. Takes the object's PATH
-   * and nothing else (#789).
+   * Open a tab holding the statement for one object and RUN it, or focus the one already open
+   * for that object, on this connection, while its statement is unedited. A focused tab whose
+   * last run failed is run again, in place. Takes the object's PATH and nothing else (#789).
    *
    * The path is the address and the name is only a label (standing ruling 2), so the
    * lookup that finds this object's columns joins on the path, segment by segment, the
@@ -415,15 +417,55 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
        */
       databaseOverride?: number,
     ) => {
+      const key = pathKey(path);
+      /*
+       * A data tab already open for this object, on this connection, in this database, and still
+       * on the statement it was opened with, is FOCUSED and not run again: the rule
+       * `openSourceTab` keeps for a Source tab. Measured before this, three activations of one
+       * table left three identical tabs and three reads, and clicking twice did what pressing
+       * Space twice does.
+       *
+       * The connection is part of the match because two connections can hold the same path, and
+       * a tab opened on one can outlive the switch to another where storage is unavailable: the
+       * load effect then returns before it resets the tabs.
+       *
+       * A matched tab whose last run FAILED is run again, in that tab. It holds no rows to keep,
+       * only the error, and activating the object is the reader asking for its data.
+       *
+       * The query comparison is what keeps the reader's work out of reach. A tab whose
+       * statement has been edited is never captured, so the activation opens a fresh one.
+       *
+       * Read from the committed `tabs`, as `openSourceTab` reads it. Two activations inside one
+       * React batch both miss and both open, which no gesture reaches: separate DOM events flush
+       * between them. The id is not derived from the address the way a Source tab's is, because
+       * an edited tab and a fresh one for the same object must be able to stand side by side.
+       */
+      const open = tabs.find(
+        (tab) =>
+          tab.origin !== undefined &&
+          tab.origin.connectionId === activeConnection?.id &&
+          pathKey(tab.origin.path) === key &&
+          tab.origin.databaseOverride === databaseOverride &&
+          tab.query === tab.origin.query,
+      );
+      if (open !== undefined) {
+        setActiveTabId(open.id);
+        if (open.runError !== undefined) {
+          // The same call, options and deferral as the fresh tab's run below.
+          setTimeout(() => executeQueryFn(open.query, open.id, false, { limit: PREVIEW_PAGE_SIZE }), 100);
+        }
+        return;
+      }
+
       const capabilities = metadata?.capabilities;
       const tableName = objectSegment(path);
       // Look the object up exactly as handleGenerateSelect does: the Redis generator is
       // type-aware, and the sampled key type lives on the schema node's `type` column (#427).
-      const key = pathKey(path);
       const table = schema.find((t) => pathKey(t.path) === key);
       const columns = columnsOverride ?? table?.columns ?? [];
+      // A group's readable pieces ride on its schema entry, and only the etcd arm reads them (#1089 4.7).
       const newQuery = capabilities
-        ? generateTableQuery(path, capabilities, columns)
+        ? generateTableQuery(path, capabilities, columns, { readRanges: table?.readRanges })
         : `SELECT * FROM ${path.join(".")};`;
 
       const newId = newLocalId();
@@ -437,6 +479,13 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
         // Spread rather than written, so an ordinary activation's tab is the record it has always
         // been: absent means "the connection's own database" and a key of `undefined` is not that.
         ...(databaseOverride === undefined ? {} : { databaseOverride }),
+        // Written with the same spread rule, so the origin says "no override" by absence too.
+        origin: {
+          path,
+          ...(activeConnection === null ? {} : { connectionId: activeConnection.id }),
+          ...(databaseOverride === undefined ? {} : { databaseOverride }),
+          query: newQuery,
+        },
       };
       setTabs((prev) => [...prev, newTab]);
       setActiveTabId(newId);
@@ -445,7 +494,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       // results run.
       setTimeout(() => executeQueryFn(newQuery, newId, false, { limit: PREVIEW_PAGE_SIZE }), 100);
     },
-    [metadata, schema],
+    [activeConnection, metadata, schema, tabs],
   );
 
   /** The same address and the same join as `handleTableClick`, without the run (#789). */
@@ -457,8 +506,11 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       const table = schema.find((t) => pathKey(t.path) === key);
       const columns = table?.columns || [];
 
+      // The group's readable pieces and the connection's own mode, which only the etcd arm reads (#1089 6.4):
+      // on a read-only connection Generate Command writes the read alone.
+      const scope = { readRanges: table?.readRanges, readOnly: activeConnection?.readOnly === true };
       const newQuery = capabilities
-        ? generateSelectQuery(path, columns, capabilities)
+        ? generateSelectQuery(path, columns, capabilities, scope)
         : `SELECT\n${columns.map((c) => `  ${c.name}`).join(",\n") || "  *"}\nFROM ${path.join(".")}\nWHERE 1=1\nLIMIT 100;`;
 
       const tabType = resolveTabType(capabilities);
@@ -477,7 +529,7 @@ export function useTabManager({ activeConnection, metadata, schema, persistWorks
       ]);
       setActiveTabId(newId);
     },
-    [metadata, schema],
+    [activeConnection, metadata, schema],
   );
 
   const handleGenerateCount = useCallback(

@@ -2,10 +2,26 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import React, { useState, useEffect, useMemo } from "react";
-import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X } from "lucide-react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { ShieldAlert, ShieldCheck, TriangleAlert, LoaderCircle, Play, X, Info } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { TypedConfirmField } from "@/components/typed-confirm";
+import { useReturnFocus } from "@/hooks/use-return-focus";
+import { QUERY_SAFETY_ANALYSIS_TIMEOUT_MS } from "@/lib/llm/query-safety";
 import { cn } from "@/lib/utils";
-import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
+import {
+  isDestructiveNonSqlQuery,
+  vocabularyDecidesAlone,
+  vocabularySendsToModel,
+  vocabularyTypedConfirmation,
+} from "@/lib/db/destructive-commands";
+import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { readsSqlText, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
@@ -32,10 +48,20 @@ interface QuerySafetyDialogProps {
   query: string;
   schemaContext: string;
   databaseType?: string;
+  /**
+   * The name of the connection the statement is about to run on, which a typed confirmation of the connection asks
+   * for (#1089, section 5.5). Optional because this dialog is published: a caller that passes none, or an empty one,
+   * gets a refusal in place of the typed field and a disabled Proceed button, never a throw.
+   */
+  connectionName?: string;
   onClose: () => void;
   onProceed: () => void;
-  /** Optional API adapter: when provided, bypasses the built-in /api/ai/query-safety fetch. */
-  onAnalyzeSafety?: (params: { query: string; schemaContext: string }) => Promise<SafetyAnalysis>;
+  /**
+   * Optional API adapter: when provided, bypasses the built-in /api/ai/query-safety fetch. `signal` aborts when the
+   * dialog stops waiting (the person skipped the analysis, the wait ran out, or the dialog closed); an adapter that
+   * honours it stops its own request, and an answer that arrives after it is ignored either way.
+   */
+  onAnalyzeSafety?: (params: { query: string; schemaContext: string; signal?: AbortSignal }) => Promise<SafetyAnalysis>;
 }
 
 function parseSafetyResponse(text: string): SafetyAnalysis | null {
@@ -50,6 +76,47 @@ function parseSafetyResponse(text: string): SafetyAnalysis | null {
     return null;
   }
 }
+
+/**
+ * Said in place of the typed field when the vocabulary asks for the connection's name and the caller gave none, or
+ * an empty one (#1089, section 5.5).
+ */
+const MISSING_CONNECTION_NAME =
+  "This statement is confirmed by typing the connection's name, which this editor did not provide, so it cannot run from here.";
+
+/**
+ * Said where the vocabulary keeps the statement from the AI analysis, beside the dialog's own local sentence
+ * (#1089, E10): the classification that opened this dialog is the editor's, and nothing was sent to be judged.
+ */
+const LOCAL_CLASSIFICATION =
+  "This editor checked the statement itself: statements for this engine are not sent to an AI provider for a risk analysis.";
+
+/**
+ * The text a typed ask is compared with: the ask's own text, or the connection's name, or undefined where the ask is
+ * the name and there is none to type, which the dialog answers with MISSING_CONNECTION_NAME.
+ */
+function typedConfirmationText(ask: TypedConfirmationAsk, connectionName: string | undefined): string | undefined {
+  if (ask.type === "text") return ask.text;
+  // An empty name is no name: an exact comparison would let an empty field confirm it.
+  return connectionName === "" ? undefined : connectionName;
+}
+
+/**
+ * Why the dialog stopped waiting for the AI analysis before it answered: the person chose to skip it, or it did not
+ * finish within QUERY_SAFETY_ANALYSIS_TIMEOUT_MS. Either way Execute no longer waits on it.
+ */
+type AnalysisStopped = "skipped" | "timed-out";
+
+const ANALYSIS_STOPPED_NOTICE: Record<AnalysisStopped, { title: string; detail: string }> = {
+  "timed-out": {
+    title: "AI analysis could not be completed",
+    detail: `The AI safety analysis did not finish within ${QUERY_SAFETY_ANALYSIS_TIMEOUT_MS / 1000} seconds and was stopped. Review the statement yourself before running it.`,
+  },
+  skipped: {
+    title: "AI analysis skipped",
+    detail: "The AI analysis was stopped before it answered. Review the statement yourself before running it.",
+  },
+};
 
 const RISK_CONFIG = {
   safe: {
@@ -94,6 +161,7 @@ export function QuerySafetyDialog({
   query,
   schemaContext,
   databaseType,
+  connectionName,
   onClose,
   onProceed,
   onAnalyzeSafety,
@@ -102,6 +170,17 @@ export function QuerySafetyDialog({
   const [analysis, setAnalysis] = useState<SafetyAnalysis | null>(null);
   const [rawResponse, setRawResponse] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [stopped, setStopped] = useState<AnalysisStopped | null>(null);
+  // The analysis in flight, so Skip, the wait running out and closing the dialog can all stop it.
+  const analysisRun = useRef<AbortController | null>(null);
+  const cancelButton = useRef<HTMLButtonElement>(null);
+  const skipButton = useRef<HTMLButtonElement>(null);
+  // Whether the typed confirmation's field matches (#1089, section 5.5). The field reports it when it mounts and on
+  // every change, so each opening starts from false: the field's own state lives inside the dialog content.
+  const [typedMatches, setTypedMatches] = useState(false);
+  // Radix hands focus back only to an AlertDialogTrigger, and the editor opens this dialog without
+  // one, so the dialog keeps what had focus when it opened and puts focus back there on close.
+  const returnFocus = useReturnFocus();
 
   /**
    * Whether the client-side reading that opened this dialog could not resolve part
@@ -125,12 +204,31 @@ export function QuerySafetyDialog({
     return readsSqlText(type) && hasUnterminatedSpan(query, resolveSqlGrammar(type));
   }, [query, databaseType]);
 
+  // What this engine's vocabulary asks the person to type before the statement runs, read from the table the gate
+  // that opened this dialog read, so the two cannot disagree about a statement (#1089, section 5.5).
+  const typedAsk = useMemo(
+    () => vocabularyTypedConfirmation(databaseType as DatabaseType | undefined, query),
+    [query, databaseType],
+  );
+  const typedExpected = typedAsk === undefined ? undefined : typedConfirmationText(typedAsk, connectionName);
+  // Proceed waits for the analysis and for an exact match, and a refusal in place of the field is never a match,
+  // whatever was typed before it replaced the field. The wait for the analysis is bounded: Skip ends it at once and
+  // QUERY_SAFETY_ANALYSIS_TIMEOUT_MS ends it anyway, so a slow or hung model can no longer hold every write back.
+  const proceedBlocked = isAnalyzing || (typedAsk !== undefined && (typedExpected === undefined || !typedMatches));
+  // False keeps the statement on this device (#1089, E10).
+  const sendsToModel = vocabularySendsToModel(databaseType as DatabaseType | undefined);
+
   // Declared above the effect that calls it: react-compiler
   // (react-hooks/immutability) rejects reading a `const` binding from a position
   // earlier than its declaration. Pure code motion - no hook order changes.
   const analyzeQuery = async () => {
+    const run = new AbortController();
+    analysisRun.current = run;
+    const { signal } = run;
+    const timer = setTimeout(() => stopWaiting(run, "timed-out"), QUERY_SAFETY_ANALYSIS_TIMEOUT_MS);
     setIsAnalyzing(true);
     setError(null);
+    setStopped(null);
 
     try {
       let filteredSchema = "";
@@ -155,7 +253,8 @@ export function QuerySafetyDialog({
 
       if (onAnalyzeSafety) {
         // Platform adapter: use callback instead of fetch
-        const result = await onAnalyzeSafety({ query, schemaContext: filteredSchema });
+        const result = await onAnalyzeSafety({ query, schemaContext: filteredSchema, signal });
+        if (signal.aborted) return;
         setAnalysis(result);
       } else {
         // Default: existing fetch behavior
@@ -163,6 +262,7 @@ export function QuerySafetyDialog({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query, schemaContext: filteredSchema, databaseType }),
+          signal,
         });
 
         if (!response.ok) {
@@ -178,47 +278,93 @@ export function QuerySafetyDialog({
         let fullResponse = "";
         while (true) {
           const { done, value } = await reader.read();
+          // A run stopped while a chunk was on its way: what it streamed is no longer shown.
+          if (signal.aborted) return;
           if (done) break;
           fullResponse += new TextDecoder().decode(value);
           setRawResponse(fullResponse);
         }
 
         const parsed = parseSafetyResponse(fullResponse);
-        if (parsed) {
+        if (parsed && !signal.aborted) {
           setAnalysis(parsed);
         }
       }
     } catch (err) {
+      // An aborted run was stopped on purpose, and the reason is already on screen.
+      if (signal.aborted) return;
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
-      setIsAnalyzing(false);
+      clearTimeout(timer);
+      // A run that was stopped already said so, and a newer run may be the one in flight now.
+      if (analysisRun.current === run) {
+        analysisRun.current = null;
+        setIsAnalyzing(false);
+      }
     }
   };
 
+  /**
+   * Stops waiting for `run`, the analysis in flight: aborts its request, drops what it streamed so far (half a
+   * verdict is not one) and says why Execute no longer waits for it. A run that already ended is left alone.
+   */
+  function stopWaiting(run: AbortController, why: AnalysisStopped) {
+    if (analysisRun.current !== run) return;
+    analysisRun.current = null;
+    run.abort();
+    // The Skip button leaves with the wait it ended. Focus that was on it goes to Cancel, where the dialog put it
+    // on opening, rather than to the Execute button this just enabled.
+    if (document.activeElement === skipButton.current) cancelButton.current?.focus();
+    setIsAnalyzing(false);
+    setRawResponse("");
+    setStopped(why);
+  }
+
+  const skipAnalysis = () => {
+    if (analysisRun.current) stopWaiting(analysisRun.current, "skipped");
+    // A click does not always focus the button it lands on (Safari, a pointer that moved), so Cancel takes focus
+    // here whatever had it.
+    cancelButton.current?.focus();
+  };
+
   useEffect(() => {
-    if (isOpen && query) {
+    // A vocabulary that keeps its statements on this device posts nothing and calls no adapter (#1089, E10).
+    if (isOpen && query && sendsToModel) {
       analyzeQuery();
     }
     return () => {
+      // Closing the dialog, or a new statement, ends the wait for this one: its request stops too.
+      analysisRun.current?.abort();
+      analysisRun.current = null;
+      // The aborted run's own `finally` no longer owns the spinner, so it is cleared here: the dialog stays
+      // mounted between openings, and the next one may post nothing at all.
+      setIsAnalyzing(false);
       setAnalysis(null);
       setRawResponse("");
       setError(null);
+      setStopped(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, query]);
-
-  if (!isOpen) return null;
+  }, [isOpen, query, sendsToModel]);
 
   const risk = analysis ? RISK_CONFIG[analysis.riskLevel] || RISK_CONFIG.medium : null;
   const RiskIcon = risk?.icon || ShieldAlert;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-overlay border border-hairline-strong rounded-xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden">
+    <AlertDialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <AlertDialogContent
+        className="p-0 gap-0 bg-overlay border border-hairline-strong rounded-xl shadow-2xl overflow-hidden"
+        {...returnFocus}
+      >
         <div className="flex items-center justify-between px-5 py-3 border-b border-hairline">
           <div className="flex items-center gap-2">
             <ShieldAlert strokeWidth={1.5} className="w-3.5 h-3.5 text-warning" />
-            <span className="text-xs font-medium text-fg">Query Safety Check</span>
+            <AlertDialogTitle className="text-xs font-medium text-fg">Query Safety Check</AlertDialogTitle>
           </div>
           <button
             onClick={onClose}
@@ -231,9 +377,11 @@ export function QuerySafetyDialog({
         </div>
 
         <div className="px-5 py-3 bg-surface border-b border-hairline">
-          <pre className="text-xs font-mono text-fg-tertiary whitespace-pre-wrap max-h-24 overflow-auto">
-            {query.length > 300 ? query.substring(0, 300) + "..." : query}
-          </pre>
+          <AlertDialogDescription asChild>
+            <pre className="text-xs font-mono text-fg-tertiary whitespace-pre-wrap max-h-24 overflow-auto">
+              {query.length > 300 ? query.substring(0, 300) + "..." : query}
+            </pre>
+          </AlertDialogDescription>
         </div>
 
         <div className="px-5 py-4 max-h-80 overflow-auto">
@@ -256,12 +404,31 @@ export function QuerySafetyDialog({
             </div>
           )}
 
+          {!sendsToModel && <p className="mb-3 text-xs text-fg-tertiary">{LOCAL_CLASSIFICATION}</p>}
+
           {isAnalyzing && (
             <div className="flex items-center justify-center gap-2 py-8 text-fg-muted">
               <LoaderCircle strokeWidth={1.5} className="w-5 h-5 animate-spin" />
               <span className="text-xs">Analyzing query safety...</span>
             </div>
           )}
+
+          {/*
+            A live region (an output is role="status") mounted for as long as the dialog is, so a screen reader
+            hears why the Execute button just became usable: a region inserted together with its text is often
+            not announced at all.
+          */}
+          <output className="block">
+            {stopped && (
+              <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-warning-tint/10 border border-warning-tint/20">
+                <Info strokeWidth={1.5} className="w-3.5 h-3.5 mt-0.5 shrink-0 text-warning" />
+                <div>
+                  <span className="text-xs font-medium text-warning">{ANALYSIS_STOPPED_NOTICE[stopped].title}</span>
+                  <p className="text-xs text-fg-tertiary mt-0.5">{ANALYSIS_STOPPED_NOTICE[stopped].detail}</p>
+                </div>
+              </div>
+            )}
+          </output>
 
           {error && (
             <div className="bg-danger-tint/10 border border-danger-tint/20 rounded-lg p-3 text-xs text-danger">
@@ -333,22 +500,66 @@ export function QuerySafetyDialog({
           )}
         </div>
 
+        {/*
+          The typed confirmation the vocabulary asks for (#1089, section 5.5), right above the Proceed button it holds
+          disabled until the typed value matches exactly. The field keeps what was typed in its own state, inside this
+          content, which unmounts on close, so every opening starts empty; it is keyed by the text it compares with,
+          so a new ask starts empty too.
+        */}
+        {typedAsk !== undefined && (
+          <div className="px-5 py-3 border-t border-hairline space-y-3">
+            {typedAsk.type === "connection-name" && (
+              <div>
+                <p className="text-xs text-fg-muted">Targets</p>
+                <ul className="mt-1 space-y-0.5">
+                  {typedAsk.targets.map((target, index) => (
+                    // oxlint-disable-next-line react/no-array-index-key -- the ask's own fixed list, never reordered, and a target may repeat.
+                    <li key={index} className="text-xs font-mono text-fg-secondary whitespace-pre-wrap break-all">
+                      {target}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {typedExpected === undefined ? (
+              <p className="text-xs text-danger">{MISSING_CONNECTION_NAME}</p>
+            ) : (
+              <TypedConfirmField
+                key={typedExpected}
+                expected={typedExpected}
+                match="exact"
+                onMatchChange={setTypedMatches}
+              />
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-hairline bg-surface">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-fill text-fg-tertiary text-xs font-medium hover:bg-fill-strong transition-colors"
+          {isAnalyzing && (
+            <button
+              ref={skipButton}
+              type="button"
+              onClick={skipAnalysis}
+              className="mr-auto px-3 py-2 rounded-lg text-xs font-medium text-fg-tertiary hover:bg-fill hover:text-fg-secondary transition-colors"
+            >
+              Skip analysis
+            </button>
+          )}
+          <AlertDialogCancel
+            ref={cancelButton}
+            className="h-auto border-0 bg-fill px-4 py-2 text-xs font-medium text-fg-tertiary shadow-none transition-colors hover:bg-fill-strong dark:bg-fill dark:hover:bg-fill-strong hover:text-fg-tertiary rounded-lg"
           >
             <span>Cancel</span>
-          </button>
+          </AlertDialogCancel>
           <button
             onClick={onProceed}
-            disabled={isAnalyzing}
+            disabled={proceedBlocked}
             className={cn(
               "px-4 py-2 rounded-lg text-white text-xs font-medium transition-colors flex items-center gap-1.5",
               analysis?.riskLevel === "critical" || analysis?.riskLevel === "high"
                 ? "bg-danger-solid hover:bg-danger-solid-hover"
                 : "bg-brand-solid hover:bg-brand-solid-hover",
-              isAnalyzing && "opacity-50 cursor-not-allowed",
+              proceedBlocked && "opacity-50 cursor-not-allowed",
             )}
           >
             <Play strokeWidth={1.5} className="w-3 h-3 fill-current" />
@@ -359,8 +570,8 @@ export function QuerySafetyDialog({
                 : "Execute Query"}
           </button>
         </div>
-      </div>
-    </div>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -374,6 +585,25 @@ export function QuerySafetyDialog({
 const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE", "UPDATE"]);
 
 /**
+ * The words that open a procedural block or a branch of one rather than a statement of
+ * their own, in PL/SQL, T-SQL and SQLite trigger bodies. A statement read with one of
+ * these as its keyword is the block, and what it does is written after it.
+ */
+const CONTROL_FLOW_KEYWORDS = new Set([
+  "BEGIN",
+  "DECLARE",
+  "IF",
+  "ELSE",
+  "ELSIF",
+  "THEN",
+  "WHILE",
+  "LOOP",
+  "FOR",
+  "EXCEPTION",
+  "WHEN",
+]);
+
+/**
  * Whether ONE statement's own code asks for a confirmation, read under `grammar`.
  *
  * Its own function because the caller below asks the question twice over different
@@ -381,9 +611,48 @@ const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRAN
  * will run. Re-deriving the two keyword tests per call site is how the gate and the
  * runner drifted apart in the first place.
  */
+/**
+ * Whether a procedural block's code writes, as far as its words can say.
+ *
+ * Any dangerous keyword in the block's code counts, except two shapes that only look like
+ * one: a T-SQL variable (`@alter`, `@delete`) and a cursor's `FOR UPDATE` lock clause.
+ * Dynamic SQL counts whatever its text says, because the text is a literal the reader
+ * cannot see into: `EXECUTE IMMEDIATE 'DROP TABLE t PURGE'` drops a table, and Oracle
+ * used to refuse the block it sits in when the runner cut it at its first `;` (#1312).
+ */
+function blockWrites(text: string, grammar: SqlGrammar): boolean {
+  const execute = findCodeWord(text, "EXECUTE", 0, grammar);
+  if (execute !== null && findCodeWord(text, "IMMEDIATE", execute.end, grammar) !== null) return true;
+  if (findCodeWord(text, "DBMS_SQL", 0, grammar) !== null) return true;
+
+  for (const word of DANGEROUS_KEYWORDS) {
+    let found = findCodeWord(text, word, 0, grammar);
+    while (found !== null) {
+      const before = text.slice(0, found.start);
+      const variable = before.endsWith("@");
+      const lockClause = word === "UPDATE" && /\bFOR\s+$/i.test(before);
+      if (!variable && !lockClause) return true;
+      found = findCodeWord(text, word, found.end, grammar);
+    }
+  }
+  return false;
+}
+
 function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   const keyword = readOperativeKeyword(text, grammar)?.keyword;
   if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;
+
+  // A statement led by a control-flow word, or by a `<<label>>` no keyword reading
+  // passes, does what the words AFTER it say: `BEGIN DELETE FROM emp; END;` is a PL/SQL
+  // block that deletes, and `IF @@ROWCOUNT > 0 DELETE FROM t` a T-SQL statement that
+  // does. Its own keyword is `BEGIN` or `IF`, so for these the dangerous words are looked
+  // for anywhere in the statement's CODE (#1312). Before procedural bodies were a grammar
+  // fact the runner cut such a block at its first `;` and Oracle refused the fragment, so
+  // nothing ran unasked; now the whole block runs, and the gate has to read into it.
+  const labelled = keyword === undefined && text.trimStart().startsWith("<<");
+  if ((labelled || (keyword !== undefined && CONTROL_FLOW_KEYWORDS.has(keyword))) && blockWrites(text, grammar)) {
+    return true;
+  }
 
   // A write the statement's own keyword does not report: PostgreSQL's data-modifying
   // CTE is OPERATED by its SELECT (`WITH x AS (UPDATE … SET …) SELECT * FROM x`), so
@@ -433,9 +702,10 @@ function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
  * and a MongoDB `deleteMany` ran with no confirmation at all, on both execution
  * paths, while the same intent on every SQL engine asked (S8). Their vocabulary now
  * comes from `@/lib/db/destructive-commands`, one table per type read by one
- * function, and it names only what each provider can actually dispatch. PromQL's row
- * in the same table names nothing and is the whole answer: PromQL has no write path
- * (#1085, section 2), and read as SQL a metric named `update` or `delete` was a write.
+ * function, and it names only what each provider can actually dispatch. PromQL's and
+ * Kafka's rows in the same table name nothing and are the whole answer: neither has a
+ * write path (#1085 and #1088, section 2), and read as SQL a metric named `update` or
+ * `delete` was a write.
  *
  * `databaseType` is the connection the statement is about to run on, and both
  * call sites hold one (#292). It decides the characters the engines read
@@ -453,19 +723,22 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // "not there".
   //
   // Only where the text IS SQL, though. Both execution paths ask about whatever is
-  // in the editor, so this predicate is handed MongoDB documents, Redis commands and
-  // PromQL expressions as well, and an escaped quote that a SQL span reader cannot
-  // resolve closes perfectly in the grammar those are written in. For MongoDB and
+  // in the editor, so this predicate is handed MongoDB documents, Redis commands, PromQL
+  // expressions, Kafka read requests and etcdctl commands as well, and an escaped quote that a SQL
+  // span reader cannot resolve closes perfectly in the grammar those are written in. For MongoDB and
   // Redis the keyword tests below still run: narrowing this rule is not switching the
   // gate off.
   if (readsSqlText(databaseType) && hasUnterminatedSpan(query, grammar)) return true;
 
   // A type whose own vocabulary is the whole answer is not read as SQL at all, and
-  // PromQL is that type. An expression can start with a metric name the server's data
-  // chooses, `update`, `delete` and `drop` are legal names, and the keyword test below
-  // read the tree's own selector for such a metric as a write, about text that only
-  // ever reaches a query endpoint that cannot write (#1085, section 2). Which types
-  // decide alone is a fact of the same table, not a type test written here.
+  // PromQL, Kafka and etcd are those types. A PromQL expression can start with a metric name the
+  // server's data chooses, `update`, `delete` and `drop` are legal names, and the keyword
+  // test below read the tree's own selector for such a metric as a write, about text that
+  // only ever reaches a query endpoint that cannot write (#1085, section 2); a Kafka read
+  // request names a topic, which can carry those names too, and can only read it (#1088,
+  // section 2); an etcd command names keys, which can be spelled like any SQL keyword, and the
+  // etcd provider's guard.ts reads it with the parser the provider runs (#1089, section 5.5).
+  // Which types decide alone is a fact of the same table, not a type test here.
   if (vocabularyDecidesAlone(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
 
   if (writesUnderGrammar(query, grammar)) return true;
@@ -493,5 +766,11 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // facts are a table in `@/lib/db/destructive-commands`, not a type test written
   // here: this file already learned that lesson for the span rule above.
   if (!readsSqlText(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
-  return splitStatements(query, grammar).some((statement) => writesUnderGrammar(statement.sql, grammar));
+  // One exception to "exactly what the runner will run": a procedural body is ONE
+  // statement to the runner (#1312), and its operative keyword is `BEGIN`, `DECLARE` or
+  // `CREATE`, none of which asks. The writes inside it are still writes, so the gate keeps
+  // reading the body's own `;`-separated statements, which is what it read before bodies
+  // were a fact at all. The spans and the separator lines stay the dialect's.
+  const statementsInsideBodies = { ...grammar, script: { ...grammar.script, blocks: "none" as const } };
+  return splitStatements(query, statementsInsideBodies).some((statement) => writesUnderGrammar(statement.sql, grammar));
 }

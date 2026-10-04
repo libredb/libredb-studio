@@ -1,12 +1,19 @@
 import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { createFakeEtcdClient, type FakeEtcdClient } from "../../../helpers/etcd-fake-client";
+import { KEY_SPACE_HEADER, keySpaceRange } from "../../../helpers/etcd-key-space";
 import { parseResponseJSON } from "../../../helpers/mock-next";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { mintPlanToken } from "@/lib/api/object-edit-plan-token";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { EDIT_PLAN_EXECUTABLE_LIMIT } from "@/lib/db/object-edit";
-import type { ObjectEditOutcome } from "@/lib/db/types";
+import type { EtcdStatus } from "@/lib/db/providers/keyvalue/etcd/client";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
+import type { ObjectEditOutcome, ObjectEditPlan } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
 import {
   POST_APPLY as POST,
+  POST_PLAN,
   CONNECTION,
   CONSEQUENCE,
   EVERY_OUTCOME,
@@ -253,7 +260,8 @@ describe("POST /api/db/objects/edit-apply", () => {
   });
 
   test("the OUTCOME event's sink throwing leaves the 200 intact", async () => {
-    // `src/app/api/db/maintenance/route.ts:108-131` verbatim, including its stated reason: the
+    // The completed-run audit row in `POST` of `src/app/api/db/maintenance/route.ts`, verbatim,
+    // including its stated reason: the
     // engine has already acted and a broken sink must not turn a completed apply into a 500 that
     // invites a retry that would be a SECOND DDL.
     const sealed = await mintValidPlan();
@@ -332,7 +340,8 @@ describe("POST /api/db/objects/edit-apply", () => {
 
   test("the audit names the connection and the caller, and falls back through the arms in order", async () => {
     // Fix round 1, finding 8. `connectionName` is `name || database || "unknown"`, inherited
-    // verbatim from `src/app/api/db/maintenance/route.ts:117`, and BOTH its fallback arms had no
+    // verbatim from the `connectionName` fallback in `auditFields` of `POST` in
+    // `src/app/api/db/maintenance/route.ts`, and BOTH its fallback arms had no
     // population: the harness fixture always carries a name, so `?? "unknown"` on that line killed
     // nothing. `resolveConnection` returns an INLINE caller-supplied connection object verbatim, so
     // a connection whose `name` is empty is the caller's to send and is the live population here.
@@ -393,5 +402,105 @@ describe("POST /api/db/objects/edit-apply", () => {
     expect(events[1].reason).toBe("object_edit_refused");
     expect(events[1].result).toBe("failure");
     expect(events[1].duration).toBe(12);
+  });
+});
+
+/** A single-member etcd with authentication off. */
+const ETCD: DatabaseConnection = {
+  id: "etcd-e6",
+  name: "etcd E6",
+  type: "etcd",
+  host: "etcd.test",
+  port: 2379,
+  createdAt: new Date(0),
+};
+
+const ETCD_STATUS: EtcdStatus = {
+  header: KEY_SPACE_HEADER,
+  version: "3.7.2",
+  dbSize: "20480",
+  dbSizeInUse: "16384",
+  dbSizeQuota: "0",
+  leader: KEY_SPACE_HEADER.memberId,
+  raftIndex: "40",
+  raftTerm: "2",
+  raftAppliedIndex: "40",
+  errors: [],
+  isLearner: false,
+  storageVersion: "3.7.0",
+};
+
+/** One provider the factory stand-in built, its client, and how many calls its connect sent. */
+interface OpenedEtcd {
+  readonly client: FakeEtcdClient;
+  readonly connectCalls: number;
+}
+
+/**
+ * The next `getOrCreateProvider` call answered as the factory answers an etcd connection: a provider built
+ * from the connection the route hands it, connected to a fake client that records every call. It reads the
+ * route's argument, so a route that dropped or rewrote the posted connection's `readOnly` on its way to the
+ * factory builds a read-write provider here, and the apply is sent.
+ */
+function nextEtcdProvider(opened: OpenedEtcd[]): void {
+  mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
+    const client = createFakeEtcdClient({
+      authStatus: async () => ({ enabled: false, authRevision: "1" }),
+      status: async () => ETCD_STATUS,
+      range: keySpaceRange([{ key: "/app/cfg", value: "old" }]),
+      txn: async () => ({ header: KEY_SPACE_HEADER, succeeded: true, responses: [] }),
+      close: async () => {},
+    });
+    const etcd = new EtcdProvider(args[0] as DatabaseConnection, {}, {}, async () => client);
+    await etcd.connect();
+    opened.push({ client, connectCalls: client.calls.length });
+    return etcd as never;
+  });
+}
+
+describe("E6 through the edit-apply route (#1089, spec 3.6)", () => {
+  beforeEach(resetHarness);
+
+  test("a plan a read-write etcd provider built, posted with the same connection carrying readOnly: true, is refused and sends nothing", async () => {
+    // The plan token binds the server and not the mode, so the refusal is the read-only provider's that the
+    // route builds from the posted connection (spec 3.6 E6).
+    const opened: OpenedEtcd[] = [];
+    nextEtcdProvider(opened);
+    mockResolveConnection.mockResolvedValueOnce(ETCD);
+    const build = await POST_PLAN(
+      request({ connection: ETCD, path: ["/app/cfg"], kind: "key", partId: "value", text: "new" }),
+    );
+    expect(build.status).toBe(200);
+    const { built, plan, planToken } = await parseResponseJSON<{
+      built: boolean;
+      plan: ObjectEditPlan;
+      planToken: string;
+    }>(build);
+    expect(built).toBe(true);
+
+    const readOnly: DatabaseConnection = { ...ETCD, readOnly: true };
+    nextEtcdProvider(opened);
+    mockResolveConnection.mockResolvedValueOnce(readOnly);
+    const response = await POST(request({ connection: readOnly, plan, planToken }));
+    expect(response.status).toBe(200);
+    const outcome = await parseResponseJSON<ObjectEditOutcome>(response);
+    expect({ ...outcome, duration: 0 }).toEqual({
+      outcome: "refused",
+      refusal: { refusal: "privilege", sentence: readOnlySentence("connection"), at: { within: "none" } },
+      duration: 0,
+    });
+    const [, readOnlyProvider] = opened;
+    expect(readOnlyProvider.client.calls.slice(readOnlyProvider.connectCalls)).toEqual([]);
+
+    // The control: the same plan and token through the connection the plan was built on are applied, in one
+    // Txn, so the refusal above is the mode's and not the token's or the fake's.
+    nextEtcdProvider(opened);
+    mockResolveConnection.mockResolvedValueOnce(ETCD);
+    const applied = await parseResponseJSON<ObjectEditOutcome>(
+      await POST(request({ connection: ETCD, plan, planToken })),
+    );
+    expect(applied.outcome).toBe("applied");
+    const [, , writer] = opened;
+    expect(writer.client.calls.slice(writer.connectCalls).map((call) => call.method)).toEqual(["txn"]);
   });
 });

@@ -202,7 +202,10 @@ export function TestDataGenerator({
     if (!tableSchema?.columns) return [];
     return tableSchema.columns.map((col) => ({
       ...col,
-      faker: inferFakerType(col.name, col.type),
+      // The FAMILY where the provider reports one, and the declaration otherwise (#1033):
+      // MySQL and MariaDB report `enum('int','text')` in `type`, and every test below is a
+      // substring test, so the declaration alone types an ENUM of two words as a number.
+      faker: inferFakerType(col.name, col.baseType ?? col.type),
     }));
   }, [tableSchema]);
 
@@ -251,7 +254,7 @@ export function TestDataGenerator({
         // type alone: a value written unquoted IS statement grammar, so one that
         // does not look like a number is quoted and the engine gets to object
         // (PR #304 review).
-        const type = col.type.toLowerCase();
+        const type = (col.baseType ?? col.type).toLowerCase();
         if (type.includes("bool") && /^(true|false)$/i.test(val)) return val;
         if (
           (type.includes("int") ||

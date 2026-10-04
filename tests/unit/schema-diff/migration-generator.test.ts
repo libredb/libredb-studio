@@ -1,5 +1,9 @@
 import { describe, test, expect } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import { generateMigrationSQL } from "@/lib/schema-diff/migration-generator";
+import type { StoredObject } from "@/lib/db/detailed-object";
 import type { ColumnDiff, SchemaDiff } from "@/lib/schema-diff/types";
 import type { DatabaseType } from "@/lib/types";
 
@@ -315,6 +319,16 @@ describe("generateMigrationSQL: foreign keys in ALTER", () => {
   test("DROP FOREIGN KEY for removed FK (mysql)", () => {
     const sql = generateMigrationSQL(makeModifiedTableDiff(), "mysql");
     expect(sql).toContain("DROP FOREIGN KEY `fk_users_old_ref`");
+  });
+
+  // Db2 has neither `DROP CONSTRAINT IF EXISTS` nor `DROP INDEX IF EXISTS`: measured on Db2 LUW
+  // 12.1.0.0, both are SQL0104N at `EXISTS`, while the bare `ALTER TABLE "C" DROP CONSTRAINT
+  // "fk_c"` and `DROP INDEX "ix_c"` run (#786). So it takes Oracle's spelling of both.
+  test("Db2 drops a removed FK and a removed index without IF EXISTS", () => {
+    const sql = generateMigrationSQL(makeModifiedTableDiff(), "db2");
+    expect(sql).toContain('ALTER TABLE "users" DROP CONSTRAINT "fk_users_old_ref";');
+    expect(sql).toContain('DROP INDEX "idx_legacy";');
+    expect(sql).not.toContain("IF EXISTS");
   });
 
   test("SQLite FK drop produces comment", () => {
@@ -1015,6 +1029,9 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     postgres: "key-follows-in-an-alter",
     mysql: "key-follows-in-an-alter",
     oracle: "key-follows-in-an-alter",
+    // Measured on Db2 LUW 12.1.0.0 (#786): the trailing `ALTER TABLE … ADD CONSTRAINT … FOREIGN
+    // KEY … REFERENCES …` this arm emits runs.
+    db2: "key-follows-in-an-alter",
     mssql: "key-follows-in-an-alter",
     clickhouse: "engine-has-no-foreign-key",
     couchbase: "engine-has-no-foreign-key",
@@ -1027,6 +1044,14 @@ describe("generateMigrationSQL: SQLite's grammar declares a foreign key only ins
     redis: "engine-has-no-foreign-key",
     libredb: "engine-has-no-foreign-key",
     prometheus: "engine-has-no-foreign-key",
+    kafka: "engine-has-no-foreign-key",
+    etcd: "engine-has-no-foreign-key",
+    neo4j: "engine-has-no-foreign-key",
+    milvus: "engine-has-no-foreign-key",
+    qdrant: "engine-has-no-foreign-key",
+    influxdb: "engine-has-no-foreign-key",
+    influxdb3: "engine-has-no-foreign-key",
+    oxia: "engine-has-no-foreign-key",
   };
 
   for (const [dialectId, entry] of Object.entries(GRAMMAR)) {
@@ -1108,6 +1133,10 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   // pins the DDL rather than a comment.
   duckdb: "postgres-branch-measured",
   oracle: "has-own-branch",
+  // Db2 spells a retype `ALTER COLUMN … SET DATA TYPE`, which the PostgreSQL branch does not emit,
+  // and the change can leave the table REORG-pending, so the migration names it rather than
+  // carrying it (#786).
+  db2: { label: "Db2 LUW", reason: "may leave the table REORG-pending; write the change by hand." },
   mssql: "has-own-branch",
   clickhouse: "has-own-branch",
   couchbase: { label: "Couchbase", reason: "schemaless JSON documents" },
@@ -1134,6 +1163,25 @@ const MODIFIED_COLUMN_COVERAGE: Record<
   libredb: { label: "LibreDB", reason: "JSON command grammar" },
   // Not a table store (#1085): a metric is what scrapes and rules write, not a declared table.
   prometheus: { label: "Prometheus", reason: "written by scrapes and recording rules" },
+  // Not a table store (#1088): a topic holds messages, and its columns are a read's fixed shape.
+  kafka: { label: "Apache Kafka", reason: "not rows with declared columns" },
+  // Not a table store (#1089): a key-prefix group holds keys whose values are bytes.
+  etcd: { label: "etcd", reason: "not rows with declared columns" },
+  // Not a table store: a label groups nodes whose properties are not declared columns.
+  neo4j: { label: "Neo4j", reason: "not declared columns" },
+  // Not a table store either (vector-family spec 5.3): a collection's schema is declared through Milvus's own collection
+  // API, and the columns the object browser shows are its fields, which no SQL statement alters.
+  milvus: { label: "Milvus", reason: "Milvus's own collection API" },
+  // Not a table store either (vector-family spec 6.3): a collection holds points whose payloads are schemaless, and
+  // the columns the object browser shows are its vectors, its payload indexes and a sample of its payload keys.
+  qdrant: { label: "Qdrant", reason: "payloads are schemaless" },
+  // Not a table store either: a measurement's tags and fields come from the points written to it.
+  influxdb: { label: "InfluxDB (InfluxQL)", reason: "created by the points written to it" },
+  // A table's tags and fields come from the line protocol written to it, and the 3.x SQL takes no DDL.
+  influxdb3: { label: "InfluxDB 3 (SQL)", reason: "InfluxDB 3's SQL takes no DDL" },
+  // Not a table store either (SB2-4.3): a key holds opaque bytes, and the columns a read shows are a record's fixed
+  // shape, which nothing declares.
+  oxia: { label: "Oxia", reason: "has no schema, so there is no column definition to change" },
 };
 
 /**
@@ -1296,18 +1344,39 @@ describe("generateMigrationSQL: dialects that cannot modify a column", () => {
     test(`${dialect}: modified column emits a comment naming the limitation, never PostgreSQL DDL`, () => {
       const sql = generateMigrationSQL(makeModifiedTableDiff(), dialect as DatabaseType);
       if (
-        ["couchbase", "druid", "elasticsearch", "opensearch", "mongodb", "redis", "libredb", "prometheus"].includes(
-          dialect,
-        )
+        [
+          "couchbase",
+          "druid",
+          "elasticsearch",
+          "opensearch",
+          "mongodb",
+          "redis",
+          "libredb",
+          "prometheus",
+          "kafka",
+          "etcd",
+          "neo4j",
+          "milvus",
+          "qdrant",
+          "influxdb",
+          "influxdb3",
+          "oxia",
+        ].includes(dialect)
       ) {
         expect(sql).toContain(`-- ${expected.label}: Cannot generate table DDL.`);
       } else {
         expect(sql).toContain(`-- ${expected.label}: Cannot alter column "name".`);
       }
       expect(sql).toContain(expected.reason);
-      expect(sql).not.toContain("ALTER COLUMN");
-      expect(sql).not.toContain("MODIFY COLUMN");
-      expect(sql).not.toContain("MODIFY (");
+      // Statements only: Db2's reason names its own `ALTER COLUMN … SET DATA TYPE` in the comment,
+      // and what matters is that no STATEMENT carries a modification.
+      const statements = sql
+        .split("\n")
+        .filter((line) => !line.startsWith("--"))
+        .join("\n");
+      expect(statements).not.toContain("ALTER COLUMN");
+      expect(statements).not.toContain("MODIFY COLUMN");
+      expect(statements).not.toContain("MODIFY (");
     });
   }
 });
@@ -1330,13 +1399,14 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   duckdb: "BEGIN;",
   mssql: "BEGIN TRANSACTION;",
   oracle: false, // DDL commits implicitly; BEGIN starts a PL/SQL block.
+  db2: false, // no standalone `BEGIN;`: BEGIN opens a compound SQL block, the Oracle reason (#786)
   sqlite: false, // runs its own transaction (module docstring)
   libsql: false, // SQLite fork, same reasoning, plus its own Hrana-stream note (module docstring)
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
-  // The remaining ten each have a recorded reason for having no `BEGIN;` to emit, in this
+  // The remaining sixteen each have a recorded reason for having no `BEGIN;` to emit, in this
   // same module (`NO_COLUMN_MODIFICATION`), in `src/lib/sql/grammar.ts` (`NON_SQL_DIALECTS`)
   // or in the provider doc named on the line — this table applies those established facts to
-  // the wrapper fallback rather than asserting fresh ones, so none of the ten needs a new
+  // the wrapper fallback rather than asserting fresh ones, so none of the sixteen needs a new
   // live probe. What none of them means is "the wrapper bracketed nothing": see the
   // added-table fixture below.
   mongodb: false, // not SQL text at all (`NON_SQL_DIALECTS`); wrapping non-SQL in SQL statements is wrong regardless of Mongo's own transaction API
@@ -1349,6 +1419,14 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   opensearch: false, // same, measured separately on OpenSearch 3.8.0 (docs/providers/opensearch.md §9)
   trino: false, // connector-dependent at best; no portable BEGIN/COMMIT (NO_COLUMN_MODIFICATION)
   prometheus: false, // not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  kafka: false, // a JSON read request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  etcd: false, // an etcdctl command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  neo4j: false, // a Cypher statement, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  milvus: false, // a Milvus console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  qdrant: false, // a Qdrant console request, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  influxdb: false, // an InfluxQL statement, not SQL text at all (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
+  influxdb3: false, // SQL, but the 3.x planner takes no DDL, so there is no table DDL to wrap (`NO_TABLE_DDL`)
+  oxia: false, // an `oxia client` read command, not SQL text (`NON_SQL_DIALECTS`), and no table DDL to wrap (`NO_TABLE_DDL`)
 };
 
 // Both creation and modification paths must use the same wrapper policy.
@@ -1376,6 +1454,14 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
             "elasticsearch",
             "opensearch",
             "prometheus",
+            "kafka",
+            "etcd",
+            "neo4j",
+            "milvus",
+            "qdrant",
+            "influxdb",
+            "influxdb3",
+            "oxia",
           ].includes(dialect)
         ) {
           expect(sql).toMatch(/^CREATE TABLE /m);
@@ -1390,6 +1476,34 @@ describe("generateMigrationSQL: transaction wrapper by dialect", () => {
       });
     }
   }
+});
+
+/*
+  `NO_TABLE_DDL` and `NO_TRANSACTION_WRAPPER` agree, which the wrapper set's docblock claims for
+  `prometheus` and `kafka` and which no output can show: `NO_TABLE_DDL` declines the whole diff before
+  a wrapper is written, so an id missing from the wrapper set changes no text. Measured: dropping
+  either id from the wrapper set left every test above green. So the agreement is read from the
+  module's own declarations, the one place it exists.
+*/
+describe("the engines whose table DDL is declined take no wrapper either", () => {
+  const source = readFileSync(join(import.meta.dir, "../../../src/lib/schema-diff/migration-generator.ts"), "utf8");
+  const setMembers = (name: string): string[] => {
+    const declaration = new RegExp(
+      `const ${name}: ReadonlySet<DatabaseType> = new Set<DatabaseType>\\(\\[([^\\]]*)\\]\\);`,
+    );
+    const match = declaration.exec(source);
+    if (match === null) throw new Error(`${name} is not declared as a Set literal in migration-generator.ts`);
+    return [...match[1].matchAll(/"([a-z0-9]+)"/g)].map((member) => member[1]);
+  };
+
+  test("every id NO_TABLE_DDL declines is one NO_TRANSACTION_WRAPPER leaves unwrapped", () => {
+    const declined = setMembers("NO_TABLE_DDL");
+    const unwrapped = setMembers("NO_TRANSACTION_WRAPPER");
+    // The control that both literals were read: each names an id this file classifies above.
+    expect(declined).toContain("kafka");
+    expect(unwrapped).toContain("oracle");
+    expect(declined.filter((id) => !unwrapped.includes(id))).toEqual([]);
+  });
 });
 
 // ============================================================================
@@ -1576,5 +1690,119 @@ describe("generateMigrationSQL: a default is emitted as SQL, not as its value", 
   test("a dialect whose provider declares no SQL text is unchanged", () => {
     const sql = generateMigrationSQL(makeAddedColumnDiff({ targetDefault: "42" }), "postgres");
     expect(sql).toContain(`ADD COLUMN "note" varchar(20) DEFAULT 42;`);
+  });
+});
+
+describe("a MySQL column's declared type reaches the DDL (#1033)", () => {
+  /**
+   * The table `docker/mysql-init/01-object-fixture.sql` creates, as the provider now reads it
+   * back: `type` is the type AS DECLARED and `baseType` the family beside it.
+   *
+   * The generator interpolates `ColumnDiff.targetType` verbatim, and `diffSchemas` fills that
+   * field from `ColumnSchema.type`, so this asserts the whole path the issue names - provider
+   * reading, diff, generated statement - and not the generator alone.
+   */
+  const target: StoredObject[] = [
+    {
+      name: "column_types",
+      columns: [
+        { name: "c_varchar", type: "varchar(20)", baseType: "varchar", nullable: true, isPrimary: false },
+        { name: "c_decimal", type: "decimal(12,2)", baseType: "decimal", nullable: true, isPrimary: false },
+        { name: "c_char", type: "char(2)", baseType: "char", nullable: true, isPrimary: false },
+        { name: "c_enum", type: "enum('x','y')", baseType: "enum", nullable: true, isPrimary: false },
+        { name: "c_set", type: "set('a','b')", baseType: "set", nullable: true, isPrimary: false },
+        { name: "c_unsigned", type: "int unsigned", baseType: "int", nullable: true, isPrimary: false },
+        { name: "c_text", type: "text", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+
+  test("CREATE TABLE carries every length, precision, value list and attribute", () => {
+    const sql = generateMigrationSQL(diffSchemas([], target), "mysql");
+
+    expect(sql).toContain("`c_varchar` varchar(20)");
+    expect(sql).toContain("`c_decimal` decimal(12,2)");
+    expect(sql).toContain("`c_char` char(2)");
+    expect(sql).toContain("`c_enum` enum('x','y')");
+    expect(sql).toContain("`c_set` set('a','b')");
+    expect(sql).toContain("`c_unsigned` int unsigned");
+    expect(sql).toContain("`c_text` text");
+    // The defect this replaces: a bare family. `CREATE TABLE t (note varchar)` is error 1064
+    // on both servers, so a definition of exactly `varchar` is not DDL either engine accepts.
+    expect(sql).not.toMatch(/`c_varchar` varchar[^(]/);
+  });
+
+  test("ADD COLUMN carries them too, because one column reading feeds both", () => {
+    const source: StoredObject[] = [{ name: "column_types", columns: [], indexes: [] }];
+    const sql = generateMigrationSQL(diffSchemas(source, target), "mysql");
+
+    expect(sql).toContain("ADD COLUMN `c_varchar` varchar(20);");
+    expect(sql).toContain("ADD COLUMN `c_decimal` decimal(12,2);");
+    expect(sql).toContain("ADD COLUMN `c_enum` enum('x','y');");
+    expect(sql).toContain("ADD COLUMN `c_unsigned` int unsigned;");
+  });
+});
+
+describe("an Oracle column's declared type reaches the DDL (#1139)", () => {
+  /**
+   * Columns of the table `docker/oracle-init/01-object-fixture.sql` creates, as the provider
+   * now reads them back: `type` is the declaration built from `ALL_TAB_COLUMNS` and
+   * `baseType` is `DATA_TYPE` beside it.
+   *
+   * `diffSchemas` fills `ColumnDiff.targetType` from `ColumnSchema.type`, and the generator
+   * interpolates it verbatim, so this asserts the provider reading, the diff and the statement
+   * together.
+   */
+  const target: StoredObject[] = [
+    {
+      name: "COLUMN_TYPES",
+      columns: [
+        { name: "C_VARCHAR2", type: "VARCHAR2(20 BYTE)", baseType: "VARCHAR2", nullable: true, isPrimary: false },
+        { name: "C_VARCHAR2_CHAR", type: "VARCHAR2(20 CHAR)", baseType: "VARCHAR2", nullable: true, isPrimary: false },
+        { name: "C_NVARCHAR2", type: "NVARCHAR2(10)", baseType: "NVARCHAR2", nullable: true, isPrimary: false },
+        { name: "C_CHAR", type: "CHAR(2 BYTE)", baseType: "CHAR", nullable: true, isPrimary: false },
+        { name: "C_RAW", type: "RAW(16)", baseType: "RAW", nullable: true, isPrimary: false },
+        { name: "C_NUMBER_PS", type: "NUMBER(12,2)", baseType: "NUMBER", nullable: true, isPrimary: false },
+        { name: "C_NUMBER_STAR", type: "NUMBER(*,2)", baseType: "NUMBER", nullable: true, isPrimary: false },
+        { name: "C_FLOAT", type: "FLOAT(10)", baseType: "FLOAT", nullable: true, isPrimary: false },
+        { name: "C_TIMESTAMP", type: "TIMESTAMP(3)", nullable: true, isPrimary: false },
+        { name: "C_DATE", type: "DATE", nullable: true, isPrimary: false },
+        { name: "C_UROWID", type: "UROWID(100)", baseType: "UROWID", nullable: true, isPrimary: false },
+        // 26ai only, so it is not in the fixture: tests/live/oracle-column-type.ts creates it.
+        { name: "V_3_FLOAT32", type: "VECTOR(3,FLOAT32,DENSE)", baseType: "VECTOR", nullable: true, isPrimary: false },
+      ],
+      indexes: [],
+    },
+  ];
+
+  test("CREATE TABLE carries every length, precision and scale", () => {
+    const sql = generateMigrationSQL(diffSchemas([], target), "oracle");
+
+    expect(sql).toContain(`"C_VARCHAR2" VARCHAR2(20 BYTE)`);
+    expect(sql).toContain(`"C_VARCHAR2_CHAR" VARCHAR2(20 CHAR)`);
+    expect(sql).toContain(`"C_NVARCHAR2" NVARCHAR2(10)`);
+    expect(sql).toContain(`"C_CHAR" CHAR(2 BYTE)`);
+    expect(sql).toContain(`"C_RAW" RAW(16)`);
+    expect(sql).toContain(`"C_NUMBER_PS" NUMBER(12,2)`);
+    expect(sql).toContain(`"C_NUMBER_STAR" NUMBER(*,2)`);
+    expect(sql).toContain(`"C_FLOAT" FLOAT(10)`);
+    expect(sql).toContain(`"C_TIMESTAMP" TIMESTAMP(3)`);
+    expect(sql).toContain(`"C_DATE" DATE`);
+    // #1209: a bare UROWID is accepted, and creates a UROWID(4000).
+    expect(sql).toContain(`"C_UROWID" UROWID(100)`);
+    // A bare VECTOR is accepted too, and creates a VECTOR(*,*,DENSE).
+    expect(sql).toContain(`"V_3_FLOAT32" VECTOR(3,FLOAT32,DENSE)`);
+    // The defect this replaces: a bare DATA_TYPE. `CREATE TABLE t (x VARCHAR2)` is ORA-00906.
+    expect(sql).not.toMatch(/"C_VARCHAR2" VARCHAR2[^(]/);
+  });
+
+  test("ALTER TABLE ... ADD carries them too, because one column reading feeds both", () => {
+    const source: StoredObject[] = [{ name: "COLUMN_TYPES", columns: [], indexes: [] }];
+    const sql = generateMigrationSQL(diffSchemas(source, target), "oracle");
+
+    expect(sql).toContain(`ADD ("C_VARCHAR2" VARCHAR2(20 BYTE));`);
+    expect(sql).toContain(`ADD ("C_RAW" RAW(16));`);
+    expect(sql).toContain(`ADD ("C_NUMBER_PS" NUMBER(12,2));`);
   });
 });

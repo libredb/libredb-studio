@@ -14,6 +14,9 @@ import {
   compatibleEnginesFor,
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
+  isExternalDatabaseType,
+  MCP_EXPOSABLE,
+  READ_ONLY_ENFORCED,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
@@ -64,6 +67,7 @@ const COMPOSE_SERVICE_BY_ENGINE: Readonly<Record<string, string>> = {
   FerretDB: "ferretdb",
   ScyllaDB: "scylla",
   VictoriaMetrics: "victoriametrics",
+  Redpanda: "redpanda",
 };
 
 describe("wire-compatibility registry", () => {
@@ -312,7 +316,8 @@ describe("wire-compatibility registry", () => {
     const caveats = victoria?.caveats.join(" ") ?? "";
     expect(caveats).toContain("unsupported path requested");
     expect(caveats).toContain("does not serve the path");
-    expect(caveats).toContain("its own top ten");
+    // The Tables tab lists up to fifty there too, since the TSDB read sends topN beside limit.
+    expect(caveats).not.toContain("its own top ten");
     expect(caveats).toContain("shows its type and help");
     expect(caveats).toContain("has no scrapeInterval or scrapeTimeout");
     expect(caveats).toContain("1970-01-01T00:00:00Z");
@@ -334,6 +339,31 @@ describe("wire-compatibility registry", () => {
     ]) {
       expect(caveats).not.toContain(resolved);
     }
+  });
+
+  test("Redpanda is a full Kafka relative, recorded at the tier its live read-only check measured", () => {
+    // Probed 2026-09-25 against `redpandadata/redpanda:v26.2.2`, a single node seeded by
+    // docker/kafka/seed.sh and docker/kafka/seed-binary.ts, through a real KafkaProvider run by
+    // tests/live/kafka-read-only.ts --redpanda, with the single Apache Kafka 4.3.1 node as the
+    // baseline in the same pass (#1088 section 8). Every surface answered, with data wherever Kafka
+    // held data: the counts, the three listings and sources, a read in every `from` form, the four
+    // codecs, the transactional topic, the refusals, the three panels, the group listing and each
+    // group's lag against rpk's own, the forwarder and IPv6 checks, and the unchanged broker
+    // snapshot. So the tier is full, and the caveats name what reads differently from Kafka.
+    expect(SHIPPED_DATABASE_TYPES).toContain("kafka");
+    const relatives = compatibleEnginesFor("kafka");
+    expect(relatives.map((engine) => engine.name)).toEqual(["Redpanda"]);
+    const redpanda = relatives[0];
+    expect(redpanda?.via).toBe("kafka");
+    expect(redpanda?.tier).toBe("full");
+    expect(redpanda?.probedVersion).toBe("Redpanda v26.2.2");
+    // One pin per caveat the probe earned, so a caveat cannot be dropped or reworded away silently.
+    const caveats = redpanda?.caveats.join(" ") ?? "";
+    expect(caveats).toContain("max.connections");
+    expect(caveats).toContain("nine");
+    expect(caveats).toContain("usage percentage");
+    expect(caveats).toContain("ListGroups up to v4");
+    expect(redpanda?.caveats).toHaveLength(4);
   });
 
   test("every entry names a driver we actually ship", () => {
@@ -368,6 +398,78 @@ describe("wire-compatibility registry", () => {
 
   test("compatibleEnginesFor tolerates a type outside the shipped union", () => {
     expect(compatibleEnginesFor("not-a-database" as DatabaseType)).toEqual([]);
+  });
+
+  test("db2 ships as an external driver, with the posture Oracle has (#786)", () => {
+    // IBM Db2 LUW over DRDA. No relative is recorded: z/OS and IBM i speak the same protocol and
+    // are out of scope until a live probe has measured one.
+    expect(SHIPPED_DATABASE_TYPES).toContain("db2");
+    expect(EXTERNAL_DATABASE_TYPES).toContain("db2");
+    expect(compatibleEnginesFor("db2")).toEqual([]);
+    // The provider enforces no read-only mode, so `readOnly: true` is refused, and MCP is offered,
+    // both as on Oracle.
+    expect(READ_ONLY_ENFORCED.db2).toBe(false);
+    expect(MCP_EXPOSABLE.db2).toBe(true);
+  });
+
+  test("qdrant ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 6.7, 10.2)", () => {
+    // A server the user already runs, reached over its REST API. No relative is recorded: Qdrant Cloud speaks the
+    // same API and is claimed nowhere until a test cluster passes gate 4 (vector-family spec 6.2).
+    expect(SHIPPED_DATABASE_TYPES).toContain("qdrant");
+    expect(isExternalDatabaseType("qdrant")).toBe(true);
+    expect(compatibleEnginesFor("qdrant")).toEqual([]);
+    expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
+    expect(MCP_EXPOSABLE.qdrant).toBe(true);
+    // The counts of vector-family spec 10.2, from the sets they count, with Milvus, both InfluxDB types and Oxia
+    // shipped too: each adds one external engine and no relative.
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      27, 26, 28,
+    ]);
+    expect(connectableProductCount()).toBe(54);
+  });
+
+  test("milvus ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 5.7, 10.2)", () => {
+    // A server or cluster the user already runs, reached over its gRPC API. No relative is recorded: Zilliz Cloud
+    // speaks the same API and is claimed nowhere until a test cluster passes gate 4 (vector-family spec 5.2).
+    expect(SHIPPED_DATABASE_TYPES).toContain("milvus");
+    expect(isExternalDatabaseType("milvus")).toBe(true);
+    expect(compatibleEnginesFor("milvus")).toEqual([]);
+    expect(READ_ONLY_ENFORCED.milvus).toBe(true);
+    expect(MCP_EXPOSABLE.milvus).toBe(true);
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      27, 26, 28,
+    ]);
+    expect(connectableProductCount()).toBe(54);
+  });
+
+  test("influxdb and influxdb3 ship as external engines that keep the read-only mode and are offered to MCP (InfluxDB spec I2, I8, I13)", () => {
+    // Two servers the user already runs, one per query language, served from one provider directory. No relative is
+    // recorded: InfluxDB Cloud, Clustered and Enterprise 1.x are claimed nowhere until a gate-4 probe measures one.
+    for (const type of ["influxdb", "influxdb3"] as const) {
+      expect(SHIPPED_DATABASE_TYPES).toContain(type);
+      expect(isExternalDatabaseType(type)).toBe(true);
+      expect(compatibleEnginesFor(type)).toEqual([]);
+      expect(READ_ONLY_ENFORCED[type]).toBe(true);
+      expect(MCP_EXPOSABLE[type]).toBe(true);
+    }
+    // The union's 24 members plus the two and Oxia, less libredb; the relatives are unchanged.
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      27, 26, 28,
+    ]);
+    expect(connectableProductCount()).toBe(54);
+  });
+
+  test("oxia ships as an external engine that keeps the read-only mode and is not offered to MCP (SB3-1.2)", () => {
+    // A server or cluster the user already runs, reached over Oxia's gRPC client API; no relative is recorded.
+    expect(SHIPPED_DATABASE_TYPES).toContain("oxia");
+    expect(isExternalDatabaseType("oxia")).toBe(true);
+    expect(compatibleEnginesFor("oxia")).toEqual([]);
+    expect(READ_ONLY_ENFORCED.oxia).toBe(true);
+    expect(MCP_EXPOSABLE.oxia).toBe(false);
+    expect([SHIPPED_DATABASE_TYPES.length, EXTERNAL_DATABASE_TYPES.length, WIRE_COMPATIBLE_ENGINES.length]).toEqual([
+      27, 26, 28,
+    ]);
+    expect(connectableProductCount()).toBe(54);
   });
 
   test("duckdb ships as a driver and is a relative of nothing", () => {
@@ -463,5 +565,26 @@ describe("wire-compatibility registry", () => {
         expect(caveat.trim().length).toBeGreaterThan(0);
       }
     }
+  });
+});
+
+/**
+ * `MCP_EXPOSABLE` (#1089): which engines a seed connection may expose to MCP clients. The seed schema
+ * reads it before it accepts `mcp: true`, so it answers for every shipped type-id and nothing else,
+ * and no reader can change an answer at run time. The refusal it drives is pinned in
+ * `tests/unit/seed/types.test.ts`.
+ */
+describe("MCP_EXPOSABLE (#1089)", () => {
+  test("answers for every shipped type-id and for nothing else", () => {
+    expect(Object.keys(MCP_EXPOSABLE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+  });
+
+  test("is frozen, so no reader can offer or withdraw MCP for an engine at run time", () => {
+    expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
+  });
+
+  test("offers MCP for every shipped engine but etcd and oxia (#1089 E12, SB3-1.2 R10)", () => {
+    // An engine MCP is not offered for answers false with its registration, and is named here then.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type] !== true)).toEqual(["etcd", "oxia"]);
   });
 });

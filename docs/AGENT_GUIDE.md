@@ -45,7 +45,7 @@ Three controls elsewhere in the shell open it **carrying the statement in your e
 | Control | Where | What it does |
 | --- | --- | --- |
 | "Ask the agent about this query" | Command palette (`src/components/CommandPalette.tsx:134-137`) | Fills the objective with the editor's statement, and names the *Investigate* workflow for it |
-| "Ask about this query" | Mobile header (`src/components/studio/StudioMobileHeader.tsx:235-245`) | The same, and opens the sheet |
+| "Ask about this query" | Mobile header (`src/components/studio/StudioMobileHeader.tsx:272-282`) | The same, and opens the sheet |
 | "Agent" | Mobile nav (`src/components/Studio.tsx:857-863`) | Opens the rail and asks nothing |
 
 **The two that name a workflow name it under Advanced, and open that panel to show you.** The
@@ -214,8 +214,8 @@ having **no statistics**, never as empty. On SQLite the statistics exist only af
 
 **Every engine, read one of two ways.** On **PostgreSQL and SQLite** the server composes catalog
 statements and reads them through the same audited, read-only path an Agent run uses. On every other
-connection, which is the other sixteen (MySQL, Oracle, SQL Server, libSQL, DuckDB, MongoDB, Redis,
-ClickHouse, Couchbase, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Prometheus and the bundled LibreDB
+connection, which is the other twenty-five (MySQL, Oracle, Db2 LUW, SQL Server, libSQL, DuckDB, MongoDB, Redis,
+ClickHouse, Couchbase, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia and the bundled LibreDB
 store), it asks that connection's own provider to describe its schema, which is the reading the
 sidebar already performs when it lists your tables, and composes no statement at all. Grounding is
 no longer decided by the engine, and that changed in #414; what decides it now is whether the
@@ -228,7 +228,7 @@ workflow including **Operate**.
 now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding — every engine.** What a Plan run is TOLD about your database. It needs no read-only
-  statement path, because the provider reading sends no statement, so it reaches all eighteen engines.
+  statement path, because the provider reading sends no statement, so it reaches all twenty-seven engines.
 - **Agent mode — PostgreSQL, SQLite, DuckDB and SQL Server.** What a run may DO by itself. Its tools
   execute statements and need a database-native read-only path, which only those four providers implement, so a
   schema-workflow Agent run on any other engine still ends *"The agent cannot run on this database
@@ -242,12 +242,14 @@ inspection found and not proof that nothing else exists, and the plan is told so
 engines it works out a collection's fields from a **sample of your own documents**: no value from
 them is kept, but the existence of a field there is derived from your data rather than read from a
 catalog. The **estimated statistics** below are PostgreSQL's, SQLite's and SQL Server's alone; on the other
-fifteen the plan is told that this engine holds none it knows how to read, which means it has an
+twenty-four the plan is told that this engine holds none it knows how to read, which means it has an
 inventory and no sizes — the ordinary case now rather than a rare one.
 
 On an engine that speaks no SQL, a Plan run is asked for one statement or command **in that engine's
 own language** — a MongoDB aggregation rather than a SELECT — still in a block tagged with the
-engine's name, so **Apply to editor** still works. The two checks below behave differently there, and
+engine's name, so **Apply to editor** still works.
+On Oxia that is one `oxia client` read command (`get`, `list` or `range-scan`), in a block tagged `oxia`.
+The two checks below behave differently there, and
 the rail says which of them could not reach the draft; see *What is checked* further down. Operate used to be excluded on the reasoning that it asks the
 engine about itself rather than about your tables; what the reasoning missed is that the engine's
 answers are full of your table and index names — a lock is held on a table, an unused index is named,
@@ -316,7 +318,7 @@ inventory records what exists in the database, not what your role is permitted t
 **On engines that hold no tables, the plan is told what it is looking at.** Studio records every
 schema in one shape, and the word "table" is that shape's name rather than a claim about your
 database — so the prompt uses whatever your engine's provider calls its objects: collections on
-MongoDB, datasources on Druid, key patterns on Redis, key prefixes on LibreDB. On Redis and LibreDB
+MongoDB, datasources on Druid, key patterns on Redis, key prefixes on LibreDB. On Redis, LibreDB and etcd
 there is a further thing to say and the run is told it: the rows in that inventory are **groupings
 Studio computed**, by scanning a bounded part of the keyspace and collecting your real key names
 under their common prefix. `user:*` is not a key and no command can be given it. Without that
@@ -955,14 +957,14 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
   (`src/lib/db/factory.ts`), which the runtime reports as `engine-unsupported`
   (`src/lib/agent/runtime.ts`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts`). So on the other fourteen ids in the `DatabaseType` union
-  (`src/lib/types.ts`), an Agent-mode run cannot read anything: MySQL, Oracle, libSQL, MongoDB, Redis,
-  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Couchbase, Prometheus and LibreDB. That
+  (`src/components/agent/timeline.ts`). So on the other twenty-three ids in the `DatabaseType` union
+  (`src/lib/types.ts`), an Agent-mode run cannot read anything: MySQL, Oracle, Db2 LUW, libSQL, MongoDB, Redis,
+  ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, Cassandra, Couchbase, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Oxia and LibreDB. That
   last id is the bundled **LibreDB sample** connection, whose provider implements no `queryReadOnly`
   (`src/lib/db/providers/embedded/libredb.ts`) — the bundled **SQLite sample** is the seeded
   connection to try a run against (`src/lib/seed/sqlite-sample.ts:131`). **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
-  #414 its **grounding** no longer takes this path at all on the other sixteen: it asks the provider to
+  #414 its **grounding** no longer takes this path at all on the other twenty-five: it asks the provider to
   describe its schema, which needs no read-only statement profile, so a Plan run on MongoDB or MySQL
   is ordinarily grounded while an Agent run on the same connection still cannot read anything. Where
   the reading does fail — a provider that cannot describe itself, a description that overran its

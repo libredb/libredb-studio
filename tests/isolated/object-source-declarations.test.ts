@@ -81,11 +81,11 @@ import { CENSUS_CONNECTION } from "../helpers/census-connection";
  * The committed expectation, transcribed from the design's kind-declaration table, one entry
  * per type-id, each `<kind id>/<sourceLanguage>`.
  *
- * The two empty arrays are DECLARATIONS and not omissions. Druid publishes no `CREATE` text for
+ * The three empty arrays are DECLARATIONS and not omissions. Druid publishes no `CREATE` text for
  * a datasource or a system table at all, and its lookups live behind a Coordinator REST API this
  * provider's transport does not reach; the embedded store has no view, routine, trigger or index
  * anywhere in its export surface. Both were measured rather than assumed, and both provider docs
- * say so.
+ * say so. Neo4j's first version renders no definition text for any of its four kinds (spec 4.1).
  *
  * `plsql`, `tsql` and `cql` are absent on purpose: they are not language ids the installed editor
  * registers, so Oracle, SQL Server and Cassandra render under `sql`. That fact is guarded, from
@@ -110,6 +110,9 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
     "function/sql",
     "trigger/sql",
   ],
+  // A module holds routines and has no text of its own to read; an alias and a sequence are rows
+  // in the catalog rather than a stored definition (#786).
+  db2: ["view/sql", "materialized_query_table/sql", "procedure/sql", "function/sql", "trigger/sql"],
   mssql: ["view/sql", "procedure/sql", "function/sql", "trigger/sql"],
   clickhouse: ["table/sql", "view/sql", "materialized_view/sql", "dictionary/sql", "function/sql"],
   druid: [],
@@ -131,6 +134,26 @@ const SOURCE_DECLARATIONS: Readonly<Record<DatabaseType, readonly string[]>> = O
     "scrape_pool/json",
     "target/json",
   ],
+  // Every kind has a source, JSON the provider serialises from the broker's own answers, under the
+  // `rendered` origin (#1088 4.4).
+  kafka: ["topic/json", "consumer_group/json", "broker/json"],
+  // Every kind but the key-prefix group has a source, JSON under the declared language (#1089 4.4): a key's
+  // value and metadata, and a member's, a lease's, a user's and a role's answer, serialised by the provider.
+  etcd: ["key/json", "member/json", "lease/json", "user/json", "role/json"],
+  // No kind has a source in v1 (Neo4j spec 4.1): a label, a relationship type, an index and a constraint are
+  // listed and described, and the provider implements no readObjectSource.
+  neo4j: [],
+  // A collection's two-part Source, JSON under the declared language (vector-family spec 5.3).
+  milvus: ["collection/json"],
+  // A collection's two-part Source, JSON under the declared language (vector-family spec 6.3).
+  qdrant: ["collection/json"],
+  // No kind has a source in v1 (InfluxDB spec I11): a measurement and an InfluxDB 3 table are listed and described,
+  // and neither provider implements readObjectSource.
+  influxdb: [],
+  influxdb3: [],
+  // Both kinds have a source, JSON under the declared language (DECISIONS O13): a shard's answer and a key's
+  // record, serialised by the provider.
+  oxia: ["shard/json", "key/json"],
   libredb: [],
 });
 
@@ -150,7 +173,13 @@ const UNCONNECTED_SOURCE_KINDS: readonly string[] = CENSUS_TYPES.flatMap((type) 
  * It is also the third thing a new provider has to move, and `docs/ADDING_A_PROVIDER.md` says so:
  * the guard below asserts that the shipped checklist names every member of this list.
  */
-const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze(["druid", "libredb"]);
+const CENSUS_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
+  "druid",
+  "neo4j",
+  "influxdb",
+  "influxdb3",
+  "libredb",
+]);
 
 /** MariaDB's two extra kinds, which arrive only once the flavour has been measured. */
 const MARIADB_EXTRA_SOURCE_KINDS: readonly string[] = ["mysql/package/mysql", "mysql/sequence/mysql"];
@@ -214,7 +243,9 @@ describe("the fleet census of object source declarations", () => {
     // The population every assertion below iterates. If this were empty or short, each of those
     // loops would certify only the engines it happened to reach, so it is asserted first.
     expect([...CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(CENSUS_TYPES).toHaveLength(18);
+    // EXTERNAL_DATABASE_TYPES.length (26 with db2, neo4j, milvus, qdrant, influxdb, influxdb3 and oxia) plus the embedded
+    // store.
+    expect(CENSUS_TYPES).toHaveLength(27);
     expect(Object.keys(SOURCE_DECLARATIONS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
@@ -232,10 +263,13 @@ describe("the fleet census of object source declarations", () => {
     // `hasSource` moves between the two halves, so both halves must be pinned or the total alone
     // would still be satisfied. Neither half may be edited to match a build: if this fails, the
     // DECLARATION is wrong or the design's table is, and the repair is one of those two.
-    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(64);
-    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(64);
-    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(22);
-    expect(rows).toHaveLength(86);
+    expect(UNCONNECTED_SOURCE_KINDS).toHaveLength(81);
+    expect(rows.filter((row) => row.kind.hasSource === true)).toHaveLength(81);
+    // neo4j added four kinds, none source-bearing, db2 five source-bearing kinds and four others, milvus and
+    // qdrant one source-bearing kind each, influxdb and influxdb3 one kind each, neither source-bearing, and oxia
+    // two source-bearing kinds.
+    expect(rows.filter((row) => row.kind.hasSource !== true)).toHaveLength(33);
+    expect(rows).toHaveLength(114);
   });
 
   test("the MariaDB branch declares two more, which an unconnected provider cannot show", async () => {
@@ -261,10 +295,10 @@ describe("the fleet census of object source declarations", () => {
       [],
     );
     expect(mariadbRows.filter((row) => row.kind.hasSource === true)).toHaveLength(8);
-    // 66 on a MariaDB connection against 64 unconnected: the design states both numbers because
+    // 83 on a MariaDB connection against 81 unconnected: the design states both numbers because
     // criterion 2's evidence method reads an unconnected provider and would otherwise
     // structurally exclude the two riskiest declarations in the phase.
-    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(66);
+    expect(UNCONNECTED_SOURCE_KINDS.length + MARIADB_EXTRA_SOURCE_KINDS.length).toBe(83);
   });
 
   /*
@@ -325,7 +359,7 @@ describe("the fleet census of object source declarations", () => {
         .map((type) => String(type))
         .sort(),
     );
-    // Druid and the embedded store are the fleet's two abstainers, and both are deliberate: each
+    // Druid, Neo4j and the embedded store are the fleet's three abstainers, and each is deliberate: each
     // provider doc records what its engine publishes instead of a definition text.
     expect([...abstainers].sort()).toEqual([...CENSUS_ABSTAINERS].map(String).sort());
     expect(implementers.length + abstainers.length).toBe(CENSUS_TYPES.length);
@@ -350,7 +384,8 @@ describe("the fleet census of object source declarations", () => {
         throw new Error(`the half-declaration guard never reached ${extra}, so it does not cover the MariaDB branch`);
       }
     }
-    expect(rows).toHaveLength(94);
+    // 114 unconnected kinds plus the MariaDB branch's eight.
+    expect(rows).toHaveLength(122);
 
     const halfDeclared = rows
       .filter((row) => row.kind.sourceLanguage !== undefined && row.kind.hasSource !== true)
@@ -364,6 +399,111 @@ describe("the fleet census of object source declarations", () => {
       .filter((row) => row.kind.hasSource === true && row.kind.sourceLanguage === undefined)
       .map((row) => triple(row.type, row.kind));
     expect(languageless).toEqual([]);
+  });
+});
+
+/**
+ * THE KEY-BROWSER DECLARATION, held to its three conditions (#1089 3.4).
+ *
+ * `enumeratedBy: "key-browser"` takes a declared kind out of every walk over all kinds: the tree
+ * draws no folder for it, the `inventory` and `search` routes and the agent's grounding walk never
+ * list it, and only the Keys panel's activation reaches it, through `keyBrowserKind`. Three
+ * declarations would leave that kind reachable from nowhere, and each is refused by name here, where
+ * every provider's declaration is visible at once:
+ *
+ * - a second such kind, because a key opens ONE kind's Source tab, and `keyBrowserKind` would answer
+ *   the first and hide the other;
+ * - such a kind with no `hasSource`, because activating a key opens that kind's Source tab and there
+ *   would be nothing to read;
+ * - such a kind on capabilities with no `keyScan`, because then no Keys panel exists to enumerate it.
+ *
+ * `KEY_BROWSER_KINDS` is the committed expectation, one `<type-id>/<kind id>` per such kind, and the
+ * registration of an engine that declares one moves it. etcd's `key` (#1089 4.1) and Oxia's `key` (SB2-7.1) are
+ * the two such kinds, and the planted declarations are what show each rule refuses what it names.
+ */
+const KEY_BROWSER_KINDS: readonly string[] = Object.freeze(["etcd/key", "oxia/key"]);
+
+/** The breaches of the three conditions above in one declaration, one sentence each. */
+function keyBrowserBreaches(type: string, capabilities: ProviderCapabilities): readonly string[] {
+  const browsed = declaredKinds(capabilities).filter((kind) => kind.enumeratedBy !== undefined);
+  const ids = browsed.map((kind) => kind.id).join(", ");
+  const breaches: string[] = [];
+  if (browsed.length > 1) {
+    breaches.push(
+      `${type} declares ${browsed.length} kinds enumeratedBy "key-browser" (${ids}), and the Keys panel opens one`,
+    );
+  }
+  for (const kind of browsed) {
+    if (kind.hasSource !== true) {
+      breaches.push(
+        `${type}/${kind.id} is enumeratedBy "key-browser" and declares no hasSource, so activating a key opens nothing`,
+      );
+    }
+  }
+  if (browsed.length > 0 && capabilities.keyScan === undefined) {
+    breaches.push(`${type} declares ${ids} enumeratedBy "key-browser" and no keyScan, so no Keys panel enumerates it`);
+  }
+  return breaches;
+}
+
+describe("the key-browser declaration", () => {
+  test("the fleet declares exactly the committed key-browser kinds, and no declaration breaches the rules", async () => {
+    const rows = await censusKinds();
+    // The zero-iteration case certifies nothing, so it is refused by name, as the census above does.
+    if (rows.length === 0) {
+      throw new Error("the key-browser census inspected 0 kinds, so it certifies nothing about the fleet");
+    }
+    expect(
+      rows.filter((row) => row.kind.enumeratedBy !== undefined).map((row) => `${row.type}/${row.kind.id}`),
+    ).toEqual([...KEY_BROWSER_KINDS]);
+    const breaches: string[] = [];
+    for (const type of CENSUS_TYPES) {
+      const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
+      breaches.push(...keyBrowserBreaches(type, capabilities));
+    }
+    expect(breaches).toEqual([]);
+  });
+
+  // PLANTED declarations, because the fleet's one declaration of this shape keeps all three rules, so without
+  // them each rule would be certified by nothing but a declaration that keeps it.
+  const PREFIX: ObjectKindSpec = { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes" };
+  const KEY: ObjectKindSpec = {
+    id: "key",
+    role: "config",
+    label: "Key",
+    labelPlural: "Keys",
+    enumeratedBy: "key-browser",
+    hasSource: true,
+    sourceLanguage: "json",
+  };
+  const keyValue = (kinds: readonly ObjectKindSpec[], withKeyScan = true): ProviderCapabilities =>
+    ({
+      queryLanguage: "json",
+      containerLevels: [],
+      ...(withKeyScan ? { keyScan: { defaultCount: 500, maxCount: 1000 } } : {}),
+      objectKinds: kinds,
+    }) as unknown as ProviderCapabilities;
+
+  test("a declaration that meets all three rules has no breach, the control for the three below", () => {
+    expect(keyBrowserBreaches("kv", keyValue([PREFIX, KEY]))).toEqual([]);
+  });
+
+  test("a second key-browser kind is refused by name", () => {
+    expect(keyBrowserBreaches("kv", keyValue([PREFIX, KEY, { ...KEY, id: "value" }]))).toEqual([
+      'kv declares 2 kinds enumeratedBy "key-browser" (key, value), and the Keys panel opens one',
+    ]);
+  });
+
+  test("a key-browser kind with no hasSource is refused by name", () => {
+    expect(
+      keyBrowserBreaches("kv", keyValue([PREFIX, { ...KEY, hasSource: undefined, sourceLanguage: undefined }])),
+    ).toEqual(['kv/key is enumeratedBy "key-browser" and declares no hasSource, so activating a key opens nothing']);
+  });
+
+  test("a key-browser kind on capabilities with no keyScan is refused by name", () => {
+    expect(keyBrowserBreaches("kv", keyValue([PREFIX, KEY], false))).toEqual([
+      'kv declares key enumeratedBy "key-browser" and no keyScan, so no Keys panel enumerates it',
+    ]);
   });
 });
 

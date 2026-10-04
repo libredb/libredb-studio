@@ -19,6 +19,11 @@ NestedInstallerFiles:
     PortableCommandAlias: libredb-studio
 Commands:
   - libredb-studio
+# The Db2 driver's win32-x64-msvc addon imports VCRUNTIME140.dll (#786), which
+# a clean Windows install does not carry.
+Dependencies:
+  PackageDependencies:
+    - PackageIdentifier: Microsoft.VCRedist.2015+.x64
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/libredb/libredb-studio/releases/download/{{VERSION}}/libredb-studio-standalone-{{VERSION}}-win32-x64.zip

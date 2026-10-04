@@ -1,0 +1,240 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "DescribeCollection",
+    "user": "nobody",
+    "surface": "DescribeCollection as nobody",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "virtual_channel_names": [
+      "by-dev-rootcoord-dml_0_469506719193499070v0"
+    ],
+    "physical_channel_names": [
+      "by-dev-rootcoord-dml_0"
+    ],
+    "aliases": [],
+    "start_positions": [],
+    "properties": [
+      {
+        "key": "timezone",
+        "value": "UTC"
+      },
+      {
+        "key": "namespace.sharding.enabled",
+        "value": "false"
+      },
+      {
+        "key": "max_field_id",
+        "value": "107"
+      }
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "schema": {
+      "fields": [
+        {
+          "type_params": [],
+          "index_params": [],
+          "fieldID": "100",
+          "name": "id",
+          "is_primary_key": true,
+          "description": "",
+          "data_type": "Int64",
+          "autoID": true,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [],
+          "index_params": [],
+          "fieldID": "101",
+          "name": "seq",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "Int64",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [
+            {
+              "key": "dim",
+              "value": "8"
+            }
+          ],
+          "index_params": [],
+          "fieldID": "102",
+          "name": "vec",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "FloatVector",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [
+            {
+              "key": "max_length",
+              "value": "256"
+            }
+          ],
+          "index_params": [],
+          "fieldID": "103",
+          "name": "title",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "VarChar",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [],
+          "index_params": [],
+          "fieldID": "104",
+          "name": "meta",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "JSON",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [
+            {
+              "key": "max_capacity",
+              "value": "8"
+            }
+          ],
+          "index_params": [],
+          "fieldID": "105",
+          "name": "tags",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "Array",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "Int64",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [],
+          "index_params": [],
+          "fieldID": "106",
+          "name": "maybe_count",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "Int32",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": true,
+          "is_function_output": false,
+          "external_field": ""
+        }
+      ],
+      "properties": [
+        {
+          "key": "timezone",
+          "value": "UTC"
+        },
+        {
+          "key": "namespace.sharding.enabled",
+          "value": "false"
+        },
+        {
+          "key": "max_field_id",
+          "value": "107"
+        }
+      ],
+      "functions": [],
+      "struct_array_fields": [],
+      "file_resource_ids": [],
+      "name": "docs_int64",
+      "description": "int64 auto_id key, scalar fields of every kind, a dynamic field",
+      "autoID": false,
+      "enable_dynamic_field": true,
+      "dbName": "default",
+      "version": 0,
+      "external_source": "",
+      "external_spec": "",
+      "do_physical_backfill": false,
+      "enable_namespace": false
+    },
+    "collectionID": "469506719193499070",
+    "created_timestamp": "469506742749233170",
+    "created_utc_timestamp": "1791026087758",
+    "shards_num": 1,
+    "consistency_level": "Bounded",
+    "collection_name": "docs_int64",
+    "db_name": "default",
+    "num_partitions": "3",
+    "db_id": "1",
+    "request_time": "0",
+    "update_timestamp": "469506742749233170",
+    "update_timestamp_str": "469506742749233170"
+  }
+}

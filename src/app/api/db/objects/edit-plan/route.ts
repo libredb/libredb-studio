@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import {
   ObjectRouteError,
   handleObjectRequest,
-  readBoundedJson,
+  readObjectRouteBody,
   requireObjectPath,
   requireString,
 } from "@/lib/api/object-route";
@@ -52,7 +52,7 @@ export const dynamic = "force-dynamic";
  * two of the three day-one engines, and Redis was NOT probed, so for Redis the ruling is inherited
  * rather than measured and the plan token is doing real work there.
  *
- * `readBoundedJson` rather than the handler's default body read, because the default answers
+ * `readObjectRouteBody` rather than the handler's default body read, because the default answers
  * `{ error: "Empty request body" }` at 400 for a body the framework TRUNCATED at 10,485,760 bytes.
  * A caller reading that sentence has no way to learn that the fix is to send less.
  */
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
       const partId = requireString(body, "partId");
       const text = requireString(body, "text");
 
-      // The CHARACTER bound and not the byte bound: `readBoundedJson` above has already held the
+      // The CHARACTER bound and not the byte bound: `readObjectRouteBody` above has already held the
       // whole body to `EDIT_BODY_BYTE_LIMIT`, and this is the separate question of how long ONE
       // part may be. The two are different numbers for a measured reason: one part of 1,000,000
       // UTF-16 code units is up to 6 MB once JSON-escaped, so a body inside the byte bound can
@@ -162,6 +162,6 @@ export async function POST(req: NextRequest) {
       // 4. THE MINT, last, so no token is ever issued for a plan this route would not accept back.
       return { built: true, plan, preimage: answer.preimage, planToken: await mintPlanToken(plan) };
     },
-    { readBody: (request) => readBoundedJson(request, EDIT_BODY_BYTE_LIMIT) },
+    { readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
   );
 }

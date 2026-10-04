@@ -144,8 +144,12 @@ const STATUS_ORDER = { live: 0, pending: 1, deprecated: 2 };
  * its submission is an upstream pull request that a human merges, the first
  * listing in a catalog is manual, and the token it needs may be absent - none
  * of which should paint a release run red.
+ *
+ * `aur` qualifies on the same grounds (#971): the push needs an AUR account
+ * and its SSH key, and the account can only be registered by a person.
  */
 export const SWITCHABLE_CHANNEL_IDS = new Set([
+  "aur",
   "docker-hub-mirror",
   "homebrew",
   "snap",
@@ -496,6 +500,16 @@ export function parseChannels(yamlText) {
 }
 
 /**
+ * Whether release CI may publish this switchable channel: the flag says it
+ * should, and the status says there is a listing to publish to. A pending
+ * channel (staged before its account or listing exists, as the AUR was, #971)
+ * or a deprecated one is never published, so going live is the switch.
+ */
+export function ciPublishes(channel) {
+  return channel.status === "live" && channel.update.ci_enabled === true;
+}
+
+/**
  * `<name>=<bool>` lines for $GITHUB_OUTPUT, one per switchable channel present.
  * Dashes become underscores because a GitHub expression cannot dot-access an
  * output name that contains one.
@@ -503,7 +517,7 @@ export function parseChannels(yamlText) {
 export function ciEnabledOutputs(channels) {
   return channels
     .filter((channel) => SWITCHABLE_CHANNEL_IDS.has(channel.id))
-    .map((channel) => `${channel.id.replaceAll("-", "_")}=${channel.update.ci_enabled}`);
+    .map((channel) => `${channel.id.replaceAll("-", "_")}=${ciPublishes(channel)}`);
 }
 
 /**
@@ -911,7 +925,7 @@ async function main(argv) {
       console.error(`ERROR: channel '${ciId}' is not in ${CHANNELS_YAML}`);
       process.exit(2);
     }
-    console.log(String(channel.update.ci_enabled));
+    console.log(String(ciPublishes(channel)));
     return;
   }
 

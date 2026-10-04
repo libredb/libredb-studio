@@ -273,6 +273,55 @@ describe("the plan digest", () => {
     expect(await digestPlan(retyped)).not.toBe(await digestPlan(base));
   });
 
+  /**
+   * The command arm's two optional fields (etcd spec 3.4, 4.5), sealed by the walk as it stands.
+   *
+   * The walk sorts and descends into every own key of the unit, so `trailing`, whose tokens etcd
+   * receives, and `payloadLabel`, which names the payload in the preview, are leaves with no change
+   * to it, and `planVersion` stays 1. This proves that over the leaves the walk itself reports, so
+   * a later walk driven from a fixed key list that forgets either field fails here by name.
+   */
+  test("a command unit's trailing tokens and payload label are sealed, each leaf and each key", async () => {
+    const commandPlan = (): ObjectEditPlan => ({
+      ...plan(),
+      unit: {
+        medium: "command",
+        name: "leaf-name",
+        arguments: ["leaf-argument"],
+        payload: { text: "leaf-payload", language: "json", segments: [{ from: "user", start: 0, end: 12 }] },
+        trailing: ["leaf-trailing-0", "leaf-trailing-1"],
+        payloadLabel: "leaf-payload-label",
+      },
+    });
+    const paths = planDigestLeaves(commandPlan()).map((leaf) => leaf.path);
+    const added = paths.filter((path) => path.startsWith("unit.trailing") || path.startsWith("unit.payloadLabel"));
+    expect(added).toEqual(["unit.payloadLabel", "unit.trailing.length", "unit.trailing.0", "unit.trailing.1"]);
+
+    const baseline = await digestPlan(commandPlan());
+    const tampered = await Promise.all(
+      [...added, "unit.keys"].map(async (path) => {
+        const mutated = commandPlan() as unknown as Record<string, unknown>;
+        tamper(mutated, path);
+        return { path, digest: await digestPlan(mutated as unknown as ObjectEditPlan) };
+      }),
+    );
+    expect(tampered.filter((entry) => entry.digest === baseline).map((entry) => entry.path)).toEqual([]);
+
+    // Dropping either field whole is visible too, and a minted token refuses the plan without it.
+    const without = (field: "trailing" | "payloadLabel"): ObjectEditPlan => {
+      const stripped = commandPlan() as unknown as { unit: Record<string, unknown> };
+      delete stripped.unit[field];
+      return stripped as unknown as ObjectEditPlan;
+    };
+    const token = await mintPlanToken(commandPlan());
+    expect(await verifyPlanToken(token, commandPlan(), FINGERPRINT)).toEqual({ valid: true });
+    const refused = { valid: false, reason: "this preview no longer matches the plan it was issued for" };
+    const verdicts = await Promise.all(
+      [without("trailing"), without("payloadLabel")].map((stripped) => verifyPlanToken(token, stripped, FINGERPRINT)),
+    );
+    expect(verdicts).toEqual([refused, refused]);
+  });
+
   test("the leaves include the places the bytes actually live", async () => {
     const paths = planDigestLeaves(plan()).map((leaf) => leaf.path);
     for (const required of [

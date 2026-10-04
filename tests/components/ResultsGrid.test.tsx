@@ -96,6 +96,8 @@ mock.module("@/components/results-grid/ResultCard", () => ({
         // The card decides its own preview fields from this list, so what it is HANDED is
         // the whole of the question here (#870).
         "data-fields": (props.fields as string[]).join(","),
+        // What the card is handed about vector columns, which it reads per preview field.
+        "data-vector-columns": JSON.stringify(props.vectorColumns ?? null),
       },
       React.createElement(
         "button",
@@ -114,7 +116,11 @@ mock.module("@/components/results-grid/RowDetailSheet", () => ({
     props.isOpen
       ? React.createElement(
           "div",
-          { "data-testid": "row-detail-sheet", "data-row-index": String(props.rowIndex) },
+          {
+            "data-testid": "row-detail-sheet",
+            "data-row-index": String(props.rowIndex),
+            "data-vector-columns": JSON.stringify(props.vectorColumns ?? null),
+          },
           "Row Detail",
         )
       : null,
@@ -255,6 +261,7 @@ mock.module("lucide-react", () => {
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, fireEvent, cleanup, act, waitFor, within } from "@testing-library/react";
 import { ResultsGrid, type CellChange } from "@/components/ResultsGrid";
+import { getHeaderFitColumnSize } from "@/components/results-grid/column-sizing";
 import type { QueryResult } from "@/lib/types";
 
 // ── Test data ───────────────────────────────────────────────────────────────
@@ -336,6 +343,17 @@ function findDesktopRow(container: HTMLElement, text: string): HTMLElement | und
   ).find((row) => row.textContent?.includes(text));
 }
 
+function findDesktopHeader(container: HTMLElement, field: string): HTMLElement {
+  const header = Array.from(container.querySelectorAll<HTMLElement>("[data-desktop-grid] .cursor-col-resize"))
+    .map((handle) => handle.parentElement)
+    .find((candidate) =>
+      candidate?.querySelector<HTMLButtonElement>("button")?.getAttribute("aria-label")?.startsWith(field),
+    );
+
+  if (!header) throw new Error(`Could not find the desktop header for ${field}`);
+  return header;
+}
+
 // =============================================================================
 // ResultsGrid Tests
 // =============================================================================
@@ -389,6 +407,41 @@ describe("ResultsGrid", () => {
     expect(getAllByRole("button", { name: "id" }).length).toBeGreaterThan(0);
     expect(getAllByRole("button", { name: "name" }).length).toBeGreaterThan(0);
     expect(getAllByRole("button", { name: "email" }).length).toBeGreaterThan(0);
+  });
+
+  test("sizes desktop result columns from field names, not cell values", () => {
+    const result: QueryResult = {
+      rows: [{ id: "a very long value that must not affect the initial width", name: "x" }],
+      fields: ["id", "name"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container } = render(React.createElement(ResultsGrid, { result }));
+
+    expect(findDesktopHeader(container, "id").style.width).toBe(`${getHeaderFitColumnSize("id")}px`);
+    expect(findDesktopHeader(container, "name").style.width).toBe(`${getHeaderFitColumnSize("name")}px`);
+
+    cleanup();
+
+    const shortValueResult: QueryResult = {
+      ...result,
+      rows: [{ id: "1", name: "short" }],
+    };
+    const shortValueRender = render(React.createElement(ResultsGrid, { result: shortValueResult }));
+    expect(findDesktopHeader(shortValueRender.container, "id").style.width).toBe(`${getHeaderFitColumnSize("id")}px`);
+    expect(findDesktopHeader(shortValueRender.container, "name").style.width).toBe(
+      `${getHeaderFitColumnSize("name")}px`,
+    );
+
+    const longField = "x".repeat(200);
+    const longFieldRender = render(
+      React.createElement(ResultsGrid, {
+        result: { ...result, fields: [longField], rows: [{ [longField]: "short" }] },
+      }),
+    );
+    expect(
+      findDesktopHeader(longFieldRender.container, longField).querySelector("span.truncate")?.getAttribute("title"),
+    ).toBe(longField);
   });
 
   // ── 3. Renders data rows from result.rows ─────────────────────────────────
@@ -564,6 +617,114 @@ describe("ResultsGrid", () => {
     await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith("Charles"));
   });
 
+  test("Copy Cell on a bytea value copies the whole value, not the cell's preview", async () => {
+    // Reproduces the defect first: the grid cell shows the first 32 bytes and the size, and Copy Cell used to
+    // copy that preview, 77 characters for a 100-byte value, which no reader could paste back as the value.
+    const bytes = Array.from({ length: 100 }, (_, index) => index);
+    const hex = bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const preview = `\\x${hex.slice(0, 64)}... (100 B)`;
+    const result: QueryResult = {
+      rows: [{ id: 1, payload: { type: "Buffer", data: bytes } }],
+      fields: ["id", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+      columnTypes: { id: "int4", payload: "bytea" },
+    };
+    expect(preview).toHaveLength(77);
+
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    for (const mode of ["desktop", "mobile"] as const) {
+      mockClipboardWriteText.mockClear();
+      const contextMenu = findContextMenuForMode(container, preview, mode);
+      fireEvent.contextMenu(within(contextMenu).getByText(preview));
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+      // oxlint-disable-next-line no-await-in-loop -- one copy per table, each read from a cleared clipboard mock.
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(`\\x${hex}`));
+    }
+  });
+
+  describe("vector columns (vector-family spec 3.10)", () => {
+    const DIMENSION = 768;
+    const embedding = Array.from({ length: DIMENSION }, (_, index) => ((index % 9) - 4) / 4);
+    const DISPLAY = "[-1.0, -0.75, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, …] 768 dims";
+    const COPY = `[${embedding.map((value) => (Number.isInteger(value) ? value.toFixed(1) : String(value))).join(",")}]`;
+    const vectorResult: QueryResult = {
+      rows: [{ id: 1, embedding }],
+      fields: ["id", "embedding"],
+      rowCount: 1,
+      executionTime: 1,
+      vectorColumns: { embedding: { kind: "dense", dtype: "float32", dimension: DIMENSION } },
+    };
+
+    test("a declared vector column draws the vector cell in the desktop and the mobile table", () => {
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: vectorResult }));
+      fireEvent.click(getByTestId("view-table"));
+      expect(within(findContextMenuForMode(container, DISPLAY, "desktop")).getByText(DISPLAY)).not.toBeNull();
+      expect(within(findContextMenuForMode(container, DISPLAY, "mobile")).getByText(DISPLAY)).not.toBeNull();
+    });
+
+    test("Copy Cell on a declared vector cell copies the whole value as compact JSON", async () => {
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: vectorResult }));
+      fireEvent.click(getByTestId("view-table"));
+      for (const mode of ["desktop", "mobile"] as const) {
+        mockClipboardWriteText.mockClear();
+        const contextMenu = findContextMenuForMode(container, DISPLAY, mode);
+        fireEvent.contextMenu(within(contextMenu).getByText(DISPLAY));
+        fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+        // oxlint-disable-next-line no-await-in-loop -- one copy per table, each read from a cleared clipboard mock.
+        await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(COPY));
+      }
+    });
+
+    test("the same array in a column the result does not declare draws and copies as the JSON it was", async () => {
+      const json = JSON.stringify(embedding);
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, { result: { ...vectorResult, vectorColumns: undefined } }),
+      );
+      fireEvent.click(getByTestId("view-table"));
+      const contextMenu = findContextMenuForMode(container, json, "desktop");
+      fireEvent.contextMenu(within(contextMenu).getByText(json));
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(json));
+    });
+
+    test("a masked vector column shows and copies its mask, never the vector", async () => {
+      mockShouldMask.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["embedding", "custom"]]));
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, { result: vectorResult, maskingEnabled: true }),
+      );
+      fireEvent.click(getByTestId("view-table"));
+      const contextMenu = findContextMenuForMode(container, "***", "desktop");
+      expect(within(contextMenu).queryByText(DISPLAY)).toBeNull();
+      fireEvent.contextMenu(within(contextMenu).getByText("***"));
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Cell" }));
+      await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith("***"));
+    });
+
+    test("a column named like an Object.prototype member is not taken for a declared vector", () => {
+      const result: QueryResult = {
+        rows: [{ constructor: [1, 2] }],
+        fields: ["constructor"],
+        rowCount: 1,
+        executionTime: 1,
+        vectorColumns: vectorResult.vectorColumns,
+      };
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+      fireEvent.click(getByTestId("view-table"));
+      expect(within(findContextMenuForMode(container, "[1,2]", "desktop")).getByText("[1,2]")).not.toBeNull();
+    });
+
+    test("the card view and the row detail are handed the result's vector columns", () => {
+      const declared = JSON.stringify(vectorResult.vectorColumns);
+      const { getAllByTestId, getByTestId } = render(React.createElement(ResultsGrid, { result: vectorResult }));
+      expect(getAllByTestId("result-card")[0].getAttribute("data-vector-columns")).toBe(declared);
+      fireEvent.click(getAllByTestId("result-card-content")[0]);
+      expect(getByTestId("row-detail-sheet").getAttribute("data-vector-columns")).toBe(declared);
+    });
+  });
+
   test("offers no cell action for the row-detail column", () => {
     // That column holds a control, not a value, so there is nothing in it to copy.
     const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
@@ -609,6 +770,77 @@ describe("ResultsGrid", () => {
     fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
 
     await waitFor(() => expect(mockClipboardWriteText).toHaveBeenCalledWith(JSON.stringify(row, null, 2)));
+  });
+
+  // The cell shows `\x` hex, and the copied row used to carry the Buffer form instead,
+  // one number per byte (#1381). The row copies what the grid and the CSV show.
+  test("copies a binary cell as the hex the grid shows, not as the Buffer form", async () => {
+    const result: QueryResult = {
+      rows: [{ name: "Blob", payload: { type: "Buffer", data: [0xde, 0xad, 0x00, 0xff] } }],
+      fields: ["name", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Blob", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Blob"));
+    fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Blob", payload: "\\xdead00ff" }, null, 2),
+      ),
+    );
+  });
+
+  // `JSON.stringify` throws on a bigint, which took the copy down with no clipboard
+  // write and no toast; the row now goes through `jsonText`, which writes the digits.
+  test("copies a bigint cell as its digits instead of throwing", async () => {
+    const result: QueryResult = {
+      rows: [{ name: "Big", n: BigInt("9007199254740993") }],
+      fields: ["name", "n"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Big", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Big"));
+    expect(() =>
+      fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" })),
+    ).not.toThrow();
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Big", n: "9007199254740993" }, null, 2),
+      ),
+    );
+  });
+
+  test("copies an unmasked binary cell as hex when masking is active", async () => {
+    mockShouldMask.mockReturnValue(true);
+    mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["email", "email"]]));
+    const result: QueryResult = {
+      rows: [{ name: "Blob", email: "a@b.c", payload: { type: "Buffer", data: [0x00, 0xff] } }],
+      fields: ["name", "email", "payload"],
+      rowCount: 1,
+      executionTime: 1,
+    };
+    const { container, getByTestId } = render(React.createElement(ResultsGrid, { result, maskingEnabled: true }));
+    fireEvent.click(getByTestId("view-table"));
+    const contextMenu = findContextMenuForMode(container, "Blob", "mobile");
+
+    fireEvent.contextMenu(within(contextMenu).getByText("Blob"));
+    fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Copy Row as JSON" }));
+
+    await waitFor(() =>
+      expect(mockClipboardWriteText).toHaveBeenCalledWith(
+        JSON.stringify({ name: "Blob", email: "***", payload: "\\x00ff" }, null, 2),
+      ),
+    );
   });
 
   test("copies masked mobile-table cell and row values when masking is active", async () => {
@@ -1219,6 +1451,132 @@ describe("ResultsGrid", () => {
       expect(queryAllByPlaceholderText(/^Filter /).length).toBeGreaterThan(0);
     });
 
+    /**
+     * A filter belongs to the result it was typed against (#1409). A different query in the
+     * same tab used to inherit it, and a column the new rows lack reads as "" so every row
+     * was hidden while the strip still reported the real count.
+     */
+    test("a new result without the filtered column starts unfiltered", () => {
+      const { container, getByTestId, rerender } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      fireEvent.click(getByTestId("view-table"));
+      fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[1]);
+      fireEvent.change(container.querySelector('input[placeholder="Filter name..."]')!, { target: { value: "Alice" } });
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain("1 filtered");
+
+      const other: QueryResult = {
+        rows: [{ sku: "a" }, { sku: "b" }],
+        fields: ["sku"],
+        rowCount: 2,
+        executionTime: 1,
+      };
+      rerender(React.createElement(ResultsGrid, { result: other }));
+
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain("2 filtered");
+      expect(container.querySelector('[data-testid="clear-filters"]')).toBeNull();
+    });
+
+    test("filter matching folds the Turkish dotted and dotless I", () => {
+      const turkish: QueryResult = {
+        rows: [{ city: "İzmir" }, { city: "IZMIR" }, { city: "ızmir" }, { city: "Ankara" }],
+        fields: ["city"],
+        rowCount: 4,
+        executionTime: 1,
+      };
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: turkish }));
+      fireEvent.click(getByTestId("view-table"));
+      fireEvent.click(container.querySelector('button[title="Filter column"]')!);
+      const input = () => container.querySelector('input[placeholder="Filter city..."]')!;
+      const count = () => container.querySelector('[data-testid="filtered-count"]')?.textContent;
+
+      fireEvent.change(input(), { target: { value: "izmir" } });
+      expect(count()).toContain("3 filtered");
+      fireEvent.change(input(), { target: { value: "İZMİR" } });
+      expect(count()).toContain("3 filtered");
+      fireEvent.change(input(), { target: { value: "ANK" } });
+      expect(count()).toContain("1 filtered");
+    });
+
+    test("filter matching keeps other accents and scripts apart", () => {
+      const mixed: QueryResult = {
+        rows: [{ w: "caf\u00e9" }, { w: "cafe" }, { w: "\ud55c\uad6d" }, { w: "\u017caba" }],
+        fields: ["w"],
+        rowCount: 4,
+        executionTime: 1,
+      };
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mixed }));
+      fireEvent.click(getByTestId("view-table"));
+      fireEvent.click(container.querySelector('button[title="Filter column"]')!);
+      const input = () => container.querySelector('input[placeholder="Filter w..."]')!;
+      const count = () => container.querySelector('[data-testid="filtered-count"]')?.textContent;
+
+      fireEvent.change(input(), { target: { value: "cafe" } });
+      expect(count()).toContain("1 filtered");
+      fireEvent.change(input(), { target: { value: "\ud558" } });
+      expect(count()).toContain("0 filtered");
+      fireEvent.change(input(), { target: { value: "zaba" } });
+      expect(count()).toContain("0 filtered");
+    });
+
+    describe("filter lifetime (#1409)", () => {
+      const resultA = (fields = ["id", "name", "email"]): QueryResult => ({
+        rows: [
+          { id: 1, name: "Alice", email: "a@x" },
+          { id: 2, name: "Bob", email: "b@x" },
+        ].map((r) => Object.fromEntries(fields.map((f) => [f, (r as Record<string, unknown>)[f]]))),
+        fields,
+        rowCount: 2,
+        executionTime: 1,
+      });
+      const renderGrid = (result: QueryResult, resultQuery: string | undefined) =>
+        React.createElement(ResultsGrid, { result, resultQuery });
+      const typeNameFilter = (container: HTMLElement) => {
+        fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[1]);
+        fireEvent.change(container.querySelector('input[placeholder="Filter name..."]')!, {
+          target: { value: "Alice" },
+        });
+      };
+      const count = (c: HTMLElement) => c.querySelector('[data-testid="filtered-count"]')?.textContent;
+
+      test("A, then B without the column, then A again starts unfiltered", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "select * from a"));
+        fireEvent.click(getByTestId("view-table"));
+        typeNameFilter(container);
+        expect(count(container)).toContain("1 filtered");
+        rerender(renderGrid({ rows: [{ sku: "x" }], fields: ["sku"], rowCount: 1, executionTime: 1 }, "select sku"));
+        rerender(renderGrid(resultA(), "select * from a"));
+        expect(count(container)).toContain("2 filtered");
+        expect(container.querySelector('[data-testid="clear-filters"]')).toBeNull();
+      });
+
+      test("a different query with the same columns starts unfiltered", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "select * from a"));
+        fireEvent.click(getByTestId("view-table"));
+        typeNameFilter(container);
+        rerender(renderGrid(resultA(), "select * from b"));
+        expect(count(container)).toContain("2 filtered");
+      });
+
+      test("the same run keeps its filter across a page that changes the columns", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "db.a.find()"));
+        fireEvent.click(getByTestId("view-table"));
+        typeNameFilter(container);
+        rerender(renderGrid(resultA(["id", "name"]), "db.a.find()"));
+        expect(count(container)).toContain("1 filtered");
+        // a column that vanished takes its own filter with it, the others stay
+        rerender(renderGrid(resultA(["id"]), "db.a.find()"));
+        expect(count(container)).toContain("2 filtered");
+      });
+
+      test("an open filter panel closes when its column leaves the result", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "q"));
+        fireEvent.click(getByTestId("view-table"));
+        fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[1]);
+        expect(container.querySelector('input[placeholder="Filter name..."]')).not.toBeNull();
+        rerender(renderGrid(resultA(["id"]), "q"));
+        expect(container.querySelector('input[placeholder="Filter name..."]')).toBeNull();
+      });
+    });
+
     test("clicking filter button opens filter dropdown with input", () => {
       const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
       fireEvent.click(getByTestId("view-table"));
@@ -1420,6 +1778,38 @@ describe("ResultsGrid", () => {
       expect(findEditInput(container)).toBeUndefined();
       expect(onCellChange).not.toHaveBeenCalled();
       expect(container.querySelectorAll(".cursor-text").length).toBe(0);
+    });
+
+    test("a column whose declared type the provider refuses opens no editor, and says why (K24)", () => {
+      // Db2 declares a CLOB, DBCLOB or BLOB column by its bare name, and db2-node writes nothing
+      // for a value bound to one declared 32768 bytes or longer, so its provider refuses the type.
+      const onCellChange = mock(() => {});
+      const reason = "db2-node writes nothing for a value bound to this column";
+      const { container, getByTestId } = render(
+        React.createElement(ResultsGrid, {
+          result: {
+            ...mockResult,
+            rows: [{ id: 1, name: "Alice", email: "alice-notes" }],
+            columnTypes: { id: "INTEGER", name: "VARCHAR(20)", email: "CLOB" },
+          },
+          editingEnabled: true,
+          inlineEditRefusedColumns: { type: "^(CLOB|DBCLOB|BLOB)$", reason },
+          onCellChange,
+          pendingChanges: [],
+        }),
+      );
+      fireEvent.click(getByTestId("view-table"));
+
+      const row = findDesktopRow(container, "Alice")!;
+      const refused = within(row).getByText("alice-notes").parentElement!;
+      expect(refused.getAttribute("title")).toBe(reason);
+      expect(refused.classList.contains("cursor-text")).toBe(false);
+      fireEvent.doubleClick(refused);
+      expect(findEditInput(container)).toBeUndefined();
+
+      // The column beside it, whose type the rule does not match, still edits.
+      fireEvent.doubleClick(findDesktopCell(container, "Alice")!);
+      expect(findEditInput(container)).not.toBeUndefined();
     });
 
     test("Enter key commits a desktop-table edit and calls onCellChange", () => {
@@ -1824,9 +2214,14 @@ describe("ResultsGrid", () => {
       fireEvent.click(getByTestId("view-table"));
 
       expect(getAllByRole("button", { name: "name" })[0].textContent).toBe("name");
-      // No header gains a tooltip it did not have before ("Filter column" is pre-existing,
-      // and the row detail control is a row control rather than a header).
-      expect(container.querySelectorAll('[title]:not([title="Filter column"]):not([data-row-detail])').length).toBe(0);
+      expect(container.querySelector('span.truncate[title="name"]')).not.toBeNull();
+      const unexpectedTooltips = Array.from(container.querySelectorAll<HTMLElement>("[title]")).filter(
+        (element) =>
+          element.title !== "Filter column" &&
+          !mockResult.fields.includes(element.title) &&
+          !element.hasAttribute("data-row-detail"),
+      );
+      expect(unexpectedTooltips.length).toBe(0);
     });
   });
 
@@ -1897,6 +2292,66 @@ describe("ResultsGrid", () => {
     expect(descending[2]).toContain("Alice");
   });
 
+  /**
+   * 64-bit integers and decimals reach the grid as digit strings (#1384), and the table's
+   * default comparison orders a string lexicographically: 1, 10, 100, 9. The column's declared
+   * type picks a numeric comparison, and a text column keeps the default.
+   */
+  describe("sorting numeric columns (#1384)", () => {
+    const numericResult: QueryResult = {
+      rows: [
+        { id: "10", total: "100.00", label: "10", memo: "b" },
+        { id: "9", total: "1.25", label: "9", memo: "a" },
+        { id: "9007199254740993", total: "-5.5", label: "9007199254740993", memo: "d" },
+        { id: null, total: null, label: "100", memo: "c" },
+        { id: "-5", total: "1000.00", label: "-5", memo: "e" },
+        { id: "9007199254740992", total: "10.00", label: "1", memo: "f" },
+      ],
+      fields: ["id", "total", "label", "memo"],
+      columnTypes: { id: "bigint", total: "numeric(12,2)", label: "varchar(30)", memo: "text" },
+      rowCount: 6,
+      executionTime: 1,
+    };
+
+    /** The memo column names each row with one letter, so the order read back is unambiguous. */
+    const memoOrder = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll("[data-index]:not([data-testid]):not(button)"))
+        .map((row) => /[a-f]$/.exec(row.textContent ?? "")?.[0])
+        .join("");
+
+    const clickHeader = (utils: ReturnType<typeof render>, name: RegExp) =>
+      fireEvent.click(utils.getAllByRole("button", { name })[0]);
+
+    test("a bigint column sorts ascending and descending as numbers, NULL last both ways", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^id, bigint$/);
+      // -5, 9, 10, 2^53, 2^53 + 1, NULL
+      expect(memoOrder(utils.container)).toBe("eabfdc");
+      clickHeader(utils, /^id, bigint, sorted ascending$/);
+      // 2^53 + 1, 2^53, 10, 9, -5, NULL
+      expect(memoOrder(utils.container)).toBe("dfbaec");
+    });
+
+    test("a numeric(12,2) column sorts decimals of different magnitudes as numbers", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^total, numeric\(12,2\)$/);
+      // -5.5, 1.25, 10.00, 100.00, 1000.00, NULL
+      expect(memoOrder(utils.container)).toBe("dafbec");
+      clickHeader(utils, /^total, numeric\(12,2\), sorted ascending$/);
+      expect(memoOrder(utils.container)).toBe("ebfadc");
+    });
+
+    test("a text column of digit strings keeps the text order", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^label, varchar\(30\)$/);
+      // "-5" < "1" < "10" < "100" < "9" < "9007199254740993" as text
+      expect(memoOrder(utils.container)).toBe("efbcad");
+    });
+  });
+
   // ── A11y semantics (#100): keyboard-reachable interactive elements ────────
 
   describe("a11y semantics", () => {
@@ -1937,6 +2392,56 @@ describe("ResultsGrid", () => {
       for (const handle of handles) {
         expect(handle.getAttribute("aria-hidden")).toBe("true");
       }
+    });
+  });
+
+  describe("column sizing", () => {
+    test("keeps manual resizing and restores only the selected column on double-click", () => {
+      const result: QueryResult = {
+        rows: [{ name: "Ada", email: "ada@example.com" }],
+        fields: ["name", "email"],
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result }));
+      const nameHeader = findDesktopHeader(container, "name");
+      const emailHeader = findDesktopHeader(container, "email");
+      const nameHandle = nameHeader.querySelector<HTMLElement>(".cursor-col-resize")!;
+      const emailHandle = emailHeader.querySelector<HTMLElement>(".cursor-col-resize")!;
+
+      fireEvent.mouseDown(nameHandle, { clientX: 100 });
+      fireEvent.mouseMove(document, { clientX: 150 });
+      fireEvent.mouseUp(document, { clientX: 150 });
+
+      fireEvent.mouseDown(emailHandle, { clientX: 200 });
+      fireEvent.mouseMove(document, { clientX: 260 });
+      fireEvent.mouseUp(document, { clientX: 260 });
+
+      expect(nameHeader.style.width).toBe(`${getHeaderFitColumnSize("name") + 50}px`);
+      expect(emailHeader.style.width).toBe(`${getHeaderFitColumnSize("email") + 60}px`);
+
+      fireEvent.doubleClick(nameHandle);
+
+      expect(nameHeader.style.width).toBe(`${getHeaderFitColumnSize("name")}px`);
+      expect(emailHeader.style.width).toBe(`${getHeaderFitColumnSize("email") + 60}px`);
+    });
+
+    test("sizes a typed masked header for all of its visible markers", () => {
+      mockShouldMask.mockReturnValue(true);
+      mockDetectSensitiveColumnsFromConfig.mockReturnValue(new Map([["name", "sensitive"]]));
+
+      const result: QueryResult = {
+        rows: [{ name: "Ada" }],
+        fields: ["name"],
+        columnTypes: { name: "VARCHAR(255)" },
+        rowCount: 1,
+        executionTime: 1,
+      };
+      const { container } = render(React.createElement(ResultsGrid, { result, maskingEnabled: true }));
+      const header = findDesktopHeader(container, "name");
+
+      expect(header.style.width).toBe(`${getHeaderFitColumnSize("name", "VARCHAR(255)", true)}px`);
+      expect(header.querySelector("span.truncate")?.getAttribute("title")).toBe("name");
     });
   });
 

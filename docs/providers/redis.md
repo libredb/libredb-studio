@@ -210,11 +210,12 @@ answers is a floor rather than a total. The keyspace walk below
 caller drives, one batch at a time, with the cursor kept. Both are bounded alike, which is why the
 walk's `maxCount` is the same 1,000 that `KEY_SCAN_LIMIT` puts on this one.
 
-### 3.3 Generic command dispatch via `call()`
+### 3.3 Generic command dispatch via `callBuffer()`
 
 Rather than hand-coding a method per Redis command, `runCommand()`
 ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)) funnels everything through `ioredis`'s
-low-level `client.call(command, ...args)`.
+low-level `client.callBuffer(command, ...args)`, and `decodeReply()` turns the raw reply into what
+the grid shows ([§3.5a](#35a-integer-replies-are-exact-past-253)).
 This means **any** Redis command works without code changes — `GET`, `LPUSH`, `XADD`, `JSON.GET`,
 module commands, etc. The trade-off is that there is no per-command validation; an unknown or
 mis-arity command surfaces as a Redis-side error wrapped in `QueryError`.
@@ -231,56 +232,86 @@ query string by its first character:
 The dispatch happens *after* leading blank lines and `#` comment lines are dropped, so the character
 that decides the format is the first character of the first runnable line, not of the buffer.
 
-### 3.4a Comments and how one command is picked out of a buffer
+A quoted run makes an argument even when it is empty, the way redis-cli reads one: `SET k ""` sends
+the empty string, and `LPUSH l "" x` pushes two elements. Before this the tokenizer kept a token only
+when it held a character, so measured on Redis 8.10.2 `SET k ""` answered *"ERR wrong number of
+arguments for 'set' command"* and `LPUSH l "" x` pushed `x` alone.
 
-`commandBody()` reduces the buffer to the one command to run, in two steps:
+### 3.4a Comments, lines, and how one command is picked out of a buffer
 
-1. **Every `#` comment line is dropped**, wherever it sits — leading, interleaved or trailing. A
-   line is a comment only when it *starts* with `#` (after trimming) **and no quoted argument is
-   open across it**, so a `#` inside a key or a value is never mistaken for one — including the
-   continuation line of a multi-line quoted value (`SET note "line1` / `#tag"`). The same quote
-   state suspends the blank-line rule: a blank line inside an open quoted argument is data.
+`readRedisCommandText()`
+([`redis-command-text.ts`](../../src/lib/db/providers/keyvalue/redis-command-text.ts)) reads the
+buffer to the one command a run sends. **Each non-empty line is its own command.** The rules:
 
-   Quote state is tracked **only while the block is a plain command**. The block's kind is fixed by
-   its first content line with the same test §3.4 uses to pick a parser (`{` first), because the
-   tracker's rules are the plain tokenizer's — no escape handling — and a JSON body's `\"` inside a
-   string is not a quote to it. A key named `say"hi` therefore left a phantom quote open, no later
-   comment line was dropped, and the whole-buffer run reached `JSON.parse` with comments in it:
-   *"Invalid JSON command format"* instead of a `TYPE` result. A JSON body needs no tracking anyway
-   — a JSON string carries no literal newline, so no line inside one can begin with `#` (#427).
-2. **The first blank-line-delimited block of what remains is taken**, and its lines are joined back
-   with a **newline**, verbatim. Leading blank lines are padding and are skipped; the first blank
-   line *after* content ends the block.
+1. **Every `#` comment line is dropped**, wherever it sits: leading, between commands, inside a
+   pretty-printed JSON command or trailing. A line is a comment only when it *starts* with `#`
+   (after trimming) **and no quoted argument is open across it**, so a `#` inside a key or a value
+   is never mistaken for one, including the continuation line of a multi-line quoted value
+   (`SET note "line1` / `#tag"`).
+2. **A line continues onto the next only in two cases**, both of which the tokenizer can see:
+   - it ends **inside an open quoted argument**. The line break is then data, and so is a blank or
+     `#`-leading line inside the quote. This is how a multi-line value, an `EVAL` script and a
+     `FUNCTION LOAD` library are written: `EVAL "local a = 1` / `return a" 0` is one command whose
+     script keeps its newline. The tokenizer's quote rules are redis-cli's without escapes: a `"` or
+     `'` opens a run that only the same character closes, and runs with no whitespace between them
+     make one argument (`a"b c"d` is `ab cd`). **A quote that never closes is refused**, naming the
+     line it opened on (*"Line 1 opens a quoted argument with ' that never closes ..."*), and nothing
+     is sent: continuing is right only when the quote closes later. Before this, `SET greeting it's` /
+     `GET greeting` stored `its`, a newline and `GET greeting`, and `SET k "a\"b"` / `GET k` did the
+     same, because the open quote took every later line as data, blank-line alternatives included.
+   - it belongs to a **JSON command whose braces and brackets are not yet balanced**. A command whose
+     first character is `{` is read line by line until `{`/`[` and `}`/`]` balance, counted outside
+     JSON strings with JSON's own `\` escape, so `JSON.stringify(cmd, null, 2)` reads whole and a
+     `}` inside a string does not end it. A blank line ends an unfinished JSON command, which then
+     fails `JSON.parse` (*"Invalid JSON command format"*) rather than swallowing the next command.
+3. **The first blank line ends what a run reads.** Leading blank lines are padding. The generated
+   cheatsheet (§5.3) is a list of alternatives separated by blank lines, so running the whole buffer
+   runs its first command, and a command after a blank line is not run.
+4. **A second command before that blank line is refused**, and nothing is sent: *"Line 2 holds a
+   second command, which begins with "RPUSH": each line is one Redis command, and Studio runs one
+   command per run. Select the line to run it, and the editor sends the selection. ..."*. The line
+   number counts from the top of the text the editor sent, which is the selection when there is one.
 
-A block rather than a line, because *outside quotes* the tokenizer treats a newline as ordinary
-whitespace: a single command wrapped over several lines (`HSET k a 1` / `b 2`) has always run whole,
-and `JSON.stringify(cmd, null, 2)` is legitimately multi-line — taking only line 1 would silently
-half-execute both. Not the whole buffer, because the generated cheatsheet (§5.3) is a list of
-alternatives separated by blank lines, and running it must run only its first command.
+Brackets count **only for a JSON command**. Outside quotes a plain argument cannot carry a JSON value
+or a Lua script across lines anyway, because whitespace splits it and quote characters are stripped,
+so in plain form a bracket is ordinary key text: `user:{42}` is a cluster hash tag, and a key such as
+`a{b` would otherwise hold its line open and glue the next command onto it.
 
-Joined with a newline and not a space, because the tokenizer's whitespace branch is guarded by
-`!inQuote`: *inside* a quoted argument a newline is data. `SET note "line1` / `line2"` stores a
-two-line value, and a space join silently rewrote it to `line1 line2`. Lines are also appended
-without trimming, so indentation inside a quoted value survives.
+**Why the rule changed.** Until this rule a newline outside quotes was ordinary whitespace and the
+first blank-line-delimited block ran as ONE command, so that a command wrapped over several lines
+(`HSET k a 1` / `b 2`) ran whole. The same rule turned two commands on consecutive lines into one,
+and the second command's words became data. Measured on Redis 8.10.2 and Valkey 9.1.2 on
+2026-10-04: `RPUSH mq x` / `RPUSH mq y` answered `(integer) 4` and the list held `x, RPUSH, mq, y`;
+`SADD s2 a` / `SADD s2 b` left the set `a, SADD, s2, b`; `DEL a` / `DEL b` would also delete a key
+literally named `DEL`. Nothing on screen said so. One command per line is what redis-cli and every
+other Redis client reads, so it is the reading a user expects; a command wrapped across lines without
+a quote is now refused, naming the line that would have been merged, instead of running as something
+else. The refusal rather than running every line, because one run answers one result, and because
+the confirmation gate below asks about one command.
 
-The dispatch of §3.4 then looks at the first character of that block, not of the buffer. A JSON
-command is parsed whole, so a trailing **comment** after a JSON body is fine (it was dropped in
-step 1) but trailing **non-comment** text is not — it joins the block and fails `JSON.parse`.
+The dispatch of §3.4 then looks at the first character of that command. Text after a JSON command
+is a second command (refused by rule 4), and text on the JSON command's own last line joins the body
+and fails `JSON.parse`.
 
 Input that is only comments or blank lines raises
 `QueryError("No command to run (only comments or blank lines)")`.
 
-This mirrors the embedded LibreDB provider, and exists so the commented cheatsheet the schema
-explorer inserts is directly runnable: selecting one command runs it, and running the whole buffer
-runs its first one (#427).
+This exists so the commented cheatsheet the schema explorer inserts is directly runnable: selecting
+one command runs it, and running the whole buffer runs its first one (#427). The embedded LibreDB
+provider is line-based too: it runs its first non-comment line ([`libredb.md`](libredb.md) §5.1).
 
-Since S8 the **execution confirmation gate reads a buffer the same way**:
-`src/lib/db/destructive-commands.ts` drops `#` lines and takes the first block as above, dispatches
-on a leading `{` as §3.4 does, and asks before running any command in its Redis destructive
+Since S8 the **execution confirmation gate reads a buffer the same way**, and since this rule with the
+same function: `src/lib/db/destructive-commands.ts` reads the text with `readRedisCommandText()`,
+dispatches on a leading `{` as §3.4 does, and asks before running any command in its Redis destructive
 vocabulary - key, expiry, string, hash, list, set, sorted-set and stream writes, the scripting
 entry points, and the server and access commands, with container commands such as `CONFIG SET`
 matched on their two-token spelling - while a body it cannot read (broken JSON, a JSON body whose
-`command` is not a string) asks rather than staying silent.
+`command` is not a string) asks rather than staying silent. The vocabulary names only commands the
+provider runs: the blocking list and sorted-set pops are refused before they reach the server
+([§5.2b](#52b-commands-that-would-change-the-shared-connection-1107)), so their non-blocking
+forms are the ones the gate asks about. The Redis row also declares `refuse: redisRefusal`, so the
+editor refuses a second command before any request with the same sentence the provider raises, and
+the gate names nothing for such a text, because it cannot run.
 
 ### 3.5 Reply normalisation into the shared grid
 
@@ -288,6 +319,33 @@ Redis replies are heterogeneous (status strings, integers, nil, flat arrays, has
 `INFO` text). `formatResult()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))
 normalises each into the standard `{ rows, fields, rowCount }` envelope so the existing
 `ResultsGrid` renders them unchanged. See the [reply table](#52-result-shaping) below.
+
+### 3.5a Integer replies are exact past 2^53
+
+By default ioredis parses an integer reply into a JS number, which rounds one past 2^53 with no
+error. Measured on redis 8.10.2 through ioredis 5.11.1 on 2026-10-04: `INCR` on a key holding
+9223372036854775806 was shown as `(integer) 9223372036854778000`, and `INCRBY` 0 on
+9007199254740993 as `(integer) 9007199254740992`, in the grid, the API and every export. The same
+held on every relative in [§1](#valkey-dragonflydb-keydb-and-garnet), since the rounding is the
+driver's.
+
+The connection therefore sets ioredis's **`stringNumbers: true`**, which hands every integer reply
+over as its digits. Two consequences follow, and both are handled in
+[`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts):
+
+- **A command typed in the editor is sent with `callBuffer`, not `call`.** Under `stringNumbers`,
+  `call` decodes an integer reply and a string reply to the same text, so `(integer)` could no
+  longer be told apart from a value that happens to be digits. `callBuffer` leaves a bulk or status
+  string as a Buffer and an integer as its digit string, and `decodeReply()` decodes the first from
+  UTF-8, as `call` does, and turns the second into a number when it is exact as one and a bigint
+  when it is not. An integer nested in an array reply is shown as JSON with the unsafe ones as
+  their quoted digits (`[2,"9223372036854775807","x"]`); an integer in the safe range stays a
+  number.
+- **The counts the provider reads for itself arrive as digit strings too.** `DBSIZE` answers `"42"`
+  rather than `42`, so the overview's key count and the key-space page's `total` go through
+  `integerReply()`, which reads one back as a number (and accepts a JS number too). A reply that is
+  not a count is refused in both places rather than shown as 0 keys, a number nobody measured.
+  `SLOWLOG GET` was already read through `String()` and `Number()`.
 
 ### 3.6 No connection pool
 
@@ -370,7 +428,7 @@ fabricated zeros. `POST /api/db/test-connection` reports that as a **degraded** 
 green tick and not a failure: the connection is real, the health read is not. Grant `+info`,
 or expect the monitoring panels to stay empty for that user.
 
-### 4.2 Connection-string nuance ⚠️
+### 4.2 Connection-string nuance
 
 `getCapabilities().supportsConnectionString` is **`false`** — the provider itself only consumes
 discrete fields. However, the UI connection-string parser
@@ -430,6 +488,45 @@ does, so the pair is what distinguishes a wired path from a documented shape.
 > redis://localhost:6390  -> sslMode disable | FAILED: Failed to connect to Redis: Connection is closed.
 > ```
 
+### 4.4 Why a connect failed (#1356)
+
+ioredis rejects `connect()` with the same *"Connection is closed."* whatever went wrong, and emits
+the reason as an `error` event. `openClient()` attaches an `error` listener before it connects and
+keeps the FIRST event as the reason, so `connect()`, Test Connection and every per-database object
+read raise a typed error that names it (`connectFailure()` in
+[`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)). Before the listener existed, every case
+below showed only *"Connection is closed."* (HTTP 503, `retryable: true` even for a bad password),
+and the reason reached nothing but the server log, as *"[ioredis] Unhandled error event"*.
+
+Measured 2026-10-04 through ioredis 5.11.1 against `redis:latest` (8.10.2) and
+`valkey/valkey:latest` (9.1.2), through Test Connection on a production build (Valkey answers the
+wrong-password row word for word). The Redis 5 row (`redis:5`, 5.0.14) and the timeout row were
+measured on the driver directly:
+
+| Case | Raised as | Message after *"Failed to connect to Redis: "* |
+|------|-----------|-----------------------------------------------|
+| Wrong password, or an ACL user that does not exist | `AuthenticationError` (401) | `WRONGPASS invalid username-password pair or user is disabled.` |
+| No password against `requirepass` | `AuthenticationError` (401) | `NOAUTH Authentication required.` |
+| Wrong password on Redis 5 (5.0.14, `requirepass`, no ACL) | `AuthenticationError` (401) | `ERR invalid password` |
+| The connect never answers (`connectTimeout`) | `ConnectionError` (503) | `connect ETIMEDOUT` |
+| Nothing listening on the port | `ConnectionError` (503) | `connect ECONNREFUSED 127.0.0.1:40009` |
+| Host name that does not resolve | `ConnectionError` (503) | `getaddrinfo ENOTFOUND nonexistent.invalid` |
+| Verifying mode, self-signed server, no CA pasted | `ConnectionError` (503) | `self-signed certificate in certificate chain` |
+| Plaintext client on a TLS-only port | `ConnectionError` (503) | `Connection is closed.` (the server closes the socket and ioredis emits no event) |
+
+Only the message is carried, never the driver's error object: a `ReplyError` to `AUTH` holds the
+command it answered, password included, on its `command` field (ioredis 5.11.1 `DataHandler`). A
+credential is told apart by how the server's reply begins (`WRONGPASS`, `NOAUTH`, or Redis 5's
+`ERR invalid password`, whose first word is the generic `ERR`); a password sent to a server that
+requires none is not refused at all (ioredis warns and connects). Any other
+reply during the connect, such as the `LOADING` a server answers while it reads its dataset, stays a
+`ConnectionError`, which the client may retry. With the CA pasted, the TLS server of the table
+connects (`verify-full`, host `localhost`).
+
+The listener stays attached after the connect settles, and from then on logs each event as a
+warning, `[Redis] <message>` with `provider: "redis"`, so a dropped socket and the reconnects after
+it stay visible in the server log. The message only, for the same reason as above.
+
 ---
 
 ## 5. Query interface
@@ -458,7 +555,7 @@ HGETALL user:1
 | Redis reply | `fields` | Example cell |
 |-------------|----------|--------------|
 | Simple string / status (`GET`, `PING`, `SET`) | `result` | `OK`, `PONG`, `hello-world` |
-| Integer (`DEL`, `DBSIZE`, `INCR`) | `result` | `(integer) 42` |
+| Integer (`DEL`, `DBSIZE`, `INCR`) | `result` | `(integer) 42`; past 2^53 the server's exact digits, `(integer) 9223372036854775807` ([§3.5a](#35a-integer-replies-are-exact-past-253)) |
 | `nil` | `result` | `(nil)` (rowCount `0`) |
 | Empty array | `result` | `(empty list)` (rowCount `0`) |
 | Array (`KEYS`, `SMEMBERS`, `LRANGE`) | `index`, `value` | `1 \| user:1` |
@@ -537,6 +634,56 @@ change: the provider would have to record which scope opened the `MULTI` it obse
 opened before any scope was recorded still has no owner.
 The same argument applies to `sqlite` and `duckdb`, which likewise hold one handle for every
 concurrent request and ignore the scope for the same reason.
+
+### 5.2b Commands that would change the shared connection (#1107)
+
+`query()` refuses three kinds of command before they reach the server.
+The reason is the one §5.2a gives for `MULTI`: the provider is cached per connection for the whole process and runs every statement on ONE client (§3.6), so whatever a statement leaves on that client is what every later request on the connection gets, whoever sends it.
+Measured on redis 8.10.2 through ioredis 5.11.1, on a connection configured for database `2`: the first table as an ACL user with `+@read` on 2026-09-25, the rest as `default` on 2026-09-28.
+
+**Commands that change what later requests read, or who they run as.**
+The refusal reads `<COMMAND> is not run here: it would change the shared connection for every later request.`, and for `SELECT` it adds where to pick a database instead.
+
+| Command | What it did to the shared client |
+|---------|----------------------------------|
+| `SELECT 0` | Every later `GET` read database 0 instead of the configured `database` |
+| `MULTI` / `SELECT 0` / `EXEC` | The same, which is why the refusal is by command name and not by reply |
+| `RESET` | Moved the client to database 0 AND logged it back in as `default`: the read-only user could `SET` |
+| `AUTH default <anything>` | The same against a stock `default nopass` server |
+| `HELLO 3` | Switched the reply protocol; ioredis then failed with `Protocol error, got "%"` |
+
+**Commands after which the connection stops answering.**
+The refusal reads `<COMMAND> is not run here: the shared connection would stop answering later requests.`
+
+| Command | What it did to the shared client |
+|---------|----------------------------------|
+| `SUBSCRIBE`, `PSUBSCRIBE`, `SSUBSCRIBE` | Never answered; ioredis threw an uncaught `TypeError`, and every later command failed `Connection in subscriber mode`. Through `POST /api/db/query`, one `SUBSCRIBE` from a `user` session failed the connection for every user, admin included, until the idle sweep evicted the provider |
+| `QUIT` | Closed the socket for good: every later command failed `Connection is closed.`, while `isConnected()` still said true, so the provider cache kept serving it |
+| `MONITOR` | Turned the connection into a feed of every command the server runs, which ioredis read as replies to later commands |
+| `CLIENT REPLY OFF`, `CLIENT REPLY SKIP` | Stopped the server replying, so every later command waited for an answer that never came |
+
+**Commands that hold the connection until data or a timeout arrives.**
+The refusal reads `<COMMAND> is not run here: every other request on the shared connection would wait until it returns.`
+They are `BLPOP`, `BRPOP`, `BRPOPLPUSH`, `BLMOVE`, `BLMPOP`, `BZPOPMIN`, `BZPOPMAX`, `BZMPOP`, `WAIT`, `WAITAOF`, and `XREAD` / `XREADGROUP` with `BLOCK`.
+With a timeout of 0 each one never returned, and neither did any later command.
+A `GET` sent while `BLPOP queue 3` waited answered after 3 seconds, so the refusal does not depend on the timeout.
+Only a `BLOCK` before `STREAMS` is the option, and `GROUP`'s two names are skipped, so a stream key or a group named `BLOCK` still runs.
+The non-blocking forms, such as `LPOP`, `LMOVE`, `ZPOPMIN` and `XREAD` without `BLOCK`, run as before.
+
+**Every command word is compared up to its first NUL.**
+The server can match a name that way: it reuses the previous command's lookup when the next name matches it as a C string.
+On a raw socket `SELECT\0 0` answered `OK` right after `SELECT 2` and `unknown command` right after `PING`.
+The provider sends `SELECT <db>` on connect, so a byte-exact check let the first statement on a fresh provider, `SELECT\0 0`, move it to database 0 through `POST /api/db/query`.
+
+**Measured, and still run.**
+`SWAPDB`, `MOVE` and a script's `redis.call('SELECT', n)` leave the client's database and user where they were.
+`UNSUBSCRIBE`, `PUNSUBSCRIBE` and `SUNSUBSCRIBE` outside subscriber mode answer 0 and change nothing.
+`CLIENT SETNAME`, `SETINFO`, `NO-EVICT`, `NO-TOUCH` and `TRACKING` set attributes and flags of the connection, not its database, user or replies.
+`SYNC` and `PSYNC` ended in an ioredis protocol error, and the next request was answered normally in the configured database.
+
+To read another database, pick it in the Keys panel (§6.2): a key opened from there runs under the
+per-run `database` field of `POST /api/db/query`, on a provider of its own, and the shared one is not
+touched. To change the database a connection reads by default, change its **Database** field (§4.1).
 
 ### 5.3 Schema-explorer menu actions
 
@@ -976,7 +1123,7 @@ reach this arm is a declaration somebody removed.
 |---|---|---|
 | `id` | `definition` | one part, always: a library has one Lua text |
 | `label` | `Definition` | rendered as-is |
-| `language` | the kind's declared `sourceLanguage`, which is `lua` | `lua` IS a Monaco language id the installed 0.56.0 bundle registers, unlike `plsql`, `tsql` and `cql` |
+| `language` | the kind's declared `sourceLanguage`, which is `lua` | `lua` IS a Monaco language id the installed 0.57.0 bundle registers, unlike `plsql`, `tsql` and `cql` |
 | `form` | `complete` | the text runs as given: it is what `FUNCTION LOAD` was handed |
 | `origin` | `stored` | the author's own bytes. Measured on Redis 8.10.0: `WITHCODE` answers the shebang line and the body exactly as they were loaded, with no reformatting |
 
@@ -1606,6 +1753,7 @@ no control offers it.
 | `declaresForeignKeys` | `false` — Redis has no constraints at all, and the "tables" here are key prefixes this provider grouped rather than objects anyone declared |
 | `tablesAreDerivedGroupings` | `true` — the object surface SCANs a bounded slice of the keyspace and groups the real key names it found by their prefix, so a `user:*` row is this server's own summary and not a key any command can be given. The agent layer states this to a plan run, in one sentence, so a grounded run does not draft a command against a grouping. In the object tree it is what withholds Profile from a `keyspace` row ([§6.1](#61-the-object-surface-789)) |
 | `containerLevels` | one level, `schema`, labelled Database ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact`: only `[database]` addresses a container, so a shorter or a longer path is refused, by the object routes over HTTP and by this provider for a caller that reaches it directly (#1147) |
 | `objectKinds` | `keyspace` (relation) and `function` (routine, `hasSource`, `sourceLanguage: "lua"`). `function` is the only kind in this engine with a definition text, read through `FUNCTION LIST ... WITHCODE` ([§6.1](#61-the-object-surface-789)). Three further candidates are absent rather than declared and zero |
 | `keyScan` | `{ defaultCount: 500, maxCount: 1000 }` — the batch sizes this provider forwards for a resumable walk of the keyspace, and the declaration that gates the Keys panel ([§6.2](#62-the-key-space-walk-panel)). Declared here rather than defaulted at the call site so a panel and its provider cannot disagree about what a batch is |
 | `supportsMaintenance` | `true` |
@@ -1669,10 +1817,13 @@ The provider raises the shared error classes from
 |-----------|-------|
 | Missing `host` at construction | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
-| `connect()` fails | `ConnectionError` |
+| `connect()` refused for a credential (`WRONGPASS`, `NOAUTH`, `ERR invalid password`) | `AuthenticationError`, *"Failed to connect to Redis: WRONGPASS …"*, not retryable ([§4.4](#44-why-a-connect-failed-1356)) |
+| `connect()` fails any other way | `ConnectionError`, *"Failed to connect to Redis: &lt;reason&gt;"* ([§4.4](#44-why-a-connect-failed-1356)) |
 | Malformed JSON command | `QueryError` — *"Invalid JSON command format"* |
 | JSON without `command` | `QueryError` — *"Command is required…"* |
-| Empty command | `QueryError` — *"Empty command"* |
+| Only comments or blank lines | `QueryError` - *"No command to run (only comments or blank lines)"* |
+| A quoted argument that never closes ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N opens a quoted argument with ... that never closes ..."* |
+| A second command before the first blank line ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N holds a second command, which begins with ..."* |
 | Redis-side command failure | `QueryError` — *"Redis error: …"* |
 
 All `QueryError`s carry the `QUERY_ERROR` API code and surface to the client as `400 Bad Request`.
@@ -1688,8 +1839,10 @@ Integration tests live in
 In keeping with the project's test architecture, the `ioredis` driver is replaced with an in-process
 mock via `mock.module('ioredis', …)` **before** the provider is imported — there is no live Redis
 container in the suite. The mock simulates a Redis 7.2.x server (`redis_version:7.2.4`,
-`INFO`/`SCAN`/`CLIENT LIST`/`call()` responses), which exercises the same code paths as a real
-Redis 6.0+ instance.
+`INFO`/`SCAN`/`CLIENT LIST`/`call()`/`callBuffer()` responses), which exercises the same code paths as a real
+Redis 6.0+ instance. The mock also honours `stringNumbers` the way ioredis does, answering an integer
+reply as its digit string when the option is set, so a count read with `typeof x === "number"`
+fails in the suite as it would against a live server.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide. Run the suite with
 > `bun run test`, which gives every test file its own bun process, never bare `bun test` across
@@ -1699,16 +1852,22 @@ Redis 6.0+ instance.
 ### 11.2 Coverage
 
 The suite covers: validation, connect/disconnect, capabilities, labels, `prepareQuery`, all query
-formats (JSON, plain, empty, `HGETALL`, `INFO`, nil), error handling (malformed JSON, missing
+formats (JSON, plain, empty, `HGETALL`, `INFO`, nil), the line reading of §3.4a (the second-command
+refusal and the empty driver call behind it, multi-line quoted values, `EVAL` scripts and
+`FUNCTION LOAD` libraries, a JSON command read until its brackets balance, quoted empty arguments),
+error handling (malformed JSON, missing
 `command`, Redis-side error, disconnected provider), schema scanning, health, overview, performance,
 slow queries, active sessions, table/index/storage stats, `getMonitoringData`, maintenance, a
-battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), the whole object surface
+battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), integer replies past 2^53
+(`INCR`, `INCRBY`, `DECRBY` and a nested array, [§3.5a](#35a-integer-replies-are-exact-past-253)), the whole object surface
 ([§6.1](#61-the-object-surface-789)) through `assertObjectSurface` plus per-method assertions, and
 **every `ssl.mode` branch**
 asserted against the options object the `Redis` constructor received. The same captured options carry
 the **ACL user** assertions ([§4.1a](#41a-acl-users-d29)) — `username` present for a named user,
 absent for both an empty string and an unset field — and a refused `INFO` is asserted to raise the
-server's own `NOPERM` sentence out of `getHealth()`.
+server's own `NOPERM` sentence out of `getHealth()`. The mock's `connect()` can emit the measured
+`error` events of [§4.4](#44-why-a-connect-failed-1356) before it rejects, which pins the typed error and
+the message each one becomes.
 
 ### 11.3 Run it
 
@@ -1856,6 +2015,7 @@ request/response contract.
   node presents a self-signed one, which a verifying mode would refuse. Verification therefore stays
   an explicit choice in the SSL panel; the URL alone never turns it on.
 - **No Cluster / Sentinel support.** Only a single standalone node is supported.
+- **No pub/sub, `MONITOR` or blocking reads in the editor.** Each would change or hold the one client every request on the connection shares, so `query()` refuses them ([§5.2b](#52b-commands-that-would-change-the-shared-connection-1107)).
 - **`SCAN` is capped at 1000 keys** for schema discovery — prefixes that only appear beyond the cap
   won't show as "tables". This is a deliberate bound, not a bug. The object surface shares the same
   walk and the same bound, so on a keyspace larger than it the `keyspace` folder's badge and its rows
@@ -1875,9 +2035,11 @@ request/response contract.
   form; use the JSON command object for those. The schema-explorer generators detect this and emit
   the JSON form for the affected line automatically (§5.3), so only hand-typed plain commands are
   exposed to it.
-- **Non-comment text cannot follow a JSON command.** Comment lines anywhere are dropped, including
-  after a JSON body, but the body itself is parsed whole (§3.4a) — so trailing text that is not a
-  `#` comment joins the block and fails `JSON.parse`.
+- **One command per run.** Each line is a command (§3.4a) and a second one before the first blank
+  line is refused, so a script of several commands runs one selection at a time. A command can no
+  longer be wrapped across lines outside a quoted argument; such a text is refused, naming the line.
+  A command after a blank line is not run and not refused, because that is how the cheatsheet's
+  alternatives are separated.
 - **No column modification in a generated migration.** Since
   [#269](https://github.com/libredb/libredb-studio/issues/269) the schema-diff migration generator
   answers a modified column per dialect; keys are not tables and carry no column definitions, so it

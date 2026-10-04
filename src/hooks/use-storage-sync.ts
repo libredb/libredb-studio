@@ -178,6 +178,7 @@ export function useStorageSync(): StorageSyncState {
       if (data.dismissed_seeds) writeCollectionToLocal("dismissed_seeds", data.dismissed_seeds);
       if (data.favorite_connections) writeCollectionToLocal("favorite_connections", data.favorite_connections);
       if (data.connection_order) writeCollectionToLocal("connection_order", data.connection_order);
+      if (data.connection_groups) writeCollectionToLocal("connection_groups", data.connection_groups);
 
       setLastSyncedAt(new Date());
       setSyncError(null);
@@ -337,6 +338,8 @@ function getCollectionData(collection: string): unknown {
       return storage.getFavoriteConnectionIds();
     case "connection_order":
       return storage.getConnectionOrder();
+    case "connection_groups":
+      return storage.getConnectionGroups();
     default:
       return null;
   }

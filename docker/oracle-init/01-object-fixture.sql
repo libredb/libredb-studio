@@ -66,6 +66,45 @@ ALTER TABLE app.app_orders ADD CONSTRAINT app_orders_customer_fk
 
 CREATE INDEX app.app_orders_total_ix ON app.app_orders (total);
 
+-- The #1139 measurement, as a table a live check can read back. `ALL_TAB_COLUMNS.DATA_TYPE`
+-- has no length, precision or scale, so the provider builds a column's declaration from
+-- DATA_LENGTH, DATA_PRECISION, DATA_SCALE, CHAR_LENGTH and CHAR_USED. One column per row of
+-- that rule (docs/providers/oracle.md, section 7). The TIMESTAMP, INTERVAL, DATE, CLOB, BLOB
+-- and BINARY_DOUBLE columns are the controls: DATA_TYPE already is their declaration.
+-- tests/live/oracle-column-type.ts replays the generated CREATE TABLE and compares the new
+-- table's ALL_TAB_COLUMNS rows with these.
+--
+-- The two UROWID columns are #1209: DATA_TYPE leaves out their size, and a bare UROWID is
+-- created with DATA_LENGTH 4000. This image is 21c, which has no VECTOR type, so the live
+-- guard creates its own vector table on 23ai or later.
+CREATE TABLE app.column_types (
+  c_varchar2       VARCHAR2(20),
+  c_varchar2_byte  VARCHAR2(20 BYTE),
+  c_varchar2_char  VARCHAR2(20 CHAR),
+  c_nvarchar2      NVARCHAR2(10),
+  c_char           CHAR(2),
+  c_char_char      CHAR(3 CHAR),
+  c_nchar          NCHAR(3),
+  c_raw            RAW(16),
+  c_number         NUMBER,
+  c_number_p       NUMBER(10),
+  c_number_ps      NUMBER(12, 2),
+  c_number_star    NUMBER(*, 2),
+  c_number_neg     NUMBER(5, -2),
+  c_integer        INTEGER,
+  c_float          FLOAT(10),
+  c_float_default  FLOAT,
+  c_timestamp      TIMESTAMP(3),
+  c_timestamp_tz   TIMESTAMP(6) WITH TIME ZONE,
+  c_interval       INTERVAL DAY(3) TO SECOND(2),
+  c_date           DATE,
+  c_clob           CLOB,
+  c_blob           BLOB,
+  c_binary_double  BINARY_DOUBLE,
+  c_urowid         UROWID(100),
+  c_urowid_default UROWID
+);
+
 CREATE TABLE reporting.report_daily (
   report_day  DATE NOT NULL,
   orders      NUMBER(10),

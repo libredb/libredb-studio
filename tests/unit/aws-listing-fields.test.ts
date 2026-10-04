@@ -129,6 +129,7 @@ describe("AWS Marketplace listing fields", () => {
       MongoDB: "mongodb",
       Redis: "redis",
       Oracle: "oracle",
+      Db2: "db2",
       "SQL Server": "mssql",
       Couchbase: "couchbase",
       ClickHouse: "clickhouse",
@@ -140,6 +141,8 @@ describe("AWS Marketplace listing fields", () => {
       libSQL: "libsql",
       DuckDB: "duckdb",
       Prometheus: "prometheus",
+      Kafka: "kafka",
+      Oxia: "oxia",
     };
     const copy = [listingFields, description, usage].join("\n");
     for (const [product, id] of Object.entries(productNames)) {

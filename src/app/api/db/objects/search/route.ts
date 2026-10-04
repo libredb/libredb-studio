@@ -6,7 +6,7 @@ import type { DatabaseObject } from "@/lib/db/types";
 export const dynamic = "force-dynamic";
 
 /**
- * Name search across every container and every declared kind (#789).
+ * Name search across every container and every kind the object surface enumerates (#789, #1089 3.4).
  *
  * NO PRODUCT CALLER TODAY, stated rather than left for the next reader to discover. The tree's
  * filter box is Phase 2; this route is the half that cannot be built in the browser, and it was

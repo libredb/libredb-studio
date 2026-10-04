@@ -2,24 +2,18 @@ import "../setup-dom";
 import "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
-import { mock } from "bun:test";
-
-// Mock data-masking before component import
-mock.module("@/lib/data-masking", () => ({
-  detectSensitiveColumns: mock(() => new Map()),
-  maskValue: mock(() => "****"),
-}));
-
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
 import { render, fireEvent, within, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../helpers/mock-fetch";
 
 import { DataProfiler } from "@/components/DataProfiler";
-import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
+import { DEFAULT_MASKING_CONFIG, saveMaskingConfig, shouldMask, type MaskingConfig } from "@/lib/data-masking";
 import { mockPostgresConnection } from "../fixtures/connections";
 import { mockUsersTable } from "../fixtures/schemas";
+import { schemaContextOf } from "@/lib/db/detailed-object";
+import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 
 // =============================================================================
 // DataProfiler Tests
@@ -74,6 +68,31 @@ function createDefaultProps(overrides: Partial<Parameters<typeof DataProfiler>[0
     connection: mockPostgresConnection,
     schemaContext: "",
     databaseType: "postgres",
+    // Masking off unless a test turns it on, so the values below read as the engine sent them.
+    maskingConfig: DEFAULT_MASKING_CONFIG,
+    maskingEnabled: false,
+    ...overrides,
+  };
+}
+
+/**
+ * The default configuration plus an admin pattern on `name`, the shape Admin > Security >
+ * Data Masking saves: a column no built-in rule knows, masked only because an admin said so.
+ */
+function nameMasked(overrides: Partial<MaskingConfig> = {}, patternEnabled = true): MaskingConfig {
+  return {
+    ...DEFAULT_MASKING_CONFIG,
+    patterns: [
+      ...DEFAULT_MASKING_CONFIG.patterns,
+      {
+        id: "custom-name",
+        name: "Name",
+        columnPatterns: ["name"],
+        maskType: "full",
+        enabled: patternEnabled,
+        isBuiltin: false,
+      },
+    ],
     ...overrides,
   };
 }
@@ -514,12 +533,7 @@ describe("DataProfiler", () => {
   // ── Sensitive column masking (lock icon + masked values) ─────────────────
 
   test("shows lock icon and masked values for sensitive columns", async () => {
-    // Override detectSensitiveColumns to return a map with 'email' as sensitive
-    const mockRule = { pattern: /email/i, label: "Email", mask: (v: string) => v };
-    (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(() => new Map([["email", mockRule]]));
-    (maskValue as ReturnType<typeof mock>).mockImplementation(() => "****");
-
-    const props = createDefaultProps();
+    const props = createDefaultProps({ maskingEnabled: true, userRole: "admin" });
     const { container } = render(<DataProfiler {...props} />);
     const view = within(container);
 
@@ -527,16 +541,10 @@ describe("DataProfiler", () => {
       expect(view.queryByText("Column Profiles")).not.toBeNull();
     });
 
-    // Lock icon should be present (title attribute = 'Sensitive column - values masked')
-    const lockIcon = container.querySelector('[title="Sensitive column - values masked"]');
-    expect(lockIcon).not.toBeNull();
-
-    // Masked values should appear as '****'
-    const maskedValues = view.queryAllByText("****");
-    expect(maskedValues.length).toBeGreaterThan(0);
-
-    // Restore default mock
-    (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(() => new Map());
+    // The built-in Email pattern marks `email`, and only it.
+    expect(container.querySelectorAll('[title="Sensitive column - values masked"]')).toHaveLength(1);
+    expect(view.queryAllByText("a****@e**********").length).toBeGreaterThan(0);
+    expect(container.textContent).not.toContain("alice@example.com");
   });
 
   // ── No fetch when connection is null ─────────────────────────────────────
@@ -664,6 +672,82 @@ describe("DataProfiler", () => {
     const columnsCard = Array.from(summaryCards).find((card) => card.textContent?.includes("Columns"));
     expect(columnsCard).not.toBeNull();
     expect(columnsCard!.textContent).toContain("3");
+  });
+
+  // ── Figures the engine could not produce (E2E-007) ───────────────────────
+
+  /** A profile whose columns hold every partial outcome the route can answer. */
+  const partialProfile = {
+    tableName: "notes",
+    totalRows: 4,
+    columns: [
+      { name: "id", totalRows: 4, nullCount: 0, nullPercent: 0, distinctCount: 4, minValue: "1", maxValue: "4" },
+      {
+        name: "body",
+        totalRows: 4,
+        nullCount: 2,
+        nullPercent: 50,
+        warnings: ["Distinct count: The text data type cannot be selected as DISTINCT"],
+      },
+      { name: "geom", totalRows: 4, error: "ORA-22849: type SDO_GEOMETRY is not supported" },
+    ],
+    omittedColumns: ["c21", "c22"],
+  };
+
+  function renderPartial(profile: unknown = partialProfile, extra: Partial<Parameters<typeof DataProfiler>[0]> = {}) {
+    restoreGlobalFetch();
+    mockGlobalFetch({
+      "/api/db/profile": { ok: true, json: profile },
+      "/api/ai/describe-schema": { ok: false, status: 500, json: { error: "AI not configured" } },
+    });
+    return render(<DataProfiler {...createDefaultProps(extra)} />);
+  }
+
+  test("the average null share counts only the columns whose nulls were counted", async () => {
+    const { container } = renderPartial();
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("Avg Null %")).not.toBeNull());
+
+    // (0 + 50) / 2, and not (0 + 50 + 0) / 3: the failed column has no null figure.
+    expect(view.queryByText("25%")).not.toBeNull();
+  });
+
+  test("the average null share says n/a when no column could be counted", async () => {
+    const { container } = renderPartial({ ...partialProfile, columns: [partialProfile.columns[2]] });
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("Avg Null %")).not.toBeNull());
+
+    expect(view.queryByText("n/a")).not.toBeNull();
+  });
+
+  test("a refused measure shows the engine's reason, and an unknown distinct count is not 0", async () => {
+    const { container } = renderPartial();
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("ORA-22849: type SDO_GEOMETRY is not supported")).not.toBeNull());
+
+    expect(view.queryByText("Distinct count: The text data type cannot be selected as DISTINCT")).not.toBeNull();
+    expect(view.queryAllByText("distinct unknown")).toHaveLength(2);
+    expect(view.queryByText("0 distinct")).toBeNull();
+  });
+
+  test("columns past the cap are counted and named, not silently dropped", async () => {
+    const { container } = renderPartial();
+    const view = within(container);
+    await waitFor(() => expect(view.queryByText("Columns")).not.toBeNull());
+
+    expect(view.queryByText("3 of 5")).not.toBeNull();
+    expect(view.queryByText("Not profiled, past the first 3 columns: c21, c22")).not.toBeNull();
+  });
+
+  test("the AI summary says which columns could not be profiled rather than writing undefined", async () => {
+    const onDescribeSchema = mock(async () => "summary");
+    renderPartial(partialProfile, { onDescribeSchema });
+    await waitFor(() => expect(onDescribeSchema).toHaveBeenCalled());
+
+    const sent = (onDescribeSchema.mock.calls[0] as unknown as [{ schemaContext: string }])[0].schemaContext;
+    expect(sent).toContain("body: 50% null, distinct unknown, min=N/A, max=N/A");
+    expect(sent).toContain("geom: could not be profiled");
+    expect(sent).not.toContain("undefined");
   });
 
   // ── State reset on close/reopen ──────────────────────────────────────────
@@ -955,9 +1039,9 @@ describe("DataProfiler", () => {
     };
   }
 
-  async function clickExport(item: string) {
+  async function clickExport(item: string, overrides: Partial<Parameters<typeof DataProfiler>[0]> = {}) {
     const user = userEvent.setup();
-    const { container } = render(<DataProfiler {...createDefaultProps()} />);
+    const { container } = render(<DataProfiler {...createDefaultProps(overrides)} />);
 
     await waitFor(() => {
       expect(within(container).queryByText("Export")).not.toBeNull();
@@ -970,12 +1054,9 @@ describe("DataProfiler", () => {
 
   test("the CSV item writes the profile, masked, as a CSV named after the table", async () => {
     const download = captureDownload();
-    (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(
-      () => new Map([["email", { pattern: /email/i, label: "Email", mask: (v: string) => v }]]),
-    );
 
     try {
-      await clickExport("Export as CSV");
+      await clickExport("Export as CSV", { maskingEnabled: true, maskingConfig: nameMasked() });
 
       expect(download.blob.type).toStartWith("text/csv");
       expect(download.fileName).toMatch(/^data_profile_users_\d+\.csv$/);
@@ -986,11 +1067,12 @@ describe("DataProfiler", () => {
       expect(text.split("\n")).toHaveLength(4);
       // The masked column reaches the file masked, and the addresses on screen do
       // not reach it at all.
-      expect(text).toContain("email,varchar(255),100,0,0,100,****,****,**** | ****,");
+      expect(text).toContain("name,varchar(255),100,5,5,90,********,********,******** | ******** | ********,");
+      expect(text).toContain("email,varchar(255),100,0,0,100,a****@e**********,z***@e**********,");
       expect(text).not.toContain("alice@example.com");
+      expect(text).not.toContain("Alice");
     } finally {
       download.restore();
-      (detectSensitiveColumns as ReturnType<typeof mock>).mockImplementation(() => new Map());
     }
   });
 
@@ -1010,5 +1092,220 @@ describe("DataProfiler", () => {
     } finally {
       download.restore();
     }
+  });
+});
+
+describe("DataProfiler and a column the engine only inferred from sampled data", () => {
+  afterEach(() => {
+    cleanup();
+    restoreGlobalFetch();
+  });
+
+  test("the AI summary request carries no byte of it", async () => {
+    const bodies: string[] = [];
+    mockGlobalFetch({
+      "/api/db/profile": { ok: true, json: mockProfileResponse },
+      "/api/ai/describe-schema": async (req) => {
+        bodies.push(await req.text());
+        return { ok: false, status: 500, json: { error: "AI not configured" } };
+      },
+    });
+    render(<DataProfiler {...createDefaultProps({ schemaContext: schemaContextOf(sampledSchema) })} />);
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    expect(bodies[0]).toContain("category");
+    expect(bodies[0]).not.toContain(SAMPLED_MARKER);
+  });
+
+  test("the host's onDescribeSchema receives no byte of it", async () => {
+    mockGlobalFetch({ "/api/db/profile": { ok: true, json: mockProfileResponse } });
+    const onDescribeSchema = mock(async () => "Adapter AI summary");
+    render(
+      <DataProfiler {...createDefaultProps({ onDescribeSchema, schemaContext: schemaContextOf(sampledSchema) })} />,
+    );
+    await waitFor(() => {
+      expect(onDescribeSchema).toHaveBeenCalledTimes(1);
+    });
+    const argument = (onDescribeSchema.mock.calls as unknown as [{ tableName: string; schemaContext: string }][])[0][0];
+    expect(argument.schemaContext).toContain("category");
+    expect(argument.schemaContext).not.toContain(SAMPLED_MARKER);
+  });
+
+  // The profile itself is a human view and still profiles every column; its summary for the model holds only the
+  // columns the engine declares, so a sampled key's name and its real min and max never reach a model.
+  const profileOf = (names: readonly string[]) => ({
+    tableName: "articles",
+    totalRows: 3,
+    columns: names.map((name) => ({
+      name,
+      type: "text",
+      totalRows: 3,
+      nullCount: 0,
+      nullPercent: 0,
+      distinctCount: 3,
+      minValue: `${name}_min`,
+      maxValue: `${name}_max`,
+      sampleValues: [],
+    })),
+  });
+  const sampledProps = (overrides: Partial<Parameters<typeof DataProfiler>[0]> = {}) =>
+    createDefaultProps({
+      tablePath: ["articles"],
+      tableSchema: sampledSchema[0],
+      schemaContext: schemaContextOf(sampledSchema),
+      ...overrides,
+    });
+
+  test("the column profiles in the AI summary request leave it out, and the profile table still lists it", async () => {
+    const bodies: string[] = [];
+    mockGlobalFetch({
+      "/api/db/profile": async (req) => {
+        const { columns } = JSON.parse(await req.text()) as { columns: string[] };
+        return { ok: true, json: profileOf(columns) };
+      },
+      "/api/ai/describe-schema": async (req) => {
+        bodies.push(await req.text());
+        return { ok: false, status: 500, json: { error: "AI not configured" } };
+      },
+    });
+    const { container } = render(<DataProfiler {...sampledProps()} />);
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    expect(bodies[0]).toContain("category_min");
+    expect(bodies[0]).not.toContain(SAMPLED_MARKER);
+    expect(container.textContent).toContain(SAMPLED_MARKER);
+  });
+
+  test("the host's onDescribeSchema receives column profiles without it", async () => {
+    const onProfile = mock(async () => profileOf(["category", SAMPLED_MARKER]));
+    const onDescribeSchema = mock(async () => "Adapter AI summary");
+    render(<DataProfiler {...sampledProps({ onProfile, onDescribeSchema })} />);
+    await waitFor(() => {
+      expect(onDescribeSchema).toHaveBeenCalledTimes(1);
+    });
+    const argument = (onDescribeSchema.mock.calls as unknown as [{ tableName: string; schemaContext: string }][])[0][0];
+    expect(argument.schemaContext).toContain("category_min");
+    expect(argument.schemaContext).not.toContain(SAMPLED_MARKER);
+  });
+});
+
+// =============================================================================
+// The profiler masks with the grid's decision (#1421)
+//
+// Each case renders the profiler with the props the standalone shell hands the grid:
+// the saved configuration, the role, and `maskingEnabled` as the shell computes it
+// (`shouldMask`). The grid masks a column when `maskingInForce` holds and
+// `detectSensitiveColumnsFromConfig` matches it; the profiler is asserted against the
+// same truth table, on the screen and in the AI summary request.
+// =============================================================================
+
+describe("DataProfiler masks exactly what the results grid masks", () => {
+  let bodies: string[];
+
+  beforeEach(() => {
+    bodies = [];
+    mockGlobalFetch({
+      "/api/db/profile": { ok: true, json: mockProfileResponse },
+      "/api/ai/describe-schema": async (req) => {
+        bodies.push(await req.text());
+        return { ok: false, status: 500, json: { error: "AI not configured" } };
+      },
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    restoreGlobalFetch();
+    localStorage.clear();
+  });
+
+  /** Render as the standalone shell would for `role` under `config`, and wait for the summary request. */
+  async function renderAs(role: string | undefined, config: MaskingConfig) {
+    const { container } = render(
+      <DataProfiler
+        {...createDefaultProps({ maskingConfig: config, userRole: role, maskingEnabled: shouldMask(role, config) })}
+      />,
+    );
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+    return { text: container.textContent ?? "", summary: bodies[0], container };
+  }
+
+  for (const role of ["admin", "user"]) {
+    test(`a column an admin pattern masks is masked for the ${role} role: min, max, samples and the AI summary`, async () => {
+      const { text, summary, container } = await renderAs(role, nameMasked());
+
+      for (const clear of ["Alice", "Zara", "Bob", "Carol"]) {
+        expect(text).not.toContain(clear);
+        expect(summary).not.toContain(clear);
+      }
+      expect(summary).toContain("name: 5% null, 90 distinct, min=********, max=********");
+      // The built-in email pattern still applies alongside it.
+      expect(summary).not.toContain("alice@example.com");
+      expect(container.querySelectorAll('[title="Sensitive column - values masked"]')).toHaveLength(2);
+    });
+  }
+
+  test("a disabled pattern masks nothing, as in the grid", async () => {
+    const { text, summary } = await renderAs("admin", nameMasked({}, false));
+
+    expect(text).toContain("Alice");
+    expect(summary).toContain("min=Alice, max=Zara");
+  });
+
+  test("masking switched off globally unmasks the built-in kinds too for an admin", async () => {
+    const { text, summary, container } = await renderAs("admin", nameMasked({ enabled: false }));
+
+    expect(text).toContain("alice@example.com");
+    expect(text).toContain("Alice");
+    expect(summary).toContain("min=alice@example.com");
+    expect(container.querySelector('[title="Sensitive column - values masked"]')).toBeNull();
+  });
+
+  test("a user who may not toggle masking still sees it masked when the switch is off", async () => {
+    // `shouldMask` enforces masking for that role whatever `enabled` says, and so does the grid.
+    const { text, summary } = await renderAs("user", nameMasked({ enabled: false }));
+
+    expect(text).not.toContain("alice@example.com");
+    expect(text).not.toContain("Alice");
+    expect(summary).not.toContain("alice@example.com");
+  });
+
+  test("a column only the host's onProfile answers, absent from the schema, is masked too", async () => {
+    const onProfile = mock(async () => ({
+      ...mockProfileResponse,
+      columns: [{ ...mockProfileResponse.columns[2], name: "contact_email" }],
+    }));
+    const onDescribeSchema = mock(async () => "summary");
+    const { container } = render(
+      <DataProfiler
+        {...createDefaultProps({ onProfile, onDescribeSchema, maskingEnabled: true, userRole: "admin" })}
+      />,
+    );
+    await waitFor(() => {
+      expect(onDescribeSchema).toHaveBeenCalledTimes(1);
+    });
+
+    expect(container.textContent).toContain("contact_email");
+    expect(container.textContent).not.toContain("alice@example.com");
+    const [[sent]] = onDescribeSchema.mock.calls as unknown as [[{ schemaContext: string }]];
+    expect(sent.schemaContext).toContain("contact_email: 0% null, 100 distinct, min=a****@e**********");
+  });
+
+  test("with no masking props it reads the saved configuration, as the grid does", async () => {
+    saveMaskingConfig(nameMasked());
+    const { container } = render(
+      <DataProfiler {...createDefaultProps({ maskingConfig: undefined, maskingEnabled: undefined })} />,
+    );
+    await waitFor(() => {
+      expect(bodies).toHaveLength(1);
+    });
+
+    expect(container.textContent).not.toContain("Alice");
+    expect(container.textContent).not.toContain("alice@example.com");
+    expect(bodies[0]).toContain("min=********");
   });
 });

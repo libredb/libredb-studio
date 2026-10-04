@@ -279,6 +279,61 @@ describe("the drafted statement is read out of the closing prose", () => {
   });
 
   /*
+    Neo4j spec 6.4. `cypher` is a language tag, and it still names one engine while `neo4j` is the only
+    type-id that runs Cypher: the `promql` case. Read as naming no engine, a Cypher block on a PostgreSQL
+    run was filed as that run's statement.
+  */
+  test("a Cypher block is the deliverable of a Neo4j run, and of no other engine's", () => {
+    const statement = "MATCH (n:Person) RETURN n";
+    const cypher = ["```cypher", statement, "```"].join("\n");
+
+    expect(readPlanStatement(cypher, "postgres")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(cypher, "neo4j")).toEqual({ kind: "statement", sql: statement, tag: "cypher" });
+  });
+
+  /*
+    InfluxDB spec 6.5. `influxql` is a language tag that names one engine, `influxdb` (the `promql` rule): its
+    block is the deliverable of an InfluxDB run and of no other engine's, and an InfluxDB 3 run, whose language
+    is DataFusion SQL, is another engine.
+  */
+  test("an InfluxQL block is the deliverable of an InfluxDB run, and of no other engine's", () => {
+    const statement = 'SELECT * FROM "home".."cpu" WHERE time > now() - 1h';
+    const influxql = ["```influxql", statement, "```"].join("\n");
+    const influxdb = ["```influxdb", statement, "```"].join("\n");
+
+    expect(readPlanStatement(influxql, "postgres")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(influxql, "influxdb3")).toEqual({ kind: "absent" });
+    expect(readPlanStatement(influxql, "influxdb")).toEqual({ kind: "statement", sql: statement, tag: "influxql" });
+    expect(readPlanStatement(influxdb, "influxdb")).toEqual({ kind: "statement", sql: statement, tag: "influxdb" });
+    expect(readPlanStatement(influxdb, "influxdb3")).toEqual({ kind: "absent" });
+  });
+
+  /*
+    #1088. The planning contract asks for a block tagged with the connection's type-id, so a Kafka
+    run fences its read request as ```kafka, and that block is its deliverable. It names one engine
+    like any type-id, so on another connection it is the `mysql` case above.
+  */
+  test("a read request fenced as kafka is the deliverable of a Kafka run, and of no other engine's", () => {
+    const request = '{"topic": "orders", "from": "latest", "limit": 50}';
+    const kafka = ["```kafka", request, "```"].join("\n");
+
+    expect(readPlanStatement(kafka, "kafka")).toEqual({ kind: "statement", sql: request, tag: "kafka" });
+    expect(readPlanStatement(kafka, "mongodb")).toEqual({ kind: "absent" });
+  });
+
+  /*
+    #1089. An etcd run fences its command as ```etcd, the connection's type-id, and that block is its
+    deliverable; the shell tags a model might write instead name no engine (fence-tags.ts).
+  */
+  test("a command fenced as etcd is the deliverable of an etcd run, and of no other engine's", () => {
+    const command = "get /app/config/ --prefix --limit=50";
+    const etcd = ["```etcd", command, "```"].join("\n");
+
+    expect(readPlanStatement(etcd, "etcd")).toEqual({ kind: "statement", sql: command, tag: "etcd" });
+    expect(readPlanStatement(etcd, "redis")).toEqual({ kind: "absent" });
+  });
+
+  /*
     A run that refused and also pasted an illustrative block has not drafted a
     deliverable, and offering that block to the editor as the answer would be exactly
     the mislabelling this event exists to prevent.
@@ -596,6 +651,65 @@ describe("an engine whose statements are not SQL is not judged by a SQL reader (
     expect(validatePlanStatement(PROMQL, null, "promql").identifiers).toEqual({ kind: "not-applicable" });
     // The control: the same text on a SQL engine is judged, and the guard objects to it.
     expect(validatePlanStatement(PROMQL, INVENTORY, "sql").guardViolation).toBe("NON_READ_STATEMENT");
+  });
+
+  test("a Cypher draft is declined the same way: the reader speaks SQL and nothing else (Neo4j spec 6.5)", () => {
+    // Correct as a fall-through: `language !== "sql"` declines every language the guard cannot read.
+    const CYPHER = "MATCH (n:`Person`) RETURN n LIMIT 100";
+
+    expect(validatePlanStatement(CYPHER, INVENTORY, "cypher")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(CYPHER, null, "cypher").identifiers).toEqual({ kind: "not-applicable" });
+  });
+
+  test("an InfluxQL draft is declined the same way: the reader speaks SQL and nothing else (InfluxDB spec 6.5)", () => {
+    // Correct as a fall-through (`plan-statement.ts`, `language !== "sql"`): the draft meets the InfluxQL read
+    // policy when the user runs it. A regex holding `\/` is the text the SQL guard would misread.
+    const INFLUXQL = 'SELECT mean("temp") FROM "home".."cpu" WHERE "room" =~ /kitchen\\/a/ AND time > now() - 1h';
+
+    expect(validatePlanStatement(INFLUXQL, INVENTORY, "influxql")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(INFLUXQL, null, "influxql").identifiers).toEqual({ kind: "not-applicable" });
+  });
+
+  test("a Kafka read request is declined the same way: it is JSON, and the reader speaks SQL (#1088)", () => {
+    // Kafka declares `queryLanguage: "json"`, and its dialect never reaches this guard: the language
+    // alone answers not-applicable, which is correct for a read request as it is for MongoDB's JSON.
+    const REQUEST = '{"topic": "orders", "partition": 0, "from": {"offset": "120"}, "limit": 50}';
+
+    expect(validatePlanStatement(REQUEST, INVENTORY, "json")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(REQUEST, null, "json").identifiers).toEqual({ kind: "not-applicable" });
+    // The control: the same text on a SQL engine is judged, and the guard objects to it. It finds no
+    // operative keyword in a JSON object, so its objection is that there is no statement at all.
+    expect(validatePlanStatement(REQUEST, INVENTORY, "sql")).toMatchObject({
+      guardApplicable: true,
+      guardViolation: "NO_STATEMENT",
+    });
+  });
+
+  test("an etcd command is declined the same way: it is no SQL, and the reader speaks SQL (#1089)", () => {
+    // etcd declares `queryLanguage: "json"`, so the language alone answers not-applicable, whatever the
+    // command's words: a key named like a SQL verb is read by nothing here.
+    const COMMAND = "get /delete/from/users --prefix --limit=50";
+
+    expect(validatePlanStatement(COMMAND, INVENTORY, "json")).toEqual({
+      readOnly: false,
+      guardApplicable: false,
+      identifiers: { kind: "not-applicable" },
+    });
+    expect(validatePlanStatement(COMMAND, null, "json").identifiers).toEqual({ kind: "not-applicable" });
+    // The control: the same text on a SQL engine is judged.
+    expect(validatePlanStatement(COMMAND, INVENTORY, "sql").guardApplicable).toBe(true);
   });
 });
 

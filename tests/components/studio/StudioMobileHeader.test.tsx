@@ -1,5 +1,5 @@
 import "../../setup-dom";
-import "../../helpers/mock-navigation";
+import { mockRouterPush } from "../../helpers/mock-navigation";
 
 import React from "react";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -68,6 +68,7 @@ mock.module("lucide-react", () => {
 });
 
 import { StudioMobileHeader } from "@/components/studio/StudioMobileHeader";
+import { CANCEL_UNAVAILABLE_REASON } from "@/components/studio/QueryToolbar";
 import type { DatabaseConnection } from "@/lib/types";
 
 const conn: DatabaseConnection = {
@@ -109,7 +110,6 @@ describe("StudioMobileHeader", () => {
     isAdmin: true,
     activeMobileTab: "editor" as const,
     isExecuting: false,
-    currentQuery: "SELECT 1",
     queryEditorRef: {
       current: {
         format: mock(() => {}),
@@ -164,6 +164,36 @@ describe("StudioMobileHeader", () => {
   test("shows CANCEL button when executing", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} isExecuting />);
     expect(queryByText("CANCEL")).not.toBeNull();
+  });
+
+  test("CANCEL is disabled with the reason where the connection cannot cancel (#1364)", () => {
+    const onCancelQuery = mock(() => {});
+    const { getByText } = render(
+      <StudioMobileHeader {...defaults} isExecuting cancelMode="unavailable" onCancelQuery={onCancelQuery} />,
+    );
+    const button = getByText("CANCEL").closest("button")!;
+    expect(button.disabled).toBe(true);
+    // On the wrapper: a disabled button takes no pointer events, so its own title never shows.
+    expect(button.parentElement?.getAttribute("title")).toBe(CANCEL_UNAVAILABLE_REASON);
+    fireEvent.click(button);
+    expect(onCancelQuery).not.toHaveBeenCalled();
+  });
+
+  test("reads STOP WAITING in stop-waiting mode and still calls the handler", () => {
+    const onCancelQuery = mock(() => {});
+    const { getByText } = render(
+      <StudioMobileHeader {...defaults} isExecuting cancelMode="stop-waiting" onCancelQuery={onCancelQuery} />,
+    );
+    fireEvent.click(getByText("STOP WAITING").closest("button")!);
+    expect(onCancelQuery).toHaveBeenCalledTimes(1);
+  });
+
+  test("CANCEL is enabled when the header is not told otherwise", () => {
+    const button = render(<StudioMobileHeader {...defaults} isExecuting />)
+      .getByText("CANCEL")
+      .closest("button")!;
+    expect(button.disabled).toBe(false);
+    expect(button.parentElement?.getAttribute("title") ?? null).toBeNull();
   });
 
   test("hides action row when not on editor tab", () => {
@@ -349,7 +379,10 @@ describe("StudioMobileHeader", () => {
     expect((writeText.mock.calls as unknown[][])[0][0]).toBe("SELECT 1");
   });
 
-  test("Copy Query falls back to currentQuery when the editor has no value", () => {
+  test("Copy Query writes an empty string when the editor has no value", () => {
+    // The header no longer receives `currentQuery` (X5): the copy reads the editor handle
+    // alone, so an empty editor copies an empty string rather than a fallback that no
+    // longer exists.
     const writeText = mock(async () => {});
     Object.defineProperty(globalThis.navigator, "clipboard", {
       value: { writeText },
@@ -362,13 +395,11 @@ describe("StudioMobileHeader", () => {
         getValue: mock(() => ""),
       },
     };
-    const { queryByText } = render(
-      <StudioMobileHeader {...defaults} queryEditorRef={emptyEditorRef} currentQuery="SELECT 2" />,
-    );
+    const { queryByText } = render(<StudioMobileHeader {...defaults} queryEditorRef={emptyEditorRef} />);
     fireEvent.click(queryByText("Copy Query")!.closest('[role="menuitem"]')!);
 
     expect(writeText).toHaveBeenCalledTimes(1);
-    expect((writeText.mock.calls as unknown[][])[0][0]).toBe("SELECT 2");
+    expect((writeText.mock.calls as unknown[][])[0][0]).toBe("");
   });
 
   // B43: this item reached `navigator.clipboard` unguarded, which is undefined over plain
@@ -427,6 +458,18 @@ describe("StudioMobileHeader", () => {
    * leave it. The user menu is where the other once-per-session settings already
    * live, and where a theme preference is looked for.
    */
+  test("offers every signed-in user the MCP settings screen", () => {
+    const { getByText } = render(<StudioMobileHeader {...defaults} isAdmin={false} />);
+    fireEvent.click(getByText("MCP"));
+    expect(mockRouterPush).toHaveBeenCalledWith("/settings/mcp");
+  });
+
+  test("offers every signed-in user the sign-in security screen", () => {
+    const { getByText } = render(<StudioMobileHeader {...defaults} isAdmin={false} />);
+    fireEvent.click(getByText("Sign-in security"));
+    expect(mockRouterPush).toHaveBeenCalledWith("/settings/authenticator");
+  });
+
   test("the user menu carries a theme control", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} />);
     expect(queryByText("Switch to light theme")).not.toBeNull();
@@ -442,5 +485,27 @@ describe("StudioMobileHeader", () => {
     const control = queryByText("Switch to light theme")!.closest("button");
     expect(control).not.toBeNull();
     expect(control!.closest('[role="menuitem"]')).toBeNull();
+  });
+
+  describe("the read-only marker (#1089)", () => {
+    test("renders beside the connection selector, titled with what it refuses", () => {
+      const { getByText } = render(<StudioMobileHeader {...defaults} activeConnection={{ ...conn, readOnly: true }} />);
+      const marker = getByText("Read-only");
+
+      expect(marker.getAttribute("title")).toBe("Writes, value edits and maintenance are refused on this connection");
+      // Row 1 reads the selector, the marker, then the Online badge.
+      expect(marker.nextElementSibling).toBe(getByText("Online"));
+    });
+
+    test("renders nothing for a read-write connection or for no connection", () => {
+      const view = render(<StudioMobileHeader {...defaults} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(<StudioMobileHeader {...defaults} activeConnection={{ ...conn, readOnly: false }} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(<StudioMobileHeader {...defaults} activeConnection={null} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+    });
   });
 });

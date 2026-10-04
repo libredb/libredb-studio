@@ -136,10 +136,11 @@
    * out of room in different places. Dark's tightest pair is amber/yellow; light's
    * is blue/indigo.
    *
-   * `-alt` is a second step of the same hue. For sky, yellow, emerald and teal it
-   * is a second IDENTITY — there are more engines than there are hues, and
-   * `db-ui-config`'s own test asserts every engine colour differs — and those four
-   * therefore join the separation set. Elsewhere it is emphasis on one identity.
+   * `-alt` is a second step of the same hue. For blue, sky, yellow, emerald, teal
+   * and fuchsia it is a second IDENTITY (there are more engines than there are
+   * hues, and `db-ui-config`'s own test asserts every engine colour differs), and
+   * those six therefore join the separation set. Elsewhere it is emphasis on one
+   * identity.
    *
    * One deviation from "the lightest step that clears AA", forced by separation
    * rather than by contrast: orange sits at -900, because Tailwind's amber ramp
@@ -154,8 +155,10 @@
   --studio-hue-sky: #00598a;
   --studio-hue-sky-alt: #024a70;
   --studio-hue-indigo: #432dd7;
+  --studio-hue-indigo-alt: #372aac;
   --studio-hue-indigo-tint: #615fff;
   --studio-hue-violet: #7008e7;
+  --studio-hue-violet-alt: #5d0ec0;
   --studio-hue-purple: #8200db;
   --studio-hue-purple-alt: #6e11b0;
   --studio-hue-purple-tint: #ad46ff;
@@ -166,6 +169,7 @@
   --studio-hue-red: #9f0712;
   --studio-hue-red-tint: #fb2c36;
   --studio-hue-orange: #7e2a0c;
+  --studio-hue-orange-alt: #441306;
   --studio-hue-orange-tint: #ff6900;
   --studio-hue-amber: #973c00;
   --studio-hue-amber-tint: #fe9a00;
@@ -199,6 +203,7 @@
   --studio-hue-purple-solid-hover: #ad46ff;
 
   --studio-hue-fuchsia: #8a0194;
+  --studio-hue-fuchsia-alt: #721378;
 }
 
 .dark {
@@ -279,8 +284,10 @@
   --studio-hue-sky: #00bcff;
   --studio-hue-sky-alt: #74d4ff;
   --studio-hue-indigo: #7c86ff;
+  --studio-hue-indigo-alt: #a3b3ff;
   --studio-hue-indigo-tint: #615fff;
   --studio-hue-violet: #a684ff;
+  --studio-hue-violet-alt: #c4b4ff;
   --studio-hue-purple: #c27aff;
   --studio-hue-purple-alt: #dab2ff;
   --studio-hue-purple-tint: #ad46ff;
@@ -291,6 +298,7 @@
   --studio-hue-red: #ff6467;
   --studio-hue-red-tint: #fb2c36;
   --studio-hue-orange: #ff8904;
+  --studio-hue-orange-alt: #ffb86a;
   --studio-hue-orange-tint: #ff6900;
   --studio-hue-amber: #ffb900;
   --studio-hue-amber-tint: #fe9a00;
@@ -313,6 +321,7 @@
   --studio-hue-purple-solid-hover: #ad46ff;
 
   --studio-hue-fuchsia: #ed6aff;
+  --studio-hue-fuchsia-alt: #f4a8ff;
 }
 
 /*
@@ -381,8 +390,10 @@
   --color-hue-sky: var(--studio-hue-sky);
   --color-hue-sky-alt: var(--studio-hue-sky-alt);
   --color-hue-indigo: var(--studio-hue-indigo);
+  --color-hue-indigo-alt: var(--studio-hue-indigo-alt);
   --color-hue-indigo-tint: var(--studio-hue-indigo-tint);
   --color-hue-violet: var(--studio-hue-violet);
+  --color-hue-violet-alt: var(--studio-hue-violet-alt);
   --color-hue-purple: var(--studio-hue-purple);
   --color-hue-purple-alt: var(--studio-hue-purple-alt);
   --color-hue-purple-tint: var(--studio-hue-purple-tint);
@@ -393,6 +404,7 @@
   --color-hue-red: var(--studio-hue-red);
   --color-hue-red-tint: var(--studio-hue-red-tint);
   --color-hue-orange: var(--studio-hue-orange);
+  --color-hue-orange-alt: var(--studio-hue-orange-alt);
   --color-hue-orange-tint: var(--studio-hue-orange-tint);
   --color-hue-amber: var(--studio-hue-amber);
   --color-hue-amber-tint: var(--studio-hue-amber-tint);
@@ -410,6 +422,7 @@
   --color-hue-cyan: var(--studio-hue-cyan);
   --color-hue-cyan-tint: var(--studio-hue-cyan-tint);
   --color-hue-fuchsia: var(--studio-hue-fuchsia);
+  --color-hue-fuchsia-alt: var(--studio-hue-fuchsia-alt);
   --color-hue-teal-solid: var(--studio-hue-teal-solid);
   --color-hue-teal-solid-hover: var(--studio-hue-teal-solid-hover);
   --color-hue-purple-solid: var(--studio-hue-purple-solid);

@@ -296,6 +296,7 @@ describe("GET /api/agent/config", () => {
     const body = await parseResponseJSON<Record<string, unknown>>(res);
 
     expect(res.status).toBe(401);
+    expect(body.code).toBe("AUTH_REQUIRED");
     expect(body).not.toHaveProperty("enabled");
     expect(body).not.toHaveProperty("reason");
   });

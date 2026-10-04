@@ -33,10 +33,12 @@ const mockBuffer = {
     id: `evt-${Date.now()}`,
     timestamp: new Date().toISOString(),
   })),
-  getRecent: mock((count: number) => mockEvents.slice(-count)),
-  filter: mock((opts: { type?: string }) => {
-    if (opts.type) return mockEvents.filter((e) => e.type === opts.type);
-    return mockEvents;
+  // Mirrors the real buffer: newest first, `limit` keeps the newest matches.
+  getRecent: mock((count: number) => [...mockEvents].reverse().slice(0, count)),
+  filter: mock((opts: { type?: string; limit?: number }) => {
+    const matches = opts.type ? mockEvents.filter((e) => e.type === opts.type) : mockEvents;
+    const newest = [...matches].reverse();
+    return opts.limit === undefined ? newest : newest.slice(0, opts.limit);
   }),
   getAll: mock(() => mockEvents),
   size: mockEvents.length,
@@ -183,6 +185,20 @@ describe("/api/admin/audit", () => {
       expect(res.status).toBe(200);
       expect(mockBuffer.filter).toHaveBeenCalled();
       expect(data.events).toBeArray();
+    });
+
+    test("both paths answer newest first and honour limit", async () => {
+      const unfiltered = await parseResponseJSON<{ events: AuditEvent[] }>(
+        await GET(createMockRequest("/api/admin/audit?limit=1")),
+      );
+      expect(unfiltered.events).toEqual([mockEvents[mockEvents.length - 1]]);
+
+      const filtered = await parseResponseJSON<{ events: AuditEvent[] }>(
+        await GET(createMockRequest("/api/admin/audit?type=query_execution&limit=1")),
+      );
+      expect(filtered.events).toHaveLength(1);
+      expect(filtered.events[0]).toEqual([...mockEvents].reverse().find((e) => e.type === "query_execution")!);
+      expect(mockBuffer.filter).toHaveBeenCalledWith({ type: "query_execution", limit: 1 });
     });
 
     test("returns 500 when buffer read fails", async () => {

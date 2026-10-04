@@ -1,0 +1,44 @@
+{
+  "$captured": {
+    "service": "etcd-auth",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "18242060571022570213",
+    "memberId": "1380394221505655472",
+    "date": "2026-09-30T16:30:12.670Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "Maintenance/Alarm",
+    "surface": "alarmDisarm as root: DEACTIVATE NOSPACE with no alarm raised",
+    "request": {
+      "action": "DEACTIVATE",
+      "memberID": {
+        "$int64": "1380394221505655472"
+      },
+      "alarm": "NOSPACE"
+    },
+    "match": {
+      "action": "DEACTIVATE"
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "alarms": [],
+    "header": {
+      "cluster_id": {
+        "$int64": "18242060571022570213"
+      },
+      "member_id": {
+        "$int64": "1380394221505655472"
+      },
+      "revision": {
+        "$int64": "37"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    }
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "DescribeCollection",
+    "user": "root",
+    "surface": "DescribeCollection of a collection that does not exist",
+    "request": {
+      "db_name": "default",
+      "collection_name": "libredb_evidence_absent"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "virtual_channel_names": [],
+    "physical_channel_names": [],
+    "aliases": [],
+    "start_positions": [],
+    "properties": [],
+    "status": {
+      "extra_info": {
+        "is_input_error": "true"
+      },
+      "error_code": "CollectionNotExists",
+      "reason": "can't find collection[database=default][collection=libredb_evidence_absent]",
+      "code": 100,
+      "retriable": false,
+      "detail": "can't find collection[database=default][collection=libredb_evidence_absent]"
+    },
+    "schema": null,
+    "collectionID": "0",
+    "created_timestamp": "0",
+    "created_utc_timestamp": "0",
+    "shards_num": 0,
+    "consistency_level": "Strong",
+    "collection_name": "libredb_evidence_absent",
+    "db_name": "default",
+    "num_partitions": "0",
+    "db_id": "0",
+    "request_time": "0",
+    "update_timestamp": "0",
+    "update_timestamp_str": ""
+  }
+}

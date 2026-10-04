@@ -1,0 +1,21 @@
+{
+  "version": "3.12.0-core",
+  "name": "unknown-measurement",
+  "image": "influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "db": "home",
+      "q": "SELECT * FROM nope",
+      "chunked": "true",
+      "chunk_size": "1000"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": ""
+}

@@ -32,7 +32,7 @@ interface SchemaExplorerProps {
   onGenerateTestData?: (path: readonly string[]) => void;
 }
 
-export function SchemaExplorer({
+export const SchemaExplorer = React.memo(function SchemaExplorer({
   schema,
   isLoadingSchema,
   schemaError = null,
@@ -213,4 +213,4 @@ export function SchemaExplorer({
       </div>
     </div>
   );
-}
+});

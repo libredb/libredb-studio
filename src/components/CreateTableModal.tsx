@@ -248,12 +248,13 @@ const DIALECTS: Partial<Record<DatabaseType, CreateTableDialect>> = {
 };
 
 /**
- * PostgreSQL is the fallback for an unknown or absent `dbType` because it is what this
- * form emitted for every engine before #648: an unconnected modal keeps the behaviour it
- * had rather than picking a new one.
+ * PostgreSQL is the dialect for an absent `dbType` because it is what this form emitted
+ * for every engine before #648: an unconnected modal keeps the behaviour it had rather
+ * than picking a new one. A connected engine with no row answers `undefined`, which the
+ * component refuses rather than writing PostgreSQL DDL for it.
  */
-function resolveDialect(dbType: DatabaseType | undefined): CreateTableDialect {
-  return (dbType && DIALECTS[dbType]) || POSTGRES_DIALECT;
+function resolveDialect(dbType: DatabaseType | undefined): CreateTableDialect | undefined {
+  return dbType === undefined ? POSTGRES_DIALECT : DIALECTS[dbType];
 }
 
 /** The first column the form starts with, which is an auto-increment key wherever there is one. */
@@ -270,8 +271,27 @@ function defaultColumns(dialect: CreateTableDialect): ColumnDefinition[] {
   ];
 }
 
-export function CreateTableModal({ isOpen, onClose, onTableCreated, dbType }: CreateTableModalProps) {
-  const dialect = resolveDialect(dbType);
+/**
+ * The modal is mounted for every connection (`StudioOverlays`), so an engine without a
+ * dialect renders nothing while closed. OPENING it for one is a caller that skipped the
+ * `supportsCreateTable` gate, and that throws: the form has no grammar to write for it.
+ */
+export function CreateTableModal(props: CreateTableModalProps) {
+  const dialect = resolveDialect(props.dbType);
+  if (dialect === undefined) {
+    if (props.isOpen) throw new Error(`CreateTableModal: no create-table dialect for "${props.dbType}"`);
+    return null;
+  }
+  return <CreateTableForm {...props} dialect={dialect} />;
+}
+
+function CreateTableForm({
+  isOpen,
+  onClose,
+  onTableCreated,
+  dbType,
+  dialect,
+}: CreateTableModalProps & { dialect: CreateTableDialect }) {
   const [tableName, setTableName] = useState("");
   const [columns, setColumns] = useState<ColumnDefinition[]>(() => defaultColumns(dialect));
   const [isSubmitting] = useState(false);

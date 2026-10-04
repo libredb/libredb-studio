@@ -1,0 +1,13 @@
+version: "1"
+
+defaults:
+  managed: true
+  readOnly: true
+
+connections:
+  - id: "test-readonly-defaults"
+    name: "Test Read-only Defaults"
+    type: postgres
+    host: db.internal
+    port: 5432
+    roles: ["*"]

@@ -1,0 +1,29 @@
+{
+  "$captured": {
+    "service": "etcd-auth",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "18242060571022570213",
+    "memberId": "1380394221505655472",
+    "date": "2026-09-30T16:30:12.430Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "Auth/UserGet",
+    "surface": "userGet reader with a certificate that has no Common Name (gateway-client.crt) and no token",
+    "request": {
+      "name": "reader"
+    },
+    "match": {
+      "name": "reader"
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "class": "Error",
+    "message": "3 INVALID_ARGUMENT: etcdserver: user name is empty",
+    "code": 3,
+    "details": "etcdserver: user name is empty"
+  }
+}

@@ -18,8 +18,9 @@
  * scheme, default port and paths.
  */
 
-import { isIPv6 } from "node:net";
+import { BlockList, isIP, isIPv6 } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { assertPublicLiteralHost, LOOPBACK_NETWORKS } from "./egress-policy";
 
 export type HttpScheme = "http" | "https";
 
@@ -74,28 +75,88 @@ function ipv6Literal(host: string): string | null {
   return !address.includes("%") && isIPv6(address) ? address : null;
 }
 
-/** The host in URL form, or a refusal. */
-function validateHost(host: unknown): string {
+/**
+ * The host in URL form, or a refusal.
+ * Exported for the Kafka bootstrap address, which is a TCP host and port rather than a URL.
+ */
+export function validateHost(host: unknown): string {
   if (typeof host !== "string") throw new DatabaseConfigError(INVALID_HOST);
 
   const ipv6 = ipv6Literal(host);
-  if (ipv6 !== null) return `[${ipv6.toLowerCase()}]`;
-  if (IPV4.test(host) || isHostname(host)) return host.toLowerCase();
+  if (ipv6 !== null) {
+    return `[${ipv6.toLowerCase()}]`;
+  }
+  if (IPV4.test(host) || isHostname(host)) {
+    return host.toLowerCase();
+  }
 
   throw new DatabaseConfigError(INVALID_HOST);
 }
 
-/** An integer port from 1 to 65535, from a number or a string of digits alone. */
-function validatePort(port: unknown): number {
+/**
+ * An integer port from 1 to 65535, from a number or a string of digits alone.
+ * Exported for the Kafka bootstrap address, which is a TCP host and port rather than a URL.
+ */
+export function validatePort(port: unknown): number {
   const value = typeof port === "string" && PORT_DIGITS.test(port) ? Number(port) : port;
   if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_PORT) return value;
 
   throw new DatabaseConfigError(INVALID_PORT);
 }
 
+const loopback = new BlockList();
+for (const [network, prefix, family] of LOOPBACK_NETWORKS) loopback.addSubnet(network, prefix, family);
+
+/**
+ * Whether a host is this machine: an address in `LOOPBACK_NETWORKS`, bare or IPv4-mapped, or the exact name
+ * `localhost` in any case, and nothing else. The brackets `validateHost` puts around an IPv6 literal are stripped
+ * first.
+ */
+function isLoopbackHost(host: string): boolean {
+  const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (address.toLowerCase() === "localhost") return true;
+  const family = isIP(address);
+  if (family === 4) return loopback.check(address, "ipv4");
+  if (family !== 6) return false;
+  const groups = expandIPv6(address).split(":");
+  const mapped = groups.slice(0, 5).every((group) => group === "0000") && groups[5] === "ffff";
+  if (!mapped) return loopback.check(address, "ipv6");
+  const octets = [groups[6].slice(0, 2), groups[6].slice(2), groups[7].slice(0, 2), groups[7].slice(2)];
+  return loopback.check(octets.map((octet) => Number.parseInt(octet, 16)).join("."), "ipv4");
+}
+
+/**
+ * The refusal of a secret that would cross the network without TLS, or undefined where it may go.
+ *
+ * Both vector engines send the secret on every request, so a non-empty one over no TLS is refused unless the host
+ * is this machine or an SSH tunnel carries the connection. The caller maps "no TLS" (an absent or null ssl panel,
+ * or mode `disable`) to `tls: false`, passes the validated host the connection names and never the tunnel's local
+ * end, and runs this in `connect()` before any socket. `secretLabel` names the secret in the sentence, `password`
+ * when absent. The sentence never repeats the host.
+ */
+export function plaintextSecretRefusal(connection: {
+  readonly host: string;
+  readonly tunnelled: boolean;
+  readonly tls: boolean;
+  readonly hasSecret: boolean;
+  readonly secretLabel?: string;
+}): string | undefined {
+  if (!connection.hasSecret || connection.tls || connection.tunnelled || isLoopbackHost(connection.host)) {
+    return undefined;
+  }
+  const label = connection.secretLabel ?? "password";
+  return (
+    `This connection would send its ${label} without TLS to a host that is not this machine, where anyone on the ` +
+    `path can read it. Choose an SSL mode under SSL / TLS, connect through an SSH tunnel, or, if authentication is ` +
+    `off on this server, clear the ${label}.`
+  );
+}
+
 /** Validate a connection's host and port for one scheme. */
 export function httpOrigin(scheme: HttpScheme, host: unknown, port: unknown): HttpOrigin {
-  return { scheme, host: validateHost(host), port: validatePort(port) };
+  const validatedHost = validateHost(host);
+  assertPublicLiteralHost(validatedHost);
+  return { scheme, host: validatedHost, port: validatePort(port) };
 }
 
 /**

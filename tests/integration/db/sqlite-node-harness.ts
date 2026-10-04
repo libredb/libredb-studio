@@ -37,6 +37,12 @@ async function main(): Promise<void> {
     driverEnv: process.env.LIBREDB_SQLITE_DRIVER ?? null,
   };
 
+  if (process.argv[3] === "unwritable") {
+    await unwritableFileScenario(config, report);
+    console.log(JSON.stringify(report));
+    return;
+  }
+
   const provider = new SQLiteProvider(config);
 
   // Connect
@@ -67,6 +73,21 @@ async function main(): Promise<void> {
   const del = await provider.query("DELETE FROM users WHERE id = ?", [2]);
   report.deleteRowCount = del.rowCount;
 
+  // Statements that return rows without starting with SELECT. The provider routes on the
+  // driver's own column count, so this is node:sqlite's answer on the Node runtime the
+  // npx / brew / deb installs run, beside the in-process run of both drivers.
+  const rowsOf = async (sql: string) => {
+    const result = await provider.query(sql);
+    return { rows: result.rows, rowCount: result.rowCount };
+  };
+  report.rowReturning = {
+    cte: await rowsOf("WITH x AS (SELECT 1 AS a UNION ALL SELECT 2) SELECT a FROM x"),
+    values: await rowsOf("VALUES (1, 'a'), (2, 'b')"),
+    insertReturning: await rowsOf("INSERT INTO users (id, name) VALUES (3, 'Cy') RETURNING id, name"),
+    updateReturning: await rowsOf("UPDATE users SET name = 'Cyd' WHERE id = 3 RETURNING name"),
+    deleteReturning: await rowsOf("DELETE FROM users WHERE id = 3 RETURNING id"),
+  };
+
   // 64-bit ids. With node:sqlite's defaults this read threw ERR_OUT_OF_RANGE
   // outright, where bun:sqlite silently answered the NEIGHBOURING row's id; both
   // drivers now read them as BigInt and the driver seam converts them back the same
@@ -85,6 +106,12 @@ async function main(): Promise<void> {
   // Ordinary integers must stay ordinary numbers despite the all-or-nothing driver flag.
   report.bigSmallInteger = (await provider.query("SELECT 1 AS one")).rows;
   report.bigCount = (await provider.query("SELECT COUNT(*) AS count FROM big")).rows;
+
+  // A BLOB as the route serializes it: node:sqlite reads it as a plain Uint8Array, which
+  // JSON writes as an object keyed by index unless the seam hands back a Buffer.
+  report.blobWire = JSON.parse(
+    JSON.stringify((await provider.query("SELECT x'DEADBEEF00FF' AS bin, x'' AS empty")).rows),
+  );
   await provider.query("DROP TABLE big");
 
   // The same round trip on a column with NO affinity and on a BLOB one. SQLite
@@ -313,6 +340,32 @@ async function runAgentReadOnlyProfile(dbPath: string, report: Record<string, un
   );
   report.agentMissingDirOpenRejected = await rejects(() => missingDirProvider.connect());
   report.agentMissingDirCreated = existsSync(missingDir);
+}
+
+/**
+ * The editor path against a file this process cannot write (mode 0444 in a 0555 directory,
+ * prepared by the test): it opens read-only, reads, and a write fails with the provider's
+ * read-only message.
+ */
+async function unwritableFileScenario(config: DatabaseConnection, report: Record<string, unknown>): Promise<void> {
+  const provider = new SQLiteProvider(config);
+  await provider.connect();
+  try {
+    report.connected = provider.isConnected();
+    const health = await provider.getHealth();
+    report.integrity = health.slowQueries.find((sq) => sq.query.includes("Integrity"))?.query;
+    report.journalMode = (await provider.query("PRAGMA journal_mode")).rows;
+    report.tables = (await provider.listObjects([], "table")).map((object) => object.name);
+    report.count = (await provider.query("SELECT COUNT(*) AS n FROM orders")).rows;
+    try {
+      await provider.query("INSERT INTO orders VALUES (4, 'dee', 1)");
+      report.insertError = null;
+    } catch (error) {
+      report.insertError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    }
+  } finally {
+    await provider.disconnect();
+  }
 }
 
 /** True when the thunk rejects; false when it resolves. */

@@ -23,6 +23,8 @@
  */
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import {
   type ClickHouseQueryOptions,
@@ -396,9 +398,16 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
     // JSON.parse silently rounds 18446744073709551615 to ...552000. Quoted, it
     // arrives as a string, which is what the `pg` driver already does for int8.
     params.set("output_format_json_quote_64bit_integers", "1");
+    // The same rounding for Decimal, which the setting above does not cover:
+    // measured on 26.9.9.28, a Decimal(38,10) holding
+    // 12345678901234567890.1234567891 arrived unquoted and was shown as
+    // 12345678901234567000. Every Decimal is then a string, small ones included,
+    // which is how the `pg` driver already hands over NUMERIC.
+    params.set("output_format_json_quote_decimals", "1");
 
     const database = opts.database ?? this.database;
     if (database) params.set("database", database);
+    if (opts.queryId !== undefined) params.set("query_id", opts.queryId);
 
     return endpointUrl(this.origin, "/", params);
   }
@@ -413,7 +422,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
     let response: Response;
     let text: string;
     try {
-      response = await fetch(url, {
+      response = await httpTransportFetch(url, {
         method: "POST",
         headers: this.authorization ? { authorization: this.authorization } : {},
         body: sql,
@@ -423,6 +432,7 @@ export class ClickHouseHttpTransport implements ClickHouseTransport {
       });
       text = await response.text();
     } catch (error) {
+      if (error instanceof DatabaseConfigError) throw error;
       // A refused socket, an abort and a truncated body all arrive here, and all
       // have to leave as the seam's own error type.
       throw transportError(error);

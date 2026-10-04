@@ -348,11 +348,12 @@ The role mapping system:
 | Feature | Description |
 |---------|-------------|
 | **PKCE S256** | Proof Key for Code Exchange prevents authorization code interception |
-| **State Cookie** | PKCE state encrypted as JWT with `JWT_SECRET`, httpOnly, sameSite=lax, 5-min expiry |
+| **State Cookie** | PKCE state signed as a JWT with a key derived from `JWT_SECRET` for this purpose, httpOnly, sameSite=lax, 5-min expiry |
 | **Prompt Login** | `prompt=login` forces re-authentication on every SSO click |
 | **Provider Logout** | Logout clears both local JWT and provider session |
 | **Discovery Cache** | OIDC provider metadata cached for 5 minutes to reduce network calls |
 | **Nonce Validation** | ID token nonce validated to prevent replay attacks |
+| **Return Path** | When a session ends mid-use, an API call answers `401` `AUTH_REQUIRED` and the tab goes to `/login?next=<page>`. `Login with SSO` passes `next` to `/api/auth/oidc/login`, which keeps it in the signed state cookie; the callback lands there instead of `/` or `/admin`. Only an app-relative path is kept, judged on the path it resolves to (`/..//host` resolves to `//host` and is refused), at most 1024 UTF-8 bytes so the state cookie stays within the browser limit, and checked on the way in and again on the way out, so a crafted sign-in link cannot redirect off the deployment |
 
 > See the [Security Model](#security-model) in Part 2 for the underlying threat model and implementation detail.
 
@@ -556,7 +557,7 @@ The OIDC subsystem follows three core principles:
     │                            │ 15. Delete oidc-state cookie      │
     │                            │                                   │
     │  16. Set-Cookie: auth-token│                                   │
-    │◄── 302 → / or /admin ─────│                                    │
+    │◄── 302 → return_to, else / or /admin                           │
     │                            │                                   │
     ╞════════════════════════════════════════════════════════════════╡
     │  From here: identical to local password login                  │
@@ -630,6 +631,7 @@ interface OIDCState {
   code_verifier: string;   // PKCE random bytes (base64url)
   state: string;           // CSRF protection random
   nonce: string;           // Replay protection random
+  return_to?: string;      // App-relative page to land on after sign-in, when the session ended there
 }
 
 interface OIDCClaims {
@@ -735,7 +737,9 @@ The OIDC login flow requires carrying three values from the login route to the c
 ```
 ┌─────────────────────────────────────────────┐
 │  Cookie: oidc-state                         │
-│  Value: JWT (HS256 signed with JWT_SECRET)  │
+│  Value: JWT (HS256, key derived from        │
+│         JWT_SECRET, typ                     │
+│         libredb-oidc-state+jwt)             │
 │                                             │
 │  Payload: {                                 │
 │    code_verifier: "dBjftJeZ4CVP...",        │
@@ -755,10 +759,11 @@ The OIDC login flow requires carrying three values from the login route to the c
 
 **Why JWT and not a plain cookie?**
 - The state must be tamper-proof — an attacker shouldn't be able to forge a state cookie
-- JWT signing with `JWT_SECRET` provides integrity verification without needing server-side storage
+- JWT signing with a key derived from `JWT_SECRET` provides integrity verification without needing server-side storage
+- The key is HMAC-SHA256(`JWT_SECRET`, `libredb.oidc.state.v1`) and the header pins `typ: libredb-oidc-state+jwt`, the same purpose-derived key convention the other non-session tokens follow
 - The 5-minute expiry prevents stale state cookies from accumulating
 
-> **`JWT_SECRET` is mandatory for OIDC state signing — no development fallback.** Secret reading is centralized in `src/lib/config/auth-env.ts`. The state signer calls `getJwtSecret({ allowDevFallback: false })`, so a missing `JWT_SECRET` throws in *every* environment (unlike `auth.ts`, which permits a dev fallback outside production). A `JWT_SECRET` shorter than 32 characters is rejected everywhere — and rejected earliest of all at boot: `src/lib/config/auth-preflight.ts` exits the process with code 1 on a standalone start, so the misconfiguration surfaces in the server log instead of only in the first login attempt (issue #227). This is why an OIDC deployment must always set a real `JWT_SECRET` (zero-config boot generates one automatically).
+> **`JWT_SECRET` is mandatory for OIDC state signing: no development fallback.** Secret reading is centralized in `src/lib/config/auth-env.ts`. The state signer calls `derivedSigningKey(label, { allowDevFallback: false })`, so a missing `JWT_SECRET` throws in *every* environment (unlike `auth.ts`, which permits a dev fallback outside production). A `JWT_SECRET` shorter than 32 characters is rejected everywhere, and rejected earliest of all at boot: `src/lib/config/auth-preflight.ts` exits the process with code 1 on a standalone start, so the misconfiguration surfaces in the server log instead of only in the first login attempt (issue #227). This is why an OIDC deployment must always set a real `JWT_SECRET` (zero-config boot generates one automatically).
 
 **Lifecycle:**
 1. Created in `/api/auth/oidc/login` via `encryptState()`

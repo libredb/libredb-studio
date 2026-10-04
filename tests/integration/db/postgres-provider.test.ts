@@ -21,6 +21,7 @@ import {
   DatabaseError,
   ExecutionProfileError,
   QueryError,
+  NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
 // The ender's raise is measured through the mapper the two routes answer through, because the
 // cost its docblock states is an HTTP status and not a class name.
@@ -53,6 +54,13 @@ let mockQueryFn: (
  * Tests set it to say what the server would have said.
  */
 let mockTxStatus: "I" | "T" | "E" | null = "I";
+
+/**
+ * Whether a bare `BEGIN` opens a transaction on the mock server. Measured 2026-10-04 on
+ * RisingWave 3.1.0: `BEGIN` succeeds with the NOTICE "no transaction is actually started"
+ * and ReadyForQuery stays `I`, which is what `false` reproduces.
+ */
+let mockBeginOpens = true;
 
 /** A `pg` named-statement config, which is the ONLY shape that reaches Parse rather than a simple query. */
 interface MockParseConfig {
@@ -123,6 +131,10 @@ const mockClient = {
     // test can observe the provider's rollback rather than only the call to it.
     const ended = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(sql as string);
     if (ended) mockTxStatus = "I";
+    // A bare BEGIN opens one, which PostgreSQL reports as "T" on the very next
+    // ReadyForQuery. `mockBeginOpens = false` is the server that accepts BEGIN and opens
+    // nothing, the way RisingWave does.
+    if (mockBeginOpens && /^\s*BEGIN\s*;?\s*$/i.test(sql as string)) mockTxStatus = "T";
     const answer = mockQueryFn(sql as string, params);
     if (typeof sql !== "string") return answer;
     // One result per statement, which is what `pg` hands back for a multi-statement simple
@@ -166,12 +178,20 @@ let lastPool: MockPool | undefined;
  */
 let lastPoolConfig: Record<string, unknown> = {};
 
+/**
+ * The REAL `pg-types` registry, taken before the mock replaces `pg`. The provider's per-pool
+ * parsers delegate every type they do not own to it, so a stub here would let the tests
+ * below agree with whatever the stub returns instead of with what `pg` really parses.
+ */
+const { types: realPgTypes } = await import("pg");
+
 mock.module("pg", () => ({
   Pool: function (config: Record<string, unknown>) {
     lastPoolConfig = config;
     lastPool = new MockPool();
     return lastPool;
   },
+  types: realPgTypes,
 }));
 
 // Dynamic import AFTER mock is installed
@@ -893,6 +913,93 @@ describe("PostgresProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // Per-pool type parsers
+  // --------------------------------------------------------------------------
+
+  // `pg-types` turns `date` into a Date at LOCAL midnight of the server process and reads
+  // `timestamp` as local wall-clock time, so every value then serialised as ISO UTC moved with
+  // the process TZ: under Europe/Istanbul `DATE '2026-09-01'` answered 2026-08-31T21:00:00Z,
+  // and a SQL INSERT export replayed it as the previous day. The two zoneless types now arrive
+  // as the engine's own text. Both connection forms build the pool from one shared base, and
+  // each is checked because only the base carries the parsers.
+  describe.each([
+    ["discrete fields", makePgConfig()],
+    ["connection string", makePgConfig({ connectionString: "postgresql://postgres:secret@localhost:5432/testdb" })],
+  ])("pool type parsers (%s)", (_form, config) => {
+    type GetTypeParser = (oid: number, format?: string) => (value: string) => unknown;
+    const parserFor = async (): Promise<GetTypeParser> => {
+      provider = new PostgresProvider(config);
+      await provider.connect();
+      const types = lastPoolConfig.types as { getTypeParser: GetTypeParser } | undefined;
+      expect(types).toBeDefined();
+      return types!.getTypeParser;
+    };
+
+    test("date and timestamp arrive as the engine's own text", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1082, "text")("2026-09-01")).toBe("2026-09-01");
+      expect(getTypeParser(1114, "text")("2026-09-01 10:30:00")).toBe("2026-09-01 10:30:00");
+      // `pg` passes the format, but `pg-types` treats an absent one as text, and so does this.
+      expect(getTypeParser(1082)("2026-09-01")).toBe("2026-09-01");
+      // The values a Date could not hold survive as written instead of Invalid Date or Infinity.
+      expect(getTypeParser(1082, "text")("infinity")).toBe("infinity");
+      expect(getTypeParser(1082, "text")("0044-03-15 BC")).toBe("0044-03-15 BC");
+    });
+
+    test("date[] and timestamp[] arrive as arrays of the engine's text, NULL kept", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1182, "text")("{2026-09-01,2026-09-02}")).toEqual(["2026-09-01", "2026-09-02"]);
+      expect(getTypeParser(1182, "text")("{2026-09-01,NULL}")).toEqual(["2026-09-01", null]);
+      expect(getTypeParser(1115, "text")('{"2026-09-01 10:30:00","2026-09-02 11:00:00"}')).toEqual([
+        "2026-09-01 10:30:00",
+        "2026-09-02 11:00:00",
+      ]);
+    });
+
+    // `pg-types` reads an infinite timestamptz as the NUMBER Infinity, which no Date holds and
+    // JSON writes as null: measured on PostgreSQL 18.6, `'-infinity'::timestamptz` reached the
+    // grid as NULL. The two words arrive as written, like an infinite date; a finite instant
+    // stays a Date (the control below).
+    test("an infinite timestamptz arrives as the engine's text, alone and in an array", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(1184, "text")("infinity")).toBe("infinity");
+      expect(getTypeParser(1184, "text")("-infinity")).toBe("-infinity");
+      expect(getTypeParser(1185, "text")('{infinity,"2026-09-01 10:30:00+00",NULL,-infinity}')).toEqual([
+        "infinity",
+        new Date("2026-09-01T10:30:00.000Z"),
+        null,
+        "-infinity",
+      ]);
+      expect(getTypeParser(1185, "text")('{{infinity},{"2026-09-01 10:30:00+00"}}')).toEqual([
+        ["infinity"],
+        [new Date("2026-09-01T10:30:00.000Z")],
+      ]);
+    });
+
+    // Controls: without these, a parser that answered every OID with the raw text would pass
+    // the two tests above.
+    test("every other type is delegated to pg-types unchanged", async () => {
+      const getTypeParser = await parserFor();
+      expect(getTypeParser(23, "text")("5")).toBe(5);
+      // timestamptz names an instant, so it stays a Date and serialises as the same ISO UTC
+      // string in every process TZ.
+      const instant = getTypeParser(1184, "text")("2026-09-01 10:30:00+00");
+      expect(instant).toBeInstanceOf(Date);
+      expect((instant as Date).toISOString()).toBe("2026-09-01T10:30:00.000Z");
+      expect(getTypeParser(1185, "text")('{"2026-09-01 10:30:00+00"}')).toEqual([new Date("2026-09-01T10:30:00.000Z")]);
+      // The binary format carries no text to hand back, so it is pg's own parser.
+      expect(getTypeParser(1082, "binary")).toBe(realPgTypes.getTypeParser(1082, "binary"));
+    });
+
+    // A process-wide `pg.types.setTypeParser` would reach every other `pg` user in a host
+    // that embeds `@libredb/studio`. The global registry must still parse a date as a Date.
+    test("the global pg-types registry is left alone", async () => {
+      await parserFor();
+      expect(realPgTypes.getTypeParser(1082, "text")("2026-09-01")).toBeInstanceOf(Date);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // Query execution
   // --------------------------------------------------------------------------
 
@@ -932,19 +1039,58 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("cancelQuery()", () => {
+    type Running = { pid: number; client: Record<string, unknown> };
+    const runningOf = (p: unknown) => (p as unknown as { runningQueries: Map<string, Running> }).runningQueries;
+
+    /** A stand-in PostgreSQL that takes a CancelRequest the way the server does: read it, close. */
+    async function cancelListener(onRequest: (bytes: Buffer) => void) {
+      const { createServer } = await import("node:net");
+      const server = createServer((socket) => {
+        socket.on("data", (bytes) => {
+          onRequest(Buffer.from(bytes));
+          socket.end();
+        });
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      return {
+        port: typeof address === "object" && address !== null ? address.port : 0,
+        close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+      };
+    }
+
+    /** `pg_cancel_backend` as CockroachDB v26.3.2 answers it. */
+    function refusePgCancelBackend() {
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("pg_cancel_backend")) throw new Error("unknown function: pg_cancel_backend()");
+        return originalMock(sql, params);
+      };
+    }
+
     test("cancels known PID and returns true", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-
-      // We need a query running to have a tracked PID.
-      // Simulate: trigger a query with queryId, then cancel mid-flight.
-      // Since our mock is synchronous, we'll manually set the PID map.
-      // Access the private runningQueryPids map via casting.
-      const providerAny = provider as unknown as { runningQueryPids: Map<string, number> };
-      providerAny.runningQueryPids.set("cancel-test", 12345);
+      runningOf(provider).set("cancel-test", { pid: 12345, client: {} });
 
       const cancelled = await provider.cancelQuery("cancel-test");
       expect(cancelled).toBe(true);
+    });
+
+    test("tracks the run's backend and client while it runs, and forgets both after", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let seen: Running | undefined;
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql === "SELECT 42") seen = runningOf(provider).get("q-run");
+        return originalMock(sql, params);
+      };
+
+      await provider.query("SELECT 42", [], "q-run");
+
+      expect(seen?.client).toBeDefined();
+      expect(runningOf(provider).has("q-run")).toBe(false);
     });
 
     test("returns false for unknown queryId", async () => {
@@ -954,24 +1100,152 @@ describe("PostgresProvider", () => {
       expect(result).toBe(false);
     });
 
-    test("handles cancel error gracefully and returns false", async () => {
+    // CockroachDB, Materialize and RisingWave do not honour `pg_cancel_backend`, and the
+    // statement kept running (#1364); the wire-protocol cancel reaches the same session.
+    test("falls back to the wire-protocol cancel and confirms once the run ends", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const received: Buffer[] = [];
+      const listener = await cancelListener((bytes) => {
+        received.push(bytes);
+        // The engine stops the statement, and the run's own `finally` forgets it.
+        runningOf(provider).delete("wire-cancel");
+      });
+      try {
+        runningOf(provider).set("wire-cancel", {
+          pid: 1990112,
+          client: { processID: 1990112, secretKey: -1029646662, host: "127.0.0.1", port: listener.port },
+        });
 
-      const providerAny = provider as unknown as { runningQueryPids: Map<string, number> };
-      providerAny.runningQueryPids.set("error-cancel", 99999);
+        expect(await provider.cancelQuery("wire-cancel")).toBe(true);
+        const request = Buffer.concat(received);
+        expect(request.readInt32BE(4)).toBe(80877102);
+        expect(request.readInt32BE(8)).toBe(1990112);
+        expect(request.readInt32BE(12)).toBe(-1029646662);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
 
-      // Override mock to throw on pg_cancel_backend
+    // A session that runs over TLS gets its cancel over TLS: the client's own `ssl` travels
+    // with the request, so the first bytes are an SSLRequest, and a server that does not
+    // answer `S` never sees the key.
+    test("asks for TLS first when the session's client was configured with ssl", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const received: Buffer[] = [];
+      const listener = await cancelListener((bytes) => received.push(bytes));
+      try {
+        runningOf(provider).set("tls-session", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port, ssl: true },
+        });
+
+        expect(await provider.cancelQuery("tls-session")).toBe(false);
+        const first = Buffer.concat(received);
+        expect(first.length).toBe(8);
+        expect(first.readInt32BE(4)).toBe(80877103);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
+
+    test("answers false when the run is still going after the wire-protocol cancel", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const listener = await cancelListener(() => {});
+      // A clock that moves a second per reading, so the confirmation window passes in a few
+      // polls wherever it is first read: the run never ends.
+      const realNow = Date.now;
+      let calls = 0;
+      const now = spyOn(Date, "now").mockImplementation(() => realNow() + 1000 * calls++);
+      try {
+        runningOf(provider).set("still-running", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port },
+        });
+
+        expect(await provider.cancelQuery("still-running")).toBe(false);
+      } finally {
+        now.mockRestore();
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
+
+    test("waits for the run to end before confirming the wire-protocol cancel", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      // The engine takes a moment after the request, as CockroachDB did (about 0.5 s).
+      const listener = await cancelListener(() => {
+        setTimeout(() => runningOf(provider).delete("slow-stop"), 60);
+      });
+      try {
+        runningOf(provider).set("slow-stop", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port },
+        });
+
+        expect(await provider.cancelQuery("slow-stop")).toBe(true);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
+
+    test("answers false without a backend key to name the session by", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      try {
+        runningOf(provider).set("no-key", { pid: 7, client: { host: "127.0.0.1", port: 1 } });
+
+        expect(await provider.cancelQuery("no-key")).toBe(false);
+      } finally {
+        errors.mockRestore();
+      }
+    });
+
+    // The pool hands a released session to the next request, so a request sent after the run
+    // ended could stop somebody else's statement.
+    test("sends no wire-protocol cancel once the run has ended", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const received: Buffer[] = [];
+      const listener = await cancelListener((bytes) => received.push(bytes));
       const originalMock = mockQueryFn;
       mockQueryFn = async (sql: string, params?: unknown[]) => {
         if (sql.includes("pg_cancel_backend")) {
-          throw new Error("Connection lost");
+          // The run ends while `pg_cancel_backend` is being refused.
+          runningOf(provider).delete("ended");
+          throw new Error("unknown function: pg_cancel_backend()");
         }
         return originalMock(sql, params);
       };
+      try {
+        runningOf(provider).set("ended", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port },
+        });
 
-      const result = await provider.cancelQuery("error-cancel");
-      expect(result).toBe(false);
+        expect(await provider.cancelQuery("ended")).toBe(false);
+        expect(received).toEqual([]);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
     });
   });
 
@@ -1009,6 +1283,149 @@ describe("PostgresProvider", () => {
       await expect(provider.beginTransaction()).rejects.toThrow("Transaction already active");
       // Clean up
       await provider.rollbackTransaction();
+    });
+
+    test("a BEGIN the server accepts without opening a transaction is refused, and the client goes back", async () => {
+      // RisingWave 3.1.0, measured 2026-10-04: BEGIN succeeds, ReadyForQuery stays "I", and
+      // an INSERT and a DELETE run after it survived the ROLLBACK SANDBOX reported.
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const release = spyOn(mockClient, "release");
+      mockBeginOpens = false;
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow(NO_TRANSACTION_OPENED);
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+        // Nothing is held, so the next caller is not told one is already active.
+        await expect(provider.beginTransaction()).rejects.toThrow(NO_TRANSACTION_OPENED);
+      } finally {
+        mockBeginOpens = true;
+        release.mockRestore();
+      }
+    });
+
+    test("a BEGIN that fails releases the client it borrowed", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (/^\s*BEGIN/i.test(sql)) throw new Error("Connection lost");
+        return originalMock(sql, params);
+      };
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow("Connection lost");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a statement that ends the transaction itself ends the session, so no rollback is pretended", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      // A typed COMMIT inside a multi-statement text: the server answers "I" afterwards.
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("COMMIT;")) mockTxStatus = "I";
+        return originalMock(sql, params);
+      };
+      try {
+        mockWire = [];
+        await provider.queryInTransaction("INSERT INTO t VALUES (1); COMMIT; SELECT 1");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+        // A best-effort ROLLBACK goes out before the client does, so a relative that reported
+        // "I" with a transaction still open cannot hand one to the pool.
+        expect(mockWire.at(-1)).toBe("ROLLBACK");
+        await expect(provider.rollbackTransaction()).rejects.toThrow("No active transaction");
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a ROLLBACK that fails on an ended session still releases the client", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("COMMIT;")) mockTxStatus = "I";
+        if (sql === "ROLLBACK") throw new Error("Connection lost");
+        return originalMock(sql, params);
+      };
+      try {
+        await provider.queryInTransaction("INSERT INTO t VALUES (1); COMMIT;");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a ROLLBACK queued behind a statement that ended the session does not release the client twice", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      let finish: () => void = () => {};
+      let openGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      let rollbacks = 0;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("COMMIT;")) {
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+          mockTxStatus = "I";
+        }
+        // The caller's ROLLBACK is held until the statement ahead of it has ended the session,
+        // which is the order the server answers them in.
+        if (sql === "ROLLBACK" && ++rollbacks === 1) await gate;
+        return originalMock(sql, params);
+      };
+      try {
+        const running = provider.queryInTransaction("INSERT INTO t VALUES (1); COMMIT;");
+        const rollback = provider.rollbackTransaction();
+        finish();
+        await running;
+        openGate();
+        await rollback;
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a failed statement inside the transaction keeps the session for the rollback", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const originalMock = mockQueryFn;
+      mockQueryFn = async () => {
+        mockTxStatus = "E";
+        throw new Error('relation "nope" does not exist');
+      };
+      try {
+        await expect(provider.queryInTransaction("SELECT * FROM nope")).rejects.toThrow("nope");
+        expect(provider.isInTransaction()).toBe(true);
+      } finally {
+        mockQueryFn = originalMock;
+      }
+      await provider.rollbackTransaction();
+      expect(provider.isInTransaction()).toBe(false);
     });
 
     test("commitTransaction without begin throws", async () => {
@@ -1066,7 +1483,7 @@ describe("PostgresProvider", () => {
     test("transaction timeout timer fires and auto-rollbacks", async () => {
       // TX_TIMEOUT_MS is a private static read at beginTransaction() call time;
       // shrink it so the auto-rollback timer actually fires in the test
-      // (same private-access-via-cast precedent as runningQueryPids above).
+      // (same private-access-via-cast precedent as runningQueries above).
       const providerStatics = PostgresProvider as unknown as { TX_TIMEOUT_MS: number };
       const originalTimeout = providerStatics.TX_TIMEOUT_MS;
       providerStatics.TX_TIMEOUT_MS = 5;
@@ -1115,7 +1532,10 @@ describe("PostgresProvider", () => {
           issued.push(String(sql));
           const endsTransaction = /^\s*(COMMIT|ROLLBACK)\s*;?\s*$/i.test(String(sql));
           if (endsTransaction && client.failRollbackWith !== undefined) throw client.failRollbackWith;
-          client.status = endsTransaction ? "I" : afterStatement;
+          // A bare BEGIN opens a transaction whatever the client was built to answer after
+          // its other statements, the way the server reports it.
+          const opens = /^\s*BEGIN\s*;?\s*$/i.test(String(sql));
+          client.status = endsTransaction ? "I" : opens ? "T" : afterStatement;
           return { rows: [], fields: [], rowCount: 0 };
         },
         getTransactionStatus: () => client.status,
@@ -2201,6 +2621,48 @@ describe("PostgresProvider", () => {
       expect(capturedSql).not.toContain("public.");
     });
 
+    // The container parameter exists because the name alone cannot say which schema it came
+    // from: `schemaName` is a schema for PostgreSQL, the database for MySQL, an owner for
+    // Oracle, and the monitoring page already renders it beside every table (#772). A name
+    // that carries a dot cannot stand in for it, since a container can contain one.
+    test("a container qualifies the target, and the name is not re-split", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("vacuum", "users", "reporting");
+      expect(capturedSql).toContain('"reporting"."users"');
+      expect(capturedSql).not.toContain("public.");
+    });
+
+    test("a container containing a dot survives the qualifier", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("analyze", "users", "my.schema");
+      expect(capturedSql).toContain('"my.schema"."users"');
+    });
+
+    test("without a container the old readings stay", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      let capturedSql = "";
+      mockQueryFn = (sql: string) => {
+        capturedSql = sql;
+        return defaultMockQuery(sql);
+      };
+      await provider.runMaintenance("vacuum", "reporting.MonthlySummary");
+      expect(capturedSql).toContain('"reporting"."MonthlySummary"');
+      expect(capturedSql).not.toContain('"reporting.MonthlySummary"');
+    });
+
     test("kill with valid PID returns success", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
@@ -2379,6 +2841,8 @@ describe("PostgresProvider", () => {
       const metrics = await provider.getPerformanceMetrics();
 
       expect(metrics.cacheHitRatio).toBe(98.75);
+      // The tuning sentence is PostgreSQL's own and is declared beside the ratio.
+      expect(metrics.cacheHitAdvice).toBe("Increase shared_buffers");
       // Not a metric PostgreSQL publishes; see the note in getPerformanceMetrics().
       expect("bufferPoolUsage" in metrics).toBe(false);
       expect(typeof metrics.deadlocks).toBe("number");
@@ -2487,6 +2951,7 @@ describe("PostgresProvider", () => {
 
       const metrics = await provider.getPerformanceMetrics();
       expect("cacheHitRatio" in metrics).toBe(false);
+      expect("cacheHitAdvice" in metrics).toBe(false);
       mockQueryFn = originalMock;
     });
 
@@ -2809,9 +3274,20 @@ describe("PostgresProvider", () => {
       const stats = provider.getPoolStats();
 
       expect(stats.total).toBe(10);
+      // The configured ceiling, apart from the clients open right now.
+      expect(stats.max).toBe(10);
       expect(stats.idle).toBe(7);
       expect(stats.active).toBe(3); // total - idle
       expect(stats.waiting).toBe(0);
+    });
+
+    test("max is the configured ceiling, not the open client count", async () => {
+      provider = new PostgresProvider(makePgConfig(), { pool: { max: 25 } });
+      await provider.connect();
+      const stats = provider.getPoolStats();
+
+      expect(stats.total).toBe(10);
+      expect(stats.max).toBe(25);
     });
 
     test("not connected returns zeros", () => {
@@ -2830,6 +3306,12 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
+    test("declares only the statements that end the transaction, because PostgreSQL's DDL is transactional", () => {
+      provider = new PostgresProvider(makePgConfig());
+      // `END` is the COMMIT synonym and `PREPARE TRANSACTION` detaches the transaction; no DDL.
+      expect(provider.getCapabilities().implicitCommitStatements).toEqual(["END", "PREPARE TRANSACTION"]);
+    });
+
     // #U9: the target grammar of each operation, declared next to it. PostgreSQL is
     // the engine both surfaces were already right about - every statement here has a
     // one-table form and a whole-database form - so this records the baseline the
@@ -4841,11 +5323,84 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  test("Materialize's XX000 for the missing prokind costs the routine folders, not the container", async () => {
+    // Measured on Materialize v26.44.1 on 2026-10-04: the routine arm answers SQLSTATE XX000
+    // (internal_error), not 42703, with `column "p.prokind" does not exist`. Keying the
+    // retry on the code lost all seven folders there; the routine-free statement answers.
+    const statements: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("GROUP BY kind")) return { rows: [] };
+      statements.push(sql);
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "p.prokind" does not exist'), { code: "XX000" });
+      }
+      return {
+        rows: [
+          { kind: "table", n: 1 },
+          { kind: "view", n: 1 },
+          { kind: "materialized_view", n: 1 },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["public"]);
+    expect(statements).toHaveLength(2);
+    expect(statements[1]).not.toContain("pg_proc");
+    expect(counts.table).toEqual({ count: 1 });
+    expect(counts.view).toEqual({ count: 1 });
+    expect(counts.materialized_view).toEqual({ count: 1 });
+    expect(counts.sequence).toEqual({ count: 0 });
+    expect(counts.trigger).toEqual({ count: 0 });
+    expect(counts.function).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    expect(counts.procedure).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    await provider.disconnect();
+  });
+
+  test("a code-less refusal naming prokind is handled alike: the column name is the key, not the SQLSTATE", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("GROUP BY kind")) return { rows: [] };
+      if (sql.includes("pg_proc")) throw new Error('column "p.prokind" does not exist');
+      return { rows: [{ kind: "table", n: 4 }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    expect(counts.table).toEqual({ count: 4 });
+    expect(counts.function).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    expect(counts.procedure).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    await provider.disconnect();
+  });
+
+  test("a statement timeout is not retried: one statement, and every folder carries its sentence", async () => {
+    // A second catalog scan would double the wait, and filing the timeout under the routine
+    // pair would say something about routines the server never said.
+    const statements: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("GROUP BY kind")) return { rows: [] };
+      statements.push(sql);
+      throw Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    expect(statements).toHaveLength(1);
+    for (const kind of ["table", "view", "materialized_view", "sequence", "function", "procedure", "trigger"]) {
+      expect(counts[kind]).toEqual({ unavailable: "canceling statement due to statement timeout" });
+    }
+    await provider.disconnect();
+  });
+
   test("a 42703 that does not name prokind takes the whole container down", async () => {
     // The retry repairs nothing when the missing column was in an arm it keeps, so
     // reporting the routine folders as merely unavailable would be a guess.
+    const statements: string[] = [];
     mockQueryFn = async (sql) => {
       if (sql.includes("GROUP BY kind")) {
+        statements.push(sql);
         throw Object.assign(new Error("column c.relkind does not exist"), { code: "42703" });
       }
       return { rows: [] };
@@ -4854,6 +5409,7 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.connect();
 
     const counts = await provider.countObjects(["app"]);
+    expect(statements).toHaveLength(1);
     for (const kind of ["table", "view", "materialized_view", "sequence", "function", "procedure", "trigger"]) {
       expect(counts[kind]).toEqual({ unavailable: "column c.relkind does not exist" });
     }
@@ -5029,6 +5585,36 @@ describe("PostgreSQL bulk column read", () => {
     await provider.connect();
 
     await expect(provider.describeObjects(["app"], "package")).rejects.toThrow(/declares no object kind "package"/);
+    await provider.disconnect();
+  });
+
+  /**
+   * The schema level is REQUIRED by this engine's readers, not just the depth.
+   *
+   * A declaration whose one level is called `catalog` has the depth the shared check wants,
+   * so the renderer accepts `["shop"]` here and the refusal has to come from this engine.
+   * PostgreSQL's readers do not read their segment by position: they look the `schema` level
+   * up and bind what they find, so with no such level the read would bind `undefined` where
+   * `$1` belongs and answer an empty folder that looks exactly like a schema holding
+   * nothing. Nothing else in this file covers it, because every other fixture declares a
+   * `schema` level.
+   */
+  test("a declaration with no schema level is refused even when the depth matches", async () => {
+    mockQueryFn = async () => ({ rows: [] });
+    const provider = makeProvider();
+    await provider.connect();
+    const spy = spyOn(provider, "getCapabilities").mockReturnValue({
+      ...provider.getCapabilities(),
+      containerLevels: [{ id: "catalog", label: "Catalog", labelPlural: "Catalogs" }],
+    });
+
+    try {
+      await expect(provider.describeObjects(["shop"], "table")).rejects.toThrow(
+        /A PostgreSQL path needs a "schema" container level and a segment for it; the declaration is \[catalog\] and the path is \["shop"\]/,
+      );
+    } finally {
+      spy.mockRestore();
+    }
     await provider.disconnect();
   });
 

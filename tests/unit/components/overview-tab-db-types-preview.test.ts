@@ -16,7 +16,7 @@ describe("OverviewTab DB_TYPES_PREVIEW", () => {
 
   test("spans relational, document, key-value, wide-column, search and analytics, not six flavours of one category", () => {
     const categories: Record<string, readonly DatabaseType[]> = {
-      relational: ["postgres", "mysql", "sqlite", "libsql", "oracle", "mssql"],
+      relational: ["postgres", "mysql", "sqlite", "libsql", "oracle", "db2", "mssql"],
       document: ["mongodb", "couchbase"],
       "key-value": ["redis"],
       "wide-column": ["cassandra"],

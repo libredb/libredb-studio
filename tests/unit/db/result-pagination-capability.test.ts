@@ -31,10 +31,19 @@ const STATEMENT = "SELECT * FROM t";
  * - `false` for `mongodb` and `redis`, which pin `offset` to 0 and return the statement
  *   untouched, and for `prometheus` (#1085), declared the same way before its provider
  *   existed: an instant query has no row offset, and the provider bounds series itself.
+ * - `false` for `kafka` (#1088), which inherits `BaseDatabaseProvider.prepareQuery` as `libredb`
+ *   does below: a read request carries its own limit and no offset can page it.
+ * - `false` for `etcd` (#1089), whose own `prepareQuery` pins the command it is given: a command
+ *   carries its own `--limit`, and no offset can page it.
+ * - `false` for `neo4j`, whose `prepareQuery` (`GraphBaseProvider`) hands the statement on untouched:
+ *   the provider bounds a read by the rows it takes from the server, and no offset can page it.
+ * - `false` for `influxdb` (InfluxDB spec I19), whose `prepareQuery` hands the InfluxQL text on untouched: the
+ *   provider bounds a read by the rows it takes from the answer, and no offset can page it. `influxdb3` is `true`:
+ *   it inherits `SQLBaseProvider.prepareQuery`, which writes `LIMIT ... OFFSET` like the other SQL engines.
  * - `false` for `libredb`, the quiet one: it inherits `BaseDatabaseProvider.prepareQuery`,
  *   which echoes `offset: 50` back while applying nothing, so a `true` here would render a
  *   control whose every click re-fetches page one.
- * - `true` for the other twelve, each of which emits a real offset clause; the shapes
+ * - `true` for the other fourteen, each of which emits a real offset clause; the shapes
  *   differ per dialect and the invariant below does not care which, only that the
  *   statement CHANGED and the provider says it applied the bound.
  *
@@ -48,6 +57,7 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   libsql: true,
   duckdb: true,
   oracle: true,
+  db2: true,
   mssql: true,
   clickhouse: true,
   druid: true,
@@ -60,6 +70,14 @@ const EXPECTED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   redis: false,
   libredb: false,
   prometheus: false,
+  kafka: false,
+  etcd: false,
+  neo4j: false,
+  milvus: false,
+  qdrant: false,
+  influxdb: false,
+  influxdb3: true,
+  oxia: false,
 });
 
 const TYPES = Object.keys(EXPECTED) as DatabaseType[];
@@ -126,7 +144,7 @@ describe("supportsResultPagination (#816)", () => {
    * is left with a larger preview and no control". Cassandra and Elasticsearch are exactly the
    * pair whose generated `LIMIT 50` this change removed and whose flag is false, so restricting
    * the chain to `EXPECTED[type]` would have excluded the two engines the item was written
-   * about. The split below is on a capability and never on a type-id: the three JSON grammars
+   * about. The split below is on a capability and never on a type-id: the JSON grammars
    * carry their bound inside the document the generator writes, because the limiter cannot
    * reach into one.
    */
@@ -146,7 +164,9 @@ describe("supportsResultPagination (#816)", () => {
       // and their previews did not grow; the assertion is that the limiter still does not
       // rewrite them, because a rewrite is what would silently replace their own bound.
       // Prometheus (#1085) joins them with the metric selector its generator writes, which
-      // its own `prepareQuery` hands on untouched as well.
+      // its own `prepareQuery` hands on untouched as well, and Kafka (#1088) with the read
+      // request its generator writes, `limit` included, which the base `prepareQuery` hands on, and etcd
+      // (#1089) with the `get` its generator writes, `--limit` included, which its own `prepareQuery` pins.
       expect(pageOne.prepared.query).toBe(generated);
       return;
     }
@@ -175,7 +195,7 @@ describe("supportsResultPagination (#816)", () => {
       return;
     }
 
-    // MongoDB, Redis, LibreDB and Prometheus: no refusal, so the only thing that keeps criterion 3 is the
+    // MongoDB, Redis, LibreDB, Prometheus, Kafka, etcd and Neo4j: no refusal, so the only thing that keeps criterion 3 is the
     // flag. Pin what they really do, so a provider that starts applying the offset is a
     // failure here rather than a flag left false for an engine that outgrew it.
     expect(pageTwo.prepared.wasLimited).toBe(false);

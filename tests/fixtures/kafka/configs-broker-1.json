@@ -1,0 +1,3417 @@
+{
+ "$captured": {
+  "image": "apache/kafka:4.3.1",
+  "clusterId": "4L6g3nShT-eMCtK--X86sw",
+  "date": "2026-09-24T18:56:45.127Z",
+  "surface": "admin.describeConfigs({ resources: [{ resourceType: BROKER, resourceName: \"1\" }] })"
+ },
+ "outcome": "pass",
+ "payload": [
+  {
+   "resourceType": 4,
+   "resourceName": "1",
+   "configs": [
+    {
+     "name": "log.cleaner.min.compaction.lag.ms",
+     "value": "0",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "offsets.topic.num.partitions",
+     "value": "50",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.jwks.endpoint.refresh.ms",
+     "value": "3600000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.metadata.manager.listener.name",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "log.flush.interval.messages",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "controller.socket.timeout.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.flush.interval.ms",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "principal.builder.class",
+     "value": "org.apache.kafka.common.security.authenticator.DefaultKafkaPrincipalBuilder",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.request.timeout.ms",
+     "value": "2000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "min.insync.replicas",
+     "value": "1",
+     "readOnly": false,
+     "configSource": 3,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.expected.audience",
+     "value": "",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.thread.pool.size",
+     "value": "2",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.max.session.timeout.ms",
+     "value": "60000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "num.recovery.threads.per.data.dir",
+     "value": "2",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.keystore.type",
+     "value": "JKS",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.private.key.file",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.state.topic.replication.factor",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 4,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.bootstrap.servers",
+     "value": "",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "sasl.mechanism.inter.broker.protocol",
+     "value": "GSSAPI",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "metadata.log.segment.bytes",
+     "value": "1073741824",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "fetch.purgatory.purge.interval.requests",
+     "value": "1000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.num.standby.replicas",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.record.lock.duration.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.endpoint.identification.algorithm",
+     "value": "https",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "replica.socket.timeout.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "message.max.bytes",
+     "value": "1048588",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.state.topic.segment.bytes",
+     "value": "104857600",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.fetch.max.bytes.per.second",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "group.share.session.timeout.ms",
+     "value": "45000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "max.connection.creation.rate",
+     "value": "2147483647",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.claim.exp.seconds",
+     "value": "300",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "connections.max.reauth.ms",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.state.topic.min.isr",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 4,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.copy.quota.window.size.seconds",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.flush.offset.checkpoint.interval.ms",
+     "value": "60000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.claim.aud",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "quota.window.num",
+     "value": "11",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.clock.skew.seconds",
+     "value": "30",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.min.assignment.interval.ms",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.min.session.timeout.ms",
+     "value": "45000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "authorizer.class.name",
+     "value": "",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "num.replica.fetchers",
+     "value": "1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "alter.log.dirs.replication.quota.window.size.seconds",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.scope",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.jwks.endpoint.url",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.metadata.custom.metadata.max.bytes",
+     "value": "128",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.roll.jitter.hours",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "telemetry.max.bytes",
+     "value": "1048576",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.delete.retention.ms",
+     "value": "86400000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.file",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.retry.backoff.ms",
+     "value": "100",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "queued.max.requests",
+     "value": "500",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.threads",
+     "value": "1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.kerberos.service.name",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "socket.request.max.bytes",
+     "value": "104857600",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.max.size",
+     "value": "2147483647",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.assignors",
+     "value": "uniform,range",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.storage.system.enable",
+     "value": "false",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "log.message.timestamp.type",
+     "value": "CreateTime",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "connections.max.idle.ms",
+     "value": "600000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "max.connections",
+     "value": "2147483647",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "delegation.token.expiry.time.ms",
+     "value": "86400000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "transaction.state.log.num.partitions",
+     "value": "50",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.election.timeout.ms",
+     "value": "1000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "listener.security.protocol.map",
+     "value": "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT",
+     "readOnly": false,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "log.retention.hours",
+     "value": "168",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "client.quota.callback.class",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.storage.manager.impl.prefix",
+     "value": "rsm.config.",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "ssl.provider",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "delete.records.purgatory.purge.interval.requests",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "producer.id.expiration.ms",
+     "value": "86400000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.roll.ms",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "ssl.cipher.suites",
+     "value": "",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.retry.backoff.ms",
+     "value": "20",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.copy.max.bytes.per.second",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "broker.session.timeout.ms",
+     "value": "9000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "security.inter.broker.protocol",
+     "value": "PLAINTEXT",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.assignment.interval.ms",
+     "value": "1000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.heartbeat.interval.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "delegation.token.secret.key",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.fetch.quota.window.num",
+     "value": "11",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "remote.fetch.max.wait.ms",
+     "value": "500",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.max.heartbeat.interval.ms",
+     "value": "15000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.claim.jti.include",
+     "value": "false",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "node.id",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "replica.high.watermark.checkpoint.interval.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "replication.quota.window.size.seconds",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.local.retention.ms",
+     "value": "-2",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.append.linger.ms",
+     "value": "-1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.reader.threads",
+     "value": "10",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.snapshot.update.records.per.snapshot",
+     "value": "500",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "follower.fetch.last.tiered.offset.enable",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "sasl.kerberos.ticket.renew.window.factor",
+     "value": "0.8",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "group.coordinator.threads",
+     "value": "4",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.private.key.passphrase",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "metrics.recording.level",
+     "value": "INFO",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.template.file",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "log.dir.failure.timeout.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "transaction.partition.verification.enable",
+     "value": "true",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.auto.join.enable",
+     "value": "false",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "group.share.min.heartbeat.interval.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.principal.mapping.rules",
+     "value": "DEFAULT",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.fetch.quota.window.size.seconds",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "replica.selector.class",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "max.connections.per.ip",
+     "value": "2147483647",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "background.threads",
+     "value": "10",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.max.assignment.interval.ms",
+     "value": "15000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "request.timeout.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "add.partitions.to.txn.retry.backoff.ms",
+     "value": "20",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.class",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.index.file.cache.total.size.bytes",
+     "value": "1073741824",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.dir",
+     "value": "/tmp/kafka-logs",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "log.segment.bytes",
+     "value": "1073741824",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "replica.fetch.response.max.bytes",
+     "value": "10485760",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.max.session.timeout.ms",
+     "value": "1800000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.heartbeat.interval.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "controller.listener.names",
+     "value": "CONTROLLER",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "log.message.timestamp.after.max.ms",
+     "value": "3600000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.append.linger.ms",
+     "value": "25",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.retention.minutes",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.segment.delete.delay.ms",
+     "value": "60000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.dirs",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "early.start.listeners",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "controlled.shutdown.enable",
+     "value": "true",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.state.topic.compression.codec",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.message.timestamp.before.max.ms",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "group.share.min.partition.max.record.locks",
+     "value": "100",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.copier.thread.pool.size",
+     "value": "10",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "socket.connection.setup.timeout.max.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.refresh.min.period.seconds",
+     "value": "60",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 4,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.scope.claim.name",
+     "value": "scope",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.expected.issuer",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.read.timeout.ms",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "transaction.abort.timed.out.transaction.cleanup.interval.ms",
+     "value": "10000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.kerberos.kinit.cmd",
+     "value": "/usr/bin/kinit",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.min.assignment.interval.ms",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.io.max.bytes.per.second",
+     "value": "1.7976931348623157E308",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "auto.leader.rebalance.enable",
+     "value": "true",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "leader.imbalance.check.interval.seconds",
+     "value": "300",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.min.cleanable.ratio",
+     "value": "0.5",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "group.share.min.record.lock.duration.ms",
+     "value": "15000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "replica.lag.time.max.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "num.network.threads",
+     "value": "3",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.min.session.timeout.ms",
+     "value": "45000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.keystore.key",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "sasl.client.callback.handler.class",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "compression.gzip.level",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "metrics.num.samples",
+     "value": "2",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "socket.send.buffer.bytes",
+     "value": "102400",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.coordinator.rebalance.protocols",
+     "value": "classic,consumer,streams",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.storage.manager.class.name",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "socket.receive.buffer.bytes",
+     "value": "102400",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.initial.rebalance.delay.ms",
+     "value": "3000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "replica.fetch.min.bytes",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.max.session.timeout.ms",
+     "value": "60000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.sub.claim.name",
+     "value": "sub",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "broker.rack",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "unclean.leader.election.enable",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.jwks.endpoint.retry.backoff.ms",
+     "value": "100",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "offsets.retention.check.interval.ms",
+     "value": "600000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "group.share.min.delivery.count.limit",
+     "value": "2",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "producer.purgatory.purge.interval.requests",
+     "value": "1000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.voters",
+     "value": "1@kafka:29093",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "group.share.assignors",
+     "value": "simple",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "metrics.sample.window.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.retention.check.interval.ms",
+     "value": "300000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.session.timeout.ms",
+     "value": "45000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.refresh.window.jitter",
+     "value": "0.05",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.assignment.interval.ms",
+     "value": "15000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "controller.quota.window.num",
+     "value": "11",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.session.timeout.ms",
+     "value": "45000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "metric.reporters",
+     "value": "org.apache.kafka.common.metrics.JmxReporter",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.token.endpoint.url",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "auto.create.topics.enable",
+     "value": "true",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "group.share.partition.max.record.locks",
+     "value": "2000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.engine.factory.class",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "replica.socket.receive.buffer.bytes",
+     "value": "65536",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.allow.dn.changes",
+     "value": "false",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "replica.fetch.wait.max.ms",
+     "value": "500",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.coordinator.background.threads",
+     "value": "2",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.min.heartbeat.interval.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.delivery.count.limit",
+     "value": "10",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.min.session.timeout.ms",
+     "value": "45000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "default.replication.factor",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.truststore.password",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "group.share.assignment.interval.ms",
+     "value": "1000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.preallocate",
+     "value": "false",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "sasl.kerberos.principal.to.local.rules",
+     "value": "DEFAULT",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.reader.max.pending.tasks",
+     "value": "100",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "transactional.id.expiration.ms",
+     "value": "604800000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "transaction.state.log.replication.factor",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 4,
+     "documentation": null
+    },
+    {
+     "name": "num.io.threads",
+     "value": "8",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.max.size",
+     "value": "2147483647",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.refresh.buffer.seconds",
+     "value": "300",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 4,
+     "documentation": null
+    },
+    {
+     "name": "connection.failed.authentication.delay.ms",
+     "value": "100",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.heartbeat.interval.ms",
+     "value": "15000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.write.timeout.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "delete.topic.enable",
+     "value": "true",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "quota.window.size.seconds",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.truststore.type",
+     "value": "JKS",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "offsets.commit.timeout.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.algorithm",
+     "value": "RS256",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "broker.heartbeat.interval.ms",
+     "value": "2000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.mechanism.controller.protocol",
+     "value": "GSSAPI",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.record.lock.duration.ms",
+     "value": "60000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.max.compaction.lag.ms",
+     "value": "9223372036854775807",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.storage.manager.class.path",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "log.retention.ms",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "share.fetch.purgatory.purge.interval.requests",
+     "value": "1000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "alter.log.dirs.replication.quota.window.num",
+     "value": "11",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.enable",
+     "value": "true",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.fetch.timeout.ms",
+     "value": "2000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "offsets.load.buffer.size",
+     "value": "5242880",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.client.auth",
+     "value": "none",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "offsets.topic.replication.factor",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 4,
+     "documentation": null
+    },
+    {
+     "name": "transaction.state.log.min.isr",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.secure.random.implementation",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.kerberos.ticket.renew.jitter",
+     "value": "0.05",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "ssl.trustmanager.algorithm",
+     "value": "PKIX",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.assignment.interval.ms",
+     "value": "1000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.local.retention.bytes",
+     "value": "-2",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.retention.bytes",
+     "value": "-1",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.metadata.manager.impl.prefix",
+     "value": "rlmm.config.",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "controller.quota.window.size.seconds",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.jaas.config",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.state.topic.num.partitions",
+     "value": "50",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.kerberos.min.time.before.relogin",
+     "value": "60000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "offsets.retention.minutes",
+     "value": "10080",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "replica.fetch.backoff.ms",
+     "value": "1000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.delivery.count.limit",
+     "value": "5",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "kafka.metrics.reporters",
+     "value": "",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "compression.zstd.level",
+     "value": "3",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.allow.san.changes",
+     "value": "false",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.copy.quota.window.num",
+     "value": "11",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "num.partitions",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.keystore.certificate.chain",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "socket.connection.setup.timeout.ms",
+     "value": "10000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "listeners",
+     "value": "CONTROLLER://:29093,PLAINTEXT_HOST://:9092,PLAINTEXT://:19092",
+     "readOnly": false,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.client.credentials.client.id",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "ssl.enabled.protocols",
+     "value": "TLSv1.2,TLSv1.3",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "inter.broker.listener.name",
+     "value": "PLAINTEXT",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.claim.nbf.seconds",
+     "value": "60",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "alter.config.policy.class.name",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "delegation.token.expiry.check.interval.ms",
+     "value": "3600000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.flush.scheduler.interval.ms",
+     "value": "9223372036854775807",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.expiration.thread.pool.size",
+     "value": "10",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.max.assignment.interval.ms",
+     "value": "15000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.index.size.max.bytes",
+     "value": "10485760",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.share.sessions",
+     "value": "2000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.keymanager.algorithm",
+     "value": "SunX509",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.callback.handler.class",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "replica.fetch.max.bytes",
+     "value": "1048576",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.server.callback.handler.class",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.cached.buffer.max.bytes",
+     "value": "1048588",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.dedupe.buffer.size",
+     "value": "134217728",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.io.buffer.size",
+     "value": "524288",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "config.providers",
+     "value": "",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "create.topic.policy.class.name",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "socket.listen.backlog.size",
+     "value": "50",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.truststore.certificates",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.fetch.snapshot.max.bytes",
+     "value": "1048576",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.jwt.validator.class",
+     "value": "org.apache.kafka.common.security.oauthbearer.DefaultJwtValidator",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.threads",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.server.max.receive.size",
+     "value": "524288",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "security.providers",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "metadata.log.max.snapshot.interval.ms",
+     "value": "3600000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.max.standby.replicas",
+     "value": "2",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "compression.lz4.level",
+     "value": "9",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.roll.hours",
+     "value": "168",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.fetch.max.bytes",
+     "value": "1048576",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleanup.policy",
+     "value": "delete",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "initial.broker.registration.timeout.ms",
+     "value": "60000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.flush.start.offset.checkpoint.interval.ms",
+     "value": "60000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.roll.jitter.ms",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "transaction.state.log.segment.bytes",
+     "value": "104857600",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "offsets.topic.segment.bytes",
+     "value": "104857600",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.claim.sub",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "metadata.max.idle.interval.ms",
+     "value": "500",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.metadata.manager.class.name",
+     "value": "org.apache.kafka.server.log.remote.metadata.storage.TopicBasedRemoteLogMetadataManager",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.client.credentials.client.secret",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.task.interval.ms",
+     "value": "30000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.retry.backoff.max.ms",
+     "value": "10000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "group.initial.rebalance.delay.ms",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.index.interval.bytes",
+     "value": "4096",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.backoff.ms",
+     "value": "15000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "share.coordinator.load.buffer.size",
+     "value": "5242880",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "cordoned.log.dirs",
+     "value": "",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "offset.metadata.max.bytes",
+     "value": "4096",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.truststore.location",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "ssl.keystore.password",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "transaction.two.phase.commit.enable",
+     "value": "false",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 1,
+     "documentation": null
+    },
+    {
+     "name": "fetch.max.bytes",
+     "value": "57671680",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "metadata.max.retention.bytes",
+     "value": "104857600",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "compression.type",
+     "value": "producer",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.min.assignment.interval.ms",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.connect.timeout.ms",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "max.connections.per.ip.overrides",
+     "value": "",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.metadata.manager.class.path",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.max.heartbeat.interval.ms",
+     "value": "15000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.login.refresh.window.factor",
+     "value": "0.8",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "kafka.metrics.polling.interval.secs",
+     "value": "10",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "add.partitions.to.txn.retry.backoff.max.ms",
+     "value": "100",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "remote.log.manager.follower.thread.pool.size",
+     "value": "2",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "metadata.log.max.record.bytes.between.snapshots",
+     "value": "20971520",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "metadata.max.retention.ms",
+     "value": "604800000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.size",
+     "value": "200",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "controller.quorum.election.backoff.max.ms",
+     "value": "1000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "max.incremental.fetch.session.cache.slots",
+     "value": "1000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.assertion.claim.iss",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.partition.max.record.locks",
+     "value": "4000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.key.password",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": true,
+     "synonyms": [],
+     "configType": 9,
+     "documentation": null
+    },
+    {
+     "name": "transaction.remove.expired.transaction.cleanup.interval.ms",
+     "value": "3600000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.protocol",
+     "value": "TLSv1.3",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "group.consumer.migration.policy",
+     "value": "bidirectional",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "metadata.log.segment.ms",
+     "value": "604800000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "transaction.state.log.load.buffer.size",
+     "value": "5242880",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.coordinator.append.linger.ms",
+     "value": "-1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "ssl.keystore.location",
+     "value": null,
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "remote.list.offsets.request.timeout.ms",
+     "value": "30000",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "num.replica.alter.log.dirs.threads",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.enabled.mechanisms",
+     "value": "GSSAPI",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.jwt.retriever.class",
+     "value": "org.apache.kafka.common.security.oauthbearer.DefaultJwtRetriever",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 8,
+     "documentation": null
+    },
+    {
+     "name": "group.share.max.session.timeout.ms",
+     "value": "60000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.min.session.timeout.ms",
+     "value": "6000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "metadata.log.dir",
+     "value": null,
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 2,
+     "documentation": null
+    },
+    {
+     "name": "log.cleaner.io.buffer.load.factor",
+     "value": "0.9",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 6,
+     "documentation": null
+    },
+    {
+     "name": "transaction.max.timeout.ms",
+     "value": "900000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.heartbeat.interval.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "process.roles",
+     "value": "broker,controller",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "group.max.size",
+     "value": "2147483647",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "broker.id",
+     "value": "1",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "max.request.partition.size.limit",
+     "value": "2000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "offsets.topic.compression.codec",
+     "value": "0",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "sasl.oauthbearer.jwks.endpoint.retry.backoff.max.ms",
+     "value": "10000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "delegation.token.max.lifetime.ms",
+     "value": "604800000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    },
+    {
+     "name": "replication.quota.window.num",
+     "value": "11",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "group.streams.min.heartbeat.interval.ms",
+     "value": "5000",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "advertised.listeners",
+     "value": "PLAINTEXT_HOST://localhost:9092,PLAINTEXT://kafka:19092",
+     "readOnly": true,
+     "configSource": 4,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 7,
+     "documentation": null
+    },
+    {
+     "name": "group.coordinator.cached.buffer.max.bytes",
+     "value": "1048588",
+     "readOnly": false,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 3,
+     "documentation": null
+    },
+    {
+     "name": "queued.max.request.bytes",
+     "value": "-1",
+     "readOnly": true,
+     "configSource": 5,
+     "isSensitive": false,
+     "synonyms": [],
+     "configType": 5,
+     "documentation": null
+    }
+   ]
+  }
+ ]
+}

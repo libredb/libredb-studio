@@ -97,6 +97,49 @@ describe("ConnectionItem", () => {
     expect(queryByText("Test PostgreSQL")).not.toBeNull();
   });
 
+  test("activating the row with Enter or Space selects the connection", () => {
+    const { container } = render(
+      <ConnectionItem
+        connection={mockPostgresConnection}
+        isActive={false}
+        onSelect={defaultOnSelect}
+        onDelete={defaultOnDelete}
+      />,
+    );
+
+    const row = container.querySelector('[role="button"]');
+    expect(row).not.toBeNull();
+
+    fireEvent.keyDown(row as HTMLElement, { key: "Enter" });
+    expect(defaultOnSelect).toHaveBeenCalledWith(mockPostgresConnection);
+
+    fireEvent.keyDown(row as HTMLElement, { key: " " });
+    expect(defaultOnSelect).toHaveBeenCalledTimes(2);
+
+    // Any other key does not select, so the keyboard handler is not a catch-all.
+    fireEvent.keyDown(row as HTMLElement, { key: "a" });
+    expect(defaultOnSelect).toHaveBeenCalledTimes(2);
+  });
+
+  // The row's buttons sit inside it, so their keydowns bubble to the row. Handling those
+  // cancelled the button's own activation: Enter on Edit selected the connection instead.
+  test.each(["Enter", " "])("%p on a button inside the row is left to that button", (key) => {
+    const { getByRole } = render(
+      <ConnectionItem
+        connection={mockPostgresConnection}
+        isActive={false}
+        onSelect={defaultOnSelect}
+        onDelete={defaultOnDelete}
+        onEdit={defaultOnEdit}
+      />,
+    );
+
+    // `fireEvent` answers false when a handler called preventDefault.
+    expect(fireEvent.keyDown(getByRole("button", { name: "Edit connection" }), { key })).toBe(true);
+    expect(fireEvent.keyDown(getByRole("button", { name: "Delete connection" }), { key })).toBe(true);
+    expect(defaultOnSelect).not.toHaveBeenCalled();
+  });
+
   test("shows environment badge for non-other environments", () => {
     // mockPostgresConnection has environment: 'development' => ENVIRONMENT_LABELS['development'] = 'DEV'
     const { queryByText } = render(
@@ -446,6 +489,45 @@ describe("ConnectionItem", () => {
 
       fireEvent.click(getByRole("button", { name: "Delete connection" }));
       expect(onDelete).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("the read-only marker (#1089)", () => {
+    const title = "Writes, value edits and maintenance are refused on this connection";
+
+    test("a read-only connection carries the marker, titled with what it refuses", () => {
+      const { getByText } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, readOnly: true }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(getByText("Read-only").getAttribute("title")).toBe(title);
+    });
+
+    test("a managed read-only seed shows it beside the managed lock", () => {
+      const { getByText, getByTestId } = render(
+        <ConnectionItem
+          connection={{ ...mockPostgresConnection, managed: true, seedId: "prod", readOnly: true }}
+          isActive={false}
+          onSelect={defaultOnSelect}
+          onDelete={defaultOnDelete}
+        />,
+      );
+
+      expect(getByText("Read-only").parentElement).toBe(getByTestId("managed-lock-prod").parentElement);
+    });
+
+    test("a connection that is not read-only carries none", () => {
+      const props = { isActive: false, onSelect: defaultOnSelect, onDelete: defaultOnDelete };
+      const view = render(<ConnectionItem connection={mockPostgresConnection} {...props} />);
+      expect(view.queryByText("Read-only")).toBeNull();
+
+      view.rerender(<ConnectionItem connection={{ ...mockPostgresConnection, readOnly: false }} {...props} />);
+      expect(view.queryByText("Read-only")).toBeNull();
     });
   });
 });

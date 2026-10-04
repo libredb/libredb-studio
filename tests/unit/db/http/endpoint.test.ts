@@ -8,7 +8,15 @@
  */
 import { describe, expect, test } from "bun:test";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
-import { endpointUrl, httpOrigin, type HttpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import {
+  endpointUrl,
+  httpOrigin,
+  type HttpOrigin,
+  plaintextSecretRefusal,
+  rejectRedirect,
+  validateHost,
+  validatePort,
+} from "@/lib/db/http/endpoint";
 
 function refusal(run: () => unknown): Error {
   try {
@@ -268,5 +276,92 @@ describe("rejectRedirect", () => {
     expect(error.message).toContain("HTTP 301");
     expect(error.message).toContain("not an http or https URL");
     expect(error.message).not.toContain("SECRET");
+  });
+});
+
+describe("validateHost and validatePort are exported for non-HTTP transports", () => {
+  test("a hostname, an IPv4 and an IPv6 literal pass; IPv6 comes back bracketed", () => {
+    expect(validateHost("Broker-1.Example.com")).toBe("broker-1.example.com");
+    expect(validateHost("10.0.0.7")).toBe("10.0.0.7");
+    expect(validateHost("::1")).toBe("[::1]");
+  });
+
+  test.each(["a:1", "a/b", "u@a", "a b", "a%25b"])(
+    "URL syntax in the host %p is refused without echoing it",
+    (host) => {
+      const error = refusal(() => validateHost(host));
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error.message).not.toContain(host);
+    },
+  );
+
+  test("a port from 1 to 65535 passes, as a number or a string of digits", () => {
+    expect(validatePort(9092)).toBe(9092);
+    expect(validatePort("9092")).toBe(9092);
+  });
+
+  test.each([0, 65536, "90a", -1, 1.5])("the port %p is refused", (port) => {
+    expect(refusal(() => validatePort(port))).toBeInstanceOf(DatabaseConfigError);
+  });
+});
+
+/**
+ * A non-empty secret never travels without TLS outside the machine, unless an SSH tunnel carries it.
+ * The vector providers' connection checks run their own rows of this table through `connect()`.
+ */
+describe("plaintextSecretRefusal", () => {
+  const PASSWORD_REFUSAL =
+    "This connection would send its password without TLS to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS, connect through an SSH tunnel, or, if authentication is off on this server, clear the password.";
+
+  const inTheClear = (host: string, extra: Partial<Parameters<typeof plaintextSecretRefusal>[0]> = {}) =>
+    plaintextSecretRefusal({ host: validateHost(host), tunnelled: false, tls: false, hasSecret: true, ...extra });
+
+  test.each([
+    "127.0.0.1",
+    "127.255.0.1",
+    "::1",
+    "[::1]",
+    "0:0:0:0:0:0:0:1",
+    "::ffff:127.0.0.1",
+    "::ffff:7f00:1",
+    "localhost",
+    "LOCALHOST",
+  ])("lets a secret travel in the clear to the loopback host %s", (host) => {
+    expect(inTheClear(host)).toBeUndefined();
+  });
+
+  test("reads localhost case-insensitively before validation too", () => {
+    expect(
+      plaintextSecretRefusal({ host: "LocalHost", tunnelled: false, tls: false, hasSecret: true }),
+    ).toBeUndefined();
+  });
+
+  test.each([
+    "db.example.com",
+    "10.0.0.5",
+    "localhost.example",
+    "localhost.",
+    "128.0.0.1",
+    "::ffff:10.0.0.1",
+    "::2",
+    "2001:db8::1",
+  ])("refuses a secret in the clear to %s, naming the three ways out", (host) => {
+    expect(inTheClear(host)).toBe(PASSWORD_REFUSAL);
+  });
+
+  test("never names the host it refuses", () => {
+    expect(inTheClear("db.example.com")).not.toContain("db.example.com");
+  });
+
+  test("opens through an SSH tunnel, over TLS, and with no secret, whatever the host", () => {
+    expect(inTheClear("db.example.com", { tunnelled: true })).toBeUndefined();
+    expect(inTheClear("db.example.com", { tls: true })).toBeUndefined();
+    expect(inTheClear("db.example.com", { hasSecret: false })).toBeUndefined();
+  });
+
+  test("names the secret the engine sends", () => {
+    expect(inTheClear("db.example.com", { secretLabel: "API key" })).toBe(
+      "This connection would send its API key without TLS to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS, connect through an SSH tunnel, or, if authentication is off on this server, clear the API key.",
+    );
   });
 });

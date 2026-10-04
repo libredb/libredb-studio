@@ -7,6 +7,8 @@
 > same SQLite. This document is the single reference point for the libSQL provider: design,
 > architecture, usage, and tests.
 
+`DB_HTTP_BLOCK_PRIVATE_HOSTS=true` blocks loopback, private, link-local and other non-public HTTP destinations; it is off by default so local connections work.
+
 | | |
 |---|---|
 | **Status** | Implemented & shipped |
@@ -317,6 +319,7 @@ facts was re-measured over Hrana rather than assumed:
 | `q'…'` is a literal | **No** — syntax error |
 | `''` escapes a quote | **Yes** — `SELECT 'it''s'` answers `it's` |
 | `hex(X'0102deadbeef')` | `0102DEADBEEF`; `typeof(X'')` is `blob`, `length(X'')` is 0 |
+| A `CREATE TRIGGER … BEGIN … END` body holds its `;` (#1312) | **Yes**: cut at its inner `;` it is "SQL string could not be parsed: unexpected end of input", sent whole it is created and fires |
 
 ### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
 
@@ -406,6 +409,17 @@ columnTypes? }`.
   map is the common case rather than a failure.
 - **`executionTime`** is the engine's own measurement when it rounds to at least a millisecond, and
   the wall-clock one otherwise.
+- **A `BLOB` arrives as a `Buffer`.** Hrana carries a blob as base64 (`x'DEADBEEF00FF'` answers
+  `{"type":"blob","base64":"3q2+7wD/"}` on sqld 0.24.33, `x''` answers `"base64":""`), and
+  [`hrana-transport.ts`](../../src/lib/db/providers/sql/libsql/hrana-transport.ts) decodes it to a
+  `Buffer` rather than a plain `Uint8Array`. The rows reach the browser through `JSON.stringify`, which
+  writes a plain `Uint8Array` as an object keyed by index (`{"0":222,"1":173,...}`): the grid showed
+  that object and "Export as SQL INSERT" wrote it back as quoted text, so a replay stored a string
+  where the bytes had been. A `Buffer` serializes to `{"type":"Buffer","data":[...]}`, which
+  `asBytes` in [`binary.ts`](../../src/lib/export/binary.ts) reads, so the grid, the CSV and the JSON
+  export (#1381) show `\xdeadbeef00ff` and the SQL export writes `X'deadbeef00ff'` (and `X''` for an empty blob), the
+  same as the SQLite provider. Measured 2026-10-04 on sqld 0.24.33: the exported INSERTs, run into a
+  fresh `BLOB` table, read back with identical `hex()` and `length()`, `0x00` and `0xFF` included.
 
 ### EXPLAIN
 
@@ -459,7 +473,7 @@ answer). The floor that matters here is 3.37, and both builds are above it.
 `containerLevels` is `[]`, `containerDepth()` answers 0, and `listContainers()` answers `[]`. A connection
 addresses one database and every object in it is addressed by a bare name, so `DatabaseObject.path` for a
 table is `['orders']` and for a trigger `['orders', 'orders_stamp']`. No synthetic `main` container is
-invented to make the shape match the other sixteen engines.
+invented to make the shape match the other engines.
 
 #### The four kinds, and the one that is NOT declared
 
@@ -864,6 +878,9 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | `check` | globally | `PRAGMA integrity_check`, and the ANSWER is read — a corrupt database reports damage in its row while the statement itself succeeds |
 | `vacuum`, `analyze`, `optimize`, `kill` | withheld | Refused by the server (§3.5); a direct API call is refused by the provider with the reason |
 
+A `container` is deliberately ignored (#772): a libSQL connection resolves names against its one
+attached database, exactly as `sqlite.ts` does.
+
 ---
 
 ## 9. Capabilities & labels
@@ -885,6 +902,7 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | `supportsCreateTable` | `true` | `CREATE TABLE` works as an ordinary SQL statement |
 | `schemaRefreshPattern` | `"(CREATE\|DROP\|ALTER\|TRUNCATE\|REINDEX)\\b"` | Matches statements that modify schema or index metadata |
 | `containerLevels` | `[]` | Zero-container engine; bare object names throughout ([§6.1](#61-the-object-surface-789)) |
+| `containerPathShapes` | `exact` | Only the empty path `[]` addresses a container, so any segment is refused, by the object routes over HTTP and by this provider directly (#1147) |
 | `objectKinds` | `LIBSQL_OBJECT_KINDS` | `table` (relation, `acceptsRowWrites`), `view` (relation), `index` (config), `trigger` (attached) |
 
 ### Labels — overridden (`getLabels()`, [`src/lib/db/providers/sql/libsql/index.ts`](../../src/lib/db/providers/sql/libsql/index.ts))

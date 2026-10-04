@@ -1,0 +1,23 @@
+{
+  "$captured": {
+    "engine": "qdrant",
+    "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1",
+    "digest": "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+    "version": "1.19.1",
+    "date": "2026-10-03T12:30:30.816Z",
+    "runtime": "bun 1.4.2",
+    "surface": "GET /collections/small_dtypes",
+    "request": {
+      "method": "GET",
+      "path": "/collections/small_dtypes",
+      "headers": {},
+      "body": null
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 1080,
+    "body": "{\"result\":{\"status\":\"green\",\"optimizer_status\":\"ok\",\"indexed_vectors_count\":200,\"points_count\":200,\"segments_count\":2,\"config\":{\"params\":{\"vectors\":{\"f16\":{\"size\":8,\"distance\":\"Cosine\",\"datatype\":\"float16\"},\"manhattan\":{\"size\":4,\"distance\":\"Manhattan\"},\"t4\":{\"size\":64,\"distance\":\"Cosine\",\"datatype\":\"turbo4\"},\"u8\":{\"size\":8,\"distance\":\"Euclid\",\"datatype\":\"uint8\"}},\"shard_number\":1,\"replication_factor\":1,\"write_consistency_factor\":1,\"on_disk_payload\":true,\"sparse_vectors\":{\"sp_u8\":{\"index\":{\"datatype\":\"uint8\"}}}},\"hnsw_config\":{\"m\":16,\"ef_construct\":100,\"full_scan_threshold\":10000,\"max_indexing_threads\":0,\"on_disk\":false},\"optimizer_config\":{\"deleted_threshold\":0.2,\"vacuum_min_vector_number\":1000,\"default_segment_number\":0,\"max_segment_size\":null,\"memmap_threshold\":null,\"indexing_threshold\":10000,\"flush_interval_sec\":5,\"max_optimization_threads\":null,\"prevent_unoptimized\":null},\"wal_config\":{\"wal_capacity_mb\":32,\"wal_segments_ahead\":0,\"wal_retain_closed\":1},\"quantization_config\":null},\"payload_schema\":{},\"update_queue\":{\"length\":0}},\"status\":\"ok\",\"time\":0.000095336}"
+  }
+}

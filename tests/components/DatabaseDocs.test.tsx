@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { DatabaseDocs } from "@/components/DatabaseDocs";
-import type { DetailedObject } from "@/lib/db/detailed-object";
+import { schemaContextOf, type DetailedObject } from "@/lib/db/detailed-object";
+import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 import type { ProviderCapabilities } from "@/lib/db/types";
 
 const schema: DetailedObject[] = [
@@ -465,5 +466,39 @@ describe("DatabaseDocs object filtering", () => {
     expect(queryByText("recalculate_totals")).toBeNull();
     // The header count is the same derivation, so a routine cannot be counted as a table.
     expect(queryByText("1 tables")).not.toBeNull();
+  });
+});
+
+describe("DatabaseDocs and a column the engine only inferred from sampled data", () => {
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+
+  test("its table lists the column, and AI Describe posts no byte of it", async () => {
+    const user = userEvent.setup();
+    globalThis.fetch = mockFetchStream("## Overview") as unknown as typeof fetch;
+    const { queryByText, queryAllByText } = render(
+      <DatabaseDocs schema={sampledSchema} schemaContext={schemaContextOf(sampledSchema)} databaseType="postgres" />,
+    );
+    expect(queryAllByText(SAMPLED_MARKER).length).toBeGreaterThan(0);
+
+    await user.click(queryByText("AI Describe")!);
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalled();
+    });
+    const [url, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe("/api/ai/describe-schema");
+    expect(String(init.body)).toContain("category");
+    expect(String(init.body)).not.toContain(SAMPLED_MARKER);
   });
 });

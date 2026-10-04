@@ -1,0 +1,23 @@
+{
+  "$derived": {
+    "by": "tests/live/vector-evidence-derive.ts",
+    "from": "milvus/manifest.json and qdrant/search-non-finite.json"
+  },
+  "milvus": {
+    "collection": "default/edge_values",
+    "id": 3,
+    "field": "sp",
+    "cell": {
+      "1": 3.3999999521443642e+38
+    },
+    "doubleSelfInnerProduct": 1.1559999674581679e+77,
+    "score": "Infinity"
+  },
+  "qdrant": {
+    "collection": "edge_values",
+    "id": 2,
+    "field": "sp",
+    "printed": null,
+    "capture": "qdrant/search-non-finite.json"
+  }
+}

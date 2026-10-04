@@ -1,0 +1,159 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "DescribeCollection",
+    "user": "root",
+    "surface": "DescribeCollection of probe_db.notes",
+    "request": {
+      "db_name": "probe_db",
+      "collection_name": "notes"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "virtual_channel_names": [
+      "by-dev-rootcoord-dml_4_469506719199432287v0"
+    ],
+    "physical_channel_names": [
+      "by-dev-rootcoord-dml_4"
+    ],
+    "aliases": [],
+    "start_positions": [],
+    "properties": [
+      {
+        "key": "timezone",
+        "value": "UTC"
+      },
+      {
+        "key": "namespace.sharding.enabled",
+        "value": "false"
+      },
+      {
+        "key": "max_field_id",
+        "value": "102"
+      }
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "schema": {
+      "fields": [
+        {
+          "type_params": [],
+          "index_params": [],
+          "fieldID": "100",
+          "name": "id",
+          "is_primary_key": true,
+          "description": "",
+          "data_type": "Int64",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [
+            {
+              "key": "dim",
+              "value": "4"
+            }
+          ],
+          "index_params": [],
+          "fieldID": "101",
+          "name": "vec",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "FloatVector",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [
+            {
+              "key": "max_length",
+              "value": "128"
+            }
+          ],
+          "index_params": [],
+          "fieldID": "102",
+          "name": "body",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "VarChar",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        }
+      ],
+      "properties": [
+        {
+          "key": "timezone",
+          "value": "UTC"
+        },
+        {
+          "key": "namespace.sharding.enabled",
+          "value": "false"
+        },
+        {
+          "key": "max_field_id",
+          "value": "102"
+        }
+      ],
+      "functions": [],
+      "struct_array_fields": [],
+      "file_resource_ids": [],
+      "name": "notes",
+      "description": "a second database, small and loaded",
+      "autoID": false,
+      "enable_dynamic_field": false,
+      "dbName": "probe_db",
+      "version": 0,
+      "external_source": "",
+      "external_spec": "",
+      "do_physical_backfill": false,
+      "enable_namespace": false
+    },
+    "collectionID": "469506719199432287",
+    "created_timestamp": "469506756223434771",
+    "created_utc_timestamp": "1791026139158",
+    "shards_num": 1,
+    "consistency_level": "Bounded",
+    "collection_name": "notes",
+    "db_name": "probe_db",
+    "num_partitions": "1",
+    "db_id": "469506719193499066",
+    "request_time": "0",
+    "update_timestamp": "469506756223434771",
+    "update_timestamp_str": "469506756223434771"
+  }
+}

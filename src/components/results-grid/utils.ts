@@ -1,6 +1,8 @@
+import type { VectorColumn } from "@/lib/db/vector/types";
 import type { QueryWarning } from "@/lib/types";
 import { classifyValue } from "./renderers/classify";
 import { getRenderer } from "./renderers/registry";
+import type { RenderContext } from "./renderers/types";
 
 const WARNING_FALLBACK_LABEL = "Warning";
 
@@ -18,8 +20,52 @@ export function describeWarning(warning: QueryWarning): string {
   return warning.code === undefined ? WARNING_FALLBACK_LABEL : `${WARNING_FALLBACK_LABEL} ${warning.code}`;
 }
 
+/**
+ * The render context of one result column: its vector declaration, when the result made one.
+ *
+ * Own-key check rather than a direct lookup, for the reason `declaredTypeOf` in `ResultsGrid.tsx` gives: a column
+ * name is arbitrary query output, and `SELECT 1 AS constructor` would otherwise find `Object.prototype`'s member.
+ */
+export function renderContextFor(
+  vectorColumns: Readonly<Record<string, VectorColumn>> | undefined,
+  field: string,
+): RenderContext | undefined {
+  return vectorColumns !== undefined && Object.hasOwn(vectorColumns, field)
+    ? { vector: vectorColumns[field] }
+    : undefined;
+}
+
 // Format cell value for display — thin adapter over the renderer registry,
-// kept name- and signature-stable for the existing grid call sites.
-export function formatCellValue(value: unknown): { display: string; className: string } {
-  return getRenderer(classifyValue(value)).renderCompact(value);
+// kept name-stable for the existing grid call sites; the context is the cell's
+// column declaration (`renderContextFor`), absent for every undeclared column.
+export function formatCellValue(value: unknown, context?: RenderContext): { display: string; className: string } {
+  return getRenderer(classifyValue(value, context)).renderCompact(value, context);
+}
+
+/**
+ * What Copy Cell writes for a cell: the renderer's copy form where it has one, its compact display otherwise.
+ *
+ * A separate reading from the display because the two differ wherever the display is a preview: a binary cell
+ * shows its first 32 bytes and its size, and a vector cell its first 8 elements, while Copy Cell copies the whole
+ * value. `value` is the DISPLAYED value, so a masked cell copies its mask.
+ */
+export function formatCellCopy(value: unknown, context?: RenderContext): string {
+  const renderer = getRenderer(classifyValue(value, context));
+  return renderer.renderCopy?.(value, context) ?? renderer.renderCompact(value, context).display;
+}
+
+/**
+ * Case folding for the column filter (#1409).
+ *
+ * `"İ".toLowerCase()` is "i" plus U+0307 (combining dot above), so the filter `izmir` never found
+ * the dotted capital spelling; and under a Turkish locale `toLocaleLowerCase` turns a plain "I" into the
+ * dotless "ı", which would break the same match the other way. So the combining dot is dropped after
+ * lowercasing and the dotless "ı" is read as "i". Nothing else is normalised: no NFD, which would make
+ * `e` match `é` and a Hangul syllable match its first jamo.
+ */
+export function foldFilterCase(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\u0307/g, "")
+    .replace(/\u0131/g, "i");
 }

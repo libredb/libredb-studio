@@ -1,4 +1,5 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -161,6 +162,29 @@ describe("POST /api/db/multi-query", () => {
     expect(data.statements).toHaveLength(1);
     expect(data.rows).toBeDefined();
     expect(data.fields).toBeDefined();
+  });
+
+  // `JSON.stringify` writes NaN and both infinities as `null`; the main result and the
+  // statement it came from both carry them as words.
+  test("answers NaN and the infinities as words on the main result and its statement", async () => {
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+      rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, ok: 1.5, z: null }],
+      fields: ["f", "r", "n", "ok", "z"],
+      rowCount: 1,
+      executionTime: 1,
+    }));
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM floats" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ rows: unknown[]; statements: Array<{ rows: unknown[] }> }>(res);
+
+    const words = [{ f: "NaN", r: "Infinity", n: "-Infinity", ok: 1.5, z: null }];
+    expect(res.status).toBe(200);
+    expect(data.rows).toEqual(words);
+    expect(data.statements[0].rows).toEqual(words);
   });
 
   // ── Warnings and declared column types travel with their statement (#285) ──
@@ -446,6 +470,149 @@ describe("POST /api/db/multi-query", () => {
       const data = await parseResponseJSON<{ statementCount: number }>(res);
 
       expect(data.statementCount).toBe(3);
+    });
+  });
+
+  // #1312: what one request carries is the dialect's unit, not the `;`-statement.
+  describe("execution units", () => {
+    const executed = () => (mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[0]);
+
+    test("a T-SQL batch is ONE provider call, sent whole and unbounded", async () => {
+      const sql = "DECLARE @x INT = 5; SELECT @x * 2 AS doubled;\nGO\nSELECT 3 AS c";
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, type: "mssql", port: 1433 }, sql },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ statementCount: number; statements: { sql: string }[] }>(res);
+
+      expect(data.statementCount).toBe(2);
+      // Only the script's last unit is bounded, as only its last statement was before.
+      expect(executed()).toEqual(["DECLARE @x INT = 5; SELECT @x * 2 AS doubled", "SELECT 3 AS c LIMIT 50"]);
+      expect(data.statements.map((statement) => statement.sql)).toEqual([
+        "DECLARE @x INT = 5; SELECT @x * 2 AS doubled",
+        "SELECT 3 AS c",
+      ]);
+    });
+
+    const mssql = { ...validConnection, type: "mssql", port: 1433 };
+
+    test("the last batch's last read is bounded in place, the statements before it as written", async () => {
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: mssql, sql: "SELECT 1; SELECT * FROM big;" },
+      });
+
+      await POST(req as never);
+
+      expect(executed()).toEqual(["SELECT 1; SELECT * FROM big LIMIT 50"]);
+    });
+
+    test.each([
+      "CREATE PROCEDURE p AS SET NOCOUNT ON; SELECT * FROM big",
+      "CREATE OR ALTER VIEW v AS SELECT 1 AS a; SELECT * FROM big",
+      "ALTER FUNCTION f() RETURNS TABLE AS RETURN SELECT 1 AS a; SELECT * FROM big",
+    ])("a batch that is a module body is never bounded, its tail being the stored body: %s", async (sql) => {
+      const req = createMockRequest("/api/db/multi-query", { method: "POST", body: { connection: mssql, sql } });
+
+      await POST(req as never);
+
+      expect(executed()).toEqual([sql]);
+    });
+
+    test("a last batch that ends with a write is sent as written", async () => {
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: mssql, sql: "SELECT 1; DELETE FROM t" },
+      });
+
+      await POST(req as never);
+
+      expect(executed()).toEqual(["SELECT 1; DELETE FROM t"]);
+    });
+
+    test("a batch with several result sets shows the last one with rows", async () => {
+      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+        rows: [{ a: 1 }],
+        fields: ["a"],
+        rowCount: 1,
+        executionTime: 1,
+        resultSets: [
+          { rows: [{ a: 1 }], fields: ["a"] },
+          { rows: [{ b: 2 }, { b: 3 }], fields: ["b"], columnTypes: { b: "int" } },
+          { rows: [], fields: ["c"] },
+        ],
+      }));
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: mssql, sql: "SELECT 1 AS a; SELECT b FROM t; SELECT c FROM empty" },
+      });
+
+      const data = await parseResponseJSON<{
+        rows: unknown[];
+        fields: string[];
+        rowCount: number;
+        statements: { columnTypes?: Record<string, string> }[];
+      }>(await POST(req as never));
+
+      expect(data.rows).toEqual([{ b: 2 }, { b: 3 }]);
+      expect(data.fields).toEqual(["b"]);
+      expect(data.rowCount).toBe(2);
+      expect(data.statements[0].columnTypes).toEqual({ b: "int" });
+    });
+
+    test.each<[string, Record<string, unknown>, number]>([
+      // One result set after a write: the engine's count is the INSERT's, not the shown rows'.
+      [
+        "INSERT INTO t VALUES (1),(2); SELECT * FROM t",
+        { rows: [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }, { a: 5 }], fields: ["a"], rowCount: 2 },
+        5,
+      ],
+      // No result set at all: the engine's count is the only one there is.
+      ["UPDATE t SET a = 1; UPDATE u SET b = 2", { rows: [], fields: [], rowCount: 7 }, 7],
+    ])("a batch's count is its shown rows when it has a result set: %s", async (sql, answer, rowCount) => {
+      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({ executionTime: 1, ...answer }));
+      const req = createMockRequest("/api/db/multi-query", { method: "POST", body: { connection: mssql, sql } });
+
+      const data = await parseResponseJSON<{ statements: { rowCount: number }[] }>(await POST(req as never));
+
+      expect(data.statements[0].rowCount).toBe(rowCount);
+    });
+
+    test("a single-statement unit keeps the engine's own result even when it carries several sets", async () => {
+      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+        rows: [{ a: 1 }],
+        fields: ["a"],
+        rowCount: 1,
+        executionTime: 1,
+        resultSets: [
+          { rows: [{ a: 1 }], fields: ["a"] },
+          { rows: [{ b: 2 }], fields: ["b"] },
+        ],
+      }));
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: mssql, sql: "EXEC sp_help\nGO" },
+      });
+
+      const data = await parseResponseJSON<{ rows: unknown[] }>(await POST(req as never));
+
+      expect(data.rows).toEqual([{ a: 1 }]);
+    });
+
+    test("an Oracle PL/SQL unit is one call that keeps its END;, and the `/` line is never sent", async () => {
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { ...validConnection, type: "oracle", port: 1521 },
+          sql: "CREATE PROCEDURE p AS BEGIN UPDATE emp SET a = 1; END;\n/\nBEGIN p; END;",
+        },
+      });
+
+      await POST(req as never);
+
+      expect(executed()).toEqual(["CREATE PROCEDURE p AS BEGIN UPDATE emp SET a = 1; END;", "BEGIN p; END;"]);
     });
   });
 
@@ -737,5 +904,79 @@ describe("POST /api/db/multi-query", () => {
 
     expect(res.status).toBe(200);
     expect("openTransaction" in data).toBe(false);
+  });
+});
+
+/**
+ * A type that declares a console text bound runs one statement per request, so this route, whose SQL splitter would
+ * turn one console text into several requests, refuses it before splitting anything.
+ */
+describe("POST /api/db/multi-query: a type that declares a console text bound", () => {
+  const REFUSAL =
+    "This connection type runs one statement per request: send it to POST /api/db/query, because this route would split its text into several requests.";
+  let remove: () => void = () => {};
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    remove = installStandInVocabulary({ maxTextBytes: 64 });
+  });
+
+  afterEach(() => {
+    remove();
+    remove = () => {};
+  });
+
+  test("is refused with 400 naming POST /api/db/query, before the text is split or a provider acquired", async () => {
+    // `;` alone splits into no statement, which answers "No valid SQL statements found" when the split runs first.
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { id: "stand-in-1", name: "Stand-in", type: STAND_IN_TYPE }, sql: ";" },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(REFUSAL);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("a type that declares no bound is split and run as before", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT 1; SELECT 2" },
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+  });
+
+  test("the real influxdb row declares a bound, so an InfluxQL text is refused the same way (InfluxDB spec A.11)", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { id: "influxdb-1", name: "Telegraf", type: "influxdb", host: "127.0.0.1", port: 8086 },
+          sql: "SHOW DATABASES; SHOW MEASUREMENTS",
+        },
+      }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(REFUSAL);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("influxdb3 declares no bound: its SQL is split under the DataFusion row and run as before", async () => {
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { id: "influxdb3-1", name: "Edge", type: "influxdb3", host: "127.0.0.1", port: 8181 },
+          sql: "SELECT 1; SELECT 2",
+        },
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
   });
 });

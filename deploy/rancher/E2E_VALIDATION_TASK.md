@@ -278,7 +278,7 @@ Common conventions for every scenario:
 - **Known and expected:** the card's description line comes from `Chart.yaml`, which now
   names fourteen engines, while the app-readme still names ten. The ten-engine wording is
   deliberate and version-scoped — the catalog prose describes a released version and stays
-  at ten until a tag ships Elasticsearch, OpenSearch, Apache Trino and Apache Cassandra — so this mismatch is
+  at ten until a tag ships Elasticsearch, OpenSearch, Trino and Apache Cassandra — so this mismatch is
   expected, is tracked in `CATALOG_LISTING.md`, and must NOT be reported as a rendering
   failure. Record a screenshot/API dump of the card.
 

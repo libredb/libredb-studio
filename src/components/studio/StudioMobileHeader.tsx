@@ -3,6 +3,7 @@
 import React, { type RefObject } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { QueryEditorRef } from "@/components/QueryEditor";
+import { CancelQueryButton, type CancelControlMode } from "./QueryToolbar";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
@@ -13,6 +14,8 @@ import {
   Database,
   PenLine,
   Gauge,
+  KeyRound,
+  ShieldCheck,
   LogOut,
   EllipsisVertical,
   Pencil,
@@ -21,7 +24,6 @@ import {
   Plus,
   Save,
   Settings,
-  Square,
   Trash2,
   Upload,
   User,
@@ -36,6 +38,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
+import { ReadOnlyMarker } from "@/components/read-only-marker";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
@@ -48,7 +51,6 @@ interface StudioMobileHeaderProps {
   isAdmin: boolean;
   activeMobileTab: "database" | "schema" | "editor";
   isExecuting: boolean;
-  currentQuery: string;
   queryEditorRef: RefObject<QueryEditorRef | null>;
   transactionActive: boolean;
   playgroundMode: boolean;
@@ -60,6 +62,11 @@ interface StudioMobileHeaderProps {
   onClearQuery: () => void;
   onExecuteQuery: () => void;
   onCancelQuery: () => void;
+  /**
+   * What the Cancel control can do on this connection (`cancelControlMode`, #1364), as in
+   * `QueryToolbar`. Omitted means the provider can cancel.
+   */
+  cancelMode?: CancelControlMode;
   /**
    * The transaction trio, supplied together or not at all — the same contract
    * `QueryToolbar` states. A caller whose provider declares no transaction session
@@ -89,7 +96,7 @@ interface StudioMobileHeaderProps {
   onAskAgent?: () => void;
 }
 
-export function StudioMobileHeader({
+export const StudioMobileHeader = React.memo(function StudioMobileHeader({
   connections,
   activeConnection,
   connectionPulse,
@@ -97,7 +104,6 @@ export function StudioMobileHeader({
   isAdmin,
   activeMobileTab,
   isExecuting,
-  currentQuery,
   queryEditorRef,
   transactionActive,
   playgroundMode,
@@ -109,6 +115,7 @@ export function StudioMobileHeader({
   onClearQuery,
   onExecuteQuery,
   onCancelQuery,
+  cancelMode = "cancel",
   onBeginTransaction,
   onCommitTransaction,
   onRollbackTransaction,
@@ -177,6 +184,7 @@ export function StudioMobileHeader({
             </DropdownMenuContent>
           </DropdownMenu>
 
+          {activeConnection?.readOnly === true && <ReadOnlyMarker />}
           {activeConnection && (
             <span className="text-xs text-success font-medium px-1.5 py-0.5 rounded bg-success-tint/10">Online</span>
           )}
@@ -223,6 +231,12 @@ export function StudioMobileHeader({
                 )}
                 <DropdownMenuItem onClick={() => router.push("/monitoring")} className="cursor-pointer">
                   <Gauge strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Monitoring
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/settings/mcp")} className="cursor-pointer">
+                  <KeyRound strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> MCP
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => router.push("/settings/authenticator")} className="cursor-pointer">
+                  <ShieldCheck strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" /> Sign-in security
                 </DropdownMenuItem>
                 <div className="border-t border-hairline my-1" />
                 {/*
@@ -289,7 +303,11 @@ export function StudioMobileHeader({
                     // that API is absent over plain HTTP off loopback, which several
                     // distribution channels are, and this menu closes on click — a toast is
                     // the only place left to say the clipboard is still empty.
-                    const query = queryEditorRef.current?.getValue() || currentQuery;
+                    // The header no longer receives `currentQuery` (X5): it changed on every
+                    // keystroke and re-rendered this memoized header, and the fallback it
+                    // provided was dead — the editor is mounted on every surface that can
+                    // reach this menu item.
+                    const query = queryEditorRef.current?.getValue() ?? "";
                     void writeToClipboard(query).then((copied) => {
                       if (!copied) toast.error("Could not copy the query — select the text and copy it yourself");
                     });
@@ -373,14 +391,7 @@ export function StudioMobileHeader({
           </div>
 
           {isExecuting ? (
-            <Button
-              size="sm"
-              className="bg-danger-solid hover:bg-danger-solid-hover text-white font-medium text-xs h-7 px-4 gap-1.5"
-              onClick={onCancelQuery}
-            >
-              <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
-              CANCEL
-            </Button>
+            <CancelQueryButton mode={cancelMode} onCancel={onCancelQuery} className="gap-1.5" />
           ) : (
             <Button
               size="sm"
@@ -396,4 +407,4 @@ export function StudioMobileHeader({
       )}
     </header>
   );
-}
+});

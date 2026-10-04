@@ -1,0 +1,161 @@
+{
+  "$captured": {
+    "service": "etcd",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "15812935348987335903",
+    "memberId": "13653403111078390177",
+    "date": "2026-09-30T16:29:55.381Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: the prefix /values/: the values of spec 4.4 and a key that is not UTF-8",
+    "request": {
+      "key": {
+        "$bytes": "L3ZhbHVlcy8="
+      },
+      "range_end": {
+        "$bytes": "L3ZhbHVlczA="
+      },
+      "limit": {
+        "$int64": "500"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L3ZhbHVlcy8="
+      },
+      "range_end": {
+        "$bytes": "L3ZhbHVlczA="
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9lbXB0eQ=="
+        },
+        "create_revision": {
+          "$int64": "17"
+        },
+        "mod_revision": {
+          "$int64": "17"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": ""
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9rZXkt//4="
+        },
+        "create_revision": {
+          "$int64": "19"
+        },
+        "mod_revision": {
+          "$int64": "19"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "dGhlIGtleSBpcyBub3QgVVRGLTg="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9sYXJnZQ=="
+        },
+        "create_revision": {
+          "$int64": "16"
+        },
+        "mod_revision": {
+          "$int64": "16"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$filled": {
+            "byte": 120,
+            "length": 300000
+          }
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy9ub3QtdXRmOA=="
+        },
+        "create_revision": {
+          "$int64": "15"
+        },
+        "mod_revision": {
+          "$int64": "15"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "//4AAcMo"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      },
+      {
+        "key": {
+          "$bytes": "L3ZhbHVlcy93aGl0ZXNwYWNl"
+        },
+        "create_revision": {
+          "$int64": "18"
+        },
+        "mod_revision": {
+          "$int64": "18"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "ICAKCSA="
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "15812935348987335903"
+      },
+      "member_id": {
+        "$int64": "13653403111078390177"
+      },
+      "revision": {
+        "$int64": "67"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "5"
+    }
+  }
+}

@@ -425,6 +425,18 @@ describe("extractPin", () => {
       "0.9.27",
     );
   });
+
+  // TrueNAS started quoting and digest-pinning the same field, and the pattern
+  // then matched nothing, so the channel reported UNKNOWN on every run for weeks
+  // and nobody saw it. This is that exact shape, so the quote cannot go
+  // unreadable again without a red test.
+  test("extracts a quoted, digest-pinned tag (truenas style)", () => {
+    const content =
+      '    repository: ghcr.io/libredb/libredb-studio\n    tag: "0.17.0@sha256:ce4d58724e2507a4467bcce6702d00760475e0f339071d878fce83e90c99718f"\n';
+    expect(
+      extractPin(content, 'ghcr\\.io/libredb/libredb-studio\\s+tag:\\s*"?(\\d+\\.\\d+\\.\\d+)', "truenas-scale"),
+    ).toBe("0.17.0");
+  });
 });
 
 function helmChannel() {
@@ -642,6 +654,7 @@ describe("update.ci_enabled", () => {
     // required release assets are deliberately absent: a flag there would be a
     // way to publish a release with no npm package or no image.
     expect([...SWITCHABLE_CHANNEL_IDS].sort()).toEqual([
+      "aur",
       "chocolatey",
       "docker-hub-mirror",
       "homebrew",
@@ -681,10 +694,69 @@ describe("update.ci_enabled", () => {
     expect(ciEnabledOutputs(channels)).toEqual(["snap=true", "docker_hub_mirror=false"]);
   });
 
+  // The AUR channel is staged before the account that pushes it exists (#971).
+  // Its publish job has to stay off until the channel is live, and flipping the
+  // status is what turns it on: no second switch to forget.
+  test("ciEnabledOutputs emits false for a channel that is not live", () => {
+    const pending = switchableRow("aur", true).replace("status: live", "status: pending");
+    const deprecated = switchableRow("snap", true).replace("status: live", "status: deprecated");
+    const channels = parseChannels(channelsYaml(pending + deprecated + switchableRow("winget", true)));
+    expect(ciEnabledOutputs(channels)).toEqual(["aur=false", "snap=false", "winget=true"]);
+  });
+
   test("the real inventory declares the flag for every switchable channel", () => {
     const channels = parseChannels(readFileSync(join(import.meta.dir, "../../distribution/channels.yaml"), "utf8"));
     const declared = channels.filter((c: { update: { ci_enabled?: boolean } }) => c.update.ci_enabled !== undefined);
     expect(declared.map((c: { id: string }) => c.id).sort()).toEqual([...SWITCHABLE_CHANNEL_IDS].sort());
+  });
+
+  // TrueNAS quoted and digest-pinned a tag it had always written bare, the
+  // pattern stopped matching, and the channel reported UNKNOWN on every run for
+  // weeks with nobody noticing: strictFailures only covers local_file channels
+  // on every_release, so a remote pin that measures nothing never fails anything.
+  // Every pin below reads a field whose quoting the upstream owner can change
+  // without telling us, so each is asserted against all three legal spellings.
+  test("every quote-sensitive pin reads the value bare, single- and double-quoted", () => {
+    const channels = parseChannels(readFileSync(join(import.meta.dir, "../../distribution/channels.yaml"), "utf8"));
+    const shapes: Record<string, (v: string) => string> = {
+      "truenas-scale": (v) => `    repository: ghcr.io/libredb/libredb-studio\n    tag: ${v}\n`,
+      kubero: (v) => `    repository: ghcr.io/libredb/libredb-studio\n    tag: ${v}\n`,
+      helm: (v) => `appVersion: ${v}\n`,
+      homebrew: (v) => `  version ${v}\n`,
+      "caprover-official": (v) => `          defaultValue: ${v}\n`,
+      yunohost: (v) => `version = ${v}\n`,
+    };
+    // A formatter run upstream can turn one space into two, or into a tab, as
+    // easily as it can change a quote. Homebrew's pattern used to spell the gap
+    // as a single literal space while every other one used \\s.
+    const gaps: Record<string, string[]> = { homebrew: ["  version ", "  version  ", "  version\t"] };
+    for (const [id, shape] of Object.entries(shapes)) {
+      const channel = channels.find((c: { id: string }) => c.id === id);
+      expect(channel, `${id} is missing from the inventory`).toBeDefined();
+      const pattern = channel.pin.extract as string;
+      // Homebrew writes a Ruby string literal, so bare is not a spelling there:
+      // `version 0.17.0` is not valid Ruby, and accepting it would only widen the
+      // pattern towards matching something that is not the version.
+      const spellings = id === "homebrew" ? ['"9.9.9"', "'9.9.9'"] : ["9.9.9", '"9.9.9"', "'9.9.9'"];
+      for (const spelling of spellings) {
+        expect(extractPin(shape(spelling), pattern, id), `${id} cannot read ${spelling}`).toBe("9.9.9");
+      }
+      for (const gap of gaps[id] ?? []) {
+        expect(extractPin(`${gap}"9.9.9"\n`, pattern, id), `${id} cannot read the gap ${JSON.stringify(gap)}`).toBe(
+          "9.9.9",
+        );
+      }
+    }
+  });
+
+  // The digest is part of the tag TrueNAS publishes, and the capture has to stop
+  // before it or the channel reads a version no release ever carried.
+  test("a digest-pinned tag captures the version and stops at the digest", () => {
+    const channels = parseChannels(readFileSync(join(import.meta.dir, "../../distribution/channels.yaml"), "utf8"));
+    const truenas = channels.find((c: { id: string }) => c.id === "truenas-scale");
+    const body =
+      '  image:\n    repository: ghcr.io/libredb/libredb-studio\n    tag: "0.17.0@sha256:ce4d58724e2507a4467bcce6702d00760475e0f339071d878fce83e90c99718f"\n  container_utils_image:\n    repository: ixsystems/container-utils\n    tag: "1.0.2@sha256:46eba20714c1cc6784f60e245c32c33a2d9f616e47d804694a9854248c89a992"\n';
+    expect(extractPin(body, truenas.pin.extract, "truenas-scale")).toBe("0.17.0");
   });
 });
 
@@ -821,6 +893,14 @@ describe("CLI (subprocess against temp fixtures)", () => {
   test("--ci-enabled <id> prints the flag alone", () => {
     const root = makeFixture("0.9.61", channelsYaml(switchableRow("chocolatey", false)));
     const result = runCheck(root, ["--ci-enabled", "chocolatey"]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString().trim()).toBe("false");
+  });
+
+  test("--ci-enabled answers false for a switchable channel that is not live", () => {
+    const pending = switchableRow("aur", true).replace("status: live", "status: pending");
+    const root = makeFixture("0.9.61", channelsYaml(pending));
+    const result = runCheck(root, ["--ci-enabled", "aur"]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout.toString().trim()).toBe("false");
   });

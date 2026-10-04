@@ -1,0 +1,64 @@
+{
+  "$captured": {
+    "service": "etcd-auth",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "18242060571022570213",
+    "memberId": "1380394221505655472",
+    "date": "2026-09-30T16:30:12.447Z",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "Watch/Watch",
+    "surface": "watch: /config/b as reader, cancelled in-band",
+    "request": {
+      "create_request": {
+        "key": {
+          "$bytes": "L2NvbmZpZy9i"
+        },
+        "fragment": true
+      }
+    },
+    "match": {
+      "create_request": {
+        "key": {
+          "$bytes": "L2NvbmZpZy9i"
+        }
+      }
+    },
+    "metadata": {
+      "hasleader": "true"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "messages": [
+      {
+        "events": [],
+        "header": {
+          "cluster_id": {
+            "$int64": "18242060571022570213"
+          },
+          "member_id": {
+            "$int64": "1380394221505655472"
+          },
+          "revision": {
+            "$int64": "37"
+          },
+          "raft_term": {
+            "$int64": "2"
+          }
+        },
+        "watch_id": {
+          "$int64": "-1"
+        },
+        "created": true,
+        "canceled": true,
+        "compact_revision": {
+          "$int64": "0"
+        },
+        "cancel_reason": "rpc error: code = PermissionDenied desc = etcdserver: permission denied",
+        "fragment": false
+      }
+    ],
+    "end": "open"
+  }
+}

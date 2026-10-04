@@ -1,0 +1,25 @@
+{
+  "$captured": {
+    "engine": "milvus",
+    "image": "milvusdb/milvus:v3.0.2",
+    "digest": "sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03T14:40:45.539Z",
+    "runtime": "bun 1.4.2",
+    "surface": "collections/describe of default.pk_partitioned",
+    "request": {
+      "method": "POST",
+      "path": "/v2/vectordb/collections/describe",
+      "headers": {
+        "authorization": "<token>"
+      },
+      "body": "{\"dbName\":\"default\",\"collectionName\":\"pk_partitioned\"}"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "status": 200,
+    "bodyBytes": 1079,
+    "body": "{\"code\":0,\"data\":{\"aliases\":[],\"autoId\":false,\"collectionID\":469506719194210472,\"collectionName\":\"pk_partitioned\",\"consistencyLevel\":\"Bounded\",\"description\":\"a partition key over 1,024 partitions\",\"enableDynamicField\":false,\"externalSource\":\"\",\"externalSpec\":\"\",\"fields\":[{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":100,\"name\":\"id\",\"nullable\":false,\"partitionKey\":false,\"primaryKey\":true,\"type\":\"Int64\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":101,\"name\":\"tenant\",\"nullable\":false,\"partitionKey\":true,\"primaryKey\":false,\"type\":\"Int64\"},{\"autoId\":false,\"clusteringKey\":false,\"description\":\"\",\"id\":102,\"name\":\"vec\",\"nullable\":false,\"params\":[{\"key\":\"dim\",\"value\":\"8\"}],\"partitionKey\":false,\"primaryKey\":false,\"type\":\"FloatVector\"}],\"functions\":[],\"indexes\":[{\"fieldName\":\"vec\",\"indexName\":\"vec\",\"metricType\":\"L2\"}],\"load\":\"LoadStateLoaded\",\"partitionsNum\":1024,\"properties\":[{\"key\":\"timezone\",\"value\":\"UTC\"},{\"key\":\"namespace.sharding.enabled\",\"value\":\"false\"},{\"key\":\"max_field_id\",\"value\":\"102\"}],\"shardsNum\":1,\"structFields\":[]},\"message\":\"\"}"
+  }
+}

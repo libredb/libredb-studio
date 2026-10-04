@@ -18,6 +18,10 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   mysql: ["ADD COLUMN `extra` integer;", "DROP COLUMN `old`;"],
   mssql: ["ADD [extra] integer;", "DROP COLUMN [old];"],
   oracle: ['ADD ("extra" integer);', 'DROP COLUMN "old";'],
+  // Both measured on Db2 LUW 12.1.0.0 against an empty table (#786): `ALTER TABLE APP.EMPTY_T ADD
+  // COLUMN "extra" integer` and `... DROP COLUMN "extra"` run. The drop leaves the table
+  // REORG-pending, which a REORG clears; the statement itself is the standard one.
+  db2: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
   sqlite: ['ADD COLUMN "extra" integer;', 'Cannot drop column "old" directly.'],
   libsql: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
   duckdb: ['ADD COLUMN "extra" integer;', 'DROP COLUMN "old";'],
@@ -32,6 +36,14 @@ const COLUMN_GRAMMAR: Record<DatabaseType, [string, string] | null> = {
   redis: null,
   libredb: null,
   prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
 };
 
 describe("migration dialect regressions (#284)", () => {

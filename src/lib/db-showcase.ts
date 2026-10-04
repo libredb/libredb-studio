@@ -28,37 +28,68 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   redis: 5,
   oracle: 6,
   mssql: 7,
+  // A mainstream relational engine (#786), read beside Oracle and SQL Server, the other two
+  // commercial relational engines on this page, so it closes that group ahead of the search pair.
+  db2: 8,
   // The two search engines sit here, ahead of the analytical stores: Elasticsearch is
   // one of the best-known names on this page, and OpenSearch reads as its sibling to
   // anyone who knows it - which is also what the code says, since the two type-ids
   // share one HTTP SQL transport (#424).
-  elasticsearch: 8,
-  opensearch: 9,
+  elasticsearch: 9,
+  opensearch: 10,
   // Ahead of the analytical stores and behind the search pair: Cassandra is a
   // first-rank name for anyone who has met a wide-column store, and it is the only
   // one of those on this page.
-  cassandra: 10,
-  couchbase: 11,
-  clickhouse: 12,
-  druid: 13,
+  cassandra: 11,
+  // Behind Cassandra and ahead of the analytical stores, for the reason Cassandra sits where it
+  // does: the best-known graph database, a first-rank name for anyone who has met one, and the
+  // only one on this page.
+  neo4j: 12,
+  couchbase: 13,
+  clickhouse: 14,
+  druid: 15,
   // Ahead of the embedded store and behind the three analytical ones: Trino is the
   // name an evaluator is most likely to already know out of this last group, because
   // it is the engine a data platform is usually met THROUGH rather than one more
   // store to choose between.
-  trino: 14,
+  trino: 16,
   // Behind Trino and ahead of libSQL (#1085): a name every cloud-native evaluator already
   // knows, but met as the metrics store beside their databases rather than as one of them,
   // so it follows the query engine and leads the two newest names on this page.
-  prometheus: 15,
-  // Behind Prometheus and ahead of the embedded store: libSQL is the newest name on this
-  // page and the one an evaluator is least likely to have met, but it is a product
-  // name (Turso's server) rather than our own, so it goes ahead of `libredb`.
-  libsql: 16,
+  prometheus: 17,
+  // Directly after Prometheus (R28, kiro F10): the showcase ranks by what Studio's audience, cloud-native teams,
+  // already runs beside Kubernetes, where Prometheus is the default metrics store and already holds 17; InfluxDB is
+  // inserted directly after it so the two time-series stores read together, and moving a shipped engine's rank needs
+  // a measurement this spec does not have.
+  influxdb: 18,
+  // The second InfluxDB connection type, one per query language.
+  influxdb3: 19,
+  // Behind the time-series stores and ahead of libSQL (#1088), for the reason Prometheus sits where it does:
+  // the message log a cloud-native team runs beside its databases, as well known to that
+  // evaluator as Prometheus and met the same way, beside the databases rather than as one of them.
+  kafka: 20,
+  // Behind Kafka and ahead of libSQL (#1089), for the reason the two before it sit where they do: the
+  // store a Kubernetes control plane keeps its state in, known to the same evaluator and met beside the
+  // databases rather than as one of them.
+  etcd: 21,
+  // Behind etcd and ahead of libSQL (vector-family spec 10.3), for the reason the three before it sit where they do: the
+  // vector database a team runs beside its databases, known to the same evaluator and met beside them.
+  milvus: 22,
+  // Behind Milvus and ahead of libSQL (vector-family spec 10.3), for the same reason: the second vector database.
+  qdrant: 23,
+  // Behind Qdrant and ahead of libSQL, for the reason the seven before it sit where they do: the store an Apache Pulsar
+  // cluster keeps its metadata in, known to the same cloud-native evaluator and met beside the databases rather than
+  // as one of them.
+  oxia: 24,
+  // Behind etcd and ahead of the embedded store: libSQL is the name on this page an
+  // evaluator is least likely to have met, but it is a product name (Turso's server)
+  // rather than our own, so it goes ahead of `libredb`.
+  libsql: 25,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 17,
+  libredb: 26,
 };
 
 /**

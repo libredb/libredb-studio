@@ -1,0 +1,73 @@
+{
+  "$captured": {
+    "service": "etcd-auth-password",
+    "image": "gcr.io/etcd-development/etcd:v3.7.2",
+    "digest": "sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "clusterId": "9341064349964996272",
+    "memberId": "11100594549813706834",
+    "date": "2026-09-30T16:31:01.603Z",
+    "runtime": "bun 1.4.2",
+    "rpc": "KV/Range",
+    "surface": "range: /app/cfg with reader's token issued before root granted the reader role its READ on /config/a again: a simple token still reads",
+    "request": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      },
+      "limit": {
+        "$int64": "1"
+      }
+    },
+    "match": {
+      "key": {
+        "$bytes": "L2FwcC9jZmc="
+      }
+    },
+    "metadata": {
+      "hasleader": "true",
+      "token": "<token>"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "kvs": [
+      {
+        "key": {
+          "$bytes": "L2FwcC9jZmc="
+        },
+        "create_revision": {
+          "$int64": "12"
+        },
+        "mod_revision": {
+          "$int64": "12"
+        },
+        "version": {
+          "$int64": "1"
+        },
+        "value": {
+          "$bytes": "eyJtb2RlIjoiYmx1ZSJ9"
+        },
+        "lease": {
+          "$int64": "0"
+        }
+      }
+    ],
+    "header": {
+      "cluster_id": {
+        "$int64": "9341064349964996272"
+      },
+      "member_id": {
+        "$int64": "11100594549813706834"
+      },
+      "revision": {
+        "$int64": "37"
+      },
+      "raft_term": {
+        "$int64": "2"
+      }
+    },
+    "more": false,
+    "count": {
+      "$int64": "1"
+    }
+  }
+}

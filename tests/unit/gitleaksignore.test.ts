@@ -37,7 +37,10 @@ describe(".gitleaksignore", () => {
     // #708's fabricated ApiKey-header test pair, plus one placeholder JWT
     // secret written twice into the release runbook's smoke phase in 2ff08e3a,
     // removed from the working tree in the commit that added those lines -
-    // history keeps the commit, so the findings stay.
+    // history keeps the commit, so the findings stay. A fingerprint whose commit
+    // only a squash-merged branch held goes once the squash lands, because no
+    // ref reaches that commit any more: the server-text test's four went with
+    // #1247.
     //
     // This number is the point of the test: a suppression is a decision someone
     // has to make on purpose, so both a line silently dropped and a line

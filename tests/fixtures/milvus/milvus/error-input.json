@@ -1,0 +1,45 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2 and node 24.14.0",
+    "rpc": "Query",
+    "user": "root",
+    "surface": "a Query whose filter does not parse",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64",
+      "expr": "seq >>> 3",
+      "output_fields": [
+        "seq"
+      ],
+      "query_params": [
+        {
+          "key": "limit",
+          "value": "1"
+        }
+      ]
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "fields_data": [],
+    "output_fields": [],
+    "element_indices": [],
+    "status": {
+      "extra_info": {
+        "is_input_error": "true"
+      },
+      "error_code": "IllegalArgument",
+      "reason": "failed to create query plan: cannot parse expression: seq >>> 3: line 1:6 extraneous input '>' expecting {'(', '[', '{', EXISTS, TEXTMATCH, TEXTMATCHFUZZY, PHRASEMATCH, RANDOMSAMPLE, MATCH_ALL, MATCH_ANY, MATCH_LEAST, MATCH_MOST, MATCH_EXACT, ISO, '+', '-', '~', NOT, EmptyArray, JSONContains, JSONContainsAll, JSONContainsAny, ArrayContains, ArrayContainsAll, ArrayContainsAny, ArrayLength, ElementFilter, STEuqals, STTouches, STOverlaps, STCrosses, STContains, STIntersects, STWithin, STDWithin, STIsValid, BooleanConstant, IntegerConstant, FloatingConstant, Identifier, '$meta', StringLiteral, RawStringLiteral, JSONIdentifier, StructIndexFieldIdentifier, StructFieldIdentifier, StructSubFieldIdentifier}: query plan failed: invalid parameter",
+      "code": 1100,
+      "retriable": false,
+      "detail": "failed to create query plan: cannot parse expression: seq >>> 3: line 1:6 extraneous input '>' expecting {'(', '[', '{', EXISTS, TEXTMATCH, TEXTMATCHFUZZY, PHRASEMATCH, RANDOMSAMPLE, MATCH_ALL, MATCH_ANY, MATCH_LEAST, MATCH_MOST, MATCH_EXACT, ISO, '+', '-', '~', NOT, EmptyArray, JSONContains, JSONContainsAll, JSONContainsAny, ArrayContains, ArrayContainsAll, ArrayContainsAny, ArrayLength, ElementFilter, STEuqals, STTouches, STOverlaps, STCrosses, STContains, STIntersects, STWithin, STDWithin, STIsValid, BooleanConstant, IntegerConstant, FloatingConstant, Identifier, '$meta', StringLiteral, RawStringLiteral, JSONIdentifier, StructIndexFieldIdentifier, StructFieldIdentifier, StructSubFieldIdentifier}: query plan failed: invalid parameter"
+    },
+    "collection_name": "",
+    "session_ts": "0",
+    "primary_field_name": ""
+  }
+}

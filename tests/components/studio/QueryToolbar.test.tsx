@@ -6,7 +6,12 @@ import { describe, test, expect, mock, afterEach } from "bun:test";
 import { render, fireEvent, cleanup } from "@testing-library/react";
 import React from "react";
 
-import { QueryToolbar } from "@/components/studio/QueryToolbar";
+import {
+  CANCEL_UNAVAILABLE_REASON,
+  QueryToolbar,
+  STOP_WAITING_HINT,
+  cancelControlMode,
+} from "@/components/studio/QueryToolbar";
 import { mockPostgresConnection } from "../../fixtures/connections";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { ProviderLabels } from "@/lib/db/types";
@@ -92,6 +97,65 @@ describe("QueryToolbar", () => {
 
     expect(queryByText("CANCEL")).not.toBeNull();
     expect(queryByText("RUN")).toBeNull();
+  });
+
+  // A provider with no `cancelQuery` refuses every cancel, so the button must not offer
+  // one (#1364). Absent means "not said", which an embedded host's own capabilities can be.
+  // SQLite: the provider cannot cancel AND the statement holds the server's thread, so even
+  // "Stop waiting" would get nothing answered sooner (#1364).
+  test("Cancel is disabled with the reason where the engine blocks the server", () => {
+    const onCancelQuery = mock(() => {});
+    const metadata = {
+      ...sqlMetadata,
+      capabilities: { ...sqlMetadata.capabilities, supportsQueryCancel: false, blocksServerWhileRunning: true },
+    };
+    const { getByText } = render(
+      <QueryToolbar {...createDefaultProps({ isExecuting: true, metadata, onCancelQuery })} />,
+    );
+
+    const button = getByText("CANCEL").closest("button")!;
+    expect(button.disabled).toBe(true);
+    // On the wrapper: a disabled button takes no pointer events, so its own title never shows.
+    expect(button.parentElement?.getAttribute("title")).toBe(CANCEL_UNAVAILABLE_REASON);
+    fireEvent.click(button);
+    expect(onCancelQuery).not.toHaveBeenCalled();
+  });
+
+  // A provider without cancel: the control still ends the editor's wait, and says so.
+  test("reads STOP WAITING where the provider cannot cancel, and still calls the handler", () => {
+    const onCancelQuery = mock(() => {});
+    const metadata = { ...sqlMetadata, capabilities: { ...sqlMetadata.capabilities, supportsQueryCancel: false } };
+    const { getByText, queryByText } = render(
+      <QueryToolbar {...createDefaultProps({ isExecuting: true, metadata, onCancelQuery })} />,
+    );
+
+    expect(queryByText("CANCEL")).toBeNull();
+    const button = getByText("STOP WAITING").closest("button")!;
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute("title")).toBe(STOP_WAITING_HINT);
+    fireEvent.click(button);
+    expect(onCancelQuery).toHaveBeenCalledTimes(1);
+  });
+
+  test("Cancel stays CANCEL where the provider can cancel or does not say", () => {
+    for (const supportsQueryCancel of [true, undefined]) {
+      const metadata = { ...sqlMetadata, capabilities: { ...sqlMetadata.capabilities, supportsQueryCancel } };
+      const { getByText, unmount } = render(<QueryToolbar {...createDefaultProps({ isExecuting: true, metadata })} />);
+      const button = getByText("CANCEL").closest("button")!;
+      expect(button.disabled).toBe(false);
+      expect(button.getAttribute("title")).toBeNull();
+      expect(button.parentElement?.getAttribute("title") ?? null).toBeNull();
+      unmount();
+    }
+  });
+
+  test("cancelControlMode: unavailable beats stop-waiting, and no metadata is cancel", () => {
+    const caps = (extra: Record<string, unknown>) =>
+      ({ ...sqlMetadata, capabilities: { ...sqlMetadata.capabilities, ...extra } }) as ProviderMetadata;
+    expect(cancelControlMode(null)).toBe("cancel");
+    expect(cancelControlMode(caps({ supportsQueryCancel: true }))).toBe("cancel");
+    expect(cancelControlMode(caps({ supportsQueryCancel: false }))).toBe("stop-waiting");
+    expect(cancelControlMode(caps({ supportsQueryCancel: false, blocksServerWhileRunning: true }))).toBe("unavailable");
   });
 
   test("Transaction BEGIN button visible when not in transaction", () => {
@@ -429,6 +493,77 @@ describe("QueryToolbar", () => {
     // And the same props on SQL draw the group, so the handlers above were servable.
     const sql = render(<QueryToolbar {...createDefaultProps()} />);
     expect(sql.queryByText("BEGIN")).not.toBeNull();
+  });
+
+  test("No transaction, sandbox, edit or import controls for a Cypher connection (Neo4j spec 6.5)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and a graph connection runs
+    // every statement in a read session, with no transaction to open.
+    const cypherMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "cypher" },
+      labels: { ...sqlLabels, entityName: "label", entityNamePlural: "labels" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: cypherMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    expect(queryByText("RUN")).not.toBeNull();
+  });
+
+  test("No transaction, sandbox, edit or import controls for an InfluxQL connection (InfluxDB spec 6.7)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone (`QueryToolbar.tsx:120`), and an
+    // InfluxDB (InfluxQL) connection is read-only, with no transaction to open and no row to write.
+    const influxqlMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "influxql" },
+      labels: { ...sqlLabels, entityName: "measurement", entityNamePlural: "measurements" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: influxqlMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    expect(queryByText("RUN")).not.toBeNull();
+  });
+
+  test("No transaction, sandbox, edit or import controls for a Kafka connection (#1088)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and a Kafka read request
+    // is JSON in a dialect of its own, which no transaction, sandbox or import could reach.
+    const kafkaMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "json", queryDialect: "kafka" },
+      labels: { ...sqlLabels, entityName: "Topic", entityNamePlural: "Topics" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: kafkaMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    // The control: the toolbar still rendered its run control, so the absent group is the gate.
+    expect(queryByText("RUN")).not.toBeNull();
+    cleanup();
+
+    // And the same props on SQL draw the group, so the handlers above were servable.
+    const sql = render(<QueryToolbar {...createDefaultProps()} />);
+    expect(sql.queryByText("BEGIN")).not.toBeNull();
+  });
+
+  test("No transaction, sandbox, edit or import controls for an etcd connection (#1089)", () => {
+    // Correct as is: the group is drawn for `queryLanguage: "sql"` alone, and an etcd txn is one atomic
+    // request the provider sends whole, not a session transaction a BEGIN could open.
+    const etcdMetadata: ProviderMetadata = {
+      capabilities: { ...sqlMetadata.capabilities, queryLanguage: "json", queryDialect: "etcd" },
+      labels: { ...sqlLabels, entityName: "Key Prefix", entityNamePlural: "Key Prefixes" },
+    };
+    const { queryByText } = render(<QueryToolbar {...createDefaultProps({ metadata: etcdMetadata })} />);
+
+    expect(queryByText("BEGIN")).toBeNull();
+    expect(queryByText("SANDBOX")).toBeNull();
+    expect(queryByText("EDIT")).toBeNull();
+    expect(queryByText("IMPORT")).toBeNull();
+    // The control: the toolbar still rendered its run control, so the absent group is the gate.
+    expect(queryByText("RUN")).not.toBeNull();
   });
 
   test("Query label always shown", () => {

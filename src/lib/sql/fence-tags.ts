@@ -47,6 +47,10 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   mongodb: true,
   redis: true,
   oracle: true,
+  // A ```db2 block holds a statement this editor runs against a Db2 LUW connection (#786). No
+  // alias is registered below: `sqlpl` names Db2's procedural language rather than the product,
+  // and an alias that names the WRONG engine is worse here than a missing one.
+  db2: true,
   mssql: true,
   libredb: true,
   couchbase: true,
@@ -75,6 +79,37 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `/api/v1/query` (#1085), and it is the tag the planning contract asks a model for. The
   // `promql` alias below spells the language, and it still names this engine: see its entry.
   prometheus: true,
+  // A ```kafka block holds a JSON read request the editor sends to the provider as it is
+  // (#1088). No alias is registered below: `json` is the tempting one and it is the wrong one,
+  // because a MongoDB document is JSON too, and `fenceTagEngine` is what decides whether a plan's
+  // deliverable was written for THIS connection.
+  kafka: true,
+  // An ```etcd block holds one etcdctl command the editor runs as it is (#1089). No alias is
+  // registered below: `sh`, `bash` and `shell` name no engine, which is the reason `sql` maps to
+  // no engine in `ALIAS_ENGINES`, and `etcdctl`, which names etcd alone, is left out until plan
+  // runs show a model writing it.
+  etcd: true,
+  // A ```neo4j block holds one read-only Cypher statement the editor runs as it is (Neo4j spec 6.4). The
+  // `cypher` alias below spells the language, and it still names this engine: see its entry.
+  neo4j: true,
+  // A ```milvus block holds one Milvus console request the editor runs as it is (vector-family spec 5.7). No alias
+  // is registered below: `json` is a MongoDB document as often, `http` and `rest` name no engine, and
+  // `fenceTagEngine` is what decides whether a plan's deliverable was written for THIS connection.
+  milvus: true,
+  // A ```qdrant block holds one Qdrant console request the editor runs as it is (vector-family spec 6.7). No alias
+  // is registered below: `json` is a MongoDB document as often, `http` and `rest` name no engine, and
+  // `fenceTagEngine` is what decides whether a plan's deliverable was written for THIS connection.
+  qdrant: true,
+  // An ```influxdb block holds one InfluxQL statement the editor runs as it is. The `influxql` alias below
+  // spells the language, and it still names this engine: see its entry. No `flux` tag is registered anywhere:
+  // no type-id runs Flux, and an alias would make a Flux block look runnable on `influxdb`.
+  influxdb: true,
+  // An ```influxdb3 block holds one DataFusion SQL statement. No alias is registered below: `sql` names no
+  // engine, and `influxql` and `flux` are not this type-id's language.
+  influxdb3: true,
+  // A ```oxia block holds one `oxia client` read command the editor runs as it is (O14). No alias: `oxia` already
+  // names the engine and its CLI.
+  oxia: true,
 });
 
 /**
@@ -101,6 +136,8 @@ const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "n1ql",
   "cql",
   "promql",
+  "cypher",
+  "influxql",
 ]);
 
 /**
@@ -132,6 +169,13 @@ const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.freeze({
   // `cql` is absent on a reason the same rule does not leave standing, since ScyllaDB connects
   // through `cassandra` too; docs/BACKLOG.md B86 records it.
   promql: "prometheus",
+  // The `promql` rule again: Cypher is a language, and `neo4j` is the only type-id that runs it. Left
+  // out of this record, a ```cypher block contradicted no connection and was recorded as a PostgreSQL
+  // run's statement. A second graph type-id that runs Cypher is the moment to revisit this entry.
+  cypher: "neo4j",
+  // The `promql` rule again: InfluxQL is a language, and `influxdb` is the only type-id that runs it
+  // (`influxdb3` runs SQL). A second InfluxQL type-id is the moment to revisit this entry.
+  influxql: "influxdb",
 });
 
 /**

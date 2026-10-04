@@ -90,10 +90,22 @@ afterEach(() => {
   resetTuning();
 });
 
+/**
+ * How many models the shipped document holds, derived rather than typed.
+ *
+ * It was written as the literal 35 in three places, and every one of them had to be edited by hand
+ * the moment a model landed - which is a test failing for arithmetic rather than for a defect.
+ * Derived here, the assertions keep the meaning they were written for (an operator document that
+ * cannot be read must leave the SHIPPED roster standing, whole) without pinning a number that is
+ * expected to grow. `model-roster-docs.test.ts` is what guards the count itself, against the
+ * sentences in `docs/llms/`.
+ */
+const SHIPPED_MODELS = Object.keys(parseTuning(bundled, "roster").models).length;
+
 describe("the document Studio ships with", () => {
   test("passes its own contract", () => {
     const tuning = parseTuning(bundled, "test");
-    expect(Object.keys(tuning.models)).toHaveLength(35);
+    expect(Object.keys(tuning.models)).toHaveLength(SHIPPED_MODELS);
   });
 
   test("argues for every value it changed", () => {
@@ -598,7 +610,7 @@ describe("a document an operator supplies", () => {
     process.env[ENV] = writeDocument("{ not json");
     resetTuning();
     expect(ceilingFor("gemma4:26b")).toBe(10);
-    expect(Object.keys(activeTuning().models)).toHaveLength(35);
+    expect(Object.keys(activeTuning().models)).toHaveLength(SHIPPED_MODELS);
   });
 
   test("reports that it ignored a document, naming the file and the reason", () => {
@@ -752,13 +764,13 @@ describe("a document an operator supplies", () => {
   test("is ignored when it breaks the contract, not partially applied", () => {
     process.env[ENV] = writeDocument(document({ schemaVersion: 99 }));
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(35);
+    expect(Object.keys(activeTuning().models)).toHaveLength(SHIPPED_MODELS);
   });
 
   test("is ignored when the file is not there at all", () => {
     process.env[ENV] = "/nonexistent/models.json";
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(35);
+    expect(Object.keys(activeTuning().models)).toHaveLength(SHIPPED_MODELS);
   });
 
   test("an unset or blank variable is simply no operator document", () => {
@@ -766,7 +778,7 @@ describe("a document an operator supplies", () => {
     // reading it as a path would warn on every boot of an install that configured nothing.
     process.env[ENV] = "   ";
     resetTuning();
-    expect(Object.keys(activeTuning().models)).toHaveLength(35);
+    expect(Object.keys(activeTuning().models)).toHaveLength(SHIPPED_MODELS);
   });
 
   test("is read once, so a run cannot see the table change under it", () => {

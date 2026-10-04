@@ -33,6 +33,7 @@ const EXPECTED_TIMEOUTS: Record<string, Record<string, number>> = {
     "dispatch-downstream": 5,
     chocolatey: 15,
     winget: 15,
+    aur: 30,
   },
   "update-sponsors.yml": { "update-sponsors": 5 },
 };

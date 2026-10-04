@@ -15,7 +15,7 @@ import {
   type DatabaseConnection,
   type QueryResult,
   type HealthInfo,
-  type MaintenanceType,
+  type MaintenanceOperation,
   type MaintenanceResult,
   type ProviderOptions,
   type PoolConfig,
@@ -183,7 +183,11 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   ): Promise<ObjectDetailBatch>;
 
   public abstract getHealth(): Promise<HealthInfo>;
-  public abstract runMaintenance(type: MaintenanceType, target?: string): Promise<MaintenanceResult>;
+  public abstract runMaintenance(
+    type: MaintenanceOperation,
+    target?: string,
+    container?: string,
+  ): Promise<MaintenanceResult>;
 
   // Monitoring methods (must be implemented by subclasses)
   public abstract getOverview(): Promise<DatabaseOverview>;

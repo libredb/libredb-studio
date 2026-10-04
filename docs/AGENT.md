@@ -59,14 +59,14 @@ Three properties frame everything below, and each of them is load-bearing rather
   on which of its two readings it takes**: `agent-read-only` on the dialects `CATALOG_PLANS` serves,
   because it composes catalog statements, and `agent-operations` everywhere else, because asking a
   provider to describe its own schema sends nothing an engine has to plan. That is what lets grounding
-  reach the fourteen the read-only profile refuses, and it still cannot narrow any workflow's
+  reach the twenty-three the read-only profile refuses, and it still cannot narrow any workflow's
   reach: the profile whose acquisition would be refused is never the profile that capture asks for. Everything else about
   the three acquisitions is identical: the same `readOnly: true` open, the same optional
   least-privilege `agentUser`, and the same profiled cache, so neither an operations run nor an
   editor replay is ever handed the editor's writable pool. **Plan mode grounds itself the same way**
   — the server reads the schema, and on PostgreSQL and SQLite the engine's estimated statistics
   beside it, before the model's first turn — so a plan run is now ordinarily grounded on every engine,
-  including the fourteen where an agent run cannot read anything at all. What is left of the old engine
+  including the twenty-three where an agent run cannot read anything at all. What is left of the old engine
   rule is narrower and still worth stating: the engine no longer decides WHETHER a plan run is
   grounded, only whether it is grounded through a composed statement or through its provider, and
   whether it gets statistics. A run whose reading fails — a provider that cannot describe itself, a
@@ -272,7 +272,7 @@ somebody else's run, and no credential is ever persisted (only the connection id
 Which connections qualify is decided in the browser before a run is opened, by
 `resolveAgentRunConnectionId` (`src/hooks/use-connection-payload.ts`):
 
-- an **admin-managed** seed connection — the server's copy is authoritative and the UI is read-only,
+- an **admin-managed** seed connection: the server's copy is authoritative and not editable in the UI,
   so `seed:<id>` means the same database on every resume;
 - the **editable copy of a seed** — what a zero-config deployment ships — but only while the copy
   still matches the descriptor the browser last fetched from the server. Every field deciding which
@@ -509,8 +509,9 @@ sentence saying the inventory is incomplete and naming the limit. A kind whose c
 `sampledFrom`, Redis key groupings from one bounded `SCAN` and LibreDB keyspaces from a bounded key
 walk, is reported as a FLOOR ("at least what is shown"), and a kind on an engine declaring
 `tablesAreDerivedGroupings` is named as groupings this server derived rather than objects anybody
-named, so no command can be addressed to one. An absence the model was not told about is read as an
-absence in the database, which is #414 in one sentence.
+named, so no command can be addressed to one.
+An object whose listing carried `readRanges`, an etcd group the user's grants read only in part, is marked partly readable beside its name, naming none of those ranges, and a note tells the model that a read of the whole object is refused and is not to be drafted or run (#1089 4.7).
+An absence the model was not told about is read as an absence in the database, which is #414 in one sentence.
 
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
 PostgreSQL costs three and SQLite two. No object method takes a budget on any provider, so the call is
@@ -568,7 +569,7 @@ What a grounded plan run is given, and where each part comes from:
   which process happened to have read a catalog first. They are read from what the engine already
   holds — `pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite — so no column
   is scanned and no value is read out of any row. `ESTIMATE_BUILDERS` serves those two and SQL Server (`buildMssqlEstimates`, from `sys.partitions`) and
-  nothing else, and #414 added no engine to it: on the other fifteen `readSchemaStatistics` answers
+  nothing else, and #414 added no engine to it: on the other twenty-four `readSchemaStatistics` answers
   `DIALECT_HAS_NO_STATISTICS` — *"this engine does not hold statistics this run knows how to read"* —
   so **a known schema with no statistics is now the ORDINARY combination rather than a rare one**, and
   the two sentences the run is handed agree: the inventory is a record of what exists, and every
@@ -689,9 +690,9 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 
 1. **A plan run costs statements now.** On PostgreSQL and SQLite grounding is catalog reads plus one
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
-   because SQLite resolves table names at prepare time). On the other sixteen it is **one**, the
+   because SQLite resolves table names at prepare time). On the other twenty-five it is **one**, the
    single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other fifteen hold no statistics this run
+   `ESTIMATE_BUILDERS` serves outside `CATALOG_PLANS`; the other twenty-four hold no statistics this run
    knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,
@@ -729,7 +730,7 @@ exactly why: the engines that answer differently are not the ones a reader would
   hard-coded before.
 - **What a derived grouping IS**, said once and only where it is true. A noun alone does not tell a
   model that a key pattern is not addressable, and no fact about Redis could — the grouping is this
-  product's own. `ProviderCapabilities.tablesAreDerivedGroupings` is `true` on Redis and LibreDB
+  product's own. `ProviderCapabilities.tablesAreDerivedGroupings` is `true` on Redis, LibreDB and etcd
   alone, and where it is, the plan rules carry one sentence saying what the rows are (groupings this
   server derived from a bounded scan), what a statement may name instead (a whole key, or a pattern
   scan in whatever form the engine offers), and that the list is one reading's reach rather than the
@@ -747,9 +748,9 @@ engine.
 The deliverable is one runnable statement, not a lecture. The rules ask for it in a single fenced
 block tagged with the connection's canonical type-id, rationale after the block, and no name that is
 not in the inventory.
-Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, and since #1085 a `promql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
+Since #414 the WORDING varies with the engine's `queryLanguage` and the TAG does not: on an engine whose language is not SQL (a `json` engine, since #1085 a `promql` one, a `cypher` one since Neo4j, and an `influxql` one) the run is asked for one statement or command in that engine's own language, a MongoDB aggregation or a PromQL expression rather than a SELECT, and told that this engine speaks no SQL, while the tag stays the canonical type-id in both arms.
 That is deliberate rather than an oversight: `isQueryFenceTag`
-is a total record over `DatabaseType`, so all eighteen ids pass it, whereas a draft the model fenced as
+is a total record over `DatabaseType`, so all twenty-seven ids pass it, whereas a draft the model fenced as
 ```` ```javascript ```` passes nothing and records no `plan-statement-drafted` event at all — the run
 would score as having drafted nothing while the user is looking at a statement. A run that cannot answer from the
 inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` saying exactly what is
@@ -757,12 +758,9 @@ missing and asking the one question that would unblock it. That marker is a conv
 **output**, not a tool, which is what lets a toolless mode make its two outcomes mechanically
 distinguishable.
 
-The server reads that block out of the closing prose (`src/lib/agent/plan-statement.ts`) and records
-it as a **`plan-statement-drafted`** event carrying the SQL, the connection's dialect, whether the
-statement is read-only, and what the identifier check found. It is its own event kind rather than
-`statement-drafted` because that kind promises a `stepId` tying a draft to a tool invocation, and a
-toolless run has none. Recording it closed the deferral that had the rail reading a plan's SQL out of
-a markdown fence rather than out of the ledger.
+The server reads that block out of the closing prose (`src/lib/agent/plan-statement.ts`) and records it as a **`plan-statement-drafted`** event carrying the SQL, the connection's dialect, the editor language the drive's capabilities resolve to, whether the statement is read-only, and what the identifier check found; the language is what tints the statement on the answer card, which the rail renders without capabilities (#1089).
+It is its own event kind rather than `statement-drafted` because that kind promises a `stepId` tying a draft to a tool invocation, and a toolless run has none.
+Recording it closed the deferral that had the rail reading a plan's SQL out of a markdown fence rather than out of the ledger.
 
 The server's reader and the browser's renderer have to agree about which block is a statement, and
 both dimensions of that agreement are now enforced rather than asserted: the CommonMark fence rule
@@ -944,7 +942,7 @@ Two consequences worth stating:
   composed path has and the provider path cannot: reads audited statement by statement rather than as
   one opaque call; foreign keys, which no provider can report on an engine that declares none; and
   SQLite's inventory, which is parsed out of the DDL text the engine stored and which its provider
-  does not expose in the same shape. Collapsing the other sixteen onto the composed one is the thing
+  does not expose in the same shape. Collapsing the other twenty-five onto the composed one is the thing
   #414 exists because nobody can do: a catalog statement has to be written per dialect and verified
   against a live server, and until it is, refusing the dialect was the honest answer and reading the
   provider is a better one.
@@ -2562,7 +2560,7 @@ src/lib/agent/
 ├── runtime.ts            # composition root: the only place that assembles a tool context
 ├── tools.ts              # the four tools + server-side selection; the only database reach,
                           #   the model's tools and the server's own grounding reads alike
-├── composed-sql.ts       # the SQL the SERVER writes, per dialect — four of the eighteen
+├── composed-sql.ts       # the SQL the SERVER writes, per dialect: four of the twenty-seven
 ├── sqlite-ddl.ts         # reading SQLite's stored DDL back into an inventory
 ├── execution-policy.ts   # the frozen policy and the run-level ceilings
 ├── deadline.ts           # the wall-clock deadline and the timeout clamp
@@ -2608,8 +2606,7 @@ the role's own grants are the whole boundary (A3).
 
 - **B2** — the Anthropic kind is ratified and installed but not offered; serving it means giving the
   chat surface an Anthropic provider first.
-- **B4** — a mapped database error discards the text distinguishing a timeout cancel from an operator
-  cancel.
+- **B4** — `mapDatabaseError` classifies on a substring a table or column name can satisfy.
 - **B5** — the ledger assumes one writer per run and cannot enforce it.
 - **B6** — the repair ledger is rebuilt per drive, so a resumed run's repair attempts start over.
 - **B9** — the resume sweep is local-only, so an interrupted run is picked up only on the `local`
@@ -2689,6 +2686,14 @@ the role's own grants are the whole boundary (A3).
 - **B87**: a run's inventory count names every kind with the engine's entity noun, because `captureContextSnapshot` counts every object the inventory read and both the answer card and the prompt's inventory header name that count through `inventoryNoun`, so a SQLite run over six tables and two views reads "8 tables read" and a Prometheus run over metrics, rule groups, rules, scrape pools and targets counts them all as metrics.
   Each inventory row still carries its own kind; the count is what names the wrong thing.
 - **B88**: a kind whose listing the engine refuses ends the grounding walk, because `walkObjectInventory` lists a kind whose count was refused and the capture is all-or-nothing, so a plan run on a seeded VictoriaMetrics connection starts with no inventory and is told the server could not be reached, though it answered three of its four listings.
+- **B89**: on a Kafka cluster with more topics than the provider's topic cap (`KAFKA_TOPIC_LIST_CAP`, 2,000 names), a plan run's inventory holds topics and nothing else, because `walkObjectInventory` stops at the first truncated `describeObjects` batch and topics are the first kind that provider declares.
+  Below the cap, a cluster with more consumer groups than the object budget leaves after its topics grounds no broker, because the walk stops at its object budget too and groups come before brokers; the inventory's `truncated` tells the run that the reading is incomplete.
+- **B90**: the worked call a refusal attaches for a model to copy is gated by `refusalExamples`, which defaults to false and is on for 2 of the 40 shipped profiles, so it is off for every model nobody has measured yet - which is where the repeated refusals are: `qwen2.5:3b-instruct` earned 155 `compose_report` refusals in one data-analysis cell with the flag off. The refusal names the failing paths and offers what is citable either way; what the flag withholds is the shape a model can copy rather than parse.
+- **B91**: the MCP settings page renders the OpenCode snippet under `mcp.servers.libredb` while that client reads `mcp.libredb` and wants an `enabled` field, so a user copying it gets a configuration error rather than a server; the same route accepts a request body of any size, measured at 2 MB with HTTP 200.
+- **B92**: on etcd, plan mode can draft a read of a whole prefix group the connection can only partly read, because the snapshot marks the group `partlyReadable` and says so in the prompt but `plan-statement-drafted` is recorded with no check of the draft against that mark, and the model, which is not given the readable key's name, follows the note only some of the time; measured at 4 of 4 drafts of `etcdctl get /config/ --prefix` on one model, each refused by etcd when run.
+- **B93**: Neo4j is served by plan mode and the MCP metadata tools only: its provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it, because both guard a statement with SQL readers and a Cypher statement needs a contract of its own, measured against the `LOAD CSV` and APOC reach its read policy refuses (`docs/providers/neo4j.md` section 3.6).
+- **B94**: InfluxDB is served by plan mode and the MCP metadata tools only, on both `influxdb` and `influxdb3`: neither provider implements `queryReadOnly`, so agent execution and MCP `run_read_query` refuse both, because both guard a statement with SQL readers, and each type needs a statement contract of its own, the InfluxQL read policy for `influxdb` and the DataFusion policy for `influxdb3`.
+- **B100**: Oxia is served by plan mode only: MCP is not offered for it (`MCP_EXPOSABLE.oxia` is false), and its provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it, because its key paths name Pulsar tenants and topics and no MCP surface that never returns a key value is designed yet (`docs/providers/oxia.md` section 3.6).
 
 **Settled as limits rather than as work.** The eight below have no entry in `docs/BACKLOG.md`, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet

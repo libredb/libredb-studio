@@ -1,0 +1,60 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "node 24.14.0",
+    "rpc": "Search",
+    "user": "root",
+    "surface": "a Search whose radius is a string",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_int64",
+      "dsl": "",
+      "dsl_type": "BoolExprV1",
+      "ids": {
+        "int_id": {
+          "data": [
+            "469506719193499079"
+          ]
+        }
+      },
+      "nq": "1",
+      "output_fields": [],
+      "use_default_consistency": true,
+      "search_params": [
+        {
+          "key": "anns_field",
+          "value": "vec"
+        },
+        {
+          "key": "topk",
+          "value": "3"
+        },
+        {
+          "key": "params",
+          "value": "{\"radius\":\"abc\"}"
+        },
+        {
+          "key": "round_decimal",
+          "value": "-1"
+        }
+      ]
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "status": {
+      "extra_info": {},
+      "error_code": "UnexpectedError",
+      "reason": "failed to search: failed to search/query delegator 4 for channel by-dev-rootcoord-dml_0_469506719193499070v0: fail to search on QueryNode 4: worker(4) query failed: Operator::GetOutput failed for [Operator:PhyVectorSearchNode, plan node id: 153] :  => Brute force range search fail: type conflict in json, Type conflict in json: param 'radius' (\"abc\") should be a number at ../internal/core/src/query/SearchBruteForce.cpp:284\nStack trace: : knowhere error[segcoreCode=2099]",
+      "code": 2099,
+      "retriable": false,
+      "detail": "failed to search: failed to search/query delegator 4 for channel by-dev-rootcoord-dml_0_469506719193499070v0: fail to search on QueryNode 4: worker(4) query failed: Operator::GetOutput failed for [Operator:PhyVectorSearchNode, plan node id: 153] :  => Brute force range search fail: type conflict in json, Type conflict in json: param 'radius' (\"abc\") should be a number at ../internal/core/src/query/SearchBruteForce.cpp:284\nStack trace: : knowhere error[segcoreCode=2099]"
+    },
+    "results": null,
+    "collection_name": "",
+    "session_ts": "0"
+  }
+}

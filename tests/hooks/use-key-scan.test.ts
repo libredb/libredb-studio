@@ -65,6 +65,46 @@ function page(keys: string[], cursor: string, total = 31, types: Record<string, 
   return { json: { keys, cursor, total, types } };
 }
 
+/**
+ * A key space larger than every bound the hook keeps: each page hands back a full batch of keys no
+ * page has named before, under the pattern it was asked for, and a cursor that is never `"0"`.
+ */
+function endlessKeys(name: (pattern: string, index: number) => string) {
+  const served = new Map<string, number>();
+  return async (req: Request): Promise<MockFetchResponse> => {
+    const body = (await req.json()) as { pattern?: string; count: number };
+    const pattern = body.pattern ?? "";
+    const from = served.get(pattern) ?? 0;
+    served.set(pattern, from + body.count);
+    const keys = Array.from({ length: body.count }, (_, offset) => name(pattern, from + offset));
+    return page(keys, String(from + body.count), 1_000_000);
+  };
+}
+
+/**
+ * Whether a run ends on its own, counted in microtask turns rather than in time.
+ *
+ * A loop that awaits a promise that has already resolved never hands the thread back, so no timer
+ * fires while it runs, a test's own timeout included, and a test that waited for it would hang the
+ * suite rather than fail. The watchdog's turns are taken on the same microtask queue, so they keep
+ * passing while such a loop spins. Whichever ends first answers; then `stop` sets the flag the loop
+ * reads between pages, which ends it either way.
+ */
+async function endsUnaided(run: () => Promise<void>, stop: () => void): Promise<boolean> {
+  const running = run().then(() => true);
+  const watchdog = (async () => {
+    for (let turn = 0; turn < 10_000; turn += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- one turn of the microtask queue is the unit this counts in.
+      await Promise.resolve();
+    }
+    return false;
+  })();
+  const unaided = await Promise.race([running, watchdog]);
+  stop();
+  await running;
+  return unaided;
+}
+
 describe("useKeyScan", () => {
   afterEach(() => {
     restoreGlobalFetch();
@@ -275,7 +315,7 @@ describe("useKeyScan", () => {
     });
     const { result } = hook();
 
-    let first: Promise<void> = Promise.resolve();
+    let first: Promise<unknown> = Promise.resolve();
     act(() => {
       first = result.current.scanMore();
     });
@@ -552,7 +592,7 @@ describe("useKeyScan", () => {
     });
 
     const first = hook();
-    let ok: Promise<void> = Promise.resolve();
+    let ok: Promise<unknown> = Promise.resolve();
     act(() => {
       ok = first.result.current.scanMore();
     });
@@ -568,7 +608,7 @@ describe("useKeyScan", () => {
 
     mode = "fail";
     const second = hook();
-    let bad: Promise<void> = Promise.resolve();
+    let bad: Promise<unknown> = Promise.resolve();
     act(() => {
       bad = second.result.current.scanMore();
     });
@@ -622,7 +662,7 @@ describe("useKeyScan", () => {
       });
       const { result } = hook();
 
-      let stale: Promise<void> = Promise.resolve();
+      let stale: Promise<unknown> = Promise.resolve();
       act(() => {
         stale = result.current.scanMore();
       });
@@ -661,7 +701,7 @@ describe("useKeyScan", () => {
       });
       const { result } = hook();
 
-      let stale: Promise<void> = Promise.resolve();
+      let stale: Promise<unknown> = Promise.resolve();
       act(() => {
         stale = result.current.scanMore();
       });
@@ -1092,5 +1132,375 @@ describe("the held-key limit", () => {
     });
     expect(fetchMock.mock.calls.length).toBe(1);
     expect(result.current.nodeCursors.size).toBe(0);
+  });
+
+  /**
+   * Load more fills the tree AHEAD of the walk: its keys join the tree and not the walk's count, so
+   * the tree can reach the limit while the walk is short of Scan all's cap and its cursor is live.
+   * A Scan all pressed then has nothing it may take, and it must end there rather than ask a full
+   * tree for a page forever, a loop that never yields and that no Stop press could reach.
+   */
+  test("ends a Scan all at the limit when Load more filled the tree ahead of the walk", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": endlessKeys((pattern, index) => (pattern === "" ? `top:${index}` : `app:${index}`)),
+    });
+    const { result } = hook();
+
+    // The first page, as the panel takes it, then nine presses of Load more under `app`: 9,500 keys
+    // held against a walk that has counted 500, so the panel still offers Scan all.
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    for (let press = 0; press < 9; press += 1) {
+      // oxlint-disable-next-line no-await-in-loop -- each press continues the prefix's walk from the cursor the last one wrote.
+      await act(async () => {
+        await result.current.loadMoreUnder(["app"]);
+      });
+    }
+    expect(result.current.keys.length).toBe(9_500);
+    expect(result.current.scanned).toBe(500);
+    const asked = fetchMock.mock.calls.length;
+
+    let unaided = false;
+    await act(async () => {
+      unaided = await endsUnaided(result.current.scanAll, result.current.stop);
+    });
+
+    expect(unaided).toBe(true);
+    // One page filled the tree, and nothing was asked for after it.
+    expect(fetchMock.mock.calls.length).toBe(asked + 1);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT);
+    expect(result.current.scanningAll).toBe(false);
+    expect(result.current.exhausted).toBe(false);
+    // The limit's sentence is the panel's, drawn from the tree's size, so Scan all adds none of its own.
+    expect(result.current.stoppedBy).toBeNull();
+  });
+});
+
+/**
+ * The walk in a declared shape (spec 3.4, 4.6): an etcd-shaped provider's pages, with an opaque
+ * cursor, a prefix Load more and the keys a page left out.
+ */
+describe("a walk in a declared shape", () => {
+  afterEach(() => {
+    restoreGlobalFetch();
+  });
+
+  const ETCD_SCAN = {
+    defaultCount: 500,
+    maxCount: 1000,
+    separator: "/",
+    cursor: "opaque",
+    pattern: "prefix",
+    totalScope: "walk",
+  } as const;
+  const REASON = "a key that is not UTF-8 text has no name a row could carry; a typed get shows it in base64.";
+
+  /** A page with the keys it left out, in the shape the route answers with. */
+  function skippingPage(keys: string[], cursor: string, count: number): MockFetchResponse {
+    return { json: { keys, cursor, total: 9, types: {}, skipped: { count, reason: REASON } } };
+  }
+
+  /** The body of the nth request, as the route would have received it. */
+  const bodyAt = (fetchMock: { mock: { calls: unknown[][] } }, index: number) =>
+    JSON.parse(String((fetchMock.mock.calls[index][1] as RequestInit).body)) as Record<string, unknown>;
+
+  function etcdHook() {
+    return renderHook(() => useKeyScan({ connection: CONNECTION, capability: ETCD_SCAN, pattern: "" }));
+  }
+
+  test("hands an opaque cursor back exactly as the page wrote it", async () => {
+    const opaque = "k:L2FwcC9i:12:9";
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) =>
+        (await cursorOf(req)) === "0" ? page(["/app/a"], opaque, 9) : page(["/app/b"], "0", 9),
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    expect(bodiesOf(fetchMock).map((body) => body.cursor)).toEqual(["0", opaque]);
+    expect(result.current.keys).toEqual(["/app/a", "/app/b"]);
+    expect(result.current.exhausted).toBe(true);
+  });
+
+  test('a page that answers total 0 under "none" keeps the walk going to cursor "0"', async () => {
+    const uncounted = { ...ETCD_SCAN, totalScope: "none" } as const;
+    const next = "k:L2FwcC9i:h";
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) =>
+        (await cursorOf(req)) === "0" ? page(["/app/a"], next, 0) : page(["/app/b"], "0", 0),
+    });
+    const { result } = renderHook(() => useKeyScan({ connection: CONNECTION, capability: uncounted, pattern: "" }));
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    // A total of 0 is not the end of anything: only the cursor ends a walk.
+    expect(result.current.exhausted).toBe(false);
+    expect(result.current.total).toBe(0);
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(bodiesOf(fetchMock).map((body) => body.cursor)).toEqual(["0", next]);
+    expect(result.current.keys).toEqual(["/app/a", "/app/b"]);
+    expect(result.current.exhausted).toBe(true);
+  });
+
+  test("passes a page's skipped keys through and adds them up across the walk's pages", async () => {
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) =>
+        (await cursorOf(req)) === "0" ? skippingPage(["/a"], "k:x:3:9", 2) : skippingPage(["/b"], "0", 1),
+    });
+    const { result } = etcdHook();
+
+    // Nothing is left out before a page says so: null, and not a zero count a panel would draw.
+    expect(result.current.skipped).toBeNull();
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.skipped).toEqual({ count: 2, reason: REASON });
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    expect(result.current.skipped).toEqual({ count: 3, reason: REASON });
+  });
+
+  test("gives the reason of the latest page that left a key out", async () => {
+    const later = "the second page's own words.";
+    mockGlobalFetch({
+      "/api/db/keys/scan": async (req) =>
+        (await cursorOf(req)) === "0"
+          ? skippingPage(["/a"], "k:x:3:9", 2)
+          : { json: { keys: ["/b"], cursor: "0", total: 9, types: {}, skipped: { count: 1, reason: later } } },
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    // The count is the walk's, added up; the words are the provider's latest, and are never joined.
+    expect(result.current.skipped).toEqual({ count: 3, reason: later });
+  });
+
+  test("leaves skipped at null for a page that left nothing out", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": skippingPage(["/a"], "0", 0) });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+
+    // A zero count says nothing was left out, which the panel must not draw as a line.
+    expect(result.current.skipped).toBeNull();
+  });
+
+  test("throws the skipped count away with the walk", async () => {
+    mockGlobalFetch({ "/api/db/keys/scan": skippingPage(["/a"], "k:x:3:9", 2) });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    act(() => {
+      result.current.reset();
+    });
+    expect(result.current.skipped).toBeNull();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    // The restarted walk counts its own pages from nothing, never on top of the old walk's.
+    expect(result.current.skipped).toEqual({ count: 2, reason: REASON });
+  });
+
+  test("leaves skipped untouched in a prefix's Load more, as it leaves scanned", async () => {
+    let call = 0;
+    mockGlobalFetch({
+      "/api/db/keys/scan": () => {
+        call += 1;
+        return call === 1 ? skippingPage(["/app/a"], "k:x:3:9", 2) : skippingPage(["/app/b"], "0", 5);
+      },
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["", "app"]);
+    });
+
+    expect(result.current.keys).toEqual(["/app/a", "/app/b"]);
+    expect(result.current.skipped).toEqual({ count: 2, reason: REASON });
+    expect(result.current.scanned).toBe(1);
+  });
+
+  test("asks a prefix's Load more for the bare prefix and keeps that prefix's opaque cursor", async () => {
+    const opaque = "k:L2Fw:7:12";
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": async (req) =>
+        (await cursorOf(req)) === "0" ? page(["/app/a", "/app/b", "/apple/x"], opaque, 12) : page(["/app/c"], "0", 12),
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.loadMoreUnder(["", "app"]);
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder(["", "app"]);
+    });
+
+    // The bare prefix and its separator, the rule the Sidebar hands a row's name over by, and the
+    // largest batch the engine declares, as a Redis Load more asks for.
+    expect(bodyAt(fetchMock, 0)).toMatchObject({ cursor: "0", pattern: "/app/", count: 1000 });
+    expect(bodyAt(fetchMock, 1)).toMatchObject({ cursor: opaque, pattern: "/app/" });
+    // A key the answer held that is not under the prefix by segments is dropped, as on Redis.
+    expect(result.current.keys).toEqual(["/app/a", "/app/b", "/app/c"]);
+    expect(result.current.nodeCursors.get(pathKey(["", "app"]))).toBe("0");
+  });
+
+  test("asks the root row's Load more for the separator itself", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": page(["/a"], "0", 1) });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.loadMoreUnder([""]);
+    });
+
+    expect(bodyAt(fetchMock, 0)).toMatchObject({ pattern: "/" });
+  });
+
+  test("asks the Load more of a folder whose last segment is a star for that folder's own range", async () => {
+    const fetchMock = mockGlobalFetch({ "/api/db/keys/scan": page(["/a/*/x"], "0", 1) });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.loadMoreUnder(["", "a", "*"]);
+    });
+
+    // Under a prefix declaration `*` is a byte of the segment, so the folder's range is `/a/*/`. Its
+    // joined name `/a/*`, read as a folder's advertised form, would walk `/a/`, the folder above it.
+    expect(bodyAt(fetchMock, 0)).toMatchObject({ cursor: "0", pattern: "/a/*/" });
+    expect(result.current.keys).toEqual(["/a/*/x"]);
+  });
+
+  test("names the prefix when Scan all stops at its cap", async () => {
+    const wide = { ...ETCD_SCAN, defaultCount: SCAN_ALL_MAX_KEYS, maxCount: SCAN_ALL_MAX_KEYS };
+    mockGlobalFetch({
+      "/api/db/keys/scan": page(
+        Array.from({ length: SCAN_ALL_MAX_KEYS }, (_, index) => `/bulk/${index}`),
+        "k:L2J1bGs:5:20000",
+        20_000,
+      ),
+    });
+    const { result } = renderHook(() => useKeyScan({ connection: CONNECTION, capability: wide, pattern: "" }));
+
+    await act(async () => {
+      await result.current.scanAll();
+    });
+
+    expect(result.current.stoppedBy).toBe("Stopped after 10,000 keys. Narrow the prefix to walk a smaller key space.");
+  });
+
+  /**
+   * A key a page left out was walked as surely as one it named (spec 4.6): etcd read it, and it took
+   * its room on the page. So Scan all's cap counts both, or a prefix of keys that are not UTF-8 text
+   * is read whole by a gesture the cap says stops after ten thousand keys.
+   */
+  test("counts the keys a page left out toward Scan all's cap", async () => {
+    // Two hundred pages that name nothing and leave out a batch each: 100,000 keys, ten times the cap.
+    let pages = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": () => {
+        pages += 1;
+        return skippingPage([], pages === 200 ? "0" : `k:page-${pages}:7:100000`, ETCD_SCAN.defaultCount);
+      },
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanAll();
+    });
+
+    // The cap's own arithmetic, twenty round trips of 500, and not the two hundred of the whole key space.
+    expect(fetchMock.mock.calls.length).toBe(SCAN_ALL_MAX_KEYS / ETCD_SCAN.defaultCount);
+    expect(result.current.exhausted).toBe(false);
+    expect(result.current.stoppedBy).toBe("Stopped after 10,000 keys. Narrow the prefix to walk a smaller key space.");
+    expect(result.current.skipped).toEqual({ count: SCAN_ALL_MAX_KEYS, reason: REASON });
+    expect(result.current.scanned).toBe(0);
+  });
+
+  test("adds the keys a page named and the keys it left out toward the cap", async () => {
+    // Ten named keys and 490 left out a page: the cap is spent at twenty pages, not at the thousand it
+    // takes to be handed ten thousand names.
+    let pages = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": () => {
+        pages += 1;
+        const named = Array.from({ length: 10 }, (_, index) => `/bulk/${pages}/${index}`);
+        return skippingPage(named, pages === 2_000 ? "0" : `k:page-${pages}:7:1000000`, 490);
+      },
+    });
+    const { result } = etcdHook();
+
+    await act(async () => {
+      await result.current.scanAll();
+    });
+
+    expect(fetchMock.mock.calls.length).toBe(SCAN_ALL_MAX_KEYS / ETCD_SCAN.defaultCount);
+    expect(result.current.scanned).toBe(200);
+    expect(result.current.skipped).toEqual({ count: 9_800, reason: REASON });
+    expect(result.current.stoppedBy).toBe("Stopped after 10,000 keys. Narrow the prefix to walk a smaller key space.");
+  });
+
+  /**
+   * The held limit's end of a Scan all, reached the way a prefix panel reaches it: the root row's
+   * Load more reads `/` while the walk covers one prefix, so its keys are ones the walk never counts,
+   * and one press is enough for the walk to fill the tree short of its cap.
+   */
+  test("ends a Scan all at the held limit when the root row's Load more read keys outside the prefix", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/keys/scan": endlessKeys((pattern, index) =>
+        pattern === "/registry/pods/" ? `/registry/pods/${index}` : `/registry/configmaps/${index}`,
+      ),
+    });
+    const { result } = renderHook(() =>
+      useKeyScan({ connection: CONNECTION, capability: ETCD_SCAN, pattern: "/registry/pods/" }),
+    );
+
+    await act(async () => {
+      await result.current.scanMore();
+    });
+    await act(async () => {
+      await result.current.loadMoreUnder([""]);
+    });
+    expect(result.current.keys.length).toBe(1_500);
+    const asked = fetchMock.mock.calls.length;
+
+    let unaided = false;
+    await act(async () => {
+      unaided = await endsUnaided(result.current.scanAll, result.current.stop);
+    });
+
+    expect(unaided).toBe(true);
+    // Seventeen pages of the prefix fill the tree with 9,000 keys walked, short of the cap, and
+    // nothing is asked for after them.
+    expect(fetchMock.mock.calls.length).toBe(asked + 17);
+    expect(result.current.scanned).toBe(9_000);
+    expect(result.current.keys.length).toBe(HELD_KEY_LIMIT);
+    expect(result.current.scanningAll).toBe(false);
+    expect(result.current.stoppedBy).toBeNull();
   });
 });

@@ -63,7 +63,10 @@ mock.module("@/components/schema-explorer/ColumnList", () => ({
 
 import { TableItem } from "@/components/schema-explorer/TableItem";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { SYNTHETIC_ENTITY_CAPABILITIES } from "../../fixtures/maintenance-entity-operations";
 
 // Capability fixtures are partial on purpose: TableItem reads a handful of fields, and
 // spelling out every ProviderCapabilities key in each case would bury them (#427).
@@ -119,6 +122,30 @@ const libredbCaps = caps({
   maintenanceOperations: [],
 });
 /**
+ * Kafka's own declaration (#1088), read from the provider rather than written here: JSON in a
+ * dialect of its own, a topic kind that takes no row writes, no grid row edit and no maintenance.
+ */
+const kafkaCaps: Caps = new KafkaProvider({
+  id: "kafka-table-item",
+  name: "Kafka",
+  type: "kafka",
+  host: "localhost",
+  port: 9092,
+  createdAt: new Date(0),
+}).getCapabilities();
+/**
+ * etcd's own declaration (#1089), read from the provider: a command line in a dialect of its own, a
+ * key-prefix group that is a derived grouping, no kind that takes row writes and no grid row edit.
+ */
+const etcdCaps: Caps = new EtcdProvider({
+  id: "etcd-table-item",
+  name: "etcd",
+  type: "etcd",
+  host: "127.0.0.1",
+  port: 2379,
+  createdAt: new Date(0),
+}).getCapabilities();
+/**
  * Search-shaped (Elasticsearch / OpenSearch, #424 Phase 1): an index is a real,
  * addressable object — so the `tablesAreDerivedGroupings` gate does NOT catch it —
  * and the engine still declares no maintenance of any kind.
@@ -155,6 +182,24 @@ const mysqlCaps = caps({
   maintenanceOperationSpecs: {
     analyze: { label: "Analyze Table", perEntity: true, global: true },
     optimize: { label: "Optimize Table", perEntity: true, global: true },
+  },
+});
+
+/**
+ * Db2-shaped (#786): RUNSTATS and REORG each name the kinds they run on, because a Db2 view is
+ * a relation and refuses both, and the vacuum slot names `optimize`.
+ */
+const db2Caps = caps({
+  supportsMaintenance: true,
+  maintenanceOperations: ["analyze", "optimize"],
+  maintenanceOperationSpecs: {
+    analyze: { label: "Run Statistics", perEntity: true, global: false, kinds: ["table", "materialized_query_table"] },
+    optimize: {
+      label: "Reorganize Table",
+      perEntity: true,
+      global: false,
+      kinds: ["table", "materialized_query_table"],
+    },
   },
 });
 
@@ -257,6 +302,21 @@ describe("TableItem", () => {
     expect(queryByText("1.5K")).not.toBeNull();
   });
 
+  // Where there is no hover the menu button is always shown, so it cannot share the count's
+  // slot the way it does on a desktop: the two drew on top of each other on a phone.
+  test("on a screen with no hover the count and the menu button sit side by side", () => {
+    const { getByText } = render(
+      <TableItem table={largeTable} isExpanded={false} onToggle={mock(() => {})} isAdmin={false} />,
+    );
+    const count = getByText("1.5K");
+    const slot = count.parentElement as HTMLElement;
+    const trigger = slot.querySelector("button") as HTMLElement;
+
+    expect(slot.className).toContain("[@media(hover:none)]:w-auto");
+    expect(count.className).toContain("[@media(hover:none)]:static");
+    expect(trigger.className).toContain("[@media(hover:none)]:static");
+  });
+
   test("compacts millions while the title carries the full reported count and its caveat", () => {
     const { getByText } = render(
       <TableItem
@@ -295,22 +355,26 @@ describe("TableItem", () => {
     },
   );
 
-  test.each([undefined, redisCaps, libredbCaps, caps({ queryLanguage: "promql" })])(
-    "withholds count for unresolved or unsupported capabilities (%#)",
-    (capabilities) => {
-      const { queryAllByText } = render(
-        <TableItem
-          table={largeTable}
-          isExpanded={false}
-          onToggle={mock(() => {})}
-          isAdmin={false}
-          capabilities={capabilities}
-          onGenerateCount={mock(() => {})}
-        />,
-      );
-      expect(queryAllByText("Generate Count Query")).toHaveLength(0);
-    },
-  );
+  test.each([
+    undefined,
+    redisCaps,
+    libredbCaps,
+    caps({ queryLanguage: "promql" }),
+    caps({ queryLanguage: "influxql" }),
+    kafkaCaps,
+  ])("withholds count for unresolved or unsupported capabilities (%#)", (capabilities) => {
+    const { queryAllByText } = render(
+      <TableItem
+        table={largeTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin={false}
+        capabilities={capabilities}
+        onGenerateCount={mock(() => {})}
+      />,
+    );
+    expect(queryAllByText("Generate Count Query")).toHaveLength(0);
+  });
 
   test("renders raw row count for < 1000", () => {
     const { queryByText } = render(
@@ -932,6 +996,40 @@ describe("TableItem", () => {
       expect(dropdown.queryByText("Analyze Table")).toBeNull();
     });
 
+    test("offers an operation only on the kinds its spec names, as the desktop tree does", () => {
+      const labels = labelsFor({ vacuumAction: "Reorganize Table", vacuumActionOperation: "optimize" });
+      const table = render(
+        <TableItem
+          table={largeTable}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={db2Caps}
+          labels={labels}
+        />,
+      );
+      const tableMenu = within(table.getByTestId("dropdown"));
+      expect(tableMenu.queryByText("Run Statistics")).not.toBeNull();
+      expect(tableMenu.queryByText("Reorganize Table")).not.toBeNull();
+      cleanup();
+
+      const view = render(
+        <TableItem
+          table={viewObject}
+          isExpanded={false}
+          onToggle={mock(() => {})}
+          isAdmin
+          capabilities={db2Caps}
+          labels={labels}
+        />,
+      );
+      const viewMenu = within(view.getByTestId("dropdown"));
+      expect(viewMenu.queryByText("Run Statistics")).toBeNull();
+      expect(viewMenu.queryByText("Reorganize Table")).toBeNull();
+      // Withheld for the kind alone: the rest of the menu is still there.
+      expect(viewMenu.queryByText("Select Top 50")).not.toBeNull();
+    });
+
     test("offers nothing while the capabilities are still unknown", () => {
       // `/api/db/provider-meta` answers with nothing both while it is in flight and
       // when it failed, and both maintenance surfaces read that as a denial. A menu
@@ -1067,6 +1165,70 @@ describe("TableItem", () => {
       expect(sqlMenu.querySelectorAll("hr")).toHaveLength(1);
     });
 
+    test("an InfluxQL measurement is offered none of the three, and no rule is drawn for them (InfluxDB spec 6.7)", () => {
+      const measurementCaps = caps({
+        queryLanguage: "influxql",
+        objectKinds: [
+          { id: "measurement", role: "relation", label: "Measurement", labelPlural: "Measurements", hasColumns: true },
+        ],
+        supportsInlineRowEdit: false,
+        supportsMaintenance: false,
+        maintenanceOperations: [],
+      });
+      const cpu: DetailedObject = {
+        name: "cpu",
+        kind: "measurement",
+        path: ["telegraf", "cpu"],
+        columns: [],
+        indexes: [],
+      };
+      const menu = menuOf(cpu, measurementCaps);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      expect(within(menu).queryByText("Copy Name")).not.toBeNull();
+      // The control: the same measurement in SQL is offered the two actions that ask the language.
+      expect(offered(menuOf(cpu, { ...measurementCaps, queryLanguage: "sql" }))).toEqual([
+        "Profile Table",
+        "Generate Code",
+      ]);
+    });
+
+    test("a Kafka topic is offered none of the three, and no rule is drawn for them (#1088)", () => {
+      const topic: DetailedObject = { name: "orders", kind: "topic", path: ["orders"], columns: [], indexes: [] };
+      const menu = menuOf(topic, kafkaCaps);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      // The actions that name the row are still there, so an empty list is the gate and not a menu
+      // that failed to render.
+      expect(within(menu).queryByText("Select Top 50")).not.toBeNull();
+      expect(within(menu).queryByText("Copy Name")).not.toBeNull();
+      // The control, in the one field under test: the same declaration with the dialect removed is
+      // MongoDB's JSON, which is profiled and generates code. Generate Test Data stays withheld there
+      // too, because the topic kind declares no row writes and the engine no grid row edit.
+      const jsonMenu = menuOf(topic, { ...kafkaCaps, queryDialect: undefined });
+      expect(offered(jsonMenu)).toEqual(["Profile Table", "Generate Code"]);
+      expect(jsonMenu.querySelectorAll("hr")).toHaveLength(1);
+    });
+
+    test("an etcd key-prefix group is offered none of the three, and no rule is drawn for them (#1089)", () => {
+      const group: DetailedObject = {
+        name: "/app/config/*",
+        kind: "prefix",
+        path: ["/app/config/*"],
+        columns: [],
+        indexes: [],
+      };
+      const menu = menuOf(group, etcdCaps);
+      expect(offered(menu)).toEqual([]);
+      expect(menu.querySelectorAll("hr")).toHaveLength(0);
+      expect(within(menu).queryByText("Copy Name")).not.toBeNull();
+      // The control, in the one field under test: with the dialect removed the declaration is MongoDB's JSON,
+      // which generates code, so that refusal is the dialect's. Profile stays withheld by the derived grouping,
+      // and Generate Test Data because no etcd kind takes row writes.
+      const jsonMenu = menuOf(group, { ...etcdCaps, queryDialect: undefined });
+      expect(offered(jsonMenu)).toEqual(["Generate Code"]);
+    });
+
     test("unknown capabilities offer none of the three", () => {
       // `/api/db/provider-meta` answers with nothing both while it is in flight and when it
       // failed, and a menu that guessed "offer it" is how the dead buttons came back.
@@ -1078,5 +1240,142 @@ describe("TableItem", () => {
       // The control: the same row once the declaration has arrived.
       expect(offered(menuOf(largeTable, sqlCaps))).toEqual(["Profile Table", "Generate Code", "Generate Test Data"]);
     });
+  });
+});
+
+describe("declared per-row operations in the mobile row menu (spec 3.11)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const declaredCaps = caps({ queryLanguage: "sql", objectKinds: [tableKind], ...SYNTHETIC_ENTITY_CAPABILITIES });
+  const MAINTENANCE_ITEMS = ["Analyze Table", "Release Object", "Load Object"];
+  const maintenanceTexts = (dropdown: HTMLElement) =>
+    Array.from(dropdown.querySelectorAll('[role="menuitem"]'))
+      .map((item) => item.textContent ?? "")
+      .filter((text) => MAINTENANCE_ITEMS.includes(text));
+
+  test("offers each declared operation after the provider's own, in declaration order", () => {
+    const { getByTestId } = render(
+      <TableItem
+        table={qualifiedTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={declaredCaps}
+        labels={labelsFor({})}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+
+    expect(maintenanceTexts(getByTestId("dropdown"))).toEqual(MAINTENANCE_ITEMS);
+  });
+
+  test('a declared item opens maintenance on "tables" with the row\'s ADDRESS', () => {
+    const onOpenMaintenance = mock((tab?: "global" | "tables" | "sessions", path?: readonly string[]) => {
+      void tab;
+      void path;
+    });
+    const { getByTestId } = render(
+      <TableItem
+        table={qualifiedTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={declaredCaps}
+        onOpenMaintenance={onOpenMaintenance}
+      />,
+    );
+
+    fireEvent.click(within(getByTestId("dropdown")).getByText("Load Object"));
+    expect(onOpenMaintenance).toHaveBeenCalledTimes(1);
+    expect(onOpenMaintenance.mock.calls[0][0]).toBe("tables");
+    expect(onOpenMaintenance.mock.calls[0][1]).toEqual(["app", "users"]);
+  });
+
+  test("a declared operation that names its kinds is offered on those kinds only, as the desktop tree does", () => {
+    const kindedCaps = caps({
+      queryLanguage: "sql",
+      objectKinds: [tableKind, viewKind],
+      ...SYNTHETIC_ENTITY_CAPABILITIES,
+      maintenanceOperationSpecs: {
+        ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs,
+        compact: { ...SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs.compact, kinds: ["table"] },
+      },
+    });
+    const table = render(
+      <TableItem
+        table={qualifiedTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={kindedCaps}
+        labels={labelsFor({})}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+    expect(maintenanceTexts(table.getByTestId("dropdown"))).toEqual(MAINTENANCE_ITEMS);
+    cleanup();
+
+    const view = render(
+      <TableItem
+        table={viewObject}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={kindedCaps}
+        labels={labelsFor({})}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+    expect(maintenanceTexts(view.getByTestId("dropdown"))).toEqual(["Analyze Table", "Release Object"]);
+  });
+
+  test("a declared operation alone still draws the maintenance group", () => {
+    const { getByTestId } = render(
+      <TableItem
+        table={qualifiedTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={caps({
+          queryLanguage: "sql",
+          objectKinds: [tableKind],
+          supportsMaintenance: true,
+          maintenanceOperations: ["disarm"],
+          maintenanceOperationSpecs: { disarm: SYNTHETIC_ENTITY_CAPABILITIES.maintenanceOperationSpecs.disarm },
+        })}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+
+    expect(maintenanceTexts(getByTestId("dropdown"))).toEqual(["Release Object"]);
+  });
+
+  test("a non-admin, and a derived grouping, are offered none of them", () => {
+    const { getByTestId, unmount } = render(
+      <TableItem
+        table={qualifiedTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin={false}
+        capabilities={declaredCaps}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+    expect(maintenanceTexts(getByTestId("dropdown"))).toEqual([]);
+    unmount();
+
+    const grouped = render(
+      <TableItem
+        table={qualifiedTable}
+        isExpanded={false}
+        onToggle={mock(() => {})}
+        isAdmin
+        capabilities={caps({ ...declaredCaps, tablesAreDerivedGroupings: true })}
+        onOpenMaintenance={mock(() => {})}
+      />,
+    );
+    expect(maintenanceTexts(grouped.getByTestId("dropdown"))).toEqual([]);
   });
 });

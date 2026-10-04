@@ -1,5 +1,5 @@
 /**
- * Drift guard for the four public type blocks in `docs/API_DOCS.md` (#567).
+ * Drift guard for the public type blocks in `docs/API_DOCS.md` (#567).
  *
  * The Data Types section restates `DatabaseConnection`, `QueryResult`, `DatabaseObject`
  * and `HealthInfo`. Nothing compared those restatements to the interfaces, which is
@@ -11,10 +11,15 @@
  * This extracts top-level field names from each doc block and from the matching
  * interface and asserts they are equal, so the next field added to the source fails
  * the gate until the doc follows.
+ *
+ * `VectorColumn` joined the list with the vector results grid, and its block inlines three published unions
+ * (`VectorKind`, `VectorDType`, `SparseEncoding`), so their members are compared too: a member added to the
+ * source fails the gate until the doc's inlined union follows.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -27,6 +32,14 @@ const SHAPES = [
   { name: "QueryResult", source: "src/lib/types.ts" },
   { name: "DatabaseObject", source: "src/lib/db/types.ts" },
   { name: "HealthInfo", source: "src/lib/db/types.ts" },
+  { name: "VectorColumn", source: "src/lib/db/vector/types.ts" },
+] as const;
+
+/** The `VectorColumn` fields whose doc line inlines a published union, which must list exactly its members. */
+const INLINED_UNIONS = [
+  { field: "kind", union: "VectorKind" },
+  { field: "dtype", union: "VectorDType" },
+  { field: "sparseEncoding", union: "SparseEncoding" },
 ] as const;
 
 function scanInterfaceBody(source: string, name: string): string {
@@ -114,6 +127,25 @@ function stripComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 }
 
+function quotedMembers(text: string): string[] {
+  return [...text.matchAll(/"([^"]*)"/g)].map((match) => match[1]);
+}
+
+function unionMembers(source: string, name: string): string[] {
+  const match = source.match(new RegExp(`export\\s+type\\s+${name}\\s*=([^;]*);`));
+  if (!match) throw new Error(`type ${name} not found`);
+  return quotedMembers(stripComments(match[1]));
+}
+
+function fieldTypeText(source: string, name: string, field: string): string {
+  const body = stripComments(scanInterfaceBody(source, name));
+  const line = body
+    .split("\n")
+    .find((candidate) => new RegExp(`^\\s*(?:readonly\\s+)?${field}\\??\\s*:`).test(candidate));
+  if (line === undefined) throw new Error(`${name}.${field} not found`);
+  return line;
+}
+
 function topLevelFields(source: string, name: string): string[] {
   const body = stripComments(scanInterfaceBody(source, name));
   const fields: string[] = [];
@@ -139,4 +171,29 @@ describe("docs/API_DOCS.md Data Types blocks match the source interfaces", () =>
       expect(fromDocs).toEqual(fromSource);
     });
   }
+});
+
+describe("the unions docs/API_DOCS.md inlines in VectorColumn match the published types", () => {
+  for (const { field, union } of INLINED_UNIONS) {
+    test(`VectorColumn.${field} lists exactly the members of ${union}`, () => {
+      const fromSource = unionMembers(read("src/lib/db/vector/types.ts"), union);
+      expect(fromSource.length).toBeGreaterThan(0);
+      expect(quotedMembers(fieldTypeText(DATA_TYPES, "VectorColumn", field))).toEqual(fromSource);
+    });
+  }
+});
+
+describe("the allowInsecureAuth field names every engine that reads it", () => {
+  test("docs/API_DOCS.md and docs/SEED_CONNECTIONS.md name Db2, both InfluxDB types and Oxia, the types whose form offers the field", () => {
+    const readers = Object.entries(DB_UI_CONFIG)
+      .filter(([, config]) => (config.connectionFields as readonly string[] | undefined)?.includes("allowInsecureAuth"))
+      .map(([type]) => type);
+    // The control: a fifth type taking the field fails here until both docs name it.
+    expect(readers).toEqual(["db2", "influxdb", "influxdb3", "oxia"]);
+    expect(API_DOCS).toContain("`allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia)");
+    expect(DATA_TYPES).toContain("allowInsecureAuth?: boolean; // Db2, both InfluxDB types and Oxia (#786):");
+    expect(read("docs/SEED_CONNECTIONS.md")).toContain(
+      "| `connections[].allowInsecureAuth` | No | absent | Db2, both InfluxDB types and Oxia (#786):",
+    );
+  });
 });

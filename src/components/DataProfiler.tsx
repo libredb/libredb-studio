@@ -6,8 +6,15 @@ import { LoaderCircle, ChartColumn, X, CircleAlert, Sparkles, Lock, Download } f
 import { cn } from "@/lib/utils";
 import { DatabaseConnection } from "@/lib/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
-import type { DetailedObject } from "@/lib/db/detailed-object";
-import { detectSensitiveColumns, maskValue } from "@/lib/data-masking";
+import { machineColumns, type DetailedObject } from "@/lib/db/detailed-object";
+import {
+  detectSensitiveColumnsFromConfig,
+  loadMaskingConfig,
+  maskingInForce,
+  maskValueByPattern,
+  type MaskingConfig,
+  type MaskingPattern,
+} from "@/lib/data-masking";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
 import { downloadText } from "@/lib/export/download";
@@ -19,6 +26,27 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ShortcutsDialog } from "@/components/ShortcutsDialog";
+
+/**
+ * The null share a card draws. Read only on a column without `error`, which the route
+ * always answers with its null figures; the fallback exists for the type alone.
+ */
+const nullPercentOf = (column: ColumnProfile): number => column.nullPercent ?? 0;
+
+/** "N distinct", or "distinct unknown" where the engine refused the count: never a 0 it did not measure. */
+const distinctLabel = (column: ColumnProfile): string =>
+  column.distinctCount === undefined ? "distinct unknown" : `${column.distinctCount.toLocaleString()} distinct`;
+
+/**
+ * The mean null share over the columns whose nulls were counted. A column the engine could
+ * not count has no share, and averaging it in as 0 % is what made a table that failed to
+ * profile read as one with no NULLs at all.
+ */
+function averageNullText(columns: readonly ColumnProfile[]): string {
+  const counted = columns.flatMap((column) => (column.nullPercent === undefined ? [] : [column.nullPercent]));
+  if (counted.length === 0) return "n/a";
+  return `${Math.round(counted.reduce((sum, share) => sum + share, 0) / counted.length)}%`;
+}
 
 interface DataProfilerProps {
   isOpen: boolean;
@@ -37,6 +65,15 @@ interface DataProfilerProps {
   onProfile?: (params: { connectionId: string; tablePath: readonly string[] }) => Promise<ProfileData>;
   /** Optional API adapter: when provided, bypasses the built-in /api/ai/describe-schema fetch. */
   onDescribeSchema?: (params: { tableName: string; schemaContext: string }) => Promise<string>;
+  /**
+   * The three masking inputs the results grid takes, with the grid's defaults: the saved
+   * configuration when none is given, an absent role read as `user`, and an absent switch
+   * read as the configuration's own flag. A shell hands both surfaces the same values, so
+   * a column the grid masks is masked here too (#1421).
+   */
+  maskingConfig?: MaskingConfig;
+  maskingEnabled?: boolean;
+  userRole?: string;
 }
 
 export function DataProfiler({
@@ -49,6 +86,9 @@ export function DataProfiler({
   databaseType,
   onProfile,
   onDescribeSchema,
+  maskingConfig,
+  maskingEnabled,
+  userRole,
 }: DataProfilerProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [profile, setProfile] = useState<ProfileData | null>(null);
@@ -61,11 +101,31 @@ export function DataProfiler({
   const tableName = objectPathLabel(tablePath);
   const tableKey = pathKey(tablePath);
 
-  // Detect sensitive columns for masking sample values in profiler
-  const sensitiveColumnNames = useMemo(() => {
-    if (!tableSchema?.columns) return new Map();
-    return detectSensitiveColumns(tableSchema.columns.map((c) => c.name));
-  }, [tableSchema]);
+  /*
+    The columns whose values this profile masks, decided exactly as the results grid decides:
+    `maskingInForce` for whether masking applies at all, `detectSensitiveColumnsFromConfig`
+    for which columns. It used to come from a fixed list of built-in names instead, so a
+    column an admin masked showed its min, max and samples in clear here, and a pattern the
+    admin disabled stayed masked (#1421). Every value this component prints or sends, on
+    screen, in an export and in the AI summary request, goes through this one map.
+  */
+  const resolvedMaskingConfig = useMemo(() => maskingConfig ?? loadMaskingConfig(), [maskingConfig]);
+  const maskingActive = maskingInForce(userRole, resolvedMaskingConfig, maskingEnabled);
+
+  /**
+   * The masking map over every column name this profile can print: the schema's AND the
+   * profile's own. A host's `onProfile` answers whatever columns it likes, and a name the
+   * schema does not hold must not be the one column that escapes the configuration.
+   */
+  const sensitiveColumnsOf = (data: ProfileData | null): Map<string, MaskingPattern> => {
+    if (!maskingActive) return new Map();
+    const names = new Set([
+      ...(tableSchema?.columns ?? []).map((c) => c.name),
+      ...(data?.columns ?? []).map((c) => c.name),
+    ]);
+    return detectSensitiveColumnsFromConfig([...names], resolvedMaskingConfig);
+  };
+  const sensitiveColumnNames = sensitiveColumnsOf(profile);
 
   const exportProfile = (format: "csv" | "json") => {
     if (!profile) return;
@@ -82,10 +142,25 @@ export function DataProfiler({
   const fetchAiSummary = async (data: ProfileData) => {
     setIsAiLoading(true);
     try {
+      // The profile table lists every column, but the summary goes to a model, which never sees a column the
+      // engine only inferred from sampled data: `machineColumns` decides which, as for `schemaContext` below.
+      const declared = new Set(machineColumns(tableSchema?.columns ?? []));
+      const withheld = new Set(
+        (tableSchema?.columns ?? []).filter((column) => !declared.has(column)).map((column) => column.name),
+      );
+      // Built from `data` itself: `profile` is set in the same tick and has not rendered yet.
+      const sensitive = sensitiveColumnsOf(data);
+      const shownValue = (column: string, value: string): string => {
+        const pattern = sensitive.get(column);
+        return pattern ? maskValueByPattern(value, pattern) : value;
+      };
       const profileSummary = data.columns
-        .map(
-          (c) =>
-            `${c.name}: ${c.nullPercent}% null, ${c.distinctCount} distinct, min=${c.minValue || "N/A"}, max=${c.maxValue || "N/A"}`,
+        .filter((c) => !withheld.has(c.name))
+        .map((c) =>
+          c.nullPercent === undefined
+            ? `${c.name}: could not be profiled`
+            : // Masked as on screen: a model is one more reader the configuration hides the value from.
+              `${c.name}: ${c.nullPercent}% null, ${distinctLabel(c)}, min=${c.minValue ? shownValue(c.name, c.minValue) : "N/A"}, max=${c.maxValue ? shownValue(c.name, c.maxValue) : "N/A"}`,
         )
         .join("\n");
 
@@ -219,6 +294,8 @@ export function DataProfiler({
 
   if (!isOpen) return null;
 
+  const omitted = profile?.omittedColumns ?? [];
+
   return (
     <>
       {/*
@@ -305,20 +382,23 @@ export function DataProfiler({
                   </div>
                   <div className="bg-surface rounded-lg p-3 border border-hairline">
                     <p className="text-xs font-medium text-fg-muted">Columns</p>
-                    <p className="text-xs font-medium text-fg mt-1">{profile.columns.length}</p>
+                    <p className="text-xs font-medium text-fg mt-1">
+                      {omitted.length > 0
+                        ? `${profile.columns.length} of ${profile.columns.length + omitted.length}`
+                        : profile.columns.length}
+                    </p>
                   </div>
                   <div className="bg-surface rounded-lg p-3 border border-hairline">
                     <p className="text-xs font-medium text-fg-muted">Avg Null %</p>
-                    <p className="text-xs font-medium text-fg mt-1">
-                      {profile.columns.length > 0
-                        ? Math.round(
-                            profile.columns.reduce((sum, c) => sum + c.nullPercent, 0) / profile.columns.length,
-                          )
-                        : 0}
-                      %
-                    </p>
+                    <p className="text-xs font-medium text-fg mt-1">{averageNullText(profile.columns)}</p>
                   </div>
                 </div>
+
+                {omitted.length > 0 && (
+                  <p className="text-xs text-fg-muted">
+                    {`Not profiled, past the first ${profile.columns.length} columns: ${omitted.join(", ")}`}
+                  </p>
+                )}
 
                 {/* Column Profiles */}
                 <div className="space-y-2">
@@ -335,7 +415,7 @@ export function DataProfiler({
                             </span>
                           )}
                         </div>
-                        <span className="text-xs text-fg-muted">{col.distinctCount.toLocaleString()} distinct</span>
+                        <span className="text-xs text-fg-muted">{distinctLabel(col)}</span>
                       </div>
 
                       {col.error ? (
@@ -348,26 +428,26 @@ export function DataProfiler({
                               <div
                                 className={cn(
                                   "h-full rounded-full transition-all",
-                                  col.nullPercent > 50
+                                  nullPercentOf(col) > 50
                                     ? "bg-danger-tint"
-                                    : col.nullPercent > 20
+                                    : nullPercentOf(col) > 20
                                       ? "bg-warning-tint"
                                       : "bg-success-tint",
                                 )}
-                                style={{ width: `${100 - col.nullPercent}%` }}
+                                style={{ width: `${100 - nullPercentOf(col)}%` }}
                               />
                             </div>
                             <span
                               className={cn(
                                 "text-xs font-mono w-10 text-right",
-                                col.nullPercent > 50
+                                nullPercentOf(col) > 50
                                   ? "text-danger"
-                                  : col.nullPercent > 20
+                                  : nullPercentOf(col) > 20
                                     ? "text-warning"
                                     : "text-success",
                               )}
                             >
-                              {col.nullPercent}% null
+                              {nullPercentOf(col)}% null
                             </span>
                           </div>
 
@@ -376,7 +456,9 @@ export function DataProfiler({
                             {col.minValue &&
                               (() => {
                                 const rule = sensitiveColumnNames.get(col.name);
-                                const display = rule ? maskValue(col.minValue, rule) : col.minValue.substring(0, 30);
+                                const display = rule
+                                  ? maskValueByPattern(col.minValue, rule)
+                                  : col.minValue.substring(0, 30);
                                 return (
                                   <span className="text-fg-muted">
                                     min:{" "}
@@ -391,7 +473,9 @@ export function DataProfiler({
                             {col.maxValue &&
                               (() => {
                                 const rule = sensitiveColumnNames.get(col.name);
-                                const display = rule ? maskValue(col.maxValue, rule) : col.maxValue.substring(0, 30);
+                                const display = rule
+                                  ? maskValueByPattern(col.maxValue, rule)
+                                  : col.maxValue.substring(0, 30);
                                 return (
                                   <span className="text-fg-muted">
                                     max:{" "}
@@ -405,12 +489,19 @@ export function DataProfiler({
                               })()}
                           </div>
 
+                          {/* Measures the engine refused for this column, each with its reason */}
+                          {col.warnings?.map((warning) => (
+                            <p key={warning} className="text-xs text-warning mt-1">
+                              {warning}
+                            </p>
+                          ))}
+
                           {/* Sample Values */}
                           {col.sampleValues && col.sampleValues.length > 0 && (
                             <div className="flex flex-wrap gap-1 mt-1.5">
                               {col.sampleValues.map((val, i) => {
                                 const rule = sensitiveColumnNames.get(col.name);
-                                const display = rule ? maskValue(val, rule) : val.substring(0, 20);
+                                const display = rule ? maskValueByPattern(val, rule) : val.substring(0, 20);
                                 return (
                                   <span
                                     key={i}

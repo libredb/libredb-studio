@@ -182,20 +182,34 @@ describe("useAuth", () => {
 
   // ── /api/auth/me non-ok response ───────────────────────────────────────────
 
-  test("/api/auth/me returns non-ok → user stays null", async () => {
+  test("/api/auth/me answers 401 → user stays null and the page goes to the login screen", async () => {
+    // A session the server has ended (a disabled, deleted or demoted stored account) still has a
+    // cookie that verifies in the proxy, so only the client can take the tab to the login screen.
     mockGlobalFetch({
       "/api/auth/me": { ok: false, status: 401, json: { error: "Unauthorized" } },
     });
 
     const { result } = renderHook(() => useAuth());
 
-    // Wait for fetch to complete
+    // With the page it was on as the return path (#1420).
+    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/login?next=%2F"));
+    expect(result.current.user).toBeNull();
+    expect(result.current.isAdmin).toBe(false);
+  });
+
+  test("/api/auth/me answers another failure → user stays null and the page stays", async () => {
+    mockGlobalFetch({
+      "/api/auth/me": { ok: false, status: 500, json: { error: "Server error" } },
+    });
+
+    const { result } = renderHook(() => useAuth());
+
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
     });
 
     expect(result.current.user).toBeNull();
-    expect(result.current.isAdmin).toBe(false);
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 
   // ── /api/auth/me throws network error ──────────────────────────────────────

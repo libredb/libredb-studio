@@ -1,0 +1,96 @@
+{
+  "$captured": {
+    "service": "milvus",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-03",
+    "runtime": "bun 1.4.2",
+    "rpc": "HybridSearch",
+    "user": "nobody",
+    "surface": "HybridSearch as nobody",
+    "request": {
+      "db_name": "default",
+      "collection_name": "docs_varchar",
+      "requests": [
+        {
+          "dsl": "",
+          "dsl_type": "BoolExprV1",
+          "placeholder_group": {
+            "$bytes": "CigKAiQwEGUaIM3MzD3NzEw+mpmZPs3MzD4AAAA/mpkZPzMzMz/NzEw/"
+          },
+          "nq": "1",
+          "search_params": [
+            {
+              "key": "anns_field",
+              "value": "f16"
+            },
+            {
+              "key": "topk",
+              "value": "3"
+            },
+            {
+              "key": "params",
+              "value": "{}"
+            }
+          ]
+        },
+        {
+          "dsl": "",
+          "dsl_type": "BoolExprV1",
+          "placeholder_group": {
+            "$bytes": "CigKAiQwEGUaIM3MzD3NzEw+mpmZPs3MzD4AAAA/mpkZPzMzMz/NzEw/"
+          },
+          "nq": "1",
+          "search_params": [
+            {
+              "key": "anns_field",
+              "value": "bf16"
+            },
+            {
+              "key": "topk",
+              "value": "3"
+            },
+            {
+              "key": "params",
+              "value": "{}"
+            }
+          ]
+        }
+      ],
+      "rank_params": [
+        {
+          "key": "strategy",
+          "value": "rrf"
+        },
+        {
+          "key": "params",
+          "value": "{\"k\":60}"
+        },
+        {
+          "key": "limit",
+          "value": "3"
+        },
+        {
+          "key": "offset",
+          "value": "0"
+        },
+        {
+          "key": "round_decimal",
+          "value": "-1"
+        }
+      ],
+      "output_fields": [
+        "label"
+      ],
+      "use_default_consistency": true
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "code": 7,
+      "details": "PrivilegeSearch: permission deny to nobody in the `default` database",
+      "message": "7 PERMISSION_DENIED: PrivilegeSearch: permission deny to nobody in the `default` database"
+    }
+  }
+}
