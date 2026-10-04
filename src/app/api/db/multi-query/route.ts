@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
     const results: StatementResult[] = [];
     let totalExecutionTime = 0;
     let openTransaction: OpenQueryTransactionOutcome = "none";

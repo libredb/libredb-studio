@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     // falsy test would have refused anyway, because the audit row below records what arrived.
     const requestedContainer: string | undefined = container || undefined;
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
     const capabilities = provider.getCapabilities();
 
     if (!capabilities.supportsMaintenance) {

@@ -212,7 +212,7 @@ export async function POST(req: NextRequest) {
     // The LABEL, for the response alone: the profiler names its export after it.
     const tableName = objectSegment(path);
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     {
       const capabilities = provider.getCapabilities();

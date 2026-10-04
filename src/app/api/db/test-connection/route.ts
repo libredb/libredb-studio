@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDatabaseProvider, findOpenSingleWriterProvider, withOneShotTunnel } from "@/lib/db/factory";
+import {
+  createDatabaseProvider,
+  findOpenSingleWriterProvider,
+  isSingleWriterFileOpen,
+  withOneShotTunnel,
+} from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
@@ -29,10 +34,10 @@ export async function POST(req: NextRequest) {
     // path's tunnel handling and has to ask for it. `withOneShotTunnel` owns the
     // tunnel's whole lifetime because nothing here is cached, so no eviction would
     // ever close a pooled one - and every failed test click would strand it.
-    // The DuckDB editor file-access posture, server-derived from the session role (B1/K1): it
-    // both opens any handle this route builds with the right posture and keeps a non-admin from
-    // borrowing an admin's full handle (or the reverse) below.
-    const execution = editorExecutionContext(guard.session);
+    // The DuckDB editor file-access posture, server-derived from the session role and the resolved
+    // connection (B1/K1): it opens any handle this route builds with the right posture and keeps
+    // this route from borrowing a handle of the other posture below.
+    const execution = editorExecutionContext(guard.session, connection);
     return await withOneShotTunnel(connection, async (effective) => {
       /*
         The handle already holding this connection's file, on an engine that admits
@@ -51,6 +56,16 @@ export async function POST(req: NextRequest) {
         file under the session that opened it.
       */
       const borrowed = findOpenSingleWriterProvider(effective, execution.allowExternalFileAccess);
+      /*
+        Nothing to borrow, yet the file is open: a DuckDB handle of the OTHER file-access posture
+        holds it (B1/K1). A second read-write handle here would be the one thing this route must
+        not open, because closing it checkpoints its own view over the file and removes the
+        write-ahead log under the open handle. So the test handle opens read-only, with external
+        access off, which is the agent profile's handle: it reads the file beside the writer and
+        writes nothing when it closes. Windows refuses any second handle on a file this process
+        holds, so there the test reports that refusal (docs/providers/duckdb.md section 3.8).
+      */
+      const besideWriter = borrowed === null && isSingleWriterFileOpen(effective);
       // Both declared inside the scope so a provider this route opened is always torn
       // down before the tunnel it runs over, on the success and the failure path alike.
       let provider = borrowed;
@@ -61,7 +76,11 @@ export async function POST(req: NextRequest) {
       };
       try {
         if (!provider) {
-          provider = await createDatabaseProvider(effective, { queryTimeout: 10000 }, execution);
+          provider = await createDatabaseProvider(
+            effective,
+            { queryTimeout: 10000 },
+            besideWriter ? { readOnly: true } : execution,
+          );
           // The connection itself: every provider's connect() reaches the server and is
           // refused by a wrong host, port, credential or database - the SQL ones borrow a
           // pooled client, and the HTTP ones send a probe statement. So a connect that

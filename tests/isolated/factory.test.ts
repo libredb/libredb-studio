@@ -361,6 +361,7 @@ const {
   registerShutdownHandlers,
   acquireExecutionProfileProvider,
   findOpenSingleWriterProvider,
+  isSingleWriterFileOpen,
   getExecutionProfileCacheStats,
   withOneShotTunnel,
   assertReadOnlyHonoured,
@@ -2173,6 +2174,32 @@ describe("single-writer file reuse", () => {
     expect(findOpenSingleWriterProvider(conn, true)).toBeNull();
     expect(findOpenSingleWriterProvider(conn, false)).toBe(nonAdmin);
     await removeProvider(conn.id);
+  });
+
+  test("isSingleWriterFileOpen sees a held file whatever posture holds it, which the borrow cannot", async () => {
+    // The question Test Connection asks when the borrow answers null: is the file open under the
+    // OTHER posture, where a second read-write handle must not be opened beside it.
+    const file = join(dir, "posture-held.duckdb");
+    const conn = makeConnection("duckdb", { id: "duck-held-admin", database: file });
+    const other = makeConnection("duckdb", { id: "duck-held-other", database: file });
+    expect(isSingleWriterFileOpen(other)).toBe(false);
+
+    await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+
+    expect(findOpenSingleWriterProvider(other, false)).toBeNull();
+    expect(isSingleWriterFileOpen(other)).toBe(true);
+    await removeProvider(conn.id);
+    // Closed, so nothing holds it any more.
+    expect(isSingleWriterFileOpen(other)).toBe(false);
+  });
+
+  test("isSingleWriterFileOpen is false for a connection with no file, an anonymous in-memory one included", async () => {
+    const memory = makeConnection("duckdb", { id: "duck-held-memory", database: ":memory:" });
+    await getOrCreateProvider(memory, {}, { allowExternalFileAccess: true });
+
+    expect(isSingleWriterFileOpen(memory)).toBe(false);
+    expect(isSingleWriterFileOpen(makeConnection("mongodb", { database: undefined }))).toBe(false);
+    await removeProvider(memory.id);
   });
 
   test("an engine that admits many handles is not borrowed from, and keeps its read-only boundary", async () => {

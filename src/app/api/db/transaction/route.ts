@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Connection and action are required" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     if (!isTransactionProvider(provider)) {
       return NextResponse.json(

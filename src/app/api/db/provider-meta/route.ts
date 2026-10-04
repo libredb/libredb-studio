@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     // off the constructed provider without a socket, so there is nothing to tunnel. The
     // execution context is passed for consistency with the other routes (B1/K1); it changes
     // nothing, because the posture only affects a handle this route never opens.
-    const provider = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     return NextResponse.json({
       // `supportsQueryCancel` is read off the provider's surface rather than declared by

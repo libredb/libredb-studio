@@ -92,9 +92,9 @@ export async function handleObjectRequest(
     }
 
     // Covers all nine object routes and keys/scan: the DuckDB editor file-access posture is
-    // derived from the verified session role (B1/K1), so a non-admin browsing or editing objects
-    // on a DuckDB connection opens a handle with no filesystem reach.
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    // derived from the verified session role and the resolved connection (B1/K1), so a non-admin
+    // browsing or editing objects on a DuckDB connection opens a handle with external access off.
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
     return NextResponse.json(await run(provider, body, { connection, session: guard.session, route }));
   } catch (error) {
     if (error instanceof ObjectRouteError) {

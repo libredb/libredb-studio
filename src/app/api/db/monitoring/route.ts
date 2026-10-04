@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
     const monitoringData = await provider.getMonitoringData(options);
     // The maintenance this connected server accepts (#1387). Read here, off the provider the
     // panels came from, because `POST /api/db/provider-meta` never connects and can only answer

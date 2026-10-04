@@ -80,7 +80,7 @@ export async function POST(request: Request) {
            * refused item is reported as that item's error, beside the health of the rest.
            */
           const resolved = await resolveConnection(buildConnectionPayload(conn), guard.session);
-          const provider = await getOrCreateProvider(resolved, {}, editorExecutionContext(guard.session));
+          const provider = await getOrCreateProvider(resolved, {}, editorExecutionContext(guard.session, resolved));
           const health = await provider.getHealth();
           const latencyMs = Date.now() - start;
 

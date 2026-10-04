@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string", cancelled: false }, { status: 400 });
     }
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     // The same check `/api/db/provider-meta` reports as `supportsQueryCancel`, so the editor
     // does not offer a Cancel this refuses (#1364).

@@ -199,8 +199,9 @@ export async function POST(req: NextRequest) {
     }
 
     // The DuckDB editor file-access posture rides on the server-derived execution context: an
-    // admin keeps full filesystem reach, every other role opens with external access off (B1/K1).
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    // admin keeps the full editor reach, every other role opens with external access off, and so
+    // does every role on a seed a non-admin role can use, whose one handle they share (B1/K1).
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling

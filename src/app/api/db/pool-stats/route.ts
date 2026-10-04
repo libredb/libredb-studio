@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
 
     const connection = await resolveConnection(body, guard.session);
 
-    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session));
+    const provider = await getOrCreateProvider(connection, {}, editorExecutionContext(guard.session, connection));
 
     // Check if provider has getPoolStats
     if ("getPoolStats" in provider && typeof (provider as Record<string, unknown>).getPoolStats === "function") {

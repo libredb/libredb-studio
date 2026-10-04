@@ -542,6 +542,26 @@ export function findOpenSingleWriterProvider(
   return null;
 }
 
+/**
+ * Whether a connected handle in the writable cache holds this connection's file, whatever
+ * file-access posture it was opened under (B1 / K1).
+ *
+ * `findOpenSingleWriterProvider` answers only with a handle of the caller's own posture, so when it
+ * answers null and this answers true, the file is held by a DuckDB handle of the OTHER posture. A
+ * caller that would otherwise open its own read-write handle there must not: DuckDB serves one file
+ * through one read-write handle per process, and a second one keeps its own copy of the catalog and
+ * checkpoints it over the file when it closes, which loses the other handle's committed rows on Linux
+ * and macOS and is refused outright on Windows. Test Connection opens a read-only handle instead,
+ * which leaves the writer's file and write-ahead log alone (`src/app/api/db/test-connection/route.ts`).
+ */
+export function isSingleWriterFileOpen(connection: DatabaseConnection): boolean {
+  const identity = fileIdentity(connection);
+  if (identity === null) return false;
+  return Array.from(providerCache.values()).some(
+    (entry) => entry.singleWriterFile === identity && entry.provider.isConnected(),
+  );
+}
+
 // ============================================================================
 // Execution-profile provider cache (#328)
 // ----------------------------------------------------------------------------
