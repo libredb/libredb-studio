@@ -98,6 +98,7 @@ describe("TestDataGenerator", () => {
         isOpen={false}
         onClose={mock(() => {})}
         tablePath={[]}
+        tableSchema={null}
         capabilities={capsOf({ queryLanguage: "influxql" })}
         onExecuteQuery={mock(() => {})}
       />,
