@@ -22,7 +22,11 @@ import {
 } from "@/lib/db/errors";
 import { type NodeTransport, type NodeTransportOptions, TransportError } from "@/lib/db/http/node-transport";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
-import { INFLUX_LIST_CAP, INFLUX_ROW_CUT } from "@/lib/db/providers/timeseries/influxdb/connection-options";
+import {
+  INFLUX_LIMITER_OPTIONS,
+  INFLUX_LIST_CAP,
+  INFLUX_ROW_CUT,
+} from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
 import {
   INFLUX_CONTAINER_LEVELS,
@@ -635,12 +639,14 @@ describe("the query pipeline (spec 5.1)", () => {
     const hanging = hangingAfter(3);
     const waiting = await connected("v1", [], { database: "home" }, { queryTimeout: 80 }, hanging);
     // Sixteen runs of four other providers hold every permit of the engine key.
+    // Enough providers, each at its own bound, to hold every permit of the engine.
+    const { perEngine, perProvider } = INFLUX_LIMITER_OPTIONS;
     const fillers: Harness[] = [];
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < perEngine / perProvider; index += 1) {
       // oxlint-disable-next-line no-await-in-loop -- each filler connects before the next, so the engine's permits fill in order.
       fillers.push(await connected("v1", [], { database: "home" }, {}, hangingAfter(3)));
     }
-    const ids = (index: number) => Array.from({ length: 4 }, (_, run) => `q-fill-${index}-${run}`);
+    const ids = (index: number) => Array.from({ length: perProvider }, (_, run) => `q-fill-${index}-${run}`);
     const held = fillers.flatMap((filler, index) =>
       ids(index).map((id) => rejection(filler.provider.query("SELECT * FROM m", undefined, id))),
     );

@@ -525,8 +525,8 @@ describe("R23 and E12: the read-only seed stage, after resolution, before any so
 
 describe("the bounds of 5.5 and the timeouts", () => {
   test("the constants are the spec's", () => {
-    expect(INFLUX_MAX_IN_FLIGHT).toBe(4);
-    expect(INFLUX_LIMITER_OPTIONS).toEqual({ perProvider: 4, perEngine: 16, queueDepth: 64 });
+    expect(INFLUX_MAX_IN_FLIGHT).toBe(2);
+    expect(INFLUX_LIMITER_OPTIONS).toEqual({ perProvider: 2, perEngine: 2, queueDepth: 64 });
     expect(INFLUX_RESPONSE_CAP_BYTES).toBe(33_554_432);
     expect(INFLUX_SURFACE_TIMEOUT_MS).toBe(10_000);
     expect(INFLUX_ROW_CUT).toBe(10_000);

@@ -82,9 +82,13 @@ export const INFLUXDB_DEFAULT_PORT = 8086;
 /** The HTTP API port of InfluxDB 3. */
 export const INFLUXDB3_DEFAULT_PORT = 8181;
 /** The calls in flight for one provider, and so the sockets of its one Agent. */
-export const INFLUX_MAX_IN_FLIGHT = 4;
-/** The limiter of each type-id: one provider's calls, the whole engine's, and the queue behind them (K3). */
-export const INFLUX_LIMITER_OPTIONS = { perProvider: 4, perEngine: 16, queueDepth: 64 } as const;
+export const INFLUX_MAX_IN_FLIGHT = 2;
+/**
+ * The limiter of each type-id: one provider's calls, the whole engine's, and the queue behind them (K3, R45).
+ * Measured in the image runtime under its heap flag and the chart's 512Mi limit, four runs at the 32 MiB cap fit
+ * on the InfluxQL 1.x line and eight do not; the two type-ids' engines add up in one process, so each keeps two.
+ */
+export const INFLUX_LIMITER_OPTIONS = { perProvider: INFLUX_MAX_IN_FLIGHT, perEngine: 2, queueDepth: 64 } as const;
 /** The transport's cap on one response, past which the socket is destroyed (K3). */
 export const INFLUX_RESPONSE_CAP_BYTES = 32 * 1024 * 1024;
 /** The longest a tree, connect or monitoring read may take, under the query timeout. */

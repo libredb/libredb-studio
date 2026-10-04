@@ -19,6 +19,7 @@ import {
 } from "@/lib/db/providers/timeseries/influxdb/client";
 import {
   buildInfluxConnectionOptions,
+  INFLUX_MAX_IN_FLIGHT,
   type InfluxConnectionOptions,
   type InfluxType,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
@@ -109,7 +110,7 @@ describe("what the client hands the transport", () => {
       {
         origin: { scheme: "http", host: "127.0.0.1", port: 8086 },
         tls: null,
-        maxSockets: 4,
+        maxSockets: INFLUX_MAX_IN_FLIGHT,
         headers: { authorization: `Basic ${Buffer.from(`${TEST_USER}:${TEST_PASSWORD}`).toString("base64")}` },
       },
     ]);
