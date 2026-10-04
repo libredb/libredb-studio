@@ -26,21 +26,27 @@ function cutAfter(text: string, cut: "fin" | "rst"): (socket: Socket) => void {
 }
 
 /** What the listener does with each request, by its path. */
-const BEHAVIOURS: Readonly<Record<string, (socket: Socket) => void>> = {
-  "/fin-zero": cutAfter(CHUNKED, "fin"),
-  "/rst-zero": cutAfter(CHUNKED, "rst"),
-  "/fin-mid": cutAfter(`${CHUNKED}40\r\n0123456789`, "fin"),
-  "/rst-mid": cutAfter(`${CHUNKED}40\r\n0123456789`, "rst"),
-  "/fin-line": cutAfter(CHUNKED + ONE_LINE_CHUNK, "fin"),
-  "/rst-line": cutAfter(CHUNKED + ONE_LINE_CHUNK, "rst"),
-  "/complete-empty": (socket) => socket.write(`${CHUNKED}0\r\n\r\n`),
-  "/complete-line": (socket) => socket.write(`${CHUNKED + ONE_LINE_CHUNK}0\r\n\r\n`),
-  "/hold": (socket) => socket.write(CHUNKED),
-  "/big": (socket) => socket.write(`${CHUNKED}40\r\n${"x".repeat(64)}\r\n`),
-  "/redirect": (socket) =>
-    socket.write("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:1/x\r\nContent-Length: 0\r\n\r\n"),
-  "/gzip": (socket) => socket.write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n"),
-};
+const BEHAVIOURS: ReadonlyMap<string, (socket: Socket) => void> = new Map([
+  ["/fin-zero", cutAfter(CHUNKED, "fin")],
+  ["/rst-zero", cutAfter(CHUNKED, "rst")],
+  ["/fin-mid", cutAfter(`${CHUNKED}40\r\n0123456789`, "fin")],
+  ["/rst-mid", cutAfter(`${CHUNKED}40\r\n0123456789`, "rst")],
+  ["/fin-line", cutAfter(CHUNKED + ONE_LINE_CHUNK, "fin")],
+  ["/rst-line", cutAfter(CHUNKED + ONE_LINE_CHUNK, "rst")],
+  ["/complete-empty", (socket) => socket.write(`${CHUNKED}0\r\n\r\n`)],
+  ["/complete-line", (socket) => socket.write(`${CHUNKED + ONE_LINE_CHUNK}0\r\n\r\n`)],
+  ["/hold", (socket) => socket.write(CHUNKED)],
+  ["/big", (socket) => socket.write(`${CHUNKED}40\r\n${"x".repeat(64)}\r\n`)],
+  [
+    "/redirect",
+    (socket) =>
+      socket.write("HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:1/x\r\nContent-Length: 0\r\n\r\n"),
+  ],
+  [
+    "/gzip",
+    (socket) => socket.write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n"),
+  ],
+]);
 
 let server: Server;
 let port = 0;
@@ -57,7 +63,9 @@ beforeAll(async () => {
       if (!head.includes("\r\n\r\n")) return;
       socket.off("data", onData);
       const path = head.split(" ")[1];
-      BEHAVIOURS[path](socket);
+      const behave = BEHAVIOURS.get(path);
+      if (behave === undefined) throw new Error(`The test server has no behaviour for ${path}`);
+      behave(socket);
     };
     socket.on("data", onData);
   });
