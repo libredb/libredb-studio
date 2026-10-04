@@ -185,7 +185,7 @@ describe("discovery-loader", () => {
     it("refuses an export file over 2 MiB as invalid_export by its size, without reading or quoting it", async () => {
       const content = " ".repeat(2 * 1024 * 1024) + exportFile();
       write(content);
-      const message = `The export file is ${Buffer.byteLength(content)} bytes, over the 2097152-byte limit, and was not read`;
+      const message = "The export file is over the 2097152-byte limit, so it was not read";
 
       const status = await statusNow();
 
@@ -882,6 +882,24 @@ describe("discovery-loader", () => {
         path: file,
         code: "invalid_export",
         reason: expect.stringContaining("The export file could not be read ("),
+      });
+    });
+
+    it("logs an oversized export once while it keeps growing", async () => {
+      process.env.SEED_CACHE_TTL_MS = "0";
+      const content = " ".repeat(2 * 1024 * 1024) + exportFile();
+      write(content);
+
+      await getDiscoveryStatus(deps());
+      write(content + " ".repeat(1024));
+      await getDiscoveryStatus(deps());
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith("Discovery source error", {
+        route: ROUTE,
+        path: file,
+        code: "invalid_export",
+        reason: "The export file is over the 2097152-byte limit, so it was not read",
       });
     });
 

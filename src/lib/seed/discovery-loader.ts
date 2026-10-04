@@ -263,10 +263,13 @@ function probeWithDefault(host: string, port: number): Promise<boolean> {
   return defaultProbe.check(host, port);
 }
 
-/** An export file over DISCOVERY_FILE_MAX_BYTES, refused by the size its handle reports before any of it is read. */
+/**
+ * An export file over DISCOVERY_FILE_MAX_BYTES, refused by the size its handle reports before any of it is read.
+ * The message names no size: a growing file would change it on every recompute, and each change is logged.
+ */
 class ExportFileTooLarge extends Error {
-  constructor(readonly bytes: number) {
-    super(`The export file is ${bytes} bytes, over the ${DISCOVERY_FILE_MAX_BYTES}-byte limit, and was not read`);
+  constructor() {
+    super(`The export file is over the ${DISCOVERY_FILE_MAX_BYTES}-byte limit, so it was not read`);
     this.name = "ExportFileTooLarge";
   }
 }
@@ -292,7 +295,7 @@ async function readExportFile(path: string): Promise<string> {
     // the OS, so it would come back as empty text instead of EISDIR. The type is checked first instead.
     if (!stats.isFile()) throw new ExportFileNotRegular();
     const { size } = stats;
-    if (size > DISCOVERY_FILE_MAX_BYTES) throw new ExportFileTooLarge(size);
+    if (size > DISCOVERY_FILE_MAX_BYTES) throw new ExportFileTooLarge();
     const buffer = Buffer.alloc(size);
     const { bytesRead } = await handle.read(buffer, 0, size, 0);
     return buffer.toString("utf8", 0, bytesRead);
