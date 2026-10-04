@@ -798,6 +798,18 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
     return point === undefined ? tick : point[xAxis];
   };
 
+  // The x axis and tooltip every category chart (bar, line, area and both stacked forms) shares.
+  const categoryXAxis = (
+    <RotatedXAxis
+      dataKey={CHART_ROW_KEY}
+      fill={viz.axis}
+      fontSize={11}
+      shortenDates={analysis.dateFields.includes(xAxis)}
+      labelOf={categoryAt}
+    />
+  );
+  const categoryTooltip = <Tooltip content={<CustomTooltip labelOf={categoryAt} />} />;
+
   const plottedYAxis = yAxis.slice(0, MAX_SERIES);
   const droppedYAxisCount = yAxis.length - plottedYAxis.length;
 
@@ -1065,15 +1077,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             {chartType === "bar" ? (
               <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <RotatedXAxis
-                  dataKey={CHART_ROW_KEY}
-                  fill={viz.axis}
-                  fontSize={11}
-                  shortenDates={analysis.dateFields.includes(xAxis)}
-                  labelOf={categoryAt}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip labelOf={categoryAt} />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Bar key={field} dataKey={field} fill={CHART_COLORS[index]} radius={[4, 4, 0, 0]} />
@@ -1082,15 +1088,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "line" ? (
               <LineChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <RotatedXAxis
-                  dataKey={CHART_ROW_KEY}
-                  fill={viz.axis}
-                  fontSize={11}
-                  shortenDates={analysis.dateFields.includes(xAxis)}
-                  labelOf={categoryAt}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip labelOf={categoryAt} />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Line
@@ -1107,15 +1107,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "area" ? (
               <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <RotatedXAxis
-                  dataKey={CHART_ROW_KEY}
-                  fill={viz.axis}
-                  fontSize={11}
-                  shortenDates={analysis.dateFields.includes(xAxis)}
-                  labelOf={categoryAt}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip labelOf={categoryAt} />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Area
@@ -1164,15 +1158,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "stacked-bar" ? (
               <BarChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <RotatedXAxis
-                  dataKey={CHART_ROW_KEY}
-                  fill={viz.axis}
-                  fontSize={11}
-                  shortenDates={analysis.dateFields.includes(xAxis)}
-                  labelOf={categoryAt}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip labelOf={categoryAt} />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Bar key={field} dataKey={field} stackId="stack" fill={CHART_COLORS[index]} />
@@ -1181,15 +1169,9 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
             ) : chartType === "stacked-area" ? (
               <AreaChart data={chartData} margin={ROTATED_AXIS_MARGIN}>
                 <CartesianGrid strokeDasharray="3 3" stroke={viz.grid} />
-                <RotatedXAxis
-                  dataKey={CHART_ROW_KEY}
-                  fill={viz.axis}
-                  fontSize={11}
-                  shortenDates={analysis.dateFields.includes(xAxis)}
-                  labelOf={categoryAt}
-                />
+                {categoryXAxis}
                 <YAxis tick={{ fill: viz.axis, fontSize: 11 }} tickFormatter={formatNumber} />
-                <Tooltip content={<CustomTooltip labelOf={categoryAt} />} />
+                {categoryTooltip}
                 <Legend wrapperStyle={{ paddingTop: 20 }} {...legendProps} />
                 {plottedYAxis.map((field, index) => (
                   <Area
