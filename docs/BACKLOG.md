@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D221, U17 · 136
+- [Drivers and connections](#drivers-and-connections) — D1-D222, U17 · 137
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
@@ -2499,6 +2499,15 @@ The sentence is the shared panel's, not a provider's.
 Found 2026-10-04 by the browser pass of the Oxia provider (step 9).
 
 **Done when:** under a prefix the empty state says that no key under the prefix has been seen, for every engine.
+
+### D222. etcd and Milvus blame a pasted CA when none was pasted
+
+With SSL mode verify-full and the CA field empty, an untrusted server certificate is checked against the runtime's own roots, yet etcd says "The server's certificate is not signed by the CA under SSL / TLS: paste the etcd CA." and Milvus says the same of "the CA under SSL / TLS".
+Both read the panel through the shared `readGrpcTlsPanel`, which accepts verify-full with no CA; Oxia words this case on its own since ruling R35 of its PR.
+
+Found 2026-10-04 by the review of that change.
+
+**Done when:** etcd and Milvus name the trust store when no CA is pasted, as Oxia's `tlsSentence` does.
 
 ## Value interpolation
 
