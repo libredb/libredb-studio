@@ -24,11 +24,11 @@ import type {
 } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import type { InfluxSend } from "./client";
-import { INFLUX_LIST_CAP } from "./connection-options";
+import { INFLUX_LIST_CAP, type InfluxShapeLimits, type ShapedResult } from "./connection-options";
 import { InfluxAnswerError, InfluxAnswerShapeError } from "./errors";
 import { evaluateInfluxql } from "./influxql-policy";
 import { quoteInfluxqlIdentifier } from "./influxql-quote";
-import { type InfluxShapeLimits, type ShapedResult, shapeInfluxqlBody } from "./influxql-results";
+import { shapeInfluxqlBody } from "./influxql-results";
 import { INFLUXQL_ROUTES } from "./routes";
 import { resolveRunDatabase } from "./run-database";
 import { GENERATION_TRAITS, type InfluxGeneration } from "./versions";

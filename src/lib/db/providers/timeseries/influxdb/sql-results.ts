@@ -15,24 +15,8 @@
  * pattern reads the server's text (R40): every pass over it is one forward walk.
  */
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
-import type { QueryWarning } from "@/lib/types";
+import type { InfluxShapeLimits, ShapedResult } from "./connection-options";
 import { InfluxAnswerShapeError } from "./errors";
-
-export interface InfluxShapeLimits {
-  /** `INFLUX_ROW_CUT`. */
-  readonly rowCut: number;
-  /** `INFLUX_CELL_BUDGET`: rows times columns. */
-  readonly cellBudget: number;
-}
-
-export interface ShapedResult {
-  readonly fields: readonly string[];
-  readonly rows: readonly Record<string, unknown>[];
-  /** True when the row cut or the cell budget dropped rows; reported on `pagination.wasLimited`. */
-  readonly cut: boolean;
-  /** Engine notices only (R26); a jsonl answer carries none, so this is always empty here. */
-  readonly warnings: readonly QueryWarning[];
-}
 
 /** Index just past the JSON string that opens at `start`; the text is already known to be valid JSON. */
 function endOfString(text: string, start: number): number {

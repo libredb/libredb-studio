@@ -5,13 +5,13 @@
  * bodies where no capture holds the case.
  */
 import { describe, expect, test } from "bun:test";
-import { INFLUX_CELL_BUDGET, INFLUX_ROW_CUT } from "@/lib/db/providers/timeseries/influxdb/connection-options";
-import { INFLUX_ERROR_SENTENCES, InfluxAnswerShapeError } from "@/lib/db/providers/timeseries/influxdb/errors";
 import {
+  INFLUX_CELL_BUDGET,
+  INFLUX_ROW_CUT,
   type InfluxShapeLimits,
-  shapeInfluxqlBody,
-  splitJsonDocuments,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-results";
+} from "@/lib/db/providers/timeseries/influxdb/connection-options";
+import { INFLUX_ERROR_SENTENCES, InfluxAnswerShapeError } from "@/lib/db/providers/timeseries/influxdb/errors";
+import { shapeInfluxqlBody, splitJsonDocuments } from "@/lib/db/providers/timeseries/influxdb/influxql-results";
 import {
   INFLUX_FIXTURE_VERSIONS,
   type InfluxFixtureVersion,

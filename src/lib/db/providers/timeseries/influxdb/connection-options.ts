@@ -37,6 +37,7 @@ import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transp
 import { secretForms } from "@/lib/db/utils/server-text";
 import {
   type DatabaseConnection,
+  type QueryWarning,
   type SSHTunnelConfig,
   TUNNEL_FAR_END,
   type TunnelFarEnd,
@@ -92,6 +93,27 @@ export const INFLUX_SURFACE_TIMEOUT_MS = 10_000;
 export const INFLUX_ROW_CUT = 10_000;
 /** The most cells one result holds before it is cut (K3). */
 export const INFLUX_CELL_BUDGET = 250_000;
+
+/** The bounds a results module shapes one answer under. Here because both results modules take it (seam rule 2). */
+export interface InfluxShapeLimits {
+  /** `INFLUX_ROW_CUT`. */
+  readonly rowCut: number;
+  /** `INFLUX_CELL_BUDGET`: rows times columns. */
+  readonly cellBudget: number;
+}
+
+/** One shaped answer of either results module. */
+export interface ShapedResult {
+  readonly fields: readonly string[];
+  readonly rows: readonly Record<string, unknown>[];
+  /** True when the row cut or the cell budget dropped rows; the provider reports it on `pagination.wasLimited`. */
+  readonly cut: boolean;
+  /**
+   * Engine notices only (R26): on `/query` the server's `messages` and the last document's `partial` marker; a jsonl
+   * answer carries none.
+   */
+  readonly warnings: readonly QueryWarning[];
+}
 /** The most names one tree listing holds. Here because the SQL objects module may not import an InfluxQL one. */
 export const INFLUX_LIST_CAP = 2000;
 

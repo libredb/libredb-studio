@@ -23,23 +23,8 @@
  */
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import type { QueryWarning } from "@/lib/types";
+import type { InfluxShapeLimits, ShapedResult } from "./connection-options";
 import { INFLUX_ERROR_SENTENCES, InfluxAnswerShapeError } from "./errors";
-
-export interface InfluxShapeLimits {
-  /** `INFLUX_ROW_CUT`. */
-  readonly rowCut: number;
-  /** `INFLUX_CELL_BUDGET`: rows times columns. */
-  readonly cellBudget: number;
-}
-
-export interface ShapedResult {
-  readonly fields: readonly string[];
-  readonly rows: readonly Record<string, unknown>[];
-  /** Either bound dropped rows; the provider reports it on `pagination.wasLimited`. */
-  readonly cut: boolean;
-  /** Engine notices only (R26): the server's `messages` and the last document's `partial` marker. */
-  readonly warnings: readonly QueryWarning[];
-}
 
 /** The leading column of a result that spans more than one series name, and its name when a column claims that one. */
 const MEASUREMENT_COLUMN = "measurement";
