@@ -135,11 +135,14 @@ const prepareOkPacket = (statementId: number) => {
  * - `refuses-prepare-verbatim`: the same refusal, but a backslash in a literal is an ordinary
  *   character, the reading a MySQL server has under NO_BACKSLASH_ESCAPES.
  * - `refuses-both`: the same refusal, and the text protocol refuses the binding probe too.
+ * - `switches-to-verbatim`: refuses COM_STMT_PREPARE and reads backslash escapes while the provider
+ *   connects, then reads a backslash as an ordinary character, as a session does after
+ *   `SET SESSION sql_mode = CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')`.
  *
  * Every text statement the server receives is kept in `received`, so a test can read what the
  * client-side binding actually sent.
  */
-type Binding = "prepares" | "refuses-prepare" | "refuses-prepare-verbatim" | "refuses-both";
+type Binding = "prepares" | "refuses-prepare" | "refuses-prepare-verbatim" | "refuses-both" | "switches-to-verbatim";
 
 interface StartedServer {
   port: number;
@@ -150,8 +153,18 @@ interface StartedServer {
 /** Databend's refusal of COM_STMT_PREPARE, measured 2026-10-04 on 1.2.881: errno 1105. */
 const PREPARE_REFUSAL = { message: "Prepare is not support in Databend.", code: 1105 };
 
-/** `SELECT '<literal>' AS bound`: the provider's binding probe after client-side escaping. */
-const BOUND_PROBE = /^SELECT '((?:[^'\\]|\\.)*)' AS bound$/;
+/** `SELECT '<literal>' AS bound`: the provider's binding probe, its literal in group 1. */
+const BOUND_PROBE = /^SELECT '((?:[^'\\]|\\[\s\S]|'')*)' AS bound$/;
+
+/**
+ * A single-quoted literal's content as a server reads it: with backslash escapes (`\x` is `x`)
+ * or verbatim (a backslash is a character), and `''` as one quote either way.
+ */
+const readLiteral = (content: string, verbatim: boolean): string =>
+  verbatim ? content.replace(/''/g, "'") : content.replace(/\\([\s\S])|''/g, (_m, ch: string | undefined) => ch ?? "'");
+
+/** The provider's check of how the session reads a backslash: `SELECT 'a\\b' AS backslash`. */
+const BACKSLASH_CHECK = "SELECT 'a\\\\b' AS backslash";
 
 const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<StartedServer> => {
   const server = (mysql2 as unknown as { createServer(): FakeServer }).createServer();
@@ -184,8 +197,13 @@ const startServer = (textLabel: number, binding: Binding = "prepares"): Promise<
     const status = () => 2 | (inTransaction ? 1 : 0);
     const answer = (sql: string) => {
       const bound = BOUND_PROBE.exec(sql);
-      if (bound !== null) {
-        const literal = binding === "refuses-prepare-verbatim" ? bound[1] : bound[1].replace(/\\([\s\S])/g, "$1");
+      if (sql === BACKSLASH_CHECK) {
+        connection.writeTextResult(
+          [{ backslash: binding === "switches-to-verbatim" ? "a\\\\b" : "a\\b" }],
+          [definition({ name: "backslash", characterSet: textLabel, columnType: VAR_STRING, flags: 0 })],
+        );
+      } else if (bound !== null) {
+        const literal = readLiteral(bound[1], binding === "refuses-prepare-verbatim");
         if (binding === "refuses-both") {
           connection.writeError({ message: `unsupported: ${sql}`, code: 1064 });
         } else {
@@ -514,7 +532,7 @@ describe("a server that refuses COM_STMT_PREPARE (Databend)", () => {
 
     expect((result.rows[0] as Record<string, unknown>).v).toBe(TEXT);
     expect(reads(server)).toEqual([
-      "SELECT v, b FROM t WHERE v = 'it\\'s a \\\\ value' AND n = 2 AND m IS NULL AND f = true",
+      "SELECT v, b FROM t WHERE v = 'it''s a \\\\ value' AND n = 2 AND m IS NULL AND f = true",
     ]);
   });
 
@@ -528,9 +546,10 @@ describe("a server that refuses COM_STMT_PREPARE (Databend)", () => {
   });
 
   /**
-   * Only the backslash and the quote are escaped. mysql2's own escaper also writes `\Z`, `\b` and
-   * `\"`, which Databend 1.2.881 and 1.2.925-patch-11 read back as a backslash and a letter in an
-   * INSERT or an UPDATE (measured 2026-10-04), so an inline edit would have changed the value.
+   * Only the backslash and the quote are touched, the quote by doubling. mysql2's own escaper also
+   * writes `\Z`, `\b` and `\"`, which Databend 1.2.881 and 1.2.925-patch-11 read back as a backslash
+   * and a letter in an INSERT or an UPDATE (measured 2026-10-04), so an inline edit would have
+   * changed the value.
    */
   test("every other character is written as itself", async () => {
     const server = await start(UTF8MB4_UNICODE_CI, "refuses-prepare");
@@ -538,7 +557,37 @@ describe("a server that refuses COM_STMT_PREPARE (Databend)", () => {
 
     await provider.query("SELECT v, b FROM t WHERE v = ?", ["\0\b\t\n\r\x1a\"'\\"]);
 
-    expect(reads(server)).toEqual(["SELECT v, b FROM t WHERE v = '\0\b\t\n\r\x1a\"\\'\\\\'"]);
+    expect(reads(server)).toEqual(["SELECT v, b FROM t WHERE v = '\0\b\t\n\r\x1a\"''\\\\'"]);
+  });
+
+  test("a negative number after a minus sign does not start a comment", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "refuses-prepare");
+    const provider = await connected(server.port);
+
+    await provider.query("SELECT v, b FROM t WHERE n = 1-?", [-5]);
+
+    expect(reads(server)).toEqual(["SELECT v, b FROM t WHERE n = 1- -5"]);
+  });
+
+  /**
+   * A session that turns NO_BACKSLASH_ESCAPES on after connect reads a backslash as a character.
+   * There `\'` would END a literal, which is why a quote is doubled instead: read verbatim, the
+   * literal below still holds the whole value and nothing after it runs. A value holding a
+   * backslash would be stored with it doubled, so the provider asks the session first and refuses.
+   */
+  test("a session that reads backslashes verbatim after connect cannot have a literal closed", async () => {
+    const server = await start(UTF8MB4_UNICODE_CI, "switches-to-verbatim");
+    const provider = await connected(server.port);
+
+    await provider.query("SELECT v, b FROM t WHERE v = ?", ["' OR 1=1 -- "]);
+    const [sent] = reads(server);
+    const literal = /^SELECT v, b FROM t WHERE v = '((?:[^']|'')*)'$/.exec(sent ?? "");
+    expect(literal).not.toBeNull();
+    expect(readLiteral(literal?.[1] ?? "", true)).toBe("' OR 1=1 -- ");
+
+    const failure = await provider.query("SELECT v, b FROM t WHERE v = ?", ["a\\b"]).catch((error: unknown) => error);
+    expect((failure as Error).message).toContain("reads a backslash as an ordinary character (NO_BACKSLASH_ESCAPES)");
+    expect(reads(server)).toHaveLength(1);
   });
 
   test.each([
@@ -546,15 +595,11 @@ describe("a server that refuses COM_STMT_PREPARE (Databend)", () => {
       "a ? inside a double-quoted string",
       'SELECT v, b FROM t WHERE v = "a?" AND w = ?',
       ["x"],
-      "2 placeholders were found for 1 values",
+      "2 value placeholders for 1 values",
     ],
-    ["a ? after a # comment", "SELECT v, b FROM t WHERE w = ? # why?", ["x"], "2 placeholders were found for 1 values"],
-    [
-      "a value with no placeholder",
-      "SELECT v, b FROM t WHERE v = 'x'",
-      ["y"],
-      "0 placeholders were found for 1 values",
-    ],
+    ["a ? after a # comment", "SELECT v, b FROM t WHERE w = ? # why?", ["x"], "2 value placeholders for 1 values"],
+    ["a ?? identifier placeholder", "SELECT v, b FROM t WHERE ?? = ?", ["x"], "a ?? identifier placeholder"],
+    ["a value with no placeholder", "SELECT v, b FROM t WHERE v = 'x'", ["y"], "0 value placeholders for 1 values"],
     ["an object", "SELECT v, b FROM t WHERE v = ?", [{ v: 1 }], "a object value has no literal form here"],
     [
       "a number that is not finite",
@@ -585,10 +630,8 @@ describe("a server that refuses COM_STMT_PREPARE (Databend)", () => {
   });
 
   /**
-   * Client-side escaping is only as safe as the server's reading of it: mysql2 escapes a quote as
-   * `\'`, which a server that reads a backslash as an ordinary character takes as the END of the
-   * literal. Such a server keeps the prepared path, and its refusal, rather than receive text the
-   * escaper did not write for it.
+   * A server that does not read the probe's literal back exactly keeps the prepared path, and its
+   * refusal, rather than receive text written for a reading it does not have.
    */
   test.each([
     ["reads a backslash verbatim", "refuses-prepare-verbatim" as const],

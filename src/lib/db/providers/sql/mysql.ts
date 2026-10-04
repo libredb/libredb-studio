@@ -166,7 +166,7 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
 ): Promise<[T, FieldPacket[]]> => {
   const core = (queryable as { connection?: object }).connection;
   if (core !== undefined && BINDS_CLIENT_SIDE.has(core) && params !== undefined && params.length > 0) {
-    return runStatement<T>(queryable, bindClientSide(core as CoreConnection, sql, params));
+    return runBoundClientSide<T>(queryable, core as CoreConnection, sql, params);
   }
   if (core !== undefined && UTF8_UNDER_UTF8MB3.has(core)) {
     return runReadingUtf8mb3AsUtf8<T>(core as CoreConnection, sql, params);
@@ -184,8 +184,17 @@ const runStatement = <T extends RowDataPacket[] = RowDataPacket[]>(
 const BINDS_CLIENT_SIDE = new WeakSet<object>();
 
 /**
- * A string as a single-quoted literal with ONLY the backslash and the quote escaped, every
- * other character written as itself.
+ * A string as a single-quoted literal that no value can close, whichever way the session
+ * reads a backslash: a quote is DOUBLED (`''`), a backslash is written as `\\`, and every
+ * other character is written as itself.
+ *
+ * Doubling is what makes it safe in both modes. A session can turn `NO_BACKSLASH_ESCAPES` on
+ * after connect - one `SET SESSION sql_mode = ...` from the editor stays on its pooled
+ * connection, and a `SET GLOBAL` reaches every connection opened after it - and there a
+ * backslash is an ordinary character, so a `\'` escape would END the literal and the rest of
+ * the value would run as SQL. `''` is a quote inside the literal in both modes. The cost in
+ * that mode is that `\\` reads as two backslashes, which is corruption rather than injection,
+ * and `runBoundClientSide()` refuses a value holding a backslash before it can happen.
  *
  * Not mysql2's own escaper, which also writes `\0`, `\b`, `\n`, `\r`, `\t`, `\Z` and `\"`, and
  * that is a measured choice. On Databend 1.2.881 and 1.2.925-patch-11 (2026-10-04), across a
@@ -193,14 +202,17 @@ const BINDS_CLIENT_SIDE = new WeakSet<object>();
  * three characters: `\Z` (0x1a) reads as a backslash and a `Z` everywhere, and `\b` and `\"`
  * read the same way in an INSERT, so an inline edit of a value holding a double quote would
  * have stored a backslash in front of it. This literal round-tripped all nine of those
- * characters byte for byte in all four statements.
- *
- * Only `\` and `'` can end or bend a single-quoted literal on a server that reads backslash
- * escapes, and `probeClientSideBinding()` sends this exact literal and requires it back
- * unchanged before any pool binds this way.
+ * characters, `''` and `\\` included, byte for byte in all four statements on both versions
+ * and on MySQL 26.7.0, and `probeClientSideBinding()` requires it back unchanged before any
+ * pool binds this way.
  */
 function stringLiteral(value: string): string {
-  return `'${value.replace(/[\\']/g, (ch) => `\\${ch}`)}'`;
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
+}
+
+/** A number as its literal. A negative one starts with a space, so `-?` never writes `--5`, a comment. */
+function numberLiteral(value: number | bigint): unknown {
+  return value < 0 ? { toSqlString: () => ` ${String(value)}` } : value;
 }
 
 /**
@@ -214,17 +226,20 @@ function stringLiteral(value: string): string {
  */
 function clientSideValue(value: unknown): unknown {
   if (typeof value === "string") return { toSqlString: () => stringLiteral(value) };
-  if (value === null || typeof value === "boolean" || typeof value === "bigint") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "bigint" || (typeof value === "number" && Number.isFinite(value))) return numberLiteral(value);
   throw new QueryError(
     `This server cannot prepare statements, so values are written into the statement text, and a ${typeof value} value has no literal form here.`,
     "mysql",
   );
 }
 
-/** What the formatter writes for each placeholder while they are counted. */
+/** What the formatter writes for each `?` (a value) and each `??` (an identifier) while they are counted. */
 const PLACEHOLDER_MARK = "\u0001";
-const PLACEHOLDER_MARKER = { toSqlString: () => PLACEHOLDER_MARK };
+const IDENTIFIER_MARK = "\u0002";
+const PLACEHOLDER_MARKER = { toSqlString: () => PLACEHOLDER_MARK, toString: () => IDENTIFIER_MARK };
+
+const occurrences = (text: string, mark: string): number => text.split(mark).length - 1;
 
 /**
  * The statement with its values written in, for a pool whose server refuses to prepare.
@@ -232,30 +247,71 @@ const PLACEHOLDER_MARKER = { toSqlString: () => PLACEHOLDER_MARK };
  * mysql2's formatter finds the placeholders, skipping single-quoted strings, backtick
  * identifiers and `--` and block comments. It does NOT skip a double-quoted string or a `#`
  * comment, where a server preparing the statement would not see a placeholder, so
- * `SELECT "a?", ?` would put the value inside the double-quoted text. The count is therefore
- * checked first: the formatter is asked to fill one more placeholder than there are values,
- * and a statement where it finds a different number is refused with a sentence naming the
- * cause, instead of being sent with a value in the wrong place.
+ * `SELECT "a?", ?` would put the value inside the double-quoted text; and it reads `??` as an
+ * identifier placeholder, which a server preparing the statement does not have. So the
+ * statement is formatted with markers first, one more than there are values, and refused with
+ * a sentence naming the cause when the formatter found a `??`, or a number of value
+ * placeholders different from the number of values, instead of being sent with a value in the
+ * wrong place.
  */
 function bindClientSide(core: CoreConnection, sql: string, params: unknown[]): string {
-  const markers = Array.from({ length: params.length + 1 }, () => PLACEHOLDER_MARKER);
-  const found = core.format(sql, markers).split(PLACEHOLDER_MARK).length - sql.split(PLACEHOLDER_MARK).length;
-  if (found !== params.length) {
+  const marked = core.format(
+    sql,
+    Array.from({ length: params.length + 1 }, () => PLACEHOLDER_MARKER),
+  );
+  const identifiers = occurrences(marked, IDENTIFIER_MARK) - occurrences(sql, IDENTIFIER_MARK);
+  const found = occurrences(marked, PLACEHOLDER_MARK) - occurrences(sql, PLACEHOLDER_MARK);
+  if (identifiers > 0 || found !== params.length) {
     throw new QueryError(
-      `This server cannot prepare statements, so values are written into the statement text, and ${found} placeholders were found for ${params.length} values. A ? inside a double-quoted string or after # counts as a placeholder there; write the statement without one.`,
+      `This server cannot prepare statements, so values are written into the statement text, and the statement has ${found} value placeholders for ${params.length} values${identifiers > 0 ? " and a ?? identifier placeholder" : ""}. A ? inside a double-quoted string or after # counts as a placeholder there, and ?? cannot be bound; write the statement without them.`,
       "mysql",
     );
   }
   return core.format(sql, params.map(clientSideValue));
 }
 
+/** `'a\\b'`: one backslash in a session that reads backslash escapes, two in one that does not. */
+const BACKSLASH_CHECK_SQL = "SELECT 'a\\\\b' AS backslash";
+
+/**
+ * Run a statement whose values `bindClientSide()` writes in.
+ *
+ * A value holding a backslash is written as `\\`, which reads back as itself only in a session
+ * that reads backslash escapes. Whether this session does can change after connect, so for such
+ * a value the session is asked first, on the same connection, and the statement is refused
+ * rather than sent when it reads backslashes verbatim: the value would be stored with every
+ * backslash doubled. No value can close its literal either way (`stringLiteral()`), so this is
+ * about not corrupting a value, and the extra round trip is spent only on a value that has one.
+ */
+async function runBoundClientSide<T extends RowDataPacket[]>(
+  queryable: MySQLQueryable,
+  core: CoreConnection,
+  sql: string,
+  params: unknown[],
+): Promise<[T, FieldPacket[]]> {
+  const text = bindClientSide(core, sql, params);
+  if (params.some((value) => typeof value === "string" && value.includes("\\"))) {
+    const [rows] = await queryable.query<RowDataPacket[]>(BACKSLASH_CHECK_SQL);
+    if (rows[0]?.backslash !== "a\\b") {
+      throw new QueryError(
+        "This server cannot prepare statements, so values are written into the statement text, and this session reads a backslash as an ordinary character (NO_BACKSLASH_ESCAPES), so a value holding a backslash would be stored changed. Turn NO_BACKSLASH_ESCAPES off for the session, or send the value without a backslash.",
+        "mysql",
+      );
+    }
+  }
+  return runStatement<T>(queryable, text);
+}
+
 /**
  * The value the binding probe sends: the nine characters mysql2's escaper writes a backslash
  * in front of (NUL, backspace, tab, newline, carriage return, 0x1a, the double quote, the
  * quote and the backslash), so a server that reads it back unchanged reads `stringLiteral()`
- * the way it is written.
+ * the way it is written, the doubled quote and the escaped backslash included.
  */
 const BINDING_PROBE_VALUE = "\0\b\t\n\r\x1a\"'\\ probe";
+
+/** `max_prepared_stmt_count` reached: a MySQL server that prepares, out of slots for now. */
+const ER_MAX_PREPARED_STMT_COUNT_REACHED = 1461;
 
 /**
  * Whether this server refuses COM_STMT_PREPARE and reads `stringLiteral()` back exactly, in
@@ -271,37 +327,43 @@ const BINDING_PROBE_VALUE = "\0\b\t\n\r\x1a\"'\\ probe";
  *
  * Two questions, and both must answer:
  *
- * 1. Does the server prepare? A server that does keeps the prepared path, whatever the second
- *    answer would have been, because binding on the server is what keeps a value out of the SQL
- *    text. MySQL 26.7.0 and StarRocks 4.1.6 prepare `SELECT ?` (measured the same day), and so
- *    does every relative whose parameterised reads already answered, because those reads prepare.
- * 2. Does the written literal come back unchanged? `\'` is safe only on a server that reads a
- *    backslash as an escape. A MySQL server under `NO_BACKSLASH_ESCAPES` reads it as a character
- *    and the quote then ENDS the literal, so a server that answers anything but the value it was
- *    sent keeps the prepared path and its refusal.
+ * 1. Does the server refuse to prepare, for good? A server that prepares keeps the prepared
+ *    path, because binding on the server is what keeps a value out of the SQL text. MySQL 26.7.0
+ *    and StarRocks 4.1.6 prepare `SELECT ?` (measured the same day), and so does every relative
+ *    whose parameterised reads already answered, because those reads prepare. The family shares
+ *    no errno for a refusal, so the errno does not have to name one; but a decision that lasts
+ *    the pool's lifetime is not taken on a passing failure. A `fatal` error (the connection
+ *    itself failed) and errno 1461 (`max_prepared_stmt_count`, a server that prepares and is out
+ *    of slots for now) keep the prepared path, and any other refusal has to repeat on a second
+ *    attempt before it counts.
+ * 2. Does the written literal come back unchanged? The probe sends `stringLiteral()` of a value
+ *    holding every character an escaper touches. A server that reads anything else back keeps
+ *    the prepared path and its refusal. A session that turns `NO_BACKSLASH_ESCAPES` on LATER is
+ *    not caught here, and does not need to be: `stringLiteral()` cannot be closed by a value in
+ *    either mode, and `runBoundClientSide()` refuses a value holding a backslash in such a session.
  *
- * The first question reads success or failure and never the errno, for the reason
- * `probeExplainFormat` does not: the family does not share one. So ANY failure of the prepared
- * probe counts as a refusal, a MySQL server out of prepared-statement slots
- * (`max_prepared_stmt_count`, errno 1461) included; the second question still has to answer
- * before anything changes, and the refusal that switched a pool over is logged with its errno.
- * Nothing here rejects.
+ * The refusal that switched a pool over is logged with its errno. Nothing here rejects.
  */
 const probeClientSideBinding = async (queryable: MySQLQueryable): Promise<boolean> => {
-  let refusal: unknown;
-  try {
-    await queryable.execute("SELECT ? AS bound", [1]);
-    return false;
-  } catch (error) {
-    refusal = error;
-  }
+  const prepares = async (): Promise<unknown> => {
+    try {
+      await queryable.execute("SELECT ? AS bound", [1]);
+      return undefined;
+    } catch (error) {
+      return error ?? new Error("refused");
+    }
+  };
+  const refusal = await prepares();
+  if (refusal === undefined) return false;
+  const { errno, fatal, message } = refusal as { errno?: unknown; fatal?: unknown; message?: unknown };
+  if (fatal === true || errno === ER_MAX_PREPARED_STMT_COUNT_REACHED) return false;
+  if ((await prepares()) === undefined) return false;
   try {
     const [rows] = await queryable.query<RowDataPacket[]>(`SELECT ${stringLiteral(BINDING_PROBE_VALUE)} AS bound`);
     if (rows[0]?.bound !== BINDING_PROBE_VALUE) return false;
   } catch {
     return false;
   }
-  const { errno, message } = refusal as { errno?: unknown; message?: unknown };
   console.info(
     `[MySQL] The server refused to prepare a statement (errno ${String(errno)}: ${String(message)}); this pool writes parameter values into the statement text.`,
   );

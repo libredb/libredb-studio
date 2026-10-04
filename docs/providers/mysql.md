@@ -295,52 +295,71 @@ panel, a bound query and an inline row edit, over catalogs that answer in full w
 SQL. `connect()` therefore asks two questions with `probeClientSideBinding()`, on the connection the
 pool check already holds:
 
-1. **Does the server prepare `SELECT ? AS bound`?** If it does, nothing changes: the prepared path is
-   kept, because binding on the server is what keeps a value out of the SQL text. MySQL 26.7.0 and
-   StarRocks 4.1.6 both prepare it (measured the same day), and so does every other engine in
-   [README.md](./README.md#wire-compatible-engines) whose parameterised reads work today. ANY failure
-   counts as a refusal here, because the family shares no errno for it; that includes a MySQL server
-   out of prepared-statement slots (`max_prepared_stmt_count`, errno 1461). The second question still
-   has to answer before anything changes, and a pool that is switched over logs the refusal that did
-   it, errno and message, as `[MySQL] The server refused to prepare a statement (errno ...)`.
+1. **Does the server refuse to prepare `SELECT ? AS bound`, for good?** If it prepares, nothing
+   changes: the prepared path is kept, because binding on the server is what keeps a value out of the
+   SQL text. MySQL 26.7.0 and StarRocks 4.1.6 both prepare it (measured the same day), and so does
+   every other engine in [README.md](./README.md#wire-compatible-engines) whose parameterised reads
+   work today. The family shares no errno for a refusal, so the errno does not have to name one, but a
+   decision that lasts the pool's lifetime is not taken on a passing failure: a `fatal` error (the
+   connection itself failed) and errno 1461 (`max_prepared_stmt_count`, a server that prepares and is
+   out of slots for now) keep the prepared path, and any other refusal has to repeat on a second
+   attempt. A pool that is switched over logs the refusal that did it, errno and message, as
+   `[MySQL] The server refused to prepare a statement (errno ...)`.
 2. **Does the literal this provider writes come back unchanged?** The probe sends
    `SELECT '<value>' AS bound` with the value holding all nine characters mysql2's escaper writes a
    backslash in front of: NUL, backspace, tab, newline, carriage return, 0x1a, `"`, `'` and `\`. Only
-   a server that reads the value back exactly is switched over. The reason is the backslash: a MySQL
-   server under `NO_BACKSLASH_ESCAPES` reads `\'` as a backslash followed by the end of the literal,
-   so the literal would let a value close its own string. Such a server keeps the prepared path and
-   its refusal instead.
+   a server that reads the value back exactly is switched over.
 
-A pool whose server answers no to the first and yes to the second marks its connections the way
+A pool whose server answers yes to both marks its connections the way
 [§3.8](#38-on-a-server-that-sends-utf-8-under-a-utf8mb3-label-utf8mb3-columns-are-read-as-utf-8)'s
 utf8mb3 probe does, from the pool's `acquire` event, and `runStatement` then writes that pool's
 parameterised statements out with `bindClientSide()` and sends them as text. Nothing is keyed on the
 type id or on the version string, and a second pool in the same process is untouched.
 
-**How a value is written.** A string becomes a single-quoted literal with only `\` and `'` escaped and
-every other character written as itself; a finite number stays a number, `null` becomes `NULL` and a
-boolean `true`/`false`. Any other value (an object, a Buffer, a Date, `NaN`) is refused with a
-sentence saying so; the API admits only strings, numbers, booleans and null anyway. mysql2's own
-escaper is deliberately not used for strings, because Databend does not read all of what it writes.
-Measured 2026-10-04 on 1.2.881 and 1.2.925-patch-11, each character as `a<char>b` through a `SELECT`,
-an `INSERT`, a `WHERE` match and an `UPDATE`:
+**How a value is written, and why no value can close its literal.** A string becomes a single-quoted
+literal in which a quote is DOUBLED (`''`), a backslash is written as `\\`, and every other character
+is written as itself. A finite number is written as itself, with a space in front of a negative one so
+`1-?` never becomes the comment `1--5`; `null` becomes `NULL` and a boolean `true`/`false`. Any other
+value (an object, a Buffer, a Date, `NaN`) is refused with a sentence saying so; the API admits only
+strings, numbers, booleans and null anyway.
 
-| Character | mysql2's escaper | Written as itself, only `\` and `'` escaped |
+The doubled quote is what makes the literal safe whichever way the session reads a backslash. A
+session can turn `NO_BACKSLASH_ESCAPES` on after connect: `SET SESSION sql_mode =
+CONCAT(@@sql_mode, ',NO_BACKSLASH_ESCAPES')` from the editor stays on its pooled connection, and a `SET
+GLOBAL` reaches every connection opened after it. There a backslash is an ordinary character, so a
+`\'` escape would END the literal and the rest of the value would run as SQL; `''` is a quote inside
+the literal in both modes. Measured 2026-10-04 on MySQL 26.7.0 with the session switched that way:
+the value `' OR 1=1 -- ` written as this literal matched no row, and `a'b` read back as `a'b`. What
+that mode does change is the backslash: `\\` reads as two of them. So before sending a statement that
+carries a value with a backslash, the provider asks the session `SELECT 'a\\b'` on the same connection
+and refuses the statement, with a sentence naming `NO_BACKSLASH_ESCAPES`, when that reads two
+backslashes rather than one; the value is never stored changed, and the extra round trip is spent only
+on a value that has a backslash.
+
+mysql2's own escaper is deliberately not used for strings: besides writing `\'`, it writes escapes
+Databend does not read. Measured 2026-10-04 on 1.2.881 and 1.2.925-patch-11, each character as
+`a<char>b` through a `SELECT`, an `INSERT`, a `WHERE` match and an `UPDATE`:
+
+| Character | mysql2's escaper | This literal (`''` and `\\`, the rest as itself) |
 |---|---|---|
 | NUL, tab, newline, carriage return, `'`, `\` | all four unchanged | all four unchanged |
 | backspace (`\b`) | `INSERT` stores `a\bb` as the bytes `5c 62` (a backslash and `b`) | all four unchanged |
 | 0x1a (`\Z`) | every statement reads a backslash and `Z` | all four unchanged |
 | `"` (`\"`) | `INSERT` stores a backslash in front of it | all four unchanged |
 
-So an inline edit of a value holding a double quote would have stored a backslash in front of it.
+So an inline edit of a value holding a double quote would have stored a backslash in front of it. The
+same literal round-tripped all nine characters, `''` and `''''` included, in all four statements on
+MySQL 26.7.0 as well.
 
 **Where the placeholders are.** The formatter finds a `?` while skipping single-quoted strings,
 backtick identifiers and `--` and block comments. It does not skip a double-quoted string or a `#`
 comment, where a server preparing the statement would see no placeholder, so `SELECT "a?", ?` would
-put the value inside the double-quoted text. `bindClientSide()` therefore counts the placeholders the
-formatter would fill first, and a statement where that count differs from the number of values is
-refused with a sentence naming the cause (*"2 placeholders were found for 1 values. A ? inside a
-double-quoted string or after # counts as a placeholder there"*) instead of being sent.
+put the value inside the double-quoted text; and it reads `??` as an identifier placeholder, which a
+server preparing the statement does not have. `bindClientSide()` therefore formats the statement with
+markers first and refuses it, with a sentence naming the cause (*"the statement has 2 value
+placeholders for 1 values ... A ? inside a double-quoted string or after # counts as a placeholder
+there, and ?? cannot be bound"*), when the formatter found a `??` or a number of value placeholders
+other than the number of values.
 
 `tests/integration/db/mysql-wire-decoding.test.ts` runs the real driver against an in-process server
 that refuses `COM_STMT_PREPARE` with Databend's own error and pins the exact text it receives.
@@ -2148,10 +2167,13 @@ after each, the same pool must still answer. A third block runs servers that ref
 with Databend's own error ([§3.4](#a-server-that-prepares-nothing-binds-client-side)): the exact text a
 parameterised read sends on both decoding paths (a quote, a backslash, a number, `NULL` and a boolean
 bound in), a `?` inside a string literal left alone, every other character written as itself, the
-statements refused before anything is sent (a `?` in a double-quoted string or after `#`, a value with
-no placeholder, an object, `NaN`), a transaction's connection binding the same way, a server that
+statements refused before anything is sent (a `?` in a double-quoted string or after `#`, a `??`, a
+value with no placeholder, an object, `NaN`), a negative number after a minus sign, a session that
+switches to reading backslashes verbatim after connect never having a literal closed (and a value
+with a backslash refused there), a transaction's connection binding the same way, a server that
 reads a backslash verbatim or refuses the text probe never being sent client-side bound text, and a
-preparing server beside a refusing one keeping the prepared path.
+preparing server beside a refusing one keeping the prepared path. `mysql-provider.test.ts` pins that
+errno 1461, a fatal error and a refusal that does not repeat at connect all keep the prepared path.
 
 It also covers **the object surface** ([§7.1](#71-the-object-surface-789)) in two blocks. `object
 surface` holds the seven conformance tests: the declared kinds and roles on each server, the
@@ -2258,9 +2280,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
   actually executing.
 - **Client-side binding on a server that prepares nothing reads the statement with mysql2's formatter.**
   On such a server ([§3.4](#a-server-that-prepares-nothing-binds-client-side)) a `?` inside a
-  double-quoted string or after a `#` comment counts as a placeholder, so a bound statement that has
-  one is refused rather than sent, and `??` is read as a backtick-quoted identifier. Nothing the
-  provider writes has either, and the editor binds nothing.
+  double-quoted string or after a `#` comment counts as a placeholder and `??` is an identifier
+  placeholder, so a bound statement that has either is refused rather than sent. A value holding a
+  backslash is refused in a session that has turned `NO_BACKSLASH_ESCAPES` on, because it would be
+  stored with the backslash doubled. Nothing the provider writes has any of these, and the editor
+  binds nothing.
 - **Cloud SSL auto-detect uses `rejectUnauthorized: false`** — encrypted but **not** authenticated
   (MITM-exposed). For verified TLS, set an explicit `connection.ssl` with mode `verify-system` (nothing
   to paste) or `verify-ca`/`verify-full`

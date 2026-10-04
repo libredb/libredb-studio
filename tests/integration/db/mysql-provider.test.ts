@@ -3482,6 +3482,36 @@ describe("MySQLProvider wire protocol", () => {
     await p.rollbackTransaction();
   });
 
+  /**
+   * Client-side binding lasts the pool's lifetime, so a passing failure of the prepared probe
+   * must not decide it. Each case below answers the text probe exactly as a Databend would, so
+   * the prepared path surviving is the probe's first question doing its job. (A switched pool
+   * would also call `pool.on`, which this mock pool does not have, and fail the connect.)
+   */
+  test.each([
+    ["errno 1461, a server out of prepared-statement slots", [{ errno: 1461 }]],
+    ["a fatal connection error", [{ errno: -104, fatal: true, code: "ECONNRESET" }]],
+    ["a refusal that does not repeat", [{ errno: 1105 }, undefined]],
+  ])("%s at connect keeps the prepared path", async (_label, answers) => {
+    let attempts = 0;
+    mockExecuteFn = (sql: string) => {
+      if (sql === "SELECT ? AS bound") {
+        const answer = answers[Math.min(attempts++, answers.length - 1)];
+        if (answer !== undefined) return Promise.reject(Object.assign(new Error("refused"), answer));
+        return Promise.resolve([[{ bound: 1 }], []]);
+      }
+      if (sql.startsWith("SELECT '") && sql.endsWith(" AS bound")) {
+        return Promise.resolve([[{ bound: "\0\b\t\n\r\x1a\"'\\ probe" }], []]);
+      }
+      return defaultMockExecute(sql);
+    };
+
+    await connected();
+    await provider.query("SELECT * FROM users WHERE id = ?", [7]);
+
+    expect(protocolCalls).toEqual([{ method: "execute", sql: "SELECT * FROM users WHERE id = ?", params: [7] }]);
+  });
+
   test("cancelQuery kills the running thread over the text protocol", async () => {
     let releaseStatement: () => void = () => {};
     let statementStarted: () => void = () => {};
