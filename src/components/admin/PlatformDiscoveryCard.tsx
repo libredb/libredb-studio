@@ -67,8 +67,12 @@ export function PlatformDiscoveryCard() {
   const showCookieWarning = discovery.connected.length > 0 && (transport.plainHttp || transport.cookieSecureOff);
 
   return (
-    <section data-testid="platform-discovery-card" className="rounded-xl border border-hairline bg-panel p-5 space-y-3">
-      <h3 className="text-sm font-bold text-fg-secondary flex items-center gap-2">
+    <section
+      data-testid="platform-discovery-card"
+      aria-labelledby="platform-discovery-heading"
+      className="rounded-xl border border-hairline bg-panel p-5 space-y-3"
+    >
+      <h3 id="platform-discovery-heading" className="text-sm font-bold text-fg-secondary flex items-center gap-2">
         <Radar className="h-4 w-4 text-brand" />
         {CARD_TITLE}
       </h3>

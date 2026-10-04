@@ -1,7 +1,7 @@
 import "../../setup-dom";
 import "../../helpers/mock-navigation";
 
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { act, cleanup, render, waitFor } from "@testing-library/react";
 import React from "react";
 import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../../helpers/mock-fetch";
@@ -52,21 +52,36 @@ async function flush() {
 /**
  * Captures the card's own 60 s refresh so a test can fire it on demand. Every other interval
  * (testing-library's waitFor polls on one) stays real. Pattern: tests/components/admin/OverviewTab.test.tsx.
+ * fire() runs the handler whatever happened to the interval; elapse() is one 60 s period passing, so it
+ * runs the handler only while the card has not cleared the interval, as a real timer would.
  */
 function captureAutoRefresh() {
   const realSetInterval = globalThis.setInterval;
-  const captured: { fire?: () => void } = {};
+  const realClearInterval = globalThis.clearInterval;
+  let timer: unknown;
+  let cleared = false;
+  const captured: { fire?: () => void; elapse: () => void } = {
+    elapse: () => {
+      if (!cleared) captured.fire?.();
+    },
+  };
   globalThis.setInterval = ((handler: () => void, timeout?: number) => {
     if (timeout === 60000) {
       captured.fire = handler;
-      return realSetInterval(() => {}, 100000);
+      timer = realSetInterval(() => {}, 100000);
+      return timer;
     }
     return realSetInterval(handler, timeout);
   }) as unknown as typeof setInterval;
+  globalThis.clearInterval = ((id?: unknown) => {
+    if (id !== undefined && id === timer) cleared = true;
+    realClearInterval(id as Parameters<typeof clearInterval>[0]);
+  }) as typeof clearInterval;
   return {
     captured,
     restore: () => {
       globalThis.setInterval = realSetInterval;
+      globalThis.clearInterval = realClearInterval;
     },
   };
 }
@@ -120,10 +135,12 @@ describe("PlatformDiscoveryCard", () => {
 
   test("shows the ok state, the last scan, and the connected and skipped lists", async () => {
     mockGlobalFetch({ "/api/admin/discovery": answer(status()) });
-    const { findByTestId, getByText, queryByTestId, queryByRole } = await renderCard();
+    const { findByTestId, getByRole, getByText, queryByTestId, queryByRole } = await renderCard();
 
-    await findByTestId("platform-discovery-card");
+    const card = await findByTestId("platform-discovery-card");
 
+    // The section is a landmark named by its heading, as the other admin sections are.
+    expect(getByRole("region", { name: "Platform Discovery (CapRover)" })).toBe(card);
     expect(getByText("Platform Discovery (CapRover)")).not.toBeNull();
     expect(getByText("Running")).not.toBeNull();
     expect(getByText("Discovery is running")).not.toBeNull();
@@ -158,6 +175,29 @@ describe("PlatformDiscoveryCard", () => {
     } finally {
       errors.mockRestore();
     }
+  });
+
+  // The route sends names and types only. The card must hold that line itself: given a payload that
+  // also carries a host name and an environment value per entry, it still shows neither.
+  test("never renders a host name or an environment value, even when the payload carries them", async () => {
+    const extra = { host: "srv-captain--secret-host", env: { POSTGRES_PASSWORD: "SECRET_VALUE" } };
+    mockGlobalFetch({
+      "/api/admin/discovery": answer(
+        status({
+          connected: [{ name: "pgtest (PostgreSQL)", type: "postgres", ...extra }],
+          skipped: [{ appName: "legacy", reason: "did not answer on port 5432", ...extra }],
+        }),
+      ),
+    });
+    const { findByTestId, getByText } = await renderCard();
+
+    const card = await findByTestId("platform-discovery-card");
+
+    // Both entries are on screen, so the absences below are not an empty card.
+    expect(getByText("pgtest (PostgreSQL)")).not.toBeNull();
+    expect(getByText("legacy")).not.toBeNull();
+    expect(card.innerHTML).not.toContain("srv-captain--secret-host");
+    expect(card.innerHTML).not.toContain("SECRET_VALUE");
   });
 
   test("shows the waiting state with Never and empty lists", async () => {
@@ -216,12 +256,16 @@ describe("PlatformDiscoveryCard", () => {
         }),
       ),
     });
-    const { findByTestId, getByText } = await renderCard();
+    const { findByTestId, getByText, queryByText } = await renderCard();
 
     await findByTestId("platform-discovery-card");
 
     expect(getByText("Failed")).not.toBeNull();
     expect((await findByTestId("platform-discovery-error")).textContent).toBe("invalid_export: bad");
+    // The payload carries the last good scan, so the row shows when it was and not Never.
+    expect(getByText("Last successful scan")).not.toBeNull();
+    expect(getByText(new Date(GENERATED_AT).toLocaleString())).not.toBeNull();
+    expect(queryByText("Never")).toBeNull();
   });
 
   test("warns about the cookie when the request is plain HTTP and a database is connected", async () => {
@@ -279,6 +323,58 @@ describe("PlatformDiscoveryCard", () => {
       });
       expect(fetchMock).toHaveBeenCalledTimes(3);
     } finally {
+      restore();
+    }
+  });
+
+  // The request is held open by hand, so it is still in flight when the card unmounts. A stub of
+  // its own rather than mockGlobalFetch, because the test has to see the moment the card reads the
+  // late answer: only after that does "nothing happened" say anything. React 19 neither warns about
+  // nor shows an update to an unmounted component, so the late answer can only be checked against an
+  // empty container and a silent console. The timer assertion is the one a missing cleanup fails.
+  test("unmounting mid-request leaves nothing behind: no render, no warning, no further refresh", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let read = false;
+    const fetchMock = mock(async () => {
+      await gate;
+      return {
+        ok: true,
+        json: async () => {
+          read = true;
+          return { discovery: status(), transport: { plainHttp: false, cookieSecureOff: false } };
+        },
+      } as unknown as Response;
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    const { captured, restore } = captureAutoRefresh();
+    const errors = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const { container, unmount } = await renderCard();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(captured.fire).toBeDefined();
+
+      unmount();
+      release();
+      await waitFor(() => {
+        expect(read).toBe(true);
+      });
+      await flush();
+
+      expect(container.innerHTML).toBe("");
+      expect(errors.mock.calls.map((call) => call.map(String).join(" "))).toEqual([]);
+
+      // A 60 s period passes with the card gone: a cleared interval does not run, so no second request.
+      await act(async () => {
+        captured.elapse();
+      });
+      await flush();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      errors.mockRestore();
       restore();
     }
   });
