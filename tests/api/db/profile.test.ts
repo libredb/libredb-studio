@@ -752,6 +752,79 @@ describe("POST /api/db/profile", () => {
     }
   });
 
+  test("MongoDB projects only the outermost paths and profiles a dotted field from the nested document", async () => {
+    // The inferred column list names a subdocument and its children side by side, and a
+    // `$project` naming both is refused: `Path collision at address.city remaining portion
+    // city` (mongo:8.2.12). The sample comes back nested, so `address.city` is not a key of
+    // the row and has to be read by walking the document.
+    const mongoProvider = createMockProvider({
+      capabilities: {
+        queryLanguage: "json",
+        containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      },
+    });
+    const rows = [
+      { name: "Ann", address: { city: "Izmir", geo: { lat: 38.4 } }, orders: [{ sku: "A1" }] },
+      { name: "Bob", address: { city: "Ankara", geo: { lat: 39.9 } }, orders: [] },
+      { name: "Cem", address: { city: "Izmir" } },
+      { name: "Dil", address: null },
+      { name: "Eda", address: "unknown" },
+    ];
+    (mongoProvider.query as ReturnType<typeof mock>).mockImplementation(async (queryStr: string) => {
+      const parsed = JSON.parse(queryStr);
+      if (parsed.operation === "count")
+        return { rows: [{ count: 4 }], fields: ["count"], rowCount: 1, executionTime: 1 };
+      return { rows, fields: ["name", "address", "orders"], rowCount: rows.length, executionTime: 1 };
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+
+    const columns = ["name", "address", "address.city", "address.geo", "address.geo.lat", "orders"];
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: { connection: mongoConnection, tablePath: ["shop", "people"], columns },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      columns: { name: string; nullCount: number; distinctCount: number; sampleValues: string[] }[];
+    }>(res);
+
+    expect(res.status).toBe(200);
+    const sent = JSON.parse(String((mongoProvider.query as ReturnType<typeof mock>).mock.calls[0]?.[0]));
+    expect(sent.pipeline[1]).toEqual({ $project: { name: 1, address: 1, orders: 1 } });
+
+    const byName = Object.fromEntries(data.columns.map((c) => [c.name, c]));
+    expect(data.columns.map((c) => c.name)).toEqual(columns);
+    // A path that crosses a null or a scalar is absent in that document.
+    expect(byName["address.city"]).toMatchObject({ nullCount: 2, distinctCount: 2 });
+    expect(byName["address.city"]?.sampleValues).toEqual(["Izmir", "Ankara", "Izmir"]);
+    expect(byName["address.geo.lat"]).toMatchObject({ nullCount: 3, distinctCount: 2 });
+    // A null sample is spelled `NULL`, as the SQL branch spells it.
+    expect(byName.address?.sampleValues.slice(3)).toEqual(["NULL", "unknown"]);
+    // A subdocument's sample is its JSON, not `[object Object]`.
+    expect(byName["address.geo"]?.sampleValues).toEqual(['{"lat":38.4}', '{"lat":39.9}']);
+    expect(byName.orders?.sampleValues).toEqual(['[{"sku":"A1"}]', "[]"]);
+    expect(byName.name).toMatchObject({ nullCount: 0, distinctCount: 5 });
+  });
+
+  test("MongoDB with no column to profile answers 400 and sends nothing", async () => {
+    // An empty list would build `$project: {}`, which MongoDB refuses; refused here as the
+    // SQL branch refuses it.
+    const mongoProvider = createMockProvider({ capabilities: { queryLanguage: "json" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: { connection: mongoConnection, tablePath: ["people"], columns: [] },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("No columns to profile");
+    expect(mongoProvider.query).not.toHaveBeenCalled();
+  });
+
   /**
    * A language this route writes no statement in is refused before anything is sent (#1085).
    *

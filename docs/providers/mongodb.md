@@ -138,6 +138,17 @@ Caveats baked into this approach:
   at `shipping: object` did not name it: a plan run on 2026-08-22 grouped by `$shipping.region`, a
   path the database does not have, and MongoDB answers that with one null group rather than an
   error — so the plan read as runnable and was silently wrong.
+- **A projection built from this list names only the outermost paths.** The list holds a
+  subdocument beside its own children, and MongoDB refuses a projection or `$project` that names
+  both: `Path collision at address.city remaining portion city` (measured on `mongo:8.2.12`, where
+  Generate Query and the profiler both failed on every collection with a subdocument).
+  `outermostFieldPaths()` in [`query-generators.ts`](../../src/lib/query-generators.ts) drops every
+  path whose ancestor is listed, so `address`, `address.city` and `address.geo.lat` project as
+  `{ "address": 1 }`; `addressBook` is not a child of `address`. Generate Query (shown as Generate
+  Find, `generateSelectQuery`) and the profiler's `$project` (`/api/db/profile`) both go through
+  it, and the profiler reads a dotted column by walking the sampled document, so `address.city` is
+  profiled from its real values rather than as absent. A top-level key that literally contains a
+  dot is walked the same way, as a nested path, so it profiles as absent.
 - **Arrays are named and left closed.** `items.sku` addresses one value *per array entry*, so it
   does not mean on an array what the same syntax means on a subdocument; listing it in a flat field
   list would invite exactly that confusion. Date/ObjectId/Binary/Decimal128 are scalars here and
