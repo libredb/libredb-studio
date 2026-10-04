@@ -609,6 +609,14 @@ These are real, current, and not oversights. Each is a decision with a reason.
   on a proxy and lumps everyone behind it into one bucket. The same derived address is the `ip`
   field in the audit log, so a wrong value also makes that field unreliable. Both are documented in
   [`.env.example`](../.env.example) under Forwarded Headers.
+- **The CapRover auto-connect variant runs a companion with the Docker socket, which is root on the host.**
+  It is an operator decision, made by choosing the separate `libredb-studio-autoconnect` template; the plain CapRover template, the chart and every other channel never mount the socket.
+  The exporter, `docker/discover.mjs`, sends GET requests to two Docker Engine API paths only, but that is a property of its code and not of the socket: whoever controls the companion's image tag or process controls the host.
+  It has no listening port, and the Studio web process never touches the socket; it reads one file the exporter writes, and treats that file as untrusted input.
+  The file holds the name, host alias, image and task counts of every non-system app on the CapRover network that is not listed in "Apps to skip", only the names of the apps that are, and the values of ten allow-listed database environment keys, in plaintext, mode 0600 and owned by uid 1001, on a named volume; the same passwords are already plaintext in each service spec and in CapRover's own configuration.
+  Every discovered connection is managed, admin-only and never offered to MCP clients, its values are used as literal text so no `${NAME}` or `${vault:...}` in another app's environment is resolved, and a standard user who names a discovered id gets the same 404 as for an unknown id.
+  The connections carry the superuser credentials CapRover's database templates create, so a stolen admin session reaches every discovered database; the template ships `AUTH_COOKIE_SECURE` set to `false` until HTTPS is on, and the admin Overview page warns while the session cookie can travel over plain HTTP.
+  [`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md#platform-discovery-caprover) describes the variant, and [`deploy/caprover/README.md`](../deploy/caprover/README.md#auto-connect-variant) how to install it.
 - **Configuring an AI model means database content leaves the machine.** Nothing here is telemetry
   and nothing fires on its own, but an agent run sends the objective you typed, the schema
   inventory, the relations graph and the rows of every read it performs to the model provider you
