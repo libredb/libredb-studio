@@ -1537,6 +1537,372 @@ services:
     <<: *etcd-one-shot-limits
 
   # ---------------------------------------------------------------------------------------
+  # Oxia (the Oxia provider). One standalone server is the default fixture, three shards, seeded
+  # by a one-shot that runs the Oxia CLI inside the Oxia image. Four more fixtures sit behind
+  # profiles: `oxia-natural` (two standalone servers that sort keys naturally), `oxia-017` (the
+  # same seed on the 0.17 line), `oxia-auth` (TLS and an OIDC token) and `oxia-cluster` (a
+  # coordinator and three data servers, for the dial policy). Keys the CLI cannot write are
+  # added by hand with tests/live/oxia-seed-raw.ts. The scripts, the seeded keys and the
+  # certificates are described in docker/oxia/README.md.
+  # ---------------------------------------------------------------------------------------
+  oxia:
+    # Pinned to the exact build the provider is verified against, by tag and by digest: the
+    # captures under tests/fixtures/oxia and the provider's error texts are claims about
+    # 0.16.10, not about Oxia in general. The 0.17 line has its own fixture, oxia-017.
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia
+    restart: unless-stopped
+    # A standalone server advertises the address it listens on, so the container port is the
+    # published one. No data volume: removing the container resets the fixture.
+    command:
+      - oxia
+      - standalone
+      - --shards
+      - "3"
+      - --public-addr
+      - 0.0.0.0:6648
+      - --metrics-addr
+      - 0.0.0.0:8080
+      - --data-dir
+      - /data/db
+      - --wal-dir
+      - /data/wal
+    ports:
+      # Loopback only, as the postgres service's.
+      - "127.0.0.1:6648:6648"
+    environment:
+      # The Go runtime collects before it reaches the container's bound below, rather than being
+      # killed there.
+      GOMEMLIMIT: 900MiB
+    healthcheck: &oxia-standalone-health
+      # A list through the public listener, which exits 0 only once the shard map is served, so
+      # it also catches a server whose assignments never arrive. A standalone server has no
+      # internal listener for `oxia health` (measured on 0.16.10: connection refused on 6649).
+      # The authority is localhost:6648, a plain host:port, which every server accepts.
+      test: ["CMD", "oxia", "client", "-a", "localhost:6648", "--request-timeout", "3s", "list", "-s", "/", "-e", "/0"]
+      start_period: 60s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    # Bounded at the maintainer's request, as the Kafka fixtures are; no swap past it. A seeded
+    # 0.17.1 server measured 217 MiB and a seeded 0.16.10 server 101 MiB, so 1G leaves room for
+    # the 17 MiB value's WAL and the 20,000 bulk keys of tests/live/oxia-seed-raw.ts.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    memswap_limit: 1G
+
+  oxia-seed:
+    # One-shot seed through the Oxia CLI of the server's own image (docker/oxia/seed.sh). It
+    # wipes the namespace first, so it may run again on a seeded server.
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-seed
+    restart: "no"
+    depends_on:
+      oxia:
+        condition: service_healthy
+    volumes:
+      - ./docker/oxia:/seed:ro
+    entrypoint: ["sh", "/seed/seed.sh", "oxia:6648", "full"]
+    <<: &oxia-one-shot-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "0.5"
+            memory: 256M
+      memswap_limit: 256M
+
+  # -- Oxia, natural key order -------------------------------------------------
+
+  oxia-natural:
+    # The natural key order, which a namespace fixes at creation, on two shards: the small key
+    # set, with keys whose first byte sorts below /. Profile-gated with oxia-natural-blind:
+    #   docker compose -f database-compose.yml --profile oxia-natural up -d --wait \
+    #     oxia-natural oxia-natural-blind
+    #   docker compose -f database-compose.yml --profile oxia-natural up oxia-natural-seed
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-natural
+    profiles: ["oxia-natural"]
+    restart: unless-stopped
+    command: &oxia-natural-command
+      - oxia
+      - standalone
+      - --shards
+      - "2"
+      - --public-addr
+      - 0.0.0.0:6648
+      - --metrics-addr
+      - 0.0.0.0:8080
+      - --data-dir
+      - /data/db
+      - --wal-dir
+      - /data/wal
+      - --key-sorting
+      - natural
+    ports:
+      - "127.0.0.1:6658:6648"
+    environment:
+      GOMEMLIMIT: 450MiB
+    healthcheck: *oxia-standalone-health
+    # A small key set: 512M, half the default server's bound.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    memswap_limit: 512M
+
+  oxia-natural-blind:
+    # The blind spot of the order probe: a natural namespace whose listed keys each begin with
+    # a byte below /. 605 short keys: 256M.
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-natural-blind
+    profiles: ["oxia-natural"]
+    restart: unless-stopped
+    command: *oxia-natural-command
+    ports:
+      - "127.0.0.1:6659:6648"
+    environment:
+      GOMEMLIMIT: 200MiB
+    healthcheck: *oxia-standalone-health
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+    memswap_limit: 256M
+
+  oxia-natural-seed:
+    # Both natural servers, one after the other, from inside the oxia-natural profile, so a
+    # plain up never starts a profiled server.
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-natural-seed
+    profiles: ["oxia-natural"]
+    restart: "no"
+    depends_on:
+      oxia-natural:
+        condition: service_healthy
+      oxia-natural-blind:
+        condition: service_healthy
+    volumes:
+      - ./docker/oxia:/seed:ro
+    entrypoint: ["sh", "-c", "sh /seed/seed.sh oxia-natural:6648 small && sh /seed/seed.sh oxia-natural-blind:6648 blind"]
+    <<: *oxia-one-shot-limits
+
+  # -- Oxia, the 0.17 line -----------------------------------------------------
+
+  oxia-017:
+    # The same server and seed on 0.17.1, pinned by digest: the line the provider doc
+    # recommends, and the captures under tests/fixtures/oxia/0.17.1 are claims about it.
+    # Profile-gated:
+    #   docker compose -f database-compose.yml --profile oxia-017 up -d --wait oxia-017
+    #   docker compose -f database-compose.yml --profile oxia-017 up oxia-017-seed
+    image: oxia/oxia:0.17.1@sha256:165bf4f3803153f23be3ba699f6430ab1463cdeaa46e341ff32c3eaed0d1b7d6
+    container_name: libredb-oxia-017
+    profiles: ["oxia-017"]
+    restart: unless-stopped
+    command:
+      - oxia
+      - standalone
+      - --shards
+      - "3"
+      - --public-addr
+      - 0.0.0.0:6648
+      - --metrics-addr
+      - 0.0.0.0:8080
+      - --data-dir
+      - /data/db
+      - --wal-dir
+      - /data/wal
+    ports:
+      - "127.0.0.1:6668:6648"
+    environment:
+      GOMEMLIMIT: 900MiB
+    healthcheck: *oxia-standalone-health
+    # A seeded 0.17.1 server measured 217 MiB.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    memswap_limit: 1G
+
+  oxia-017-seed:
+    # The full seed with the 0.17.1 CLI.
+    image: oxia/oxia:0.17.1@sha256:165bf4f3803153f23be3ba699f6430ab1463cdeaa46e341ff32c3eaed0d1b7d6
+    container_name: libredb-oxia-017-seed
+    profiles: ["oxia-017"]
+    restart: "no"
+    depends_on:
+      oxia-017:
+        condition: service_healthy
+    volumes:
+      - ./docker/oxia:/seed:ro
+    entrypoint: ["sh", "/seed/seed.sh", "oxia-017:6648", "full"]
+    <<: *oxia-one-shot-limits
+
+  # -- Oxia, TLS with an OIDC token --------------------------------------------
+
+  oxia-auth-certs:
+    # Generates a throwaway CA, the server certificate, a client pair, the JWT key pair and the
+    # tokens into a named volume at first start (docker/oxia/certs.sh), so no certificate, key
+    # or token is ever committed.
+    image: alpine/openssl:3.5.8@sha256:3f25da71f70eba788067daac3f3df03bd1de7a7c52ed89fa93b94ad2c92d986b
+    container_name: libredb-oxia-auth-certs
+    profiles: ["oxia-auth"]
+    restart: "no"
+    volumes:
+      - oxia-auth-material:/certs
+      - ./docker/oxia:/seed:ro
+    entrypoint: ["sh", "/seed/certs.sh", "/certs"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 64M
+    memswap_limit: 64M
+
+  oxia-auth:
+    # A coordinator and a data server in one container: TLS on the public listener and the OIDC
+    # provider with a static key, so a token is checked without an issuer endpoint. The
+    # coordinator's memory metadata is rebuilt on a restart, and the server keeps its shards.
+    # Not seeded: the 0.16.10 CLI has no TLS or token flag. Profile-gated:
+    #   docker compose -f database-compose.yml --profile oxia-auth up -d --wait oxia-auth
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-auth
+    profiles: ["oxia-auth"]
+    restart: unless-stopped
+    depends_on:
+      oxia-auth-certs:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -c
+      - |
+        oxia coordinator --cconfig /seed/cluster-auth.yaml --metadata memory -i 0.0.0.0:6652 -a 0.0.0.0:6651 -m 0.0.0.0:6653 &
+        exec oxia server -p 0.0.0.0:6678 -i 0.0.0.0:6649 -m 0.0.0.0:8080 --data-dir /data/db --wal-dir /data/wal \
+          --tls-cert-file /certs/server.crt --tls-key-file /certs/server.key \
+          --auth-provider-name oidc \
+          --auth-provider-params '{"issuers":{"https://issuer.libredb-fixture.invalid":{"allowedAudiences":"oxia","userNameClaim":"sub","staticKeyFile":"/certs/jwt.pub"}}}'
+    ports:
+      # The port cluster-auth.yaml advertises, the same on the host and in the container.
+      - "127.0.0.1:6678:6678"
+    volumes:
+      - oxia-auth-material:/certs:ro
+      - ./docker/oxia:/seed:ro
+    environment:
+      GOMEMLIMIT: 900MiB
+    healthcheck: &oxia-internal-health
+      # `oxia health` on the internal listener, which answers SERVING without TLS or a token;
+      # the 0.16.10 CLI has no TLS or token flag for the public one (measured on the shared
+      # TLS and OIDC probes).
+      test: ["CMD", "oxia", "health", "--host", "localhost", "--port", "6649", "--timeout", "3s"]
+      start_period: 60s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    memswap_limit: 1G
+
+  # -- Oxia, a coordinator and three data servers ------------------------------
+
+  oxia-cluster-coordinator:
+    # The cluster of docker/oxia/cluster.yaml, for the dial policy: each shard leader is
+    # advertised at its own loopback port. Profile-gated:
+    #   docker compose -f database-compose.yml --profile oxia-cluster up -d --wait \
+    #     oxia-cluster-coordinator oxia-cluster-1 oxia-cluster-2 oxia-cluster-3
+    # An empty cluster-mode server measured 24 MiB.
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-cluster-coordinator
+    profiles: ["oxia-cluster"]
+    restart: unless-stopped
+    command:
+      - oxia
+      - coordinator
+      - --cconfig
+      - /seed/cluster.yaml
+      - --metadata
+      - memory
+      - -i
+      - 0.0.0.0:6652
+      - -a
+      - 0.0.0.0:6651
+      - -m
+      - 0.0.0.0:6653
+    volumes:
+      - ./docker/oxia:/seed:ro
+    environment:
+      GOMEMLIMIT: 200MiB
+    healthcheck:
+      # The coordinator's internal listener answers `oxia health` (measured on 0.16.10).
+      test: ["CMD", "oxia", "health", "--host", "localhost", "--port", "6652", "--timeout", "3s"]
+      start_period: 60s
+      start_interval: 1s
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 256M
+    memswap_limit: 256M
+
+  oxia-cluster-1:
+    # A cluster advertises the public address of cluster.yaml, so the container listens on the
+    # published port. The check is on the internal listener: a list from inside one container is
+    # sent to leaders on the other servers, whose advertised ports are the host's.
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-cluster-1
+    profiles: ["oxia-cluster"]
+    restart: unless-stopped
+    command: ["oxia", "server", "-p", "0.0.0.0:6671", "-i", "0.0.0.0:6649", "-m", "0.0.0.0:8080", "--data-dir", "/data/db", "--wal-dir", "/data/wal"]
+    ports:
+      - "127.0.0.1:6671:6671"
+    environment: &oxia-cluster-env
+      GOMEMLIMIT: 450MiB
+    healthcheck: *oxia-internal-health
+    <<: &oxia-cluster-server-limits
+      deploy:
+        resources:
+          limits:
+            cpus: "1"
+            memory: 512M
+      memswap_limit: 512M
+
+  oxia-cluster-2:
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-cluster-2
+    profiles: ["oxia-cluster"]
+    restart: unless-stopped
+    command: ["oxia", "server", "-p", "0.0.0.0:6672", "-i", "0.0.0.0:6649", "-m", "0.0.0.0:8080", "--data-dir", "/data/db", "--wal-dir", "/data/wal"]
+    ports:
+      - "127.0.0.1:6672:6672"
+    environment: *oxia-cluster-env
+    healthcheck: *oxia-internal-health
+    <<: *oxia-cluster-server-limits
+
+  oxia-cluster-3:
+    image: oxia/oxia:0.16.10@sha256:da5133e862715b2ea03aada42593d0cb16b7b079bbba2035f82b870a3ccfb322
+    container_name: libredb-oxia-cluster-3
+    profiles: ["oxia-cluster"]
+    restart: unless-stopped
+    command: ["oxia", "server", "-p", "0.0.0.0:6673", "-i", "0.0.0.0:6649", "-m", "0.0.0.0:8080", "--data-dir", "/data/db", "--wal-dir", "/data/wal"]
+    ports:
+      - "127.0.0.1:6673:6673"
+    environment: *oxia-cluster-env
+    healthcheck: *oxia-internal-health
+    <<: *oxia-cluster-server-limits
+
+  # ---------------------------------------------------------------------------------------
   # Milvus (the milvus provider). One standalone server with authorization on is the default
   # fixture, seeded by a one-shot Python sidecar; two TLS servers sit behind the `milvus-tls`
   # profile, one-way TLS and mutual TLS. Every server follows Milvus's standalone_embed.sh at
@@ -2680,7 +3046,9 @@ volumes:
   # milvus-certs and milvus-credentials hold the generated certificates and the seeded users'
   # passwords, and qdrant-keys the generated Qdrant keys, local.yaml files and certificates.
   # influxdb2-read-token keeps the InfluxDB 2.x read-only token influxdb-seed created, whose
-  # value the server shows only once. Everything else uses the image's own anonymous volumes.
+  # value the server shows only once. oxia-auth-material carries the generated certificates, JWT
+  # keys and tokens from oxia-auth-certs to the Oxia auth server. Everything else uses the image's
+  # own anonymous volumes.
   #
   # druid_shared is the deep-storage + indexing-log volume, mounted by the three processes
   # that write or read segments. A `down -v` resets the cluster to empty.
@@ -2692,6 +3060,7 @@ volumes:
   druid_router_var: {}
   kafka-auth-certs: {}
   etcd-auth-certs: {}
+  oxia-auth-material: {}
   milvus-data: {}
   milvus-tls-data: {}
   milvus-mtls-data: {}

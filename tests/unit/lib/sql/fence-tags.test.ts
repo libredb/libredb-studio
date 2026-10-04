@@ -38,6 +38,7 @@ describe("fenceTagEngine", () => {
       "qdrant",
       "influxdb",
       "influxdb3",
+      "oxia",
     ] satisfies DatabaseType[];
 
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
@@ -152,6 +153,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("influxdb3")).toBe("influxdb3");
     expect(isQueryFenceTag("influxdb3")).toBe(true);
     expect(fenceTagEngine("sql")).toBeNull();
+  });
+
+  test("oxia has no alias: `oxia` already names the engine and its CLI, and the shell tags name no engine (O14)", () => {
+    for (const tag of ["sh", "bash", "shell", "oxia-client"]) expect(fenceTagEngine(tag)).toBeNull();
+    expect(fenceTagEngine("oxia")).toBe("oxia");
+    expect(isQueryFenceTag("oxia")).toBe(true);
   });
 
   test("promql is a language tag that still names one engine, because one type-id runs PromQL", () => {

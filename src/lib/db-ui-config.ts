@@ -25,6 +25,7 @@ import {
   QdrantIcon,
   MilvusIcon,
   InfluxDBIcon,
+  OxiaIcon,
 } from "@/components/icons/db-icons";
 import type { DatabaseType } from "@/lib/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
@@ -62,10 +63,12 @@ export interface DatabaseUIConfig {
     // Kafka only (#1088): which SASL mechanism checks the user and password, drawn as the select
     // `fieldOptions` below declares.
     | "saslMechanism"
-    // Db2 (#786) and both InfluxDB types (InfluxDB spec I7): the consent to send the password without TLS,
-    // drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in `fieldHints`.
-    // The provider refuses a connection with no TLS unless it is set.
+    // Db2 (#786), both InfluxDB types (InfluxDB spec I7), and Oxia for its token: the consent to send the password
+    // without TLS, drawn as a checkbox while SSL Mode is disable, under the sentence the type declares in
+    // `fieldHints`. The provider refuses a connection with no TLS unless it is set.
     | "allowInsecureAuth"
+    // Oxia only (O6): a cluster's data-server addresses, one text box.
+    | "dataServers"
   )[];
   /**
    * The connection dialog's label for a field, where this engine names the field differently from
@@ -219,6 +222,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
   // IBM Db2 LUW (#786). No connection-string toggle: a `db2://` paste fills the fields, the Oracle
   // precedent. No password hint: a declared hint is drawn whatever SSL Mode says, and the cleartext
   // warning belongs only to a connection without TLS, where the `allowInsecureAuth` box carries it.
+  // The consent box's sentence is declared here too, so a second engine that takes the box says its own.
   db2: {
     icon: Db2Icon,
     color: "text-hue-purple",
@@ -574,6 +578,33 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     },
     readOnlyHint: "InfluxDB connections are read-only whether or not this is ticked: Studio sends no write.",
     hostAcceptsUri: ["http", "https"],
+  },
+  oxia: {
+    // A mark drawn for Studio, never Oxia's logo (DECISIONS O16).
+    icon: OxiaIcon,
+    // `hue-orange` is Couchbase's; its `-alt` step joins IDENTITY_ALTS with this entry, measured in
+    // tests/unit/theme-accent-contrast.test.ts next to InfluxDB's `purple-alt` and `violet-alt` (O16, O17).
+    color: "text-hue-orange-alt",
+    label: "Oxia",
+    // The client port of `oxia standalone` and of every data server's public listener (R01, R02 12).
+    defaultPort: "6648",
+    // No URI convention: the CLI takes `-a host:port`, which Host and Port hold (DECISIONS O5).
+    showConnectionStringToggle: false,
+    connectionFields: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
+    fieldLabels: { password: "Token", database: "Namespace", dataServers: "Data servers" },
+    fieldHints: {
+      host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
+      password:
+        "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection.",
+      database:
+        "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration.",
+      dataServers:
+        "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
+      allowInsecureAuth:
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server; the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+    },
+    readOnlyHint:
+      "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
   },
   libredb: {
     icon: LibreDBIcon,

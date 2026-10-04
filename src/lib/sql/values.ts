@@ -87,6 +87,9 @@ const LITERAL_ESCAPE: Record<DatabaseType, LiteralEscape> = {
   // PostgreSQL-style `E'...'` strings (measured: `SELECT E'a\nb'` decodes the escape), which
   // `quoteLiteral` never emits.
   influxdb3: "standard",
+  // No generator calls `quoteLiteral` for Oxia: the command table's own quoting writes every word (O10); the row
+  // is the inert answer etcd's is.
+  oxia: "standard",
   // Default `sql_mode`. A server running with NO_BACKSLASH_ESCAPES reads the
   // doubled backslash as two characters, which is why binding the value beats
   // quoting it wherever a bind form exists.

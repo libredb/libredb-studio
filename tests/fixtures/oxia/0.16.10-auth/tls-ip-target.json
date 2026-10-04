@@ -1,0 +1,91 @@
+{
+  "calls": [
+    {
+      "authority": "127.0.0.1:6678",
+      "end": {
+        "kind": "open"
+      },
+      "messageBytes": [
+        111
+      ],
+      "messages": [
+        {
+          "allowed_authorities": [],
+          "namespaces": {
+            "default": {
+              "assignments": [
+                {
+                  "int32_hash_range": {
+                    "max_hash_inclusive": 2863311531,
+                    "min_hash_inclusive": 1431655766
+                  },
+                  "leader": "localhost:6678",
+                  "shard": "1",
+                  "shard_boundaries": "int32_hash_range"
+                },
+                {
+                  "int32_hash_range": {
+                    "max_hash_inclusive": 4294967295,
+                    "min_hash_inclusive": 2863311532
+                  },
+                  "leader": "localhost:6678",
+                  "shard": "2",
+                  "shard_boundaries": "int32_hash_range"
+                },
+                {
+                  "int32_hash_range": {
+                    "max_hash_inclusive": 1431655765,
+                    "min_hash_inclusive": 0
+                  },
+                  "leader": "localhost:6678",
+                  "shard": "0",
+                  "shard_boundaries": "int32_hash_range"
+                }
+              ],
+              "shard_key_router": "XXHASH3"
+            }
+          }
+        }
+      ],
+      "method": "io.oxia.proto.v1.OxiaClient/GetShardAssignments",
+      "request": {
+        "namespace": "default"
+      },
+      "target": "127.0.0.1:6678",
+      "tls": {
+        "identity": "127.0.0.1",
+        "mode": "verify-full"
+      },
+      "token": true
+    }
+  ],
+  "file": "0.16.10-auth/tls-ip-target.json",
+  "result": {
+    "ok": {
+      "namespace": "default",
+      "shards": [
+        {
+          "bootstrap": false,
+          "id": "0",
+          "leader": "localhost:6678",
+          "maxHash": 1431655765,
+          "minHash": 0
+        },
+        {
+          "bootstrap": false,
+          "id": "1",
+          "leader": "localhost:6678",
+          "maxHash": 2863311531,
+          "minHash": 1431655766
+        },
+        {
+          "bootstrap": false,
+          "id": "2",
+          "leader": "localhost:6678",
+          "maxHash": 4294967295,
+          "minHash": 2863311532
+        }
+      ]
+    }
+  }
+}

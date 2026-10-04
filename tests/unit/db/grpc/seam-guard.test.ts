@@ -47,6 +47,8 @@ const TRANSPORT_TESTS = "tests/unit/db/grpc";
 const CHANNEL_TEST = `${TRANSPORT_TESTS}/channel.test.ts`;
 const CREDENTIALS_TEST = `${TRANSPORT_TESTS}/credentials.test.ts`;
 const TLS_TEST = `${TRANSPORT_TESTS}/tls.test.ts`;
+const SERVER_STREAM_TEST = `${TRANSPORT_TESTS}/server-stream.test.ts`;
+const SERVER_STREAM_CASES = "tests/helpers/grpc-server-stream-cases.ts";
 const REGISTRY = "tests/helpers/grpc-seam-holdings.ts";
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 
@@ -331,7 +333,7 @@ const g5TransportImporters: Rule = (root, env) => {
 
 /** G6: among the transport's tests and helpers, who loads each client package, held exactly. */
 const TEST_IMPORTERS: readonly (readonly [string, readonly string[]])[] = [
-  [GRPC_JS, [CHANNEL_TEST, CREDENTIALS_TEST]],
+  [GRPC_JS, [CHANNEL_TEST, CREDENTIALS_TEST, SERVER_STREAM_TEST, SERVER_STREAM_CASES]],
   [PROTO_LOADER, [CHANNEL_TEST]],
 ];
 const g6TestImporters: Rule = (root, env) => {
@@ -442,14 +444,13 @@ function g11Registry(root: string, env?: NodeJS.ProcessEnv, holdings: Holdings =
 
 /**
  * G12: the names of grpc-js the transport never writes. The first three build a generated client, which would hold
- * every RPC of a service, not the ones an adapter allows; the last two are call shapes no provider sends.
+ * every RPC of a service, not the ones an adapter allows; the last one is a call shape no provider sends.
  */
 const REFUSED_NAMES: ReadonlySet<string> = new Set([
   "makeClientConstructor",
   "makeGenericClientConstructor",
   "loadPackageDefinition",
   "makeClientStreamRequest",
-  "makeServerStreamRequest",
 ]);
 const g12RefusedNames: Rule = (root, env) =>
   transportFiles(root, env).flatMap(({ path, sf }) =>
@@ -517,7 +518,7 @@ describe("the real tree holds every rule", () => {
       CREDENTIALS,
       TLS,
     ]);
-    for (const path of [CHANNEL_TEST, CREDENTIALS_TEST, TLS_TEST, REGISTRY]) {
+    for (const path of [CHANNEL_TEST, CREDENTIALS_TEST, TLS_TEST, SERVER_STREAM_TEST, SERVER_STREAM_CASES, REGISTRY]) {
       expect(files.some((file) => file.path === path)).toBe(true);
     }
     expect(Object.values(GRPC_SEAM_HOLDINGS).flatMap((holding) => holding.transportImporters).length).toBeGreaterThan(
@@ -580,6 +581,8 @@ const HOLDING: Readonly<Record<string, string>> = {
   [CHANNEL_TEST]: `import { Server } from "${GRPC_JS}";\nimport { fromJSON } from "${PROTO_LOADER}";\n`,
   [CREDENTIALS_TEST]: `import { credentials } from "${GRPC_JS}";\n`,
   [TLS_TEST]: 'import type { GrpcTlsOptions } from "@/lib/db/grpc/tls";\n',
+  [SERVER_STREAM_TEST]: `import type { ServiceError } from "${GRPC_JS}";\n`,
+  [SERVER_STREAM_CASES]: `import { Server } from "${GRPC_JS}";\n`,
   [REGISTRY]: "export const GRPC_SEAM_HOLDINGS = {};\n",
   ...Object.fromEntries(IMPORTERS.map((path) => [path, 'import { open } from "@/lib/db/grpc/channel";\n'])),
 };
@@ -700,6 +703,12 @@ describe("planted violations: each rule fails by name", () => {
     expect(planted({ [CHANNEL_TEST]: `import { Server } from "${GRPC_JS}";\n` }, g6TestImporters)).toEqual([
       `@grpc/proto-loader importers among the transport's tests: ${CHANNEL_TEST} is named, and no longer imports @grpc/proto-loader`,
     ]);
+    expect(planted({ [SERVER_STREAM_TEST]: "export {};\n" }, g6TestImporters)).toEqual([
+      `@grpc/grpc-js importers among the transport's tests: ${SERVER_STREAM_TEST} is named, and no longer imports @grpc/grpc-js`,
+    ]);
+    expect(planted({ [SERVER_STREAM_CASES]: "export {};\n" }, g6TestImporters)).toEqual([
+      `@grpc/grpc-js importers among the transport's tests: ${SERVER_STREAM_CASES} is named, and no longer imports @grpc/grpc-js`,
+    ]);
   });
 
   test("G7: a logger import and a console member", () => {
@@ -812,6 +821,15 @@ describe("planted violations: each rule fails by name", () => {
     expect(planted({ [TLS]: `export const call = (client: any) => client.${name}();\n` }, g12RefusedNames)).toEqual([
       `refused names: ${TLS}:1 names ${name}`,
     ]);
+  });
+
+  test("G12: a server-streaming request is a call shape the transport sends", () => {
+    expect(
+      planted(
+        { [CHANNEL]: `${HOLDING[CHANNEL]}export const stream = (client: any) => client.makeServerStreamRequest();\n` },
+        g12RefusedNames,
+      ),
+    ).toEqual([]);
   });
 
   test("G12: a refused name as a string fails, and in a comment it does not", () => {

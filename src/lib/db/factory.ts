@@ -239,6 +239,13 @@ export async function createDatabaseProvider(
       return new EtcdProvider(connection, options, execution);
     }
 
+    case "oxia": {
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
+      // along, so a refusal names the read-only mode an execution profile set (O1).
+      const { OxiaProvider } = await import("./providers/keyvalue/oxia/index");
+      return new OxiaProvider(connection, options, execution);
+    }
+
     // Time-series stores - dynamically imported
     case "prometheus": {
       // The explicit /index specifier keeps this dynamic import statically
@@ -306,7 +313,7 @@ export async function createDatabaseProvider(
         // This list is NOT type-checked against the union - a new case above with no
         // entry here is silent - so it is kept in the same order as the cases and
         // tests/isolated/factory.test.ts pins individual names in it by regex.
-        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, libredb`,
+        `Unknown database type: ${connection.type}. Supported types: postgres, mysql, sqlite, duckdb, libsql, oracle, db2, mssql, clickhouse, druid, trino, cassandra, elasticsearch, opensearch, mongodb, couchbase, redis, etcd, oxia, prometheus, influxdb, influxdb3, kafka, neo4j, milvus, qdrant, libredb`,
         connection.type,
       );
   }

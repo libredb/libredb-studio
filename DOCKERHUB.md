@@ -20,7 +20,7 @@
 
 > 📖 **Full documentation, source, and issues:** <https://github.com/libredb/libredb-studio>
 
-Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, etcd, Neo4j, Milvus and Qdrant** from your browser, with AI query assistance, RBAC and OIDC SSO.
+Query **PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Apache Cassandra, Prometheus, InfluxDB, Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia** from your browser, with AI query assistance, RBAC and OIDC SSO.
 
 ---
 
@@ -63,7 +63,7 @@ A ready-to-use, fully-commented compose file is in the repo: [`docker-compose.ex
 
 ### Reaching your databases from inside the container
 
-**`localhost` in the connection dialog means *this container*, not your machine.** A database on the host, or in another container, is not there — so a connection that works from a terminal fails here, and it fails as a timeout rather than as anything that mentions the host. This is the first thing to check when a container-run Studio cannot connect to a database you know is up.
+**`localhost` in the connection dialog means *this container*, not your machine.** A database on the host, or in another container, is not there, so a connection that works from a terminal fails here, and it fails as a timeout rather than as anything that mentions the host.
 
 Pick whichever fits how the database runs:
 
@@ -109,8 +109,8 @@ Every one of those tags is published on three bases, and the suffix is appended 
 
 ## Supported databases
 
-Twenty-five external engines share one interface.
-The twenty-sixth row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
+Twenty-six external engines share one interface.
+The twenty-seventh row is the embedded LibreDB store: it ships inside the image, not as a server you reach.
 
 | Database | Driver | Highlights |
 | :--- | :--- | :--- |
@@ -139,6 +139,7 @@ The twenty-sixth row is the embedded LibreDB store: it ships inside the image, n
 | **Qdrant** | none, HTTP | Read-only REST request editor, vector search, collection browser |
 | **InfluxDB (InfluxQL)** | none, HTTP | Read-only InfluxQL editor, 1.x to 3 |
 | **InfluxDB 3 (SQL)** | none, HTTP | Read-only SQL editor |
+| **Oxia** | `@grpc/grpc-js` | Read-only oxia client commands, shard map, key browser |
 | **LibreDB** | `@libredb/libredb` | The embedded key-value store, for a database with nothing to install |
 
 **Read-only where the engine is.** Druid, Elasticsearch and OpenSearch have no `UPDATE` and no `CREATE TABLE` anywhere in their grammar, so inline editing and DDL are reported as unsupported instead of failing when used.
@@ -146,7 +147,7 @@ Prometheus, InfluxDB and Apache Kafka are read-only too: Studio calls only read 
 
 ### Engines with no provider of their own
 
-Twenty-eight further engines speak the wire protocol of one of the twenty-five drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
+Twenty-eight further engines speak the wire protocol of one of the twenty-six drivers above, so they connect through it unchanged: pick that driver in the connection dialog. Each was measured against a real instance, and how much worked is recorded per engine.
 
 | Engine | Connect as | Support |
 | :--- | :--- | :--- |

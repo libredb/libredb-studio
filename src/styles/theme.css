@@ -169,6 +169,7 @@
   --studio-hue-red: #9f0712;
   --studio-hue-red-tint: #fb2c36;
   --studio-hue-orange: #7e2a0c;
+  --studio-hue-orange-alt: #441306;
   --studio-hue-orange-tint: #ff6900;
   --studio-hue-amber: #973c00;
   --studio-hue-amber-tint: #fe9a00;
@@ -297,6 +298,7 @@
   --studio-hue-red: #ff6467;
   --studio-hue-red-tint: #fb2c36;
   --studio-hue-orange: #ff8904;
+  --studio-hue-orange-alt: #ffb86a;
   --studio-hue-orange-tint: #ff6900;
   --studio-hue-amber: #ffb900;
   --studio-hue-amber-tint: #fe9a00;
@@ -402,6 +404,7 @@
   --color-hue-red: var(--studio-hue-red);
   --color-hue-red-tint: var(--studio-hue-red-tint);
   --color-hue-orange: var(--studio-hue-orange);
+  --color-hue-orange-alt: var(--studio-hue-orange-alt);
   --color-hue-orange-tint: var(--studio-hue-orange-tint);
   --color-hue-amber: var(--studio-hue-amber);
   --color-hue-amber-tint: var(--studio-hue-amber-tint);

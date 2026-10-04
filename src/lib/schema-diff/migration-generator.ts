@@ -211,6 +211,13 @@ const NO_COLUMN_MODIFICATION: Partial<Record<DatabaseType, { label: string; reas
     reason:
       "A table's tags and fields are created by the line protocol written to it, and InfluxDB 3's SQL takes no DDL, so there is no column definition to change.",
   },
+  // Not a table store either (SB2-4.3): a key holds opaque bytes, and the columns a read shows are a record's fixed
+  // shape. The sentence is the one `NO_TABLE_DDL` below prints when it declines the whole diff.
+  oxia: {
+    label: "Oxia",
+    reason:
+      "Oxia stores opaque values under string keys and has no schema, so there is no column definition to change.",
+  },
 };
 
 /**
@@ -269,7 +276,7 @@ const NO_DROP_IF_EXISTS: ReadonlySet<DatabaseType> = new Set<DatabaseType>(["ora
  * `neo4j` too: its text is a Cypher statement, `milvus`: its text is a Milvus console request, and `qdrant`: its
  * text is a Qdrant console request. `influxdb` joined on the same fact: its text is an InfluxQL statement, and
  * `influxdb3` on `NO_TABLE_DDL`'s: its text is SQL, but the 3.x planner takes no DDL, so there is no table DDL
- * to wrap.
+ * to wrap. `oxia` joined on the first fact: its text is one `oxia client` read command.
  */
 const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "oracle",
@@ -294,6 +301,7 @@ const NO_TRANSACTION_WRAPPER: ReadonlySet<DatabaseType> = new Set<DatabaseType>(
   "qdrant",
   "influxdb",
   "influxdb3",
+  "oxia",
 ]);
 
 // These engines cannot apply a relational table diff through SQL. In particular,
@@ -315,6 +323,7 @@ const NO_TABLE_DDL: ReadonlySet<DatabaseType> = new Set<DatabaseType>([
   "qdrant",
   "influxdb",
   "influxdb3",
+  "oxia",
 ]);
 
 // IndexDiff carries column names/uniqueness, not ClickHouse's index expression,

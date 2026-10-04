@@ -439,6 +439,8 @@ const GRAMMAR_COVERAGE: Record<DatabaseType, "established" | "default"> = {
   // sends on; see the influxdb3 block below and DATAFUSION_GRAMMAR in `grammar.ts` for the statement
   // behind each one.
   influxdb3: "established",
+  // One `oxia client` read command, not SQL (SB2-4.3): no SQL grammar is established for it, and none is read.
+  oxia: "default",
 };
 
 /**
@@ -582,6 +584,9 @@ const SQL_TEXT_COVERAGE: Record<DatabaseType, boolean> = {
   influxdb: false,
   // SQL under the DataFusion grammar row: the provider extends SQLBaseProvider, so the SQL gate reads its text.
   influxdb3: true,
+  // An `oxia client` read command is words split by POSIX shell rules, not SQL text: its quoting is the shell's,
+  // which a SQL span reader would report as unreadable (SB2-4.3).
+  oxia: false,
 };
 
 describe("readsSqlText", () => {

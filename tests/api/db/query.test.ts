@@ -7,6 +7,7 @@ import { createMockProvider } from "../../helpers/mock-provider";
 import { discoverRoutes } from "../../security/helpers/discover-routes";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { agentReadSqlInput } from "@/lib/db/operations/statement-guard";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
 import {
   QueryError,
   TimeoutError,
@@ -1405,5 +1406,47 @@ describe("POST /api/db/query: a declared console text bound", () => {
     const { res } = await post({ connection: validConnection, sql });
     expect(res.status).toBe(200);
     expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toHaveLength(sql.length);
+  });
+});
+
+describe("POST /api/db/query: an oxia buffer", () => {
+  const oxia = { id: "oxia-1", name: "Oxia", type: "oxia", host: "127.0.0.1", port: 6648 };
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
+  });
+
+  test("reaches the provider whole, its # comment and its quotes kept (SB2-4.3)", async () => {
+    // One `oxia client` read command is not SQL text: the route reads no SQL comment out of it and splits nothing.
+    const sql = "# the keys of one tenant\nlist --key-min '/t a/' --key-max \"/t a0\" # until the next tenant\n";
+    const res = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection: oxia, sql } }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(sql);
+  });
+
+  test("answers 413 one byte past the real row's bound, before any provider, and lets the bound itself through", async () => {
+    // The route reads the bound from oxia's own vocabulary row, so this is what the registration adds here.
+    const over = `get /${"x".repeat(OXIA_MAX_TEXT_BYTES - 4)}`;
+    const refused = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection: oxia, sql: over } }) as never,
+    );
+    expect(refused.status).toBe(413);
+    expect((await parseResponseJSON<{ error?: string }>(refused)).error).toBe(
+      `The statement is ${OXIA_MAX_TEXT_BYTES + 1} bytes in UTF-8, over the ${OXIA_MAX_TEXT_BYTES}-byte limit for this connection type. Shorten it to run it.`,
+    );
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    const atBound = `get /${"x".repeat(OXIA_MAX_TEXT_BYTES - 5)}`;
+    expect(atBound).toHaveLength(OXIA_MAX_TEXT_BYTES);
+    const res = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection: oxia, sql: atBound } }) as never,
+    );
+    expect(res.status).toBe(200);
+    expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls[0][0]).toBe(atBound);
   });
 });

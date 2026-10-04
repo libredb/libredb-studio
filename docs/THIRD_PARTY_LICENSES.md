@@ -33,5 +33,17 @@ The Graph tab's canvas library and its layout carry only the MIT notice each pac
 Each ships its LICENSE file in the package; all four were read on 2026-10-03.
 Only `src/components/results-graph/cytoscape-host.ts` loads them, and only through a dynamic import, so importing that module loads neither package.
 
+The Oxia provider vendors two protocol definitions, unmodified, and ships the descriptor generated from them:
+
+| File | Upstream | License |
+| --- | --- | --- |
+| `src/lib/db/providers/keyvalue/oxia/proto/client.proto` | [`oxia-db/oxia`](https://github.com/oxia-db/oxia) `common/proto/client.proto` at tag `v0.16.10`, commit `c72b0bfce3fa0058fe200462b64f0d502dd56b02` | Apache-2.0, copyright The Oxia Authors |
+| `src/lib/db/providers/keyvalue/oxia/proto/grpc/health/v1/health.proto` | [`grpc/grpc-proto`](https://github.com/grpc/grpc-proto) `grpc/health/v1/health.proto` at commit `2eb777aba6593c31e21f7f69a163486bdc793501` | Apache-2.0, copyright The gRPC Authors |
+
+Each file keeps its upstream license header, and each upstream's `LICENSE` is vendored beside it (`proto/LICENSE`, `proto/grpc/LICENSE`), with Oxia's `NOTICE` (`proto/NOTICE`); `proto/README.md` records every file's SHA-256, which `tests/unit/db/oxia/descriptor.test.ts` holds.
+`grpc/grpc-proto` ships no NOTICE file at that commit.
+The etcd provider vendors etcd's v3 API definitions from [`etcd-io/etcd`](https://github.com/etcd-io/etcd) at tag `v3.7.2` (commit `68c065e562994b89e333e77b039ad066f933c586`), Apache-2.0, with upstream's `LICENSE` beside them (`src/lib/db/providers/keyvalue/etcd/proto/LICENSE`).
+The Milvus provider vendors Milvus's API definitions from [`milvus-io/milvus-proto`](https://github.com/milvus-io/milvus-proto) at tag `go-api/v3.0.2` (commit `9e4f0ebc92af3ecf9e13c12350c6fce13d0893fa`), Apache-2.0, with upstream's `LICENSE` beside them (`src/lib/db/providers/vector/milvus/proto/LICENSE`).
+
 See `docs/BACKLOG.md` entry C8 for the broader, not-yet-generated NOTICE this file is a manual
 precursor to.

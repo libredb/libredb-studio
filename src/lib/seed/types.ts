@@ -73,6 +73,7 @@ const SeedDatabaseType = z.enum([
   "qdrant",
   "influxdb",
   "influxdb3",
+  "oxia",
 ]);
 
 export const SeedDefaultsSchema = z.object({
@@ -168,11 +169,14 @@ export const SeedConnectionSchema = z
     // naming the field. Accepted only on an engine whose provider enforces it (the second refine
     // below), and only on a managed seed (SeedConfigSchema).
     readOnly: z.boolean().optional(),
-    // Db2 only (#786): accept that a connection with no TLS sends its password in cleartext, which
+    // Db2 (#786), and Oxia for its token: accept that a connection with no TLS sends its password in cleartext, which
     // the Db2 provider otherwise refuses. Declared for the reason skipObjectScan is: zod strips an
     // undeclared key silently, and a seed file's consent would validate and vanish, leaving a
     // connection the provider refuses with a message naming a field the file did set.
     allowInsecureAuth: z.boolean().optional(),
+    // Oxia only (O6): an address list the provider parses and refuses entry by entry; resolvable as `host` is
+    // (`RESOLVABLE_FIELDS`).
+    dataServers: z.string().optional(),
   })
   .superRefine((conn, ctx) => {
     if (conn.type === "elasticsearch") return;

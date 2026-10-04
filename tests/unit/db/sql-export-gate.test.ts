@@ -73,6 +73,10 @@ describe("offersSqlExport", () => {
     expect(offersSqlExport(makeCaps({ queryDialect: "qdrant" }))).toBe(false);
   });
 
+  test("withholds them from oxia, whose record declines them (SB2-4.4)", () => {
+    expect(offersSqlExport(makeCaps({ queryDialect: "oxia" }))).toBe(false);
+  });
+
   test("offers them to a host's dialect this release has no record for, as the menu always did", () => {
     for (const dialect of ["not-a-registered-dialect", "constructor"]) {
       expect(offersSqlExport(declaring(dialect)), dialect).toBe(true);

@@ -137,6 +137,11 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * phase does not yet build. They are in the frame anyway because the frame answers "which server
  * is this", a question that has nothing to do with which kinds an engine will take an edit for,
  * and a field added on the day an engine becomes editable is a field nobody remembers to add.
+ *
+ * `dataServers` (Oxia) is NOT in the frame, by the same criterion: it admits or refuses the leaders
+ * the cluster at `host` and `port` advertises, so changing it alone can refuse a plan's server but
+ * never send the plan to another one. `src/lib/db/provider-cache-key.ts` frames it instead, because a
+ * cached provider holds the dial policy the list built.
  */
 export async function connectionFingerprint(connection: DatabaseConnection & WithTunnelFarEnd): Promise<string> {
   // The address this connection actually reaches: the tunnel's far end when the factory

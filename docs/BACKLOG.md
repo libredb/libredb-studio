@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D204, U17 · 119
+- [Drivers and connections](#drivers-and-connections) — D1-D218, U17 · 133
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
@@ -41,7 +41,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4
 - [Security scanner triage](#security-scanner-triage) — SCAN1 · 1
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A1–A8 · 7
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B94 · 35
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B100 · 36
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246)
 
@@ -1859,7 +1859,7 @@ Not fixed there: the change is to the adapter's log-dir read, whose error table 
 
 ### D126. Concurrent first acquisitions of one connection and profile each open a provider
 
-`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:816-916`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:912`).
+`acquireExecutionProfileProvider` (`src/lib/db/factory.ts:823-923`) checks the profiled cache, and on a miss constructs and connects a provider, then stores it (`:919`).
 Two callers that miss at the same time each construct one, and the later store overwrites the earlier entry, so the earlier provider stays connected with nothing left to close it.
 The editor and agent paths reach this function the same way.
 `/api/mcp` avoids it on its own side, with an in-flight map keyed on the exported `profiledCacheKey` (`src/lib/mcp/context.ts`).
@@ -2355,6 +2355,122 @@ This is existing Db2 behaviour (#786).
 Found 2026-10-04 by the security review of the InfluxDB provider design (finding SR1 F8), filed by the review-round rulings rather than fixed there, because the shared form change alters Db2's behaviour inside a provider PR.
 
 **Done when:** the connection form clears `allowInsecureAuth` when Host or Port changes, for every type that takes the field, with a hook test; decided as a shared change outside a provider PR.
+
+### D205. Oxia connections cannot write
+
+v1 reads only (`src/lib/db/providers/keyvalue/oxia/`, DECISIONS O1).
+Writes need a protected-prefix table for Pulsar's metadata (`/admin`, `/managed-ledgers`, `/loadbalance`, `/namespace`, `/schemas`, `/ledgers`) and an expected-version guard, because the server has no authorization and no undo.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O1).
+
+**Done when:** `put`, `delete` and `delete-range` run behind typed confirmation, refuse a protected prefix and send `expected_version`, with `READ_ONLY_ENFORCED.oxia` still true for the mode, measured live on 0.16.x and 0.17.x.
+
+### D206. Oxia ephemeral records and sessions are shown, never made or listed
+
+The Source tab badges an ephemeral record (O11), but no session is created or listed (`getActiveSessions` answers the "Oxia does not list client sessions" state).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O11).
+
+**Done when:** a decision on whether sessions belong in Studio is taken; if yes, a session list from a read the server offers, with a test against 0.17.x.
+
+### D207. No bounded notifications watch on Oxia
+
+`notifications` is refused by name (O10).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O10).
+
+**Done when:** a watch with a time and count bound, the etcd `watch` shape, runs on a server started with `--notifications-enabled`, with a cancel test.
+
+### D208. Oxia namespaces and data servers cannot be listed
+
+The data-server API has no namespace list, so Namespace is typed (O5) and Data servers too (O6).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O5).
+
+**Done when:** a read-only list from the coordinator's admin port is designed with its own dial and authentication rules, or the entry is closed as declined because the admin port is a write surface.
+
+### D209. A port-forwarded Oxia cluster cannot be read
+
+A forward reaches one address while the cluster sends clients to the advertised leaders (O6); the provider doc gives the hosts-file workaround.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O6).
+
+**Done when:** a rewrite map from advertised to reachable address is designed with `grpc.default_authority` handled and measured on a three-server cluster, without weakening SECURITY row 3.14.
+
+### D210. Pasting Pulsar's oxia://host:6648/ns does not split it
+
+The host-URI parser (`src/lib/connection-host-uri.ts`, `HostUriScheme`) takes `http` and `https` only and refuses a path, so the URL goes in three fields by hand (O5).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O5).
+
+**Done when:** the shared parser takes a scheme with a default port and a path-to-Database output, with tests for each existing scheme unchanged.
+
+### D211. An in-cluster Studio cannot read its Oxia token from a file
+
+A pasted OIDC token expires.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O7).
+
+**Done when:** a security decision on reading a server-side path is taken, and if accepted a token-file field with rotation, refused outside a configured directory.
+
+### D212. gRPC providers are outside the HTTP egress guard
+
+grpc-js resolves names itself, so `DB_HTTP_BLOCK_PRIVATE_HOSTS` cannot cover etcd, Milvus or Oxia.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O6).
+
+**Done when:** `src/lib/db/grpc/` resolves each target once, checks the address with `egress-policy.ts` and dials the checked address with the original name as TLS identity, with tests for etcd, Milvus and Oxia.
+
+### D213. No Oxia metrics panel
+
+The server exports Prometheus `/metrics` only, and v1 shows none (O14).
+The Grafana dashboards in `deploy/dashboards/` at Oxia v0.16.10 query metric names the server does not export (for example `oxia_server_db_puts_total` against the exported `oxia_server_db_puts_count_total`).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
+
+**Done when:** a metrics URL panel reads named series with a test over a captured scrape, and the series it reads are the names the server exports.
+
+### D214. Key order is probed because no released Oxia reports it
+
+main carries `key_sorting` in the shard assignments (upstream PR #1388); v1 vendors v0.16.10 and probes (O3, O9).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O9).
+
+**Done when:** a release carries the field; the proto is re-vendored from that tag, the reported order wins over the probe where present, and the probe stays for older servers.
+
+### D215. The POSIX shell-word rules exist twice
+
+The POSIX-shell refusal rules exist twice: `etcd/lexer.ts` and `src/lib/db/console/shell-words.ts`.
+etcd's `lexer.ts` keeps its own word reader while Oxia reads through the engine-neutral shell-word reader (O10).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O10).
+
+**Done when:** etcd's command line reads through the shared module, with `tests/unit/db/etcd/lexer.test.ts` unchanged.
+
+### D216. The Oxia Keys panel discovers folders on its first page only
+
+Discovery runs on the first page of a walk with no pattern, within the bounds SB1-8.5 sets, and never under a folder, because under a folder its cost scales with the number of child nodes (O13; SPEC-RECONCILIATION cross-part ruling).
+A deeper or wider Pulsar tree is narrowed by prefix.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O13).
+
+**Done when:** a lazy children tree is designed if real Pulsar trees show the discovery insufficient, measured on a production-shaped tree.
+
+### D217. Studio's Oxia doc recommends 0.17.1 because of a 0.16 standalone lock
+
+An Oxia 0.16 standalone server (measured on 0.16.10) stops sending shard assignments to every client after one request whose authority is not `host:port`, which Studio never sends, until restarted (upstream #1450, about standalone mode only). 0.17.1 is not affected; fixed on main by #1450, in no 0.16 release as of 2026-10-04.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O2).
+
+**Done when:** a 0.16 release carries #1450; the doc's version note and the `oxia` service of `database-compose.yml` move to it, and the live check passes on it.
+
+### D218. The Oxia cluster dial policy is checked by hand only
+
+No CI job starts the `oxia-cluster` profile; `tests/unit/db/oxia/cluster-policy.test.ts` covers it with synthetic answers.
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O15).
+
+**Done when:** a CI job runs `tests/live/oxia-live-check.ts --cluster` against the profile, or the entry is closed because the synthetic test is judged enough.
 
 ## Value interpolation
 
@@ -5218,6 +5334,16 @@ Both execution paths guard a statement with SQL readers (`src/lib/db/operations/
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
 **Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), and agent execution and `run_read_query` serve it, with tests.
+
+### B100. Oxia has no agent execution and no MCP surface
+
+`MCP_EXPOSABLE.oxia` is false and the provider implements no `queryReadOnly` (O14; key paths name Pulsar tenants and topics).
+
+Found 2026-10-04 while designing the Oxia provider (DECISIONS O14).
+
+**Done when:** an MCP metadata surface that never returns a key value is designed and `run_read_query` serves a read command under the `oxia` grammar, with tests; cited in `docs/AGENT.md` beside B93.
+
+B100 rather than the next free id: InfluxDB, built at the same time, took B94, and the gap kept the two from racing for an id.
 
 ## Passkey deferrals (#785)
 

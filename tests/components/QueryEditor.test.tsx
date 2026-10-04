@@ -1951,6 +1951,16 @@ describe("QueryEditor", () => {
     expect(capturedLanguageRegistrations).toContain("promql");
   });
 
+  test("registers the oxia language before the editor mounts, beside etcd (SB2-4.6)", () => {
+    render(
+      React.createElement(QueryEditor, createDefaultProps({ language: "oxia", value: "get /admin/policies/public" })),
+    );
+
+    // etcd's registration is the control: it reaches the same capture, so a missing "oxia" is the component.
+    expect(capturedLanguageRegistrations).toContain("etcd");
+    expect(capturedLanguageRegistrations).toContain("oxia");
+  });
+
   test("registers the etcd language before the editor mounts, beside LibreDB, Redis and PromQL (#1089)", () => {
     render(React.createElement(QueryEditor, createDefaultProps({ language: "etcd", value: "get /app/ --prefix" })));
 
@@ -1985,6 +1995,7 @@ describe("QueryEditor", () => {
       "redis",
       "promql",
       "etcd",
+      "oxia",
       "graph-cypher",
       "influxql",
       "milvus",
@@ -2345,6 +2356,7 @@ describe("QueryEditor", () => {
       ["redis", false],
       ["libredb", false],
       ["etcd", false],
+      ["oxia", false],
       ["graph-cypher", false],
       ["influxql", false],
       ["sql", true],

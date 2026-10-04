@@ -29,6 +29,7 @@ describe("credential-resolver", () => {
     delete process.env.MY_CONN_STR;
     delete process.env.ELASTIC_API_KEY_ID;
     delete process.env.ELASTIC_API_KEY_SECRET;
+    delete process.env.OXIA_DATA_SERVERS;
   });
 
   it("resolves ${VAR} in password field", () => {
@@ -68,6 +69,13 @@ describe("credential-resolver", () => {
     const resolved = resolveConnectionCredentials(conn);
     expect(resolved.apiKeyId).toBe("seed-key-id");
     expect(resolved.apiKeySecret).toBe("seed-key-secret");
+  });
+
+  it("resolves ${VAR} in dataServers", () => {
+    process.env.OXIA_DATA_SERVERS = "a.internal:6648,b.internal:6648";
+    const conn: SeedConnection = { ...baseConn, dataServers: "${OXIA_DATA_SERVERS}" };
+    const resolved = resolveConnectionCredentials(conn);
+    expect(resolved.dataServers).toBe("a.internal:6648,b.internal:6648");
   });
 
   it("throws when env var is not defined", () => {

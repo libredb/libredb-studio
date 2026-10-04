@@ -77,15 +77,19 @@ export const SHOWCASE_RANK: Record<DatabaseType, number> = {
   milvus: 22,
   // Behind Milvus and ahead of libSQL (vector-family spec 10.3), for the same reason: the second vector database.
   qdrant: 23,
+  // Behind Qdrant and ahead of libSQL, for the reason the seven before it sit where they do: the store an Apache Pulsar
+  // cluster keeps its metadata in, known to the same cloud-native evaluator and met beside the databases rather than
+  // as one of them.
+  oxia: 24,
   // Behind etcd and ahead of the embedded store: libSQL is the name on this page an
   // evaluator is least likely to have met, but it is a product name (Turso's server)
   // rather than our own, so it goes ahead of `libredb`.
-  libsql: 24,
+  libsql: 25,
   // Last on purpose: the embedded store is the least recognisable name here. It is
   // still shown - it is a shipped provider with a doc (docs/providers/libredb.md), an
   // icon and a slot in the connection picker, so omitting it would make the login page
   // contradict the app (issue #425, step 2).
-  libredb: 25,
+  libredb: 26,
 };
 
 /**
