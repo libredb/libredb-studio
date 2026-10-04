@@ -1517,6 +1517,23 @@ JSON has no form for those three, and the routes, the agent's row rendering, the
 Measured 2026-10-04 on PostgreSQL 18.6, `SELECT 'NaN'::float8, 'Infinity'::real, '-Infinity'::float8` answered `null` in all three cells of `POST /api/db/query` before and `"NaN"`, `"Infinity"`, `"-Infinity"` after, while psql shows `NaN | Infinity | -Infinity`.
 The SQL INSERT export writes them as quoted literals, `'NaN'`, which PostgreSQL reads back into a `real`, `double precision` or `timestamptz` column, so a replayed file stores the same values where it used to store NULL.
 
+### 5.7 What the SQL INSERT and DDL exports write
+
+The result export reads each cell's declared type ([§5.4](#54-declared-column-types)) for the values whose generic form PostgreSQL refuses (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)):
+
+| Declared | Arrives as | Written as |
+|---|---|---|
+| any `…[]` | a JS array, nested per dimension | `'{"1","2",NULL}'`, every element double-quoted and backslash-escaped; a `json`/`jsonb` element is written as JSON, so an array stays one document and a string keeps its quotes (`pg` `JSON.parse`s each element, so the document `"hello"` arrives as `hello`) |
+| `interval` | `{days: 1, hours: 2}` (`postgres-interval`, zero parts dropped) | `'1 days 2 hours'`; `{}` is `'0 seconds'` |
+| `point` / `circle` | `{x, y}` / `{x, y, radius}` | `'(1,2)'` / `'<(1,2),3>'` |
+
+An array or an object in a `json`/`jsonb` column, or in a result with no declared type, is still the quoted JSON text.
+The DDL keeps an array type (`integer[]`) instead of writing `TEXT`, and writes a bare `bit` as `bit varying` (and `bit[]` as `bit varying[]`), because `pg` returns a bit string such as `1010` that `bit(1)` refuses.
+
+Measured 2026-10-04 on PostgreSQL 18.6: a `SELECT *` over a table with `integer[]`, two-dimensional `integer[]`, `text[]` holding quotes, commas, braces, backslashes and the word `NULL`, `boolean[]`, `jsonb[]`, `timestamptz[]`, `interval`, `point`, `bit(4)`, `varbit`, `money`, `inet`, `int4range` and the scalar types was exported and replayed with `psql`, once into a `CREATE TABLE … (LIKE src)` copy and once into the exported DDL's own table, and `SELECT s::text FROM src s EXCEPT SELECT c::text FROM copy c` answered one row.
+That row differs in one cell that never reaches the export as itself: the JSON document `null` in a `json` column, which JSON cannot tell from SQL NULL.
+Before this, the same file stopped at its first row with `ERROR: malformed array literal: "[1,2,3]"`.
+
 ---
 
 ## 6. Schema introspection

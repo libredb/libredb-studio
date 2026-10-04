@@ -607,6 +607,15 @@ So there is no handle between two statements for a `BEGIN TRANSACTION` to surviv
 
 This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
 
+### 3.14 What the SQL INSERT and DDL exports write for composite types
+
+A result reaches the export through JSON, where an `Array` is a JS array, a `Map` an object, an unnamed `Tuple` an array and a named one an object.
+Written as quoted JSON those were `Code: 26 ... Cannot parse quoted string` on replay, so the SQL INSERT export reads the declared type ([§3.9](#39-column-types-are-the-declared-strings-verbatim)) and writes `[1, 2, 3]`, `map('k', 1)` and `tuple(7, ['p', 'q'])`, recursing through the element types, `Nullable` and `LowCardinality` included (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)).
+A named tuple's elements are written in the declared order, and a 64-bit integer or a decimal that `output_format_json_quote_64bit_integers` / `output_format_json_quote_decimals` turned into a string is written bare inside a container (a scalar column takes the quoted form as it is).
+
+The DDL keeps a type with a quoted argument, `DateTime64(3, 'Europe/Istanbul')`, `DateTime('UTC')` and `Enum8('a' = 1, 'b' = 2)`, instead of writing `TEXT`.
+
+Measured 2026-10-04 on ClickHouse 26.9: a `MergeTree` table of `Array(Int32)`, `Array(String)` holding a quote and a backslash, `Map(String, Int32)`, `Map(String, Array(String))`, `Array(Array(Nullable(Int32)))`, named and unnamed `Tuple`, `DateTime64(3, 'Europe/Istanbul')`, `DateTime('UTC')`, `Date32`, `UInt64` and `Int128` at their limits, `Decimal(18, 4)`, `Bool`, `UUID`, `IPv4`, `IPv6`, `Enum8` and `LowCardinality(String)` exported and replayed with `clickhouse-client`, into `CREATE TABLE copy AS src` and into the exported DDL's own table, and the TSV of both tables differed in one cell: a `Float64` `-0`, which JavaScript prints as `0`.
 
 ---
 

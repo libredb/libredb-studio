@@ -666,6 +666,16 @@ CONNECTED provider's `explainFormat` and names that format in its response
 `mysql-json`, which is exactly what it answered before the probe existed, so the client's pre-flight
 refusal for a non-SELECT statement is unchanged.
 
+### 5.6 What the SQL-DDL export writes for dates and BIT
+
+The DDL writes the bare `datetime`, `timestamp` and `time` ([§5.4](#54-declared-column-types)) as `datetime(6)`, `timestamp(6)` and `time(6)`, since precision 0 rounds a replayed `.999` up to the next second (measured on MySQL 26.7.0: `'2024-12-31 23:59:59.999'` into a bare `datetime` reads back as `2025-01-01 00:00:00`), and a bare `bit` as `bit(64)`, which takes every width `mysql2` hands back as bytes where `bit(1)` refuses them (#1386).
+
+The SQL INSERT export still writes a `DATETIME`, `TIMESTAMP` or `DATE` cell as the ISO text the row carries, `'2024-12-31T23:59:59.999Z'`, which MySQL refuses with `ERROR 1292 Incorrect datetime value`.
+Rewriting that text would mean assuming the connection read it with `timezone: "Z"`, which a `ProviderOptions.timezone` or a `?timezone=` in the connection string overrides, and a wrong guess replays a different day without an error.
+The fix belongs at the source: once the provider returns the server's own date text (#1388), the export writes it as it is.
+
+A `bigint unsigned` past the signed range still fails the DDL form, because the declared type is `bigint` ([§5.4](#54-declared-column-types) says why `unsigned` is not part of it).
+
 ---
 
 ## 6. Transactions
