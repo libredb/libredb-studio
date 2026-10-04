@@ -90,9 +90,10 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       code, and one shape yielded a runnable bare `DROP` fragment — so it now reads through
       `spans.ts` under a `grammar.ts` record. Zero is therefore replaced by the CLOSURE, computed
       here rather than named at one level: every module reachable from the splitter must be one of
-      these two readers, whose own only reach is a TYPE-ONLY import of the shared type module. That
+      these readers, whose own only reach is a TYPE-ONLY import of the shared type module. That
       is checked below, so a value import appearing anywhere in the closure fails this test rather
-      than a browser.
+      than a browser. `./words` joined it with #1312: a procedural body is found by its code
+      words, and that reader reaches nothing but the other two.
     */
     const read = (specifier: string) =>
       fs.readFileSync(path.join(ROOT, "src/lib/sql", `${specifier.replace("./", "")}.ts`), "utf8");
@@ -108,7 +109,7 @@ describe("the plan-draft reader stays reachable from a browser", () => {
       }
     }
 
-    expect([...closure].sort()).toEqual(["./grammar", "./spans", "@/lib/types"]);
+    expect([...closure].sort()).toEqual(["./grammar", "./spans", "./words", "@/lib/types"]);
     // The one non-relative member, and it is erased at build time: a VALUE import of the shared
     // type module would pull the whole type barrel into the browser bundle.
     expect(read("./grammar")).toContain('import type { DatabaseType } from "@/lib/types"');

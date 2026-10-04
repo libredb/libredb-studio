@@ -87,6 +87,52 @@ export type BracketGrammar = "quoted-identifier" | "subscript";
  */
 export type BlockCommentGrammar = "flat" | "nesting";
 
+/**
+ * Which statements carry a procedural BODY, inside which a `;` ends a body statement
+ * rather than the statement the engine receives.
+ *
+ * - `none` - no statement does, or every body is a literal the span reader already
+ *   holds whole (PostgreSQL's `$$ … $$`). Every `;` that is code ends a statement.
+ * - `trigger-body` - `CREATE [TEMP|TEMPORARY] TRIGGER … BEGIN … END` is the one
+ *   statement with a body. SQLite and libSQL. `BEGIN` alone stays the statement that
+ *   opens a transaction there, which is why this is not `pl-sql`.
+ * - `pl-sql` - an anonymous block (`DECLARE` or `BEGIN` first) and every
+ *   `CREATE [OR REPLACE] PROCEDURE | FUNCTION | PACKAGE [BODY] | TRIGGER | TYPE BODY`
+ *   is one PL/SQL unit, and the `;` after its closing `END` belongs to the unit:
+ *   Oracle refuses the unit without it (`PLS-00103`, "end-of-file"). Oracle.
+ */
+export type ProceduralBlockGrammar = "none" | "trigger-body" | "pl-sql";
+
+/**
+ * How a SCRIPT is cut into what the engine receives, beyond the `;` the span rules
+ * already find. Three facts, held together because the splitter reads them together and
+ * a dialect that has none of them is one value (`DEFAULT_SQL_GRAMMAR.script`).
+ */
+export interface ScriptGrammar {
+  readonly blocks: ProceduralBlockGrammar;
+  /**
+   * A line holding only this token (case-insensitive, then optional blanks and a `--`
+   * comment) ends the statement in progress and is never sent: `GO` is sqlcmd's and
+   * SSMS's batch separator, `/` is SQL*Plus's "run the buffer". Inside a literal or a
+   * comment it is text like any other. `GO 5`, sqlcmd's repeat count, is not read as a
+   * separator: it reaches the server, which refuses it, rather than running once where
+   * five runs were asked for.
+   */
+  readonly separatorLine: "GO" | "/" | null;
+  /**
+   * What ONE request to the engine carries.
+   *
+   * - `statement` - one statement per request, which is how every engine but one here is
+   *   driven.
+   * - `batch` - everything between two separator lines, sent whole. T-SQL scopes a
+   *   variable to its batch and a `#temp` table to its session, and the provider borrows
+   *   a pooled connection per request, so a `DECLARE @x` sent apart from the `SELECT @x`
+   *   after it is gone by then (`Must declare the scalar variable "@x"`, measured on SQL
+   *   Server 2025). A `CREATE PROCEDURE` body likewise runs to the end of its batch.
+   */
+  readonly unit: "statement" | "batch";
+}
+
 /** The grammar facts that differ between the engines this product supports. */
 export interface SqlGrammar {
   readonly hash: HashGrammar;
@@ -122,6 +168,14 @@ export interface SqlGrammar {
    * argued: the probes are quoted on the rows below and in `grammar.test.ts`.
    */
   readonly doubleSlashComment: boolean;
+  /**
+   * How a script is cut into the units the engine receives (E2E pass of 2026-10-03/04,
+   * #1312). Before this fact existed every code `;` was a boundary in every dialect, so a
+   * PL/SQL procedure, a SQLite trigger and a T-SQL batch were each cut at their inner `;`
+   * and the multi-statement route RAN the fragments: Oracle stored the procedure INVALID
+   * while the route reported its first fragment `success`.
+   */
+  readonly script: ScriptGrammar;
 }
 
 /**
@@ -141,6 +195,7 @@ export const DEFAULT_SQL_GRAMMAR: SqlGrammar = {
   blockComment: "flat",
   alternateQuoting: false,
   doubleSlashComment: false,
+  script: { blocks: "none", separatorLine: null, unit: "statement" },
 };
 
 /**
@@ -158,6 +213,10 @@ const MYSQL_GRAMMAR: SqlGrammar = {
   // Probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064, "check the
   // manual … near '// note'". Nothing on that line is hidden.
   doubleSlashComment: false,
+  // NOT established. MySQL has compound statements (`CREATE PROCEDURE … BEGIN … END`), which
+  // its own client cuts with `DELIMITER`, and no reading of them was measured here, so the
+  // default stays and the gap is BACKLOG S7.
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 const CLICKHOUSE_GRAMMAR: SqlGrammar = {
   hash: "comment",
@@ -180,6 +239,7 @@ const CLICKHOUSE_GRAMMAR: SqlGrammar = {
   // the exact shape #280 exists to prevent. With the fact carried it emits
   // `… LIMIT 5 // note` and returns 5 (both measured).
   doubleSlashComment: true,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 const POSTGRES_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -191,6 +251,9 @@ const POSTGRES_GRAMMAR: SqlGrammar = {
   // merely has no implementation for those argument types - not a comment and not a
   // syntax error. `SELECT 1 AS a // note` is "syntax error at or near \"//\"".
   doubleSlashComment: false,
+  // Established, and equal to the default: a routine body is a literal (`$$ … $$` or
+  // `'…'`), which the span reader already holds whole, so no `;` inside one is code.
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 /**
  * DuckDB, every fact measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4.
@@ -219,6 +282,7 @@ const DUCKDB_GRAMMAR: SqlGrammar = {
   alternateQuoting: false,
   // `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
   doubleSlashComment: false,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 const ORACLE_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -229,6 +293,10 @@ const ORACLE_GRAMMAR: SqlGrammar = {
   // dual` is ORA-00923, "FROM keyword not found where expected", with the caret under
   // the slashes. Nothing on that line is hidden.
   doubleSlashComment: false,
+  // PL/SQL units and SQL*Plus's `/` line. Measured on 26ai Free 23.26.3 before the fact
+  // existed: the procedure cut at its inner `;` was stored INVALID with PLS-00103, and the
+  // unit is refused without the `;` after its `END`, so the splitter keeps that one.
+  script: { blocks: "pl-sql", separatorLine: "/", unit: "statement" },
 };
 /**
  * Db2 LUW, every fact probed 2026-10-03 on DB2/LINUXX8664 12.1.0.0 through db2-node 1.0.22, the
@@ -251,6 +319,7 @@ const DB2_GRAMMAR: SqlGrammar = {
   alternateQuoting: false,
   // `SELECT 1 AS a FROM SYSIBM.SYSDUMMY1 // note` is SQLCODE -104.
   doubleSlashComment: false,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 const MSSQL_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -260,6 +329,11 @@ const MSSQL_GRAMMAR: SqlGrammar = {
   // Probed 2026-08-25 on 2022 through sqlcmd: `SELECT 1 AS a // note` is Msg 102,
   // "Incorrect syntax near '/'".
   doubleSlashComment: false,
+  // The batch is the unit, cut at `GO` lines, and `blocks` stays `none` because a batch
+  // already holds every body it contains: `CREATE PROCEDURE` runs to the end of its batch.
+  // Measured on 2025 RTM-CU9: `DECLARE @x INT = 5; SELECT @x * 2` sent as two requests is
+  // `Must declare the scalar variable "@x"`, and as one batch answers 10.
+  script: { blocks: "none", separatorLine: "GO", unit: "batch" },
 };
 const SQLITE_GRAMMAR: SqlGrammar = {
   hash: "code",
@@ -270,6 +344,10 @@ const SQLITE_GRAMMAR: SqlGrammar = {
   // `SELECT 1 // 2` are both 'near "/": syntax error'. The amalgamation's tokenizer
   // agrees - `case CC_SLASH` opens a run only on `/*`.
   doubleSlashComment: false,
+  // `CREATE TRIGGER … BEGIN … END` is the one statement with a body. Measured through
+  // node:sqlite 3.50.4 before the fact existed: the trigger cut at its inner `;` was
+  // `incomplete input`.
+  script: { blocks: "trigger-body", separatorLine: null, unit: "statement" },
 };
 
 /**
@@ -309,6 +387,7 @@ const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
   // costs is worth stating: if `//` DOES open a comment here, this dialect's splitter
   // over-splits exactly as `cassandra`'s did.
   doubleSlashComment: DEFAULT_SQL_GRAMMAR.doubleSlashComment,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 const OPENSEARCH_GRAMMAR: SqlGrammar = {
   // `#` really is a line comment, and this is where the fork's SQL plugin parts
@@ -333,6 +412,7 @@ const OPENSEARCH_GRAMMAR: SqlGrammar = {
   alternateQuoting: false,
   // NOT established, same reason and same stated cost as the Elasticsearch row above.
   doubleSlashComment: DEFAULT_SQL_GRAMMAR.doubleSlashComment,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 /**
  * Established the same way and for the same reason as the two search rows: the engine
@@ -368,6 +448,7 @@ const TRINO_GRAMMAR: SqlGrammar = {
   // error at the same offset - so the slashes are refused where they stand rather
   // than hiding what follows.
   doubleSlashComment: false,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 
 /**
@@ -403,6 +484,7 @@ const DATAFUSION_GRAMMAR: SqlGrammar = {
   // Line: 1, Column: 15")`, so the slashes are refused where they stand rather than hiding what
   // follows.
   doubleSlashComment: false,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 
 /**
@@ -481,6 +563,7 @@ const CASSANDRA_GRAMMAR: SqlGrammar = {
   //     -> "line 2:0 mismatched input 'DROP' expecting EOF", so the run ended at the
   //        newline: a LINE comment, not a to-end-of-input one.
   doubleSlashComment: true,
+  script: DEFAULT_SQL_GRAMMAR.script,
 };
 
 /**
@@ -633,6 +716,8 @@ const SQL_GRAMMARS: Partial<Record<DatabaseType, SqlGrammar>> = {
   // comments do not nest), and `q'[x]'` is a syntax error. Sharing the object rather
   // than declaring a second identical one is deliberate: a divergence would then have
   // to be written down as its own grammar, which is the change a reader should see.
+  // The `script` fact was measured on the same sqld: a trigger cut at its inner `;` is
+  // "SQL string could not be parsed: unexpected end of input", and sent whole it is created.
   libsql: SQLITE_GRAMMAR,
   elasticsearch: ELASTICSEARCH_GRAMMAR,
   opensearch: OPENSEARCH_GRAMMAR,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
-import { splitStatements } from "@/lib/sql/statement-splitter";
+import { splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { isSelectQuery } from "@/lib/db/utils/query-limiter";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -58,7 +58,7 @@ function carriedChannels(source: Pick<StatementResult, "warnings" | "columnTypes
  */
 async function runStatement(
   provider: DatabaseProvider,
-  stmt: { sql: string; startLine: number },
+  stmt: ExecutionUnit,
   index: number,
   isLast: boolean,
   dialect: DatabaseType,
@@ -78,8 +78,14 @@ async function runStatement(
     // was made comment-tolerant to close (#281, #275). The shared reading also
     // types a `WITH` by the keyword its CTE list operates (#287), so a
     // read-only CTE is bounded here and a data-modifying one is not.
+    //
+    // A unit that carries several statements - a T-SQL batch (#1312) - is sent as it is.
+    // The bound belongs to one statement, and the batch's last statement may be part of a
+    // `CREATE PROCEDURE` body that runs to the end of the batch, where a `TOP` written in
+    // would change the stored procedure rather than the result. Its earlier statements
+    // were never bounded either, here or before the batch was a unit.
     const prepared =
-      isLast && isSelectQuery(stmt.sql, dialect)
+      isLast && stmt.statements.length === 1 && isSelectQuery(stmt.sql, dialect)
         ? provider.prepareQuery(stmt.sql, options)
         : { query: stmt.sql, wasLimited: false, limit: 0, offset: 0 };
 
@@ -140,7 +146,11 @@ export async function POST(req: NextRequest) {
     // a reading the engine does not share is a statement the operator never wrote.
     // Measured on postgres 18, `/* a /* b *\/ ; DROP TABLE t; -- *\/ SELECT 1` is one
     // read there and the flat reading made its second fragment a bare DROP (S1).
-    const statements = splitStatements(sql, resolveSqlGrammar(connection.type));
+    //
+    // UNITS rather than statements: what one request carries is the dialect's to say, and
+    // for T-SQL it is the whole batch between `GO` lines, so a `DECLARE @x` reaches the
+    // server in the same request as the `SELECT @x` after it (#1312).
+    const statements = splitExecutionUnits(sql, resolveSqlGrammar(connection.type));
 
     if (statements.length === 0) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });

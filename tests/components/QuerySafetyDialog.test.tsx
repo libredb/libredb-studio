@@ -1386,6 +1386,21 @@ describe("QuerySafetyDialog", () => {
 });
 
 describe("isDangerousQuery", () => {
+  // A procedural body is one statement to the runner since #1312, and its own keyword is
+  // BEGIN or CREATE. The writes inside it still ask, as they did when the splitter cut them.
+  test("a write inside a procedural body still asks", () => {
+    expect(isDangerousQuery("BEGIN x := 1; DELETE FROM emp; END;", "oracle")).toBe(true);
+    expect(isDangerousQuery("CREATE TRIGGER t AFTER INSERT ON a BEGIN SELECT 1; DELETE FROM b; END", "sqlite")).toBe(
+      true,
+    );
+    expect(isDangerousQuery("BEGIN x := 1; SELECT 1 INTO y FROM dual; END;", "oracle")).toBe(false);
+  });
+
+  test("a write after a separator line asks", () => {
+    expect(isDangerousQuery("SELECT 1\nGO\nDROP TABLE t", "mssql")).toBe(true);
+    expect(isDangerousQuery("SELECT 1 FROM dual\n/\nDROP TABLE t", "oracle")).toBe(true);
+  });
+
   test("detects dangerous DML and DDL statements", () => {
     expect(isDangerousQuery("DELETE FROM users")).toBe(true);
     expect(isDangerousQuery("DROP TABLE users")).toBe(true);

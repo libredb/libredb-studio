@@ -2053,6 +2053,33 @@ describe("MSSQLProvider declared column types", () => {
     });
   });
 
+  // #1312: the editor sends a T-SQL batch as one request, and a batch with several result
+  // sets answers with its last, as the multi-statement route shows a script's last result.
+  test("query() answers a batch with its LAST result set, counted by its own rows", async () => {
+    const first = withColumns([{ a: 1 }], { a: { declaration: "int" } });
+    const last = withColumns([{ doubled: 10 }, { doubled: 20 }], { doubled: { declaration: "int" } });
+    mockQueryFn = async () => ({ recordset: first, recordsets: [first, last], rowsAffected: [1, 1, 2] });
+
+    await provider.connect();
+    const result = await provider.query("SELECT 1 AS a; DECLARE @x INT = 5; SELECT @x * 2 AS doubled");
+
+    expect(result.rows).toEqual([{ doubled: 10 }, { doubled: 20 }]);
+    expect(result.fields).toEqual(["doubled"]);
+    expect(result.rowCount).toBe(2);
+    expect(result.columnTypes).toEqual({ doubled: "int" });
+  });
+
+  test("query() keeps the driver's own count when the batch has one result set", async () => {
+    const only = withColumns([{ n: 1 }], { n: { declaration: "int" } });
+    mockQueryFn = async () => ({ recordset: only, recordsets: [only], rowsAffected: [7, 1] });
+
+    await provider.connect();
+    const result = await provider.query("UPDATE t SET a = 1; SELECT 1 AS n");
+
+    expect(result.rows).toEqual([{ n: 1 }]);
+    expect(result.rowCount).toBe(7);
+  });
+
   test("the key is omitted entirely when the recordset carries no column map", async () => {
     mockQueryFn = async () => ({ recordset: [{ a: 1 }], rowsAffected: [1] });
 

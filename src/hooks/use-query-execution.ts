@@ -442,7 +442,10 @@ export function useQueryExecution({
           // Under the connection's own dialect, the same record the gate above
           // reads the statement with: whether a `;` is code depends on the
           // engine's comment, quoting and bracket rules, and a fragment this
-          // disagrees about is a fragment the route RUNS (S1).
+          // disagrees about is a fragment the route RUNS (S1). The same record says where a
+          // procedural body holds its `;` and which line is a script separator (#1312), so a
+          // PL/SQL unit alone stays on the single-statement route and one followed by `/`
+          // goes to the route that strips the `/`.
           isMultiStatement(queryToExecute, resolveSqlGrammar(activeConnection.type));
 
         // Use transaction endpoint if a transaction is active or in playground mode

@@ -319,6 +319,7 @@ facts was re-measured over Hrana rather than assumed:
 | `q'…'` is a literal | **No** — syntax error |
 | `''` escapes a quote | **Yes** — `SELECT 'it''s'` answers `it's` |
 | `hex(X'0102deadbeef')` | `0102DEADBEEF`; `typeof(X'')` is `blob`, `length(X'')` is 0 |
+| A `CREATE TRIGGER … BEGIN … END` body holds its `;` (#1312) | **Yes**: cut at its inner `;` it is "SQL string could not be parsed: unexpected end of input", sent whole it is created and fires |
 
 ### 3.13 `endOpenQueryTransaction()` is not implemented, because the engine has no transaction to leave open
 

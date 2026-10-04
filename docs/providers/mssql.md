@@ -349,6 +349,21 @@ to the newer name would change the wording on the form without changing a single
 { rows: recordset, fields, rowCount: rowsAffected[0] ?? recordset.length, executionTime, columnTypes? }
 ```
 
+A batch that returns several result sets answers with its **last** one, and `rowCount` is then that
+set's own row count, because `rowsAffected[0]` is the first statement's (#1312).
+
+**The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
+of one request the batch between `GO` lines (`src/lib/sql/grammar.ts`), so `DECLARE @x INT = 5;
+SELECT @x * 2` reaches the server as one request and answers 10, a `#temp` table created in a batch is
+there for the batch's next statement, and `CREATE PROCEDURE … AS BEGIN …; …; END` is created as written.
+A line holding only `GO` (any case, optionally followed by a `--` comment) separates batches and is
+never sent; `GO 5` is not read as a separator and the server refuses it. Each batch is its own request
+on a pooled connection, so a `#temp` table created in one batch is visible to the next only if it
+borrows the same connection (`docs/BACKLOG.md` D92), and a batch of several statements is sent with no
+row bound (`docs/editor/query-optimization.md`, multi-statement runs). Measured before this on SQL
+Server 2025 RTM-CU9: each `;`-fragment was its own request, so the same script answered `Must declare
+the scalar variable "@x"`, `Invalid object name '#t'` and `Incorrect syntax near 'GO'`.
+
 Native `mssql` errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
 
 ### 5.2 Query cancellation
@@ -404,8 +419,8 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
   is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
   Cassandra stopped spelling their bytes `0x…` in the provider.
-- **Only the first result set is returned.** `query()` reads `result.recordset` (singular), so a
-  multi-statement batch or a stored procedure returning several result sets surfaces just one.
+- **Only one result set is returned.** `query()` returns the batch's last result set (§5.1), so a
+  batch or a stored procedure returning several result sets surfaces just that one.
 
 ### 5.4 Declared column types
 

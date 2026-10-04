@@ -181,8 +181,10 @@ with no `;`, which is the half of that measurement the engine cares about. The O
 was removed with the bound, because once there is no `FETCH FIRST` to spell it did nothing the
 shared return does not already do.
 
-It bounds the GENERATORS only. A `;` a user types is still stripped by the editor's statement reader
-before the statement is sent, and the raw API passes text through untouched.
+It bounds the GENERATORS only. A `;` a user types after a plain statement is still stripped by the
+editor's statement reader before the statement is sent, and the raw API passes text through untouched.
+The one `;` the reader keeps is the one after a PL/SQL unit's `END`, which is part of the unit
+([§5.1](#51-execution)).
 
 ### 3.3 Schema introspection reads the `ALL_*` views, and is not owner-scoped
 
@@ -525,6 +527,23 @@ proving each statement had landed:
 session saw `COUNT(*) = 0`, and the row was gone for good once the writing connection went back to
 the pool. Bind parameters use Oracle's `:1`-style placeholders.
 Native errors are normalised through `mapDatabaseError()` (see [§11](#11-error-handling)).
+
+**PL/SQL from the editor (#1312).** The grammar's `script` fact for this dialect
+(`src/lib/sql/grammar.ts`) makes the editor's statement reader treat a PL/SQL unit as ONE statement:
+an anonymous block that starts with `DECLARE` or `BEGIN`, and `CREATE [OR REPLACE]
+[EDITIONABLE | NONEDITIONABLE] PROCEDURE | FUNCTION | PACKAGE [BODY] | TRIGGER | TYPE BODY`. The unit
+is read to the `END` that closes its outermost block, and the `;` after that `END` is kept, because
+Oracle refuses the unit without it (`PLS-00103`, "Encountered the symbol end-of-file"). A line holding
+only `/` ends the statement in progress and is never sent, as in SQL*Plus, so a script written for
+SQL*Plus or SQL Developer runs unchanged; a unit the reader cannot close on its own (a call spec, a
+compound trigger) needs that `/`, as it does there. A `WITH FUNCTION` read is not a unit and is still
+cut at its inner `;`.
+
+Measured before this on 26ai Free 23.26.3: the editor cut `CREATE OR REPLACE PROCEDURE raise_sal(p_pct IN
+NUMBER) AS BEGIN UPDATE emp SET salary = salary * (1 + p_pct/100); END;` at its inner `;`, the first
+fragment answered `success` while `user_objects` showed the procedure INVALID, the second was
+`ORA-00900`, and a trigger cut the same way stayed INVALID on its table so that every later INSERT
+failed with `ORA-04098`.
 
 ### 5.2 Query cancellation
 

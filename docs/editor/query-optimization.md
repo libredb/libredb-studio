@@ -384,6 +384,38 @@ honest there and the confirmation gate is what must see it. Callers pass the con
 (this route, and the editor's multi-statement decision); a call that names none keeps the
 compatibility grammar, the same stated default the rest of `src/lib/sql` applies.
 
+#### Procedural bodies, separator lines and batches (#1312)
+
+A `;` that is code is not always the end of what the engine receives. The grammar's `script` facts
+say where it is not, and the splitter reads them:
+
+| Dialect | Body that holds its `;` | Separator line | One request carries |
+|---------|-------------------------|----------------|---------------------|
+| Oracle | a PL/SQL unit: an anonymous block (`DECLARE` or `BEGIN` first) and `CREATE [OR REPLACE] PROCEDURE`, `FUNCTION`, `PACKAGE [BODY]`, `TRIGGER`, `TYPE BODY`, read to its matching `END`; the `;` after that `END` stays in the text, because Oracle refuses the unit without it | `/` alone on a line (SQL*Plus) | one statement |
+| SQL Server | none needed: the batch holds every body | `GO` alone on a line (sqlcmd, SSMS) | the whole batch between `GO` lines |
+| SQLite, libSQL | `CREATE [TEMP] TRIGGER … BEGIN … END`; a bare `BEGIN` is still a transaction | none | one statement |
+| every other dialect | none: PostgreSQL's routine bodies are `$$` literals the span reader already holds | none | one statement |
+
+Inside a body, `CASE … END` closes a frame and `END IF` / `END LOOP` are skipped, and a declaration
+section shares its block's `END`. A unit whose frames never close (a call spec, a compound trigger)
+runs to the next `/` line or the end of the input: one statement too long, never a fragment stored
+INVALID. `GO 5`, sqlcmd's repeat count, is not a separator; it reaches the server, which refuses it.
+
+Measured in the end-to-end pass of 2026-10-03/04 before these facts existed: Oracle 26ai Free stored a
+procedure cut at its inner `;` INVALID (PLS-00103) while this route reported its first fragment
+`success`, SQLite and libSQL refused a trigger as incomplete input, and SQL Server 2025 answered
+`Must declare the scalar variable "@x"` for `DECLARE @x INT = 5; SELECT @x * 2`, because each fragment
+was its own request on a pooled connection.
+
+A T-SQL batch of several statements is sent as written, with **no** row bound: the bound belongs to one
+statement, and the batch's last statement may sit inside a `CREATE PROCEDURE` body that runs to the end
+of the batch. SQL Server's provider answers a batch with its **last** result set. Across a `GO`, a
+`#temp` table survives only if the next batch borrows the same pooled connection, which nothing
+guarantees (`docs/BACKLOG.md` D92). The editor's "run the statement at the cursor" runs the cursor's
+unit, so on SQL Server it is the batch. The confirmation gate keeps reading the statements inside a
+body, so a `DELETE` inside a PL/SQL block still asks. MySQL, Db2 and Trino compound statements are not
+read yet (`docs/BACKLOG.md` S7).
+
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
 That is also what the grid displays whenever the final statement returns no rows of its own

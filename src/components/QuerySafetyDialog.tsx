@@ -604,5 +604,11 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // facts are a table in `@/lib/db/destructive-commands`, not a type test written
   // here: this file already learned that lesson for the span rule above.
   if (!readsSqlText(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
-  return splitStatements(query, grammar).some((statement) => writesUnderGrammar(statement.sql, grammar));
+  // One exception to "exactly what the runner will run": a procedural body is ONE
+  // statement to the runner (#1312), and its operative keyword is `BEGIN`, `DECLARE` or
+  // `CREATE`, none of which asks. The writes inside it are still writes, so the gate keeps
+  // reading the body's own `;`-separated statements, which is what it read before bodies
+  // were a fact at all. The spans and the separator lines stay the dialect's.
+  const statementsInsideBodies = { ...grammar, script: { ...grammar.script, blocks: "none" as const } };
+  return splitStatements(query, statementsInsideBodies).some((statement) => writesUnderGrammar(statement.sql, grammar));
 }

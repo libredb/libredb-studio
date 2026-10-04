@@ -27,7 +27,7 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
+- [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
 - [Drivers and connections](#drivers-and-connections) — D1-D224, U17 · 139
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
@@ -113,6 +113,20 @@ Apache Cassandra 5.0.9, ScyllaDB 2026.2.4 and ClickHouse 26.7.1 (a line comment 
 refused on PostgreSQL 18, MySQL 26.7.0, SQLite, Oracle, SQL Server 2022 and Trino 476. It is undecided
 for elasticsearch and opensearch, and absent with the whole row for couchbase, druid and libredb -
 recorded in the table in `docs/editor/query-optimization.md`.
+
+### S7. Compound statements on MySQL, Db2 and Trino are still cut at their inner `;`
+
+#1312 gave `SqlGrammar` a `script` fact and read procedural bodies for Oracle (PL/SQL units), SQLite
+and libSQL (trigger bodies), and batches for SQL Server. Three dialects with `BEGIN … END` bodies were
+left at the default because no reading of them was measured: MySQL and MariaDB
+(`CREATE PROCEDURE | FUNCTION | TRIGGER | EVENT … BEGIN … END`, which the `mysql` client cuts with
+`DELIMITER`, a client command the server never sees), Db2 SQL PL (`BEGIN ATOMIC … END` and routine
+bodies) and Trino SQL routines (`CREATE FUNCTION … BEGIN … END`). On those the editor still cuts the body
+at its inner `;` and the multi-statement route runs the fragments, the shape #1312 measured on Oracle.
+
+**Done when:** each dialect's body rule is measured on a live server and written as its `script` row, with
+a test per dialect in `tests/unit/sql/statement-splitter.test.ts` (the MySQL one there pins today's cut).
+MySQL's `BEGIN` alone is a transaction, as SQLite's is, so its rule is not Oracle's `pl-sql`.
 
 ---
 
@@ -1096,6 +1110,12 @@ Found while reviewing D87. It is independent of D87 and was not introduced by it
 ENDER to the caller's own scope, which is what makes the first backend's transaction reachable at
 all, and this entry is about the script's own statements being spread across backends in the first
 place.
+
+The same gap has a T-SQL shape that needs no concurrency to describe. Since #1312 the editor sends each
+batch between `GO` lines as one request, so a variable or `#temp` table survives inside a batch, but
+two batches are two `provider.query()` calls on `pool.request()`. A `#temp` table is scoped to its
+SESSION, so `CREATE TABLE #t (a INT)` / `GO` / `SELECT * FROM #t` finds the table only when the second
+batch borrows the same pooled connection, which sqlcmd and SSMS guarantee and this route does not.
 
 **Done when:** either a probe forces the interleave and the result is recorded, or the route holds
 one client for the script's scope. The second changes pool semantics for every caller of `query()`

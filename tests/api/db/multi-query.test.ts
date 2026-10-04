@@ -450,6 +450,46 @@ describe("POST /api/db/multi-query", () => {
     });
   });
 
+  // #1312: what one request carries is the dialect's unit, not the `;`-statement.
+  describe("execution units", () => {
+    const executed = () => (mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[0]);
+
+    test("a T-SQL batch is ONE provider call, sent whole and unbounded", async () => {
+      const sql = "DECLARE @x INT = 5; SELECT @x * 2 AS doubled;\nGO\nSELECT 3 AS c";
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, type: "mssql", port: 1433 }, sql },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ statementCount: number; statements: { sql: string }[] }>(res);
+
+      expect(data.statementCount).toBe(2);
+      // The batch's last statement is a SELECT, and it is still not bounded: the bound is
+      // one statement's, and a batch can be a procedure body. The last single-statement
+      // unit is bounded as before.
+      expect(executed()).toEqual(["DECLARE @x INT = 5; SELECT @x * 2 AS doubled", "SELECT 3 AS c LIMIT 50"]);
+      expect(data.statements.map((statement) => statement.sql)).toEqual([
+        "DECLARE @x INT = 5; SELECT @x * 2 AS doubled",
+        "SELECT 3 AS c",
+      ]);
+    });
+
+    test("an Oracle PL/SQL unit is one call that keeps its END;, and the `/` line is never sent", async () => {
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: {
+          connection: { ...validConnection, type: "oracle", port: 1521 },
+          sql: "CREATE PROCEDURE p AS BEGIN UPDATE emp SET a = 1; END;\n/\nBEGIN p; END;",
+        },
+      });
+
+      await POST(req as never);
+
+      expect(executed()).toEqual(["CREATE PROCEDURE p AS BEGIN UPDATE emp SET a = 1; END;", "BEGIN p; END;"]);
+    });
+  });
+
   describe("final-statement classification", () => {
     test("comment-led final SELECT is prepared and the bounded SQL reaches the engine", async () => {
       const finalStatement = "-- final read\nSELECT * FROM users";

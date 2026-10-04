@@ -29,7 +29,7 @@ import { logger } from "@/lib/logger";
 import { setLineNumbersPreference, useLineNumbersPreference } from "@/hooks/use-line-numbers-preference";
 import { writeToClipboard } from "@/components/copy-button";
 import { toast } from "sonner";
-import { splitStatements } from "@/lib/sql/statement-splitter";
+import { splitExecutionUnits } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
 
@@ -394,12 +394,16 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       // cut at a `;` inside a nested comment, so what reached the engine was a line
       // comment plus the SELECT, and the grid read 0 rows where psql answers 2. A `;`
       // inside a literal (`SELECT 'a;b'`) cut the same way.
+      //
+      // The dialect's execution UNIT rather than its `;`-statement (#1312): on SQL Server
+      // the cursor runs the batch it sits in, sent whole, so a `DECLARE @x` above the
+      // cursor still declares the `@x` it uses, and a `GO` line is never sent.
       if (language === "sql") {
         const position = editorRef.current.getPosition();
         if (position) {
           const fullText = model.getValue();
           const cursorOffset = model.getOffsetAt(position);
-          const statements = splitStatements(fullText, resolveSqlGrammar(databaseType));
+          const statements = splitExecutionUnits(fullText, resolveSqlGrammar(databaseType));
           // The statement the cursor is inside or immediately after, which is what "run
           // this one" means with the caret resting at a statement's end. Whitespace
           // between two statements belongs to neither, so the last one that starts at or

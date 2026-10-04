@@ -233,8 +233,9 @@ The passkey branch exists only with local auth, `STORAGE_PROVIDER=sqlite` or `po
 - String literals (single/double quotes)
 - Block and line comments
 - Dollar-quoting (PostgreSQL)
+- Procedural bodies and separator lines, from the dialect's `script` grammar fact: an Oracle PL/SQL unit or a SQLite trigger is one statement, and a `/` (Oracle) or `GO` (SQL Server) line is a boundary that is never sent
 
-Multi-statement queries execute sequentially via `POST /api/db/multi-query`.
+Multi-statement queries execute sequentially via `POST /api/db/multi-query`, one request per execution unit (`splitExecutionUnits`): a statement, or on SQL Server the whole batch between `GO` lines.
 
 ### 4.4. Storage Abstraction Layer
 

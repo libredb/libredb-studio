@@ -251,6 +251,7 @@ The statement splitter, the row limiter, the confirmation gate and the read poli
 | `blockComment` | `"nesting"` | `SELECT 1 /* a /* b */ c */ AS x` answers 1 |
 | `alternateQuoting` | `false` | `SELECT q'[x]' AS x` is a parser error |
 | `doubleSlashComment` | `false` | `SELECT 1 AS x // c` is a parser error |
+| `script` | `{"blocks":"none","separatorLine":null,"unit":"statement"}` | the default (#1312): DataFusion has no procedural bodies and no separator line, so every code `;` ends a statement |
 
 A string literal doubles its quote (`'it''s'`) and a backslash in it is data; Studio writes every literal that way and never the `E'...'` form.
 A name is double-quoted with `""` doubling, and an unquoted name folds to lower case.

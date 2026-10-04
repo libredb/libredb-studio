@@ -517,6 +517,36 @@ describe("influxdb3", () => {
   });
 });
 
+/**
+ * How a script is cut (#1312). Each non-default row was measured in the end-to-end pass of
+ * 2026-10-03/04 before the fact existed, the cost quoted beside it.
+ */
+describe("script", () => {
+  test("Oracle reads PL/SQL units and SQL*Plus's `/` line, one statement per request", () => {
+    // A procedure cut at its inner `;` was stored INVALID (PLS-00103) on 26ai Free 23.26.3.
+    expect(resolveSqlGrammar("oracle").script).toEqual({ blocks: "pl-sql", separatorLine: "/", unit: "statement" });
+  });
+
+  test("SQL Server sends the batch between GO lines as one request", () => {
+    // `DECLARE @x INT = 5; SELECT @x * 2` as two requests was `Must declare the scalar
+    // variable "@x"` on 2025 RTM-CU9.
+    expect(resolveSqlGrammar("mssql").script).toEqual({ blocks: "none", separatorLine: "GO", unit: "batch" });
+  });
+
+  test.each<DatabaseType>(["sqlite", "libsql"])("%s reads a trigger body", (type) => {
+    // A trigger cut at its inner `;` was "incomplete input" on SQLite 3.50.4 and "unexpected
+    // end of input" on sqld 0.24.33.
+    expect(resolveSqlGrammar(type).script).toEqual({ blocks: "trigger-body", separatorLine: null, unit: "statement" });
+  });
+
+  test.each<DatabaseType>(["postgres", "mysql", "db2", "duckdb", "clickhouse", "trino", "cassandra", "influxdb3"])(
+    "%s keeps the default: every code `;` ends a statement",
+    (type) => {
+      expect(resolveSqlGrammar(type).script).toBe(DEFAULT_SQL_GRAMMAR.script);
+    },
+  );
+});
+
 describe("every database type has a recorded grammar decision", () => {
   test.each(Object.entries(GRAMMAR_COVERAGE))("%s is %s", (type, expected) => {
     const isDefault = resolveSqlGrammar(type as DatabaseType) === DEFAULT_SQL_GRAMMAR;

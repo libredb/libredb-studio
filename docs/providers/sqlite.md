@@ -471,6 +471,15 @@ way, so the longer reading can only ever cost a bound — and, where the doubled
 real closer so the run never terminates (`SELECT [a]] FROM t`), a confirmation prompt as well, since
 #297 asks about text the reader cannot resolve. Both are on statements the server refuses, and both are
 pinned by tests rather than left to be discovered.
+
+The third grammar fact is about what a statement IS (#1312): `CREATE [TEMP | TEMPORARY] TRIGGER … BEGIN
+… END` holds a `;` after every statement of its body, and the editor's statement reader keeps the
+whole trigger as one statement, closing it at the `END` that matches its `BEGIN` (a `CASE … END`
+inside the body is counted, so it does not close it early). A bare `BEGIN` stays the statement that
+opens a transaction. Measured before this through node:sqlite 3.50.4: the trigger was cut at its
+inner `;`, the run answered `incomplete input`, and in a longer script every statement after the
+trigger was skipped.
+
 `EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
 
 ### Declared column types

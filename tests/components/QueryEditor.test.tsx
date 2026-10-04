@@ -2525,6 +2525,39 @@ describe("QueryEditor", () => {
     window.removeEventListener("execute-query", handler);
   });
 
+  test("getEffectiveQuery: on SQL Server the caret runs its whole GO batch (#1312)", () => {
+    mockUseMonacoReturn = {
+      Range: class {
+        constructor(
+          public startLineNumber: number,
+          public startColumn: number,
+          public endLineNumber: number,
+          public endColumn: number,
+        ) {}
+      },
+    };
+    mockCursorOffset = 22; // Inside `SELECT @x`, after the DECLARE that gives it a value
+
+    let eventDetail: { query: string } | null = null;
+    const handler = ((e: CustomEvent) => {
+      eventDetail = e.detail;
+    }) as EventListener;
+    window.addEventListener("execute-query", handler);
+
+    render(
+      React.createElement(
+        QueryEditor,
+        createDefaultProps({ value: "DECLARE @x INT = 5; SELECT @x\nGO\nSELECT 2", databaseType: "mssql" as const }),
+      ),
+    );
+    act(() => {
+      capturedCommands[0].handler();
+    });
+
+    expect(eventDetail!.query).toBe("DECLARE @x INT = 5; SELECT @x");
+    window.removeEventListener("execute-query", handler);
+  });
+
   test("getEffectiveQuery: cursor after last semicolon extracts trailing statement", () => {
     mockUseMonacoReturn = {
       Range: class {

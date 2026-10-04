@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { splitStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
+import { splitStatements, isMultiStatement, splitExecutionUnits } from "@/lib/sql/statement-splitter";
 import type { SplitStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
@@ -571,5 +571,259 @@ describe("splitStatements offsets", () => {
 
     expect(rest).toHaveLength(0);
     expect(input.slice(only!.start, only!.end)).toBe(input);
+  });
+});
+
+// ── Procedural bodies, separator lines and batches (#1312) ──────────────────
+//
+// Measured in the end-to-end pass of 2026-10-03/04 before the `script` facts existed:
+// Oracle 26ai Free 23.26.3 stored a procedure cut at its inner `;` INVALID (PLS-00103)
+// while the route reported fragment 1 `success`; SQLite 3.50.4 answered "incomplete
+// input" for a trigger and libSQL sqld 0.24.33 "unexpected end of input"; SQL Server 2025
+// answered `Must declare the scalar variable "@x"` and `Incorrect syntax near 'GO'`.
+
+describe("splitStatements: Oracle PL/SQL units", () => {
+  const ORACLE = resolveSqlGrammar("oracle");
+
+  test("a procedure is one statement and keeps the `;` after its END", () => {
+    const procedure =
+      "CREATE OR REPLACE PROCEDURE raise_sal(p_pct IN NUMBER) AS BEGIN UPDATE emp SET salary = salary * (1 + p_pct/100); END;";
+
+    expect(sqlsOf(splitStatements(procedure, ORACLE))).toEqual([procedure]);
+    expect(isMultiStatement(procedure, ORACLE)).toBe(false);
+  });
+
+  test("a trigger, an anonymous block and a plain statement after them are three statements", () => {
+    const script = [
+      "CREATE OR REPLACE TRIGGER trg_emp BEFORE INSERT ON emp FOR EACH ROW BEGIN :NEW.name := UPPER(:NEW.name); END;",
+      "BEGIN raise_sal(10); END;",
+      "SELECT * FROM emp;",
+    ].join("\n");
+
+    expect(sqlsOf(splitStatements(script, ORACLE))).toEqual([
+      "CREATE OR REPLACE TRIGGER trg_emp BEFORE INSERT ON emp FOR EACH ROW BEGIN :NEW.name := UPPER(:NEW.name); END;",
+      "BEGIN raise_sal(10); END;",
+      // A plain statement still loses its `;`: oracledb refuses one that carries it.
+      "SELECT * FROM emp",
+    ]);
+  });
+
+  test("a DECLARE section shares its block's END", () => {
+    const block = "DECLARE v NUMBER := 1; w NUMBER; BEGIN w := v + 1; END;";
+
+    expect(sqlsOf(splitStatements(`${block}\nSELECT 1 FROM dual`, ORACLE))).toEqual([block, "SELECT 1 FROM dual"]);
+  });
+
+  test("IF, LOOP and CASE closers inside a body do not end it", () => {
+    const fn = [
+      "CREATE FUNCTION grade(p NUMBER) RETURN VARCHAR2 IS",
+      "  r VARCHAR2(1);",
+      "  CURSOR c IS SELECT id FROM emp;",
+      "BEGIN",
+      "  IF p IS NULL THEN RETURN NULL; END IF;",
+      "  FOR x IN c LOOP NULL; END LOOP;",
+      "  CASE WHEN p > 5 THEN r := 'A'; ELSE r := 'B'; END CASE;",
+      "  r := CASE p WHEN 1 THEN 'X' ELSE r END;",
+      "  BEGIN NULL; EXCEPTION WHEN OTHERS THEN NULL; END;",
+      "  RETURN r;",
+      "END grade;",
+    ].join("\n");
+
+    expect(sqlsOf(splitStatements(`${fn}\nSELECT grade(1) FROM dual;`, ORACLE))).toEqual([
+      fn,
+      "SELECT grade(1) FROM dual",
+    ]);
+  });
+
+  test("a package spec and body, with nested routines and forward declarations", () => {
+    const spec = "CREATE OR REPLACE PACKAGE pk AS PROCEDURE p(a IN NUMBER); FUNCTION f RETURN NUMBER; END pk;";
+    const body = [
+      "CREATE OR REPLACE PACKAGE BODY pk AS",
+      "  PROCEDURE p(a IN NUMBER) IS BEGIN NULL; END p;",
+      "  FUNCTION f RETURN NUMBER IS v NUMBER; BEGIN SELECT 1 INTO v FROM dual; RETURN v; END;",
+      "BEGIN",
+      "  NULL;",
+      "END pk;",
+    ].join("\n");
+
+    expect(sqlsOf(splitStatements(`${spec}\n${body}`, ORACLE))).toEqual([spec, body]);
+  });
+
+  test("a type body is a unit and a type spec is plain SQL", () => {
+    const spec = "CREATE TYPE pt AS OBJECT (x NUMBER, MEMBER FUNCTION len RETURN NUMBER)";
+    const body = "CREATE TYPE BODY pt AS MEMBER FUNCTION len RETURN NUMBER IS BEGIN RETURN x; END; END;";
+
+    expect(sqlsOf(splitStatements(`${spec};\n${body}`, ORACLE))).toEqual([spec, body]);
+  });
+
+  test("a CREATE of anything but a unit is plain SQL, cut at its `;`", () => {
+    expect(sqlsOf(splitStatements("CREATE TABLE t (a NUMBER); BEGIN NULL; END;", ORACLE))).toEqual([
+      "CREATE TABLE t (a NUMBER)",
+      "BEGIN NULL; END;",
+    ]);
+  });
+
+  test("an editionable unit is read past its modifiers", () => {
+    const unit = "CREATE OR REPLACE EDITIONABLE PROCEDURE p AS BEGIN NULL; END;";
+
+    expect(sqlsOf(splitStatements(unit, ORACLE))).toEqual([unit]);
+  });
+
+  test("a trigger whose body is a CALL has no block, so its `;` ends it as usual", () => {
+    const script =
+      "CREATE TRIGGER t BEFORE INSERT ON emp REFERENCING NEW AS n FOR EACH ROW CALL p(:n.id); SELECT 1 FROM dual";
+
+    expect(sqlsOf(splitStatements(script, ORACLE))).toEqual([
+      "CREATE TRIGGER t BEFORE INSERT ON emp REFERENCING NEW AS n FOR EACH ROW CALL p(:n.id)",
+      "SELECT 1 FROM dual",
+    ]);
+  });
+
+  test("words inside literals, comments and quoted names open nothing", () => {
+    const block = `BEGIN INSERT INTO "END" VALUES ('END; BEGIN'); -- END;\nNULL; /* END; */ END;`;
+
+    expect(sqlsOf(splitStatements(`${block} SELECT 1 FROM dual`, ORACLE))).toEqual([block, "SELECT 1 FROM dual"]);
+  });
+
+  test("a word glued to a number or an identifier is not a keyword", () => {
+    expect(splitStatements("BEGIN x := 1END; y_begin := 2; END;", ORACLE)).toHaveLength(1);
+  });
+
+  test("a `/` line ends the unit and is never sent", () => {
+    const script = "CREATE PROCEDURE p AS BEGIN NULL; END;\n/\nBEGIN p; END;\n  /  \nSELECT 1 FROM dual\n/";
+    const result = splitStatements(script, ORACLE);
+
+    expect(sqlsOf(result)).toEqual(["CREATE PROCEDURE p AS BEGIN NULL; END;", "BEGIN p; END;", "SELECT 1 FROM dual"]);
+    expect(linesOf(result)).toEqual([0, 2, 4]);
+  });
+
+  test("a unit whose frames never close runs to the `/` line, SQL*Plus's own rule", () => {
+    const callSpec = 'CREATE FUNCTION f RETURN NUMBER AS LANGUAGE C NAME "f" LIBRARY lib;';
+
+    expect(sqlsOf(splitStatements(`${callSpec}\n/\nSELECT 1 FROM dual`, ORACLE))).toEqual([
+      callSpec,
+      "SELECT 1 FROM dual",
+    ]);
+  });
+
+  test("one unit followed by `/` still has to be cut, so it takes the multi-statement route", () => {
+    expect(isMultiStatement("BEGIN NULL; END;\n/", ORACLE)).toBe(true);
+    expect(isMultiStatement("BEGIN NULL; END;", ORACLE)).toBe(false);
+  });
+
+  test("a `/` that is not alone on its line is division, and one inside a comment is text", () => {
+    expect(sqlsOf(splitStatements("SELECT 10\n/ 2 FROM dual", ORACLE))).toEqual(["SELECT 10\n/ 2 FROM dual"]);
+    expect(sqlsOf(splitStatements("SELECT 1 FROM dual /*\n/\n*/", ORACLE))).toEqual(["SELECT 1 FROM dual /*\n/\n*/"]);
+  });
+
+  test("an END with nothing after it closes the unit at the end of the input", () => {
+    expect(sqlsOf(splitStatements("BEGIN NULL; END", ORACLE))).toEqual(["BEGIN NULL; END"]);
+  });
+
+  test("a stray END in a unit with no open frame is ignored", () => {
+    expect(sqlsOf(splitStatements("CREATE TRIGGER t AFTER DROP ON SCHEMA END; SELECT 1 FROM dual", ORACLE))).toEqual([
+      "CREATE TRIGGER t AFTER DROP ON SCHEMA END",
+      "SELECT 1 FROM dual",
+    ]);
+  });
+});
+
+describe("splitStatements: SQLite and libSQL trigger bodies", () => {
+  const SQLITE = resolveSqlGrammar("sqlite");
+
+  test("a trigger is one statement, its END closing it", () => {
+    const trigger =
+      "CREATE TRIGGER trg_emp AFTER INSERT ON emp BEGIN UPDATE emp SET name = upper(NEW.name) WHERE id = NEW.id; END";
+
+    expect(sqlsOf(splitStatements(`${trigger};`, SQLITE))).toEqual([trigger]);
+    expect(splitStatements(`${trigger};`, resolveSqlGrammar("libsql"))).toHaveLength(1);
+  });
+
+  test("a CASE inside the body is not the body's END, and the rest of the script still splits", () => {
+    const trigger = [
+      "CREATE TEMP TRIGGER IF NOT EXISTS guard BEFORE DELETE ON emp",
+      "BEGIN",
+      "  SELECT CASE WHEN OLD.id = 1 THEN RAISE(ABORT, 'protected') END;",
+      "  INSERT INTO log VALUES (OLD.id);",
+      "END",
+    ].join("\n");
+    const script = `CREATE TABLE log (id INTEGER);\n${trigger};\nINSERT INTO emp VALUES (2, 'b');`;
+
+    expect(sqlsOf(splitStatements(script, SQLITE))).toEqual([
+      "CREATE TABLE log (id INTEGER)",
+      trigger,
+      "INSERT INTO emp VALUES (2, 'b')",
+    ]);
+  });
+
+  test("BEGIN is a transaction there, not a block", () => {
+    expect(sqlsOf(splitStatements("BEGIN; INSERT INTO t VALUES (1); COMMIT;", SQLITE))).toEqual([
+      "BEGIN",
+      "INSERT INTO t VALUES (1)",
+      "COMMIT",
+    ]);
+  });
+
+  test("a CREATE that is not a trigger is plain", () => {
+    expect(splitStatements("CREATE TEMPORARY TABLE t (a); CREATE VIEW v AS SELECT 1;", SQLITE)).toHaveLength(2);
+  });
+});
+
+describe("splitStatements and splitExecutionUnits: T-SQL batches", () => {
+  const MSSQL = resolveSqlGrammar("mssql");
+
+  test("GO lines separate batches and are never sent", () => {
+    const result = splitStatements("SELECT 1 AS a\nGO\nSELECT 2 AS b\ngo -- next\n", MSSQL);
+
+    expect(sqlsOf(result)).toEqual(["SELECT 1 AS a", "SELECT 2 AS b"]);
+    expect(linesOf(result)).toEqual([0, 2]);
+    expect(isMultiStatement("SELECT 1\r\nGO\r\n", MSSQL)).toBe(true);
+  });
+
+  test("GO inside a literal, a comment or a longer word is not a separator, and neither is GO with a count", () => {
+    for (const text of ["SELECT 'a\nGO\nb'", "SELECT 1 /*\nGO\n*/", "GOTO done", "SELECT 1\nGO 5"]) {
+      expect(isMultiStatement(text, MSSQL)).toBe(false);
+    }
+  });
+
+  test("a batch is ONE unit with its inner statements, so a variable survives to the SELECT", () => {
+    const units = splitExecutionUnits("DECLARE @x INT = 5; SELECT @x * 2 AS doubled;", MSSQL);
+
+    expect(units).toHaveLength(1);
+    expect(units[0].sql).toBe("DECLARE @x INT = 5; SELECT @x * 2 AS doubled");
+    expect(sqlsOf(units[0].statements)).toEqual(["DECLARE @x INT = 5", "SELECT @x * 2 AS doubled"]);
+    // The statements are still two for the readers that ask about statements.
+    expect(isMultiStatement("DECLARE @x INT = 5; SELECT @x * 2 AS doubled;", MSSQL)).toBe(true);
+  });
+
+  test("each GO-separated batch is its own unit, offsets and lines intact", () => {
+    const input = "CREATE PROCEDURE p AS BEGIN SET NOCOUNT ON; SELECT 1; END;\nGO\n\nEXEC p;\nSELECT 2;\nGO";
+    const units = splitExecutionUnits(input, MSSQL);
+
+    expect(sqlsOf(units)).toEqual(["CREATE PROCEDURE p AS BEGIN SET NOCOUNT ON; SELECT 1; END", "EXEC p;\nSELECT 2"]);
+    expect(linesOf(units)).toEqual([0, 3]);
+    for (const unit of units) expect(input.slice(unit.start, unit.end)).toBe(unit.sql);
+  });
+
+  test("an empty batch between two GO lines is no unit", () => {
+    expect(splitExecutionUnits("GO\nGO\nSELECT 1\nGO\n\nGO", MSSQL)).toHaveLength(1);
+  });
+});
+
+describe("splitExecutionUnits: one unit per statement where the unit is the statement", () => {
+  test("PostgreSQL dollar-quoted bodies are untouched and every statement is its own unit", () => {
+    const fn = "CREATE FUNCTION f() RETURNS int AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql";
+    const units = splitExecutionUnits(`${fn}; SELECT f();`, resolveSqlGrammar("postgres"));
+
+    expect(sqlsOf(units)).toEqual([fn, "SELECT f()"]);
+    expect(units.map((unit) => unit.statements.length)).toEqual([1, 1]);
+  });
+
+  test("the default grammar has no body, separator or batch", () => {
+    expect(sqlsOf(splitExecutionUnits("BEGIN; SELECT 1;\nGO\n/"))).toEqual(["BEGIN", "SELECT 1", "GO\n/"]);
+  });
+
+  test("MySQL compound statements are not read yet, as recorded in BACKLOG S7", () => {
+    expect(splitStatements("CREATE PROCEDURE p() BEGIN SELECT 1; END", resolveSqlGrammar("mysql"))).toHaveLength(2);
   });
 });
