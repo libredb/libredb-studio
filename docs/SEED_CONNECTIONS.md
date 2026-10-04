@@ -972,9 +972,9 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
    Pin the `-discovery` app to the manager.
 6. `error` with `network_not_found`: no Docker network has exactly the name `DISCOVERY_NETWORK` gives, or the exporter runs where that network does not exist, for example outside a swarm.
    Check the variable against `docker network ls` on the manager; CapRover's own network is `captain-overlay-network`.
-7. `error` with any other code:
-   - `invalid_export`: Studio refused the file at `SEED_DISCOVERY_PATH`, and the message says why: over 2 MiB, unreadable (the reason follows in brackets), not JSON, or the first field that does not match the export's shape.
-     Check that `SEED_DISCOVERY_PATH` is the exporter's `DISCOVERY_OUTPUT`, and for `EACCES` that `DISCOVERY_FILE_UID` and `DISCOVERY_FILE_GID` name the user Studio runs as, because the file is mode 0600.
+7. `error` with one of these codes:
+   - `invalid_export`: Studio refused the file at `SEED_DISCOVERY_PATH`, and the message says why: over 2 MiB, unreadable (the reason follows in parentheses), not JSON, or the first field that does not match the export's shape.
+     Check that `SEED_DISCOVERY_PATH` is the exporter's `DISCOVERY_OUTPUT`, and for `EACCES` that `DISCOVERY_FILE_UID` is the user Studio runs as, because the file is mode 0600.
      Studio also logs the reason as a `Discovery source error` warning when it appears or changes.
    - `docker_error`: a Docker failure no other code covers, such as an HTTP status other than 400 and 503, and the message is the daemon's own text when it sent one.
      The `-discovery` app's log repeats it.
