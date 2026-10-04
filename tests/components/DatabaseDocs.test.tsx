@@ -465,7 +465,60 @@ describe("DatabaseDocs object filtering", () => {
     expect(queryByText("users")).not.toBeNull();
     expect(queryByText("recalculate_totals")).toBeNull();
     // The header count is the same derivation, so a routine cannot be counted as a table.
-    expect(queryByText("1 tables")).not.toBeNull();
+    expect(queryByText("1 table")).not.toBeNull();
+  });
+});
+
+describe("DatabaseDocs counts by relation kind (#1466)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const capabilities = {
+    queryLanguage: "sql",
+    objectKinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", acceptsRowWrites: true },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+    ],
+  } as unknown as ProviderCapabilities;
+
+  const inventory: DetailedObject[] = [
+    ...["employees", "departments", "salaries", "titles"].map((name) => ({
+      name,
+      kind: "table",
+      path: [name],
+      columns: [],
+      indexes: [],
+    })),
+    { name: "current_dept", kind: "view", path: ["current_dept"], columns: [], indexes: [] },
+  ];
+
+  test("the header names tables and views separately", () => {
+    const { queryByText } = render(<DatabaseDocs schema={inventory} schemaContext="[]" capabilities={capabilities} />);
+    expect(queryByText("4 tables, 1 view")).not.toBeNull();
+    expect(queryByText("5 tables")).toBeNull();
+  });
+
+  test("the Markdown export carries the same counts", async () => {
+    const user = userEvent.setup();
+    const createObjectURLMock = mock(() => "blob:fake-url");
+    globalThis.URL.createObjectURL = createObjectURLMock as unknown as typeof URL.createObjectURL;
+    globalThis.URL.revokeObjectURL = mock(() => {});
+    const origCreateElement = document.createElement.bind(document);
+    document.createElement = mock((tag: string) => {
+      const el = origCreateElement(tag);
+      if (tag === "a") el.click = mock(() => {});
+      return el;
+    }) as unknown as typeof document.createElement;
+
+    const { queryByText } = render(<DatabaseDocs schema={inventory} schemaContext="[]" capabilities={capabilities} />);
+    await user.click(queryByText("Export MD")!);
+
+    const exportedBlob = (createObjectURLMock.mock.calls as unknown[][])[0][0] as Blob;
+    const exported = await exportedBlob.text();
+    expect(exported).toContain("**Relations:** 4 tables, 1 view");
+
+    document.createElement = origCreateElement;
   });
 });
 

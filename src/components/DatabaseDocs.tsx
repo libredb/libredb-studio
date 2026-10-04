@@ -4,7 +4,7 @@ import { appFetch } from "@/lib/config/base-path";
 import React, { useState } from "react";
 import { FileText, LoaderCircle, Search, Sparkles, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
+import { relationCountLabel, relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { renderInline } from "@/components/rich-text";
@@ -111,7 +111,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities
   const exportMarkdown = () => {
     let md = `# Database Documentation\n\n`;
     md += `**Type:** ${databaseType || "Unknown"}\n`;
-    md += `**Tables:** ${relations.length}\n\n`;
+    md += `**Relations:** ${relationCountLabel(relations, capabilities)}\n\n`;
 
     if (aiDocs) {
       md += `## AI Analysis\n\n${aiDocs}\n\n---\n\n`;
@@ -186,7 +186,7 @@ export function DatabaseDocs({ schema, schemaContext, databaseType, capabilities
             <FileText strokeWidth={1.5} className="w-3 h-3 text-hue-teal" />
           </div>
           <span className="text-xs font-medium text-hue-teal">Database Docs</span>
-          <span className="text-[0.625rem] text-fg-muted font-mono">{relations.length} tables</span>
+          <span className="text-[0.625rem] text-fg-muted font-mono">{relationCountLabel(relations, capabilities)}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <button

@@ -16,7 +16,7 @@
  * left to keep. `StoredObject` below is the one shape that still has the absences, and it
  * is persisted data rather than a reading.
  */
-import { findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
+import { declaredKinds, findKind, kindAcceptsRowWrites } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import type { DatabaseObject, ObjectDetail, ObjectReadRange, ProviderCapabilities } from "@/lib/db/types";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
@@ -85,6 +85,32 @@ export function relationObjects(
 ): readonly DetailedObject[] {
   if (capabilities === undefined) return objects;
   return objects.filter((object) => findKind(capabilities, object.kind)?.role === "relation");
+}
+
+/**
+ * How many relations a header names, counted BY KIND in the provider's own words (#1466).
+ *
+ * A view, a materialized view and a collection share the `relation` role with a table, so a
+ * bare `N tables` called a view a table. Each declared kind is counted under its own `label` /
+ * `labelPlural`, in declaration order, so "4 tables, 1 view" needs no kind id here and a new
+ * engine's relation kinds are named without a change.
+ *
+ * Capabilities that have not loaded yet name no kind, and an empty list has nothing to group,
+ * so both keep the old wording rather than inventing a noun.
+ */
+export function relationCountLabel(
+  relations: readonly DetailedObject[],
+  capabilities: ProviderCapabilities | undefined,
+): string {
+  const parts =
+    capabilities === undefined
+      ? []
+      : declaredKinds(capabilities).flatMap((kind) => {
+          const count = relations.filter((object) => object.kind === kind.id).length;
+          if (count === 0) return [];
+          return [`${count} ${(count === 1 ? kind.label : kind.labelPlural).toLowerCase()}`];
+        });
+  return parts.length > 0 ? parts.join(", ") : `${relations.length} tables`;
 }
 
 /**
