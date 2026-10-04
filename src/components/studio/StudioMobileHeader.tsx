@@ -3,7 +3,7 @@
 import React, { type RefObject } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import type { QueryEditorRef } from "@/components/QueryEditor";
-import { CancelQueryButton } from "./QueryToolbar";
+import { CancelQueryButton, type CancelControlMode } from "./QueryToolbar";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
@@ -63,11 +63,10 @@ interface StudioMobileHeaderProps {
   onExecuteQuery: () => void;
   onCancelQuery: () => void;
   /**
-   * False where the connection's provider cannot cancel a running statement
-   * (`ProviderCapabilities.supportsQueryCancel`, #1364): Cancel is then disabled with the
-   * reason, as in `QueryToolbar`. Omitted means it can.
+   * What the Cancel control can do on this connection (`cancelControlMode`, #1364), as in
+   * `QueryToolbar`. Omitted means the provider can cancel.
    */
-  canCancelQuery?: boolean;
+  cancelMode?: CancelControlMode;
   /**
    * The transaction trio, supplied together or not at all — the same contract
    * `QueryToolbar` states. A caller whose provider declares no transaction session
@@ -116,7 +115,7 @@ export const StudioMobileHeader = React.memo(function StudioMobileHeader({
   onClearQuery,
   onExecuteQuery,
   onCancelQuery,
-  canCancelQuery = true,
+  cancelMode = "cancel",
   onBeginTransaction,
   onCommitTransaction,
   onRollbackTransaction,
@@ -392,7 +391,7 @@ export const StudioMobileHeader = React.memo(function StudioMobileHeader({
           </div>
 
           {isExecuting ? (
-            <CancelQueryButton canCancel={canCancelQuery} onCancel={onCancelQuery} className="gap-1.5" />
+            <CancelQueryButton mode={cancelMode} onCancel={onCancelQuery} className="gap-1.5" />
           ) : (
             <Button
               size="sm"

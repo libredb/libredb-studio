@@ -16,6 +16,7 @@ import {
   QueryToolbar,
   BottomPanel,
 } from "@/components/studio/index";
+import { cancelControlMode } from "@/components/studio/QueryToolbar";
 import { StudioModals } from "@/components/studio/StudioModals";
 import { StudioOverlays } from "@/components/studio/StudioOverlays";
 import { AgentRail } from "@/components/agent/AgentRail";
@@ -1199,7 +1200,7 @@ export default function Studio() {
               onClearQuery={handleClearQuery}
               onExecuteQuery={handleMobileExecuteQuery}
               onCancelQuery={cancelEditorQuery}
-              canCancelQuery={metadata?.capabilities.supportsQueryCancel !== false}
+              cancelMode={cancelControlMode(metadata)}
               {...transactionHandlers}
               onToggleEditing={onToggleEditing}
               onImport={openImport}

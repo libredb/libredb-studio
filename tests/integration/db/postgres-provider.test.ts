@@ -1110,6 +1110,32 @@ describe("PostgresProvider", () => {
       }
     });
 
+    // A session that runs over TLS gets its cancel over TLS: the client's own `ssl` travels
+    // with the request, so the first bytes are an SSLRequest, and a server that does not
+    // answer `S` never sees the key.
+    test("asks for TLS first when the session's client was configured with ssl", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refusePgCancelBackend();
+      const errors = spyOn(console, "error").mockImplementation(() => {});
+      const received: Buffer[] = [];
+      const listener = await cancelListener((bytes) => received.push(bytes));
+      try {
+        runningOf(provider).set("tls-session", {
+          pid: 7,
+          client: { processID: 7, secretKey: 8, host: "127.0.0.1", port: listener.port, ssl: true },
+        });
+
+        expect(await provider.cancelQuery("tls-session")).toBe(false);
+        const first = Buffer.concat(received);
+        expect(first.length).toBe(8);
+        expect(first.readInt32BE(4)).toBe(80877103);
+      } finally {
+        errors.mockRestore();
+        await listener.close();
+      }
+    });
+
     test("answers false when the run is still going after the wire-protocol cancel", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();

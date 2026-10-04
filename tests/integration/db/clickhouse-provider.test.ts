@@ -901,13 +901,18 @@ describe("ClickHouseProvider cancelQuery", () => {
   const KILLED = (killStatus: string) =>
     jsonReply([{ kill_status: killStatus, query_id: "q-1", user: "default", query: LONG }]);
 
-  test("runs the statement under the caller's id as the server's query id", async () => {
+  // ClickHouse keeps a query id unique per server USER only, so the caller's id (which any
+  // Studio user chooses) must not become it: two users on one ClickHouse account could then
+  // share an id, and one KILL would stop both.
+  test("runs the statement under a query id it generates, never the caller's", async () => {
     const provider = await connectProvider();
 
     await provider.query("SELECT count() FROM orders", undefined, "q-1");
     await provider.query("SELECT 2");
 
-    expect(new URL(urlWith("count()")).searchParams.get("query_id")).toBe("q-1");
+    const serverId = new URL(urlWith("count()")).searchParams.get("query_id");
+    expect(serverId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(serverId).not.toBe("q-1");
     // Without an id the server picks its own, as before.
     expect(new URL(urlWith("SELECT 2")).searchParams.has("query_id")).toBe(false);
   });
@@ -920,7 +925,9 @@ describe("ClickHouseProvider cancelQuery", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(await provider.cancelQuery("q-1")).toBe(true);
-    expect(sqlWith("KILL QUERY")).toBe("KILL QUERY WHERE query_id = 'q-1' SYNC");
+    // The KILL names the id the statement was sent under, not the caller's.
+    const serverId = new URL(urlWith("sipHash64")).searchParams.get("query_id");
+    expect(sqlWith("KILL QUERY")).toBe(`KILL QUERY WHERE query_id = '${serverId}' SYNC`);
     expect((await running) as Error).toBeInstanceOf(QueryCancelledError);
   });
 

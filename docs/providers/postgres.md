@@ -1441,11 +1441,24 @@ same test pass; Materialize was not measured with it.
 
 The server never answers a CancelRequest, so `cancelQuery` answers true only once the run has ended,
 within 3 s of sending it; a run still going after that is false, and the editor says the cancel was
-not confirmed. The request is sent without TLS, as libpq sent it before PostgreSQL 17: a server reads
-it before authentication and before `pg_hba.conf`, but a proxy that refuses plaintext connections
-refuses it too, and the cancel is then reported as not confirmed. It is sent only while the run still
-holds that session, checked once the socket is open, because a released session can already be
-running another request's statement.
+not confirmed.
+
+**Encrypted wherever the session is.** When the connection uses TLS (any SSL mode but `disable`), the
+cancel connection sends an SSLRequest first, upgrades with the same TLS options and server name the
+session itself used, and only then sends the CancelRequest, as `pg`'s own cancel and libpq since
+PostgreSQL 17 do. A server that answers the SSLRequest with `N` gets nothing, since the session was
+configured to require TLS, and a certificate the session's settings do not trust gets nothing either;
+both are reported as not confirmed. A connection without TLS sends the request in plaintext, as the
+session itself goes. Behind an SNI-routing proxy (a managed service that routes on the TLS server
+name), only the encrypted request can reach the session at all, which is one more reason it is not
+sent in clear. Measured 2026-10-04: over TLS the request stopped `SELECT pg_sleep(20)` about 1.5 s
+into the run on PostgreSQL 18.6 (`ssl=on`) and on CockroachDB v26.3.2 in secure mode alike.
+
+**A window of one round trip remains.** The request is sent only while the run still holds its
+session, checked once the cancel socket is open, because a released session can already be running
+another request's statement. The check narrows the race to the request's own flight time and cannot
+close it: a statement that ends while the 16 bytes travel leaves the key on a session the pool may
+have handed on. That window is inherent to the protocol's cancel, the same one `psql`'s Ctrl+C has.
 
 ### 5.4 Declared column types
 

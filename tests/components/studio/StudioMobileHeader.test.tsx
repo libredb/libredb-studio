@@ -169,7 +169,7 @@ describe("StudioMobileHeader", () => {
   test("CANCEL is disabled with the reason where the connection cannot cancel (#1364)", () => {
     const onCancelQuery = mock(() => {});
     const { getByText } = render(
-      <StudioMobileHeader {...defaults} isExecuting canCancelQuery={false} onCancelQuery={onCancelQuery} />,
+      <StudioMobileHeader {...defaults} isExecuting cancelMode="unavailable" onCancelQuery={onCancelQuery} />,
     );
     const button = getByText("CANCEL").closest("button")!;
     expect(button.disabled).toBe(true);
@@ -177,6 +177,15 @@ describe("StudioMobileHeader", () => {
     expect(button.parentElement?.getAttribute("title")).toBe(CANCEL_UNAVAILABLE_REASON);
     fireEvent.click(button);
     expect(onCancelQuery).not.toHaveBeenCalled();
+  });
+
+  test("reads STOP WAITING in stop-waiting mode and still calls the handler", () => {
+    const onCancelQuery = mock(() => {});
+    const { getByText } = render(
+      <StudioMobileHeader {...defaults} isExecuting cancelMode="stop-waiting" onCancelQuery={onCancelQuery} />,
+    );
+    fireEvent.click(getByText("STOP WAITING").closest("button")!);
+    expect(onCancelQuery).toHaveBeenCalledTimes(1);
   });
 
   test("CANCEL is enabled when the header is not told otherwise", () => {

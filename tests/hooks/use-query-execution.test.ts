@@ -1,5 +1,5 @@
 import "../setup-dom";
-import { mockToastSuccess, mockToastError, mockToastDefault } from "../helpers/mock-sonner";
+import { mockToastSuccess, mockToastError, mockToastDefault, mockToastLoading } from "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
@@ -510,7 +510,10 @@ describe("useQueryExecution", () => {
     expect(abortSignalUsed).toBe(true);
     // The server confirmed the cancel, so the toast says it happened, once.
     expect(mockToastSuccess).toHaveBeenCalledTimes(1);
-    expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", { description: "Query execution was cancelled." });
+    expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", {
+      description: "Query execution was cancelled.",
+      id: "loading-toast",
+    });
 
     globalThis.fetch = originalFetch;
   });
@@ -3481,7 +3484,10 @@ describe("useQueryExecution", () => {
 
     // Nothing confirmed the cancel, so the run is not reported as cancelled (#1364).
     expect(mockToastSuccess).not.toHaveBeenCalled();
-    expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+    expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", {
+      description: CANCEL_NOT_CONFIRMED_TEXT,
+      id: "loading-toast",
+    });
 
     globalThis.fetch = originalFetch;
   });
@@ -3541,7 +3547,10 @@ describe("useQueryExecution", () => {
         const tabs = await runThenCancel();
         expect(mockToastSuccess).not.toHaveBeenCalled();
         expect(mockToastError).toHaveBeenCalledTimes(1);
-        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", {
+          description: CANCEL_NOT_CONFIRMED_TEXT,
+          id: "loading-toast",
+        });
         // Nothing in this tab waits for the run any more; the toast says the engine may.
         expect(tabs[0].isExecuting).toBe(false);
       } finally {
@@ -3556,7 +3565,10 @@ describe("useQueryExecution", () => {
       try {
         await runThenCancel();
         expect(mockToastSuccess).not.toHaveBeenCalled();
-        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", {
+          description: CANCEL_NOT_CONFIRMED_TEXT,
+          id: "loading-toast",
+        });
       } finally {
         restore();
       }
@@ -3567,7 +3579,10 @@ describe("useQueryExecution", () => {
       try {
         await runThenCancel();
         expect(mockToastSuccess).not.toHaveBeenCalled();
-        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", {
+          description: CANCEL_NOT_CONFIRMED_TEXT,
+          id: "loading-toast",
+        });
       } finally {
         restore();
       }
@@ -3578,7 +3593,10 @@ describe("useQueryExecution", () => {
       try {
         await runThenCancel();
         expect(mockToastSuccess).not.toHaveBeenCalled();
-        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", {
+          description: CANCEL_NOT_CONFIRMED_TEXT,
+          id: "loading-toast",
+        });
       } finally {
         restore();
       }
@@ -3594,9 +3612,101 @@ describe("useQueryExecution", () => {
         expect(mockToastSuccess).toHaveBeenCalledTimes(1);
         expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", {
           description: "Query execution was cancelled.",
+          id: "loading-toast",
         });
       } finally {
         restore();
+      }
+    });
+
+    // The verdict can take seconds (a wire-protocol cancel waits for the run to end), so a
+    // toast says at once that the cancel is under way, and the verdict replaces it.
+    test("says Cancelling... at once, and the verdict replaces that toast", async () => {
+      const restore = installCancelAnswers(() => json({ cancelled: true }));
+      mockToastLoading.mockClear();
+      try {
+        await runThenCancel();
+        expect(mockToastLoading).toHaveBeenCalledTimes(1);
+        expect(mockToastLoading).toHaveBeenCalledWith("Cancelling...", { description: undefined });
+      } finally {
+        restore();
+      }
+    });
+
+    // Where the provider has no cancel at all, the control reads "Stop waiting": it ends this
+    // tab's wait, posts nothing the route could only refuse, and says the statement goes on.
+    test("a provider without cancel: stops waiting, posts no cancel, says the statement runs on", async () => {
+      const cancelled: string[] = [];
+      const restore = installCancelAnswers((queryId) => {
+        cancelled.push(queryId);
+        return json({ cancelled: false });
+      });
+      mockToastLoading.mockClear();
+      try {
+        let tabs = [createTab()];
+        const setTabs = mock((updater: unknown) => {
+          if (typeof updater === "function") tabs = (updater as (prev: QueryTab[]) => QueryTab[])(tabs);
+        });
+        const metadata = {
+          ...mockMetadata,
+          capabilities: { ...mockMetadata.capabilities, supportsQueryCancel: false },
+        };
+        const { result } = renderHook(() => useQueryExecution(createDefaultParams({ setTabs, metadata })));
+        const running = act(async () => {
+          await result.current.executeQuery("SELECT * FROM users");
+        });
+        await act(async () => {
+          await result.current.cancelQuery();
+        });
+        await running;
+
+        expect(cancelled).toEqual([]);
+        expect(tabs[0].isExecuting).toBe(false);
+        expect(mockToastLoading).not.toHaveBeenCalled();
+        expect(mockToastSuccess).not.toHaveBeenCalled();
+        expect(mockToastError).toHaveBeenCalledWith("Stopped Waiting", {
+          description:
+            "Studio stopped waiting for the result. This database cannot cancel a running statement, so it keeps running on the server until it ends.",
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // A statement inside a transaction goes to /api/db/transaction, which hands the provider
+    // no `queryId`, so the server has nothing to cancel by: say so rather than "not confirmed".
+    test("a run with no id on the server says why it cannot be cancelled there", async () => {
+      const cancelled: string[] = [];
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/api/db/transaction")) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          });
+        }
+        if (url.includes("/api/db/cancel")) cancelled.push("cancel");
+        return json({ cancelled: false });
+      }) as typeof fetch;
+      try {
+        const { result } = renderHook(() => useQueryExecution(createDefaultParams({ transactionActive: true })));
+        const running = act(async () => {
+          await result.current.executeQuery("UPDATE users SET name = 'x' WHERE id = 1");
+        });
+        await act(async () => {
+          await result.current.cancelQuery();
+        });
+        await running;
+
+        expect(cancelled).toEqual([]);
+        expect(mockToastError).toHaveBeenCalledWith("Stopped Waiting", {
+          description:
+            "A multi-statement script or a statement inside a transaction cannot be cancelled on the server, so it keeps running there until it ends.",
+        });
+      } finally {
+        globalThis.fetch = originalFetch;
       }
     });
   });

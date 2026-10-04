@@ -878,10 +878,24 @@ export interface ProviderCapabilities {
    * answer, because a provider's engine can still refuse (a PostgreSQL-wire engine that does
    * not honour `pg_cancel_backend`, a statement that ended first).
    *
-   * Optional, and the UI disables Cancel only on `=== false`: an embedded host declares its
-   * own capabilities and runs its own queries, so an absent flag keeps the control it had.
+   * Optional, and the UI reads it only on `=== false`: an embedded host declares its own
+   * capabilities and runs its own queries, so an absent flag keeps the control it had. Where
+   * it is false the control reads "Stop waiting": it ends the editor's wait and says the
+   * statement keeps running on the server.
    */
   supportsQueryCancel?: boolean;
+  /**
+   * The engine runs a statement on the Studio server's own JavaScript thread, synchronously,
+   * so while one runs the server answers no other request: SQLite, whose `node:sqlite` and
+   * `bun:sqlite` drivers are both synchronous (#1364; measured 2026-10-03, `/api/health`
+   * answered after 69.7 s during one statement).
+   *
+   * Declared by the provider, unlike `supportsQueryCancel`: it is a property of the driver,
+   * and nothing on the provider's surface shows it. It is why the editor disables its
+   * Cancel control there instead of offering "Stop waiting": with the server blocked,
+   * nothing else the user could do next would be answered before the statement ends.
+   */
+  blocksServerWhileRunning?: boolean;
   /**
    * The statements that can END the transaction they run inside on this engine, beyond the
    * `COMMIT` / `ROLLBACK` / `ABORT` every engine has: the ones it COMMITS IMPLICITLY (MySQL

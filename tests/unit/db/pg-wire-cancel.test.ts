@@ -10,7 +10,11 @@ import { createServer, type Server, type Socket } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cancelRequestMessage, sendPgCancelRequest } from "@/lib/db/providers/sql/pg-wire-cancel";
+import { TLSSocket } from "node:tls";
+import { cancelRequestMessage, sendPgCancelRequest, sslRequestMessage } from "@/lib/db/providers/sql/pg-wire-cancel";
+import { loadTlsFixtures } from "../../helpers/tls-fixtures";
+
+const TLS = loadTlsFixtures();
 
 let server: Server | null = null;
 let socketDir: string | null = null;
@@ -105,5 +109,105 @@ describe("sendPgCancelRequest", () => {
     const { port } = await listen(() => {}, undefined, true);
 
     expect(await sendPgCancelRequest({ host: "127.0.0.1", port, processID: 1, secretKey: 1 }, 100)).toBe(false);
+  });
+});
+
+/**
+ * A server that answers an SSLRequest the way PostgreSQL does: one byte, `S` then TLS, or `N`.
+ * `plain` is what arrived before TLS, `secure` what arrived inside it, and `servername` the
+ * name the client asked for (SNI).
+ */
+async function listenTls(answer: "S" | "N") {
+  const seen = { plain: [] as Buffer[], secure: [] as Buffer[], servername: undefined as string | false | undefined };
+  server = createServer((socket) => {
+    accepted.push(socket);
+    socket.once("data", (chunk) => {
+      seen.plain.push(Buffer.from(chunk));
+      if (answer === "N") {
+        socket.end("N");
+        return;
+      }
+      socket.write("S");
+      const secure = new TLSSocket(socket, { isServer: true, key: TLS.server.key, cert: TLS.server.cert });
+      secure.on("secure", () => {
+        seen.servername = (secure as TLSSocket & { servername?: string | false }).servername;
+      });
+      secure.on("data", (bytes) => {
+        seen.secure.push(Buffer.from(bytes));
+        secure.end();
+      });
+      secure.on("error", () => socket.destroy());
+    });
+  });
+  await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+  const address = server!.address();
+  return { port: typeof address === "object" && address !== null ? address.port : 0, seen };
+}
+
+describe("sendPgCancelRequest over TLS", () => {
+  // The session was configured with TLS, so the cancel goes the same way: SSLRequest, the
+  // upgrade with the session's own TLS options, and only then the key.
+  test("asks for TLS, upgrades with the session's options, and sends the request inside it", async () => {
+    const { port, seen } = await listenTls("S");
+
+    const sent = await sendPgCancelRequest(
+      { host: "127.0.0.1", port, processID: 42, secretKey: 7, ssl: { ca: TLS.ca } },
+      2000,
+    );
+
+    expect(sent).toBe(true);
+    expect(Buffer.concat(seen.plain).equals(sslRequestMessage())).toBe(true);
+    expect(Buffer.concat(seen.secure).equals(cancelRequestMessage(42, 7))).toBe(true);
+  });
+
+  // `pg` names the host as the TLS server name unless it is an IP address; an SNI proxy in
+  // front of a managed database routes on it.
+  test("names a host as the TLS server name, and an IP address not at all", async () => {
+    const byName = await listenTls("S");
+    expect(
+      await sendPgCancelRequest(
+        { host: "localhost", port: byName.port, processID: 1, secretKey: 2, ssl: { ca: TLS.ca } },
+        2000,
+      ),
+    ).toBe(true);
+    expect(byName.seen.servername).toBe("localhost");
+    for (const socket of accepted) socket.destroy();
+    accepted = [];
+    await new Promise<void>((resolve) => server!.close(() => resolve()));
+
+    const byIp = await listenTls("S");
+    await sendPgCancelRequest(
+      { host: "127.0.0.1", port: byIp.port, processID: 1, secretKey: 2, ssl: { ca: TLS.ca } },
+      2000,
+    );
+    // No SNI: node reports `false`, bun `undefined`.
+    expect(byIp.seen.servername || undefined).toBeUndefined();
+  });
+
+  // The session required TLS; a server that will not speak it does not get the key in clear.
+  test("sends nothing when the server refuses TLS", async () => {
+    const { port, seen } = await listenTls("N");
+
+    const sent = await sendPgCancelRequest({ host: "127.0.0.1", port, processID: 42, secretKey: 7, ssl: true }, 2000);
+
+    expect(sent).toBe(false);
+    expect(Buffer.concat(seen.plain).equals(sslRequestMessage())).toBe(true);
+    expect(seen.secure).toEqual([]);
+  });
+
+  test("sends nothing when the server's certificate is not trusted", async () => {
+    const { port, seen } = await listenTls("S");
+
+    // `ssl: true` verifies against the system roots, which never signed the test CA.
+    expect(await sendPgCancelRequest({ host: "127.0.0.1", port, processID: 1, secretKey: 2, ssl: true }, 2000)).toBe(
+      false,
+    );
+    expect(
+      await sendPgCancelRequest(
+        { host: "127.0.0.1", port, processID: 1, secretKey: 2, ssl: { ca: TLS.otherCa } },
+        2000,
+      ),
+    ).toBe(false);
+    expect(seen.secure).toEqual([]);
   });
 });

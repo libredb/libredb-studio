@@ -20,7 +20,7 @@
 | **Connection string** | Supported (`clickhouse://`, plain `http://` / `https://`) |
 | **EXPLAIN** | `clickhouse-json` — estimate only; ClickHouse's `EXPLAIN` never executes the statement, so there is no separate analyze mode |
 | **Transactions** | Not exposed (ClickHouse has no multi-statement transactions to expose) |
-| **Query cancellation** | Yes: each run carries its own `query_id`, and `cancelQuery` sends `KILL QUERY ... SYNC` for it ([§5.4](#54-cancellation)) |
+| **Query cancellation** | Yes: each run gets a generated `query_id`, and `cancelQuery` sends `KILL QUERY ... SYNC` for it ([§5.4](#54-cancellation)) |
 | **Source** | [`src/lib/db/providers/sql/clickhouse/`](../../src/lib/db/providers/sql/clickhouse/) |
 | **Tests** | [`tests/integration/db/clickhouse-provider.test.ts`](../../tests/integration/db/clickhouse-provider.test.ts) + [`tests/unit/db/clickhouse/`](../../tests/unit/db/clickhouse/) + [`tests/unit/lib/explain/clickhouse-json.test.ts`](../../tests/unit/lib/explain/clickhouse-json.test.ts) |
 | **Tracking issue** | [#264 — Add ClickHouse provider](https://github.com/libredb/libredb-studio/issues/264) |
@@ -766,9 +766,12 @@ when the provider had no `cancelQuery`: after the editor's Cancel, `system.proce
 `SELECT count() FROM numbers(200000000000) WHERE sipHash64(number) % 7 = 3` 19 s and 29 s later,
 and the editor had said "Query Cancelled".
 
-Now `query(sql, params, queryId)` sends the caller's id as the statement's own `query_id` (a neutral
-`queryId` option on the transport seam), and `cancelQuery(queryId)` sends
-`KILL QUERY WHERE query_id = '<id>' SYNC`. `SYNC` answers once the statement has stopped: one row with
+Now `query(sql, params, queryId)` runs the statement under a `query_id` the provider generates (a
+random UUID, sent through a neutral `queryId` option on the transport seam) and remembers it against
+the caller's id; `cancelQuery(queryId)` looks that up and sends
+`KILL QUERY WHERE query_id = '<generated id>' SYNC`. The caller's id never reaches the server:
+ClickHouse keeps a query id unique per server user only, so two Studio users sharing one ClickHouse
+account could otherwise run under the same id, and one KILL would stop both. `SYNC` answers once the statement has stopped: one row with
 `kill_status` `finished` per statement it reached, or a 200 with an empty body when nothing matched
 because the statement had already ended (both measured on 26.9.9.28). `cancelQuery` answers true only
 for a `finished` row, so `cant_cancel`, an empty answer and a refused KILL are all false, and the

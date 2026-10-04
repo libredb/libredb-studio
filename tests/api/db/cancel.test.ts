@@ -175,6 +175,22 @@ describe("POST /api/db/cancel", () => {
     expect(data.error).toContain("Connection and queryId are required");
   });
 
+  test("a queryId that is not a string returns 400 and reaches no provider (#1364)", async () => {
+    mockCancelProvider.cancelQuery.mockClear();
+    const req = createMockRequest("/api/db/cancel", {
+      method: "POST",
+      body: { connection: validConnection, queryId: { $ne: "" } },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string; cancelled: boolean }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("queryId must be a string");
+    expect(data.cancelled).toBe(false);
+    expect(mockCancelProvider.cancelQuery).not.toHaveBeenCalled();
+  });
+
   test("provider without cancelQuery returns 400", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => mockNoCancelProvider as never);
 

@@ -509,6 +509,13 @@ These are real, current, and not oversights. Each is a decision with a reason.
   and the SSH tunnel host are outside this guard. HTTP connections routed through an SSH tunnel are
   refused while the flag is enabled because their request target is a local tunnel endpoint.
   Oxia is reached over gRPC, as Milvus is, and is outside this guard: grpc-js resolves names itself, so an address check would be believed and not hold; a pinned gRPC guard is a backlog entry (D212).
+- **A PostgreSQL-wire cancel opens one more connection to the server.** Where `pg_cancel_backend`
+  is refused (CockroachDB, Materialize, RisingWave), Cancel sends the protocol's CancelRequest,
+  carrying the session's process id and secret key, on a fresh connection to the session's
+  address. It is TLS-encrypted whenever the session is, with the session's own TLS options and
+  server name, and is not sent at all if such a server refuses TLS or presents a certificate the
+  session would not trust; without TLS it is plaintext, as the session is
+  ([`docs/providers/postgres.md`](./providers/postgres.md) section 5.3, #1364).
 - **Browser `localStorage` holds your credentials in plaintext.** It is the rendering source, and
   encrypting it would require a master password and a recovery flow, changing what the product is.
   This is why 0.1 and 1.1 matter as much as they do.

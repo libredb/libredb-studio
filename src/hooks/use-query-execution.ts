@@ -95,6 +95,31 @@ const CANCEL_NOT_CONFIRMED = {
   variant: "destructive" as const,
 };
 
+/**
+ * Cancel where the provider has no cancel at all (`supportsQueryCancel: false`): the control
+ * reads "Stop waiting" there, and this is what it did (#1364). The cancel route would only
+ * answer 400, so nothing is sent.
+ */
+const STOPPED_WAITING = {
+  title: "Stopped Waiting",
+  description:
+    "Studio stopped waiting for the result. This database cannot cancel a running statement, so it keeps running on the server until it ends.",
+  variant: "destructive" as const,
+};
+
+/**
+ * Cancel of a run that has no id on the server: a multi-statement script
+ * (`/api/db/multi-query`) or a statement inside a transaction or SANDBOX
+ * (`/api/db/transaction`). Neither route hands the provider a `queryId`, so the cancel route
+ * could only answer `false`; this says why instead of "not confirmed".
+ */
+const RUN_NOT_CANCELLABLE = {
+  title: "Stopped Waiting",
+  description:
+    "A multi-statement script or a statement inside a transaction cannot be cancelled on the server, so it keeps running there until it ends.",
+  variant: "destructive" as const,
+};
+
 /** Whether one `POST /api/db/cancel` answer says the engine stopped the statement. */
 async function cancelConfirmed(response: Response): Promise<boolean> {
   if (!response.ok) return false;
@@ -214,7 +239,16 @@ export function useQueryExecution({
    * no error. Keying the map by tab is what keeps one tab's Run out of another's.
    */
   const runsRef = useRef(
-    new Map<string, { controller: AbortController; queryId: string; planQueryId: string | undefined }>(),
+    new Map<
+      string,
+      {
+        controller: AbortController;
+        queryId: string;
+        planQueryId: string | undefined;
+        /** Whether the run went to the one route that hands the provider its `queryId`. */
+        serverCancellable: boolean;
+      }
+    >(),
   );
 
   /**
@@ -481,7 +515,8 @@ export function useQueryExecution({
         explainStrategy !== null &&
         explainStrategy.buildSql(queryToExecute, "estimate") !== null;
       const planQueryId = sendsPlan ? `${queryId}-plan` : undefined;
-      runsRef.current.set(targetTabId, { controller: abortController, queryId, planQueryId });
+      const run = { controller: abortController, queryId, planQueryId, serverCancellable: false };
+      runsRef.current.set(targetTabId, run);
       lastRunRef.current.set(targetTabId, queryId);
 
       /**
@@ -579,6 +614,8 @@ export function useQueryExecution({
           : useMultiQuery
             ? "/api/db/multi-query"
             : "/api/db/query";
+        // Only this route carries the run's `queryId` to the provider (see the body below).
+        run.serverCancellable = queryEndpoint === "/api/db/query";
         const mainQueryPromise = appFetch(queryEndpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1125,6 +1162,22 @@ export function useQueryExecution({
       // server's answer, because the abort stops nothing but this tab's wait for the response.
       run.controller.abort();
 
+      // Nothing on the server can be asked: say what the abort did, and that the statement
+      // goes on. Asked of the declared capability first, so a provider with no cancel at
+      // all is not posted a cancel it can only refuse.
+      if (metadata?.capabilities.supportsQueryCancel === false) {
+        toast(STOPPED_WAITING);
+        return;
+      }
+      if (!run.serverCancellable) {
+        toast(RUN_NOT_CANCELLABLE);
+        return;
+      }
+
+      // Shown at once and replaced by the verdict: a cancel the server has to confirm can
+      // take seconds (a wire-protocol cancel waits up to 3 s for the run to end).
+      const pending = toast({ title: "Cancelling...", variant: "loading" });
+
       // Also cancel on the server side: aborting the fetch drops the response,
       // it does not stop the statement the engine is still executing. That holds for
       // the run's background plan request as much as for the run, so both are named
@@ -1154,11 +1207,14 @@ export function useQueryExecution({
           logger.warn("Query cancellation request failed", { route: "use-query-execution" });
         }
       }
-      toast(
-        confirmed ? { title: "Query Cancelled", description: "Query execution was cancelled." } : CANCEL_NOT_CONFIRMED,
-      );
+      toast({
+        ...(confirmed
+          ? { title: "Query Cancelled", description: "Query execution was cancelled." }
+          : CANCEL_NOT_CONFIRMED),
+        id: pending,
+      });
     },
-    [activeConnection, toast],
+    [activeConnection, metadata, toast],
   );
 
   // Load More handler

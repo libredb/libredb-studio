@@ -64,6 +64,11 @@ export async function POST(req: NextRequest) {
     if (!sql) {
       return NextResponse.json({ error: "Connection and query are required" }, { status: 400 });
     }
+    // The id a provider tracks the run under and the cancel route names it by: a provider
+    // sends it on to the engine (ClickHouse) or keys a Map with it, so only a string (#1364).
+    if (queryId !== undefined && typeof queryId !== "string") {
+      return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
+    }
 
     // A connection type that declares a console text bound is held to it here, before the bound parameters, the
     // provider and the statement cache are reached, so an oversize text opens no socket. The answer names the size

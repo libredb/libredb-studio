@@ -8,29 +8,48 @@ import { FlaskConical, Pencil, Play, Save, Square, Terminal, Upload } from "luci
 import { Button } from "@/components/ui/button";
 
 /**
- * Why Cancel is disabled on a connection whose provider cannot cancel (#1364).
+ * What the editor's Cancel control can do on a connection (#1364).
  *
- * The cancel route refuses there, and the editor used to offer Cancel anyway and report the
- * run as cancelled while the engine kept running it (measured on SQLite and libSQL).
- * Disabled rather than hidden, so the run's place in the toolbar still says that a
- * statement is running and the reason is one hover away.
+ * - `cancel`: the provider can ask the engine to stop the statement (`cancelQuery`).
+ * - `stop-waiting`: it cannot (`supportsQueryCancel: false`). The control still ends the
+ *   editor's wait, so it reads "STOP WAITING", and the toast says the statement keeps running
+ *   on the server. It used to read CANCEL and report "Query Cancelled" while the engine kept
+ *   going (measured on ClickHouse before it could cancel, and on libSQL).
+ * - `unavailable`: the engine also blocks the server while it runs
+ *   (`blocksServerWhileRunning`, SQLite). Nothing the user did next would be answered before
+ *   the statement ends, so the control is disabled with the reason.
+ *
+ * Read on `=== false` / `=== true` only: an embedded host declares its own capabilities, and
+ * one that says nothing keeps the Cancel it always had.
  */
+export type CancelControlMode = "cancel" | "stop-waiting" | "unavailable";
+
+export function cancelControlMode(metadata: ProviderMetadata | null): CancelControlMode {
+  if (metadata?.capabilities.blocksServerWhileRunning === true) return "unavailable";
+  if (metadata?.capabilities.supportsQueryCancel === false) return "stop-waiting";
+  return "cancel";
+}
+
+/** Why the control is disabled in `unavailable` mode. */
 export const CANCEL_UNAVAILABLE_REASON =
-  "This database cannot cancel a running statement from Studio, so the statement runs until it ends.";
+  "This database runs a statement on the Studio server's own thread and cannot cancel it, so the statement runs until it ends.";
+
+/** What "STOP WAITING" does, on hover. */
+export const STOP_WAITING_HINT =
+  "This database cannot cancel a running statement. Stop waiting ends the editor's wait; the statement keeps running on the server.";
 
 /**
- * The CANCEL control of both editor shells' toolbars, disabled with the reason where the
- * connection cannot cancel.
+ * The Cancel control of both editor shells' toolbars, in the mode `cancelControlMode` gives.
  *
- * The reason sits on a wrapper, not on the button: a disabled `Button` takes no pointer events
- * (`disabled:pointer-events-none`), so a title on the button itself never shows on hover.
+ * The disabled reason sits on a wrapper, not on the button: a disabled `Button` takes no
+ * pointer events (`disabled:pointer-events-none`), so a title on the button never shows.
  */
 export function CancelQueryButton({
-  canCancel,
+  mode,
   onCancel,
   className,
 }: {
-  canCancel: boolean;
+  mode: CancelControlMode;
   onCancel: () => void;
   className?: string;
 }) {
@@ -39,18 +58,19 @@ export function CancelQueryButton({
       size="sm"
       className={cn("bg-danger-solid hover:bg-danger-solid-hover text-white font-medium text-xs h-7 px-4", className)}
       onClick={onCancel}
-      disabled={!canCancel}
+      disabled={mode === "unavailable"}
+      title={mode === "stop-waiting" ? STOP_WAITING_HINT : undefined}
     >
       <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
-      CANCEL
+      {mode === "stop-waiting" ? "STOP WAITING" : "CANCEL"}
     </Button>
   );
-  return canCancel ? (
-    button
-  ) : (
+  return mode === "unavailable" ? (
     <span title={CANCEL_UNAVAILABLE_REASON} className="inline-flex">
       {button}
     </span>
+  ) : (
+    button
   );
 }
 
@@ -143,13 +163,7 @@ export const QueryToolbar = React.memo(function QueryToolbar({
           )}
         </div>
         {isExecuting ? (
-          <CancelQueryButton
-            // `=== false` only: an embedded host declares its own capabilities, and one that
-            // says nothing keeps the Cancel it always had.
-            canCancel={metadata?.capabilities.supportsQueryCancel !== false}
-            onCancel={onCancelQuery}
-            className="gap-2"
-          />
+          <CancelQueryButton mode={cancelControlMode(metadata)} onCancel={onCancelQuery} className="gap-2" />
         ) : (
           <Button
             size="sm"

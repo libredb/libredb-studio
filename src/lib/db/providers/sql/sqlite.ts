@@ -1100,6 +1100,8 @@ export class SQLiteProvider extends SQLBaseProvider {
       // SQLite HAS transactions; this provider holds no session for one, so
       // POST /api/db/transaction refuses the call and the controls stay hidden.
       supportsTransactions: false,
+      // Both drivers run the statement synchronously on the server's one thread (#1364).
+      blocksServerWhileRunning: true,
       maintenanceOperations: ["vacuum", "analyze", "reindex", "check"],
       // `VACUUM` rewrites the whole database file and takes no object at all, and
       // `PRAGMA integrity_check` reads the whole file the same way - `runMaintenance`

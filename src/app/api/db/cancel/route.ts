@@ -20,6 +20,9 @@ export async function POST(req: NextRequest) {
     if (!queryId) {
       return NextResponse.json({ error: "Connection and queryId are required" }, { status: 400 });
     }
+    if (typeof queryId !== "string") {
+      return NextResponse.json({ error: "queryId must be a string", cancelled: false }, { status: 400 });
+    }
 
     const provider = await getOrCreateProvider(connection);
 

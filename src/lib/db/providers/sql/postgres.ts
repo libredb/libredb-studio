@@ -73,7 +73,7 @@ import {
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
-import { sendPgCancelRequest } from "./pg-wire-cancel";
+import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
@@ -142,14 +142,16 @@ const ZONELESS_AS_TEXT: NonNullable<PgPoolConfig["types"]> = {
 
 /**
  * What `pg` keeps on a connected client and does not declare in its types: the BackendKeyData
- * the server sent at startup, and the address the client connected to (a tunnel's local end
- * when there is one). The wire-protocol cancel needs all four.
+ * the server sent at startup, the address the client connected to (a tunnel's local end when
+ * there is one), and its TLS setting. The wire-protocol cancel needs all five, the last so it
+ * is encrypted wherever the session is.
  */
 interface BackendKey {
   processID?: unknown;
   secretKey?: unknown;
   host: string;
   port: number;
+  ssl?: PgCancelTarget["ssl"];
 }
 
 /**
@@ -2515,13 +2517,16 @@ export class PostgresProvider extends SQLBaseProvider {
 
     if (await this.cancelBackend(running.pid)) return true;
 
-    const { processID, secretKey, host, port } = running.client as PoolClient & BackendKey;
+    const { processID, secretKey, host, port, ssl } = running.client as PoolClient & BackendKey;
     if (typeof processID !== "number" || typeof secretKey !== "number") return false;
     const sent = await sendPgCancelRequest(
-      { host, port, processID, secretKey },
+      { host, port, processID, secretKey, ssl },
       WIRE_CANCEL_CONFIRM_MS,
       // Only while this run still holds that session: once it has ended, the pool may have
-      // handed the session to another request, whose statement the request would stop.
+      // handed the session to another request, whose statement the request would stop. The
+      // check narrows that to the request's own flight time and cannot close it: a statement
+      // that ends while the 16 bytes travel leaves the key on a session someone else may
+      // already be using, the same window `psql`'s Ctrl+C has, inherent to the protocol.
       () => this.runningQueries.get(queryId)?.client === running.client,
     );
     return sent && (await this.settles(queryId, WIRE_CANCEL_CONFIRM_MS));
