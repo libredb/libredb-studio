@@ -12,7 +12,7 @@ import {
   managedRefreshIntervalMs,
   useConnectionManager,
 } from "@/hooks/use-connection-manager";
-import type { ManagedConnectionPayload } from "@/hooks/use-connection-payload";
+import { SEED_CONFIG_UNREADABLE_REASON, type ManagedConnectionPayload } from "@/hooks/use-connection-payload";
 import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
@@ -1186,6 +1186,319 @@ describe("useConnectionManager", () => {
     test("a floor that is not a number falls back to the default", () => {
       process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "soon";
       expect(managedRefreshIntervalMs(null)).toBe(5000);
+    });
+  });
+  // ── Managed connection refresh (CapRover auto-connect spec, section 11) ──
+
+  const firstManaged = () =>
+    makeManagedConnection({ id: "managed-1", managed: true, seedId: "seed-1", name: "First DB" });
+  const secondManaged = () =>
+    makeManagedConnection({ id: "managed-2", managed: true, seedId: "seed-2", name: "Second DB" });
+  const healthy = { ok: true, json: { status: "healthy" } };
+  const focusWindow = () => {
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+  };
+  const announceVisibility = () => {
+    act(() => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+  };
+  /** happy-dom always reports "visible"; an own accessor shadows its prototype getter until removed. */
+  const setVisibility = (state: DocumentVisibilityState) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+  };
+
+  describe("managed connection refresh", () => {
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS;
+      Reflect.deleteProperty(document, "visibilityState");
+    });
+
+    test("a new managed connection appears when the window regains focus", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      let managedCalls = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return {
+            ok: true,
+            json: { connections: managedCalls === 1 ? [firstManaged()] : [firstManaged(), secondManaged()] },
+          };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(1);
+      });
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.connections.map((c) => c.id)).toEqual(["managed-1", "managed-2"]);
+      });
+      expect(managedCallCount(fetchMock)).toBe(2);
+    });
+
+    test("a new managed connection appears on the interval, with no event at all", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      let managedCalls = 0;
+      mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return { ok: true, json: { connections: managedCalls === 1 ? [] : [firstManaged()] } };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(
+        () => {
+          expect(result.current.connections.map((c) => c.id)).toEqual(["managed-1"]);
+        },
+        { timeout: 3000 },
+      );
+      expect(result.current.activeConnection?.id).toBe("managed-1");
+    });
+
+    test("the interval follows the server's cacheHint when it is above the floor", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [firstManaged()], cacheHint: 60000 } },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(1);
+      });
+
+      await sleep(200);
+      expect(managedCallCount(fetchMock)).toBe(1);
+    });
+
+    test("the document becoming visible refreshes at once, and becoming hidden does not", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      let managedCalls = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return {
+            ok: true,
+            json: { connections: managedCalls === 1 ? [firstManaged()] : [firstManaged(), secondManaged()] },
+          };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(1);
+      });
+
+      setVisibility("hidden");
+      announceVisibility();
+      await sleep(50);
+      expect(managedCallCount(fetchMock)).toBe(1);
+
+      setVisibility("visible");
+      announceVisibility();
+      await waitFor(() => {
+        expect(result.current.connections.map((c) => c.id)).toEqual(["managed-1", "managed-2"]);
+      });
+      expect(managedCallCount(fetchMock)).toBe(2);
+    });
+
+    test("nothing is fetched while the tab is hidden, and the interval resumes once it is visible", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [firstManaged()] } },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(1);
+      });
+
+      setVisibility("hidden");
+      await sleep(50);
+      const hiddenCount = managedCallCount(fetchMock);
+      await sleep(200);
+      expect(managedCallCount(fetchMock)).toBe(hiddenCount);
+      focusWindow();
+      await sleep(50);
+      expect(managedCallCount(fetchMock)).toBe(hiddenCount);
+
+      setVisibility("visible");
+      await waitFor(
+        () => {
+          expect(managedCallCount(fetchMock)).toBeGreaterThan(hiddenCount);
+        },
+        { timeout: 3000 },
+      );
+    });
+
+    test("a refresh in flight absorbs further triggers until it answers", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = () => resolve();
+      });
+      let managedCalls = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": async () => {
+          managedCalls += 1;
+          const connections = managedCalls === 1 ? [firstManaged()] : [firstManaged(), secondManaged()];
+          if (managedCalls === 2) await held;
+          return { ok: true, json: { connections } };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(1);
+      });
+
+      focusWindow();
+      focusWindow();
+      focusWindow();
+      await sleep(50);
+      expect(managedCallCount(fetchMock)).toBe(2);
+
+      release();
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(2);
+      });
+      focusWindow();
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBe(3);
+      });
+    });
+
+    test("nothing is fetched before storage is ready", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [firstManaged()] } },
+        "/api/db/health": healthy,
+      });
+
+      renderHook(() => useConnectionManager(false));
+      focusWindow();
+      announceVisibility();
+      await sleep(150);
+      expect(managedCallCount(fetchMock)).toBe(0);
+    });
+
+    test("no refresh starts after an initial fetch that answered non-OK", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": { status: 503, json: { error: "warming up" } },
+        "/api/db/health": healthy,
+      });
+
+      renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBe(1);
+      });
+      await sleep(150);
+      focusWindow();
+      await sleep(50);
+      expect(managedCallCount(fetchMock)).toBe(1);
+    });
+
+    test("no refresh starts after an initial fetch that threw", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": () => {
+          throw new Error("offline");
+        },
+        "/api/db/health": healthy,
+      });
+
+      renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBe(1);
+      });
+      await sleep(150);
+      focusWindow();
+      await sleep(50);
+      expect(managedCallCount(fetchMock)).toBe(1);
+    });
+
+    test("a failed refresh changes nothing, served seeds included", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      const debugSpy = spyOn(logger, "debug").mockImplementation(() => {});
+      let managedCalls = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          if (managedCalls === 1) return { ok: true, json: { connections: [firstManaged()] } };
+          if (managedCalls === 2) {
+            return {
+              status: 500,
+              json: { error: "Failed to load managed connections", reason: SEED_CONFIG_UNREADABLE_REASON },
+            };
+          }
+          throw new Error("network down");
+        },
+        "/api/db/health": healthy,
+      });
+
+      try {
+        const { result } = renderHook(() => useConnectionManager(true));
+        await waitFor(() => {
+          expect(result.current.connections).toHaveLength(1);
+        });
+        const before = result.current.connections;
+
+        // A non-OK answer, attributed to the seed configuration: only the initial load may
+        // record that, so the served seeds stay loaded and the list stays the same object.
+        focusWindow();
+        await waitFor(() => {
+          expect(managedCallCount(fetchMock)).toBe(2);
+        });
+        await sleep(50);
+        expect(result.current.connections).toBe(before);
+        expect(result.current.servedSeeds).toEqual({ loaded: true, seeds: [firstManaged()] });
+
+        // A rejected request: logged, nothing else.
+        focusWindow();
+        await waitFor(() => {
+          expect(debugSpy).toHaveBeenCalledWith("Managed connection refresh failed", {
+            route: "use-connection-manager",
+            error: "network down",
+          });
+        });
+        expect(result.current.connections).toBe(before);
+        expect(result.current.servedSeeds).toEqual({ loaded: true, seeds: [firstManaged()] });
+      } finally {
+        debugSpy.mockRestore();
+      }
+    });
+
+    test("unmount removes the focus and visibility listeners and the timer", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "25";
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [firstManaged()] } },
+        "/api/db/health": healthy,
+      });
+
+      const { result, unmount } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(1);
+      });
+      unmount();
+
+      const atUnmount = managedCallCount(fetchMock);
+      await sleep(150);
+      focusWindow();
+      announceVisibility();
+      await sleep(50);
+      expect(managedCallCount(fetchMock)).toBe(atUnmount);
     });
   });
 });
