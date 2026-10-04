@@ -988,7 +988,8 @@ describe("useQueryExecution", () => {
     const { tabs, setTabs } = mutableTabs([createTab()]);
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      if (url.includes("/api/db/cancel")) return new Response(JSON.stringify({ success: true }), { status: 200 });
+      if (url.includes("/api/db/cancel"))
+        return new Response(JSON.stringify({ success: true, cancelled: true }), { status: 200 });
       const body = JSON.parse(String(init?.body)) as { sql: string };
       if (body.sql.startsWith("SELEC ")) {
         return new Response(JSON.stringify({ error: 'near "SELEC": syntax error' }), { status: 400 });
@@ -1018,6 +1019,7 @@ describe("useQueryExecution", () => {
 
     expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", {
       description: "Query execution was cancelled.",
+      id: "loading-toast",
     });
     expect(tabs[0].isExecuting).toBe(false);
     expect(tabs[0].runError).toBeUndefined();
