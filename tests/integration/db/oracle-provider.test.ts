@@ -232,7 +232,8 @@ const SQL_WORDS = new Set([
  * The column a statement reads from `USER_SEGMENTS` that the view does not have, or
  * `undefined`. It reads the two shapes the provider writes: an aliased join
  * (`USER_SEGMENTS s` then `s.<col>`) and an unaliased select list (`SELECT <cols> FROM
- * USER_SEGMENTS`). This is what the mock below answers ORA-00904 for, the way the engine
+ * USER_SEGMENTS`). For the unaliased shape it checks the select list only, not the WHERE
+ * or GROUP BY clauses. This is what the mock below answers ORA-00904 for, the way the engine
  * does: before it, the mock answered whatever it was sent, which is how
  * `SELECT TABLE_NAME ... FROM USER_SEGMENTS` shipped and emptied the Tables panel.
  */
@@ -266,6 +267,7 @@ function defaultExecute(sql: string) {
     return {
       rows: [
         {
+          OWNER: "TEST_USER",
           TABLE_NAME: "USERS",
           ROW_COUNT: 100,
           TABLE_SIZE_BYTES: 65536,
@@ -273,6 +275,7 @@ function defaultExecute(sql: string) {
           LAST_ANALYZED: "2026-02-14T00:00:00Z",
         },
         {
+          OWNER: "TEST_USER",
           TABLE_NAME: "ORDERS",
           ROW_COUNT: 500,
           TABLE_SIZE_BYTES: 131072,
@@ -2859,6 +2862,8 @@ describe("OracleProvider", () => {
       expect(captured).toContain("INDEX_TYPE IN ('LOB', 'IOT - TOP')");
       expect(captured).toContain("INSTR(s.SEGMENT_TYPE, o.KIND) > 0");
       expect(captured).toContain("t.DROPPED = 'NO'");
+      expect(captured).toContain("WHERE TABLE_OWNER = USER");
+      expect(captured).toContain("SELECT USER AS OWNER");
     });
 
     test("rejects with the engine's sentence when the stats read fails", async () => {

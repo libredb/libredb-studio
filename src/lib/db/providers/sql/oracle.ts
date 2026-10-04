@@ -198,8 +198,13 @@ const ACTIVE_SESSIONS_BODY_SQL = `SELECT * FROM (
  * `DROPPED = 'NO'` leaves out a recycle-bin table wherever the dictionary lists one: a
  * `BIN$` name is no target for a maintenance operation. `NUM_ROWS` and `LAST_ANALYZED` are the optimizer statistics,
  * so a table never analyzed reads 0 rows and no last analyze until Gather Statistics runs.
+ *
+ * `USER_INDEXES` also lists an index the user owns on ANOTHER schema's table, keyed by that
+ * table's bare name, so `TABLE_OWNER = USER` keeps it off a same-named table of this one.
+ * `OWNER` is `USER`, the account these views answer for. It is not the configured login
+ * name upper-cased: a proxy login (`app[report]`) or a quoted lower-case user differ from it.
  */
-const TABLE_STATS_SQL = `SELECT t.TABLE_NAME,
+const TABLE_STATS_SQL = `SELECT USER AS OWNER, t.TABLE_NAME,
                 NVL(t.NUM_ROWS, 0) AS ROW_COUNT,
                 NVL(sz.TABLE_BYTES, 0) AS TABLE_SIZE_BYTES,
                 NVL(sz.INDEX_BYTES, 0) AS INDEX_SIZE_BYTES,
@@ -217,6 +222,7 @@ const TABLE_STATS_SQL = `SELECT t.TABLE_NAME,
              SELECT TABLE_NAME, INDEX_NAME, 'INDEX',
                     CASE WHEN INDEX_TYPE IN ('LOB', 'IOT - TOP') THEN 'TABLE' ELSE 'INDEX' END
              FROM USER_INDEXES
+             WHERE TABLE_OWNER = USER
            ) o
            JOIN USER_SEGMENTS s ON s.SEGMENT_NAME = o.SEGMENT_NAME AND INSTR(s.SEGMENT_TYPE, o.KIND) > 0
            GROUP BY o.TABLE_NAME
@@ -3143,7 +3149,6 @@ export class OracleProvider extends SQLBaseProvider {
     let conn: oracledb.Connection | undefined;
     try {
       conn = await this.pool!.getConnection();
-      const owner = this.config.user?.toUpperCase() || "";
 
       // The `USER_*` views answer for the connected user and take no owner bind: binding
       // one the statement has no placeholder for is NJS-098.
@@ -3153,7 +3158,7 @@ export class OracleProvider extends SQLBaseProvider {
         const tableSizeBytes = Number(r.TABLE_SIZE_BYTES || 0);
         const indexSizeBytes = Number(r.INDEX_SIZE_BYTES || 0);
         return {
-          schemaName: owner,
+          schemaName: String(r.OWNER),
           tableName: String(r.TABLE_NAME || ""),
           rowCount: Number(r.ROW_COUNT || 0),
           tableSize: formatBytes(tableSizeBytes),

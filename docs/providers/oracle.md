@@ -229,7 +229,7 @@ contract PostgreSQL and SQL Server already follow ([#1102](https://github.com/li
 ### 3.7 Privilege-resilient monitoring
 
 Oracle monitoring reads `V$` dynamic-performance views, which require privileges a typical app user
-may lack. Every monitoring sub-query is wrapped in its own try/catch and degrades rather than failing
+may lack. Every `V$` sub-query is wrapped in its own try/catch and degrades rather than failing
 the whole call — so the dashboard still renders for a low-privilege user, just with gaps. The default
 it degrades to is `N/A` or `[]` where the shape has a place to say "not measured", and — in the
 health and overview readings, where a number would otherwise be invented — **nothing at all**:
@@ -1993,9 +1993,13 @@ share a table's name. Measured on the same server with a seeded schema:
 
 A table never analyzed reads `rowCount` 0 and no `lastAnalyze`: both are the optimizer statistics,
 filled by Gather Statistics. `DROPPED = 'NO'` keeps a recycle-bin `BIN$` table out of the list
-wherever the dictionary shows one. The views answer for the connected user, so `schemaName` is that
-user, which is the owner the per-row Gather Statistics and Rebuild Indexes then act on
-([§9](#9-maintenance)).
+wherever the dictionary shows one. An index the user owns on another schema's table is listed in
+`USER_INDEXES` under that table's bare name, so `TABLE_OWNER = USER` keeps it off a same-named table
+here. `schemaName` is the statement's own `USER`, the account the views answer for, which is the owner
+the per-row Gather Statistics and Rebuild Indexes then act on ([§9](#9-maintenance)). It is not the
+configured login name: a proxy login (`app[report]`) or a quoted lower-case user differ from it.
+
+A table stored in a `CLUSTER` has no segment of its own (the cluster holds it), so it reads 0 B.
 
 ---
 
