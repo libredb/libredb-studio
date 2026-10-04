@@ -1387,6 +1387,30 @@ export interface QueryPrepareOptions {
  */
 export type OpenQueryTransactionOutcome = "none" | "rolled-back";
 
+/** What the caller of `beginTransaction()` needs from the transaction it is opening. */
+export interface BeginTransactionOptions {
+  /**
+   * Refuse a transaction the server does not report the state of, and leave nothing open.
+   * SANDBOX asks for this: it promises the user a rollback, and on a server that never says
+   * whether a transaction is open no answer can show that the rollback undid anything.
+   */
+  requireReportedState?: boolean;
+}
+
+/**
+ * What a provider that reads the server's transaction state learned when it opened one.
+ *
+ * `stateReported: false` means the server answered the BEGIN without saying whether a
+ * transaction is open, and will not say it after any later statement either. Measured
+ * 2026-10-04 over the MySQL wire: Databend 1.2.881, StarRocks 4.1.6 and Apache Doris 4.1.3
+ * answer every OK packet with status 0, inside a transaction and outside one, although all
+ * three roll back what ran after a `BEGIN`. The session is then the user's own to drive,
+ * and nothing in it is judged by a status the server never sends.
+ */
+export interface BeginTransactionResult {
+  stateReported: boolean;
+}
+
 /**
  * A fresh name for one caller's call scope (D87). One per request, minted by the route
  * that will also end it, so that the token cannot collide with another request's and

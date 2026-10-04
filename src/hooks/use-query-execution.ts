@@ -481,7 +481,9 @@ export function useQueryExecution({
           const beginRes = await appFetch("/api/db/transaction", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...runPayload, action: "begin" }),
+            // SANDBOX is about to promise a rollback, so a server that never reports whether
+            // a transaction is open is refused at BEGIN (Databend, StarRocks, Doris).
+            body: JSON.stringify({ ...runPayload, action: "begin", requireReportedState: true }),
           });
           // No transaction, no SANDBOX run. This used to log and carry on, so the statement
           // ran unprotected and the toast still said it had been rolled back: measured on

@@ -3149,6 +3149,8 @@ describe("useQueryExecution", () => {
         const body = JSON.parse((init?.body as string) || "{}");
         sent.push(body.action);
         if (body.action === "begin") {
+          // SANDBOX's BEGIN asks for a server that reports its transaction state.
+          expect(body.requireReportedState).toBe(true);
           return new Response(JSON.stringify({ error: "begin failed" }), {
             status: 500,
             headers: { "content-type": "application/json" },
