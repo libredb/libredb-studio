@@ -26,7 +26,7 @@ function cutAfter(text: string, cut: "fin" | "rst"): (socket: Socket) => void {
 }
 
 /** What the listener does with each request, by its path. */
-const BEHAVIOURS: ReadonlyMap<string, (socket: Socket) => void> = new Map([
+const BEHAVIOURS: readonly (readonly [string, (socket: Socket) => void])[] = [
   ["/fin-zero", cutAfter(CHUNKED, "fin")],
   ["/rst-zero", cutAfter(CHUNKED, "rst")],
   ["/fin-mid", cutAfter(`${CHUNKED}40\r\n0123456789`, "fin")],
@@ -46,7 +46,7 @@ const BEHAVIOURS: ReadonlyMap<string, (socket: Socket) => void> = new Map([
     "/gzip",
     (socket) => socket.write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n"),
   ],
-]);
+];
 
 let server: Server;
 let port = 0;
@@ -63,9 +63,10 @@ beforeAll(async () => {
       if (!head.includes("\r\n\r\n")) return;
       socket.off("data", onData);
       const path = head.split(" ")[1];
-      const behave = BEHAVIOURS.get(path);
-      if (behave === undefined) throw new Error(`The test server has no behaviour for ${path}`);
-      behave(socket);
+      // Chosen by comparing the request's path with each known one, never by looking a name up.
+      const behaviour = BEHAVIOURS.find(([known]) => known === path);
+      if (behaviour === undefined) throw new Error(`The test server has no behaviour for ${path}`);
+      behaviour[1](socket);
     };
     socket.on("data", onData);
   });
