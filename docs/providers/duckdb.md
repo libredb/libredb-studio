@@ -24,7 +24,7 @@
 | **Result pagination** | `supportsResultPagination: true` — `prepareQuery` applies a positive offset as `LIMIT n OFFSET m` through the shared limiter, so the results grid offers Load More (#816) |
 | **Query cancellation** | Yes — `DuckDBConnection.prototype.interrupt()` exists in 1.5.5-r.4 and is what `cancelQuery` calls (§3.9) |
 | **Agent read-only profile** | Yes — a separate handle opened `access_mode: 'READ_ONLY'` **and** `enable_external_access: 'false'`, because the read-only flag alone is not a filesystem sandbox. The SQL denylist remains only as defence in depth (§3.10, §14)|
-| **Non-admin file access** | **Closed.** A non-admin editor handle opens `enable_external_access: 'false'`, read-write, so no statement reaches a file while the database stays editable; an admin editor keeps full reach, unchanged. The posture is server-derived from the session role, never the request body (§3.16, §14.3) |
+| **Non-admin file access** | **Closed at statement level.** The editor handle opens `enable_external_access: 'false'`, read-write, for every non-admin role and for every role on a seed a non-admin role can use, so no statement reaches a file or the network outside the database while that database stays editable; the database path itself is still the connection's. An admin keeps full reach on an inline connection and on an admin-only seed. Server-derived from the session and the resolved connection, never the request body (§3.16, §14.3) |
 | **Maintenance** | `vacuum` and `analyze` (per table **and** global), `optimize` mapped onto `CHECKPOINT` (global only). `reindex`, `check` and `kill` are withheld — measured unsupported (§8) |
 | **Concurrency** | `singleWriterFile: true` — a **second process is refused even read-only** (§3.8) |
 | **Extensions** | Never installed or loaded implicitly: every handle opens with `autoinstall_known_extensions`, `autoload_known_extensions` and `allow_community_extensions` off, and a file that is not a DuckDB database is refused before the engine opens it. Only DuckDB's signed extensions can load; `INSTALL` and `LOAD` in the editor are the way in (§3.14). The editor's remaining network reach is in §14.4 |
@@ -341,13 +341,17 @@ holder. Windows arbitrates the share mode per HANDLE, so "the lock is per proces
 apply there. `tests/integration/db/duckdb-provider.test.ts` asserts both answers, each positively,
 rather than the POSIX one twice.
 
-The consequence for the product is bounded but real, and it is not fixed here: the editor borrows
-the open handle rather than opening a second one (`findOpenSingleWriterProvider`), so ordinary
-browsing is unaffected on every platform. The one path that really does want two handles at once is
-an agent run reaching a connection the editor already has open, `acquireExecutionProfileProvider`
-opens the file under the profiled key while the writable handle is live. On Windows that open is
-refused, and the run fails with the engine's sentence instead of reading. Not yet measured against a
-running Studio on Windows, only against the engine.
+The consequence for the product is bounded but real, and it is not fixed here.
+Browsing serves one connection record from one cached handle, and the connection dialog's Test Connection borrows the handle already holding the file (`findOpenSingleWriterProvider`), so neither opens a second one.
+Two different connection records naming one file do get two handles, because `getOrCreateProvider` never borrows: on Linux and macOS each keeps its own catalog and whichever closes last checkpoints over the other's committed rows, and on Windows the second open is refused (BACKLOG D240).
+The one path that really does want two handles at once is an agent run reaching a connection the editor already has open: `acquireExecutionProfileProvider` opens the file under the profiled key while the writable handle is live.
+On Windows that open is refused, and the run fails with the engine's sentence instead of reading.
+Not yet measured against a running Studio on Windows, only against the engine.
+
+The file-access posture (§3.16) adds one more case.
+A handle is lent only to a caller of its own posture, and every role that can resolve one seed shares one posture, so the case is two connection records of different postures on one file: an admin's own connection and a standard user's, or an admin-only seed and a user's connection naming its file.
+Test Connection beside such a writer opens its test handle `READ_ONLY` with external access off rather than a second read-write handle: on Linux and macOS it reads beside the writer and leaves its file and `.wal` alone, and on Windows it is refused like any second handle.
+An `agent-operations` acquisition borrows only a handle of its requester's own editor posture, and otherwise opens its own read-only handle, which reads the file as it was when it opened.
 
 ### 3.9 `interrupt()` exists, so `cancelQuery` is real
 
@@ -542,52 +546,59 @@ the same words echoed inside a different error, keeps the engine's message alone
 process cannot even read still fails to open, with the
 engine's `Permission denied` in the ordinary `Failed to open DuckDB database <path>: ...` sentence.
 
-For an admin editor on an unwritable file, only `access_mode` is added, so `enable_external_access`
-stays on and the filesystem around the file is still reachable. For a non-admin editor it is joined
-by `enable_external_access: 'false'` (§3.16), so the file opens read-only AND no other file is
-reachable; the read-only-reason wrapping above is unchanged, because it keys on the catalog name,
-not on the external-access option. The directory counts because DuckDB writes its `<file>.wal`
-beside the database; measured, a writable file in a 0555 directory opens read-write and then fails
-its first commit on the `.wal`.
+For an admin editor on an unwritable file, only `access_mode` is added, so `enable_external_access` stays on and the filesystem around the file is still reachable.
+Where the posture denies file access (§3.16), `enable_external_access: 'false'` joins it, so the file opens read-only and no statement reaches another file; the read-only-reason wrapping above is unchanged, because it keys on the catalog name, not on the external-access option.
+The directory counts because DuckDB writes its `<file>.wal` beside the database; measured, a writable file in a 0555 directory opens read-write and then fails its first commit on the `.wal`.
 
-### 3.16 A non-admin editor handle has no filesystem reach (B1 / K1)
+### 3.16 The editor's file and network access is decided by the requester and the connection (B1 / K1)
 
-`access_mode: 'READ_ONLY'` is one of the engine's two file-related options; `enable_external_access`
-is the other, and the two are **independent**. Measured on v1.5.5-r.5: a **writable** handle opened
-with `enable_external_access: 'false'` refuses every route to a file while `CREATE`, `INSERT`,
-`UPDATE`, `DELETE`, `CHECKPOINT` and `ATTACH ':memory:'` on its own database all still succeed. That
-is the non-admin editor posture: the database stays editable, the filesystem is closed.
+`access_mode: 'READ_ONLY'` is one of the engine's two file-related options; `enable_external_access` is the other, and the two are **independent**.
+Measured on v1.5.5-r.5: a **writable** handle opened with `enable_external_access: 'false'` refuses every statement that reaches a file or the network outside its own database, while `CREATE`, `INSERT`, `UPDATE`, `DELETE`, `CHECKPOINT` and `ATTACH ':memory:'` on that database all still succeed.
+That is the denied posture: the database stays editable, and statement-level file and network reach is closed.
 
-So the editor handle has two postures, decided by the requester's role, not by what they open:
+**Who gets which posture.**
+`editorExecutionContext` (`src/lib/api/execution-context.ts`) decides it, server-side, from the verified session and the resolved connection:
 
-| Role | `access_mode` | `enable_external_access` | Effect |
-|---|---|---|---|
-| Admin | read-write (or `READ_ONLY` on an unwritable file) | ON | Full editor reach: `COPY`, `read_csv`, `ATTACH` a file, `INSTALL`/`LOAD`, `httpfs` (§14.3) |
-| Non-admin | read-write (or `READ_ONLY` on an unwritable file) | **OFF** | Database editable; every file route answers `Permission Error: ... file system operations are disabled by configuration` |
+| Connection | Admin | Every other role |
+|---|---|---|
+| An inline connection, the requester's own | Full reach | Denied |
+| A seed only admins can use (`roles: [admin]`) | Full reach | Cannot resolve it |
+| A seed a non-admin role can use (`roles` holds `user` or `*`) | **Denied** | Denied |
 
-Every form in §14.1's left column is refused for a non-admin, the quoted-name, bare-path and
-string-literal bypasses §14.2 records included, because the boundary is the engine option and not a
-statement guard: the SQL denylist is **not** added to this editor path (it stays agent-only defence
-in depth). The option is also self-locked once the database runs, so a non-admin cannot reopen it:
-`SET enable_external_access = true` and its `SET GLOBAL` form both answer
-`Invalid Input Error: Cannot enable external access while database is running` (§3.10).
+The last row is the price of DuckDB's single writer.
+Every role a seed is offered to resolves the same record, and one record is one cached handle, because DuckDB serves one file through one read-write handle per process.
+A second read-write handle on the same file opens on Linux and macOS, keeps its own copy of the catalog, and whichever closes last checkpoints over the other's committed rows; Windows refuses it (§3.8).
+Two postures on one record would be two cache keys and so two handles, so the record keeps one posture, the narrower one: **on a DuckDB seed a non-admin role can use, admins get no file access on that connection either.**
+Where admins need file access on a seed's database, the operator offers that seed to admins only.
 
-**How the posture reaches the engine.** It is derived server-side from `guard.session.role`
-(`editorExecutionContext` in `src/lib/api/execution-context.ts`) and carried on
-`ProviderExecutionContext.allowExternalFileAccess`, which only DuckDB reads; absent means deny (fail
-closed). It never travels on the connection or on `ProviderOptions`, both caller-supplied, so a
-request body cannot forge the admin posture. `getOrCreateProvider` keys the writable handle cache by
-it and the single-writer borrow is posture-aware, so an admin and a non-admin resolving the same
-DuckDB connection never share one handle. The agent read-only profile (§3.10) is unchanged: it
-already opens `enable_external_access: 'false'` through `readOnly`, which keeps precedence.
+A refusal under the denied posture names the policy in front of the engine's own sentence (§10):
 
-**What a non-admin keeps and loses.** Keeps: creating, reading and writing their own DuckDB database
-and `:memory:`, browsing the catalog, running queries, `ATTACH ':memory:'`. Loses: importing from
-CSV, Parquet or JSON files, `COPY` export, `EXPORT`/`IMPORT DATABASE`, attaching other database
-files, `read_duckdb`, installing or loading extensions, and `httpfs` (which also removes the DuckDB
-server-side request-forgery surface for a non-admin). This is the intended security change (B1), and
-it closes the CapRover K1 exposure for the standard login: it can no longer read
-`/app/discovery/services.json`, or any other file the Studio process can, through DuckDB.
+```
+File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use: Permission Error: Cannot access file "/etc/hostname" - file system operations are disabled by configuration
+```
+
+**What it closes, and what it does not.**
+Every form in §14.1's left column is refused under the denied posture, the quoted-name, bare-path and string-literal bypasses §14.2 records included, because the boundary is the engine option and not a statement guard: the SQL denylist is **not** added to this editor path, and stays the agent profile's defence in depth.
+The option is self-locked once the database runs: `SET enable_external_access = true` and its `SET GLOBAL` form both answer `Invalid Input Error: Cannot enable external access while database is running` (§3.10).
+It closes statement-level reach only.
+The database path is still the connection's own choice, which this change deliberately leaves alone: a denied handle still opens, reads and writes any DuckDB-format file the Studio process can access, and creates a missing one, because the main database is not external to the engine (§14.3).
+A file that is not a DuckDB database is refused before the engine opens it (§3.14), so a JSON or CSV file cannot be read by naming it as the database either.
+
+**What the denied posture keeps and loses.**
+It keeps creating, reading and writing the connection's own database and `:memory:`, browsing the catalog, running queries, and `ATTACH ':memory:'`.
+It loses importing from CSV, Parquet or JSON files, `COPY` export, `EXPORT`/`IMPORT DATABASE`, attaching other database files, `read_duckdb`, installing or loading extensions, and `httpfs`, which also removes the DuckDB server-side request-forgery surface.
+This is the intended security change (B1), and it closes the CapRover K1 exposure for the standard login: it can no longer read `/app/discovery/services.json` through DuckDB, and that export is JSON, so it cannot be opened as a database either.
+
+**How the posture reaches the engine.**
+It is carried on `ProviderExecutionContext.allowExternalFileAccess`, which only DuckDB reads; absent means deny (fail closed).
+It never travels on the connection or on `ProviderOptions`, both caller-supplied, so a request body cannot forge the admin posture.
+`getOrCreateProvider` keys the writable handle cache by it, and the single-writer borrow lends a handle only to a caller of the same posture, so nobody is handed a handle wider than their own.
+Test Connection beside a writer of the other posture opens its test handle read-only with external access off rather than a second read-write handle, and an `agent-operations` acquisition borrows only a handle of its requester's own editor posture (§3.8).
+The agent read-only profile (§3.10) is unchanged: it already opens `enable_external_access: 'false'` through `readOnly`, which keeps precedence.
+
+**For an embedder of `@libredb/studio/providers`.**
+The fail-closed default applies to the published factories too: `createDatabaseProvider` and `getOrCreateProvider` called without an execution context open a DuckDB handle with file access denied, which is a behaviour change for code written before the posture existed.
+Pass `{ allowExternalFileAccess: true }` as the third argument for the full reach; `ProviderExecutionContext` and `EditorExecutionContext` are exported from `@libredb/studio/types`, and [`docs/DATABASE_PROVIDERS.md`](../DATABASE_PROVIDERS.md) shows the call.
 
 ---
 
@@ -1444,10 +1455,8 @@ Read the first column as: the engine flag protects the *database file*, and noth
 given only that handle could write CSV anywhere the Studio process can write, read any file the
 process can read, and pull an extension over the network.
 
-The right column is also the **non-admin editor** posture (§3.16, B1 / K1): a non-admin opens a
-writable handle with `enable_external_access: 'false'`, so every form in this table answers the same
-`Permission Error` for them while their database stays editable. Only an admin editor keeps the
-left-column reach.
+The right column is also the editor's denied posture (§3.16, B1 / K1): a non-admin, and every role on a seed a non-admin role can use, opens a writable handle with `enable_external_access: 'false'`, so every form in this table answers the same `Permission Error` while the connection's own database stays editable.
+Only an admin editor on an inline connection or an admin-only seed keeps the left-column reach.
 
 ### 14.2 The boundary is in the engine, and the denylist is defence in depth
 
@@ -1483,22 +1492,16 @@ The same measurement pass found one thing the option does **not** stop: `read_du
 connection's own file>')` still answers, because it reaches nothing the profile had not already
 granted.
 
-The same `enable_external_access: 'false'` boundary, on a **writable** handle, is the non-admin
-editor posture (§3.16): the three bypasses above are refused for a non-admin too, which is why the
-editor path relies on the engine option rather than on the statement denylist.
+The same `enable_external_access: 'false'` boundary, on a **writable** handle, is the editor's denied posture (§3.16): the three bypasses above are refused there too, which is why the editor path relies on the engine option rather than on the statement denylist.
 
-### 14.3 For an admin, the file path is the whole trust boundary
+### 14.3 The file path is a trust boundary for every role, and statement reach is the admin's
 
-Anyone who can create a DuckDB connection chooses a path on the server's filesystem, and for an
-**admin** editor the engine will happily read a CSV, Parquet or JSON file next to it. Grant admin
-accordingly: on a shared deployment, an admin DuckDB connection is closer to a shell on the Studio
-host than to a database login.
+Anyone who can create a DuckDB connection chooses a path on the server's filesystem, and the handle opens whatever DuckDB database that path names, read-write, creating it when it is missing.
+That holds for every role, because the main database is not external to the engine (§3.16).
+Where the posture allows file access, the engine will also happily read a CSV, Parquet or JSON file next to it, so on a shared deployment an admin DuckDB connection is closer to a shell on the Studio host than to a database login: grant admin accordingly.
 
-A **non-admin** editor cannot reach the filesystem at all (§3.16, B1 / K1): its handle opens
-`enable_external_access: 'false'`, so `read_text`, `read_csv`, `COPY`, `ATTACH` of a file, `INSTALL`,
-`httpfs` and every other file or network route answer the engine's `Permission Error`, while the
-connection's own database stays read-write. So the "closer to a shell" caution is scoped to admins;
-a standard user with a DuckDB connection reaches only the database it names.
+Under the denied posture (§3.16, B1 / K1), which is every non-admin's handle and every handle on a seed a non-admin role can use, `read_text`, `read_csv`, `COPY`, `ATTACH` of a file, `INSTALL`, `httpfs` and every other statement-level file or network route answer the engine's `Permission Error`, while the connection's own database stays read-write.
+So the "closer to a shell" caution is the admin's, but a standard user with a DuckDB connection still reaches any DuckDB-format file whose path they name: the path is not sandboxed for any role, the position [`sqlite.md`](./sqlite.md) section 14 records for SQLite (issue #125).
 
 ### 14.4 Opening a connection reaches no network
 
@@ -1528,12 +1531,9 @@ set on the editor handle because they would also break those documented reads an
 per-session opt-in in §3.14. Restricting this further is an operator policy decision that this
 provider does not make on its own.
 
-The agent read-only profile has none of this reach: `enable_external_access` is off there and its
-denylist refuses `INSTALL` and `LOAD` (§3.10). A **non-admin editor** has none of it either, for the
-same reason the agent profile does not: `enable_external_access` is off on its handle (§3.16), so the
-`custom_extension_repository` + `INSTALL` and the `httpfs` + `read_csv('http://...')` routes above
-both answer `Permission Error` for a non-admin. The reach described in this section is the admin
-editor's.
+The agent read-only profile has none of this reach: `enable_external_access` is off there and its denylist refuses `INSTALL` and `LOAD` (§3.10).
+The editor's denied posture has none of it either, for the same reason: `enable_external_access` is off on its handle (§3.16), so the `custom_extension_repository` + `INSTALL` and the `httpfs` + `read_csv('http://...')` routes above both answer `Permission Error`.
+The reach described in this section is an admin editor's on an inline connection or an admin-only seed.
 
 ---
 
@@ -1541,7 +1541,7 @@ editor's.
 
 | Limitation | Cause | Owner |
 |---|---|---|
-| A non-admin editor cannot read or write files, import CSV/Parquet/JSON, `COPY`, `ATTACH` a file, install extensions or reach the network | `enable_external_access: 'false'` on the non-admin editor handle (B1 / K1) | **Ours, and intended**: the security change, and an admin editor keeps full reach (§3.16, §14.3) |
+| Under the denied posture, which is a non-admin role and every role on a seed a non-admin role can use, a statement cannot read or write a file outside the database, import CSV/Parquet/JSON, `COPY`, `ATTACH` a file, install extensions or reach the network; the database path itself is still any DuckDB file the process can access | `enable_external_access: 'false'` on that editor handle (B1 / K1), and one handle per seed record because DuckDB serves one file through one read-write handle per process | **Ours, and intended**: the security change; an admin keeps full reach on an inline connection and an admin-only seed (§3.16, §14.3) |
 | The file must live on Studio's filesystem | Embedded engine, no network protocol | The engine's (§1.1) |
 | A second process cannot open the file, even read-only | Measured lock behaviour | The engine's (§3.8) |
 | No transaction controls | Not exposed by this provider | Ours — `supportsTransactions: false` |

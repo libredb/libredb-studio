@@ -74,8 +74,9 @@ What it adds to the plain template:
 - **Studio settings.**
   `SEED_DISCOVERY_PATH` turns the discovery source on, `SEED_CACHE_TTL_MS=5000` re-reads the export at most every 5 seconds, and both built-in samples are off, so only the CapRover databases are listed.
   Discovered connections are listed for the admin login only.
-  The standard login cannot read the export file through a DuckDB connection: a non-admin DuckDB handle opens with file access closed (section 3.16 of [`docs/providers/duckdb.md`](../../docs/providers/duckdb.md), control 3.17 in [`docs/SECURITY.md`](../../docs/SECURITY.md)), so only the admin login can read a file the Studio process can read.
-  The standard login still reaches each connection's own database as the connection's DB user, so give it only to someone you trust with that access; the discovered databases' passwords themselves are the admin login's.
+  The standard login cannot read the export file through a DuckDB connection: a non-admin DuckDB handle opens with statement-level file access closed (section 3.16 of [`docs/providers/duckdb.md`](../../docs/providers/duckdb.md), control 3.17 in [`docs/SECURITY.md`](../../docs/SECURITY.md)), and the export is JSON, which DuckDB refuses to open as a database.
+  The admin login can read it, so treat that login as holding every discovered database's password.
+  Still give the standard login only to someone you trust: it reaches each connection's own database as the connection's DB user, and a connection that names a database file on the server is not limited to a directory (section 14 of [`docs/providers/sqlite.md`](../../docs/providers/sqlite.md#14-known-limitations--future-work), issue [#125](https://github.com/libredb/libredb-studio/issues/125)).
 - **Apps to skip.**
   The optional "Apps to skip" field becomes `DISCOVERY_EXCLUDE` of the companion: comma-separated CapRover app names whose databases Studio must not connect to.
   The exporter writes only the names of those apps to the export, and Studio's discovery status lists each one as skipped with the reason "listed in Apps to skip".

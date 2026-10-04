@@ -120,10 +120,13 @@ caproverOneClickApp:
             password settings of your database apps, in a file that only the
             Studio app and its admin login can read. Connected databases are
             listed for the Studio admin login only, and the standard login
-            cannot read that file through a DuckDB connection. Enable HTTPS for
-            Studio before you sign in for the first time. If you do not want the
-            Docker socket on this server, install the plain LibreDB Studio entry
-            instead.
+            cannot read that file through a DuckDB connection. Still give the
+            standard login only to someone you trust, because a connection that
+            names a database file on this server is not limited to a directory
+            (https://github.com/libredb/libredb-studio/blob/main/docs/providers/sqlite.md#14-known-limitations--future-work).
+            Enable HTTPS for Studio before you sign in for the first time. If
+            you do not want the Docker socket on this server, install the plain
+            LibreDB Studio entry instead.
 
             LibreDB Studio is a modern, open-source, web-based SQL IDE for the cloud era.
             This variant connects itself to the PostgreSQL, MySQL, MariaDB,
@@ -192,8 +195,11 @@ caproverOneClickApp:
 
             On this variant the standard login cannot read the passwords of
             the databases Studio found: a non-admin DuckDB connection cannot read
-            the discovery file, or any other file the Studio app can read. The
-            admin login can, so treat it as holding every database's password.
+            the discovery file. The admin login can, so treat it as holding
+            every database's password. Still give the standard login only to
+            someone you trust, because a connection that names a database file
+            on this server is not limited to a directory:
+            https://github.com/libredb/libredb-studio/blob/main/docs/providers/sqlite.md#14-known-limitations--future-work
 
             Save these credentials now. This screen does not show them again,
             but they stay readable as ADMIN_PASSWORD and USER_PASSWORD under the

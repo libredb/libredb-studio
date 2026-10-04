@@ -876,7 +876,8 @@ The marker that does this is set by the discovery source, not derived from the i
 - An app named in the export's `excluded` list (the "Apps to skip" field, `DISCOVERY_EXCLUDE`) is never listed and, while Studio serves fresh data, is reported as skipped, with the reason "listed in Apps to skip".
 - Each discovered connection is validated on its own with the seed schema; an invalid one is skipped with its reason and the others are listed.
 - Discovered connections go through the same role filter as file seeds, so a standard user receives none of them, and naming a discovered id answers the same 404 as an unknown id.
-  The export file is admin-only in practice: an admin DuckDB connection can read any file the Studio process can ([`docs/providers/duckdb.md`](./providers/duckdb.md) section 14.3), the export included, but a non-admin DuckDB handle opens with file access closed (section 3.16, control 3.17 in [`docs/SECURITY.md`](./SECURITY.md)), so a standard user cannot read the discovered databases' passwords through DuckDB.
+  A standard user cannot read the export file through DuckDB either: a non-admin DuckDB handle opens with statement-level file access closed (section 3.16 of [`docs/providers/duckdb.md`](./providers/duckdb.md), control 3.17 in [`docs/SECURITY.md`](./SECURITY.md)), and the export is JSON, which DuckDB refuses to open as a database.
+  An admin's own DuckDB connection can still read it (section 14.3 of the same page), so the admin login holds every discovered database's password.
 - No discovery failure reaches the managed list: every error is caught inside the source, so file seeds and samples are listed as before.
 
 ### Freshness and state

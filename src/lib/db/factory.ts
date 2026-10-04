@@ -795,8 +795,8 @@ export async function getOrCreateProvider(
     connectionId: connection.id,
     lastUsed: Date.now(),
     singleWriterFile,
-    // Recorded so the single-writer borrow can keep an admin and a non-admin DuckDB handle
-    // apart (B1/K1); ignored for every engine but DuckDB.
+    // Recorded so the single-writer borrow lends a DuckDB handle only to a caller of the same
+    // posture (B1/K1); ignored for every engine but DuckDB.
     allowExternalFileAccess,
   });
 

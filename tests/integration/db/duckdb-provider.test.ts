@@ -1604,20 +1604,23 @@ describe("queryReadOnly()", () => {
 // The non-admin editor file-access posture (B1 / K1)
 //
 // A signed-in non-admin opening an ordinary (writable) DuckDB connection gets a handle
-// opened with `enable_external_access: 'false'`, so every route to the filesystem is
-// refused by the engine while the main database stays read-write. The posture is carried
-// by `ProviderExecutionContext.allowExternalFileAccess`, which the route derives from the
-// verified session role; absent means deny (fail closed). An admin keeps full reach.
+// opened with `enable_external_access: 'false'`, so every statement that reaches a file or
+// the network outside the database is refused by the engine while that database stays
+// read-write. It is statement-level only: the database path itself is still the
+// connection's. The posture is carried by `ProviderExecutionContext.allowExternalFileAccess`,
+// which the route derives from the verified session and the resolved connection; absent
+// means deny (fail closed). An admin keeps full reach, except on a seed a non-admin role can
+// use, which is one handle for every role.
 //
 // This closes the CapRover K1 exposure for the standard login: it can no longer read
-// `/app/discovery/services.json`, or any other file, through DuckDB.
+// `/app/discovery/services.json` through DuckDB.
 //
 // Each refusal is the engine's own `Permission Error`, and each block carries a live
 // control so a wording change cannot make it pass vacuously. The placeholder written into
 // every scratch "secret" is PROBE-DUMMY-NOT-A-SECRET, never a real credential.
 // ============================================================================
 
-describe("a non-admin editor handle has no filesystem reach (B1/K1)", () => {
+describe("a non-admin editor handle has no statement-level file or network reach (B1/K1)", () => {
   let provider: DuckDBProvider;
   const SECRET_PLACEHOLDER = "PROBE-DUMMY-NOT-A-SECRET";
 

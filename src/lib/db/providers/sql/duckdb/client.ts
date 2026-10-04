@@ -30,7 +30,7 @@
  *   `INSERT` was refused in the same session. `enable_external_access: 'false'` is what
  *   closes that, independently of `access_mode`: a WRITABLE handle with it set refuses every
  *   file route while `CREATE`/`INSERT` on the database still run (measured on v1.5.5-r.5),
- *   which is the non-admin editor posture (B1 / K1). It is passed alongside - see
+ *   which is the editor's denied posture (B1 / K1). It is passed alongside - see
  *   `openDuckDBClient`.
  * - With `autoinstall_known_extensions` and `autoload_known_extensions` at their defaults,
  *   opening a SQLite file made the engine fetch the ~34 MB `sqlite_scanner` extension from
@@ -103,17 +103,19 @@ export interface DuckDBOpenOptions {
    * The editor on an existing file this process cannot write (a `:ro` mount, a file mode
    * 0444, a file of another user). Opened `READ_ONLY`: a read-write open of such a file
    * answers "Permission denied" and cannot read it at all (measured on v1.5.5), while this
-   * is still the editor. On its own it leaves the filesystem around the file reachable; a
-   * non-admin editor pairs it with `denyExternalAccess` (see below).
+   * is still the editor. On its own it leaves the filesystem around the file reachable; the
+   * denied editor posture pairs it with `denyExternalAccess` (see below).
    */
   unwritableFile?: boolean;
   /**
-   * The non-admin editor posture (B1 / K1): open a WRITABLE editor handle, but with
-   * `enable_external_access: 'false'` so no statement reaches the filesystem around the
-   * database. Distinct from `readOnly`, which also closes file access but makes the database
-   * itself read-only; this keeps the editor's writes and takes only the file reach away.
-   * Composes with `unwritableFile` (`READ_ONLY` plus external access off). The admin editor
-   * leaves it unset and keeps full reach.
+   * The denied editor posture (B1 / K1): open a WRITABLE editor handle, but with
+   * `enable_external_access: 'false'` so no statement reaches a file or the network outside
+   * the database. It is what every non-admin role gets, and every role on a seed a non-admin
+   * role can use (`editorExecutionContext`). Distinct from `readOnly`, which also closes file
+   * access but makes the database itself read-only; this keeps the editor's writes and takes
+   * only the statement-level file reach away, never the choice of the database file itself.
+   * Composes with `unwritableFile` (`READ_ONLY` plus external access off). An admin editor
+   * with full reach leaves it unset.
    */
   denyExternalAccess?: boolean;
 }
@@ -334,11 +336,11 @@ const EXTENSION_POLICY = {
  * - `access_mode: 'READ_ONLY'` when the database itself must not be written: the agent
  *   read-only profile (`readOnly`) or an editor on a file this process cannot write
  *   (`unwritableFile`).
- * - `enable_external_access: 'false'` when no statement may reach the filesystem around the
- *   database: the agent profile (`readOnly`) or the non-admin editor (`denyExternalAccess`).
+ * - `enable_external_access: 'false'` when no statement may reach a file or the network outside
+ *   the database: the agent profile (`readOnly`) or the denied editor (`denyExternalAccess`).
  *
- * So: agent read-only = both; admin editor = neither; non-admin editor = external access off,
- * database still writable; non-admin editor on an unwritable file = both.
+ * So: agent read-only = both; full-reach editor = neither; denied editor = external access off,
+ * database still writable; denied editor on an unwritable file = both.
  */
 function openConfig(options: DuckDBOpenOptions): Record<string, string> {
   const config: Record<string, string> = { ...EXTENSION_POLICY };
@@ -374,7 +376,7 @@ function openConfig(options: DuckDBOpenOptions): Record<string, string> {
  *   read-only profile (`readOnly`) and on an editor file this process cannot write
  *   (`unwritableFile`).
  * - `enable_external_access: 'false'` - no statement reaches the filesystem AROUND the
- *   database. Passed on the agent profile (`readOnly`) AND on the non-admin editor
+ *   database. Passed on the agent profile (`readOnly`) AND on the denied editor
  *   (`denyExternalAccess`, B1 / K1). It is drawn here rather than in the statement guard
  *   because a name denylist cannot see a quoted function name (`"read_text"(...)`), a bare
  *   path in `FROM` (DuckDB's replacement scan makes `FROM '/tmp/x.csv'` a `read_csv_auto`),
@@ -383,7 +385,7 @@ function openConfig(options: DuckDBOpenOptions): Record<string, string> {
  *   disabled by configuration`, while ordinary reads of the attached database, `duckdb_*()`
  *   catalog reads, `pragma_database_size()` and `pragma_storage_info()` are untouched - and,
  *   on a writable handle with external access off, `CREATE`/`INSERT`/`UPDATE`/`DELETE` and
- *   `ATTACH ':memory:'` still run, which is what makes the non-admin editor read-write.
+ *   `ATTACH ':memory:'` still run, which is what makes the denied editor read-write.
  *
  * Both are fixed at OPEN and neither can be undone by a later statement: `SET`
  * and `SET GLOBAL enable_external_access = true` both answer `Invalid Input Error:
@@ -393,14 +395,15 @@ function openConfig(options: DuckDBOpenOptions): Record<string, string> {
  *
  * So the handle has three editor postures and the agent one:
  *
- * - AGENT READ-ONLY (`readOnly`): both options. The database is read-only and no file is
- *   reachable.
- * - ADMIN EDITOR (neither extra option): the ordinary editor connection, where `COPY ... TO`
+ * - AGENT READ-ONLY (`readOnly`): both options. The database is read-only and no statement
+ *   reaches a file outside it.
+ * - FULL-REACH EDITOR (neither extra option): an admin's editor connection, where `COPY ... TO`
  *   and `read_csv_auto('...')` are features rather than escapes; measured unaffected. On a
  *   file it cannot write it adds `access_mode` alone (`unwritableFile`).
- * - NON-ADMIN EDITOR (`denyExternalAccess`): writable, but `enable_external_access: 'false'`,
- *   so the database is editable and no file is reachable. On a file it cannot write it also
- *   carries `access_mode` (`unwritableFile`).
+ * - DENIED EDITOR (`denyExternalAccess`): writable, but `enable_external_access: 'false'`, so
+ *   the database is editable and no statement reaches a file or the network outside it. Every
+ *   non-admin role gets it, and every role on a seed a non-admin role can use. On a file it
+ *   cannot write it also carries `access_mode` (`unwritableFile`).
  */
 export async function openDuckDBClient(path: string, options: DuckDBOpenOptions): Promise<DuckDBClient> {
   // Inside the function, never at module scope - see the file header. Through

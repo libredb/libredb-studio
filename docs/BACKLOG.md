@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D233, U17 · 143
+- [Drivers and connections](#drivers-and-connections) — D1-D240, U17 · 144
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U92 · 84
@@ -2574,6 +2574,17 @@ Found 2026-10-04 while planning the platform integration, whose local gates kept
 Not fixed there: none of the six files is part of that work.
 
 **Done when:** each of the six files removes the directories it makes, for example with `rmSync(path, { recursive: true, force: true })` in an `afterEach` or `afterAll`, and a run of `bun run test` with `TMPDIR` pointed at an empty directory leaves it empty.
+
+### D240. Two connection records naming one DuckDB file get two read-write handles in one process
+
+`getOrCreateProvider` in `src/lib/db/factory.ts` keys its cache per connection record and never borrows, so two different records that name the same DuckDB file each open a read-write `DuckDBInstance` on it: two users' own connections, say, or an admin-only seed and a user's connection naming its file.
+On Linux and macOS each handle keeps its own catalog, and whichever closes last checkpoints over the other's committed rows; on Windows the second open is refused (`docs/providers/duckdb.md` section 3.8).
+It predates the DuckDB file-access posture: `main` before B1/K1 behaves the same for two records, and B1/K1 removed only the one-record case, a seed every role can use, by giving that record one posture.
+Test Connection and the agent's operations reads borrow the open handle instead, so the gap is the editor's own cache.
+
+Found while fixing the B1/K1 review findings.
+
+**Done when:** a second record naming a file the cache already holds is served without a second read-write handle, or is refused with a sentence that names the open one, measured on Linux and on Windows.
 
 ## Value interpolation
 

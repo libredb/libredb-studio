@@ -41,10 +41,10 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *   `credentialDigest` or the fingerprint, whose rules are as whom a connection authenticates and
  *   which server it reaches, and the mode changes neither.
  * - The DuckDB file-access posture (B1 / K1), and ONLY for `connection.type === "duckdb"`. A
- *   non-admin editor handle opens with `enable_external_access: 'false'` and an admin one with full
- *   reach, so the two must never share a cached handle: an admin resolving the same DuckDB
- *   connection as a non-admin (an operator `seed:` connection, say) would otherwise be handed the
- *   sandboxed handle, or the non-admin the open one. The deny posture appends a segment; the
+ *   denied editor handle opens with `enable_external_access: 'false'` and a full-reach one without
+ *   it, so the two must never share a cached handle: a caller of one posture would otherwise be
+ *   handed the other's handle. (A seed a non-admin role can use gets one posture for every role in
+ *   `editorExecutionContext`, so that record still keeps one key.) The deny posture appends a segment; the
  *   allow/admin posture and an absent posture append NOTHING, so every non-DuckDB key and the
  *   profiled key (which passes no posture) stay byte-identical to before this change. The posture
  *   lives on `ProviderExecutionContext`, server-derived from the session role, never on the
@@ -81,8 +81,8 @@ export async function providerCacheKey(
   const parts = [connection.id, server, credentials, mode];
   // DuckDB only, and only the deny posture adds bytes: the admin/allow and absent postures leave
   // the key byte-identical to before this field existed, which keeps every non-DuckDB key and the
-  // profiled key (passed no posture) unchanged. A non-admin editor handle must not be shared with
-  // an admin one on the same connection, so its key carries this extra segment (B1 / K1).
+  // profiled key (passed no posture) unchanged. A denied editor handle must not be shared with a
+  // full-reach one on the same connection, so its key carries this extra segment (B1 / K1).
   if (connection.type === "duckdb" && allowExternalFileAccess === false) {
     parts.push("duckdb-deny-file-access");
   }
