@@ -11,10 +11,12 @@ import {
   buildNowhereChecks,
   corpusEntry,
   EVIDENCE_HIDDEN_STATEMENT,
+  EVIDENCE_MID_LINE_SLICES,
   EVIDENCE_NOWHERE_DATABASE,
   type EvidenceEntry,
   type EvidenceLine,
 } from "../../live/influxdb-evidence-plan";
+import { policyVerdict } from "../../live/influxdb-evidence-checks";
 
 const PLAN = buildEvidencePlan();
 const CORPUS = PLAN.filter((entry) => entry.kind === "corpus");
@@ -72,7 +74,7 @@ const DIFFERENTIAL_IDS = [
   "f5-regex-after-with-measurement",
 ];
 
-/** The capture list of the plan (T01), capture 14 aside: it is synthetic and never sent. */
+/** The capture list of the plan (T01), the synthetic captures aside: capture 14 and `sql-truncated-mid-line` (R39). */
 const EXPECTED_CAPTURES: Readonly<Record<string, readonly EvidenceLine[]>> = {
   "ping-anon": ALL,
   "ping-auth": ALL,
@@ -105,6 +107,7 @@ const EXPECTED_CAPTURES: Readonly<Record<string, readonly EvidenceLine[]>> = {
   "two-databases": [V3],
   "segment-after-dot": [V1, V3],
   nan: ALL,
+  infinity: ALL,
   ...Object.fromEntries(DIFFERENTIAL_IDS.map((id) => [`differential/${id}`, ALL])),
   "differential/two-statements": [V3],
   "sql-preview-home": [V3],
@@ -124,7 +127,7 @@ const EXPECTED_CAPTURES: Readonly<Record<string, readonly EvidenceLine[]>> = {
   "sql-schema-error": [V3],
   "sql-cross-database": [V3],
   "sql-truncated-zero": [V3],
-  "sql-truncated-mid-line": [V3],
+  "sql-truncated": [V3],
   "filelimit-sql": [FILELIMIT],
   "filelimit-influxql": [FILELIMIT],
   "sql-databases": [V3],
@@ -359,11 +362,45 @@ describe("the whole plan (E22)", () => {
     expect(get.query?.q).toBe(textOf(byCapture(V3, "form-64k-quotes")));
   });
 
-  test("marks only the two truncation captures as cut", () => {
-    expect(PLAN.filter((entry) => entry.expectCut === true).map((entry) => entry.capture)).toEqual([
-      "sql-truncated-zero",
-      "sql-truncated-mid-line",
+  test("marks only the two truncation captures as cut, each with the cut 3.12.0 gives it (R39)", () => {
+    expect(
+      PLAN.filter((entry) => entry.expectCut !== undefined).map((entry) => [entry.capture, entry.expectCut]),
+    ).toEqual([
+      ["sql-truncated-zero", "zero-byte"],
+      ["sql-truncated", "line-end"],
     ]);
+  });
+
+  test("sql-truncated-mid-line is never sent: it is sliced from the line-end capture sql-truncated (R39)", () => {
+    expect(EVIDENCE_MID_LINE_SLICES).toEqual([
+      { capture: "sql-truncated-mid-line", source: "sql-truncated", line: V3 },
+    ]);
+    for (const slice of EVIDENCE_MID_LINE_SLICES) {
+      expect(PLAN.some((entry) => entry.capture === slice.capture)).toBe(false);
+      const source = PLAN.find((entry) => entry.line === slice.line && entry.capture === slice.source);
+      expect(source?.expectCut).toBe("line-end");
+    }
+  });
+});
+
+describe("the policy over the plan (E22)", () => {
+  test("every text but a corpus entry's is allowed by its type's policy", () => {
+    const refused: string[] = [];
+    for (const entry of [...PLAN, ...buildNowhereChecks()]) {
+      const text = textOf(entry);
+      if (text === undefined || entry.kind === "corpus") continue;
+      // The runner's own choice of policy; tests/unit/live/influxdb-evidence-checks.test.ts shows it reads the language.
+      const verdict = policyVerdict(entry.language ?? "influxql", text);
+      if (!verdict.allowed) refused.push(`${entry.line} ${entry.capture}: ${verdict.message}`);
+    }
+    expect(refused).toEqual([]);
+  });
+
+  test("every text the policy check reads names its language, so the runner never guesses the policy", () => {
+    const unnamed = [...PLAN, ...buildNowhereChecks()].filter(
+      (entry) => entry.kind !== "corpus" && textOf(entry) !== undefined && entry.language === undefined,
+    );
+    expect(unnamed.map((entry) => `${entry.line} ${entry.capture}`)).toEqual([]);
   });
 });
 

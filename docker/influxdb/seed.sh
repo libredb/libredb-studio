@@ -241,6 +241,9 @@ seed_bench() {
     v2_write bench s <"$chunk"
     v3_write "$V3_URL" bench second <"$chunk"
   done
+  # The EXIT trap covers a failure above; it would fire after this function returned, where `chunks` is unset.
+  rm -rf "$chunks"
+  trap - EXIT
   echo "bench: wrote bulk.py bench to all three servers"
 }
 

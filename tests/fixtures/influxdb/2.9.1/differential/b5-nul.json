@@ -1,0 +1,21 @@
+{
+  "version": "2.9.1",
+  "name": "differential/b5-nul",
+  "image": "influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "db": "studio_evidence_nowhere",
+      "q": "SELECT count(temp) FROM home\u0000; SHOW DATABASES",
+      "chunked": "true",
+      "chunk_size": "1000"
+    },
+    "auth": "token"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"results\":[{\"statement_id\":0,\"error\":\"database not found: studio_evidence_nowhere\"}]}\n{\"results\":[{\"statement_id\":0,\"error\":\"not executed\"}]}\n"
+}

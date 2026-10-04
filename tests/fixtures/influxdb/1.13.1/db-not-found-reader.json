@@ -1,0 +1,21 @@
+{
+  "version": "1.13.1",
+  "name": "db-not-found-reader",
+  "image": "influxdb:1.13.1@sha256:3e3913d3b7512d1749922c8183bbf2a76973dd9f98e1a1e3249c652ec1576fc0",
+  "capturedAt": "2026-10-04",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "db": "nope",
+      "q": "SELECT count(temp) FROM home",
+      "chunked": "true",
+      "chunk_size": "1000"
+    },
+    "auth": "basic"
+  },
+  "status": 403,
+  "contentType": "application/json",
+  "body": "{\"error\":\"error authorizing query: reader not authorized to execute statement 'SELECT count(temp) FROM home', requires READ on nope\"}\n"
+}

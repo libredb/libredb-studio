@@ -38,9 +38,22 @@ export interface EvidenceEntry {
   readonly body?: Readonly<Record<string, string>>;
   /** Which policy the runner runs before sending the entry's text. */
   readonly language?: "influxql" | "sql";
-  /** The server is expected to end the body before it is complete (capture 10). */
-  readonly expectCut?: boolean;
+  /**
+   * The server is expected to end the body before it is complete (capture 10), with this cut: nothing at all, or
+   * after whole lines, which is all 3.12.0 produces (R39).
+   */
+  readonly expectCut?: "zero-byte" | "line-end";
 }
+
+/**
+ * The synthetic captures the runner derives instead of sending (R39): the body of `source`, a `line-end` cut on
+ * `line`, sliced inside its last line and written as `capture`, labelled `synthetic` with the source and the offset.
+ */
+export const EVIDENCE_MID_LINE_SLICES: readonly {
+  readonly capture: string;
+  readonly source: string;
+  readonly line: EvidenceLine;
+}[] = [{ capture: "sql-truncated-mid-line", source: "sql-truncated", line: "3.12.0-core" }];
 
 const V1: EvidenceLine = "1.13.1";
 const V2: EvidenceLine = "2.9.1";
@@ -83,7 +96,7 @@ function sql(
   line: EvidenceLine,
   principal: EvidencePrincipal,
   q: string,
-  options: { readonly db?: string; readonly expectCut?: boolean } = {},
+  options: { readonly db?: string; readonly expectCut?: EvidenceEntry["expectCut"] } = {},
 ): EvidenceEntry {
   return {
     capture,
@@ -94,7 +107,7 @@ function sql(
     path: "/api/v3/query_sql",
     body: { db: options.db ?? "home", q, format: "jsonl" },
     language: "sql",
-    ...(options.expectCut === true ? { expectCut: true } : {}),
+    ...(options.expectCut === undefined ? {} : { expectCut: options.expectCut }),
   };
 }
 
@@ -232,6 +245,8 @@ function perEngineLine(line: EvidenceLine): EvidenceEntry[] {
     // 7: a read whose value is NaN. `sqrt(-1.0)` alone is refused on 1.x and 2.x ("field must contain at least
     // one variable") and answers zero bytes on 3.x, so the square root takes a field below zero.
     influxql("nan", line, reader, 'SELECT sqrt("temp" - 100) FROM "home".."home" LIMIT 1', { db: "home" }),
+    // R33: a read whose value is infinite, which no line can write as JSON.
+    influxql("infinity", line, reader, 'SELECT log("temp", 1) FROM "home".."home" LIMIT 1', { db: "home" }),
     // 15: a 64 KiB statement travels as a form body.
     influxql("form-64k-quotes", line, reader, QUOTE_HEAVY, { db: "home" }),
     influxql("form-64k-multibyte", line, reader, MULTIBYTE, { db: "home" }),
@@ -310,13 +325,18 @@ function v3Only(): EvidenceEntry[] {
     sql("sql-not-implemented", V3, "admin", "SHOW DATABASES"),
     sql("sql-schema-error", V3, "admin", 'SELECT "nope" FROM "home"'),
     sql("sql-cross-database", V3, "admin", "SELECT * FROM edge.iox.numbers"),
-    sql("sql-truncated-zero", V3, "admin", "SELECT co/(co-co) FROM home", { expectCut: true }),
-    // K10's first candidate over `seed.sh bench`: the divisor is zero only on the last second's rows, after the
-    // earlier rows have streamed. The runner records the shape the server answers, and T08 settles the recipe.
-    sql("sql-truncated-mid-line", V3, "admin", 'SELECT "time", "host", "i1" / ("i2" - 19999) AS "q" FROM "bulk"', {
-      db: "bench",
-      expectCut: true,
-    }),
+    sql("sql-truncated-zero", V3, "admin", "SELECT co/(co-co) FROM home", { expectCut: "zero-byte" }),
+    // K10 over `seed.sh bench`: one host's last 5,000 seconds in time order, whose divisor is zero only on the last
+    // second's row, so earlier batches stream before the failure. Unordered or over every host the failure comes
+    // first and the body is empty. The server flushes whole lines, so the cut lands on a line end (R39); now and then
+    // nothing arrives, so the runner repeats it. EVIDENCE_MID_LINE_SLICES derives the mid-line capture from it.
+    sql(
+      "sql-truncated",
+      V3,
+      "admin",
+      `SELECT "i1" / ("i2" - 19999) AS "q" FROM "bulk" WHERE "host" = 'h00' AND "i2" >= 15000 ORDER BY "time"`,
+      { db: "bench", expectCut: "line-end" },
+    ),
     textless("sql-databases", V3, "admin", "/api/v3/configure/database", { format: "json" }),
     sql(
       "sql-tables",

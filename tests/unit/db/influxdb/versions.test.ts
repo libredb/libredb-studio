@@ -3,8 +3,8 @@
  * reported version and the build from the `/ping` body or, when `/ping` has none, the `/health` body, and every
  * row of `GENERATION_TRAITS`.
  *
- * The answers under "measured" are the bodies the three pinned compose services gave on 2026-10-04 (influxdb1
- * 1.13.1, influxdb2 2.9.1, influxdb3 3.12.0-core), copied here byte for byte except the 3.x process id.
+ * The answers under "measured" are the committed captures of the three pinned compose services (influxdb1 1.13.1,
+ * influxdb2 2.9.1, influxdb3 3.12.0-core), read through tests/helpers/influxdb-fixtures.ts.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -13,36 +13,28 @@ import {
   pingNeedsHealth,
   readPing,
 } from "@/lib/db/providers/timeseries/influxdb/versions";
+import { type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 
 const UNKNOWN = { generation: "unknown", reported: null, build: null } as const;
 const NO_CONTENT = { status: 204, text: "" };
 
+/** A capture as `readPing` takes an answer: the status and the body. */
+const answerOf = (version: InfluxFixtureVersion, name: string) => {
+  const { status, body } = loadInfluxCapture(version, name);
+  return { status, text: body };
+};
+
 const MEASURED = {
-  v1: {
-    ping: NO_CONTENT,
-    health: {
-      status: 200,
-      text: '{"checks":[],"message":"ready for queries and writes","name":"influxdb","status":"pass","version":"1.13.1"}',
-    },
-  },
-  v2: {
-    ping: NO_CONTENT,
-    health: {
-      status: 200,
-      text: '{"name":"influxdb", "message":"ready for queries and writes", "status":"pass", "checks":[], "version": "v2.9.1", "commit": "d4fa1941fd"}\n',
-    },
-  },
+  v1: { ping: answerOf("1.13.1", "ping-auth"), health: answerOf("1.13.1", "health-auth") },
+  v2: { ping: answerOf("2.9.1", "ping-auth"), health: answerOf("2.9.1", "health-auth") },
   v3: {
-    ping: {
-      status: 200,
-      text: '{"product_name":"InfluxDB 3 Core","version":"3.12.0","revision":"3ba97c65f1","process_id":"00000000-0000-4000-8000-000000000000"}',
-    },
+    ping: answerOf("3.12.0-core", "ping-auth"),
     /** What 3.x answers on `/health` behind the token: text, never read (spec 3.3). */
-    health: { status: 200, text: "OK" },
+    health: answerOf("3.12.0-core", "health-auth"),
     /** `/ping` and `/health` with no token. */
-    unauthenticated: { status: 401, text: '{"error": "the request was not authenticated"}' },
+    unauthenticated: answerOf("3.12.0-core", "ping-anon"),
   },
-} as const;
+};
 
 const ping = (body: unknown, status = 200) => ({ status, text: JSON.stringify(body) });
 const health = (version: unknown, status = 200) => ({
