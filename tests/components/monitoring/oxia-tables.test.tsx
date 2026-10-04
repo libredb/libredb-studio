@@ -37,7 +37,8 @@ describe("the Tables tab of an Oxia connection", () => {
       <TablesTab data={data} loading={false} onRunMaintenance={mock(async () => true)} labels={OXIA_LABELS} />,
     );
 
-    expect(getByTestId("tables-list-scope").textContent).toBe(OXIA_LABELS.tableStatsCaption);
+    expect(getByTestId("tables-list-scope").textContent).toBe(OXIA_LABELS.tableStatsCaption ?? "");
+    expect(OXIA_LABELS.tableStatsCaption).toStartWith("Oxia has no tables");
     expect(getByTestId("tables-stat-count").textContent).toBe("0");
     expect(queryByText("No table statistics available.")).toBeNull();
   });
