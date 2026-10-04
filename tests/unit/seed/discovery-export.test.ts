@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test";
-import { LIMITS } from "../../../docker/discover.mjs";
+import { ENV_ALLOW_LIST, LIMITS } from "../../../docker/discover.mjs";
 import {
   DISCOVERY_FILE_MAX_BYTES,
   type DiscoveredService,
@@ -136,6 +136,11 @@ describe("parseDiscoveryExport: valid files", () => {
   it("accepts exactly 500 services", () => {
     const services = Array.from({ length: 500 }, (_, i) => pgService({ id: `s${i}`, name: `a${i}`, appName: `a${i}` }));
     expect(parse(validExport({ services })).ok).toBe(true);
+  });
+
+  it("accepts an env record of exactly 64 keys", () => {
+    const env = Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`ENV_${i}`, "x"]));
+    expect(parse(validExport({ services: [pgService({ env })] })).ok).toBe(true);
   });
 
   it("accepts every bound at its limit", () => {
@@ -360,6 +365,25 @@ describe("parseDiscoveryExport: invalid files", () => {
       "the file does not match the export schema at services.0.env (invalid_type)",
     );
   });
+
+  it("refuses an env record of 65 keys, one more than the bound", () => {
+    const env = Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`ENV_${i}`, "x"]));
+    expect(parse(validExport({ services: [pgService({ env })] }))).toEqual({
+      ok: false,
+      reason: "the file does not match the export schema at services.0.env (custom)",
+    });
+  });
+
+  // The keys are counted before any value is validated. Otherwise zod collects 127,000 issues and spreads them into
+  // one call, which overflowed the stack on Node: the parser threw instead of refusing. bun survives that, so this
+  // pins the single refusal rather than the crash.
+  it("counts an env record's keys before validating its values: 127,000 numbers give one issue", () => {
+    const env = Object.fromEntries(Array.from({ length: 127_000 }, (_, i) => [`ENV_${i}`, 1]));
+    expect(parse(validExport({ services: [pgService({ env })] }))).toEqual({
+      ok: false,
+      reason: "the file does not match the export schema at services.0.env (custom)",
+    });
+  });
 });
 
 describe("parseDiscoveryExport: size cap", () => {
@@ -403,6 +427,12 @@ describe("parseDiscoveryExport: size cap", () => {
 describe("parseDiscoveryExport: bounds shared with the exporter", () => {
   it("caps the file at the exporter's fileBytes", () => {
     expect(DISCOVERY_FILE_MAX_BYTES).toBe(LIMITS.fileBytes);
+  });
+
+  // The exporter projects at most its allow-listed keys into a service's env, and the schema keeps at most 64 of
+  // them (ENV_KEYS_MAX): an allow-list that outgrew the bound would make Studio refuse a file the exporter wrote.
+  it("keeps the exporter's env allow-list within the schema's bound of 64 keys", () => {
+    expect(ENV_ALLOW_LIST.length).toBeLessThanOrEqual(64);
   });
 
   const bounds: Array<[string, number, (size: number) => Record<string, unknown>, string]> = [

@@ -42,13 +42,23 @@ const ExporterStatusSchema = z.discriminatedUnion("ok", [
   }),
 ]);
 
+// The most env keys one service may carry. The exporter projects at most its ten allow-listed keys. 64 leaves room
+// for a newer exporter when the exporter and Studio run different image versions, and stays far below the key count
+// at which zod's issue collection overflows the stack on Node.
+const ENV_KEYS_MAX = 64;
+
 const DiscoveredServiceSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).max(63),
   appName: z.string().min(1).max(63),
   host: z.string().min(1).max(253),
   image: z.string().min(1).max(512),
-  env: z.record(z.string(), z.string().max(1024)),
+  // As with the lists below, the keys are counted before any value is validated, so a record of bad values costs one
+  // issue instead of one per value.
+  env: z
+    .record(z.string(), z.unknown())
+    .refine((env) => Object.keys(env).length <= ENV_KEYS_MAX)
+    .pipe(z.record(z.string(), z.string().max(1024))),
   // The exporter's derivation only ever yields an env var name, never a value.
   requirepassEnv: z
     .string()
