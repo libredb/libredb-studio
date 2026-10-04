@@ -28,6 +28,7 @@
 
 import { createDatabaseProvider } from "@/lib/db";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -200,7 +201,10 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
         // returned, so a resumed drive is bounded by what the run was opened as.
         deadline: new AgentRunDeadline(ceilings.deadlineMs),
         repairs: new AgentRepairLedger(),
-        acquireProvider: acquireExecutionProfileProvider,
+        // Told the editor posture the run's persisted actor gets on this connection (B1/K1), which
+        // decides only which open single-writer handle an operations acquisition may borrow.
+        acquireProvider: (target, profile) =>
+          acquireExecutionProfileProvider(target, profile, {}, editorExecutionContext(actor, target)),
       },
     });
   } catch (error) {

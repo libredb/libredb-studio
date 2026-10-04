@@ -11,12 +11,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "b
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { acquireExecutionProfileProvider, getOrCreateProvider } from "@/lib/db/factory";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
 import { MCP_CONNECTIONS_UNREADABLE, McpConnectionContext } from "@/lib/mcp/context";
 import {
   countMethod,
+  createDuckdbFile,
   createSqliteFile,
   failNextCall,
   gateMethod,
@@ -206,6 +207,22 @@ describe("acquire", () => {
     } finally {
       failing.restore();
     }
+  });
+
+  test("an admin's operations acquisition on an admin-only DuckDB seed borrows the editor's open handle", async () => {
+    // B1/K1 with B49: the editor holds the file under the admin posture, which is the posture this
+    // caller gets in the editor on a seed only admins can use, so the borrow lends it that handle
+    // rather than opening a second one beside it.
+    const file = join(dir, "admin-only.duckdb");
+    await createDuckdbFile(file, ["CREATE TABLE t (id INTEGER)"]);
+    writeSeedFile(dir, [{ id: "warehouse", type: "duckdb", database: file, roles: ["admin"] }]);
+    const context = new McpConnectionContext(alice);
+    const connection = await context.resolve("seed:warehouse");
+    if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
+      throw new Error("seed:warehouse did not resolve");
+    const editor = await getOrCreateProvider(connection, {}, { allowExternalFileAccess: true });
+
+    expect(await context.acquire(connection, "agent-operations")).toBe(editor);
   });
 });
 

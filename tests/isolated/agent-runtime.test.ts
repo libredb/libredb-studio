@@ -23,7 +23,7 @@ import { AgentRunServiceError } from "@/lib/agent/run-service";
 import { LLMAuthError, LLMConfigError, LLMRateLimitError } from "@/lib/llm/types";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import { SeedConnectionError } from "@/lib/seed/resolve-connection";
-import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import * as realFactory from "@/lib/db/factory";
 import type { AgentToolResources } from "@/lib/agent/investigation";
 import { TABLE_LABELS } from "../fixtures/provider-labels";
 import type { ProviderCapabilities } from "@/lib/db/types";
@@ -64,6 +64,12 @@ mock.module("@/lib/agent/run-store", () => ({ ...realRunStore, resolveAgentLedge
 mock.module("@/lib/seed/resolve-connection", () => ({ resolveConnection: mockResolveConnection }));
 mock.module("@/lib/db", () => ({
   createDatabaseProvider: async () => ({ getCapabilities: mockGetCapabilities, getLabels: mockGetLabels }),
+}));
+// The profiled seam itself, so what the run's acquirer hands it can be read back.
+const mockAcquireExecutionProfileProvider = mock(async (..._args: unknown[]) => ({}) as never);
+mock.module("@/lib/db/factory", () => ({
+  ...realFactory,
+  acquireExecutionProfileProvider: mockAcquireExecutionProfileProvider,
 }));
 mock.module("@/lib/agent/model-adapter", () => ({ createAgentModel: mockCreateAgentModel }));
 mock.module("@/lib/agent/investigation", () => ({ runInvestigation: mockRunInvestigation }));
@@ -178,7 +184,16 @@ describe("driveAgentRun", () => {
     expect(resources.labels).toEqual(TABLE_LABELS);
     // Never the shared writable cache: a provider is acquired for the run's
     // execution profile, which is the only seam the tool layer is allowed to use.
-    expect(resources.acquireProvider).toBe(acquireExecutionProfileProvider);
+    mockAcquireExecutionProfileProvider.mockClear();
+    await resources.acquireProvider(CONNECTION, "agent-operations");
+    // With the editor posture the run's persisted actor gets on this connection (B1/K1): it decides
+    // only which open single-writer handle an operations acquisition may borrow. A user is denied.
+    expect(mockAcquireExecutionProfileProvider).toHaveBeenCalledWith(
+      CONNECTION,
+      "agent-operations",
+      {},
+      { allowExternalFileAccess: false },
+    );
   });
 
   test("gives the run a canonical registry, a deadline and an empty repair ledger", async () => {

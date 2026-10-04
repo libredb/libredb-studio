@@ -1,5 +1,6 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { Role } from "@/lib/auth";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
@@ -71,7 +72,10 @@ export class McpConnectionContext {
     const key = await profiledCacheKey(connection, profile);
     const pending = pendingAcquisitions.get(key);
     if (pending !== undefined) return pending;
-    const acquisition = acquireExecutionProfileProvider(connection, profile).finally(() => {
+    // The caller's editor posture on this connection (B1/K1) decides only which open single-writer
+    // handle an operations acquisition may borrow; every caller that can resolve one seed shares it.
+    const requester = editorExecutionContext(this.caller, connection);
+    const acquisition = acquireExecutionProfileProvider(connection, profile, {}, requester).finally(() => {
       pendingAcquisitions.delete(key);
     });
     pendingAcquisitions.set(key, acquisition);

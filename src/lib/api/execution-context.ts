@@ -1,4 +1,4 @@
-import type { ProviderExecutionContext } from "@/lib/db/types";
+import type { EditorExecutionContext } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -51,6 +51,6 @@ function openToNonAdminRoles(connection: DatabaseConnection): boolean {
 export function editorExecutionContext(
   session: { role: string },
   connection: DatabaseConnection,
-): ProviderExecutionContext {
+): EditorExecutionContext {
   return { allowExternalFileAccess: session.role === "admin" && !openToNonAdminRoles(connection) };
 }

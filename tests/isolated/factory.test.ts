@@ -2176,6 +2176,50 @@ describe("single-writer file reuse", () => {
     await removeProvider(conn.id);
   });
 
+  test("an operations acquisition borrows the open DuckDB handle of its requester's editor posture (B49)", async () => {
+    // An admin running an Operate agent on a connection only admins use, while the editor holds
+    // the file under the admin's posture. The agent profile itself carries no posture, so before
+    // the requester's was passed the borrow read as deny, skipped the admin's handle, and the run
+    // opened a second, read-only handle: a frozen snapshot on Linux and macOS, a refusal on Windows.
+    const file = join(dir, "operations-admin.duckdb");
+    const conn = makeConnection("duckdb", { id: "duck-ops-admin", database: file });
+    const editor = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+
+    const agent = await acquireExecutionProfileProvider(
+      conn,
+      "agent-operations",
+      {},
+      { allowExternalFileAccess: true },
+    );
+
+    expect(agent).toBe(editor);
+    // Borrowed, never owned, exactly as the posture-free borrow is.
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 0, connections: [] });
+    await removeProvider(conn.id);
+  });
+
+  test("an operations acquisition never borrows a handle wider than its requester's posture", async () => {
+    // The fail-closed default: no requester posture reads as deny, so an admin's full handle is
+    // not lent to it. It opens its own read-only handle beside the writer instead, which Windows
+    // refuses for a file this process already holds (docs/providers/duckdb.md section 3.8).
+    const file = join(dir, "operations-deny.duckdb");
+    const conn = makeConnection("duckdb", { id: "duck-ops-deny", database: file });
+    const editor = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+
+    const acquired = await acquireExecutionProfileProvider(conn, "agent-operations").then(
+      (provider) => provider,
+      (error: unknown) => error,
+    );
+
+    if (process.platform === "win32") {
+      expect(acquired).toBeInstanceOf(Error);
+    } else {
+      expect(acquired).not.toBe(editor);
+      expect(getExecutionProfileCacheStats().size).toBe(1);
+    }
+    await removeProvider(conn.id);
+  });
+
   test("isSingleWriterFileOpen sees a held file whatever posture holds it, which the borrow cannot", async () => {
     // The question Test Connection asks when the borrow answers null: is the file open under the
     // OTHER posture, where a second read-write handle must not be opened beside it.

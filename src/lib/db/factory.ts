@@ -7,6 +7,7 @@
 import {
   type DatabaseProvider,
   type DatabaseConnection,
+  type EditorExecutionContext,
   type ProviderOptions,
   type ProviderExecutionContext,
 } from "./types";
@@ -881,11 +882,20 @@ function resolveAgentCredential(connection: DatabaseConnection): { user: string;
  * rather than silently served `query()` (fail closed), and under `agent-operations`
  * it is served, because that profile sends no statement for a read-only wrapper to
  * bound. See `PROFILE_ACQUISITION` for the whole of that argument.
+ *
+ * `requester` is the editor posture of the caller this acquisition serves, as
+ * `editorExecutionContext` derives it (B1 / K1). It never changes how a profiled handle
+ * opens - every profile opens read-only with external access off - and is read only to
+ * decide which open single-writer handle an `agent-operations` acquisition may borrow:
+ * one opened under that same posture, so an admin's agent is grounded from the admin's
+ * own editor handle as before, and a requester is never lent a handle wider than its own.
+ * Absent means deny, like everywhere else on this channel.
  */
 export async function acquireExecutionProfileProvider(
   connection: DatabaseConnection,
   profile: ExecutionProfile,
   options: ProviderOptions = {},
+  requester: EditorExecutionContext = {},
 ): Promise<DatabaseProvider> {
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   assertReadOnlyHonoured(connection);
@@ -936,11 +946,12 @@ export async function acquireExecutionProfileProvider(
     session that opened it.
   */
   if (!acquisition.requiresReadOnlyStatements && credential === null) {
-    // Posture-aware for DuckDB (B1/K1): the agent profile carries no `allowExternalFileAccess`,
-    // so it borrows only a non-admin (deny) editor handle and never an admin's full one; where
-    // none matches it opens its own handle, the pre-existing D3/B49 behaviour. The posture is
+    // Posture-aware for DuckDB (B1/K1): only a handle opened under the requester's own editor
+    // posture is borrowed, so an admin's agent on a connection only admins use is grounded from
+    // the admin's editor handle, and nobody is lent a handle wider than their own. Where none
+    // matches it opens its own read-only handle, which is safe beside a writer. The posture is
     // ignored for libredb, the other single-writer engine, so its borrow is unchanged.
-    const open = findOpenSingleWriterProvider(connection, acquisition.context.allowExternalFileAccess);
+    const open = findOpenSingleWriterProvider(connection, requester.allowExternalFileAccess);
     if (open) return open;
   }
 

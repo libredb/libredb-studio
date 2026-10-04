@@ -2009,6 +2009,14 @@ export interface ProviderExecutionContext {
   allowExternalFileAccess?: boolean;
 }
 
+/**
+ * The DuckDB editor file-access posture on its own (B1 / K1): what `editorExecutionContext`
+ * derives from the verified session and the resolved connection, and what an execution-profile
+ * acquisition is told about the requester it serves, so it borrows only a handle opened under
+ * that requester's own posture.
+ */
+export type EditorExecutionContext = Pick<ProviderExecutionContext, "allowExternalFileAccess">;
+
 // ============================================================================
 // Internal Types
 // ============================================================================
