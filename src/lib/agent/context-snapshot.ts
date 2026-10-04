@@ -92,6 +92,8 @@ import type {
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError, type ExecutionProfileDenyCode } from "@/lib/db/errors";
 import { declaredKinds } from "@/lib/db/object-kinds";
+import type { ProviderCapabilities } from "@/lib/db/types";
+import { quoteObjectPath } from "@/lib/query-generators";
 import type { ColumnSchema, DatabaseConnection, DatabaseType, ForeignKeySchema, IndexSchema } from "@/lib/types";
 
 /**
@@ -863,7 +865,7 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
     );
   }
 
-  const inventory = addressInventory(read.inventory, read.defaultContainer);
+  const inventory = addressInventory(read.inventory, read.defaultContainer, context.capabilities);
   return {
     kind: "captured",
     snapshot: {
@@ -902,9 +904,13 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
  * a name. The flat reading is deleted, `describeObjects` answers columns for the same folder the
  * listing walked, and the two are joined on the path inside the walk itself.
  */
-function addressInventory(inventory: AgentInventory, defaultContainer: readonly string[] | undefined): AgentInventory {
+function addressInventory(
+  inventory: AgentInventory,
+  defaultContainer: readonly string[] | undefined,
+  capabilities: ProviderCapabilities,
+): AgentInventory {
   const objects = inventory.objects.map((object) => {
-    const name = qualifiedName(object);
+    const name = qualifiedName(object, capabilities);
     return {
       ...object,
       name,
@@ -920,9 +926,17 @@ function addressInventory(inventory: AgentInventory, defaultContainer: readonly 
   };
 }
 
-/** An object's segments as one qualified name. */
-function qualifiedName(object: AgentInventoryObject): string {
-  return object.path === undefined ? object.name : object.path.join(".");
+/**
+ * An object's segments as one qualified name: the dotted segments, except for an InfluxQL measurement,
+ * whose `[database, measurement]` path is written `"db".."m"`: the dotted spelling reads as a retention
+ * policy, so a run that copied it wrote a statement the server refuses. Any other path is no InfluxQL
+ * measurement address and keeps the dotted spelling every engine shares.
+ */
+function qualifiedName(object: AgentInventoryObject, capabilities?: ProviderCapabilities): string {
+  if (object.path === undefined) return object.name;
+  return capabilities?.queryLanguage === "influxql" && object.path.length === 2
+    ? quoteObjectPath(object.path, capabilities)
+    : object.path.join(".");
 }
 
 /**
@@ -931,10 +945,12 @@ function qualifiedName(object: AgentInventoryObject): string {
  * The qualified path where there is one, because a run that is told `orders` in a database
  * holding four schemas cannot write a statement against it. `name` alone is the fallback,
  * and on an entry that never reached the object surface it is already qualified: that is
- * what the flat readings produce.
+ * what the flat readings produce. An entry `addressInventory` qualified keeps its own name in
+ * `label` and the qualified one in `name`, which is the spelling its engine writes (InfluxQL's
+ * `"db".."m"` included), so that one is shown as it was stored.
  */
 function displayName(object: AgentInventoryObject): string {
-  return qualifiedName(object);
+  return object.label === undefined ? qualifiedName(object) : object.name;
 }
 
 /**
