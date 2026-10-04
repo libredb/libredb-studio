@@ -9,6 +9,7 @@ import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
+import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
@@ -98,11 +99,14 @@ export async function POST(req: NextRequest) {
     // plan of anything, so the text is refused before a provider is opened. It is read
     // under the connection's own grammar, the one the editor splits a run with, so a
     // `;` inside a quote or a comment is not a second statement, and neither is a note
-    // after the final `;` (a fragment of comments only is not counted).
+    // after the final `;` (a fragment of comments only is not counted). A text with a
+    // run the grammar cannot close is refused too: the splitter finds no boundary in
+    // it, yet `SELECT E'\''; INSERT ...` is two statements to PostgreSQL.
+    const explainGrammar = resolveSqlGrammar(connection.type);
     if (
       explain.explain &&
       typeof sql === "string" &&
-      countCodeStatements(sql, resolveSqlGrammar(connection.type)) > 1
+      (countCodeStatements(sql, explainGrammar) > 1 || hasUnterminatedSpan(sql, explainGrammar))
     ) {
       return NextResponse.json({ error: "Only a single statement can be explained" }, { status: 400 });
     }

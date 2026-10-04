@@ -881,6 +881,11 @@ describe("POST /api/db/query with an explain request", () => {
   test.each<[string, string]>([
     ["a SELECT followed by a write", "SELECT 1 AS a; INSERT INTO t VALUES (7)"],
     ["two SELECTs", "SELECT 1; SELECT 2"],
+    // `E'\\''` is one quote character to PostgreSQL, so the `;` after it ends the
+    // statement and the INSERT is a second one. Whether a backslash escapes is not a
+    // grammar fact the splitter carries, so it reads the run as unterminated and finds
+    // no boundary: an unresolvable text is not a single statement either.
+    ["a backslash-escaped string hiding a write", "SELECT E'\\''; INSERT INTO t VALUES (7)"],
   ])("returns 400 and runs nothing for an explain of %s", async (_label, sql) => {
     // No provider is queued: the refusal comes before one is opened, and a queued
     // `mockResolvedValueOnce` nobody consumed would leak into the next test.

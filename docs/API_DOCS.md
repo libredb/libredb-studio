@@ -535,7 +535,9 @@ Three refusals, each a 400 that runs nothing:
 - `Only a single statement can be explained` when `sql` holds more than one statement, read under the
   connection type's own grammar (a `;` inside a quote or a comment does not count, and neither does a
   trailing one). An EXPLAIN prefixes one statement: handed `SELECT 1; INSERT ...`, PostgreSQL explains
-  the SELECT and then runs the INSERT. Refused before a provider is opened (#1311).
+  the SELECT and then runs the INSERT. A text with a quote or comment the grammar cannot close is refused
+  the same way, since no boundary can be read in it (`SELECT E'\''; INSERT ...` is two statements to
+  PostgreSQL). Refused before a provider is opened (#1311).
 - `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
   format at all.
 - `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The

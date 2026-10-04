@@ -12,6 +12,7 @@ import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-commands";
 import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -364,9 +365,12 @@ export function useQueryExecution({
       // dialect, the same reading that sends a run to `/api/db/multi-query` below, and the
       // same count `POST /api/db/query` refuses an explain by. A fragment of comments only
       // is not counted: `SELECT 1; -- note` is one statement to explain, though the run
-      // route below still splits it in two.
+      // route below still splits it in two. A text with a run the grammar cannot close
+      // is not one statement either: the splitter finds no boundary in it, yet
+      // `SELECT E'\''; INSERT ...` is two statements to PostgreSQL.
       const grammar = resolveSqlGrammar(activeConnection.type);
-      const oneStatement = countCodeStatements(queryToExecute, grammar) <= 1;
+      const oneStatement =
+        countCodeStatements(queryToExecute, grammar) <= 1 && !hasUnterminatedSpan(queryToExecute, grammar);
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
       const explainAccepted =
         isExplain &&

@@ -2508,6 +2508,29 @@ describe("useQueryExecution", () => {
     ).toBe(true);
   });
 
+  // `E'\\''` is one quote character to PostgreSQL, so the INSERT after the `;` is a
+  // statement of its own, but the splitter cannot tell whether that backslash escapes
+  // and finds no boundary. Text it cannot resolve is not one statement to plan.
+  test("no background plan for a text whose statement boundaries cannot be resolved", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT E'\\''; INSERT INTO users (name) VALUES ('dup')", undefined, false, {
+        skipSafety: true,
+      });
+    });
+
+    const planCalls = fetchMock.mock.calls.filter((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return typeof init?.body === "string" && JSON.parse(init.body).explain !== undefined;
+    });
+    expect(planCalls).toHaveLength(0);
+  });
+
   // A note after the final `;` is not a second statement: the splitter keeps it as a
   // fragment of its own, and counting it dropped the plan and refused the Explain
   // button for one SELECT.
