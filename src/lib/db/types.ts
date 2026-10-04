@@ -839,26 +839,38 @@ export interface ProviderCapabilities {
    */
   supportsTransactions?: boolean;
   /**
-   * The leading keywords of the statements this engine COMMITS IMPLICITLY when one runs
-   * inside a transaction, upper-cased. A ROLLBACK after such a statement answers success
-   * and undoes nothing, neither the statement nor anything the transaction ran before it.
+   * The statements that can END the transaction they run inside on this engine, beyond the
+   * `COMMIT` / `ROLLBACK` / `ABORT` every engine has: the ones it COMMITS IMPLICITLY (MySQL
+   * and Oracle DDL), a dialect's own synonym for COMMIT (PostgreSQL's `END`), or code that
+   * may commit and that the provider cannot check afterwards (an Oracle PL/SQL block). Each
+   * entry is a sequence of leading words, upper-cased and space-separated (`"CREATE"`,
+   * `"PREPARE TRANSACTION"`), matched against the statement's operative keyword and the words
+   * right after it. A ROLLBACK after such a statement answers success and can undo nothing,
+   * neither the statement nor anything the transaction ran before it.
    *
    * It exists because SANDBOX promises a rollback. Measured 2026-10-04 on MySQL 26.7.0:
    * `START TRANSACTION`, `INSERT`, `CREATE TABLE`, `ROLLBACK` left both the table and the
    * row, and the OK packet of the CREATE already carried `SERVER_STATUS_IN_TRANS` cleared
    * (16387 after the START, 3 after the INSERT, 16386 after the CREATE). The UI said
-   * "Changes auto-rolled back. No data was modified." So SANDBOX refuses a statement led
-   * by one of these keywords before anything is sent, rather than running it and
-   * reporting afterwards that the data changed.
+   * "Changes auto-rolled back. No data was modified." So SANDBOX refuses a statement
+   * these entries name before anything is sent, rather than running it and reporting
+   * afterwards that the data changed.
    *
    * A declaration and not a measurement, because the harm happens on the server before
    * any answer could be read. The providers that can read the server's own transaction
    * state after a statement also do (`queryInTransaction` ends the held session when the
    * server says the transaction is gone, and the transaction route reports
    * `inTransaction: false`), which covers a statement this list does not name. Absent
-   * means the engine's DDL is transactional, or the provider has no transactions at all.
+   * means nothing beyond the universal three, or no transactions at all.
    */
   implicitCommitStatements?: readonly string[];
+  /**
+   * Word sequences that an `implicitCommitStatements` entry would match and that do NOT end
+   * the transaction, in the same form: Oracle's `ALTER SESSION` and `ALTER SYSTEM` are
+   * session and system control rather than DDL, and MySQL's `CREATE TEMPORARY TABLE` does
+   * not commit. Only read together with that list.
+   */
+  implicitCommitExceptions?: readonly string[];
   /**
    * Whether this engine has foreign keys to declare at all — not whether any
    * particular schema declares one, and not whether the current role can see them.

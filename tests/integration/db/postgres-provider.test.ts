@@ -1148,10 +1148,74 @@ describe("PostgresProvider", () => {
         return originalMock(sql, params);
       };
       try {
+        mockWire = [];
         await provider.queryInTransaction("INSERT INTO t VALUES (1); COMMIT; SELECT 1");
         expect(provider.isInTransaction()).toBe(false);
         expect(release).toHaveBeenCalledTimes(1);
+        // A best-effort ROLLBACK goes out before the client does, so a relative that reported
+        // "I" with a transaction still open cannot hand one to the pool.
+        expect(mockWire.at(-1)).toBe("ROLLBACK");
         await expect(provider.rollbackTransaction()).rejects.toThrow("No active transaction");
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a ROLLBACK that fails on an ended session still releases the client", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("COMMIT;")) mockTxStatus = "I";
+        if (sql === "ROLLBACK") throw new Error("Connection lost");
+        return originalMock(sql, params);
+      };
+      try {
+        await provider.queryInTransaction("INSERT INTO t VALUES (1); COMMIT;");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        mockQueryFn = originalMock;
+        release.mockRestore();
+      }
+    });
+
+    test("a ROLLBACK queued behind a statement that ended the session does not release the client twice", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockClient, "release");
+      const originalMock = mockQueryFn;
+      let finish: () => void = () => {};
+      let openGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      let rollbacks = 0;
+      mockQueryFn = async (sql: string, params?: unknown[]) => {
+        if (sql.includes("COMMIT;")) {
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+          mockTxStatus = "I";
+        }
+        // The caller's ROLLBACK is held until the statement ahead of it has ended the session,
+        // which is the order the server answers them in.
+        if (sql === "ROLLBACK" && ++rollbacks === 1) await gate;
+        return originalMock(sql, params);
+      };
+      try {
+        const running = provider.queryInTransaction("INSERT INTO t VALUES (1); COMMIT;");
+        const rollback = provider.rollbackTransaction();
+        finish();
+        await running;
+        openGate();
+        await rollback;
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
       } finally {
         mockQueryFn = originalMock;
         release.mockRestore();
@@ -3041,9 +3105,10 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getCapabilities()", () => {
-    test("declares no implicitly committing statement, because PostgreSQL's DDL is transactional", () => {
+    test("declares only the statements that end the transaction, because PostgreSQL's DDL is transactional", () => {
       provider = new PostgresProvider(makePgConfig());
-      expect(provider.getCapabilities().implicitCommitStatements).toBeUndefined();
+      // `END` is the COMMIT synonym and `PREPARE TRANSACTION` detaches the transaction; no DDL.
+      expect(provider.getCapabilities().implicitCommitStatements).toEqual(["END", "PREPARE TRANSACTION"]);
     });
 
     // #U9: the target grammar of each operation, declared next to it. PostgreSQL is

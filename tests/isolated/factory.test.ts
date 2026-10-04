@@ -779,8 +779,9 @@ describe("createDatabaseProvider", () => {
       }
     }
 
-    // MySQL and Oracle commit around DDL; PostgreSQL and SQL Server roll it back.
-    expect(implicitCommitTypes.sort()).toEqual(["mysql", "oracle"]);
+    // MySQL and Oracle commit around DDL; PostgreSQL declares its own COMMIT synonyms; SQL
+    // Server rolls DDL back and has none.
+    expect(implicitCommitTypes.sort()).toEqual(["mysql", "oracle", "postgres"]);
 
     // The positive half, pinned by name: exactly four providers hold a transaction
     // session, so a fifth (or a lost one) fails here and not only in the loop above.

@@ -56,8 +56,8 @@ interface UseQueryExecutionParams {
    */
   onObjectsChanged?: () => void;
   /**
-   * The server ended the open transaction while running a statement in it: a typed COMMIT,
-   * or a statement the engine commits implicitly. The route answers `inTransaction: false`
+   * The server ended the open transaction while running a statement in it: a typed COMMIT or
+   * ROLLBACK, or a statement the engine commits implicitly. The route answers `inTransaction: false`
    * and the BEGIN/COMMIT/ROLLBACK controls must stop offering a transaction that is gone.
    */
   onTransactionEnded?: () => void;
@@ -314,6 +314,7 @@ export function useQueryExecution({
               queryToExecute,
               resolveSqlGrammar(activeConnection.type),
               metadata?.capabilities.implicitCommitStatements,
+              metadata?.capabilities.implicitCommitExceptions,
             )
           : undefined);
       if (refusal !== undefined) {
@@ -455,7 +456,8 @@ export function useQueryExecution({
             commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
             toast({
               title: "Sandbox Unavailable",
-              description: `${description} Nothing was run.`,
+              // The server's sentence may or may not end in a period ("Transaction already active").
+              description: `${/[.!?]$/.test(description) ? description : `${description}.`} Nothing was run.`,
               variant: "destructive",
             });
             return false;
@@ -772,15 +774,17 @@ export function useQueryExecution({
           };
         });
 
-        // The server ended the transaction inside this run (a COMMIT, or a statement the engine
-        // commits implicitly), so whatever ran is permanent and there is nothing to roll back.
+        // The server ended the transaction inside this run, so there is nothing left to roll back.
+        // The OUTCOME is not known here and is not claimed: a COMMIT or an implicitly committing
+        // statement kept the work, a ROLLBACK (or a COMMIT of a failed PostgreSQL transaction)
+        // discarded it, and the server reports the same idle state after either.
         const transactionEnded = useTransaction && resultData.inTransaction === false;
         if (transactionEnded && !isPlaygroundRun) {
           onTransactionEnded?.();
           toast({
             title: "Transaction Ended",
             description:
-              "The database ended the transaction while running this statement, so its changes are committed.",
+              "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly). Check what was kept.",
             variant: "destructive",
           });
         }
@@ -791,7 +795,7 @@ export function useQueryExecution({
             toast({
               ...SANDBOX_NOT_ROLLED_BACK,
               description:
-                "The database ended the transaction while running this statement, so its changes were committed and could not be rolled back.",
+                "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly), so SANDBOX could not roll it back. Check what was kept.",
             });
           } else if (
             await rollbackConfirmed(

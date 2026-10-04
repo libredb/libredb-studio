@@ -654,18 +654,41 @@ so the provider reads them where a header exists, and three things follow:
   refuses a text containing one before anything is sent
   ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)). `SET` and `LOAD` are left out:
   only `SET autocommit = 1`, `SET PASSWORD` and `LOAD DATA` on NDB commit, and refusing every `SET`
-  would refuse the session variables a SANDBOX run needs.
+  would refuse the session variables a SANDBOX run needs. **`implicitCommitExceptions`** lets
+  through what a listed keyword would catch and that does not commit: `CREATE TEMPORARY` and `DROP
+  TEMPORARY` (the manual's own exception, and measured: the flag stays set after `CREATE TEMPORARY
+  TABLE` on every server below; the temporary table outlives the rollback on the pooled connection,
+  which is session state rather than data), and MariaDB's `ANALYZE SELECT` / `ANALYZE FORMAT`, a
+  read. MariaDB's `BEGIN NOT ATOMIC` compound block stays refused under `BEGIN`: it can run DDL.
 - **`queryInTransaction()` ends the session when a header reports bit 0 cleared**, which catches what
   the list does not name (`SET autocommit = 1`, a typed `COMMIT`, a `CALL` whose procedure runs DDL,
-  judged by the call's own header, the last element of its answer). The connection is released and
-  `POST /api/db/transaction` answers `inTransaction: false`, which the editor reports as "Not Rolled
-  Back" (SANDBOX) or "Transaction Ended" instead of announcing a rollback. A read answers rows and
-  no header, so it is never judged, and a read never ends a transaction.
+  judged by the call's own header, the last element of its answer). A best-effort `ROLLBACK` is sent
+  first (answered with a plain OK where the transaction is really gone), so a server that cleared
+  the flag with a transaction still open could not hand that transaction to the pool. The
+  connection is released and `POST /api/db/transaction` answers `inTransaction: false`, which the
+  editor reports as "Not Rolled Back" (SANDBOX) or "Transaction Ended", without claiming whether
+  the work was kept: a typed `ROLLBACK` clears the flag exactly as a commit does. A read answers
+  rows and no header, so it is never judged, and a read never ends a transaction.
 - **`beginTransaction()` refuses a `START TRANSACTION` whose header reports bit 0 cleared**, the
   MySQL-wire twin of what RisingWave does over the PostgreSQL wire (see the PostgreSQL provider's
   §8.0). It sends the same statement the driver's own `beginTransaction()` sends, directly, because
   that method resolves to nothing and the header is the evidence. A server that answers no header at
   all is not refused: there is nothing to read, and MySQL always sends one.
+
+Which servers this reading was measured on, 2026-10-04 through mysql2, one connection each:
+`START TRANSACTION`, `INSERT`, `CREATE TABLE`, `INSERT`, `ROLLBACK`, then a count.
+
+| Server | after START | after INSERT | after CREATE | after the next INSERT | rows after ROLLBACK |
+|---|---|---|---|---|---|
+| MySQL 26.7.0 (`mysql:latest`) | 16387 (set) | 3 (set) | 16386 (cleared) | 2 (autocommit) | 2 |
+| Percona Server 8.4.11-11 | 16387 (set) | 3 (set) | 16386 (cleared) | 2 (autocommit) | 2 |
+| MariaDB 13.0.2 (`mariadb:latest`) | 3 (set) | 3 (set) | 2 (cleared) | 2 (autocommit) | 2 |
+| TiDB v7.5.1 (`pingcap/tidb:latest`) | 3 (set) | 3 (set) | 2 (cleared) | 2 (autocommit) | 2 |
+
+Every one of them commits the DDL and everything before it, and every one reports it in the flag.
+**Not measured:** StarRocks, Apache Doris, Databend, SingleStore, OceanBase and Vitess. On those the
+list above still refuses DDL in SANDBOX, and a `START TRANSACTION` they answer with the flag cleared
+is refused; one that sets the flag without a real transaction would not be caught.
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
 
@@ -1657,6 +1680,7 @@ gated on the literal `vacuum`, so MySQL's own wording was written and never show
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
 | `supportsTransactions` | `true`: the transaction runs on one held connection opened with `START TRANSACTION`, so the trio and the SANDBOX toggle are offered (#464) |
 | `implicitCommitStatements` | `ALTER`, `ANALYZE`, `BEGIN`, `CACHE`, `CHANGE`, `CHECK`, `CREATE`, `DROP`, `FLUSH`, `GRANT`, `INSTALL`, `LOCK`, `OPTIMIZE`, `RENAME`, `REPAIR`, `RESET`, `REVOKE`, `START`, `STOP`, `TRUNCATE`, `UNINSTALL`, `UNLOCK`: the statements MySQL commits implicitly, which SANDBOX refuses before sending ([§6.0](#60-what-the-server-says-about-the-transaction)) |
+| `implicitCommitExceptions` | `CREATE TEMPORARY`, `DROP TEMPORARY`, `ANALYZE SELECT`, `ANALYZE FORMAT`: matched by the list above and committing nothing ([§6.0](#60-what-the-server-says-about-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; InnoDB declares them, so an empty list means this schema (or this role) has none, not the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['analyze', 'optimize', 'check', 'kill']` |

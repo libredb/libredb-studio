@@ -2106,6 +2106,10 @@ export class PostgresProvider extends SQLBaseProvider {
       supportsResultPagination: true,
       // BEGIN / COMMIT / ROLLBACK over one held pool client (`beginTransaction()` below).
       supportsTransactions: true,
+      // PostgreSQL's DDL rolls back, so nothing here commits implicitly. These two END the
+      // transaction all the same: `END` is PostgreSQL's synonym for COMMIT, and `PREPARE
+      // TRANSACTION` detaches it from the session, so SANDBOX's ROLLBACK would reach nothing.
+      implicitCommitStatements: ["END", "PREPARE TRANSACTION"],
       maintenanceOperations: ["vacuum", "analyze", "reindex", "kill"],
       // Every statement below has both forms - `VACUUM ANALYZE <table>` and bare
       // `VACUUM ANALYZE`, `REINDEX TABLE <table>` and `REINDEX DATABASE` - so
@@ -2640,24 +2644,22 @@ export class PostgresProvider extends SQLBaseProvider {
   public async commitTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
+    const client = this.txClient;
     try {
-      await this.txClient.query("COMMIT");
+      await client.query("COMMIT");
     } finally {
-      this.txClient.release();
-      this.txClient = null;
-      this.txActive = false;
+      this.releaseHeldClient(client);
     }
   }
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError("No active transaction", "postgres");
     this.clearTxTimeout();
+    const client = this.txClient;
     try {
-      await this.txClient.query("ROLLBACK");
+      await client.query("ROLLBACK");
     } finally {
-      this.txClient.release();
-      this.txClient = null;
-      this.txActive = false;
+      this.releaseHeldClient(client);
     }
   }
 
@@ -2665,12 +2667,35 @@ export class PostgresProvider extends SQLBaseProvider {
     return this.txActive;
   }
 
-  /** Let go of a session the SERVER already ended: nothing is left to commit or roll back. */
-  private endHeldTransaction(): void {
-    this.clearTxTimeout();
-    this.txClient?.release();
+  /**
+   * Hand `client` back and forget the session, but only while it is still THE session's
+   * client. A COMMIT or ROLLBACK queued behind an in-flight `queryInTransaction()` can find
+   * that statement's `endHeldTransaction()` already released it, and releasing a client twice
+   * (or `null`) is a crash rather than a no-op.
+   */
+  private releaseHeldClient(client: PoolClient): void {
+    if (this.txClient !== client) return;
+    client.release();
     this.txClient = null;
     this.txActive = false;
+  }
+
+  /**
+   * Let go of a session the SERVER already ended. A ROLLBACK is still sent first, best effort:
+   * the status byte is the evidence the transaction is gone, and it was measured on
+   * PostgreSQL 18 and RisingWave 3.1.0 but not on every relative this provider serves. If a
+   * relative ever reports `I` with a transaction still open, the client must not go back to
+   * the pool holding it; where the transaction really is gone the ROLLBACK is a no-op that
+   * answers a WARNING.
+   */
+  private async endHeldTransaction(client: PoolClient): Promise<void> {
+    this.clearTxTimeout();
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* a no-op that failed is still a no-op; the release below is what matters */
+    }
+    this.releaseHeldClient(client);
   }
 
   /**
@@ -2837,7 +2862,8 @@ export class PostgresProvider extends SQLBaseProvider {
           // text. The server reports `I` afterwards and the held client is just a pooled
           // client again, so a ROLLBACK would undo nothing. The session is ended here and the
           // route reports `inTransaction: false` instead.
-          if (this.txClient?.getTransactionStatus() === "I") this.endHeldTransaction();
+          const client = this.txClient;
+          if (client?.getTransactionStatus() === "I") await this.endHeldTransaction(client);
         }
       });
 

@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
         const result = await provider.queryInTransaction(prepared.query, bound.params);
 
         // The provider ends its session when the SERVER says the statement ended the
-        // transaction: a typed COMMIT, or a statement the engine commits implicitly (MySQL
+        // transaction: a typed COMMIT or ROLLBACK, or a statement the engine commits implicitly (MySQL
         // DDL). Reported rather than hidden, because the caller is about to ask for a
         // ROLLBACK that would answer success and undo nothing (SANDBOX said "Changes
         // auto-rolled back" over a committed CREATE TABLE). The record goes with it.

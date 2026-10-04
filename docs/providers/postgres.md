@@ -1623,14 +1623,23 @@ reading §8.1 uses), never off the statement text and never off the connection's
   nothing. The same byte reads `T` after `BEGIN` on PostgreSQL 18, so nothing changes there.
 - **`queryInTransaction()` ends the session when the byte reads `I` after the statement.**
   PostgreSQL's DDL is transactional, so this is not about DDL: it is a text that ends the
-  transaction itself, a typed `COMMIT` or `END` inside a multi-statement run. The client is
-  released and the route answers `inTransaction: false`, which the editor reports as "Not Rolled
-  Back" (SANDBOX) or "Transaction Ended" instead of announcing a rollback. A failed statement leaves
-  the byte at `E`, so the session stays for the `ROLLBACK` it needs.
+  transaction itself: a typed `COMMIT`, `END`, `ROLLBACK` or `ABORT` in a manual transaction, or
+  DDL on a relative that commits it (CockroachDB 25.1 and later commit before DDL by default,
+  `autocommit_before_ddl`). The byte cannot say WHICH of those happened, so the editor claims no
+  outcome: the route answers `inTransaction: false`, and the editor shows "Not Rolled Back"
+  (SANDBOX) or "Transaction Ended", each asking the user to check what was kept. A best-effort
+  `ROLLBACK` goes out before the client is released (a no-op answered with a WARNING where the
+  transaction really is gone), so a relative that ever reported `I` with a transaction still open
+  could not hand that transaction to the pool. A failed statement leaves the byte at `E`, so the
+  session stays for the `ROLLBACK` it needs. Measured 2026-10-04 on PostgreSQL 18.6 and
+  Materialize 26.44.1: `T` after `BEGIN` and after a read inside it, `I` after `COMMIT`.
 
-The declared half of the same guard, `implicitCommitStatements`, is absent here: nothing in
-PostgreSQL's grammar commits a transaction it runs inside, except `COMMIT` itself, which SANDBOX
-refuses on every engine ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)).
+The declared half of the same guard, `implicitCommitStatements`, holds `END` and `PREPARE
+TRANSACTION`. PostgreSQL's DDL rolls back, so no DDL is in it; those two end the transaction
+anyway (`END` is the COMMIT synonym, `PREPARE TRANSACTION` detaches it from the session), and
+SANDBOX refuses them before sending, together with the `COMMIT`, `ROLLBACK` and `ABORT` it
+refuses on every engine ([`sandbox-refusal.ts`](../../src/lib/editor/sandbox-refusal.ts)). A
+`PREPARE name AS ...` statement is not matched: the sequence is two words.
 
 ### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
 
@@ -1732,7 +1741,7 @@ Overrides the SQL base defaults:
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core PostgreSQL DML |
 | `supportsResultPagination` | `true` — `LIMIT n OFFSET m` from the shared limiter (#816) |
 | `supportsTransactions` | `true`: `beginTransaction()` holds one pool client and runs `BEGIN` / `COMMIT` / `ROLLBACK` on it, so the editor's transaction trio and the auto-rolled-back SANDBOX toggle are offered here (#464). A relative whose `BEGIN` opens nothing (RisingWave) is refused at `beginTransaction()` rather than declared per type id ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
-| `implicitCommitStatements` | absent: PostgreSQL's DDL is transactional, so SANDBOX rolls a `CREATE TABLE` back like any other statement ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
+| `implicitCommitStatements` | `END`, `PREPARE TRANSACTION`: the two statements besides COMMIT and ROLLBACK that end the transaction. No DDL is listed, because PostgreSQL's DDL is transactional; a relative that commits DDL anyway (CockroachDB's `autocommit_before_ddl`) is caught after the statement instead ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; an empty `foreignKeys` list is then a fact about the schema or the reading role, never about the engine |
 | `supportsMaintenance` | `true` |
 | `maintenanceOperations` | `['vacuum', 'analyze', 'reindex', 'kill']` |

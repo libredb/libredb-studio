@@ -1595,12 +1595,68 @@ describe("MySQLProvider", () => {
 
       const release = spyOn(mockConnection, "release");
       try {
+        protocolCalls.length = 0;
         await provider.queryInTransaction("CREATE TABLE t2 (id INT)");
         expect(provider.isInTransaction()).toBe(false);
         expect(release).toHaveBeenCalledTimes(1);
+        // A best-effort ROLLBACK goes out before the connection does, so a server that cleared
+        // the flag with a transaction still open cannot hand one to the pool.
+        expect(protocolCalls.at(-1)?.sql).toBe("ROLLBACK");
         await expect(provider.rollbackTransaction()).rejects.toThrow("No active transaction");
       } finally {
         release.mockRestore();
+      }
+    });
+
+    test("a ROLLBACK that fails on an ended session still releases the connection", async () => {
+      const statuses = answering({ "START TRANSACTION": 16387, CREATE: 16386 });
+      mockExecuteFn = (sql: string, params?: unknown[]) =>
+        sql === "ROLLBACK" ? Promise.reject(new Error("Connection lost")) : statuses(sql, params);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockConnection, "release");
+      try {
+        await provider.queryInTransaction("CREATE TABLE t2 (id INT)");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        release.mockRestore();
+      }
+    });
+
+    test("a ROLLBACK queued behind a statement that ended the session does not release the connection twice", async () => {
+      const statuses = answering({ "START TRANSACTION": 16387, CREATE: 16386 });
+      let finish: () => void = () => {};
+      mockExecuteFn = async (sql: string, params?: unknown[]) => {
+        if (sql.startsWith("CREATE")) {
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+        }
+        return statuses(sql, params);
+      };
+      let openGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      const rollback = spyOn(mockConnection, "rollback").mockImplementation(() => gate);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockConnection, "release");
+      try {
+        const running = provider.queryInTransaction("CREATE TABLE t2 (id INT)");
+        const rolledBack = provider.rollbackTransaction();
+        finish();
+        await running;
+        openGate();
+        await rolledBack;
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+      } finally {
+        release.mockRestore();
+        rollback.mockRestore();
       }
     });
 

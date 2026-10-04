@@ -188,6 +188,20 @@ const MYSQL_IMPLICIT_COMMIT_STATEMENTS: readonly string[] = [
   "UNLOCK",
 ];
 
+/**
+ * What the list above would match and does not commit. `CREATE TEMPORARY TABLE` and `DROP
+ * TEMPORARY TABLE` are named by the manual as the exceptions to its own CREATE/DROP rule (a
+ * temporary table SANDBOX creates stays on the pooled connection after the rollback, which is
+ * session state, not data). `ANALYZE SELECT` and `ANALYZE FORMAT` are MariaDB's statement
+ * analyser, a read that shares its first word with `ANALYZE TABLE`.
+ */
+const MYSQL_IMPLICIT_COMMIT_EXCEPTIONS: readonly string[] = [
+  "CREATE TEMPORARY",
+  "DROP TEMPORARY",
+  "ANALYZE SELECT",
+  "ANALYZE FORMAT",
+];
+
 /** `SERVER_STATUS_IN_TRANS`, bit 0 of the status flags every OK packet carries. */
 const SERVER_STATUS_IN_TRANS = 1;
 
@@ -2037,6 +2051,7 @@ export class MySQLProvider extends SQLBaseProvider {
       // (the MySQL manual's "Statements That Cause an Implicit Commit"), so SANDBOX
       // refuses them instead of reporting a rollback that undid nothing.
       implicitCommitStatements: MYSQL_IMPLICIT_COMMIT_STATEMENTS,
+      implicitCommitExceptions: MYSQL_IMPLICIT_COMMIT_EXCEPTIONS,
       maintenanceOperations: ["analyze", "optimize", "check", "kill"],
       // MySQL has no VACUUM, and every statement it does have names tables:
       // `ANALYZE/OPTIMIZE/CHECK TABLE <t>` with a target, the same verb over every
@@ -2413,24 +2428,22 @@ export class MySQLProvider extends SQLBaseProvider {
   public async commitTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
     this.clearTxTimeout();
+    const conn = this.txConn;
     try {
-      await this.txConn.commit();
+      await conn.commit();
     } finally {
-      this.txConn.release();
-      this.txConn = null;
-      this.txActive = false;
+      this.releaseHeldConnection(conn);
     }
   }
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txConn || !this.txActive) throw new QueryError("No active transaction", "mysql");
     this.clearTxTimeout();
+    const conn = this.txConn;
     try {
-      await this.txConn.rollback();
+      await conn.rollback();
     } finally {
-      this.txConn.release();
-      this.txConn = null;
-      this.txActive = false;
+      this.releaseHeldConnection(conn);
     }
   }
 
@@ -2438,12 +2451,35 @@ export class MySQLProvider extends SQLBaseProvider {
     return this.txActive;
   }
 
-  /** Let go of a session the SERVER already ended: nothing is left to commit or roll back. */
-  private endHeldTransaction(): void {
-    this.clearTxTimeout();
-    this.txConn?.release();
+  /**
+   * Hand `conn` back and forget the session, but only while it is still THE session's
+   * connection. A COMMIT or ROLLBACK queued behind an in-flight `queryInTransaction()` can
+   * find that statement's `endHeldTransaction()` already released it, and releasing it
+   * twice (or `null`) is a crash rather than a no-op.
+   */
+  private releaseHeldConnection(conn: PoolConnection): void {
+    if (this.txConn !== conn) return;
+    conn.release();
     this.txConn = null;
     this.txActive = false;
+  }
+
+  /**
+   * Let go of a session the SERVER already ended. A ROLLBACK is still sent first, best effort:
+   * the status flag is the evidence the transaction is gone, and it was measured on a few
+   * MySQL-wire servers, not on all of them (`docs/providers/mysql.md` section 6.0). If one
+   * ever clears the flag with a transaction still open, the connection must not go back to
+   * the pool holding it; where the transaction really is gone, MySQL answers the ROLLBACK
+   * with an OK and nothing else.
+   */
+  private async endHeldTransaction(conn: PoolConnection): Promise<void> {
+    this.clearTxTimeout();
+    try {
+      await conn.query("ROLLBACK");
+    } catch {
+      /* a no-op that failed is still a no-op; the release below is what matters */
+    }
+    this.releaseHeldConnection(conn);
   }
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
@@ -2458,7 +2494,7 @@ export class MySQLProvider extends SQLBaseProvider {
           // `COMMIT`) ends it, and from then on the held connection autocommits: a
           // ROLLBACK would answer success and undo nothing. So the session is ended here
           // and the route reports `inTransaction: false` instead of a rollback.
-          if (serverReportsOpenTransaction(rows) === false) this.endHeldTransaction();
+          if (serverReportsOpenTransaction(rows) === false) await this.endHeldTransaction(this.txConn!);
           return { rows, fields };
         } catch (error) {
           throw mapDatabaseError(error, "mysql", sql);

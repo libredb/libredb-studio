@@ -3056,7 +3056,7 @@ describe("useQueryExecution", () => {
     expect(returned).toBe(false);
     expect(sent).toEqual(["begin"]);
     expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
-      description: "begin failed Nothing was run.",
+      description: "begin failed. Nothing was run.",
     });
     expect(mockToastSuccess).not.toHaveBeenCalled();
 
@@ -3094,7 +3094,7 @@ describe("useQueryExecution", () => {
     return actions;
   }
 
-  test("playground mode does not claim a rollback when the statement committed the transaction", async () => {
+  test("playground mode does not claim a rollback when the statement ended the transaction", async () => {
     const originalFetch = globalThis.fetch;
     const actions = transactionRoute({ ...mockQueryResult, inTransaction: false });
     const params = createDefaultParams({ playgroundMode: true });
@@ -3110,7 +3110,7 @@ describe("useQueryExecution", () => {
     expect(params.fetchSchema).toHaveBeenCalledTimes(1);
     expect(mockToastError).toHaveBeenCalledWith("Not Rolled Back", {
       description:
-        "The database ended the transaction while running this statement, so its changes were committed and could not be rolled back.",
+        "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly), so SANDBOX could not roll it back. Check what was kept.",
     });
     expect(mockToastSuccess).not.toHaveBeenCalledWith("Playground", expect.anything());
 
@@ -3131,10 +3131,49 @@ describe("useQueryExecution", () => {
     expect(actions).toEqual(["query"]);
     expect(onTransactionEnded).toHaveBeenCalledTimes(1);
     expect(mockToastError).toHaveBeenCalledWith("Transaction Ended", {
-      description: "The database ended the transaction while running this statement, so its changes are committed.",
+      description:
+        "The database ended the transaction while running this statement (a COMMIT, a ROLLBACK, or a statement it commits implicitly). Check what was kept.",
     });
 
     globalThis.fetch = originalFetch;
+  });
+
+  test("a ROLLBACK typed into an open transaction is not reported as committed", async () => {
+    // The server reports the same idle state after a ROLLBACK as after a COMMIT, so the
+    // toast names neither outcome; it used to say "its changes are committed".
+    const originalFetch = globalThis.fetch;
+    transactionRoute({ ...mockQueryResult, inTransaction: false });
+    const onTransactionEnded = mock(() => {});
+    const params = createDefaultParams({ transactionActive: true, onTransactionEnded });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("ROLLBACK");
+    });
+
+    expect(onTransactionEnded).toHaveBeenCalledTimes(1);
+    const calls = mockToastError.mock.calls as unknown as [string, { description: string }][];
+    const ended = calls.find((call) => call[0] === "Transaction Ended");
+    expect(ended?.[1].description).toContain("Check what was kept.");
+    expect(ended?.[1].description).not.toContain("committed");
+
+    globalThis.fetch = originalFetch;
+  });
+
+  test("a BEGIN refusal that already ends in a period is not given a second one", async () => {
+    mockGlobalFetch({
+      "/api/db/transaction": () => ({ ok: false, status: 400, json: { error: "No transaction here." } }),
+    });
+    const params = createDefaultParams({ playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Sandbox Unavailable", {
+      description: "No transaction here. Nothing was run.",
+    });
   });
 
   test("an open transaction that is still open leaves the controls alone", async () => {
@@ -3176,7 +3215,7 @@ describe("useQueryExecution", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockToastError).toHaveBeenCalledWith("Statement Refused", {
       description:
-        "SANDBOX cannot run CREATE: this database commits the open transaction when it runs one, so the rollback that follows would undo nothing. Turn SANDBOX off to run it for real.",
+        "SANDBOX cannot run CREATE: on this database it can end the open transaction (it commits implicitly, or runs code that may), so the rollback that follows could undo nothing. Turn SANDBOX off to run it for real.",
     });
   });
 
