@@ -505,19 +505,21 @@ describe("no extension is installed or loaded behind the user's back (#1404)", (
   });
 
   const EXTENSION_SETTINGS =
-    "SELECT current_setting('autoinstall_known_extensions') AS install, current_setting('autoload_known_extensions') AS load";
+    "SELECT current_setting('autoinstall_known_extensions') AS install, current_setting('autoload_known_extensions') AS load, current_setting('allow_community_extensions') AS community, current_setting('allow_unsigned_extensions') AS unsigned";
 
-  test("the editor handle opens with autoinstall and autoload of known extensions off", async () => {
+  const POLICY = { install: false, load: false, community: false, unsigned: false };
+
+  test("the editor handle opens with autoinstall, autoload, community and unsigned extensions off", async () => {
     provider = new DuckDBProvider(makeConfig());
     await provider.connect();
 
-    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([{ install: false, load: false }]);
+    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
   });
 
-  test("the read-only handle opens with both off as well", async () => {
+  test("the read-only handle opens with all four off as well", async () => {
     const client = await openDuckDBClient(await seededFile("ext-ro.duckdb"), { readOnly: true });
     try {
-      expect((await client.run(EXTENSION_SETTINGS)).rows).toEqual([{ install: false, load: false }]);
+      expect((await client.run(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
     } finally {
       client.close();
     }
@@ -541,8 +543,21 @@ describe("no extension is installed or loaded behind the user's back (#1404)", (
     await provider.query("SET autoload_known_extensions = true");
     await provider.query("SET autoinstall_known_extensions = true");
 
-    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([{ install: true, load: true }]);
+    expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([{ ...POLICY, install: true, load: true }]);
   });
+
+  test.each([["SET allow_community_extensions = true"], ["SET GLOBAL allow_community_extensions = true"]])(
+    "community extensions cannot be turned back on inside a session: %s",
+    async (statement) => {
+      provider = new DuckDBProvider(makeConfig());
+      await provider.connect();
+
+      await expect(provider.query(statement)).rejects.toThrow(
+        /Cannot change allow_community_extensions setting while database is running/,
+      );
+      expect((await provider.query(EXTENSION_SETTINGS)).rows).toEqual([POLICY]);
+    },
+  );
 });
 
 describeIf(
@@ -568,7 +583,7 @@ describeIf(
         expect((await provider.query("SELECT count(*) AS n FROM users")).rows[0].n).toBe("2");
         await expect(provider.query("INSERT INTO users VALUES (3, 'x')")).rejects.toThrow(/read-only mode/);
         expect(info.mock.calls.map(([message]) => String(message))).toContain(
-          `[DuckDB] Opening ${file} read-only: this process cannot write the file or its directory`,
+          `[DuckDB] Opened ${file} read-only: this process cannot write the file or its directory`,
         );
       } finally {
         info.mockRestore();
@@ -576,6 +591,24 @@ describeIf(
         chmodSync(file, 0o644);
       }
       expect(digestOf(file)).toBe(before);
+    });
+
+    test("a mode 0444 SQLite file is refused, and is not announced as opened read-only", async () => {
+      const file = join(workDir, "mode-0444.sqlite");
+      const sqlite = new BunDatabase(file, { create: true, readwrite: true });
+      sqlite.exec("CREATE TABLE t (a INTEGER)");
+      sqlite.close();
+      chmodSync(file, 0o444);
+      const info = spyOn(logger, "info");
+      try {
+        provider = new DuckDBProvider(makeConfig({ database: file }));
+
+        await expect(provider.connect()).rejects.toThrow(/is a SQLite database file/);
+        expect(info.mock.calls.map(([message]) => String(message)).filter((m) => m.includes("[DuckDB]"))).toEqual([]);
+      } finally {
+        info.mockRestore();
+        chmodSync(file, 0o644);
+      }
     });
   },
 );

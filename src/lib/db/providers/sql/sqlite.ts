@@ -66,7 +66,7 @@ import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
-import { isUnwritableExistingFile } from "../../utils/unwritable-file";
+import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 
 /**
  * SQLite's identity for the shared container-path renderer.

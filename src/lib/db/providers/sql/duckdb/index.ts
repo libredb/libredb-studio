@@ -138,7 +138,7 @@ import {
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
-import { isUnwritableExistingFile } from "../../../utils/unwritable-file";
+import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { logger } from "@/lib/logger";
 import * as fs from "fs";
 import * as path from "path";
@@ -598,16 +598,18 @@ export class DuckDBProvider extends SQLBaseProvider {
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       }
 
-      // A file this process cannot write is opened read-only rather than refused (#1404):
-      // a read-write open of one answers "Permission denied" and reads nothing at all.
+      // An existing file this process cannot write, or whose directory it cannot write, is
+      // opened read-only rather than left to fail (#1404): a read-write open of an
+      // unwritable file answers "Permission denied" and reads nothing at all, and one in an
+      // unwritable directory fails its first commit on the `.wal` it cannot create.
       const unwritableFile = isUnwritableExistingFile(dbPath);
+      this.client = await openDuckDBClient(dbPath, { readOnly: false, unwritableFile });
+      // Logged once the open succeeded, so a file refused at open is not announced as opened.
       if (unwritableFile) {
-        logger.info(`[DuckDB] Opening ${dbPath} read-only: this process cannot write the file or its directory`, {
+        logger.info(`[DuckDB] Opened ${dbPath} read-only: this process cannot write the file or its directory`, {
           provider: "duckdb",
         });
       }
-
-      this.client = await openDuckDBClient(dbPath, { readOnly: false, unwritableFile });
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));

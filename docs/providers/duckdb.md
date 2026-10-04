@@ -26,7 +26,7 @@
 | **Agent read-only profile** | Yes — a separate handle opened `access_mode: 'READ_ONLY'` **and** `enable_external_access: 'false'`, because the read-only flag alone is not a filesystem sandbox. The SQL denylist remains only as defence in depth (§3.10, §14)|
 | **Maintenance** | `vacuum` and `analyze` (per table **and** global), `optimize` mapped onto `CHECKPOINT` (global only). `reindex`, `check` and `kill` are withheld — measured unsupported (§8) |
 | **Concurrency** | `singleWriterFile: true` — a **second process is refused even read-only** (§3.8) |
-| **Extensions** | Never installed or loaded implicitly: every handle opens with `autoinstall_known_extensions` and `autoload_known_extensions` off, and a file that is not a DuckDB database is refused before the engine opens it. `INSTALL` and `LOAD` in the editor are the way in (§3.14) |
+| **Extensions** | Never installed or loaded implicitly: every handle opens with `autoinstall_known_extensions`, `autoload_known_extensions` and `allow_community_extensions` off, and a file that is not a DuckDB database is refused before the engine opens it. Only DuckDB's signed extensions can load; `INSTALL` and `LOAD` in the editor are the way in (§3.14). The editor's remaining network reach is in §14.4 |
 | **Unwritable file** | Opened `READ_ONLY` in the editor, so reads work and the engine refuses writes (§3.15) |
 | **Source** | [`src/lib/db/providers/sql/duckdb/`](../../src/lib/db/providers/sql/duckdb/) |
 | **Tests** | [`tests/integration/db/duckdb-provider.test.ts`](../../tests/integration/db/duckdb-provider.test.ts) |
@@ -475,7 +475,7 @@ checkpoint its `-wal` into it, and Studio answered "Connected successfully". So 
 click made the server fetch native code from the internet, rewrote a file another connection held
 open, and on an air-gapped host hung until the download timed out.
 
-Two things close it, both in `client.ts`, on **every** handle (the editor's and the agent read-only
+Three things close it, all in `client.ts`, on **every** handle (the editor's and the agent read-only
 profile's):
 
 1. **`autoinstall_known_extensions: 'false'` and `autoload_known_extensions: 'false'`** are passed at
@@ -510,6 +510,17 @@ profile's):
    SQLite file on any machine that had `sqlite_scanner` installed. A path whose header cannot be
    read (missing, unreadable, a directory) is left to the engine, which creates a missing file or
    names the failure in its own words.
+3. **`allow_community_extensions: 'false'`** is passed at open. A community extension is third-party
+   native code DuckDB does not vet, and with this off `INSTALL <name> FROM community` is refused:
+   `IO Error: Attempting to install an extension file that doesn't have a valid signature`
+   (measured, nothing is written to the extension directory). Unlike the two options in step 1, it
+   cannot be turned back on inside a session: `SET` and `SET GLOBAL allow_community_extensions =
+   true` both answer `Invalid Input Error: Cannot change allow_community_extensions setting while
+   database is running` (measured). `allow_unsigned_extensions` is off by default and fixed at open
+   the same way, so **only DuckDB's own signed extensions can be loaded on any handle**.
+
+What this does **not** close is the editor's own reach, which is the editor's by design and is
+recorded in §14.4.
 
 ### 3.15 A file this process cannot write opens read-only in the editor
 
@@ -518,7 +529,7 @@ read-write at all: measured on v1.5.5, the open answers `IO Error: Cannot open f
 Permission denied`, so nothing in it can even be read. The editor now asks first whether the
 process can write the file and its directory (`isUnwritableExistingFile`, shared with the SQLite
 provider), and when it cannot, opens with `access_mode: 'READ_ONLY'`, logs
-`[DuckDB] Opening <path> read-only: this process cannot write the file or its directory`, and reads
+`[DuckDB] Opened <path> read-only: this process cannot write the file or its directory`, and reads
 normally. A write is then refused by the engine:
 `Invalid Input Error: Cannot execute statement of type "INSERT" on database "<name>" which is attached
 in read-only mode!`.
@@ -1417,11 +1428,31 @@ to a database login.
 A path is the only thing a DuckDB connection carries, and before #1404 a path was enough to make the
 server download and load native code: the engine auto-installed the extension that could read
 whatever file the path named (§3.14). Every handle now opens with extension autoinstall and autoload
-off, and a file without DuckDB's header is refused before the engine opens it, so opening a
-connection, Test Connection included, makes no network request and writes nothing to a file that is
-not a DuckDB database. Fetching an extension takes an explicit `INSTALL` in the editor, a statement
-the user wrote and can see. The agent read-only profile cannot do even that: `enable_external_access`
-is off there and its denylist refuses `INSTALL` and `LOAD` (§3.10).
+off, community extensions refused and a file without DuckDB's header refused before the engine opens
+it, so opening a connection, Test Connection included, makes no network request and writes nothing to
+a file that is not a DuckDB database. Only DuckDB's own signed extensions can load on any handle.
+
+**The editor itself still reaches the network, and that is deliberate, not closed.** Measured on
+v1.5.5, from an editor session:
+
+- `SET custom_extension_repository = 'http://<any host>/...'` followed by `INSTALL <name>` makes the
+  Studio server send an HTTP request to that host. What it downloads still has to carry DuckDB's
+  signature to be installed, but the request is made.
+- `INSTALL httpfs; LOAD httpfs;` and then `read_csv('http://<any host>/...')` makes the server
+  request any URL a user names, internal addresses included: a server-side request forgery
+  surface, with the server's own network position.
+
+Both were open before this change as well, with a lower bar (an implicit autoinstall needed no
+`INSTALL` at all). They are the editor's features, the same way `COPY ... TO` and local
+`read_csv` are, and they are why §14.3 says a DuckDB connection is **closer to a shell on the Studio
+host than to a database login**: grant the right to create one only to people you would trust with
+outbound network access from the server. `enable_external_access` and `lock_configuration` are not
+set on the editor handle because they would also break those documented reads and writes, and the
+per-session opt-in in §3.14. Restricting this further is an operator policy decision that this
+provider does not make on its own.
+
+The agent read-only profile has none of this reach: `enable_external_access` is off there and its
+denylist refuses `INSTALL` and `LOAD` (§3.10).
 
 ---
 

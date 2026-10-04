@@ -302,24 +302,31 @@ function assertDuckDBFile(path: string): void {
 // Open
 // ============================================================================
 
-/** Off on every handle: no extension is fetched or loaded behind the user's back (#1404). */
-const NO_IMPLICIT_EXTENSIONS = { autoinstall_known_extensions: "false", autoload_known_extensions: "false" };
+/**
+ * On every handle: no extension is fetched or loaded behind the user's back, and none
+ * from outside DuckDB's own signed set (#1404).
+ */
+const EXTENSION_POLICY = {
+  autoinstall_known_extensions: "false",
+  autoload_known_extensions: "false",
+  allow_community_extensions: "false",
+};
 
 /** The engine options for one open; `openDuckDBClient` says why each is there. */
 function openConfig(options: DuckDBOpenOptions): Record<string, string> {
   if (options.readOnly) {
-    return { ...NO_IMPLICIT_EXTENSIONS, access_mode: "READ_ONLY", enable_external_access: "false" };
+    return { ...EXTENSION_POLICY, access_mode: "READ_ONLY", enable_external_access: "false" };
   }
   if (options.unwritableFile) {
-    return { ...NO_IMPLICIT_EXTENSIONS, access_mode: "READ_ONLY" };
+    return { ...EXTENSION_POLICY, access_mode: "READ_ONLY" };
   }
-  return { ...NO_IMPLICIT_EXTENSIONS };
+  return { ...EXTENSION_POLICY };
 }
 
 /**
  * Open one DuckDB database and hand back the neutral handle.
  *
- * Two options are passed on EVERY handle, and two more on the read-only profile.
+ * Three options are passed on EVERY handle, and two more on the read-only profile.
  * Everything else DuckDB can be configured with is left at its default on purpose: a
  * setting this provider chose would have to be defended per deployment.
  *
@@ -329,6 +336,13 @@ function openConfig(options: DuckDBOpenOptions): Record<string, string> {
  *   session can `SET` either back on; the engine's own refusal names both routes.
  *   Neither stops an extension ALREADY installed on the host from being loaded to attach
  *   a file it recognises (measured), which is why `assertDuckDBFile` runs first.
+ * - `allow_community_extensions: 'false'` - a community extension is third-party native
+ *   code DuckDB does not vet, so `INSTALL x FROM community` is refused ("doesn't have a
+ *   valid signature", measured). Unlike the two above it cannot be turned back on inside
+ *   a session: `SET` and `SET GLOBAL` answer "Cannot change allow_community_extensions
+ *   setting while database is running" (measured). `allow_unsigned_extensions` is already
+ *   off by default and is fixed at open the same way, so only DuckDB's own signed
+ *   extensions can load on any handle.
  *
  * And on the read-only profile:
  *
