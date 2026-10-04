@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   connectionFieldHint,
   connectionFieldLabel,
+  connectionFieldPlaceholder,
   DB_UI_CONFIG,
   getDBConfig,
   getDBIcon,
@@ -676,11 +677,16 @@ describe("declared connection-field copy (#1085)", () => {
       dataServers:
         "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
       allowInsecureAuth:
-        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server; the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
     });
     expect(oxia.readOnlyHint).toBe(
       "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
     );
+    // The Namespace box shows the namespace an empty one means, not the dialog's "db" (ruling R34).
+    expect(oxia.fieldPlaceholders).toEqual({ database: "default" });
+    expect(connectionFieldPlaceholder(oxia, "database", "db")).toBe("default");
+    expect(connectionFieldPlaceholder(oxia, "host", "localhost")).toBe("localhost");
+    expect(connectionFieldPlaceholder(getDBConfig("postgres"), "database", "db")).toBe("db");
     expect(readOnlyHint(oxia)).toBe(oxia.readOnlyHint ?? "");
     // No User box, no Host address, no option list and the default SSH tunnel (SB3-1.5).
     expect(takesConnectionField("oxia", "user")).toBe(false);

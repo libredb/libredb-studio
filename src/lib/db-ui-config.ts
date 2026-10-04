@@ -84,6 +84,11 @@ export interface DatabaseUIConfig {
    */
   fieldHints?: Partial<Record<ConnectionField, string>>;
   /**
+   * The connection dialog's placeholder for a field, where this engine's example differs from the dialog's own.
+   * Read through `connectionFieldPlaceholder`; only the `database` box reads it so far.
+   */
+  fieldPlaceholders?: Partial<Record<ConnectionField, string>>;
+  /**
    * The sentence under the connection dialog's Read-only toggle, where this engine's mode differs from
    * the dialog's own sentence, which says the mode can be turned off. Neo4j declares one because its
    * connections are read-only whether or not the box is ticked (spec A7). Read through `readOnlyHint`.
@@ -592,6 +597,8 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
     fieldLabels: { password: "Token", database: "Namespace", dataServers: "Data servers" },
+    // The namespace an empty Namespace means, where the dialog would show "db" (ruling R34).
+    fieldPlaceholders: { database: "default" },
     fieldHints: {
       host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
       password:
@@ -601,7 +608,7 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
       dataServers:
         "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
       allowInsecureAuth:
-        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server; the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
     },
     readOnlyHint:
       "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
@@ -703,6 +710,11 @@ export function offersSshTunnel(type: DatabaseType): boolean {
  */
 export function connectionFieldLabel(config: DatabaseUIConfig, field: ConnectionField, fallback: string): string {
   return config.fieldLabels?.[field] ?? fallback;
+}
+
+/** The connection dialog's placeholder for one field: the engine's declared one, or the dialog's own example. */
+export function connectionFieldPlaceholder(config: DatabaseUIConfig, field: ConnectionField, fallback: string): string {
+  return config.fieldPlaceholders?.[field] ?? fallback;
 }
 
 /**

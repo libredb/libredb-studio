@@ -300,6 +300,7 @@ const mockFields = (type: string): string[] =>
 interface MockFieldCopy {
   readonly fieldLabels?: Readonly<Record<string, string>>;
   readonly fieldHints?: Readonly<Record<string, string>>;
+  readonly fieldPlaceholders?: Readonly<Record<string, string>>;
   readonly fieldOptions?: Readonly<Record<string, readonly { readonly value: string; readonly label: string }[]>>;
   readonly showSshTunnel?: false;
   readonly readOnlyHint?: string;
@@ -398,6 +399,7 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
   // Mirrored from the real entry (SB3-1.5); tests/unit/lib/db-ui-config.test.ts pins the real one.
   oxia: {
     fieldLabels: { password: "Token", database: "Namespace", dataServers: "Data servers" },
+    fieldPlaceholders: { database: "default" },
     fieldHints: {
       host: "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal.",
       password:
@@ -407,7 +409,7 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
       dataServers:
         "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone.",
       allowInsecureAuth:
-        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server; the connection is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
+        "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one.",
     },
     readOnlyHint:
       "Oxia connections are read-only in this version, whether or not this is ticked: Studio sends Oxia no write.",
@@ -437,6 +439,8 @@ mock.module("@/lib/db-ui-config", () => ({
   connectionFieldLabel: (config: MockFieldCopy, field: string, fallback: string) =>
     config.fieldLabels?.[field] ?? fallback,
   connectionFieldHint: (config: MockFieldCopy, field: string) => config.fieldHints?.[field],
+  connectionFieldPlaceholder: (config: MockFieldCopy, field: string, fallback: string) =>
+    config.fieldPlaceholders?.[field] ?? fallback,
   readOnlyHint: (config: MockFieldCopy) =>
     config.readOnlyHint ??
     "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.",
@@ -694,6 +698,8 @@ describe("ConnectionModal", () => {
     expect(container.querySelector('label[for="password"]')?.textContent).toBe("Token");
     expect(container.querySelector('label[for="database"]')?.textContent).toBe("Namespace");
     expect(container.querySelector('label[for="dataServers"]')?.textContent).toBe("Data servers");
+    // The Namespace box shows what an empty one means, not the dialog's "db" (ruling R34).
+    expect((container.querySelector("#database") as HTMLInputElement | null)?.placeholder).toBe("default");
     // The consent box under SSL Mode disable, with Oxia's own sentence under it.
     expect(getByLabelText("Send the password without TLS").getAttribute("aria-describedby")).toBe(
       "allowInsecureAuth-hint",

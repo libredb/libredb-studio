@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import {
   connectionFieldHint,
   connectionFieldLabel,
+  connectionFieldPlaceholder,
   getDBConfig,
   isFileBased,
   offersSshTunnel,
@@ -793,7 +794,7 @@ export function ConnectionModal({
                         id="database"
                         value={database}
                         onChange={(e) => setDatabase(e.target.value)}
-                        placeholder={databaseFieldPlaceholder}
+                        placeholder={connectionFieldPlaceholder(uiConfig, "database", databaseFieldPlaceholder)}
                         aria-describedby={describedByHint(uiConfig, "database")}
                         className="h-10 bg-panel border-hairline focus:border-brand-tint/50 transition-all text-xs font-mono"
                       />
