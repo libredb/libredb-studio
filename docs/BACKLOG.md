@@ -1996,6 +1996,7 @@ Measured 2026-10-02 in the etcd branch's regression pass, the same on `origin/ma
 
 Found by the etcd provider's regression pass on SQLite (#1089), which changes no SQL provider.
 Not fixed there: the SQLite provider is outside that PR.
+Since #1323 routes on the driver's result column count, a value-setting `PRAGMA` such as `PRAGMA foreign_keys = ON` reaches `run()` as well, so node:sqlite reports the previous write's count for it too, while bun:sqlite reports 0.
 
 **Done when:** a statement that changes no row reports no changed rows on both SQLite drivers, read from the statement itself rather than the connection's last count, and a test runs a `DELETE` then a `CREATE TABLE` on one connection and pins the second answer.
 
