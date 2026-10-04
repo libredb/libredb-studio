@@ -20,12 +20,7 @@
  */
 import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import {
-  assertContainerPathShape,
-  type ContainerPathShapeEngine,
-  callerBoundTruncationReason,
-  findKind,
-} from "@/lib/db/object-kinds";
+import { callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
 import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";
 import type {
   ActiveSessionDetails,
@@ -161,12 +156,15 @@ const SQL_MEDIA_TYPES: ReadonlySet<string> = new Set(["application/json", "appli
 /** What a `/ping` 403 means on this type (I10): a resource token, of a server that serves SQL, version unread. */
 const RESOURCE_TOKEN_VERSION: InfluxServerVersion = Object.freeze({ generation: "v3", reported: null, build: null });
 
-/** A connection is one session database, so the only container path is the empty one (R16, the Qdrant shape). */
-const CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
-  code: INFLUXDB3,
-  label: "An InfluxDB 3",
-  shapeNames: "label",
-};
+/**
+ * A connection is one session database, so the only container path is the empty one (R16, the Qdrant shape): the
+ * type declares no `containerPathShapes`, so the check is its own, not `assertContainerPathShape`.
+ */
+function requireRoot(container: readonly string[]): void {
+  if (container.length !== 0) {
+    throw new QueryError(`An InfluxDB 3 container path is empty, received ${JSON.stringify(container)}`, INFLUXDB3);
+  }
+}
 
 /** A permit wait the deadline ended rejects with the signal's own reason; worded as the transport words a timeout. */
 function waitFailure(error: unknown): unknown {
@@ -474,11 +472,6 @@ export class InfluxDB3Provider extends SQLBaseProvider {
     }
   }
 
-  /** The tables are top-level objects of the session database, so the only container path is `[]`. */
-  private requireRoot(container: readonly string[]): void {
-    assertContainerPathShape(this.getCapabilities(), container, CONTAINER_PATH_ENGINE);
-  }
-
   private requireKind(kind: string): void {
     if (findKind(this.getCapabilities(), kind) === undefined) {
       throw new QueryError(`InfluxDB 3 declares no object kind "${kind}"`, this.type);
@@ -492,14 +485,14 @@ export class InfluxDB3Provider extends SQLBaseProvider {
   }
 
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
-    this.requireRoot(container);
+    requireRoot(container);
     const table = await this.surface((context) => countInfluxdb3Tables(context));
     return { table };
   }
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     this.requireKind(kind);
-    this.requireRoot(container);
+    requireRoot(container);
     return this.surface(async (context) => [...(await listInfluxdb3Tables(context)).tables]);
   }
 
@@ -515,7 +508,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
    */
   public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     this.requireKind(kind);
-    this.requireRoot(container);
+    requireRoot(container);
     return this.surface(async (context) => {
       const { tables, truncated } = await listInfluxdb3Tables(context);
       const callerCut = limit !== undefined && tables.length > limit;
