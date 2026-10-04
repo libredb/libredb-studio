@@ -1535,7 +1535,8 @@ function seederRoutingFindings(files: LiveFiles): string[] {
   return findings;
 }
 
-const TEMPORARY_WORDS = /\btmpdir\b|\bTMPDIR\b|\bmkdtemp(?:Sync)?\b/;
+/** The temporary directory by its API, its variable, or a literal path to it. */
+const TEMPORARY_WORDS = /\btmpdir\b|\bTMPDIR\b|\bmkdtemp(?:Sync)?\b|["'`](?:\/var)?\/tmp\b/;
 
 // Rule 34.
 function repositoryStateFindings(files: LiveFiles): string[] {
@@ -1611,6 +1612,14 @@ describe("tests/live/oxia-seed-raw.ts, the one writer", () => {
     });
     finds(
       repositoryStateFindings(temporary),
+      "tests/live/oxia-evidence.ts keeps state under the system's temporary directory",
+    );
+    const literal = plantedLive(liveFiles, (draft) => {
+      draft.live["oxia-evidence.ts"] =
+        `${draft.live["oxia-evidence.ts"] ?? ""}\nwriteFileSync("/tmp/oxia-evidence/provenance.json", "{}");\n`;
+    });
+    finds(
+      repositoryStateFindings(literal),
       "tests/live/oxia-evidence.ts keeps state under the system's temporary directory",
     );
     const commented = plantedLive(liveFiles, (draft) => {

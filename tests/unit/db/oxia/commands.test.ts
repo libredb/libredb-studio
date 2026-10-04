@@ -664,6 +664,12 @@ describe("-a and -n", () => {
       message:
         "-n names a namespace other than this connection's 'team a': Namespace is set on the connection, and empty means default.",
     });
+    // A single quote inside the name closes the quotes, is escaped, and opens them again (docs/providers/oxia.md section 5).
+    expect(refusal("-n other get /a", { ...SERVER, namespace: "it's" })).toMatchObject({
+      code: "connection-flag",
+      message:
+        "-n names a namespace other than this connection's 'it'\\''s': Namespace is set on the connection, and empty means default.",
+    });
   });
 });
 

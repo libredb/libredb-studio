@@ -366,7 +366,7 @@ A `-a` or `-n` that does not name the connection's own endpoint or namespace is 
 
 > -n names a namespace other than this connection's \<namespace\>: Namespace is set on the connection, and empty means default.
 
-The namespace in that sentence is one shell word, as a command reads it: bare when every character can stand in a word unquoted, in single quotes otherwise (`'team a'`).
+The namespace in that sentence is one shell word, as a command reads it: bare when every character can stand in a word unquoted, in single quotes otherwise (`'team a'`), where a single quote inside the name is written `'\''` (`'it'\''s'`).
 
 `--index` with an empty upper bound is refused, because Oxia reads index keys up to the upper bound and an empty one reads nothing:
 

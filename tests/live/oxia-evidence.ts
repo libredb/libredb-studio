@@ -206,7 +206,8 @@ async function capture(): Promise<void> {
   if (fixture.marker === undefined && certs === undefined) fail(`${fixture.set} needs --certs <a copy of the volume>`);
   const material = certs === undefined ? {} : readMaterial(certs);
   const placeholders = placeholderMaterial();
-  const out = argument("--out") ?? FIXTURES;
+  // Resolved, so that the fixtures directory spelled relative still renders the README.
+  const out = path.resolve(argument("--out") ?? FIXTURES);
 
   let before: string | undefined;
   if (fixture.marker !== undefined) {
