@@ -226,7 +226,8 @@ export function registerInfluxqlCompletionProvider(
   schema: InfluxqlCompletionSchema,
 ): Monaco.IDisposable {
   const Kind = monaco.languages.CompletionItemKind;
-  const keywords = [...INFLUXQL_KEYWORDS].sort();
+  // Code-unit order, as the default sort gives, written out so no locale can reorder the list.
+  const keywords = [...INFLUXQL_KEYWORDS].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 
   return monaco.languages.registerCompletionItemProvider(INFLUXQL_LANGUAGE_ID, {
     triggerCharacters: [".", '"'],
