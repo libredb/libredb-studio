@@ -581,7 +581,10 @@ const COUNTS_RELATION_ARM = `
           WHERE n.nspname = $1 AND c.relkind IN ('r','p','v','m','S')`;
 
 // `prokind` is a PostgreSQL 11 column. Everything that predates it, and the forks that
-// never grew it, answer 42703 here - which is why this arm is separable at all.
+// never grew it, refuse this arm - which is why it is separable at all. They do not agree
+// on HOW: PostgreSQL answers 42703, Materialize v26.44.1 answers XX000 with the same
+// `column "p.prokind" does not exist`, so `isMissingProkindError()` reads the column name
+// and not the code.
 const COUNTS_ROUTINE_ARM = `
           SELECT CASE p.prokind WHEN 'f' THEN 'function' WHEN 'p' THEN 'procedure' END
           FROM pg_catalog.pg_proc p
@@ -615,12 +618,15 @@ const COUNTS_SQL_WITHOUT_ROUTINES = countsSql([COUNTS_RELATION_ARM, COUNTS_TRIGG
 
 // A server that has no `pg_proc.prokind` cannot tell a function from a procedure, so the
 // two routine folders are unknowable there - but the relations and the triggers still
-// are. Keyed on the column name as well as the code because 42703 is "undefined column"
-// generally, and re-running without the routine arm repairs nothing if the missing
-// column was in one of the arms that survive.
+// are. Keyed on the column name and NOT on the SQLSTATE, like every other fallback in
+// this file: PostgreSQL answers 42703, while Materialize v26.44.1 answers XX000 (its
+// generic internal error) with the same `column "p.prokind" does not exist`, so a 42703
+// key cost the whole tree there and an XX000 key would read every internal error as a
+// missing column. Only the routine arm names `prokind`, so a refusal that names it is a
+// refusal of that arm, and re-running without it is a repair rather than a guess.
 function isMissingProkindError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return (error as { code?: string }).code === "42703" && error.message.toLowerCase().includes("prokind");
+  return error.message.toLowerCase().includes("prokind");
 }
 
 // The relkinds behind each relation-shaped kind id, so `listObjects` never interpolates
@@ -2907,11 +2913,16 @@ export class PostgresProvider extends SQLBaseProvider {
    * the object browser can say why a folder has no number instead of showing a zero
    * nobody measured.
    *
-   * The `prokind` retry is the one partial outcome. That column arrived in PostgreSQL 11
-   * and the wire-compatible forks do not all have it, so a server can answer for its
+   * The routine retry is the one partial outcome. `pg_proc.prokind` arrived in PostgreSQL
+   * 11 and the wire-compatible forks do not all have it, so a server can answer for its
    * relations and its triggers while being unable to tell a function from a procedure.
    * Losing the two routine folders is the right cost there; losing the whole container to
    * one missing column is not.
+   *
+   * The retry is keyed on the refusal naming `prokind` (`isMissingProkindError()`), under
+   * any SQLSTATE, and every other refusal costs every folder on the first read: a statement
+   * timeout or a cancel is not run a second time, and its sentence is never filed under
+   * the routine pair as though it were about routines.
    */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     this.ensureConnected();

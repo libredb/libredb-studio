@@ -4958,11 +4958,84 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.disconnect();
   });
 
+  test("Materialize's XX000 for the missing prokind costs the routine folders, not the container", async () => {
+    // Measured on Materialize v26.44.1 on 2026-10-04: the routine arm answers SQLSTATE XX000
+    // (internal_error), not 42703, with `column "p.prokind" does not exist`. Keying the
+    // retry on the code lost all seven folders there; the routine-free statement answers.
+    const statements: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("GROUP BY kind")) return { rows: [] };
+      statements.push(sql);
+      if (sql.includes("prokind")) {
+        throw Object.assign(new Error('column "p.prokind" does not exist'), { code: "XX000" });
+      }
+      return {
+        rows: [
+          { kind: "table", n: 1 },
+          { kind: "view", n: 1 },
+          { kind: "materialized_view", n: 1 },
+        ],
+      };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["public"]);
+    expect(statements).toHaveLength(2);
+    expect(statements[1]).not.toContain("pg_proc");
+    expect(counts.table).toEqual({ count: 1 });
+    expect(counts.view).toEqual({ count: 1 });
+    expect(counts.materialized_view).toEqual({ count: 1 });
+    expect(counts.sequence).toEqual({ count: 0 });
+    expect(counts.trigger).toEqual({ count: 0 });
+    expect(counts.function).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    expect(counts.procedure).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    await provider.disconnect();
+  });
+
+  test("a code-less refusal naming prokind is handled alike: the column name is the key, not the SQLSTATE", async () => {
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("GROUP BY kind")) return { rows: [] };
+      if (sql.includes("pg_proc")) throw new Error('column "p.prokind" does not exist');
+      return { rows: [{ kind: "table", n: 4 }] };
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    expect(counts.table).toEqual({ count: 4 });
+    expect(counts.function).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    expect(counts.procedure).toEqual({ unavailable: 'column "p.prokind" does not exist' });
+    await provider.disconnect();
+  });
+
+  test("a statement timeout is not retried: one statement, and every folder carries its sentence", async () => {
+    // A second catalog scan would double the wait, and filing the timeout under the routine
+    // pair would say something about routines the server never said.
+    const statements: string[] = [];
+    mockQueryFn = async (sql) => {
+      if (!sql.includes("GROUP BY kind")) return { rows: [] };
+      statements.push(sql);
+      throw Object.assign(new Error("canceling statement due to statement timeout"), { code: "57014" });
+    };
+    const provider = makeProvider();
+    await provider.connect();
+
+    const counts = await provider.countObjects(["app"]);
+    expect(statements).toHaveLength(1);
+    for (const kind of ["table", "view", "materialized_view", "sequence", "function", "procedure", "trigger"]) {
+      expect(counts[kind]).toEqual({ unavailable: "canceling statement due to statement timeout" });
+    }
+    await provider.disconnect();
+  });
+
   test("a 42703 that does not name prokind takes the whole container down", async () => {
     // The retry repairs nothing when the missing column was in an arm it keeps, so
     // reporting the routine folders as merely unavailable would be a guess.
+    const statements: string[] = [];
     mockQueryFn = async (sql) => {
       if (sql.includes("GROUP BY kind")) {
+        statements.push(sql);
         throw Object.assign(new Error("column c.relkind does not exist"), { code: "42703" });
       }
       return { rows: [] };
@@ -4971,6 +5044,7 @@ describe("PostgreSQL object listing and detail", () => {
     await provider.connect();
 
     const counts = await provider.countObjects(["app"]);
+    expect(statements).toHaveLength(1);
     for (const kind of ["table", "view", "materialized_view", "sequence", "function", "procedure", "trigger"]) {
       expect(counts[kind]).toEqual({ unavailable: "column c.relkind does not exist" });
     }
