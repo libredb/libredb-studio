@@ -976,9 +976,9 @@ The integration points, all of which need an entry. This is the list the Strateg
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
-      eleven shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
-      `libsql`, `prometheus`, `qdrant`, `influxdb` and `influxdb3`
-      each add nothing here
+      fourteen shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
+      `libsql`, `sqlite`, `prometheus`, `qdrant`, `milvus`, `influxdb`, `influxdb3` and `oxia`
+      each add nothing here (`milvus` and `oxia` only extend the `//dependencies` note)
 - [ ] `database-compose.yml` — a service, so the next person can repeat the live pass. A distributed
       engine contributes a `profiles: [...]` set instead, as Druid's seven services do, so the default
       stack does not grow for everyone. An EMBEDDED engine gets no service at all — SQLite, DuckDB and
