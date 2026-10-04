@@ -379,7 +379,11 @@ utf8mb3 `VARCHAR` from a latin1 one or from a `VARBINARY`.
 
 Only `cesu8` columns move: latin1, binary (63) and utf8mb4 columns keep their decoder, so `BLOB`,
 `VARBINARY` and `BINARY` still arrive as bytes ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)).
-Errors reach the caller unchanged.
+A statement that answers an OK packet (`INSERT`, `UPDATE`, `DELETE`, DDL, `SET`, `COMMIT`) makes
+mysql2 emit `fields` with nothing, and the listener lets it through: a throw inside it would be fatal
+to the connection after the server had already run the statement. An error is the driver's own error
+object with the same message, `code`, `errno` and `sqlState` the promise path rejects with; only its
+stack differs, because the promise wrapper rewrites the stack to its caller's.
 
 > **A column NAME outside the BMP still reads as U+FFFD on these servers.** mysql2 decodes the name
 > while it parses the definition, before `fields` fires, so `SELECT 1 AS "<U+1F600>"` comes back with
@@ -1882,9 +1886,14 @@ is pinned in its own file,
 because the mock above never runs mysql2's parsers. Nothing is mocked there: the real provider and the
 real mysql2 pool talk to mysql2's own `createServer()`, run once as a server that labels UTF-8 text 33
 and once as an honest one. It pins a value outside the BMP decoding right over the text and the
-prepared protocol, a binary column staying bytes, a refusal failing exactly as on mysql2's own path, an
-unflagged pool decoding a 33 column as mysql2 alone does while a flagged one is connected beside it,
-and mysql2's `CharsetToEncoding` table left as it ships after every test.
+prepared protocol, a binary column staying bytes, a refusal failing exactly as on mysql2's own path
+(`code`, `errno`, `sqlState` included), an unflagged pool decoding a 33 column as mysql2 alone does
+while a flagged one is connected beside it, and mysql2's `CharsetToEncoding` table left as it ships
+after every test. A second block runs every OK-packet shape on both servers and compares the driver's
+header (`affectedRows`, `insertId`) and `rowCount`: `INSERT` over the text and the prepared protocol,
+`UPDATE`, `DELETE`, `CREATE TABLE`, an `INSERT` inside `beginTransaction()`/`queryInTransaction()`
+followed by a commit, and an answer that chains an OK packet, a result set and a closing OK packet;
+after each, the same pool must still answer.
 
 It also covers **the object surface** ([§7.1](#71-the-object-surface-789)) in two blocks. `object
 surface` holds the seven conformance tests: the declared kinds and roles on each server, the

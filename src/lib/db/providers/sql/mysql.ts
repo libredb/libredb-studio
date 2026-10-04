@@ -171,7 +171,7 @@ const UTF8_UNDER_UTF8MB3 = new WeakSet<object>();
 /** The slice of mysql2's callback API that `runReadingUtf8mb3AsUtf8` drives. */
 type CoreCallback = (error: Error | null, rows: unknown, fields: FieldPacket[]) => void;
 interface CoreCommand {
-  on(event: "fields", listener: (fields: FieldPacket[]) => void): unknown;
+  on(event: "fields", listener: (fields?: FieldPacket[]) => void): unknown;
 }
 interface CoreConnection {
   query(sql: string, callback: CoreCallback): CoreCommand;
@@ -193,7 +193,11 @@ interface CoreConnection {
  * A column NAME is decoded while its definition is parsed, before `fields` fires, so an
  * alias outside the BMP still reads as U+FFFD on these servers.
  */
-const readUtf8mb3AsUtf8 = (fields: FieldPacket[]): void => {
+const readUtf8mb3AsUtf8 = (fields?: FieldPacket[]): void => {
+  // A statement that answers an OK packet (INSERT, UPDATE, DDL, SET, ...) emits `fields`
+  // with nothing. A throw here would be fatal to the connection, after the server had
+  // already run the statement.
+  if (fields === undefined) return;
   for (const field of fields) {
     if (field.encoding === "cesu8") field.encoding = "utf8";
   }
@@ -1398,7 +1402,7 @@ const UTF8MB3_LABEL_PROBE = "SELECT '\u{1F600}' AS probe";
 const probeUtf8UnderUtf8mb3 = async (queryable: MySQLQueryable): Promise<boolean> => {
   try {
     const [rows, fields] = await runStatement(queryable, UTF8MB3_LABEL_PROBE);
-    return fields[0]?.encoding === "cesu8" && String(rows[0]?.probe).includes("�");
+    return fields[0]?.encoding === "cesu8" && String(rows[0]?.probe).includes("\uFFFD");
   } catch {
     return false;
   }
