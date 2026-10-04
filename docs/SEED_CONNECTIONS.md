@@ -814,7 +814,7 @@ An image that matches no engine is not a skipped entry, and neither is an app th
 `GET /api/admin/discovery` (admin only, [`docs/API_DOCS.md`](./API_DOCS.md#admin-api)) and a card on the admin Overview page (`/admin/overview`) report the state and its message, the last successful scan, the exporter's error, the connected databases and the skipped apps with their reasons.
 Neither carries a host name beyond app names, nor any environment value.
 `GET /api/connections/managed` carries no status, because every role can read it.
-While the request reached Studio over plain HTTP, or `AUTH_COOKIE_SECURE` is `false`, and at least one database is connected, the card warns:
+While the request reached Studio over plain HTTP, or `AUTH_COOKIE_SECURE` is `false`, `off` or `0` in any letter case, and at least one database is connected, the card warns:
 
 > The Studio session cookie can travel over plain HTTP, and it unlocks every discovered database.
 > Enable HTTPS and Force HTTPS for this app in CapRover, then set AUTH_COOKIE_SECURE to true and restart.
