@@ -907,10 +907,13 @@ describeIf(MISSING_UNIX_SOCKETS, "createDockerClient - GET over the unix socket"
     });
   });
 
-  test("a 2xx answer that is not JSON is refused", async () => {
-    const docker = await fakeDocker(() => ({ status: 200, body: "not json" }));
+  test("a 2xx answer that is not JSON is refused with a fixed message that never quotes the body", async () => {
+    // A JSON parser names the text it could not read (here: Unexpected identifier "pg_secret_value"), and a
+    // services answer carries every app's environment. The message is logged and written to the export.
+    const docker = await fakeDocker(() => ({ status: 200, body: '{"POSTGRES_PASSWORD":pg_secret_value}' }));
     await expect(createDockerClient({ socket: docker.socket }).get(SERVICES_PATH)).rejects.toMatchObject({
       code: "EBADJSON",
+      message: `Docker answered GET ${SERVICES_PATH} with a body that is not JSON`,
     });
   });
 
@@ -1035,9 +1038,9 @@ describeIf(MISSING_POSIX_FILE_MODES, "checkOutputDir - nobody else may write whe
   });
 
   test.each([
-    [0o775, "775"],
-    [0o757, "757"],
-  ])("a directory with mode %o is refused as group- or other-writable", (mode, shown) => {
+    ["775", 0o775],
+    ["757", 0o757],
+  ])("a directory with mode %s is refused as group- or other-writable", (shown, mode) => {
     const dir = tempDir();
     chmodSync(dir, mode);
     expect(checkOutputDir(dir, { fs: nodeFs, uid })).toEqual({
@@ -1089,6 +1092,23 @@ describeIf(MISSING_POSIX_FILE_MODES, "writeExportAtomic - temp file, fchown, fsy
     expect(readdirSync(dir)).toEqual(["services.json"]);
   });
 
+  test("opens the temp file with exactly O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW and mode 0600", () => {
+    // The leftover check runs first and hides both flags from every test that plants its link beforehand,
+    // and O_NOFOLLOW changes nothing that can be observed while O_EXCL is there. So the call itself is pinned.
+    const { path, temp } = target();
+    const calls: unknown[][] = [];
+    const fs = {
+      ...nodeFs,
+      openSync: (...args: Parameters<typeof nodeFs.openSync>) => {
+        calls.push(args);
+        return nodeFs.openSync(...args);
+      },
+    };
+    writeExportAtomic(path, "{}", { fs, uid, gid });
+    const { O_CREAT, O_EXCL, O_WRONLY, O_NOFOLLOW } = nodeFs.constants;
+    expect(calls).toEqual([[temp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600]]);
+  });
+
   test("hands the owner to fchown on the descriptor, never to a path", () => {
     const { path } = target();
     const calls: unknown[][] = [];
@@ -1124,6 +1144,24 @@ describeIf(MISSING_POSIX_FILE_MODES, "writeExportAtomic - temp file, fchown, fsy
     writeExportAtomic(path, "{}", { fs: nodeFs, uid, gid });
     expect(existsSync(nowhere)).toBe(false);
     expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+
+  test("a link planted after the leftover check is refused by the open, and never followed", () => {
+    // The race the open flags are there for: the temp path is free when it is checked, and a link sits on it
+    // by the time it is opened. Nothing unlinks that link, so O_EXCL is all that stands in the way.
+    const { dir, path, temp } = target();
+    const victim = join(dir, "victim");
+    writeFileSync(victim, "keep");
+    const fs = {
+      ...nodeFs,
+      lstatSync: () => {
+        symlinkSync(victim, temp);
+        throw injected("ENOENT");
+      },
+    };
+    expect(() => writeExportAtomic(path, "{}", { fs, uid, gid })).toThrow("open: EEXIST");
+    expect(readFileSync(victim, "utf8")).toBe("keep");
+    expect(existsSync(path)).toBe(false);
   });
 
   test("a leftover temp file from a crash does not block the write", () => {
@@ -1551,6 +1589,19 @@ describeIf(MISSING_UNIX_SOCKETS ?? MISSING_POSIX_FILE_MODES, "main - in process,
 });
 
 describeIf(MISSING_UNIX_SOCKETS ?? MISSING_POSIX_FILE_MODES, "running the exporter for real under node", () => {
+  /** The child's exit code, or "still running" when it has not exited within `ms`: a bounded wait. */
+  async function exitWithin(child: { readonly exited: Promise<number> }, ms: number) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"still running">((resolve) => {
+      timer = setTimeout(() => resolve("still running"), ms);
+    });
+    try {
+      return await Promise.race([child.exited, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   test("one run against a missing socket writes the error status and exits 0", () => {
     const dir = tempDir();
     const output = join(dir, "services.json");
@@ -1575,6 +1626,47 @@ describeIf(MISSING_UNIX_SOCKETS ?? MISSING_POSIX_FILE_MODES, "running the export
     expect(run.stderr.toString()).toContain("libredb-discovery: scan failed: socket_unavailable: ");
   });
 
+  // The two refusals below go through the entry guard, which alone turns main's answer into the exit code of
+  // the process. DISCOVERY_ONCE is set so that a run which wrongly got past the check would end by itself,
+  // and fail the test, instead of looping.
+  test("a configuration it cannot honour exits 2 with the reason on stderr, and writes nothing", () => {
+    const dir = tempDir();
+    const run = Bun.spawnSync(["node", EXPORTER], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        ...exporterEnv(join(dir, "missing.sock"), join(dir, "services.json"), {
+          DISCOVERY_INTERVAL_MS: "5",
+          DISCOVERY_ONCE: "1",
+        }),
+      },
+    });
+    expect(run.exitCode).toBe(2);
+    expect(run.stderr.toString()).toContain(
+      'libredb-discovery: invalid configuration: DISCOVERY_INTERVAL_MS must be an integer of at least 2000, got "5"\n',
+    );
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("an output directory others can write exits 1 with the reason on stderr, and writes nothing", () => {
+    const dir = tempDir();
+    chmodSync(dir, 0o777);
+    const run = Bun.spawnSync(["node", EXPORTER], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        ...exporterEnv(join(dir, "missing.sock"), join(dir, "services.json"), { DISCOVERY_ONCE: "1" }),
+      },
+    });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr.toString()).toContain(
+      `libredb-discovery: refusing to start: ${dir} is writable by group or others (mode 777)\n`,
+    );
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
   test("SIGTERM stops a running exporter promptly with exit code 0", async () => {
     const docker = await fakeDocker(healthyDocker);
     const output = join(tempDir(), "services.json");
@@ -1589,6 +1681,26 @@ describeIf(MISSING_UNIX_SOCKETS ?? MISSING_POSIX_FILE_MODES, "running the export
     child.kill("SIGTERM");
     expect(await child.exited).toBe(0);
     expect(Date.now() - sent).toBeLessThan(1500);
+    expect(await new Response(child.stdout).text()).toContain("libredb-discovery: received SIGTERM, exiting");
+  }, 10000);
+
+  test("SIGTERM while a request is in flight aborts it: exit code 0 at once, and nothing written", async () => {
+    // Left alone, the request keeps the process alive for its whole 10 s budget, which is Swarm's default
+    // stop grace period, so a redeploy during a scan would end in SIGKILL. main's promise resolves either
+    // way; only the process exiting shows that the request was aborted.
+    const docker = await fakeDocker(() => "hold");
+    const dir = tempDir();
+    const child = Bun.spawn(["node", EXPORTER], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ...exporterEnv(docker.socket, join(dir, "services.json")) },
+    });
+    cleanups.push(() => child.kill("SIGKILL"));
+    await eventually(() => docker.seen.length === 1, "the first request to reach the fake Engine", 5000);
+    child.kill("SIGTERM");
+    expect(await exitWithin(child, 1500)).toBe(0);
+    expect(docker.seen).toHaveLength(1);
+    expect(readdirSync(dir)).toEqual([]);
     expect(await new Response(child.stdout).text()).toContain("libredb-discovery: received SIGTERM, exiting");
   }, 10000);
 });
