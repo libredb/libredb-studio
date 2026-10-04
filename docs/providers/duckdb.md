@@ -534,7 +534,11 @@ normally. A write is then refused by the engine, and the editor puts the reason 
 engine's sentence (#1405), as the SQLite provider does:
 `DuckDB database <path> is open read-only because this process cannot write the file or its
 directory: Invalid Input Error: Cannot execute statement of type "INSERT" on database "<name>" which is
-attached in read-only mode!`. A file this process cannot even read still fails to open, with the
+attached in read-only mode!`. The reason is added only to that sentence as the engine words it,
+matched from its start, and only when the database it names is the editor's own file (its catalog
+name, read with `current_database()` at open): a write on another database `ATTACH`ed read-only, or
+the same words echoed inside a different error, keeps the engine's message alone. A file this
+process cannot even read still fails to open, with the
 engine's `Permission denied` in the ordinary `Failed to open DuckDB database <path>: ...` sentence.
 
 Only `access_mode` is added. This is still the editor, so `enable_external_access` stays on: the
