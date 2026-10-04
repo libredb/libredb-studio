@@ -1845,10 +1845,18 @@ statement's own fault and answers `400 QUERY_ERROR` with the server's sentence; 
 The `postgres` type id reaches wire-compatible engines that refuse part of PostgreSQL's
 maintenance, and each refuses it in its own words, so the set is measured per server the way the
 EXPLAIN grammar is ([§10.1](#101-the-explain-grammar-is-measured-at-connect-597)): `probeMaintenance()`
-asks once per `connect()`, on the client connect already borrowed, about the six statements the
-table above sends (the per-row ones carry the table name `libredb_maintenance_probe`, the global
+asks once per `connect()`, on the client connect already borrowed, about five of the six statements
+the table above sends (the per-row ones carry the table name `libredb_maintenance_probe`, the global
 ones are the exact whole-database statements). Skipped under the agent's read-only profile, which
 keeps the declaration.
+
+**The bare `ANALYZE` is never sent.** It is the one whole-database statement a transaction block
+does not stop (`VACUUM` and `REINDEX DATABASE` refuse inside one with `25001`, `ANALYZE` runs
+there), so behind a statement-routing proxy such as Pgpool-II with load balancing, where the
+probe's block cannot be shown to reach the backend the next statement reaches, it could really run
+over a whole database. Its placement is inferred instead: offered where `ANALYZE <table>` and the
+bare `VACUUM ANALYZE` both parse. That is the measured answer on every server below; CockroachDB
+has the first and not the second, and refuses the bare `ANALYZE` too.
 
 **Nothing is run.** The probe opens a block, aborts it with `SELECT 1/0`, and sends each statement
 inside it. PostgreSQL parses a simple query before it checks the block, so a statement in its
@@ -1882,10 +1890,10 @@ Measured 2026-10-04 through `pg`:
 
 | Server | `VACUUM ANALYZE <t>` / bare | `ANALYZE <t>` / bare | `REINDEX TABLE <t>` / `DATABASE` | Offered |
 |--------|-----------------------------|----------------------|----------------------------------|---------|
-| PostgreSQL 18.6 (`postgres:latest`) | `25P02` / `25P02` | `25P02` / `25P02` | `25P02` / `25P02` | everything |
-| CockroachDB v26.3.2 (`cockroachdb/cockroach:latest`) | `42601` / `42601` | `25P02` / `42601` | `42601` (`unimplemented: this syntax`) / `42601` | per-row Analyze only |
+| PostgreSQL 18.6 (`postgres:latest`) | `25P02` / `25P02` | `25P02` / inferred | `25P02` / `25P02` | everything |
+| CockroachDB v26.3.2 (`cockroachdb/cockroach:latest`) | `42601` / `42601` | `25P02` / inferred (`42601` when sent by hand) | `42601` (`unimplemented: this syntax`) / `42601` | per-row Analyze only |
 | RisingWave 3.1.0 (`risingwavelabs/risingwave:latest`) | not asked | not asked | not asked | none: `BEGIN` opens nothing (ReadyForQuery `I`) |
-| YugabyteDB 2026.1.2.0 (`yugabytedb/yugabyte:latest`) | `25P02` / `25P02` | `25P02` / `25P02` | `0A000 REINDEX not supported yet` / `0A000 REINDEX SCHEMA/DATABASE/SYSTEM not supported yet` | Vacuum and Analyze |
+| YugabyteDB 2026.1.2.0 (`yugabytedb/yugabyte:latest`) | `25P02` / `25P02` | `25P02` / inferred | `0A000 REINDEX not supported yet` / `0A000 REINDEX SCHEMA/DATABASE/SYSTEM not supported yet` | Vacuum and Analyze |
 
 YugabyteDB raises its `REINDEX` refusals in its grammar, so they reach the probe as `0A000` and drop
 both placements. Its `VACUUM` is in the grammar and stays offered, and the run then quotes the

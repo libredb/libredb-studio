@@ -3,6 +3,7 @@
  * Full MySQL support with connection pooling using mysql2
  */
 
+import { randomUUID } from "node:crypto";
 import mysql, {
   type Pool,
   type PoolConnection,
@@ -60,6 +61,7 @@ import {
   mapDatabaseError,
   NO_TRANSACTION_OPENED,
   TRANSACTION_STATE_UNREPORTED,
+  MYSQL_ACCOUNT_LIMIT_ERRNOS,
 } from "../../errors";
 import {
   applySourceBound,
@@ -435,32 +437,40 @@ const MYSQL_MAINTENANCE: Required<MaintenanceDeclaration> = {
 /** The verbs `probeMaintenance` asks about; `kill` takes a connection id, not a table. */
 const PROBED_MAINTENANCE = ["analyze", "optimize", "check"] as const;
 
-/** The table the probe names. It is never created, so every verb resolves to nothing and does no work. */
-const MAINTENANCE_PROBE_TABLE = "libredb_maintenance_probe";
-
 /**
- * The database the probe names when the connection selected none: a connection string with no
- * path. It does not exist, and the qualification is what keeps a bare name from answering `1046 No
- * database selected` before the verb is read (measured on MySQL 26.7.0 and TiDB v8.5.8).
+ * The name every probe table starts with. Each probe adds a random suffix (`probeTableName`), so a
+ * table a user happens to own can never be the one the verbs reach: with a fixed name, a table of
+ * that name would really be analyzed, optimized and checked on every connect.
  */
-const MAINTENANCE_PROBE_FALLBACK_DATABASE = "libredb_maintenance_probe";
+const MAINTENANCE_PROBE_TABLE_PREFIX = "libredb_maintenance_probe_";
+
+/** A fresh probe table name: the prefix and a dashless UUID, 58 characters, inside MySQL's 64. */
+const probeTableName = (): string => `${MAINTENANCE_PROBE_TABLE_PREFIX}${randomUUID().replace(/-/g, "")}`;
 
 /**
- * Answers that mean the server parsed the verb and went on to the table or to the caller's rights:
- * `1146` no such table and `1049` unknown database (TiDB and Vitess raise these where MySQL reports
- * them in its result set), and `1142`, `1044` and `1227`, the refusals a least-privilege account
- * gets. Measured 2026-10-04 on mysql:latest and mariadb:latest with an account granted `ALL ON
- * app.*`: a table in a database it has no grant on is `1142 command denied` for every verb, and
- * MySQL 26.7.0's `OPTIMIZE` asks for `OPTIMIZE_LOCAL_TABLE` with `1227`. The verb exists there,
- * and the run's own refusal is the engine's answer, a 400 with its sentence.
+ * Answers to the control statement, `SELECT 1 FROM` the missing probe table, that mean "the table is
+ * not there" (or "you may not read it"): `1146` no such table, `1049` unknown database, `1051` and
+ * `1109` unknown table, `1142` and `1044` the refusals a least-privilege account gets, and `1105`,
+ * the generic code Apache Doris answers a missing table with. Any other answer, or a control that
+ * resolves, is not a baseline the verbs can be read against, and the declaration stands.
  */
-const MAINTENANCE_PROBE_ACCEPTED_ERRNOS = new Set([1146, 1049, 1142, 1044, 1227]);
+const MAINTENANCE_PROBE_CONTROL_ERRNOS = new Set([1146, 1049, 1051, 1109, 1142, 1044, 1105]);
 
 /**
- * Answers that mean the server does not have the verb: `1064` a parse error (TiDB's `CHECK TABLE`),
- * `1105` the generic error vtgate answers a parse error with (`syntax error at position 6 near
- * 'CHECK'`), `8200` TiDB's `OPTIMIZE TABLE is not supported` and `1235` not supported yet, plus
- * any other answer in SQLSTATE class `42` or `0A`.
+ * Answers to a verb that mean the server parsed it and went on to the table or to the caller's
+ * rights, whatever the control answered: `1146`, `1049`, `1051` and `1109` for the missing table or
+ * database, and `1142`, `1044` and `1227` for a least-privilege account. Measured 2026-10-04 on
+ * mysql:latest and mariadb:latest with an account granted `ALL ON app.*`: MySQL 26.7.0's `OPTIMIZE`
+ * asks it for `OPTIMIZE_LOCAL_TABLE` with `1227`. The verb exists there, and the run's own refusal
+ * is the engine's answer, a 400 with its sentence.
+ */
+const MAINTENANCE_PROBE_ACCEPTED_ERRNOS = new Set([1146, 1049, 1051, 1109, 1142, 1044, 1227]);
+
+/**
+ * Answers that mean the server does not have the verb, when they differ from the control's answer:
+ * `1064` a parse error (TiDB's `CHECK TABLE`), `1105` the generic error vtgate answers a parse error
+ * with, `8200` TiDB's `OPTIMIZE TABLE is not supported` and `1235` not supported yet, plus any
+ * other answer in SQLSTATE class `42` or `0A`.
  */
 const MAINTENANCE_PROBE_REFUSED_ERRNOS = new Set([1064, 1105, 8200, 1235]);
 
@@ -481,21 +491,33 @@ const selectedDatabase = async (queryable: MySQLQueryable): Promise<string | und
   }
 };
 
-type ProbeVerdict = "accepted" | "refused" | "unknown";
+/** What one statement answered: `"resolved"`, or the error's `errno` and `sqlState`. */
+type ProbeAnswer = "resolved" | { readonly errno: unknown; readonly sqlState: unknown };
 
-/** One probe statement's answer, read from `errno` and `sqlState` and never the message. */
-const probeVerdict = async (queryable: MySQLQueryable, sql: string): Promise<ProbeVerdict | number> => {
+const probeAnswer = async (queryable: MySQLQueryable, sql: string): Promise<ProbeAnswer> => {
   try {
     await runStatement(queryable, sql);
-    return "accepted";
+    return "resolved";
   } catch (error) {
     const { errno, sqlState } = error as { errno?: unknown; sqlState?: unknown };
-    if (typeof errno !== "number") return "unknown";
-    if (MAINTENANCE_PROBE_ACCEPTED_ERRNOS.has(errno)) return "accepted";
-    if (errno === PARSE_ERROR_ERRNO) return errno;
-    if (MAINTENANCE_PROBE_REFUSED_ERRNOS.has(errno)) return "refused";
-    return typeof sqlState === "string" && /^(42|0A)/.test(sqlState) ? "refused" : "unknown";
+    return { errno, sqlState };
   }
+};
+
+type ProbeVerdict = "accepted" | "refused" | "unknown";
+
+/**
+ * One verb's answer read against the control's `errno`, never the message. The same answer the
+ * control got is the verb reaching the same missing table, which is how an engine whose codes are
+ * generic (Doris answers both a missing table and much else with `1105`) is read correctly.
+ */
+const verbVerdict = (answer: ProbeAnswer, controlErrno: number): ProbeVerdict => {
+  if (answer === "resolved") return "accepted";
+  const { errno, sqlState } = answer;
+  if (typeof errno !== "number" || MYSQL_ACCOUNT_LIMIT_ERRNOS.has(errno)) return "unknown";
+  if (errno === controlErrno || MAINTENANCE_PROBE_ACCEPTED_ERRNOS.has(errno)) return "accepted";
+  if (MAINTENANCE_PROBE_REFUSED_ERRNOS.has(errno)) return "refused";
+  return typeof sqlState === "string" && /^(42|0A)/.test(sqlState) ? "refused" : "unknown";
 };
 
 /**
@@ -508,34 +530,49 @@ const probeVerdict = async (queryable: MySQLQueryable, sql: string): Promise<Pro
  * answers ANALYZE with `1146`, OPTIMIZE with `8200 OPTIMIZE TABLE is not supported` and CHECK with
  * `1064`; Vitess 24.0.4 answers ANALYZE and OPTIMIZE and refuses CHECK with `1105 syntax error at
  * position 6 near 'CHECK'`. The table is in the connection's OWN database because an account
- * granted only that database is refused (`1142`) for a table anywhere else.
+ * granted only that database is refused (`1142`) for a table anywhere else, and its name carries a
+ * random suffix so no real table is ever reached.
+ *
+ * A control statement goes first: `SELECT 1 FROM` the same missing table. Its answer is what "the
+ * table is not there" sounds like on this server, so a verb that answers the same way reached the
+ * table and has the verb, and one that answers differently with a refusal code does not. A control
+ * that resolves, or fails some other way, leaves the declaration as it is.
  *
  * ANALYZE and OPTIMIZE carry `NO_WRITE_TO_BINLOG`. Without it MySQL writes both to the binary log
  * even for a table that does not exist, so every connect added two GTID transactions to a primary
  * and to every replica downstream; with it `gtid_executed` stayed unchanged on MySQL 26.7.0, as did
  * MariaDB's `gtid_binlog_pos` and Vitess's `gtid_executed` (measured). All four engines parse the
- * modifier; a server that answers it with a parse error is asked once more without it. CHECK TABLE
- * is never written to the binary log and takes no modifier.
+ * modifier; a server that answers it with a parse error the control did not get is asked once more
+ * without it. CHECK TABLE is never written to the binary log and takes no modifier.
  *
  * Both placements follow the verb: the whole-database form is the same statement over every table.
  * Nothing here rejects, and only a server's refusal narrows anything: an answer that is neither an
- * acceptance nor a grammar refusal (a reset connection, an unknown code) leaves the result
- * undefined, and the declaration stands.
+ * acceptance nor a refusal (a reset connection, an account limit, an unknown code) leaves the
+ * result undefined, and the declaration stands.
  */
 const probeMaintenance = async (
   queryable: MySQLQueryable,
   database: string | undefined,
 ): Promise<Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> | undefined> => {
   // A connection string carries its database in the URL rather than in `config.database`, so the
-  // server is asked which one the session selected before the fallback is used.
-  const selected = database || (await selectedDatabase(queryable)) || MAINTENANCE_PROBE_FALLBACK_DATABASE;
-  const table = `${escapeMySQLIdentifier(selected)}.${escapeMySQLIdentifier(MAINTENANCE_PROBE_TABLE)}`;
+  // server is asked which one the session selected. A session that selected none names a database
+  // that does not exist, qualified because a bare name answers `1046 No database selected` before
+  // the verb is read (measured on MySQL 26.7.0 and TiDB v8.5.8).
+  const selected = database || (await selectedDatabase(queryable)) || probeTableName();
+  const table = `${escapeMySQLIdentifier(selected)}.${escapeMySQLIdentifier(probeTableName())}`;
+  const control = await probeAnswer(queryable, `SELECT 1 FROM ${table}`);
+  if (control === "resolved" || typeof control.errno !== "number") return undefined;
+  const controlErrno = control.errno;
+  if (!MAINTENANCE_PROBE_CONTROL_ERRNOS.has(controlErrno)) return undefined;
   const measured: Partial<Record<MaintenanceOperation, MeasuredMaintenancePlacements>> = {};
   for (const verb of PROBED_MAINTENANCE) {
     const plain = `${verb.toUpperCase()} TABLE ${table}`;
     const quiet = verb === "check" ? plain : `${verb.toUpperCase()} NO_WRITE_TO_BINLOG TABLE ${table}`;
-    let verdict = await probeVerdict(queryable, quiet);
-    if (verdict === PARSE_ERROR_ERRNO && quiet !== plain) verdict = await probeVerdict(queryable, plain);
+    let answer = await probeAnswer(queryable, quiet);
+    const parseError =
+      answer !== "resolved" && answer.errno === PARSE_ERROR_ERRNO && controlErrno !== PARSE_ERROR_ERRNO;
+    if (parseError && quiet !== plain) answer = await probeAnswer(queryable, plain);
+    const verdict = verbVerdict(answer, controlErrno);
     if (verdict === "unknown") return undefined;
     const accepted = verdict === "accepted";
     measured[verb] = { perEntity: accepted, global: accepted };

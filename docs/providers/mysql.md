@@ -1896,11 +1896,20 @@ The `mysql` type id reaches wire-compatible engines that do not all have MySQL's
 so `probeMaintenance()` asks each server once per `connect()`, on the connection the pool check
 already holds, the way the EXPLAIN grammar is asked (#1387). It sends `ANALYZE NO_WRITE_TO_BINLOG
 TABLE`, `OPTIMIZE NO_WRITE_TO_BINLOG TABLE` and `CHECK TABLE` against
-`` <database>.`libredb_maintenance_probe` ``, a table that does not exist in the connection's own
-database, so nothing is touched. A connection string that names its database in the URL is asked
-`SELECT DATABASE()`; a session that selected none uses `` `libredb_maintenance_probe` `` as the
-database too, qualified because a bare name answers `1046 No database selected` before the verb
-is read.
+`` <database>.`libredb_maintenance_probe_<32 hex>` ``, a table that does not exist in the
+connection's own database, so nothing is touched. The suffix is a fresh random UUID per probe, so a
+table a user owns can never be the one the verbs reach. A connection string that names its database
+in the URL is asked `SELECT DATABASE()`; a session that selected none names a random database of
+the same shape, qualified because a bare name answers `1046 No database selected` before the verb is
+read.
+
+**A control statement goes first**: `SELECT 1 FROM` the same missing table. Its answer is what "the
+table is not there" sounds like on this server (`1146` on MySQL 26.7.0, MariaDB, TiDB v8.5.8 and
+Vitess 24.0.4, measured), so a verb that answers with the same `errno` reached the table and has the
+verb. That is what separates "table missing" from "verb missing" on an engine whose codes are
+generic: Apache Doris answers a missing table with `1105`, the code vtgate uses for a parse error. A
+control that resolves, or answers anything but a missing-table or privilege code (`1146`, `1049`,
+`1051`, `1109`, `1142`, `1044`, `1105`), leaves the declared set and no verb is sent.
 
 **The connection's own database, not an invented one.** An account granted only `ALL ON app.*` is
 refused `1142 command denied` for a table in any other database, for every verb, so a probe that
@@ -1911,19 +1920,21 @@ named a missing database read every verb as refused and the account lost all its
 for a table that does not exist, so every connect added two GTID transactions to a primary and to
 every replica behind it. With it `gtid_executed` did not move on MySQL 26.7.0, nor did MariaDB's
 `gtid_binlog_pos` or Vitess's `gtid_executed` (measured 2026-10-04). All four engines below parse
-the modifier; a server that answers it with `1064` is asked once more without it. `CHECK TABLE` is
+the modifier; a server that answers it with a `1064` the control did not get is asked once more
+without it. `CHECK TABLE` is
 never binlogged and takes no modifier.
 
 **How an answer is read**, from `errno` and `sqlState`, never the message:
 
-- kept: a result set, or `1146` no such table, `1049` unknown database, and the privilege refusals
-  `1142`, `1044` and `1227` (MySQL 26.7.0's `OPTIMIZE` asks a least-privilege account for
-  `OPTIMIZE_LOCAL_TABLE`). The verb exists there, and the run's own refusal is a 400 with the
-  engine's sentence;
-- dropped: `1064` parse error, `1105` (vtgate's parse error), `8200` (TiDB), `1235` not supported
-  yet, or any other SQLSTATE of class `42` or `0A`;
-- anything else (a reset connection, an error with no `errno`, any other code) is not a
-  measurement: the probe stops and the declared set stands.
+- kept: a result set, the control's own `errno`, or `1146`, `1049`, `1051`, `1109` for the missing
+  table or database, and the privilege refusals `1142`, `1044` and `1227` (MySQL 26.7.0's
+  `OPTIMIZE` asks a least-privilege account for `OPTIMIZE_LOCAL_TABLE`). The verb exists there, and
+  the run's own refusal is a 400 with the engine's sentence;
+- dropped, when it differs from the control's answer: `1064` parse error, `1105` (vtgate's parse
+  error), `8200` (TiDB), `1235` not supported yet, or any other SQLSTATE of class `42` or `0A`;
+- anything else (a reset connection, an error with no `errno`, the account limits `1203`
+  `max_user_connections` and `1226` `max_questions`, any other code) is not a measurement: the
+  probe stops and the declared set stands.
 
 Both placements follow the verb, because the whole-database form is the same statement over every
 table.
