@@ -653,6 +653,7 @@ What the Docker socket costs is recorded in [`docs/SECURITY.md`](./SECURITY.md#k
 ### The exporter
 
 `docker/discover.mjs` ships in every image as `/usr/local/lib/libredb-studio/discover.mjs`, owned by root, so the web process cannot replace it.
+Run it from the same image version as Studio, and when you upgrade, upgrade Studio first: a Studio older than the exporter can refuse its export with `invalid_export`, and then it withdraws every discovered connection.
 It has no dependency and no listening port, and it sends GET requests only, to two Docker Engine API paths pinned to v1.44: the network list filtered by name, and `/v1.44/services?status=true`.
 It must run as root with the socket mounted, so it has to replace the image entrypoint, because `docker-entrypoint.sh` drops every command it starts to uid 1001.
 A CapRover one-click `command` replaces the entrypoint.
@@ -988,6 +989,7 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
 7. `error` with one of these codes:
    - `invalid_export`: Studio refused the file at `SEED_DISCOVERY_PATH`, and the message says why: over 2 MiB, unreadable (the reason follows in parentheses), not JSON, or the first field that does not match the export's shape.
      Check that `SEED_DISCOVERY_PATH` is the exporter's `DISCOVERY_OUTPUT`, and for `EACCES` that `DISCOVERY_FILE_UID` is the user Studio runs as, because the file is mode 0600.
+     A field that does not match can also mean that the exporter runs a newer image than Studio: deploy the same version to both.
      Studio also logs the reason as a `Discovery source error` warning when it appears or changes.
    - `docker_error`: a Docker failure no other code covers, such as an HTTP status other than 400 and 503, and the message is the daemon's own text when it sent one.
      The `-discovery` app's log repeats it.

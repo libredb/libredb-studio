@@ -55,6 +55,7 @@ CapRover dashboard → **Apps → One-Click Apps/Databases** → select
 `libredb-studio-autoconnect.yml` deploys the same Studio app plus a second app, `<app>-discovery`, so that Studio connects itself to the databases this CapRover runs.
 It needs LibreDB Studio 0.18.0 or later, the first release that ships the exporter (`docker/discover.mjs`) and reads `SEED_DISCOVERY_PATH`.
 With an older tag the `-discovery` app cannot start, because its command names a file that image does not have.
+CapRover upgrades each app on its own, so when you upgrade, deploy the same version to both apps, the Studio app first: a Studio older than the exporter can refuse its export file, and then it withdraws every discovered connection.
 
 What it adds to the plain template:
 
