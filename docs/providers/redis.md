@@ -316,8 +316,9 @@ over as its digits. Two consequences follow, and both are handled in
   number.
 - **The counts the provider reads for itself arrive as digit strings too.** `DBSIZE` answers `"42"`
   rather than `42`, so the overview's key count and the key-space page's `total` go through
-  `integerReply()`, which reads one back as a number. `SLOWLOG GET` was already read through
-  `String()` and `Number()`.
+  `integerReply()`, which reads one back as a number (and accepts a JS number too). A reply that is
+  not a count is refused in both places rather than shown as 0 keys, a number nobody measured.
+  `SLOWLOG GET` was already read through `String()` and `Number()`.
 
 ### 3.6 No connection pool
 

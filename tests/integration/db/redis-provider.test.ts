@@ -478,6 +478,14 @@ let infoOverride: string | null = null;
 let clusterInfoReply: unknown = MOCK_PLAIN_CLUSTER_INFO;
 let pagePipelineMode: "ok" | "error" | "null" = "ok";
 
+const NO_OVERRIDE = Symbol("no override");
+
+/**
+ * What `dbsize()` answers instead of the driver-shaped 42, when set: a JS number is what a
+ * client without `stringNumbers` hands over, and anything else is a reply that is not a count.
+ */
+let dbsizeOverride: unknown = NO_OVERRIDE;
+
 /** Every pipelined batch the provider sent, by command name, in the order it sent it. */
 const pipelineBatches: string[][] = [];
 
@@ -529,7 +537,7 @@ mock.module("ioredis", () => {
     }
 
     async dbsize() {
-      return this.integerReply(42);
+      return dbsizeOverride === NO_OVERRIDE ? this.integerReply(42) : dbsizeOverride;
     }
 
     /**
@@ -2178,6 +2186,27 @@ describe("RedisProvider", () => {
 
       expect(overview.tableCount).toBe(42);
       expect(page.total).toBe(42);
+    });
+
+    test("reads a count a client hands over as a JS number the same way", async () => {
+      dbsizeOverride = 42;
+      try {
+        expect((await provider.getOverview()).tableCount).toBe(42);
+      } finally {
+        dbsizeOverride = NO_OVERRIDE;
+      }
+    });
+
+    test.each<[string, unknown]>([
+      ["a fraction", 1.5],
+      ["text that is not a count", "OK"],
+    ])("refuses an overview whose DBSIZE answered %s, rather than showing 0 keys", async (_label, reply) => {
+      dbsizeOverride = reply;
+      try {
+        await expect(provider.getOverview()).rejects.toThrow("Redis answered no key count for the overview");
+      } finally {
+        dbsizeOverride = NO_OVERRIDE;
+      }
     });
   });
 

@@ -250,6 +250,21 @@ describe("LibreDBProvider — query commands", () => {
     await provider.disconnect();
   });
 
+  test("get shows a wide decimal, a long fraction and an out-of-range exponent as stored", async () => {
+    // The same round trip rounds these too: measured on 0.2.2, 12345678901234567890.12 came
+    // back as 12345678901234567000, 0.1234567890123456789 as 0.12345678901234568 and 1e400
+    // as null.
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    const stored = ['{"amount":12345678901234567890.12}', '{"ratio":0.1234567890123456789}', '{"huge":1e400}'];
+    for (const [index, value] of stored.entries()) await provider.query(`put wide:${index} '${value}'`);
+
+    const scanned = await provider.query("prefix wide:");
+
+    expect(scanned.rows.map((row) => row.value)).toEqual(stored);
+    await provider.disconnect();
+  });
+
   test("get on a missing key returns zero rows", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();

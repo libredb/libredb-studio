@@ -19,10 +19,10 @@
  *
  * - The success envelope is `schema`/`datarows` with `total` and `size` beside it,
  *   not Elasticsearch's `columns`/`rows` with no count at all
- *   (`http-transport.ts:357-364`).
+ *   (`http-transport.ts:554-557`).
  * - `SELECT customer AS who` declares `{"name":"customer","alias":"who"}` here and
  *   `{"name":"who"}` on Elasticsearch, so reading `name` alone would put the WRONG
- *   label on the same statement's column (`http-transport.ts:285-295`).
+ *   label on the same statement's column (`http-transport.ts:724-727`).
  * - A missing index is HTTP **404** (`IndexNotFoundException`) where Elasticsearch
  *   answers HTTP 400 - the same typo, two statuses, which is why categorisation is
  *   body-driven (`http-transport.ts:35-42`).
@@ -31,7 +31,7 @@
  *   `EOFParserException`, ...) while the CORE REST layer keeps Elasticsearch's
  *   lineage and answers `index_not_found_exception` in snake_case, so one product
  *   speaks both vocabularies depending on which endpoint replied
- *   (`http-transport.ts:377-384`).
+ *   (`http-transport.ts:570-577`).
  * - `SELECT 1 AS c, 2 AS c` is REFUSED here (`IllegalArgumentException`, "Multiple
  *   entries with same key") and answers 200 with three columns named `c` on
  *   Elasticsearch, so the seam's uniqueness invariant is load-bearing on exactly
@@ -41,7 +41,7 @@
  * - A stock node ships system indices the dot rule alone does not catch:
  *   `.plugins-ml-config` AND `top_queries-<date>-<n>`, so two of four indices on a
  *   cluster holding two probe indices are not the user's
- *   (`http-transport.ts:252-264`).
+ *   (`http-transport.ts:427-439`).
  *
  * Where a divergence is only visible below the provider - a fault CATEGORY, for
  * instance, since four of them collapse onto one `QueryError` by design
@@ -190,7 +190,7 @@ const PAGE_THREE_BODY = JSON.stringify({ datarows: [["3c1f1d19-0a4b-4a52-9f6a-2b
 // `reason` is a CONSTANT banner here ("Invalid SQL query") and `details` holds the
 // only text specific to the failure, which is the reverse of Elasticsearch, whose
 // `reason` is the good text ("line 1:15: Unknown index [nope_missing]") and which
-// has no `details` at all. `http-transport.ts:600-611` prefers the detail for
+// has no `details` at all. `http-transport.ts:806-817` prefers the detail for
 // exactly that reason.
 // ============================================================================
 
@@ -219,7 +219,7 @@ const MISSING_INDEX_BODY = JSON.stringify({
  *
  * The SQL plugin above answers `IndexNotFoundException` for the same missing
  * index; the CORE REST layer keeps Elasticsearch's lineage. Both are measured, and
- * `http-transport.ts:395-401` lists both spellings for that reason.
+ * `http-transport.ts:590-591` lists both spellings for that reason.
  */
 const MAPPING_NOT_FOUND_BODY = JSON.stringify({
   error: {
@@ -395,7 +395,7 @@ const SHAPES_MAPPING_BODY = JSON.stringify({
  * `GET /` - and `version.distribution` is the member Elasticsearch does not send
  * at all. The fork added it so a client could tell the two apart, so its presence
  * here and its absence there are both readings of the payload
- * (`http-transport.ts:168-182`).
+ * (`http-transport.ts:344-357`).
  */
 const ROOT_BODY = JSON.stringify({
   name: "898fbd5c381a",
@@ -823,7 +823,7 @@ describe("OpenSearch envelope", () => {
 describe("OpenSearch faults", () => {
   /**
    * Every name here is a JAVA CLASS, and every row was measured with one probe
-   * against the live plugin. The table in `http-transport.ts:395-408` is doing real
+   * against the live plugin. The table in `http-transport.ts:588-601` is doing real
    * work: nothing about `EOFParserException` reads as "syntax" to anything but that
    * table, and nothing about `SQLFeatureNotSupportedException` reads as the answer
    * to a MISTYPED keyword - which is what it is here, while Elasticsearch calls the

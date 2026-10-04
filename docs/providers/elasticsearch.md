@@ -79,7 +79,7 @@ Three things are Elasticsearch-shaped, and most decisions below flow from one of
 
 One directory serves **two type-ids**. The two products speak the same shape of SQL over HTTP and
 differ only in wire detail, so everything they disagree about on the wire is a row in the transport's
-dialect table ([http-transport.ts:319](../../src/lib/db/providers/sql/search/http-transport.ts)) and
+dialect table ([http-transport.ts:508-603](../../src/lib/db/providers/sql/search/http-transport.ts)) and
 everything they disagree about above it is one field of `SearchProduct`
 ([index.ts:211](../../src/lib/db/providers/sql/search/index.ts)):
 
@@ -252,12 +252,12 @@ Measured, `SELECT customer, total FROM probe_orders`:
 Three properties the code depends on:
 
 - **Rows are positional**, so each row is rebuilt against the declared column list
-  ([http-transport.ts:541](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
+  ([http-transport.ts:747](../../src/lib/db/providers/sql/search/http-transport.ts)) rather than read
   as an object. The declared **order** is therefore authoritative in a way object keys never are.
 - **Duplicate output names are legal here.** Measured, `SELECT 1 AS c, 2 AS c, 3 AS c` answers HTTP
   200 with `[{"name":"c",…},{"name":"c",…},{"name":"c",…}]` and the row `[1,2,3]`. A `SearchRow` is a
   record, so without `disambiguate()`
-  ([http-transport.ts:489](../../src/lib/db/providers/sql/search/http-transport.ts)) the second and
+  ([http-transport.ts:695](../../src/lib/db/providers/sql/search/http-transport.ts)) the second and
   third values would vanish **before** the seam. They reach the grid as `c`, `c (2)`, `c (3)`, and the
   suffix keeps climbing because `SELECT 1 AS c, 2 AS "c (2)", 3 AS c` is legal too. **The same
   statement is refused outright by OpenSearch**, so this invariant is load-bearing on exactly one of
@@ -265,7 +265,7 @@ Three properties the code depends on:
   ([opensearch.md §3.4](./opensearch.md#34-the-success-envelope-schemadatarows-a-separate-alias-and-a-count)).
 - **The alias is folded into `name`.** Measured, `SELECT customer AS who` declares
   `{"name":"who","type":"keyword"}` — the alias *is* the name — so `aliasKey` is `null` for this
-  dialect ([http-transport.ts:320-356](../../src/lib/db/providers/sql/search/http-transport.ts)). The
+  dialect ([http-transport.ts:509-547](../../src/lib/db/providers/sql/search/http-transport.ts)). The
   fork puts it in a separate member, and reading `name` alone would label the same statement's column
   `who` here and `customer` there.
 
@@ -297,16 +297,16 @@ buckets and labelled the result complete — worse than an error, because a user
 has no way to notice 500 missing groups.
 
 The transport's `query()`
-([http-transport.ts:864](../../src/lib/db/providers/sql/search/http-transport.ts)) follows it, and two
+([http-transport.ts:1194](../../src/lib/db/providers/sql/search/http-transport.ts)) follows it, and two
 traps shape the loop, both measured on that same run:
 
 - **Page two carries its rows and NO column declaration.** There is nothing on it to derive names
   from, so page one's declaration is carried forward and later pages are rebuilt against it
-  (`rebuildRows()`, [http-transport.ts:568](../../src/lib/db/providers/sql/search/http-transport.ts)).
+  (`rebuildRows()`, [http-transport.ts:774](../../src/lib/db/providers/sql/search/http-transport.ts)).
   That is also the only way the seam's "these names are exactly the key set of every row" invariant
   can hold across pages.
 - **The loop is bounded** by `MAX_PAGES = 1000`
-  ([http-transport.ts:151](../../src/lib/db/providers/sql/search/http-transport.ts)), because the
+  ([http-transport.ts:326](../../src/lib/db/providers/sql/search/http-transport.ts)), because the
   terminating condition is the *server's* and a seam must not offer an unbounded remote loop. At the
   measured page size that is a million-row ceiling. Hitting it is **reported**, never silently
   accepted — the defect being fixed here is precisely a truncation nobody was told about — and the
@@ -331,7 +331,7 @@ Measured, both directions:
 A status-driven classifier would call the missing index a bad request here and a missing endpoint on
 the fork (which answers **404** for the same typo), and would call a user's arithmetic a server
 failure. So the whole classification lives in a table of measured fault names
-([http-transport.ts:348-353](../../src/lib/db/providers/sql/search/http-transport.ts)) and an
+([http-transport.ts:539-544](../../src/lib/db/providers/sql/search/http-transport.ts)) and an
 unrecognised name becomes `engine` — "reached, understood, and refused" — rather than a guess. This is
 the ClickHouse lesson from #264 arriving again.
 
@@ -416,7 +416,7 @@ AbortSignal.timeout(1)           -> DOMException, name "TimeoutError"
 ```
 
 so `requestFailure()`
-([http-transport.ts:707](../../src/lib/db/providers/sql/search/http-transport.ts)) consults
+([http-transport.ts:913](../../src/lib/db/providers/sql/search/http-transport.ts)) consults
 `signal.aborted` **before** the thrown value. The signal knows; the error does not.
 
 ### 3.9 Columns are labelled with mapping types, not SQL types
@@ -473,7 +473,7 @@ The form offers six fields
 | Field | Required | Notes |
 |---|---|---|
 | `host` | **Yes** | `validate()` ([index.ts:529](../../src/lib/db/providers/sql/search/index.ts)) throws `DatabaseConfigError` — "Elasticsearch requires a host". There is no connection string to substitute for it |
-| `port` | No | Defaults to `9200` ([index.ts:151](../../src/lib/db/providers/sql/search/index.ts), and the transport applies the same floor at [http-transport.ts:99](../../src/lib/db/providers/sql/search/http-transport.ts)). One number for both schemes — see [§4.3](#43-tls) |
+| `port` | No | Defaults to `9200` ([index.ts:151](../../src/lib/db/providers/sql/search/index.ts), and the transport applies the same floor at [http-transport.ts:105](../../src/lib/db/providers/sql/search/http-transport.ts)). One number for both schemes; see [§4.3](#43-tls) |
 | `user` / `password` | No | Sent as HTTP Basic **only when `user` is set** and no complete API key pair is, for the security plugin. Measured on a node with security disabled: a bogus `Basic` header is *ignored* (HTTP 200), so credentials are genuinely optional |
 | `apiKeyId` / `apiKeySecret` | No | Sent as `Authorization: ApiKey base64(id:secret)` when **both** are set (trimmed), in preference to `user`/`password` (#708) — see [§3.7a](#37a-api-key-auth-708). Elasticsearch only; OpenSearch **refuses** the pair rather than dropping it |
 | `ssl` | No | Any mode but `disable` switches the transport to `https` ([§4.3](#43-tls)) |
@@ -520,7 +520,7 @@ omits these two (`handlePasteConnectionString` in [`use-connection-form.ts`](../
 ### 4.3 TLS
 
 `config.ssl` with any `mode` but `disable` switches the transport from `http` to `https`
-([http-transport.ts:819](../../src/lib/db/providers/sql/search/http-transport.ts)). `ssl` is a
+([http-transport.ts:1127](../../src/lib/db/providers/sql/search/http-transport.ts)). `ssl` is a
 first-class `DatabaseConnection` field and independent of the form's `connectionFields`, so it applies
 even though this form shows no TLS row of its own, and an explicit `disable` turns TLS **off** as
 firmly as an explicit mode turns it on (the #264 lesson).
@@ -543,7 +543,7 @@ verification, which matters more here than for most providers: a secured Elastic
 one. A publicly-trusted certificate works.
 
 An IPv6 literal host is bracketed before it becomes a URL authority
-([http-transport.ts:431](../../src/lib/db/providers/sql/search/http-transport.ts)).
+([http-transport.ts:1128](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
 
 ### 4.4 Endpoint validation and redirects
@@ -818,7 +818,7 @@ $ DESCRIBE probe_shapes
 Containers appear, leaves appear, and a multi-field appears as a **child** — and `SELECT note.keyword,
 address.city` then returns both columns, so the dotted child is genuinely selectable rather than a
 display convenience. `flattenProperties()`
-([http-transport.ts:776](../../src/lib/db/providers/sql/search/http-transport.ts)) reproduces exactly
+([http-transport.ts:999](../../src/lib/db/providers/sql/search/http-transport.ts)) reproduces exactly
 that set from `_mapping`, descending both `properties` (objects) and `fields` (multi-fields). Nothing
 outside `properties` is read, because a mapping carries siblings like `_meta` that are metadata about
 the mapping rather than fields in it.
@@ -868,7 +868,7 @@ engine's own refusal, which says exactly what happened.
 
 **System indices are hidden by default.** The transport flags an index whose name is dot-prefixed, or
 which matches the fork's date-suffixed query-insights shape
-([http-transport.ts:263-264](../../src/lib/db/providers/sql/search/http-transport.ts)), and
+([http-transport.ts:438-439](../../src/lib/db/providers/sql/search/http-transport.ts)), and
 `isSystemIndex()` ([introspect.ts:156](../../src/lib/db/providers/sql/search/introspect.ts)) is where
 the product decides what to do with the flag. A stock Elasticsearch node ships none of these — the
 measured cluster listed only the three probe indices — but the same code hides two of three on a stock
@@ -1492,7 +1492,7 @@ runs on two: on Node a refused socket is `TypeError: fetch failed` whose `cause.
 `ECONNREFUSED`, while Bun throws `Error: Unable to connect. Is the computer able to access the url?`
 with `code: "ConnectionRefused"` on the error **itself** and no cause at all. Neither runtime's
 top-level message names the reason on its own
-([http-transport.ts:677-729](../../src/lib/db/providers/sql/search/http-transport.ts)).
+([http-transport.ts:883-935](../../src/lib/db/providers/sql/search/http-transport.ts)).
 
 | Situation | Error |
 |---|---|

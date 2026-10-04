@@ -329,7 +329,7 @@ const CAT_INDICES_MIXED_BODY = JSON.stringify([
  * that is not a capture, because it cannot be: this node runs with security
  * disabled, so it has created no `.security-*` index and `_cat` lists no system
  * index at all. The dot prefix is both products' own convention for their
- * bookkeeping (http-transport.ts:255-264), and only the NAME decides the flag, so
+ * bookkeeping (http-transport.ts:427-439), and only the NAME decides the flag, so
  * the rest of the row is an ordinary open index.
  */
 const CAT_INDICES_SYSTEM_BODY = JSON.stringify([
@@ -435,7 +435,7 @@ const NESTED_MAPPING_BODY = JSON.stringify({
 
 /**
  * An index with no mapping yet, CONSTRUCTED from the measurement the transport
- * records (http-transport.ts:944-946): the answer is a present, EMPTY `mappings`
+ * records (http-transport.ts:1285-1287): the answer is a present, EMPTY `mappings`
  * object rather than an error or an absent key. It is not a live capture because
  * the closed probe index it stands in for was dropped after its `_cat` row was
  * captured, and creating one would change the listing every other probe reads.

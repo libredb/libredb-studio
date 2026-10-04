@@ -309,7 +309,9 @@ only the server knows the column type, so the server is asked. With both setting
 | `Float64` | 1.5 | `1.5` |
 
 Every `Decimal` is therefore a string, small ones included, which is how the `pg` driver already
-hands over `NUMERIC`; integers up to 32 bits and floats stay numbers. No reader in the provider or
+hands over `NUMERIC`; integers up to 32 bits and floats stay numbers. So a `Decimal(10, 2)` column
+now behaves in the UI exactly as a PostgreSQL `NUMERIC` one does: the grid sorts it as text, and the
+pivot table's auto-detection no longer offers it as a value field. No reader in the provider or
 the introspection module reads a `Decimal` column, so nothing internal changed type.
 
 ### 3.6 Writes return an empty 200 body; the row count lives in a header

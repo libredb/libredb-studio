@@ -529,9 +529,11 @@ async function readKeyTypes(client: Redis, keys: readonly string[]): Promise<Rec
  *
  * The connection sets `stringNumbers`, so ioredis hands every integer reply over as its digits
  * and `DBSIZE` answers `"42"`, not `42`. A count is far inside the safe range, so it is read back
- * as a number here; a check for `typeof reply === "number"` would refuse every one of them.
+ * as a number here; a check for `typeof reply === "number"` alone would refuse every one of them.
+ * A number is accepted as well, so a client built without the option reads the same.
  */
 function integerReply(reply: unknown): number | undefined {
+  if (typeof reply === "number") return Number.isInteger(reply) ? reply : undefined;
   return typeof reply === "string" && /^-?\d+$/.test(reply) ? Number(reply) : undefined;
 }
 
@@ -1165,8 +1167,9 @@ export class RedisProvider extends BaseDatabaseProvider {
       lazyConnect: true,
       // An integer reply as its digits rather than a JS number. Measured on redis 8.10.2
       // through ioredis 5.11.1: `INCR` on 9223372036854775806 was shown as
-      // `(integer) 9223372036854778000` without this, a counter rounded with no error. Every
-      // count this provider reads for itself goes through `integerReply`, which accepts both.
+      // `(integer) 9223372036854778000` without this, a counter rounded with no error. The
+      // `DBSIZE` counts this provider reads for itself go through `integerReply`, which reads
+      // the digit string back as a number; `SLOWLOG GET` is read through `String()`/`Number()`.
       stringNumbers: true,
       ...(tls ? { tls } : {}),
     };
@@ -2492,8 +2495,11 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     const info = await this.client!.info();
     const parsed = this.parseRedisInfo(info);
-    // A digit string under `stringNumbers`, whatever the method's declared type says.
-    const dbsize = integerReply(await this.client!.dbsize()) ?? 0;
+    // A digit string under `stringNumbers`, whatever the method's declared type says. A reply
+    // that is not a count is refused, as `scanKeysPage` refuses it: `tableCount` is required,
+    // so the only alternative would be a stand-in number nobody measured.
+    const dbsize = integerReply(await this.client!.dbsize());
+    if (dbsize === undefined) throw new QueryError("Redis answered no key count for the overview", "redis");
 
     return {
       version: labelServerVersion(parsed),

@@ -145,3 +145,38 @@ export function quoteUnsafeIntegers(jsonText: string): string {
   rewritten.push(jsonText.slice(copiedTo));
   return rewritten.join("");
 }
+
+/**
+ * True when some number literal in the text would come back different from a
+ * `JSON.stringify(JSON.parse(text))` round trip.
+ *
+ * `quoteUnsafeIntegers` answers this for integers only, which is enough where the
+ * value goes on to a grid cell. A caller that shows the JSON TEXT itself needs the
+ * wider question, because a fraction or an exponent is rounded just as silently:
+ * measured on LibreDB 0.2.2, a stored `12345678901234567890.12` came back as
+ * 12345678901234567000, `0.1234567890123456789` as 0.12345678901234568 and `1e400`
+ * as null. Each literal is compared with its own round trip, so a spelling the trip
+ * would merely change (`1.0`) counts too: the stored text is the only one that is
+ * certainly what was written. Digits inside a string value are skipped, the same
+ * string-aware walk as above.
+ */
+export function carriesLossyNumber(jsonText: string): boolean {
+  let index = 0;
+  while (index < jsonText.length) {
+    if (jsonText[index] === '"') {
+      index = endOfString(jsonText, index);
+      continue;
+    }
+
+    const number = numberAt(jsonText, index);
+    if (number === null) {
+      index += 1;
+      continue;
+    }
+
+    const literal = jsonText.slice(index, number.end);
+    if (JSON.stringify(Number(literal)) !== literal) return true;
+    index = number.end;
+  }
+  return false;
+}
