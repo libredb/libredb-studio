@@ -347,7 +347,13 @@ export function oxiaErrorConnection(options: OxiaConnectionOptions): OxiaErrorCo
     tunnelled: options.tunnelled,
     ...(tls === undefined
       ? {}
-      : { tls: { serverName: tls.identity, clientCertificate: tls.clientCertificate !== undefined } }),
+      : {
+          tls: {
+            serverName: tls.identity,
+            clientCertificate: tls.clientCertificate !== undefined,
+            ca: tls.ca !== undefined,
+          },
+        }),
     runtimeReportsTlsCause: typeof Bun === "undefined",
     receiveCapBytes: options.receiveCapBytes,
     timeoutMs: options.callTimeoutMs,

@@ -331,6 +331,7 @@ const ERROR_ROWS: readonly ErrorRow[] = [
   { category: "refused", connection: { host: "localhost" }, values: { "localhost:6648": "<host>:<port>" } },
   { category: "dns", values: { [ERROR_HOST]: "<host>" } },
   { category: "tls", fields: { tlsFailure: "chain" }, connection: { ssl: TLS } },
+  { category: "tls", fields: { tlsFailure: "chain" }, connection: { ssl: { mode: "verify-full" } } },
   { category: "tls", fields: { tlsFailure: "name" }, connection: { ssl: TLS }, values: { [ERROR_HOST]: "<host>" } },
   {
     category: "tls",

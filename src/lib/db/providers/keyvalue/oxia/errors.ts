@@ -393,7 +393,8 @@ export interface OxiaErrorConnection {
   readonly sentAuthority: string;
   readonly loopback: boolean;
   readonly tunnelled: boolean;
-  readonly tls?: { readonly serverName: string; readonly clientCertificate: boolean };
+  /** `ca`: a CA is pasted under SSL / TLS; without one the chain is checked against this machine's trust store. */
+  readonly tls?: { readonly serverName: string; readonly clientCertificate: boolean; readonly ca: boolean };
   readonly runtimeReportsTlsCause: boolean;
   readonly receiveCapBytes: number;
   readonly timeoutMs: number;
@@ -519,7 +520,9 @@ function notConnectedSentence(connection: OxiaErrorConnection, endpoint: string)
 function tlsSentence(failure: OxiaTlsFailure | undefined, connection: OxiaErrorConnection): string {
   switch (failure) {
     case "chain":
-      return "The server's certificate is not signed by the CA under SSL / TLS: paste the CA that issued Oxia's certificate.";
+      return connection.tls?.ca === true
+        ? "The server's certificate is not signed by the CA under SSL / TLS: paste the CA that issued Oxia's certificate."
+        : "The server's certificate is not signed by a CA this machine trusts: paste the CA that issued Oxia's certificate under SSL / TLS.";
     case "name": {
       const name = `The certificate does not name ${connection.tls?.serverName ?? connection.host}: connect by a name or address the certificate carries.`;
       return connection.listsDataServers ? `${name}${CLUSTER_NAME_CLAUSE}` : name;

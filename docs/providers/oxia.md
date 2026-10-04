@@ -649,6 +649,7 @@ Studio reads a failure's gRPC code and grpc-js's own local texts, and no grpc-js
 | Connection refused on this machine | Nothing accepted a connection at \<host\>:\<port\>: check Host and Port, and that Oxia's public port (6648 by default) is published. If Studio runs in a container, localhost is the container itself: use the address of the machine Oxia runs on (with Docker Desktop, host.docker.internal). |
 | Name not resolved | Studio could not resolve \<host\>: check Host. If Studio runs in a container, the name must resolve inside that container. |
 | TLS, untrusted chain | The server's certificate is not signed by the CA under SSL / TLS: paste the CA that issued Oxia's certificate. |
+| TLS, untrusted chain, no CA pasted | The server's certificate is not signed by a CA this machine trusts: paste the CA that issued Oxia's certificate under SSL / TLS. |
 | TLS, wrong name | The certificate does not name \<host\>: connect by a name or address the certificate carries. |
 | TLS, wrong name, with Data servers | The certificate does not name \<host\>: connect by a name or address the certificate carries. A cluster's certificate must also name every data server's advertised host. |
 | TLS on a plaintext port | This port did not answer TLS: set SSL mode to disable, or use Oxia's TLS port. |

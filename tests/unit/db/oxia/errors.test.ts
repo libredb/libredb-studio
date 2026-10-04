@@ -391,7 +391,7 @@ interface Row {
   readonly message: string;
 }
 
-const TLS = { serverName: "oxia.example", clientCertificate: false };
+const TLS = { serverName: "oxia.example", clientCertificate: false, ca: true };
 const UNAUTHENTICATED_SENTENCES: ReadonlyArray<readonly [NonNullable<OxiaErrorFields["authCause"]>, string]> = [
   ["empty-token", "This Oxia server requires a token: paste one under Token."],
   ["malformed-token", "Oxia could not read the Token as a JWT: paste the whole token under Token."],
@@ -534,9 +534,20 @@ const ROWS: readonly Row[] = [
   {
     name: "tls, chain",
     error: oxia("tls", { tlsFailure: "chain" }),
+    connection: { ...CONNECTION, tls: TLS },
     kind: ConnectionError,
     message:
       "The server's certificate is not signed by the CA under SSL / TLS: paste the CA that issued Oxia's certificate.",
+  },
+  {
+    // verify-full with no CA pasted checks the chain against the system roots, so no CA under SSL / TLS failed it
+    // (ruling R35).
+    name: "tls, chain, no CA pasted",
+    error: oxia("tls", { tlsFailure: "chain" }),
+    connection: { ...CONNECTION, tls: { ...TLS, ca: false } },
+    kind: ConnectionError,
+    message:
+      "The server's certificate is not signed by a CA this machine trusts: paste the CA that issued Oxia's certificate under SSL / TLS.",
   },
   {
     name: "tls, name",

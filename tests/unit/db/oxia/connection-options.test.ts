@@ -633,7 +633,7 @@ describe("the exported sentences and views", () => {
       sentAuthority: "localhost:6648",
       loopback: true,
       tunnelled: false,
-      tls: { serverName: "localhost", clientCertificate: true },
+      tls: { serverName: "localhost", clientCertificate: true, ca: true },
       runtimeReportsTlsCause: false,
       receiveCapBytes: OXIA_RECEIVE_CAP_BYTES,
       timeoutMs: 30_000,
@@ -643,8 +643,13 @@ describe("the exported sentences and views", () => {
     });
     expect(oxiaErrorConnection(build({ host: "oxia.example", ssl: TLS }))).toMatchObject({
       loopback: false,
-      tls: { serverName: "oxia.example", clientCertificate: false },
+      tls: { serverName: "oxia.example", clientCertificate: false, ca: true },
       listsDataServers: false,
+    });
+    expect(oxiaErrorConnection(build({ host: "oxia.example", ssl: { mode: "verify-full" } })).tls).toEqual({
+      serverName: "oxia.example",
+      clientCertificate: false,
+      ca: false,
     });
     expect(oxiaErrorConnection(build()).tls).toBeUndefined();
   });
