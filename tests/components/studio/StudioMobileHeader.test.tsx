@@ -68,6 +68,7 @@ mock.module("lucide-react", () => {
 });
 
 import { StudioMobileHeader } from "@/components/studio/StudioMobileHeader";
+import { CANCEL_UNAVAILABLE_REASON } from "@/components/studio/QueryToolbar";
 import type { DatabaseConnection } from "@/lib/types";
 
 const conn: DatabaseConnection = {
@@ -163,6 +164,27 @@ describe("StudioMobileHeader", () => {
   test("shows CANCEL button when executing", () => {
     const { queryByText } = render(<StudioMobileHeader {...defaults} isExecuting />);
     expect(queryByText("CANCEL")).not.toBeNull();
+  });
+
+  test("CANCEL is disabled with the reason where the connection cannot cancel (#1364)", () => {
+    const onCancelQuery = mock(() => {});
+    const { getByText } = render(
+      <StudioMobileHeader {...defaults} isExecuting canCancelQuery={false} onCancelQuery={onCancelQuery} />,
+    );
+    const button = getByText("CANCEL").closest("button")!;
+    expect(button.disabled).toBe(true);
+    // On the wrapper: a disabled button takes no pointer events, so its own title never shows.
+    expect(button.parentElement?.getAttribute("title")).toBe(CANCEL_UNAVAILABLE_REASON);
+    fireEvent.click(button);
+    expect(onCancelQuery).not.toHaveBeenCalled();
+  });
+
+  test("CANCEL is enabled when the header is not told otherwise", () => {
+    const button = render(<StudioMobileHeader {...defaults} isExecuting />)
+      .getByText("CANCEL")
+      .closest("button")!;
+    expect(button.disabled).toBe(false);
+    expect(button.parentElement?.getAttribute("title") ?? null).toBeNull();
   });
 
   test("hides action row when not on editor tab", () => {

@@ -7,6 +7,53 @@ import { cn } from "@/lib/utils";
 import { FlaskConical, Pencil, Play, Save, Square, Terminal, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+/**
+ * Why Cancel is disabled on a connection whose provider cannot cancel (#1364).
+ *
+ * The cancel route refuses there, and the editor used to offer Cancel anyway and report the
+ * run as cancelled while the engine kept running it (measured on SQLite and libSQL).
+ * Disabled rather than hidden, so the run's place in the toolbar still says that a
+ * statement is running and the reason is one hover away.
+ */
+export const CANCEL_UNAVAILABLE_REASON =
+  "This database cannot cancel a running statement from Studio, so the statement runs until it ends.";
+
+/**
+ * The CANCEL control of both editor shells' toolbars, disabled with the reason where the
+ * connection cannot cancel.
+ *
+ * The reason sits on a wrapper, not on the button: a disabled `Button` takes no pointer events
+ * (`disabled:pointer-events-none`), so a title on the button itself never shows on hover.
+ */
+export function CancelQueryButton({
+  canCancel,
+  onCancel,
+  className,
+}: {
+  canCancel: boolean;
+  onCancel: () => void;
+  className?: string;
+}) {
+  const button = (
+    <Button
+      size="sm"
+      className={cn("bg-danger-solid hover:bg-danger-solid-hover text-white font-medium text-xs h-7 px-4", className)}
+      onClick={onCancel}
+      disabled={!canCancel}
+    >
+      <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
+      CANCEL
+    </Button>
+  );
+  return canCancel ? (
+    button
+  ) : (
+    <span title={CANCEL_UNAVAILABLE_REASON} className="inline-flex">
+      {button}
+    </span>
+  );
+}
+
 interface QueryToolbarProps {
   activeConnection: DatabaseConnection | null;
   metadata: ProviderMetadata | null;
@@ -96,14 +143,13 @@ export const QueryToolbar = React.memo(function QueryToolbar({
           )}
         </div>
         {isExecuting ? (
-          <Button
-            size="sm"
-            className="bg-danger-solid hover:bg-danger-solid-hover text-white font-medium text-xs h-7 px-4 gap-2"
-            onClick={onCancelQuery}
-          >
-            <Square strokeWidth={1.5} className="w-3 h-3 fill-current" />
-            CANCEL
-          </Button>
+          <CancelQueryButton
+            // `=== false` only: an embedded host declares its own capabilities, and one that
+            // says nothing keeps the Cancel it always had.
+            canCancel={metadata?.capabilities.supportsQueryCancel !== false}
+            onCancel={onCancelQuery}
+            className="gap-2"
+          />
         ) : (
           <Button
             size="sm"

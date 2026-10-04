@@ -77,6 +77,35 @@ async function rollbackConfirmed(request: Promise<Response>): Promise<boolean> {
   }
 }
 
+/**
+ * The one toast for a cancel the server did not confirm (#1364).
+ *
+ * Aborting the request only stops this tab waiting: the statement is the engine's, and only
+ * `POST /api/db/cancel` answering `cancelled: true` says the engine stopped it. Every other
+ * outcome (`cancelled: false`, a refusal such as "not supported for this database type", a
+ * route that cannot be reached) used to show "Query Cancelled" too, while CockroachDB,
+ * Materialize, RisingWave, ClickHouse and SQLite kept running the statement. `false` also
+ * covers a statement that ended just before the cancel reached it, which the server cannot
+ * tell apart, so the wording admits both.
+ */
+const CANCEL_NOT_CONFIRMED = {
+  title: "Cancel Not Confirmed",
+  description:
+    "The database did not confirm the cancel, so the statement may still be running there. It may also have finished just before the cancel arrived.",
+  variant: "destructive" as const,
+};
+
+/** Whether one `POST /api/db/cancel` answer says the engine stopped the statement. */
+async function cancelConfirmed(response: Response): Promise<boolean> {
+  if (!response.ok) return false;
+  try {
+    const body: unknown = await response.json();
+    return typeof body === "object" && body !== null && (body as { cancelled?: unknown }).cancelled === true;
+  } catch {
+    return false;
+  }
+}
+
 /** What the user is told when a SANDBOX run's changes were NOT rolled back. */
 const SANDBOX_NOT_ROLLED_BACK = {
   title: "Not Rolled Back",
@@ -910,16 +939,14 @@ export function useQueryExecution({
         }
         // A superseded run must not clear the flags the newer run just set: the
         // spinner belongs to the query that is still running.
-        const superseded = isSuperseded();
         commitToTab((t) => ({ ...t, isExecuting: false, isLoadingMore: false }));
 
         // Don't show error toast for user-initiated cancellation
         if (error instanceof DOMException && error.name === "AbortError") {
-          // Superseding is not cancelling. The user asked for another query; they
-          // did not ask to be told this one stopped.
-          if (!superseded) {
-            toast({ title: "Query Cancelled", description: "Query execution was cancelled." });
-          }
+          // Nothing to say here. A Cancel is reported by `cancelQuery` once the server has
+          // answered, since this abort stops nothing on the engine (#1364). Superseding is not
+          // cancelling: the user asked for another query, not to be told this one stopped.
+          // The one other abort is the studio unmounting, with nobody left to tell.
           return false;
         }
 
@@ -1094,17 +1121,26 @@ export function useQueryExecution({
       const run = runsRef.current.get(targetTabId);
       if (!run) return;
 
+      // The abort's own `AbortError` branch says nothing: the toast below waits for the
+      // server's answer, because the abort stops nothing but this tab's wait for the response.
       run.controller.abort();
 
       // Also cancel on the server side: aborting the fetch drops the response,
       // it does not stop the statement the engine is still executing. That holds for
       // the run's background plan request as much as for the run, so both are named
       // (#1311).
+      //
+      // Only the RUN's answer decides what the user is told (#1364). The plan request has
+      // usually finished long before a Cancel, and its `cancelled: false` then means
+      // "nothing left to stop", not "still running". The tab stops showing the run as
+      // executing either way, since nothing here is waiting for it any more; the toast is
+      // what says whether the engine is.
+      let confirmed = false;
       if (activeConnection) {
         const connection = buildConnectionPayload(activeConnection);
         const ids = run.planQueryId === undefined ? [run.queryId] : [run.queryId, run.planQueryId];
         try {
-          await Promise.all(
+          const [runAnswer] = await Promise.all(
             ids.map((queryId) =>
               appFetch("/api/db/cancel", {
                 method: "POST",
@@ -1113,12 +1149,16 @@ export function useQueryExecution({
               }),
             ),
           );
+          confirmed = await cancelConfirmed(runAnswer);
         } catch {
           logger.warn("Query cancellation request failed", { route: "use-query-execution" });
         }
       }
+      toast(
+        confirmed ? { title: "Query Cancelled", description: "Query execution was cancelled." } : CANCEL_NOT_CONFIRMED,
+      );
     },
-    [activeConnection],
+    [activeConnection, toast],
   );
 
   // Load More handler

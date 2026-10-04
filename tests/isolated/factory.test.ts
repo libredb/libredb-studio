@@ -55,6 +55,7 @@ import type { DatabaseConnection, ReadOnlyStatementBudget } from "@/lib/db/types
 import { DatabaseConfigError, ExecutionProfileError } from "@/lib/db/errors";
 import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { SSHTunnelConfig } from "@/lib/types";
 
 /** Enforcement caps for the sqlite agent-profile assertions below. */
@@ -812,6 +813,49 @@ describe("createDatabaseProvider", () => {
     // The positive half, pinned by name: exactly four providers hold a transaction
     // session, so a fifth (or a lost one) fails here and not only in the loop above.
     expect(declaringTypes.sort()).toEqual(["mssql", "mysql", "oracle", "postgres"]);
+  });
+
+  // ─── supportsQueryCancel, by name (#1364) ───
+  //
+  // The capability is read off the provider by the one check the cancel route makes, so it
+  // cannot drift from the route; what CAN change unnoticed is which providers have a
+  // `cancelQuery` at all, and the editor disables Cancel on every one that does not. Pinned
+  // by name so a provider gaining or losing it is a reviewed change.
+  test("the providers that cannot cancel a running statement, by name", async () => {
+    const overrides: Record<string, Partial<DatabaseConnection>> = {
+      sqlite: { database: ":memory:" },
+      mongodb: { connectionString: "mongodb://localhost/test" },
+      oracle: { serviceName: "ORCL" } as Partial<DatabaseConnection>,
+      couchbase: { port: 8091, database: "travel" },
+      elasticsearch: { port: 9200 },
+      opensearch: { port: 9200 },
+      clickhouse: { port: 8123, database: "demo" },
+      druid: { port: 8888 },
+      trino: { port: 8080, database: "tpch" },
+      cassandra: { port: 9042, database: "probe", localDataCenter: "datacenter1" } as Partial<DatabaseConnection>,
+      libredb: { database: CENSUS_LIBREDB_FILE },
+    };
+
+    const cannotCancel: string[] = [];
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const provider = await createDatabaseProvider(makeConnection(type, overrides[type] ?? {}));
+      if (!supportsQueryCancel(provider)) cannotCancel.push(type);
+    }
+
+    expect(cannotCancel.sort()).toEqual([
+      "cassandra",
+      "couchbase",
+      "db2",
+      "druid",
+      "elasticsearch",
+      "kafka",
+      "libredb",
+      "libsql",
+      "mongodb",
+      "opensearch",
+      "redis",
+      "sqlite",
+    ]);
   });
 });
 

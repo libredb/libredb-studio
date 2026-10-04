@@ -1199,6 +1199,7 @@ export default function Studio() {
               onClearQuery={handleClearQuery}
               onExecuteQuery={handleMobileExecuteQuery}
               onCancelQuery={cancelEditorQuery}
+              canCancelQuery={metadata?.capabilities.supportsQueryCancel !== false}
               {...transactionHandlers}
               onToggleEditing={onToggleEditing}
               onImport={openImport}

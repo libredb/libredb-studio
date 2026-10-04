@@ -20,7 +20,7 @@
 | **Connection string** | Supported (`clickhouse://`, plain `http://` / `https://`) |
 | **EXPLAIN** | `clickhouse-json` — estimate only; ClickHouse's `EXPLAIN` never executes the statement, so there is no separate analyze mode |
 | **Transactions** | Not exposed (ClickHouse has no multi-statement transactions to expose) |
-| **Query cancellation** | No `cancelQuery`; a running statement is killed via maintenance `kill` |
+| **Query cancellation** | Yes: each run carries its own `query_id`, and `cancelQuery` sends `KILL QUERY ... SYNC` for it ([§5.4](#54-cancellation)) |
 | **Source** | [`src/lib/db/providers/sql/clickhouse/`](../../src/lib/db/providers/sql/clickhouse/) |
 | **Tests** | [`tests/integration/db/clickhouse-provider.test.ts`](../../tests/integration/db/clickhouse-provider.test.ts) + [`tests/unit/db/clickhouse/`](../../tests/unit/db/clickhouse/) + [`tests/unit/lib/explain/clickhouse-json.test.ts`](../../tests/unit/lib/explain/clickhouse-json.test.ts) |
 | **Tracking issue** | [#264 — Add ClickHouse provider](https://github.com/libredb/libredb-studio/issues/264) |
@@ -758,6 +758,24 @@ that is how the rest of the application calls every provider uniformly.
 The EXPLAIN button is available (`supportsExplain: true`) and renders the plan tree described in
 [§3.12](#312-explain-reuses-the-shared-tree-model). ClickHouse has no analyze mode, so both the
 direct action and the background pre-warm show the same estimated plan.
+
+### 5.4 Cancellation
+
+Aborting the HTTP request does not stop a ClickHouse statement. Measured on 26.9.9.28 before #1364,
+when the provider had no `cancelQuery`: after the editor's Cancel, `system.processes` still listed
+`SELECT count() FROM numbers(200000000000) WHERE sipHash64(number) % 7 = 3` 19 s and 29 s later,
+and the editor had said "Query Cancelled".
+
+Now `query(sql, params, queryId)` sends the caller's id as the statement's own `query_id` (a neutral
+`queryId` option on the transport seam), and `cancelQuery(queryId)` sends
+`KILL QUERY WHERE query_id = '<id>' SYNC`. `SYNC` answers once the statement has stopped: one row with
+`kill_status` `finished` per statement it reached, or a 200 with an empty body when nothing matched
+because the statement had already ended (both measured on 26.9.9.28). `cancelQuery` answers true only
+for a `finished` row, so `cant_cancel`, an empty answer and a refused KILL are all false, and the
+editor then says the cancel was not confirmed.
+
+An id this provider is not running is refused before anything is sent, so the cancel route cannot be
+used to kill another session's statement by guessing its id.
 
 ---
 
@@ -1588,7 +1606,8 @@ await provider.disconnect();
 provider uses. `POST /api/db/maintenance` (admin) accepts `optimize` / `analyze` / `kill`;
 `optimize` and `kill` require a `target`, while `analyze` treats a missing one as "the whole pinned
 database" ([§8](#8-maintenance)) — so a client should omit it rather than invent one for
-database-wide statistics. Transaction and cancel routes do not apply — see
+database-wide statistics. `POST /api/db/cancel` stops a statement `POST /api/db/query` started
+under a `queryId` ([§5.4](#54-cancellation)); the transaction routes do not apply, see
 [§13](#13-known-limitations--future-work).
 
 ---
@@ -1597,8 +1616,10 @@ database-wide statistics. Transaction and cancel routes do not apply — see
 
 - **No transactions.** ClickHouse has no multi-statement transaction model to expose over this
   interface, so there is no begin/commit/rollback API here.
-- **No `cancelQuery`.** A running statement is terminated through maintenance `kill` with its
-  `query_id`, which needs its own grant like any other `system.processes` operation.
+- **Maintenance `kill` is a different path from Cancel.** Cancel reaches only a statement this
+  provider started ([§5.4](#54-cancellation)); a statement anyone else runs is terminated through
+  maintenance `kill` with its `query_id`, which needs its own grant like any other
+  `system.processes` operation.
 - **No analyze-mode EXPLAIN.** ClickHouse's `EXPLAIN` never executes the statement; see
   [§3.12](#312-explain-reuses-the-shared-tree-model).
 - **`ALTER TABLE ... UPDATE` and lightweight `DELETE FROM` report zero rows changed even on

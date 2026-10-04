@@ -13,6 +13,7 @@ import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
+import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
 
 /**
@@ -243,7 +244,7 @@ export async function POST(req: NextRequest) {
     let openTransaction: OpenQueryTransactionOutcome = "none";
 
     // Pass queryId to provider for cancellation tracking
-    const supportsCancel = "cancelQuery" in provider;
+    const supportsCancel = supportsQueryCancel(provider);
     let result: Awaited<ReturnType<typeof provider.query>>;
     try {
       result = await provider.query(prepared.query, bound.params, supportsCancel ? queryId : undefined, scope);

@@ -33,6 +33,10 @@ import { isMultiStatement } from "@/lib/sql/statement-splitter";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 
+/** What the hook says when the server did not confirm a cancel (#1364). */
+const CANCEL_NOT_CONFIRMED_TEXT =
+  "The database did not confirm the cancel, so the statement may still be running there. It may also have finished just before the cancel arrived.";
+
 // =============================================================================
 // Test Data
 // =============================================================================
@@ -480,7 +484,7 @@ describe("useQueryExecution", () => {
         });
       }
       if (url.includes("/api/db/cancel")) {
-        return new Response(JSON.stringify({ success: true }), {
+        return new Response(JSON.stringify({ cancelled: true }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -504,8 +508,9 @@ describe("useQueryExecution", () => {
     await queryPromise;
 
     expect(abortSignalUsed).toBe(true);
-    // Toast should indicate cancellation
-    expect(mockToastSuccess).toHaveBeenCalled();
+    // The server confirmed the cancel, so the toast says it happened, once.
+    expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", { description: "Query execution was cancelled." });
 
     globalThis.fetch = originalFetch;
   });
@@ -3474,10 +3479,126 @@ describe("useQueryExecution", () => {
 
     await queryPromise;
 
-    // Cancellation toast is still shown
-    expect(mockToastSuccess).toHaveBeenCalled();
+    // Nothing confirmed the cancel, so the run is not reported as cancelled (#1364).
+    expect(mockToastSuccess).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
 
     globalThis.fetch = originalFetch;
+  });
+
+  // ── The cancel toast follows the server's answer (#1364) ───────────────
+  //
+  // Measured on 2026-10-03: the route answered `200 {"cancelled":false}` on CockroachDB,
+  // Materialize and RisingWave and `400 {"error":"Query cancellation is not supported ...",
+  // "cancelled":false}` on ClickHouse, libSQL and SQLite, and the toast said "Query
+  // Cancelled" every time while the engine kept running the statement.
+
+  describe("the cancel toast follows the server's answer", () => {
+    /** A query that hangs until aborted, and a cancel route answering per query id. */
+    function installCancelAnswers(answer: (queryId: string) => Response) {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.includes("/api/db/query")) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          });
+        }
+        if (url.includes("/api/db/cancel")) {
+          return answer(JSON.parse(init?.body as string).queryId as string);
+        }
+        return new Response(JSON.stringify({ error: "Not found" }), { status: 404 });
+      }) as typeof fetch;
+      return () => {
+        globalThis.fetch = originalFetch;
+      };
+    }
+
+    const json = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+    async function runThenCancel() {
+      let tabs = [createTab()];
+      const setTabs = mock((updater: unknown) => {
+        if (typeof updater === "function") tabs = (updater as (prev: QueryTab[]) => QueryTab[])(tabs);
+      });
+      const { result } = renderHook(() => useQueryExecution(createDefaultParams({ setTabs })));
+      const running = act(async () => {
+        await result.current.executeQuery("SELECT * FROM users");
+      });
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+      await running;
+      return tabs;
+    }
+
+    test("cancelled: false is reported as not confirmed, and the tab stops waiting", async () => {
+      const restore = installCancelAnswers(() => json({ cancelled: false }));
+      try {
+        const tabs = await runThenCancel();
+        expect(mockToastSuccess).not.toHaveBeenCalled();
+        expect(mockToastError).toHaveBeenCalledTimes(1);
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+        // Nothing in this tab waits for the run any more; the toast says the engine may.
+        expect(tabs[0].isExecuting).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    test("a refused cancel (the route's 400) is reported as not confirmed", async () => {
+      const restore = installCancelAnswers(() =>
+        json({ error: "Query cancellation is not supported for this database type", cancelled: false }, 400),
+      );
+      try {
+        await runThenCancel();
+        expect(mockToastSuccess).not.toHaveBeenCalled();
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+      } finally {
+        restore();
+      }
+    });
+
+    test("an answer that is not JSON is reported as not confirmed", async () => {
+      const restore = installCancelAnswers(() => new Response("<html>bad gateway</html>", { status: 200 }));
+      try {
+        await runThenCancel();
+        expect(mockToastSuccess).not.toHaveBeenCalled();
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+      } finally {
+        restore();
+      }
+    });
+
+    test("an answer that is JSON but not an object is reported as not confirmed", async () => {
+      const restore = installCancelAnswers(() => json(null));
+      try {
+        await runThenCancel();
+        expect(mockToastSuccess).not.toHaveBeenCalled();
+        expect(mockToastError).toHaveBeenCalledWith("Cancel Not Confirmed", { description: CANCEL_NOT_CONFIRMED_TEXT });
+      } finally {
+        restore();
+      }
+    });
+
+    // The background plan has usually ended before a Cancel, so its `false` means
+    // "nothing left to stop"; the run's own answer is the verdict.
+    test("the run's answer decides, not its background plan's", async () => {
+      const restore = installCancelAnswers((queryId) => json({ cancelled: !queryId.endsWith("-plan") }));
+      try {
+        await runThenCancel();
+        expect(mockToastError).not.toHaveBeenCalled();
+        expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+        expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", {
+          description: "Query execution was cancelled.",
+        });
+      } finally {
+        restore();
+      }
+    });
   });
 
   // ── Run lifecycle: one run at a time, and a plan that belongs to its run ───
@@ -3517,7 +3638,7 @@ describe("useQueryExecution", () => {
             settle: () => {},
           });
           return Promise.resolve(
-            new Response(JSON.stringify({ success: true }), {
+            new Response(JSON.stringify({ success: true, cancelled: true }), {
               status: 200,
               headers: { "content-type": "application/json" },
             }),

@@ -73,6 +73,7 @@ import {
 } from "../../errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { assertReadOnlyBudget, measureResultBytes } from "./read-only-budget";
+import { sendPgCancelRequest } from "./pg-wire-cancel";
 import { postgresColumnTypes } from "./column-types";
 import { formatBytes } from "../../utils/pool-manager";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
@@ -138,6 +139,25 @@ const ZONELESS_AS_TEXT: NonNullable<PgPoolConfig["types"]> = {
 // ============================================================================
 // Type Definitions
 // ============================================================================
+
+/**
+ * What `pg` keeps on a connected client and does not declare in its types: the BackendKeyData
+ * the server sent at startup, and the address the client connected to (a tunnel's local end
+ * when there is one). The wire-protocol cancel needs all four.
+ */
+interface BackendKey {
+  processID?: unknown;
+  secretKey?: unknown;
+  host: string;
+  port: number;
+}
+
+/**
+ * How long a wire-protocol cancel may take to show: first for the request itself, then for
+ * the run to end. CockroachDB v26.3.2 ended `pg_sleep(20)` about 0.5 s after the request.
+ */
+const WIRE_CANCEL_CONFIRM_MS = 3000;
+const SETTLE_POLL_MS = 25;
 
 interface PgStatActivityRow {
   datname?: string;
@@ -2431,8 +2451,12 @@ export class PostgresProvider extends SQLBaseProvider {
   // Query Execution
   // ============================================================================
 
-  // Track running query PIDs for cancellation
-  private runningQueryPids = new Map<string, number>();
+  /**
+   * The statements running under a caller's id, so `cancelQuery` can reach them: the
+   * backend pid for `pg_cancel_backend`, and the client for the wire-protocol cancel, which
+   * names the session by the key the server gave that client (#1364).
+   */
+  private runningQueries = new Map<string, { pid: number; client: PoolClient }>();
 
   public async query(sql: string, params?: unknown[], queryId?: string, scope?: string): Promise<QueryResult> {
     this.ensureConnected();
@@ -2445,12 +2469,12 @@ export class PostgresProvider extends SQLBaseProvider {
             // Track PID for cancellation support
             if (queryId) {
               const pidRes = await client.query("SELECT pg_backend_pid() as pid");
-              this.runningQueryPids.set(queryId, pidRes.rows[0].pid);
+              this.runningQueries.set(queryId, { pid: pidRes.rows[0].pid, client });
             }
             const res = await client.query(sql, params);
             return res;
           } finally {
-            if (queryId) this.runningQueryPids.delete(queryId);
+            if (queryId) this.runningQueries.delete(queryId);
             // Read while this call still HOLDS the client, and before the release that
             // puts it back within reach of everybody else: after the release the status
             // can be another caller's, and a statement that FAILS inside a transaction —
@@ -2460,7 +2484,7 @@ export class PostgresProvider extends SQLBaseProvider {
             client.release();
           }
         } catch (error) {
-          if (queryId) this.runningQueryPids.delete(queryId);
+          if (queryId) this.runningQueries.delete(queryId);
           throw mapDatabaseError(error, "postgres", sql);
         }
       });
@@ -2475,10 +2499,35 @@ export class PostgresProvider extends SQLBaseProvider {
     });
   }
 
+  /**
+   * Stop the statement running under `queryId`, and answer true only when it stopped.
+   *
+   * `pg_cancel_backend` first, which stock PostgreSQL and its forks honour. Where it is
+   * refused or answers false, the wire-protocol CancelRequest for the same session (see
+   * `pg-wire-cancel.ts` for the engines measured), and then true only once the run has
+   * actually ended, within `WIRE_CANCEL_CONFIRM_MS`: the server sends no answer to a
+   * CancelRequest, so the run settling is the only confirmation there is. Before #1364 a
+   * refused `pg_cancel_backend` was the end of it, and the statement kept running.
+   */
   public async cancelQuery(queryId: string): Promise<boolean> {
-    const pid = this.runningQueryPids.get(queryId);
-    if (!pid) return false;
+    const running = this.runningQueries.get(queryId);
+    if (!running) return false;
 
+    if (await this.cancelBackend(running.pid)) return true;
+
+    const { processID, secretKey, host, port } = running.client as PoolClient & BackendKey;
+    if (typeof processID !== "number" || typeof secretKey !== "number") return false;
+    const sent = await sendPgCancelRequest(
+      { host, port, processID, secretKey },
+      WIRE_CANCEL_CONFIRM_MS,
+      // Only while this run still holds that session: once it has ended, the pool may have
+      // handed the session to another request, whose statement the request would stop.
+      () => this.runningQueries.get(queryId)?.client === running.client,
+    );
+    return sent && (await this.settles(queryId, WIRE_CANCEL_CONFIRM_MS));
+  }
+
+  private async cancelBackend(pid: number): Promise<boolean> {
     try {
       const client = await this.pool!.connect();
       try {
@@ -2491,6 +2540,17 @@ export class PostgresProvider extends SQLBaseProvider {
       console.error("[Postgres] Failed to cancel query:", error);
       return false;
     }
+  }
+
+  /** Whether the run under `queryId` ends within `timeoutMs`. */
+  private async settles(queryId: string, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.runningQueries.has(queryId)) {
+      if (Date.now() >= deadline) return false;
+      // oxlint-disable-next-line no-await-in-loop -- a poll: each wait must end before the run is looked at again.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_POLL_MS));
+    }
+    return true;
   }
 
   // ============================================================================

@@ -114,6 +114,16 @@ export interface ClickHouseQueryOptions {
    * Neutral rather than HTTP-specific: any implementation can honour a deadline.
    */
   timeoutMs?: number;
+
+  /**
+   * The id this statement runs under on the server, so it can be stopped later by that id
+   * (`KILL QUERY WHERE query_id = ...`, which is how `cancelQuery` reaches it, #1364).
+   *
+   * Neutral rather than HTTP-specific: the id is the server's own handle for a running
+   * statement, listed in `system.processes`, whatever protocol submitted it. Left out, the
+   * server makes one up, which nothing outside it can know.
+   */
+  queryId?: string;
 }
 
 /**

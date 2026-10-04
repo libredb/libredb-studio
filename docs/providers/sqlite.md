@@ -243,6 +243,22 @@ SANDBOX toggle from the editor toolbar here. Before that flag existed the only g
 `isTransactionProvider(provider)` inside the route — a runtime shape check the browser cannot read —
 so the controls rendered on every connection and the route answered HTTP 400.
 
+Since #1364 the same holds for Cancel. `/api/db/provider-meta` reports `supportsQueryCancel: false`
+here, read off the provider by the check the cancel route makes, and the editor shows Cancel
+disabled while a statement runs, with the reason on hover. Before that the button was live, the
+route answered 400 "Query cancellation is not supported for this database type", and the editor
+said "Query Cancelled" anyway.
+
+**A long statement blocks the whole server, and nothing can stop it.** Both drivers run the
+statement synchronously on the server's only JavaScript thread, and neither exposes
+`sqlite3_interrupt` or a progress handler (checked on Node 24.11, whose `DatabaseSync` offers
+`setAuthorizer` but neither of the two, and Bun 1.4.2). So no cancel and no deadline can reach a
+running statement: the query timeout is checked after it returns. Measured on 2026-10-03 with
+node:sqlite (SQLite 3.50.4): a 300M-row recursive CTE kept running after Cancel, and `/api/health`
+answered after 69.7 s instead of the usual 6 ms, so every user of the instance waited with it. Moving
+SQLite execution to a worker thread that can be terminated is recorded as D227 in
+[`docs/BACKLOG.md`](../BACKLOG.md).
+
 ### 3.5 `endOpenQueryTransaction()` — a transaction a statement left open
 
 A `BEGIN` sent through `query()` is a different thing from the API above: it opens a transaction on

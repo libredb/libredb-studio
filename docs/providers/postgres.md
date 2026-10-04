@@ -16,7 +16,7 @@
 | **Connection pooling** | Yes — `pg.Pool` (min 2 / max 10 by default) |
 | **Connection string** | Supported (`postgres://` / `postgresql://`) |
 | **Transactions** | Yes — explicit `BEGIN`/`COMMIT`/`ROLLBACK` with auto-rollback timeout |
-| **Query cancellation** | Yes — PID tracking + `pg_cancel_backend` |
+| **Query cancellation** | Yes: PID tracking + `pg_cancel_backend`, then the wire-protocol CancelRequest where that is refused ([§5.3](#53-query-cancellation)) |
 | **Agent read-only profile** | Yes — `BEGIN READ ONLY` + extended-protocol single statement (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/postgres.ts`](../../src/lib/db/providers/sql/postgres.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
@@ -1422,10 +1422,30 @@ comment-led final `SELECT`; it now reads `isSelectQuery()` from the same classif
 
 ### 5.3 Query cancellation
 
-A query issued with a `queryId` records its backend PID in a `Map`. `cancelQuery(queryId)`
-([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the PID up and calls
-`pg_cancel_backend(pid)` on a fresh pooled client, returning whether the cancel signalled. Exposed
-via `POST /api/db/cancel`.
+A query issued with a `queryId` records its backend PID and its pooled client in a `Map`.
+`cancelQuery(queryId)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the run up
+and calls `pg_cancel_backend(pid)` on a fresh pooled client, returning true when the cancel
+signalled. Exposed via `POST /api/db/cancel`.
+
+Three engines this provider connects to do not honour `pg_cancel_backend`, measured on 2026-10-03
+and 2026-10-04: CockroachDB v26.3.2 answers `unknown function: pg_cancel_backend()`, Materialize
+26.44.1 refuses it with a bound parameter (`pg_cancel_backend in this position not yet supported`),
+and RisingWave 3.1.0 answers `f`. Each kept running the statement, and before #1364 that was the end
+of the cancel. Where `pg_cancel_backend` is refused or answers false, `cancelQuery` now sends the
+wire protocol's own CancelRequest for the run's session
+([`pg-wire-cancel.ts`](../../src/lib/db/providers/sql/pg-wire-cancel.ts)): a fresh connection to the
+address the client connected to (a tunnel's local end when there is one), carrying the process id and
+secret key the server handed that session at startup. CockroachDB v26.3.2 ended `SELECT
+pg_sleep(20)` on it within a second, and RisingWave's wire-protocol cancel was seen to work in the
+same test pass; Materialize was not measured with it.
+
+The server never answers a CancelRequest, so `cancelQuery` answers true only once the run has ended,
+within 3 s of sending it; a run still going after that is false, and the editor says the cancel was
+not confirmed. The request is sent without TLS, as libpq sent it before PostgreSQL 17: a server reads
+it before authentication and before `pg_hba.conf`, but a proxy that refuses plaintext connections
+refuses it too, and the cancel is then reported as not confirmed. It is sent only while the run still
+holds that session, checked once the socket is open, because a released session can already be
+running another request's statement.
 
 ### 5.4 Declared column types
 

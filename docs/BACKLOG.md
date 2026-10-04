@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D226, U17 · 138
+- [Drivers and connections](#drivers-and-connections) — D1-D227, U17 · 139
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U85 · 79
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U85 · 78
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC10 · 7
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -2535,6 +2535,17 @@ Found 2026-10-04 by the review of the #1351 fix; pre-existing, not measured end 
 
 **Done when:** on a Materialize connection, search, inventory and the agent's grounding answer for tables, views and materialized views, with the two routine kinds reported as unavailable rather than failing the read.
 
+### D227. A long SQLite statement blocks the whole Studio server, and no cancel or timeout reaches it
+
+`sqlite.ts` runs every statement through `bun:sqlite` or `node:sqlite`, both synchronous, on the server's one JavaScript thread, and neither exposes `sqlite3_interrupt` or a progress handler (Node 24.11's `DatabaseSync` has `setAuthorizer` and neither of those; Bun 1.4.2's `Database` has neither).
+So a running statement cannot be stopped from inside the process, and while it runs no other request is served: measured 2026-10-03 on node:sqlite (SQLite 3.50.4), a 300M-row recursive CTE from the editor made `/api/health` answer after 69.7 s instead of 6 ms, and the 60 s query timeout, checked only after the statement returns, did not end it.
+Since #1364 the editor no longer offers Cancel there (`supportsQueryCancel: false`, `docs/providers/sqlite.md` section 3.4); the block itself is unchanged.
+A1 is the same property on the agent and MCP path.
+
+Found 2026-10-04 while fixing #1364.
+
+**Done when:** SQLite statements run in a worker thread that the provider terminates on cancel and on the query timeout, the SQLite provider implements `cancelQuery`, and a test shows `/api/health` answering while a long statement runs.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -3626,15 +3637,6 @@ Reproduce with a hook test: type a client certificate under `verify-full`, switc
 Found 2026-09-30 while designing the etcd provider (R12 UX-8).
 
 **Done when:** a mode that draws no client certificate sends none, or draws what it sends, and a hook test pins the switch.
-
-### U61. The editor's cancel discards the cancel route's answer, so a write etcd applied is shown as cancelled
-
-`use-query-execution.ts` aborts its own request, posts the cancel and shows the statement as cancelled whatever the route answers (`cancelQuery` and the cancellation branch of the run's error handling), so a write the engine had applied, for which the etcd provider's `cancelQuery` answers `false`, is shown as cancelled.
-The etcd provider states it as a limit (`docs/providers/etcd.md`, section 13).
-
-Found 2026-09-30 while designing the etcd provider (R12 CF-11).
-
-**Done when:** a cancel whose route answer is `cancelled: false` says that the statement may have run, and a hook test pins both answers.
 
 ### U62. The object-edit wire checks answer for an array with a hole in it
 
