@@ -106,7 +106,6 @@ const STRINGIFIED_VALUE_CLASSES: readonly (new (...args: never[]) => unknown)[] 
   types.Long,
   types.Integer,
   types.BigDecimal,
-  types.Duration,
   types.LocalDate,
   types.LocalTime,
   types.InetAddress,
@@ -209,6 +208,53 @@ export function describeColumnType(type: CassandraColumnType): string {
 // Value normalization
 // ============================================================================
 
+/** The nanosecond units of a CQL duration literal, largest first. */
+const DURATION_NANO_UNITS: readonly (readonly [bigint, string])[] = [
+  [BigInt("3600000000000"), "h"],
+  [BigInt("60000000000"), "m"],
+  [BigInt("1000000000"), "s"],
+  [BigInt(1000000), "ms"],
+  [BigInt(1000), "us"],
+  [BigInt(1), "ns"],
+];
+
+/**
+ * A `duration` as the CQL literal of its exact value.
+ *
+ * Not the driver's `toString()`, which divides the months into years with `toFixed(0)` and so
+ * ROUNDS them: a duration of 18 months prints `2y6mo`, which is 30 months, and the grid, the
+ * CSV and the SQL export (which writes the literal bare, #1386) all carried that wrong value.
+ * The years here are whole years, the parts are the driver's own three fields, and a zero
+ * duration, which the driver prints as the empty string, is `0s`. CQL gives every part of a
+ * duration one sign, so the sign leads.
+ */
+interface DurationFields {
+  months: number;
+  days: number;
+  nanoseconds: { toString(): string };
+}
+
+// The driver's typings declare none of the three fields its `Duration` instances carry.
+function durationText(duration: DurationFields): string {
+  const nanoseconds = BigInt(duration.nanoseconds.toString());
+  const zero = BigInt(0);
+  const negative = duration.months < 0 || duration.days < 0 || nanoseconds < zero;
+  const months = Math.abs(duration.months);
+  const parts: string[] = [];
+  if (months >= 12) parts.push(`${Math.floor(months / 12)}y`);
+  if (months % 12 !== 0) parts.push(`${months % 12}mo`);
+  if (duration.days !== 0) parts.push(`${Math.abs(duration.days)}d`);
+  let rest = nanoseconds < zero ? -nanoseconds : nanoseconds;
+  for (const [size, unit] of DURATION_NANO_UNITS) {
+    if (rest >= size) {
+      parts.push(`${rest / size}${unit}`);
+      rest %= size;
+    }
+  }
+  if (parts.length === 0) return "0s";
+  return `${negative ? "-" : ""}${parts.join("")}`;
+}
+
 /**
  * One value, as something the grid, a CSV export and `JSON.stringify` can all
  * carry.
@@ -245,6 +291,7 @@ export function normalizeCassandraValue(value: unknown): unknown {
   if (value instanceof types.Vector) return [...value].map(normalizeCassandraValue);
   if (value instanceof types.Tuple) return value.elements.map(normalizeCassandraValue);
   if (Array.isArray(value)) return value.map(normalizeCassandraValue);
+  if (value instanceof types.Duration) return durationText(value as unknown as DurationFields);
   if (STRINGIFIED_VALUE_CLASSES.some((candidate) => value instanceof candidate)) return String(value);
   if (typeof value === "object") {
     return Object.fromEntries(

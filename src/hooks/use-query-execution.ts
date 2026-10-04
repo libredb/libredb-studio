@@ -35,6 +35,19 @@ export interface QueryExecutionOptions {
    * #290) carries its values here so that no value can be read as statement text.
    */
   params?: unknown[];
+  /**
+   * Handed the message of a run that failed: the refusal, the engine's error, the statement a
+   * script stopped at, or the SANDBOX transaction that could not be opened, the same text the tab
+   * or the toast shows. A dialog that ran a statement for the user keeps itself open and shows it
+   * there (#1396), where the toast fades and the results panel sits under the dialog.
+   *
+   * Not called for a run that did not fail, nor for one that did not fail AT ALL: a run handed to
+   * the safety dialog (which runs it on Proceed, through `forceExecuteQuery`), a cancel, or a run a
+   * newer one superseded. Those resolve `false` with no message, and a caller that keeps a dialog
+   * open on a failure must tell them apart by that: the import dialog closes for them, so the
+   * statement the safety dialog runs is never offered a second time.
+   */
+  onFailure?: (message: string) => void;
 }
 
 interface UseQueryExecutionParams {
@@ -405,6 +418,7 @@ export function useQueryExecution({
           ),
         );
         toast({ title: "Statement Refused", description: refusal, variant: "destructive" });
+        executionOptions?.onFailure?.(refusal);
         return false;
       }
 
@@ -565,6 +579,7 @@ export function useQueryExecution({
               description: `${/[.!?]$/.test(description) ? description : `${description}.`} Nothing was run.`,
               variant: "destructive",
             });
+            executionOptions?.onFailure?.(description);
             return false;
           }
         }
@@ -607,7 +622,9 @@ export function useQueryExecution({
           // goes to the route that strips the `/`.
           isMultiStatement(queryToExecute, grammar);
 
-        // Use transaction endpoint if a transaction is active or in playground mode
+        // Use transaction endpoint if a transaction is active or in playground mode. It is sent the
+        // text whole and splits a script itself, running each statement on the transaction's
+        // connection (#1390), so the splitter above is not asked here.
         const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;
 
         // Start both queries in parallel (main query + background explain)
@@ -969,6 +986,7 @@ export function useQueryExecution({
         if (!isExplain && !isLoadMore && !resultData.hasError) {
           maybeInviteToStar();
         }
+        if (scriptFailure !== undefined) executionOptions?.onFailure?.(scriptFailure);
 
         // The run reached the engine and the engine accepted it. `hasError` is the
         // multi-statement path's own signal — the request succeeds while one of the
@@ -1040,6 +1058,7 @@ export function useQueryExecution({
           }));
         }
         toast({ title, description: errorMessage, variant: "destructive" });
+        executionOptions?.onFailure?.(errorMessage);
         return false;
       } finally {
         // Only the run that still owns this tab's slot may clear it. A superseded

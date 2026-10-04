@@ -27,6 +27,7 @@
  */
 import mysql from "mysql2/promise";
 import { unquoteLiteral } from "../../src/lib/sql/values";
+import { portableDefaultSql, showCreateColumnDefaults } from "../../src/lib/db/providers/sql/mysql-show-create";
 
 /** What each column must resolve to, whichever server reports it. */
 const EXPECTED: Readonly<Record<string, string | undefined>> = {
@@ -115,6 +116,89 @@ async function replayDefaults(
   return failures;
 }
 
+/**
+ * The #1031 cases, one column each: the defaults MySQL's catalog cannot spell as SQL. A
+ * zero byte the catalog truncates to `0x`, backslash escapes `SHOW CREATE` writes in every
+ * `sql_mode`, a latin1 column the hex rewrite must not reinterpret, a quoted number, and an
+ * expression. Created here rather than in the init fixture, which the mock suite mirrors.
+ */
+const SHOW_CREATE_PROBE = `(
+  bin   BINARY(4)    DEFAULT 0x00FF0A27,
+  vbin  VARBINARY(8) DEFAULT 0x0027005C0D,
+  zero  BINARY(3)    DEFAULT 0x000000,
+  note  VARCHAR(20)  DEFAULT 'abc',
+  path  VARCHAR(20)  DEFAULT 'a\\\\b',
+  lat   VARCHAR(4)   CHARACTER SET latin1 DEFAULT 0x5CE9,
+  qty   INT          DEFAULT 42,
+  ex    VARCHAR(20)  DEFAULT (concat('x','y'))
+)`;
+
+/**
+ * MySQL only (#1031): read each probe default out of `SHOW CREATE TABLE` with the shipped
+ * reader, make it portable with the shipped rewrite, and replay that text on this server
+ * under BOTH `sql_mode=''` and `NO_BACKSLASH_ESCAPES`. A replay passes when the server
+ * accepts it AND a row inserted with defaults stores the source column's exact bytes: a text
+ * that is accepted and stores other bytes is the silent failure this guards against.
+ */
+async function replayShowCreate(conn: mysql.Connection, version: string): Promise<string[]> {
+  const failures: string[] = [];
+  const source = `libredb_show_create_${process.pid}`;
+  const replay = `libredb_show_create_replay_${process.pid}`;
+  try {
+    await conn.query(`CREATE TABLE \`${source}\` ${SHOW_CREATE_PROBE}`);
+    await conn.query(`INSERT INTO \`${source}\` () VALUES ()`);
+    const [columns] = await conn.query<mysql.RowDataPacket[]>(
+      "SELECT COLUMN_NAME AS name, DATA_TYPE AS dataType, COLUMN_TYPE AS columnType, CHARACTER_SET_NAME AS charset " +
+        "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
+      [source],
+    );
+    const [[stored]] = await conn.query<mysql.RowDataPacket[]>(
+      `SELECT ${columns.map((c) => `HEX(\`${c.name}\`) AS \`${c.name}\``).join(", ")} FROM \`${source}\``,
+    );
+    const [[created]] = await conn.query<mysql.RowDataPacket[]>(`SHOW CREATE TABLE \`${source}\``);
+    const defaults = showCreateColumnDefaults(String(created["Create Table"]));
+    if (defaults === undefined) {
+      return [`${version}: showCreateColumnDefaults could not read ${String(created["Create Table"])}`];
+    }
+    for (const mode of ["", "NO_BACKSLASH_ESCAPES"]) {
+      await conn.query("SET SESSION sql_mode = ?", [mode]);
+      for (const column of columns) {
+        const name = String(column.name);
+        const text = defaults.get(name);
+        if (text === undefined) {
+          failures.push(`${version}: SHOW CREATE TABLE carried no DEFAULT for ${name}`);
+          continue;
+        }
+        const sql = portableDefaultSql(text, String(column.dataType));
+        const charset = column.charset === null ? "" : ` CHARACTER SET ${String(column.charset)}`;
+        try {
+          await conn.query(`CREATE TABLE \`${replay}\` (c ${String(column.columnType)}${charset} DEFAULT ${sql})`);
+          await conn.query(`INSERT INTO \`${replay}\` () VALUES ()`);
+          const [[row]] = await conn.query<mysql.RowDataPacket[]>(`SELECT HEX(c) AS c FROM \`${replay}\``);
+          if (row.c !== stored[name]) {
+            failures.push(
+              `${version}: ${name} under sql_mode='${mode}': DEFAULT ${sql} stored ${String(row.c)}, the source stored ${String(stored[name])}`,
+            );
+          } else {
+            console.log(`${name} under sql_mode='${mode}': DEFAULT ${sql} stored ${String(row.c)}, as the source did`);
+          }
+        } catch (error) {
+          failures.push(
+            `${version}: ${name} under sql_mode='${mode}': the server refused DEFAULT ${sql}: ` +
+              `${error instanceof Error ? error.message : String(error)}`,
+          );
+        } finally {
+          await conn.query(`DROP TABLE IF EXISTS \`${replay}\``);
+        }
+      }
+    }
+  } finally {
+    await conn.query("SET SESSION sql_mode = DEFAULT");
+    await conn.query(`DROP TABLE IF EXISTS \`${source}\``);
+  }
+  return failures;
+}
+
 async function probeServer(url: string): Promise<string[]> {
   const failures: string[] = [];
   const conn = await mysql.createConnection(url);
@@ -159,11 +243,9 @@ async function probeServer(url: string): Promise<string[]> {
     if (flavour === "mariadb") {
       failures.push(...(await replayDefaults(conn, version, rows)));
     } else {
-      console.log(
-        "replay skipped on this flavour: MySQL reports the VALUE, so `DEFAULT abc` would be rejected " +
-          "by the engine's own rules rather than by a regression here. That gap is issue #1031; the " +
-          "provider sets no `defaultExpression` on MySQL for the same reason.",
-      );
+      // MySQL reports the VALUE, so replaying the catalog text would fail by the engine's own
+      // rules. The SQL comes from `SHOW CREATE TABLE` on this flavour instead (#1031).
+      failures.push(...(await replayShowCreate(conn, version)));
     }
   } finally {
     await conn.end();

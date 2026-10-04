@@ -1451,6 +1451,83 @@ describe("useConnectionForm", () => {
     expect(onConnect).toHaveBeenCalledTimes(1);
   });
 
+  describe("a server's own caution at connect (#1401)", () => {
+    // Materialize v26.44.1's startup NOTICE for a session database that does not exist.
+    const caution = { message: 'session database "nosuchdb" does not exist', code: "MZ004", severity: "NOTICE" };
+
+    test("Test Connection shows it in a warning instead of a plain success", async () => {
+      const onTestConnection = mock(async () => ({ success: true, latency: 3, warnings: [caution] }));
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleTestConnection();
+      });
+
+      expect(result.current.testResult!.tone).toBe("warning");
+      expect(result.current.testResult!.message).toBe(
+        'Connected. The server reported: NOTICE: session database "nosuchdb" does not exist',
+      );
+    });
+
+    test("is added to a degraded answer's own sentence rather than replacing it", async () => {
+      const onTestConnection = mock(async () => ({
+        success: true,
+        degraded: true,
+        message: "Connected, but this server answered no health data: nope",
+        warnings: [caution, { message: "second", severity: "WARNING" }],
+      }));
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleTestConnection();
+      });
+
+      expect(result.current.testResult!.message).toBe(
+        'Connected, but this server answered no health data: nope The server reported: NOTICE: session database "nosuchdb" does not exist; WARNING: second',
+      );
+    });
+
+    test("holds the first save back to show it, and the second click saves", async () => {
+      const onTestConnection = mock(async () => ({ success: true, warnings: [caution] }));
+      const onConnect = mock(() => {});
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).not.toHaveBeenCalled();
+      expect(result.current.testResult!.tone).toBe("warning");
+      expect(result.current.testResult!.message).toContain('session database "nosuchdb" does not exist');
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).toHaveBeenCalledTimes(1);
+    });
+
+    test("a different caution on the second click is shown again rather than saved past", async () => {
+      const other = { message: 'session database "otherdb" does not exist', code: "MZ004", severity: "NOTICE" };
+      const answers = [[caution], [other], [other]];
+      const onTestConnection = mock(async () => ({ success: true, warnings: answers.shift() }));
+      const onConnect = mock(() => {});
+      const { result } = renderHook(() => useConnectionForm({ ...defaultProps, onConnect, onTestConnection }));
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).not.toHaveBeenCalled();
+      expect(result.current.testResult!.message).toContain('"otherdb" does not exist');
+
+      await act(async () => {
+        await result.current.handleConnect();
+      });
+      expect(onConnect).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // ── handlePasteConnectionString parses and fills form ──────────────────────
 
   test("handlePasteConnectionString parses and fills form fields", () => {

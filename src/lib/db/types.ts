@@ -20,6 +20,7 @@ import type {
   DatabaseType,
   DatabaseConnection,
   QueryResult,
+  QueryWarning,
   ColumnSchema,
   IndexSchema,
   ForeignKeySchema,
@@ -1567,6 +1568,15 @@ export interface DatabaseProvider {
   connect(): Promise<void>;
 
   /**
+   * What the server cautioned while `connect()` opened the connection, in the server's own
+   * words; empty when it said nothing worth showing. A connect that succeeded is not always
+   * the connection asked for: Materialize accepts a session database that does not exist and
+   * reports it only as a startup NOTICE (#1401). Optional, because most engines have no such
+   * channel; `POST /api/db/test-connection` reads it when it is there.
+   */
+  connectWarnings?(): QueryWarning[];
+
+  /**
    * Close all connections and cleanup resources
    */
   disconnect(): Promise<void>;
@@ -1750,8 +1760,16 @@ export interface DatabaseProvider {
    * A kind that legitimately has no columns - a routine, a trigger, a sequence on some
    * engines - answers an empty `details` array without a round trip, exactly as
    * `describeObject` answers three empty arrays for one of them.
+   *
+   * `options` is the one sanctioned exception to "one round trip per container and kind",
+   * and it is OPT-IN for that reason: see `DescribeObjectsOptions`.
    */
-  describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch>;
+  describeObjects(
+    container: readonly string[],
+    kind: string,
+    limit?: number,
+    options?: DescribeObjectsOptions,
+  ): Promise<ObjectDetailBatch>;
 
   /**
    * The definition text of ONE object, as a document of named parts (#789 Phase 2).
@@ -2586,6 +2604,23 @@ export interface ObjectDetail {
   readonly columns: readonly ColumnSchema[];
   readonly indexes: readonly IndexSchema[];
   readonly foreignKeys: readonly ForeignKeySchema[];
+}
+
+/**
+ * What a `describeObjects` caller may ask for beyond the default read (#1031).
+ *
+ * `defaultSql` asks for `ColumnSchema.defaultExpression` on a provider whose catalog does not
+ * spell a default as SQL. MySQL is the one such provider today: its catalog reports the
+ * VALUE (`abc`, not `'abc'`) and truncates a binary default at its first zero byte, so the
+ * SQL text has to come from `SHOW CREATE TABLE`, ONE ROUND TRIP PER TABLE that has a default.
+ * Measured on MySQL 26.7.0: 5000 tables cost 2.35 s against 64 ms for the four-statement
+ * read, so about 100 s at a 20 ms round trip. That is why it is not the default. SchemaDiff
+ * asks, because a migration pastes the text and a snapshot must capture it when taken; the
+ * agent's inventory never asks, because it only reads. The caller's `limit` bounds the extra
+ * reads as it bounds the objects, and a provider whose catalog already spells SQL ignores it.
+ */
+export interface DescribeObjectsOptions {
+  readonly defaultSql?: boolean;
 }
 
 /**

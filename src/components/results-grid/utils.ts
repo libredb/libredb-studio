@@ -14,10 +14,17 @@ const WARNING_FALLBACK_LABEL = "Warning";
  * code rather than rendering an empty line, and an entry carrying neither still
  * says that something was reported. `0` is a legal code, so absence is tested as
  * absence rather than as falsiness.
+ *
+ * A reported severity leads the line the way `psql` prints it (`NOTICE: ...`), because a
+ * PostgreSQL-wire server sends notices and warnings through the same channel (#1401).
  */
 export function describeWarning(warning: QueryWarning): string {
-  if (warning.message) return warning.message;
-  return warning.code === undefined ? WARNING_FALLBACK_LABEL : `${WARNING_FALLBACK_LABEL} ${warning.code}`;
+  const text = warning.message
+    ? warning.message
+    : warning.code === undefined
+      ? WARNING_FALLBACK_LABEL
+      : `${WARNING_FALLBACK_LABEL} ${warning.code}`;
+  return warning.severity ? `${warning.severity}: ${text}` : text;
 }
 
 /**

@@ -15,7 +15,7 @@ import type { DatabaseType } from "@/lib/types";
 // file used to carry its own copy that did not, so a schema object named with one
 // produced SQL that ended the quoted span early (PR #289 review).
 import { quoteIdentifier as escapeIdentifier } from "@/lib/sql/identifier";
-import type { SchemaDiff, TableDiff, ColumnDiff } from "./types";
+import type { SchemaDiff, TableDiff, ColumnDiff, IndexDiff } from "./types";
 
 /**
  * ClickHouse column-default kinds as `system.columns.default_kind` reports them, and as
@@ -461,6 +461,8 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
 
   // Add primary key constraint
   const pkCols = table.columns.filter((c) => c.targetIsPrimary).map((c) => escapeIdentifier(c.columnName, dialect));
+  // Trino SQL has no primary-key constraint, so there the key is named in a comment instead.
+  const keyWritten = pkCols.length > 0 && dialect !== "trino";
 
   // A key the target can only declare here has to be emitted here, so the closing paren is not
   // written until the constraint list is complete.
@@ -469,7 +471,7 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
 
   lines.push(`CREATE TABLE ${id} (`);
   lines.push(colDefs.join(",\n"));
-  if (pkCols.length > 0 && dialect !== "trino") {
+  if (keyWritten) {
     lines.push(`,  PRIMARY KEY (${pkCols.join(", ")})`);
   }
   if (keyIsTableConstraint) {
@@ -495,9 +497,27 @@ function generateCreateTable(table: TableDiff, dialect: DatabaseType): string {
     lines.push("-- Trino: Cannot declare a primary key. Trino SQL has no primary-key constraint.");
   }
 
-  // Indexes
+  // Indexes, less the one the PRIMARY KEY line above already builds. An engine that reports
+  // its key's index in the index list (PostgreSQL's `<table>_pkey`, MySQL's `PRIMARY`) creates
+  // that index with the constraint, so emitting it again aborts the migration: measured on
+  // PostgreSQL 18.6, `CREATE UNIQUE INDEX "ui_t_pkey"` after the CREATE TABLE is
+  // `relation "ui_t_pkey" already exists` (#1395), and MySQL refuses an index named
+  // `PRIMARY`. The index is recognised by what it is, a unique index over exactly the key's
+  // columns, because its name is the engine's own choice. The columns are compared as a set,
+  // since the PRIMARY KEY line is written in table order and `IndexDiff` carries no primary
+  // flag; so a second unique index over the same columns, in any order, is skipped with it.
+  const keyColumns = new Set(table.columns.filter((c) => c.targetIsPrimary).map((c) => c.columnName));
+  const backsTheKey = (idx: IndexDiff): boolean => {
+    const columns = idx.targetColumns ?? [];
+    return (
+      keyWritten &&
+      idx.targetUnique === true &&
+      columns.length === keyColumns.size &&
+      columns.every((column) => keyColumns.has(column))
+    );
+  };
   table.indexes
-    .filter((i) => i.action === "added")
+    .filter((i) => i.action === "added" && !backsTheKey(i))
     .forEach((idx) => {
       const refusal = NO_PORTABLE_INDEX_DDL[dialect];
       if (refusal) {

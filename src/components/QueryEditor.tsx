@@ -32,6 +32,7 @@ import { toast } from "sonner";
 import { splitCursorTargets } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
+import { quoteIdentifier } from "@/lib/query-generators";
 
 // Serve Monaco from our own origin rather than @monaco-editor/react's jsdelivr default.
 // Runs at module load so it is in place before the first <Editor> mounts.
@@ -99,6 +100,12 @@ interface QueryEditorProps {
   databaseType?: DatabaseType;
   schemaContext?: string;
   capabilities?: import("@/lib/db/types").ProviderCapabilities;
+  /**
+   * The container the session resolves a bare name in, as the object inventory reported it.
+   * A table outside it completes to its qualified address (#1397); absent, every table keeps
+   * the bare name it always had, because a default nobody reported cannot be assumed.
+   */
+  defaultContainer?: readonly string[];
 }
 
 /**
@@ -118,7 +125,7 @@ interface ParsedTable {
   name: string;
   /** The object's address; Cypher completion reads a label or relationship type from its last segment. */
   path?: string[];
-  rowCount?: number;
+  rowCount?: number | null;
   columns?: Array<{
     name: string;
     type: string;
@@ -174,6 +181,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       databaseType,
       schemaContext,
       capabilities,
+      defaultContainer,
     },
     ref,
   ) => {
@@ -307,13 +315,25 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       const columnMap = new Map<string, SchemaColumnItem[]>();
       const allColumns = new Map<string, SchemaColumnItem>();
 
+      const defaultKey = defaultContainer === undefined ? undefined : JSON.stringify(defaultContainer);
       parsedSchema.forEach((table) => {
         const tableLower = table.name.toLowerCase();
+        const path = table.path;
+        const container = path && path.length > 0 ? path.slice(0, -1) : undefined;
         tableItems.push({
           label: table.name,
           labelLower: tableLower,
-          rowCount: table.rowCount || 0,
+          // Absent stays absent: the detail line says "(0 rows)" only for a measured zero (#1397).
+          // `== null` so a null count from the JSON is as absent as a missing one.
+          ...(table.rowCount == null ? {} : { rowCount: table.rowCount }),
           columnNames: table.columns?.map((c) => c.name).join(", ") || "",
+          ...(container === undefined
+            ? {}
+            : {
+                container,
+                segment: path![path!.length - 1],
+                qualify: container.length > 0 && defaultKey !== undefined && JSON.stringify(container) !== defaultKey,
+              }),
         });
 
         const tableColumns: SchemaColumnItem[] = [];
@@ -335,8 +355,15 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
         columnMap.set(tableLower, tableColumns);
       });
 
-      return { tableItems, columnMap, allColumns };
-    }, [parsedSchema]);
+      return {
+        tableItems,
+        columnMap,
+        allColumns,
+        ...(capabilities === undefined
+          ? {}
+          : { quoteSegment: (segment: string) => quoteIdentifier(segment, capabilities) }),
+      };
+    }, [parsedSchema, defaultContainer, capabilities]);
 
     // The formatter of the tab's language, from its `DIALECT_EDITORS` record: SQL's, the JSON one MongoDB and
     // Kafka share, or none, in which case the toolbar draws no Format button and the shortcut does nothing.

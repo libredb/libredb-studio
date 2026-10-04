@@ -420,8 +420,13 @@ name carrying `--` or a newline cannot break out of it.
 
 The other three rows keep their normalization, and each reason was re-measured rather than assumed:
 `Vector` stringifies to `{"0":1.5,"1":2.5,"2":3.5}`, a numeric-keyed object no reader and no module
-reconstructs; `Duration` to `{"months":1,"days":2,"nanoseconds":"10800000000000"}`, where `String()`
-gives the CQL literal `1mo2d3h`. `Long`, `BigDecimal` and `Integer` are the one partial case worth
+reconstructs; `Duration` to `{"months":1,"days":2,"nanoseconds":"10800000000000"}`, so it is
+spelled as its CQL literal, `1mo2d3h`, by `durationText()` in
+[`driver-transport.ts`](../../src/lib/db/providers/sql/cassandra/driver-transport.ts) rather than by the
+driver's `String()`. That one divides the months into years with `toFixed(0)` and so rounds them:
+measured on 2026-10-04, 18 months printed `2y6mo`, which is 30 months, on the grid, in the CSV and in
+the SQL export. `durationText()` writes whole years (`1y6mo`), and `0s` for a zero duration, which the
+driver prints as the empty string. `Long`, `BigDecimal` and `Integer` are the one partial case worth
 naming: each defines `toJSON`, so `JSON.stringify` alone already answers `"9223372036854775807"` —
 the HTTP path would survive without this line. The in-process path would not: the embeddable
 workspace and the agent's tools read a provider's rows directly, and there the live class instance
@@ -692,6 +697,18 @@ plan of a pending one, and calling it a plan would be a claim the engine does no
 deliberately left out of this provider; if it is ever exposed it must not be called EXPLAIN.
 
 ---
+
+### 5.7 What the SQL INSERT and DDL exports write
+
+CQL reads none of the generic forms for its non-text types: a collection, a UDT, a tuple, a `bigint`, a `varint` or a `decimal` written as quoted JSON or quoted text is `Invalid STRING constant`.
+The SQL INSERT export reads the declared type (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)) and writes `[1, 2]` for a `list` or a `vector`, `{'a', 'b'}` for a `set`, `{1: {'x'}}` for a `map`, `(7, 'x')` for a `tuple`, `{"street": 'Main', "zip": 1}` for a UDT, and the numbers, uuids, timeuuids and durations bare.
+A `float` or `double` NaN or infinity, at the top level or inside a collection, is written as CQL's bare `NaN`, `Infinity` or `-Infinity`.
+A UDT is declared by its bare name, so its field types are unknown and each field value goes through the generic writer: a UDT with a `bigint`, `varint`, `decimal`, `uuid` or collection field is written with that field quoted and still stops the replay with `Invalid STRING constant`.
+A collection or tuple that does not have its declared shape is skipped with a `-- Row N skipped` comment naming the column.
+
+The driver reports a nested collection without its `frozen<...>` (`list<frozen<list<int>>>` is declared `list<list<int>>`), which CQL refuses as `Non-frozen collections are not allowed inside collections`, so the DDL writes every collection, tuple or UDT nested inside a collection as `frozen<...>`.
+
+Measured 2026-10-04 on Cassandra 5.0.9: a table of every scalar type, `list<int>`, `set<text>`, `map<text, int>`, `map<int, frozen<set<text>>>`, `list<frozen<list<int>>>`, `tuple<int, text>`, a `frozen<address>` UDT whose fields are `text` and `int`, and a `duration` was exported through the provider and replayed with `cqlsh` into a copy created with the source's own definition and into the exported DDL's own table, and `cqlsh` printed the same rows for both. So did a second table of `duration` (`1y6mo`, `0s`, `-1mo2d3h4m5s6ms7us8ns`), `double` and `float` NaN and infinities, and a `list<double>` holding them.
 
 ## 6. Schema introspection
 

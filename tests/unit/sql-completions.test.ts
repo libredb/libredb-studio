@@ -66,7 +66,9 @@ function createMockModel(lineContent: string, fullText?: string) {
       };
     },
     getLineContent: () => lineContent,
-    getValueInRange: () => fullText || lineContent,
+    // The whole document, with the cursor on its first line: every model here is one line long.
+    getValue: () => fullText || lineContent,
+    getOffsetAt: (position: { column: number }) => position.column - 1,
   } as unknown as Monaco.editor.ITextModel;
 }
 
@@ -724,5 +726,148 @@ describe("Completion dialect compatibility", () => {
       ._getProvider()!
       .provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1));
     expect(result.suggestions.map((item) => item.label)).toEqual(["marker"]);
+  });
+});
+
+describe("Completion addresses outside the default container (#1397)", () => {
+  /**
+   * The measured fixture: PostgreSQL 18.6 with `public.orders` on the search path and
+   * `sales.regions` off it, and a RisingWave-style table whose row count nobody measured.
+   */
+  function addressedCache(): SchemaCompletionCache {
+    const cache = createSchemaCache({
+      tableItems: [
+        {
+          label: "orders",
+          labelLower: "orders",
+          rowCount: 4,
+          columnNames: "id",
+          container: ["public"],
+          segment: "orders",
+          qualify: false,
+        },
+        {
+          label: "regions",
+          labelLower: "regions",
+          columnNames: "id, name",
+          container: ["sales"],
+          segment: "regions",
+          qualify: true,
+        },
+        {
+          label: "Customers",
+          labelLower: "customers",
+          columnNames: "id",
+          container: ["libredb_objects", "app"],
+          segment: "Customers",
+          qualify: true,
+        },
+      ],
+    });
+    return cache;
+  }
+
+  function complete(line: string, dialect?: Parameters<typeof registerSQLCompletionProvider>[2], fullText?: string) {
+    const monaco = createMockMonaco();
+    registerSQLCompletionProvider(monaco, addressedCache(), dialect);
+    return monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel(line, fullText), createPosition(1, line.length + 1)).suggestions;
+  }
+
+  function applied(line: string, suggestion: Monaco.languages.CompletionItem): string {
+    const range = suggestion.range as Monaco.IRange;
+    return line.slice(0, range.startColumn - 1) + suggestion.insertText + line.slice(range.endColumn - 1);
+  }
+
+  test("a table off the search path inserts its schema, a table on it its bare name", () => {
+    const line = "SELECT * FROM reg";
+    const regions = complete(line, "postgres").find((item) => item.label === "regions")!;
+    expect(applied(line, regions)).toBe("SELECT * FROM sales.regions");
+    const orders = complete("SELECT * FROM ord", "postgres").find((item) => item.label === "orders")!;
+    expect(orders.insertText).toBe("orders");
+  });
+
+  test("each segment of a qualified insert is quoted the PostgreSQL way", () => {
+    const line = "SELECT * FROM Cus";
+    const customers = complete(line, "postgres").find((item) => item.label === "Customers")!;
+    expect(applied(line, customers)).toBe('SELECT * FROM libredb_objects.app."Customers"');
+  });
+
+  test("a schema qualifier and a dot offer that schema's tables, by their own name", () => {
+    const line = "SELECT * FROM sales.";
+    const suggestions = complete(line, "postgres");
+    expect(suggestions.map((item) => item.label)).toEqual(["regions"]);
+    expect(applied(line, suggestions[0])).toBe("SELECT * FROM sales.regions");
+  });
+
+  test("a database qualifier works the same on MySQL and ClickHouse", () => {
+    for (const dialect of ["mysql", "clickhouse"] as const) {
+      expect(complete("SELECT * FROM public.", dialect).map((item) => item.label)).toEqual(["orders"]);
+    }
+  });
+
+  test("a partly typed name after the qualifier narrows the container's tables and keeps the qualifier", () => {
+    const line = "SELECT * FROM SALES.re";
+    const regions = complete(line, "postgres").find((item) => item.label === "regions")!;
+    expect(applied(line, regions)).toBe("SELECT * FROM SALES.regions");
+    expect(complete("SELECT * FROM sales.zz", "postgres").find((item) => item.label === "regions")).toBeUndefined();
+  });
+
+  test("a qualifier matches the trailing segments of a deeper container", () => {
+    expect(complete("SELECT * FROM app.", "mssql").map((item) => item.label)).toEqual(["Customers"]);
+    expect(complete("SELECT * FROM libredb_objects.app.", "mssql").map((item) => item.label)).toEqual(["Customers"]);
+    // Longer than any container: nothing to offer, and no table of a shorter one.
+    expect(complete("SELECT * FROM x.libredb_objects.app.", "mssql")).toEqual([]);
+  });
+
+  test("other dialects quote each segment through the connection's own quoting", () => {
+    const monaco = createMockMonaco();
+    const cache = createSchemaCache({
+      tableItems: [
+        {
+          label: "ct_other",
+          labelLower: "ct_other",
+          columnNames: "id",
+          container: ["e2e-other"],
+          segment: "ct_other",
+          qualify: true,
+        },
+        {
+          label: "order lines",
+          labelLower: "order lines",
+          columnNames: "id",
+          container: ["shop", "dbo"],
+          segment: "order lines",
+          qualify: false,
+        },
+      ],
+      // A stand-in for `quoteIdentifier` with MySQL capabilities: quote what is not a bare word.
+      quoteSegment: (segment) => (/^\w+$/.test(segment) ? segment : `\`${segment}\``),
+    });
+    registerSQLCompletionProvider(monaco, cache, "mysql");
+    const provider = monaco._getProvider()!;
+    const at = (line: string) =>
+      provider.provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1)).suggestions;
+    expect(at("SELECT * FROM ct").find((item) => item.label === "ct_other")!.insertText).toBe("`e2e-other`.ct_other");
+    expect(at("SELECT * FROM dbo.").find((item) => item.label === "order lines")!.insertText).toBe("`order lines`");
+  });
+
+  test("the detail line states a row count only where one was measured", () => {
+    const suggestions = complete("SELECT * FROM ", "postgres");
+    expect(suggestions.find((item) => item.label === "orders")!.detail).toBe("Table (4 rows)");
+    expect(suggestions.find((item) => item.label === "regions")!.detail).toBe("Table");
+  });
+
+  test("an alias defined after the cursor completes in the SELECT list", () => {
+    const labels = complete("SELECT c.", "mysql", "SELECT c. FROM e2e.users c").map((item) => item.label);
+    expect(labels).toEqual(["id", "name", "email"]);
+  });
+
+  test("the alias is read from the cursor's own statement, not the next one", () => {
+    const labels = complete("SELECT c.", "mysql", "SELECT c. FROM orders c; SELECT * FROM users c").map(
+      (item) => item.label,
+    );
+    expect(labels).toEqual(["id", "user_id", "total"]);
   });
 });

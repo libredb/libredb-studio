@@ -38,7 +38,7 @@ const mockShouldMask = mock(() => false);
 const mockCanToggleMasking = mock(() => true);
 const mockCanReveal = mock(() => true);
 const mockDetectSensitiveColumnsFromConfig = mock(() => new Map());
-const mockMaskValueByPattern = mock(() => "***");
+const mockMaskValueByPattern = mock((_value?: unknown) => "***");
 const mockLoadMaskingConfig = mock(() => ({
   enabled: false,
   patterns: [],
@@ -2135,6 +2135,54 @@ describe("ResultsGrid", () => {
 
       const revealButton = container.querySelector('button[title="Reveal value (10s)"]');
       expect(revealButton).toBeNull();
+    });
+
+    /**
+     * The column filter reads what the grid shows (#1477). It matched the clear value under a
+     * masked cell, so a user who may not lift masking could read a masked value one typed
+     * prefix at a time off the row count.
+     */
+    describe("column filter on a masked column (#1477)", () => {
+      function filterEmail(container: HTMLElement, value: string) {
+        fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[2]);
+        fireEvent.change(container.querySelector('input[placeholder="Filter email..."]')!, { target: { value } });
+      }
+      const countText = (container: HTMLElement) =>
+        container.querySelector('[data-testid="filtered-count"]')?.textContent ?? "";
+
+      test("a prefix of the clear value does not narrow the rows while masking is in force", () => {
+        setupMasking();
+        // The masked text keeps the first character, like the email preset.
+        mockMaskValueByPattern.mockImplementation((value: unknown) => `${String(value)[0]}***`);
+        const { container, getByTestId } = render(React.createElement(ResultsGrid, maskingProps));
+        fireEvent.click(getByTestId("view-table"));
+
+        filterEmail(container, "al");
+        expect(countText(container)).toContain("0 filtered");
+        expect(container.textContent).not.toContain("alice@example.com");
+      });
+
+      test("matches the masked text the grid displays", () => {
+        setupMasking();
+        mockMaskValueByPattern.mockImplementation((value: unknown) => `${String(value)[0]}***`);
+        const { container, getByTestId } = render(React.createElement(ResultsGrid, maskingProps));
+        fireEvent.click(getByTestId("view-table"));
+
+        filterEmail(container, "b***");
+        expect(countText(container)).toContain("1 filtered");
+      });
+
+      test("with masking off the filter still matches the clear value", () => {
+        setupMasking();
+        mockShouldMask.mockReturnValue(false);
+        const { container, getByTestId } = render(
+          React.createElement(ResultsGrid, { ...maskingProps, maskingEnabled: false }),
+        );
+        fireEvent.click(getByTestId("view-table"));
+
+        filterEmail(container, "alice@");
+        expect(countText(container)).toContain("1 filtered");
+      });
     });
   });
 

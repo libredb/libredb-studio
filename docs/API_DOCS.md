@@ -499,6 +499,8 @@ Each element must be a string, number, boolean or `null`; anything else is rejec
 
 **`inTransaction` in a transaction `query` answer.** `POST /api/db/transaction` answers its `query` action with `inTransaction`, and `false` there means the server ended the transaction while running the statement: a typed `COMMIT` or `ROLLBACK`, or a statement the engine commits implicitly (MySQL DDL). The answer does not say whether the work was kept, because the server reports the same state after either; the session is released, and a following `rollback` answers 400 "No active transaction" rather than reporting a rollback that undid nothing. A `begin` the server accepts without opening a transaction (RisingWave's `BEGIN`) answers 400 with the reason, and nothing has been held. A `begin` answer carries `stateReported`: `false` when the server opened the transaction without reporting any transaction state (Databend, StarRocks and Apache Doris over the MySQL wire), `true` when it reported an open one, `null` when the provider does not say. A `begin` sent with `requireReportedState: true`, which is what SANDBOX sends, answers 400 on a `stateReported: false` server instead, with nothing left open.
 
+**Several statements in a transaction `query`.** When the `sql` of a `query` action holds more than one statement under the connection's dialect (a fragment of comments only does not count), `POST /api/db/transaction` runs them one by one, in order, on the transaction's connection and stops at the first one that fails. The answer has the shape `POST /api/db/multi-query` gives a script: `multiStatement: true`, `statementCount`, `executedCount`, `hasError`, `statements` with each statement's outcome, and the last result that has rows as `rows`/`fields`, plus `inTransaction`. A failure is part of that 200 answer, not an error status: the statements before it ran inside the transaction and stay there to commit or roll back. There is no `pagination`, because a next page would run every statement again. A request with `params` is one statement, as before. Measured on MySQL 26.7.0 before this: two `UPDATE` lines sent inside BEGIN answered 500 "You have an error in your SQL syntax ... at line 2".
+
 **Query plan (optional):**
 ```json
 {
@@ -2042,6 +2044,8 @@ interface ColumnSchema {
   nullable: boolean;       // Allows NULL
   isPrimary: boolean;      // Primary key
   defaultValue?: string;   // Default value
+  defaultExpression?: string; // The SQL that produces it, where the provider has it. MySQL
+                           // only with includeDefaultSql, since its catalog spells a value (#1031)
   provenance?: "sampled";  // Inferred from sampled rows rather than declared; never sent to MCP or a model
 }
 
@@ -2086,6 +2090,7 @@ interface QueryPagination {
 interface QueryWarning {
   message: string;         // The notice, as the engine worded it
   code?: number | string;  // The engine's own identifier, when it reported one
+  severity?: string;       // The level it was raised at (`WARNING`, `NOTICE`), as the server spells it (may be localized), when it reports one
 }
 
 interface VectorColumn {                            // One entry of `vectorColumns`
@@ -2361,6 +2366,11 @@ curl -X POST http://localhost:3000/api/db/objects/inventory \
     "includeColumns": true
   }'
 ```
+
+Add `"includeDefaultSql": true` (with `includeColumns`) to have each column carry `defaultExpression`,
+the SQL a migration writes after `DEFAULT`. On MySQL that costs one `SHOW CREATE TABLE` per table with a
+default, because its catalog reports the value rather than the SQL; SchemaDiff asks for it, nothing
+else does (#1031). Without `includeColumns` it is a 400.
 
 #### AI Explanation of a Plan
 ```bash
