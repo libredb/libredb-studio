@@ -620,7 +620,11 @@ export function serializeExport(data) {
 
 const LOG_PREFIX = "libredb-discovery:";
 
-/** The one-line summary of a scan: counts and codes only, never a value. */
+/**
+ * The one-line summary of a scan. A good scan logs counts only. A failed one logs its status code and
+ * message: the daemon's own error text, a socket error or one of this file's fixed lines. The body of a
+ * 2xx answer, where the environment values are, never reaches a message, so none reaches the log.
+ */
 function summarize(result) {
   if (!result.ok) return `scan failed: ${result.status.code}: ${result.status.message}`;
   const cut = result.truncated ? `, cut to the first ${LIMITS.services} by name` : "";
