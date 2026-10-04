@@ -214,6 +214,10 @@ RUN node -e "require('/app/node_modules/db2-node')"
 
 COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY docker/bind-address.mjs /usr/local/lib/libredb-studio/bind-address.mjs
+# The CapRover discovery exporter runs as root with the Docker socket mounted,
+# so it is copied WITHOUT --chown: the uid 1001 web process must never be able
+# to rewrite it. No image creates the directory it writes to.
+COPY docker/discover.mjs /usr/local/lib/libredb-studio/discover.mjs
 
 EXPOSE 3000/tcp
 ENV PORT=3000

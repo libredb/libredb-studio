@@ -287,6 +287,13 @@ COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # outside the standalone payload so the native channels - which bind 127.0.0.1
 # by design (#134) - can never inherit container bind policy.
 COPY docker/bind-address.mjs /usr/local/lib/libredb-studio/bind-address.mjs
+# The CapRover discovery exporter (docker/discover.mjs) sits next to it for the
+# same two reasons. The auto-connect template runs it as a second app, as root
+# and with the Docker socket mounted, so it is copied WITHOUT --chown: the
+# uid 1001 web process must never be able to rewrite a script that holds the
+# socket. No image creates the directory it writes to; Docker creates the named
+# volume's root as root:root 0755, the only shape the exporter accepts.
+COPY docker/discover.mjs /usr/local/lib/libredb-studio/discover.mjs
 
 # Render uses PORT env variable, default to 3000
 EXPOSE 3000/tcp

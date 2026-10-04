@@ -147,6 +147,19 @@ describe("published image variants", () => {
     expect(dockerfile).toContain('CMD ["node", "server.js"]');
   });
 
+  test.each(VARIANTS)("%s copies the discovery exporter root-owned and creates no discovery directory", (variant) => {
+    const lines = instructions(readRepoFile(variant));
+
+    // Exactly this instruction: the exporter runs as root with the Docker socket, so a --chown here
+    // would let the uid 1001 web process rewrite a script that is host root one redeploy later.
+    expect(lines.filter((line) => line.includes("docker/discover.mjs"))).toEqual([
+      "COPY docker/discover.mjs /usr/local/lib/libredb-studio/discover.mjs",
+    ]);
+    // Docker must create the shared volume's root itself (root:root 0755): an image that ships
+    // /app/discovery would hand its owner to the volume, and the exporter refuses any other owner.
+    expect(lines.join("\n")).not.toContain("/app/discovery");
+  });
+
   test.each(VARIANTS)("%s starts as root so the entrypoint can chown the volume and drop privileges", (variant) => {
     const dockerfile = readRepoFile(variant);
 
