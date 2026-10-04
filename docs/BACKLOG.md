@@ -1187,7 +1187,7 @@ test pins the behaviour that was chosen.
 
 ---
 
-### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
+### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
 `grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 44 hits, re-measured 2026-10-04. Twelve of
 them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`,
@@ -1197,15 +1197,20 @@ nothing reads, and one of those thirty is `tests/helpers/object-edit-route-harne
 harness that could have been the factory and copied the stub instead. The remaining two write a
 shorter stub of their own, one with two keys and one with a single `getSession`.
 
-`src/lib/auth.ts` exports seven names. The two no hand-written stub carries are
-`shouldMarkCookieSecure` and `resetCookieSecurityWarning`:
-`grep -rn 'shouldMarkCookieSecure' tests/` returns exactly one hit, and it is a sentence in a comment
-rather than a stub key, while `resetCookieSecurityWarning` appears only in
-`tests/unit/lib/auth.test.ts`, which imports the real module.
+`src/lib/auth.ts` exports nine names. The four no hand-written stub carries are
+`shouldMarkCookieSecure`, `resetCookieSecurityWarning`, `readCookieSecureOverride` and
+`isLoopbackHost`: `grep -rn 'shouldMarkCookieSecure' tests/` returns exactly one hit, and it is a
+sentence in a comment rather than a stub key. `resetCookieSecurityWarning` appears only in
+`tests/unit/lib/auth.test.ts`, which imports the real module, and in
+`tests/api/admin/discovery.test.ts`, which calls it on the real module it spreads.
+`readCookieSecureOverride` and `isLoopbackHost` appear in `tests/unit/lib/auth.test.ts` and
+otherwise only in a comment of `tests/api/admin/discovery.test.ts`.
 `src/app/api/auth/oidc/login/route.ts` imports `shouldMarkCookieSecure` and awaits it to decide the
-auth cookie's `secure` flag, so every one of those stubs is already an export short of the module it
-replaces. Nothing has hit that yet only because `tests/api/auth/oidc-login.test.ts` is one of the
-route tests that does NOT mock `@/lib/auth`.
+auth cookie's `secure` flag, and `src/app/api/admin/discovery/route.ts` imports
+`readCookieSecureOverride` to report whether `AUTH_COOKIE_SECURE` is off, so every one of those
+stubs is already short of exports a route imports from the module it replaces. Nothing has hit that
+yet only because `tests/api/auth/oidc-login.test.ts` is one of the route tests that does NOT mock
+`@/lib/auth`, and `tests/api/admin/discovery.test.ts` spreads the real module.
 
 Nothing can catch it either. `mock.module` is declared `module(id: string, factory: () => any)` in
 `node_modules/bun-types/test.d.ts`, so a stub that has drifted from the module it stands in for is
