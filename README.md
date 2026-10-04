@@ -237,7 +237,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Expert Exporter**: Instant CSV and JSON exports for reporting. CSV import and result export offer comma (default), semicolon and tab separators. Every format the Export menu writes to a file it also copies straight to the clipboard.
 
 ### Advanced Data Visualization
-- **8 Chart Types**: Bar, Line, Pie, Area, Scatter, Histogram, Stacked Bar, and Stacked Area charts powered by Recharts.
+- **8 Chart Types**: Bar, Line, Pie, Area, Scatter, Histogram, Stacked Bar, and Stacked Area charts powered by Recharts. A NULL category is drawn as its own category named `NULL`, the word the results grid shows, and every value stays on its own row's category; a cell holding the text `NULL` reads the same on the axis, and an empty-string category is its own, blank-labelled category.
 - **Data Aggregation**: Group-by with SUM, AVG, COUNT, MIN, MAX aggregation functions. Date grouping by hour, day, week, month, or year.
 - **Chart Persistence**: Save chart configurations and reload them instantly. Manage a library of saved charts.
 - **Chart Dashboard**: Grid view of all saved charts for at-a-glance data overview directly in the bottom panel.

@@ -12,6 +12,7 @@ import {
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
+import { redisRefusal } from "@/lib/db/providers/keyvalue/redis-command-text";
 import {
   INFLUXQL_MAX_TEXT_BYTES,
   INFLUXQL_POLICY_SENTENCES,
@@ -260,13 +261,47 @@ describe("isDestructiveNonSqlQuery", () => {
     ["a comment above a read", "# nightly\nGET k", false],
     ["an indented comment", "   # note\nDEL k", true],
     ["leading blank lines", "\n\nDEL k", true],
-    ["a command wrapped across lines, named on the first", "HSET k a 1\nb 2", true],
-    ["a wrapped read", "HMGET k a\nb", false],
+    ["a quoted argument spanning lines, named on the first", 'SET note "a\nb"', true],
+    ["a script spanning lines", 'EVAL "local a = 1\nreturn a" 0', true],
+    [
+      "a library load spanning lines",
+      "FUNCTION LOAD \"#!lua name=lib\nredis.register_function('f', function() return 1 end)\"",
+      false,
+    ],
     ["a second block after a blank line", "GET k\n\nFLUSHALL", false],
+    ["a quoted empty first argument", 'DEL "" k', true],
     ["only comments", "# nothing to run", false],
     ["nothing at all", "", false],
   ])("reduces the buffer the way the provider does - %s", (_label, query, expected) => {
     expect(isDestructiveNonSqlQuery(query, "redis")).toBe(expected);
+  });
+
+  // Each line is its own command (docs/providers/redis.md 3.4a), and the editor refuses a second one before
+  // anything is sent, so a prompt here would ask about a text that cannot run. The refusal is the provider's
+  // own reading, by reference, which keeps what asks, what is refused and what runs one parse.
+  test.each<[string, string]>([
+    ["a write on the second line", "GET k\nFLUSHALL"],
+    ["a write on the first line", "DEL k\nGET k"],
+    ["a command once wrapped across lines", "HSET k a 1\nb 2"],
+    ["a second command after a comment line", "DEL a\n# then\nDEL b"],
+  ])("names nothing for %s, which the editor refuses", (_label, query) => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.redis?.read(query)).toEqual([]);
+    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(statementRefusal(query, "redis")).toBe(redisRefusal(query));
+    expect(statementRefusal(query, "redis")).toContain("holds a second command");
+  });
+
+  test("names nothing for a quote that never closes, which the editor refuses", () => {
+    const query = "DEL it's\nFLUSHALL";
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.redis?.read(query)).toEqual([]);
+    expect(isDestructiveNonSqlQuery(query, "redis")).toBe(false);
+    expect(statementRefusal(query, "redis")).toContain("Line 1 opens a quoted argument with ' that never closes");
+  });
+
+  test("refuses with the provider's own reading, by reference, and declares no byte bound", () => {
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.redis?.refuse).toBe(redisRefusal);
+    expect(NON_SQL_DESTRUCTIVE_VOCABULARY.redis?.maxTextBytes).toBeUndefined();
+    expect(statementRefusal("RPUSH mq x\n\nRPUSH mq y", "redis")).toBeUndefined();
   });
 
   // ── Prometheus ───────────────────────────────────────────────────────────
@@ -560,12 +595,15 @@ describe("statementRefusal and the console text bound", () => {
     remove = () => {};
   });
 
-  test("only milvus's, qdrant's, influxdb's and oxia's rows declare a refusal and a bound, so no other shipped type changes", () => {
+  test("only milvus's, qdrant's, influxdb's and oxia's rows declare a refusal and a bound, and redis's a refusal alone", () => {
     const declaring: readonly string[] = ["milvus", "qdrant", "influxdb", "oxia"];
     for (const [type, row] of Object.entries(NON_SQL_DESTRUCTIVE_VOCABULARY)) {
       if (declaring.includes(type)) continue;
-      expect(row?.refuse).toBeUndefined();
       expect(row?.maxTextBytes).toBeUndefined();
+      // Redis's refusal is pinned beside its reader in describe("isDestructiveNonSqlQuery"): it refuses a second
+      // command and never one command, so the oversize single-line text below still goes through.
+      if (type === "redis") continue;
+      expect(row?.refuse).toBeUndefined();
     }
     for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => !declaring.includes(candidate))) {
       expect(consoleTextByteLimit(type)).toBeUndefined();

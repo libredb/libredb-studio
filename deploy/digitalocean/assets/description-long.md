@@ -23,6 +23,16 @@ LibreDB Studio gives you a full-featured database workspace in your browser: con
 
 LibreDB Studio runs as a Docker container managed by systemd (`libredb-studio.service`). Application data persists in `/app/data` and survives restarts and upgrades. A unique JWT secret and admin/user passwords are generated on first boot — no shared default credentials.
 
+## Add a Managed Database (optional)
+
+When you create the Droplet, you can choose **Add a Database** and DigitalOcean creates a Managed PostgreSQL or MySQL cluster together with it. On first boot LibreDB Studio adds that database to its sidebar, so it is there the first time you sign in with an account that has the admin role, with nothing to type.
+
+- The connection signs in as the cluster's administrator (`doadmin`), so only accounts with the admin role see it, and it is locked in the UI: the password stays on the Droplet in `/etc/libredb-studio.env`, readable by root only, and is never sent to the browser.
+- Traffic to the cluster is encrypted, as with the `sslmode=require` connection string DigitalOcean gives you, but the server certificate is not verified. To verify it, add the cluster's CA certificate to `/etc/libredb-studio/seed/connections.yaml` as described in the [DigitalOcean deployment guide](https://github.com/libredb/libredb-studio/blob/main/deploy/digitalocean/README.md#managed-database).
+- A new cluster can take a few minutes to accept connections. If you restrict the cluster's **Trusted Sources**, add this Droplet to them.
+- The welcome message (MOTD) says whether the database was added. If it reports a problem, the credentials are in `/root/.digitalocean_dbaas_credentials` and you can add the connection in Studio yourself.
+- If you reset the cluster's password later, update `LIBREDB_DO_DB_PASSWORD` in `/etc/libredb-studio.env` and run `systemctl restart libredb-studio`.
+
 ## TLS and the session cookie
 
 The Droplet serves plain HTTP on port 3000 and ships with `AUTH_COOKIE_SECURE=false`, because a Droplet with no DNS name of its own cannot obtain a publicly trusted certificate at first boot. Without that setting the browser discards the session cookie and login quietly returns you to the sign-in page while the health check still reports the app as healthy.

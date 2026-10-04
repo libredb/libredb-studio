@@ -232,59 +232,86 @@ query string by its first character:
 The dispatch happens *after* leading blank lines and `#` comment lines are dropped, so the character
 that decides the format is the first character of the first runnable line, not of the buffer.
 
-### 3.4a Comments and how one command is picked out of a buffer
+A quoted run makes an argument even when it is empty, the way redis-cli reads one: `SET k ""` sends
+the empty string, and `LPUSH l "" x` pushes two elements. Before this the tokenizer kept a token only
+when it held a character, so measured on Redis 8.10.2 `SET k ""` answered *"ERR wrong number of
+arguments for 'set' command"* and `LPUSH l "" x` pushed `x` alone.
 
-`commandBody()` reduces the buffer to the one command to run, in two steps:
+### 3.4a Comments, lines, and how one command is picked out of a buffer
 
-1. **Every `#` comment line is dropped**, wherever it sits — leading, interleaved or trailing. A
-   line is a comment only when it *starts* with `#` (after trimming) **and no quoted argument is
-   open across it**, so a `#` inside a key or a value is never mistaken for one — including the
-   continuation line of a multi-line quoted value (`SET note "line1` / `#tag"`). The same quote
-   state suspends the blank-line rule: a blank line inside an open quoted argument is data.
+`readRedisCommandText()`
+([`redis-command-text.ts`](../../src/lib/db/providers/keyvalue/redis-command-text.ts)) reads the
+buffer to the one command a run sends. **Each non-empty line is its own command.** The rules:
 
-   Quote state is tracked **only while the block is a plain command**. The block's kind is fixed by
-   its first content line with the same test §3.4 uses to pick a parser (`{` first), because the
-   tracker's rules are the plain tokenizer's — no escape handling — and a JSON body's `\"` inside a
-   string is not a quote to it. A key named `say"hi` therefore left a phantom quote open, no later
-   comment line was dropped, and the whole-buffer run reached `JSON.parse` with comments in it:
-   *"Invalid JSON command format"* instead of a `TYPE` result. A JSON body needs no tracking anyway
-   — a JSON string carries no literal newline, so no line inside one can begin with `#` (#427).
-2. **The first blank-line-delimited block of what remains is taken**, and its lines are joined back
-   with a **newline**, verbatim. Leading blank lines are padding and are skipped; the first blank
-   line *after* content ends the block.
+1. **Every `#` comment line is dropped**, wherever it sits: leading, between commands, inside a
+   pretty-printed JSON command or trailing. A line is a comment only when it *starts* with `#`
+   (after trimming) **and no quoted argument is open across it**, so a `#` inside a key or a value
+   is never mistaken for one, including the continuation line of a multi-line quoted value
+   (`SET note "line1` / `#tag"`).
+2. **A line continues onto the next only in two cases**, both of which the tokenizer can see:
+   - it ends **inside an open quoted argument**. The line break is then data, and so is a blank or
+     `#`-leading line inside the quote. This is how a multi-line value, an `EVAL` script and a
+     `FUNCTION LOAD` library are written: `EVAL "local a = 1` / `return a" 0` is one command whose
+     script keeps its newline. The tokenizer's quote rules are redis-cli's without escapes: a `"` or
+     `'` opens a run that only the same character closes, and runs with no whitespace between them
+     make one argument (`a"b c"d` is `ab cd`). **A quote that never closes is refused**, naming the
+     line it opened on (*"Line 1 opens a quoted argument with ' that never closes ..."*), and nothing
+     is sent: continuing is right only when the quote closes later. Before this, `SET greeting it's` /
+     `GET greeting` stored `its`, a newline and `GET greeting`, and `SET k "a\"b"` / `GET k` did the
+     same, because the open quote took every later line as data, blank-line alternatives included.
+   - it belongs to a **JSON command whose braces and brackets are not yet balanced**. A command whose
+     first character is `{` is read line by line until `{`/`[` and `}`/`]` balance, counted outside
+     JSON strings with JSON's own `\` escape, so `JSON.stringify(cmd, null, 2)` reads whole and a
+     `}` inside a string does not end it. A blank line ends an unfinished JSON command, which then
+     fails `JSON.parse` (*"Invalid JSON command format"*) rather than swallowing the next command.
+3. **The first blank line ends what a run reads.** Leading blank lines are padding. The generated
+   cheatsheet (§5.3) is a list of alternatives separated by blank lines, so running the whole buffer
+   runs its first command, and a command after a blank line is not run.
+4. **A second command before that blank line is refused**, and nothing is sent: *"Line 2 holds a
+   second command, which begins with "RPUSH": each line is one Redis command, and Studio runs one
+   command per run. Select the line to run it, and the editor sends the selection. ..."*. The line
+   number counts from the top of the text the editor sent, which is the selection when there is one.
 
-A block rather than a line, because *outside quotes* the tokenizer treats a newline as ordinary
-whitespace: a single command wrapped over several lines (`HSET k a 1` / `b 2`) has always run whole,
-and `JSON.stringify(cmd, null, 2)` is legitimately multi-line — taking only line 1 would silently
-half-execute both. Not the whole buffer, because the generated cheatsheet (§5.3) is a list of
-alternatives separated by blank lines, and running it must run only its first command.
+Brackets count **only for a JSON command**. Outside quotes a plain argument cannot carry a JSON value
+or a Lua script across lines anyway, because whitespace splits it and quote characters are stripped,
+so in plain form a bracket is ordinary key text: `user:{42}` is a cluster hash tag, and a key such as
+`a{b` would otherwise hold its line open and glue the next command onto it.
 
-Joined with a newline and not a space, because the tokenizer's whitespace branch is guarded by
-`!inQuote`: *inside* a quoted argument a newline is data. `SET note "line1` / `line2"` stores a
-two-line value, and a space join silently rewrote it to `line1 line2`. Lines are also appended
-without trimming, so indentation inside a quoted value survives.
+**Why the rule changed.** Until this rule a newline outside quotes was ordinary whitespace and the
+first blank-line-delimited block ran as ONE command, so that a command wrapped over several lines
+(`HSET k a 1` / `b 2`) ran whole. The same rule turned two commands on consecutive lines into one,
+and the second command's words became data. Measured on Redis 8.10.2 and Valkey 9.1.2 on
+2026-10-04: `RPUSH mq x` / `RPUSH mq y` answered `(integer) 4` and the list held `x, RPUSH, mq, y`;
+`SADD s2 a` / `SADD s2 b` left the set `a, SADD, s2, b`; `DEL a` / `DEL b` would also delete a key
+literally named `DEL`. Nothing on screen said so. One command per line is what redis-cli and every
+other Redis client reads, so it is the reading a user expects; a command wrapped across lines without
+a quote is now refused, naming the line that would have been merged, instead of running as something
+else. The refusal rather than running every line, because one run answers one result, and because
+the confirmation gate below asks about one command.
 
-The dispatch of §3.4 then looks at the first character of that block, not of the buffer. A JSON
-command is parsed whole, so a trailing **comment** after a JSON body is fine (it was dropped in
-step 1) but trailing **non-comment** text is not — it joins the block and fails `JSON.parse`.
+The dispatch of §3.4 then looks at the first character of that command. Text after a JSON command
+is a second command (refused by rule 4), and text on the JSON command's own last line joins the body
+and fails `JSON.parse`.
 
 Input that is only comments or blank lines raises
 `QueryError("No command to run (only comments or blank lines)")`.
 
-This mirrors the embedded LibreDB provider, and exists so the commented cheatsheet the schema
-explorer inserts is directly runnable: selecting one command runs it, and running the whole buffer
-runs its first one (#427).
+This exists so the commented cheatsheet the schema explorer inserts is directly runnable: selecting
+one command runs it, and running the whole buffer runs its first one (#427). The embedded LibreDB
+provider is line-based too: it runs its first non-comment line ([`libredb.md`](libredb.md) §5.1).
 
-Since S8 the **execution confirmation gate reads a buffer the same way**:
-`src/lib/db/destructive-commands.ts` drops `#` lines and takes the first block as above, dispatches
-on a leading `{` as §3.4 does, and asks before running any command in its Redis destructive
+Since S8 the **execution confirmation gate reads a buffer the same way**, and since this rule with the
+same function: `src/lib/db/destructive-commands.ts` reads the text with `readRedisCommandText()`,
+dispatches on a leading `{` as §3.4 does, and asks before running any command in its Redis destructive
 vocabulary - key, expiry, string, hash, list, set, sorted-set and stream writes, the scripting
 entry points, and the server and access commands, with container commands such as `CONFIG SET`
 matched on their two-token spelling - while a body it cannot read (broken JSON, a JSON body whose
 `command` is not a string) asks rather than staying silent. The vocabulary names only commands the
 provider runs: the blocking list and sorted-set pops are refused before they reach the server
 ([§5.2b](#52b-commands-that-would-change-the-shared-connection-1107)), so their non-blocking
-forms are the ones the gate asks about.
+forms are the ones the gate asks about. The Redis row also declares `refuse: redisRefusal`, so the
+editor refuses a second command before any request with the same sentence the provider raises, and
+the gate names nothing for such a text, because it cannot run.
 
 ### 3.5 Reply normalisation into the shared grid
 
@@ -1794,7 +1821,9 @@ The provider raises the shared error classes from
 | `connect()` fails any other way | `ConnectionError`, *"Failed to connect to Redis: &lt;reason&gt;"* ([§4.4](#44-why-a-connect-failed-1356)) |
 | Malformed JSON command | `QueryError` — *"Invalid JSON command format"* |
 | JSON without `command` | `QueryError` — *"Command is required…"* |
-| Empty command | `QueryError` — *"Empty command"* |
+| Only comments or blank lines | `QueryError` - *"No command to run (only comments or blank lines)"* |
+| A quoted argument that never closes ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N opens a quoted argument with ... that never closes ..."* |
+| A second command before the first blank line ([§3.4a](#34a-comments-lines-and-how-one-command-is-picked-out-of-a-buffer)) | `QueryError` - *"Line N holds a second command, which begins with ..."* |
 | Redis-side command failure | `QueryError` — *"Redis error: …"* |
 
 All `QueryError`s carry the `QUERY_ERROR` API code and surface to the client as `400 Bad Request`.
@@ -1823,7 +1852,10 @@ fails in the suite as it would against a live server.
 ### 11.2 Coverage
 
 The suite covers: validation, connect/disconnect, capabilities, labels, `prepareQuery`, all query
-formats (JSON, plain, empty, `HGETALL`, `INFO`, nil), error handling (malformed JSON, missing
+formats (JSON, plain, empty, `HGETALL`, `INFO`, nil), the line reading of §3.4a (the second-command
+refusal and the empty driver call behind it, multi-line quoted values, `EVAL` scripts and
+`FUNCTION LOAD` libraries, a JSON command read until its brackets balance, quoted empty arguments),
+error handling (malformed JSON, missing
 `command`, Redis-side error, disconnected provider), schema scanning, health, overview, performance,
 slow queries, active sessions, table/index/storage stats, `getMonitoringData`, maintenance, a
 battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), integer replies past 2^53
@@ -2003,9 +2035,11 @@ request/response contract.
   form; use the JSON command object for those. The schema-explorer generators detect this and emit
   the JSON form for the affected line automatically (§5.3), so only hand-typed plain commands are
   exposed to it.
-- **Non-comment text cannot follow a JSON command.** Comment lines anywhere are dropped, including
-  after a JSON body, but the body itself is parsed whole (§3.4a) — so trailing text that is not a
-  `#` comment joins the block and fails `JSON.parse`.
+- **One command per run.** Each line is a command (§3.4a) and a second one before the first blank
+  line is refused, so a script of several commands runs one selection at a time. A command can no
+  longer be wrapped across lines outside a quoted argument; such a text is refused, naming the line.
+  A command after a blank line is not run and not refused, because that is how the cheatsheet's
+  alternatives are separated.
 - **No column modification in a generated migration.** Since
   [#269](https://github.com/libredb/libredb-studio/issues/269) the schema-diff migration generator
   answers a modified column per dialect; keys are not tables and carry no column definitions, so it

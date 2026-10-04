@@ -1603,8 +1603,21 @@ describe("RedisProvider", () => {
       await expect(provider.query("# just a note\n\n# and another")).rejects.toThrow(/only comments|no command/i);
     });
 
-    test("a line that tokenizes to nothing throws Empty command", async () => {
-      await expect(provider.query('""')).rejects.toThrow(/Empty command/);
+    // --- A quoted empty argument is an argument (redis-cli reads it so) ---
+
+    test.each<[string, string, string[]]>([
+      ['SET k ""', "SET", ["k", ""]],
+      ["SET k ''", "SET", ["k", ""]],
+      ['LPUSH l "" x', "LPUSH", ["l", "", "x"]],
+      ['HSET h f ""', "HSET", ["h", "f", ""]],
+      ['SET k ""x', "SET", ["k", "x"]],
+      ['""', "", []],
+    ])("%s sends every quoted empty argument", async (text, command, args) => {
+      // Measured on Redis 8.10.2 before this: `SET k ""` answered "wrong number of arguments" and
+      // `LPUSH l "" x` pushed only `x`, because a token was kept only when it held a character.
+      capturedCalls.length = 0;
+      await provider.query(text);
+      expect(capturedCalls).toEqual([{ command, args }]);
     });
 
     test("a pretty-printed multi-line JSON command still parses", async () => {
@@ -1622,8 +1635,43 @@ describe("RedisProvider", () => {
       expect(result.rows[0].result).toBe("hello-world");
     });
 
-    test("trailing non-comment text after a JSON body is still an Invalid JSON command format", async () => {
+    test("trailing text on the JSON body's own line is still an Invalid JSON command format", async () => {
+      await expect(provider.query('{"command":"GET","args":["mykey"]} trailing note')).rejects.toThrow(
+        /Invalid JSON command format/,
+      );
+    });
+
+    test("a line after a balanced JSON body is a second command, and nothing is sent", async () => {
+      capturedCalls.length = 0;
       await expect(provider.query('{"command":"GET","args":["mykey"]}\ntrailing note')).rejects.toThrow(
+        'Line 2 holds a second command, which begins with "trailing"',
+      );
+      expect(capturedCalls).toEqual([]);
+    });
+
+    test("a pretty-printed JSON command is read until its braces balance, not past them", async () => {
+      capturedCalls.length = 0;
+      const json = JSON.stringify({ command: "SET", args: ["k", "a } ] { [", 'say "hi" \\'] }, null, 2);
+      await provider.query(json);
+      expect(capturedCalls).toEqual([{ command: "SET", args: ["k", "a } ] { [", 'say "hi" \\'] }]);
+
+      await expect(provider.query(`${json}\nDEL k`)).rejects.toThrow(/Line 9 holds a second command/);
+    });
+
+    test("a comment line inside a pretty-printed JSON command is dropped", async () => {
+      capturedCalls.length = 0;
+      await provider.query('{\n  "command": "GET",\n  # the key\n  "args": ["mykey"]\n}');
+      expect(capturedCalls).toEqual([{ command: "GET", args: ["mykey"] }]);
+    });
+
+    test("a blank line ends an unfinished JSON command, which then fails to parse", async () => {
+      await expect(provider.query('{\n  "command": "GET",\n\n  "args": ["mykey"]\n}')).rejects.toThrow(
+        /Invalid JSON command format/,
+      );
+    });
+
+    test("a JSON command that never closes runs to the end of the text and fails to parse", async () => {
+      await expect(provider.query('{\n  "command": "GET",\n  "args": ["mykey"]')).rejects.toThrow(
         /Invalid JSON command format/,
       );
     });
@@ -1655,9 +1703,9 @@ describe("RedisProvider", () => {
      * "Run Selected" would leave them out.
      *
      * NOTE: this helper strips comments and blank lines ITSELF and runs each line
-     * on its own, so it exercises the per-line paths and NOT `commandBody`'s block
+     * on its own, so it exercises the per-line paths and NOT the whole-text reading
      * logic — which is how a comment-stripping defect survived two reviews (#427).
-     * The whole-buffer suite below is the one that covers `commandBody`.
+     * The whole-buffer suite below is the one that covers `readRedisCommandText()`.
      */
     async function runGeneratedLines(buffer: string): Promise<Array<{ command: string; args: string[] }>> {
       capturedCalls.length = 0;
@@ -1724,26 +1772,114 @@ describe("RedisProvider", () => {
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\\[b:*", "COUNT", "50"] }]);
     });
 
-    // --- Multi-line bodies (#427 F2 regression) ---
+    // --- Each line is its own command (docs/providers/redis.md 3.4a) ---
+    //
+    // Until this rule a newline outside quotes was ordinary whitespace, so the first
+    // blank-line-delimited block ran as ONE command. Measured on Redis 8.10.2 and Valkey
+    // 9.1.2: `RPUSH mq x` / `RPUSH mq y` answered `(integer) 4` and the list held
+    // `x, RPUSH, mq, y`. A second command is now refused and nothing reaches the driver.
 
-    test("a plain command wrapped across lines still runs whole", async () => {
-      // On main the tokenizer treated a newline as ordinary whitespace, so this
-      // wrote BOTH fields. First-line-only picking silently dropped the second.
+    test.each<[string, string, string]>([
+      [
+        "two pushes on consecutive lines",
+        "RPUSH mq x\nRPUSH mq y",
+        'Line 2 holds a second command, which begins with "RPUSH"',
+      ],
+      ["two set adds", "SADD s2 a\nSADD s2 b", 'Line 2 holds a second command, which begins with "SADD"'],
+      ["a command once wrapped across lines", "HSET user:1 name alice\nemail a@b.c", 'which begins with "email"'],
+      ["a second command after a comment line", "DEL a\n# then\nDEL b", "Line 3 holds a second command"],
+      [
+        "a second command after leading chrome",
+        "# note\n\nGET a\n  GET b",
+        'Line 4 holds a second command, which begins with "GET"',
+      ],
+      ["a key whose brace would hold a JSON line open", "SET a{b 1\nSET c 2", "Line 2 holds a second command"],
+      [
+        "a second command after a closed multi-line value",
+        'SET note "a\nb"\nGET note',
+        "Line 3 holds a second command",
+      ],
+    ])("%s is refused, naming the line, and nothing is sent", async (_label, text, sentence) => {
       capturedCalls.length = 0;
-      await provider.query("HSET user:1 name alice\nemail a@b.c");
-      expect(capturedCalls).toEqual([{ command: "HSET", args: ["user:1", "name", "alice", "email", "a@b.c"] }]);
+      await expect(provider.query(text)).rejects.toThrow(sentence);
+      expect(capturedCalls).toEqual([]);
     });
 
-    test("a blank line ends the command: the cheatsheet runs only its first block", async () => {
+    test("the refusal says how to run the line and when a command continues", async () => {
+      await expect(provider.query("RPUSH mq x\nRPUSH mq y")).rejects.toThrow(
+        "Select the line to run it, and the editor sends the selection. A command continues onto the next line " +
+          "only inside a quoted argument or an unfinished JSON command.",
+      );
+    });
+
+    test("the refusal quotes at most forty characters of the second command's first word", async () => {
+      const word = "x".repeat(60);
+      await expect(provider.query(`GET a\n${word} b`)).rejects.toThrow(`begins with "${"x".repeat(40)}..."`);
+    });
+
+    test("a blank line ends what a run reads: the cheatsheet runs only its first command", async () => {
       capturedCalls.length = 0;
       await provider.query(generateSelectQuery(["user:*"], KEY_COLUMNS("string"), provider.getCapabilities()));
       expect(capturedCalls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "user:*", "COUNT", "50"] }]);
     });
 
-    test("comment lines between the wrapped lines of one command are dropped", async () => {
+    test("a command after a blank line is an alternative and does not run", async () => {
       capturedCalls.length = 0;
-      await provider.query("HSET user:1 name alice\n# a note\nemail a@b.c");
-      expect(capturedCalls).toEqual([{ command: "HSET", args: ["user:1", "name", "alice", "email", "a@b.c"] }]);
+      await provider.query("RPUSH mq x\n\nRPUSH mq y");
+      expect(capturedCalls).toEqual([{ command: "RPUSH", args: ["mq", "x"] }]);
+    });
+
+    test("trailing comment lines after the command are dropped", async () => {
+      capturedCalls.length = 0;
+      await provider.query("GET mykey\n# a note\n   # another");
+      expect(capturedCalls).toEqual([{ command: "GET", args: ["mykey"] }]);
+    });
+
+    // --- Multi-line scripts continue inside their quoted argument ---
+
+    test("an EVAL script spanning lines runs as one command", async () => {
+      capturedCalls.length = 0;
+      await provider.query('EVAL "local a = 1\nlocal b = 2\n\n-- a comment\nreturn a + b" 0');
+      expect(capturedCalls).toEqual([
+        { command: "EVAL", args: ["local a = 1\nlocal b = 2\n\n-- a comment\nreturn a + b", "0"] },
+      ]);
+    });
+
+    test("a FUNCTION LOAD library spanning lines runs as one command", async () => {
+      const library = [
+        "#!lua name=mylib",
+        "redis.register_function('hi', function(keys, args)",
+        "  # not a comment here",
+        "  return 'hi'",
+        "end)",
+      ].join("\n");
+      capturedCalls.length = 0;
+      await provider.query(`FUNCTION LOAD REPLACE "${library}"`);
+      expect(capturedCalls).toEqual([{ command: "FUNCTION", args: ["LOAD", "REPLACE", library] }]);
+    });
+
+    // A quote still open at the end of the text would take every later line as data: measured,
+    // `SET greeting it's` / `GET greeting` stored "its\nGET greeting". It is refused instead,
+    // naming the line the quote opened on.
+    test.each<[string, string, string]>([
+      ["an apostrophe in an unquoted word", "SET greeting it's\nGET greeting", "Line 1 opens a quoted argument with '"],
+      [
+        "a backslash-escaped quote, which has no escape here",
+        'SET k "a\\"b"\nGET k',
+        'Line 1 opens a quoted argument with "',
+      ],
+      [
+        "a quote that swallows a blank-line alternative",
+        'SET k "abc\nDEL x\n\nGET k',
+        'Line 1 opens a quoted argument with "',
+      ],
+      ["a quote opened after leading chrome", '# note\n\nSET k "abc', 'Line 3 opens a quoted argument with "'],
+      ["a quote reopened on a continuation line", 'SET k "a\nb" "c\nd', 'Line 2 opens a quoted argument with "'],
+    ])("%s is refused, and nothing is sent", async (_label, text, sentence) => {
+      capturedCalls.length = 0;
+      await expect(provider.query(text)).rejects.toThrow(sentence);
+      await expect(provider.query(text)).rejects.toThrow("that never closes");
+      expect(capturedCalls).toEqual([]);
     });
 
     // --- A node name may not smuggle a command through the header comment (#427) ---
@@ -1790,12 +1926,12 @@ describe("RedisProvider", () => {
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\nDEL user:1 x:*", "COUNT", "50"] }]);
     });
 
-    // --- The WHOLE generated buffer through commandBody (#427 S4) ---
+    // --- The WHOLE generated buffer through readRedisCommandText() (#427 S4) ---
     //
     // `runGeneratedLines` above pre-strips comments and blank lines, so it never
-    // reaches `commandBody`. These hand the buffer over UNMODIFIED — what a user
-    // gets by pressing Run with nothing selected — and assert the args the driver
-    // received for the FIRST block, which is the only command that may run.
+    // reaches the whole-text reading. These hand the buffer over UNMODIFIED, what a user
+    // gets by pressing Run with nothing selected, and assert the args the driver
+    // received for the FIRST command, which is the only command that may run.
     const wholeBufferCases: {
       name: string;
       node: string;

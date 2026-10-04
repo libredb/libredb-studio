@@ -976,6 +976,25 @@ function redisCheatsheet(tableName: string, columns: readonly ColumnSchema[]): s
 }
 
 /**
+ * The field paths a MongoDB projection may name together: every path whose ancestor is also
+ * listed is dropped, since projecting the subdocument already returns it.
+ *
+ * Inferred columns name a subdocument and its dotted children side by side (`address`,
+ * `address.city`, `address.geo.lat`; docs/providers/mongodb.md section 3.3), and MongoDB
+ * refuses a projection or `$project` that names a path beside one of its sub-paths:
+ * `Path collision at address.city remaining portion city` (measured on mongo:8.2.12). An
+ * ancestor is a whole segment, so `addressBook` survives `address`. Order is kept and
+ * duplicates collapse.
+ */
+export function outermostFieldPaths(names: readonly string[]): string[] {
+  const listed = new Set(names);
+  return [...listed].filter((name) => {
+    const segments = name.split(".");
+    return !segments.some((_, i) => i > 0 && listed.has(segments.slice(0, i).join(".")));
+  });
+}
+
+/**
  * The statement behind "Generate Query", which is written into a tab and NOT run.
  *
  * Takes the object's PATH for the same reason `generateTableQuery` does, and the two stay
@@ -1012,8 +1031,8 @@ export function generateSelectQuery(
   if (dialect !== undefined) return DIALECT_GENERATORS[dialect].select(path, columns, scope);
   if (capabilities.queryLanguage === "json") {
     const projection: Record<string, number> = {};
-    columns.forEach((c) => {
-      projection[c.name] = 1;
+    outermostFieldPaths(columns.map((c) => c.name)).forEach((name) => {
+      projection[name] = 1;
     });
     return JSON.stringify(
       {
