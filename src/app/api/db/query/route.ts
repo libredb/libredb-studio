@@ -1,4 +1,5 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
+import { pageOfProbe, pageOptionError, probePastPage } from "@/lib/api/page-probe";
 import { NextRequest, NextResponse } from "next/server";
 import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -69,6 +70,11 @@ export async function POST(req: NextRequest) {
     // sends it on to the engine (ClickHouse) or keys a Map with it, so only a string (#1364).
     if (queryId !== undefined && typeof queryId !== "string") {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
+    }
+
+    const optionError = pageOptionError(options);
+    if (optionError !== null) {
+      return NextResponse.json({ error: optionError }, { status: 400 });
     }
 
     // A connection type that declares a console text bound is held to it here, before the bound parameters, the
@@ -226,6 +232,9 @@ export async function POST(req: NextRequest) {
 
     const prepared = provider.prepareQuery(statement, options);
 
+    // The statement that runs asks for a row past the page (#1440); see `probePastPage`.
+    const probe = probePastPage(provider, statement, options, prepared);
+
     // A SINGLE STATEMENT CAN LEAVE A TRANSACTION OPEN, SO THIS ROUTE ENDS IT (D74).
     //
     // MEASURED 2026-09-15 against PostgreSQL 18.4 through this handler with the real
@@ -253,7 +262,7 @@ export async function POST(req: NextRequest) {
     const supportsCancel = supportsQueryCancel(provider);
     let result: Awaited<ReturnType<typeof provider.query>>;
     try {
-      result = await provider.query(prepared.query, bound.params, supportsCancel ? queryId : undefined, scope);
+      result = await provider.query(probe.query, bound.params, supportsCancel ? queryId : undefined, scope);
     } finally {
       if (endsOpenQueryTransactions(provider)) {
         openTransaction = await provider.endOpenQueryTransaction(scope);
@@ -273,12 +282,17 @@ export async function POST(req: NextRequest) {
     // One rule, per statement, with no branching on database type: if the bound is ours,
     // pagination is offered; if it is the user's, or the statement could not be
     // rewritten, it is not.
-    const hasMore = prepared.wasLimited && result.rows.length === prepared.limit;
+    //
+    // The probe row is the proof (#1440): more than `prepared.limit` rows came back, so a next
+    // page exists, and the page itself is cut back to the limit asked for.
+    const { hasMore, rows: pageRows } = pageOfProbe(prepared, result.rows);
     return NextResponse.json({
       ...firstResultSet(result),
+      // The probe row is not part of the answer, so the count that names the rows is the page's.
+      ...(hasMore && { rowCount: pageRows.length }),
       // NaN and the infinities as words: `JSON.stringify` would write each as null, which
       // the grid and every export then show as SQL NULL (`src/lib/non-finite.ts`).
-      rows: rowsWithNonFiniteWords(result.rows),
+      rows: rowsWithNonFiniteWords(pageRows),
       ...(explainFormat !== undefined && { explainFormat }),
       // Present only when there was a transaction to end, the way `/api/db/multi-query`
       // reports it, so an always-present "none" would announce something that did not happen.
@@ -290,7 +304,7 @@ export async function POST(req: NextRequest) {
         limit: prepared.limit,
         offset: prepared.offset,
         hasMore,
-        totalReturned: result.rows.length,
+        totalReturned: pageRows.length,
         // A bound the PROVIDER applied is reported too (#1085, section 5.4). A provider that cuts
         // its own result, as the Prometheus provider cuts a vector at its series cap, says so on
         // the result's own `pagination`, and the badge this field drives says "Studio bounded this

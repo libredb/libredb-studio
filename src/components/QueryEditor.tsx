@@ -675,7 +675,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
               className="h-7 text-xs font-medium text-white bg-brand-solid hover:bg-brand-solid-hover hover:text-white gap-2 shadow-[0_0_10px_rgba(37,99,235,0.3)] animate-in fade-in zoom-in duration-200"
               onClick={handleExecute}
             >
-              <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Run Sel
+              <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Run Selected
             </Button>
           )}
 

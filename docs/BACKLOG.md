@@ -3478,15 +3478,15 @@ Not fixed in #1085: the spec and the rail predate it.
 
 **Done when:** the spec's locator names the editor's RUN button alone (`exact: true`, or a test id of its own), and the spec passes with an LLM configured.
 
-### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Sel" run nothing, and the toolbar Run sends the whole buffer
+### U47. In the embedded `StudioWorkspace`, Cmd/Ctrl+Enter, "Run Query" and "Run Selected" run nothing, and the toolbar Run sends the whole buffer
 
-`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Sel" button all end there.
+`handleExecute` in `src/components/QueryEditor.tsx` syncs the buffer, flashes the range it will run and dispatches a window `execute-query` event whose `detail.query` is the selection, or else the statement at the caret; the Cmd/Ctrl+Enter command, the "Run Query" context-menu entry and the editor's "Run Selected" button all end there.
 The only listener is in `src/hooks/use-query-execution.ts`, which only the standalone `src/components/Studio.tsx` uses.
 The embedded `StudioWorkspace` (`src/workspace/StudioWorkspace.tsx`, the npm package's shell) runs queries through `useQueryAdapter`, which registers none, so in the published shell those three controls never reach the host's `onQueryExecute`.
 The one control that runs there is the toolbar Run, and `executeQuery` in `src/workspace/hooks/use-query-adapter.ts` sends `overrideQuery || tabToExec.query`, the whole buffer: it never asks the editor for `getEffectiveQuery`, as `use-query-execution.ts` does, so neither a selection nor the statement at the caret can be run in that shell.
 On a PromQL tab that is a refusal: a buffer holding `up` and `rate(prometheus_http_requests_total[5m])` on two lines is sent whole, and the server answers `bad_data` with `2:1: parse error: unexpected identifier "rate"`, while `up` alone answers.
 The editor shows its Cmd/Ctrl+Enter hint in both shells, and the shortcut list in `docs/FEATURES.md`, generated from `src/lib/keyboard-shortcuts.ts`, offers it without naming a shell.
-Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Sel" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
+Reproduced 2026-09-23 by mounting the real `StudioWorkspace` and the real `QueryEditor` with only Monaco doubled: on a PostgreSQL host with the buffer `SELECT 1;` and `SELECT 2` on two lines and `SELECT 2` selected, Cmd+Enter, "Run Query" and "Run Selected" each dispatched `execute-query` with `SELECT 2` and `onQueryExecute` received nothing, and the toolbar Run then sent both statements.
 `git log -S'execute-query' -- src/workspace` is empty, so the embedded shell never listened, and `tests/components/StudioWorkspace.test.tsx` mocks `QueryEditor`, so no test reaches the embedded run shortcut.
 
 Found 2026-09-23 by the #1085 review.

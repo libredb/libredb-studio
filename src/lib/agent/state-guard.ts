@@ -178,6 +178,7 @@ const QUERY_RESULT_FIELDS: Record<keyof QueryResult, ResultFieldClass> = {
   warnings: "summary",
   columnTypes: "summary",
   vectorColumns: "summary",
+  rolledBack: "summary",
 };
 
 /**

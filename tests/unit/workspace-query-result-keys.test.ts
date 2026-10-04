@@ -22,6 +22,7 @@ const QUERY_RESULT_KEYS: Readonly<Record<keyof QueryResult, true>> = {
   columnTypes: true,
   vectorColumns: true,
   resultSets: true,
+  rolledBack: true,
 };
 
 const WORKSPACE_RESULT_KEYS: Readonly<Record<keyof WorkspaceQueryResult, true>> = {
@@ -40,6 +41,7 @@ const NOT_CARRIED: Readonly<Partial<Record<keyof QueryResult, string>>> = {
   explainPlan: "a plan reaches a tab through its own channel, QueryTab.explainPlan, and never through the result",
   resultSets:
     "read only by the standalone multi-statement route, to pick which set of a T-SQL batch it shows; a host's executor shows its own result",
+  rolledBack: "set by the standalone app when its SANDBOX rolled a run back; the embedded shell has no SANDBOX",
   columnTypes:
     "carried under another name: a host declares WorkspaceQueryResult.columns[].type and the adapter builds columnTypes from it",
 };

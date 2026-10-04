@@ -135,12 +135,15 @@ describe("POST /api/db/query", () => {
     );
   });
 
-  for (const [count, providerLimited, expectedLimited] of [
-    [2, false, false],
-    [50, false, true],
-    [2, true, true],
+  // `count` is what the engine answered to the statement that ran, which asks for one row past the
+  // 50-row page (#1440): 50 is a page that ended exactly full, 51 is a page with a next one.
+  for (const [count, providerLimited, expectedMore, expectedReturned, expectedLimited] of [
+    [2, false, false, 2, false],
+    [50, false, false, 50, false],
+    [51, false, true, 50, true],
+    [2, true, false, 2, true],
   ] as const) {
-    test(`reports a ${count}-row page with provider cut=${providerLimited} accurately`, async () => {
+    test(`reports a ${count}-row answer with provider cut=${providerLimited} accurately`, async () => {
       (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
         rows: Array.from({ length: count }, (_, i) => ({ id: i + 1 })),
         fields: ["id"],
@@ -158,8 +161,8 @@ describe("POST /api/db/query", () => {
       expect(data.pagination).toEqual({
         limit: 50,
         offset: 0,
-        hasMore: count === 50,
-        totalReturned: count,
+        hasMore: expectedMore,
+        totalReturned: expectedReturned,
         wasLimited: expectedLimited,
       });
     });
@@ -521,6 +524,22 @@ describe("POST /api/db/query", () => {
     expect(data.error).toBe("Something unexpected happened");
   });
 
+  // The probe adds one to the limit, so a limit that is not a number would be concatenated, not added.
+  for (const options of [{ limit: "500" }, { limit: -1 }, { limit: 1.5 }, { offset: "0" }, { offset: -5 }, null]) {
+    test(`refuses options ${JSON.stringify(options)} before any provider is reached`, async () => {
+      const req = createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT * FROM users", options },
+      });
+
+      const res = await POST(req as never);
+
+      expect(res.status).toBe(400);
+      expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
+      expect(mockProvider.query).not.toHaveBeenCalled();
+    });
+  }
+
   test("calls prepareQuery with sql and options", async () => {
     const req = createMockRequest("/api/db/query", {
       method: "POST",
@@ -533,11 +552,45 @@ describe("POST /api/db/query", () => {
 
     await POST(req as never);
 
-    expect(mockProvider.prepareQuery).toHaveBeenCalledTimes(1);
-    expect(mockProvider.prepareQuery).toHaveBeenCalledWith("SELECT * FROM users", { limit: 100 });
+    // The first call is the page the caller asked for; the second, made only because the limiter
+    // bounded it, asks for one row more so the route can tell a full last page from a full page (#1440).
+    expect(mockProvider.prepareQuery).toHaveBeenCalledTimes(2);
+    expect(mockProvider.prepareQuery).toHaveBeenNthCalledWith(1, "SELECT * FROM users", { limit: 100 });
+    expect(mockProvider.prepareQuery).toHaveBeenNthCalledWith(2, "SELECT * FROM users", {
+      limit: 51,
+      unlimited: false,
+    });
   });
 
-  test("pagination hasMore is true when rows.length equals limit", async () => {
+  test("the statement that runs is the one that asks for a row past the page, and the extra row is not answered", async () => {
+    (mockProvider.prepareQuery as ReturnType<typeof mock>)
+      .mockImplementationOnce(() => ({ query: "page", wasLimited: true, limit: 3, offset: 0 }))
+      .mockImplementationOnce(() => ({ query: "page+1", wasLimited: true, limit: 4, offset: 0 }));
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }],
+      fields: ["id"],
+      rowCount: 4,
+      executionTime: 10,
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users" },
+    });
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{
+      rows: unknown[];
+      rowCount: number;
+      pagination: { hasMore: boolean; totalReturned: number; wasLimited: boolean };
+    }>(res);
+
+    expect((mockProvider.query as ReturnType<typeof mock>).mock.calls.at(-1)?.[0]).toBe("page+1");
+    expect(data.rows).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    expect(data.rowCount).toBe(3);
+    expect(data.pagination).toMatchObject({ hasMore: true, totalReturned: 3, wasLimited: true });
+  });
+
+  test("a page that ends exactly full offers no further page (#1440)", async () => {
     const fiftyRows = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }));
     (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
       rows: fiftyRows,
@@ -557,7 +610,7 @@ describe("POST /api/db/query", () => {
     }>(res);
 
     expect(res.status).toBe(200);
-    expect(data.pagination.hasMore).toBe(true);
+    expect(data.pagination.hasMore).toBe(false);
     expect(data.pagination.totalReturned).toBe(50);
   });
 
@@ -692,9 +745,9 @@ describe("POST /api/db/query", () => {
     // (`wasLimited: true`, limit 50, `tests/helpers/mock-provider.ts:157-165`) and the result
     // carries no `pagination`. The whole object is pinned, so no field of it moved.
     (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
-      rows: Array.from({ length: 50 }, (_, i) => ({ id: i + 1 })),
+      rows: Array.from({ length: 51 }, (_, i) => ({ id: i + 1 })),
       fields: ["id"],
-      rowCount: 50,
+      rowCount: 51,
       executionTime: 10,
     });
 
@@ -717,11 +770,11 @@ describe("POST /api/db/query", () => {
     // provider sets `pagination`, so this is the arm that keeps an external implementer's
     // `false` from hiding the badge, and `hasMore` still answers from the limiter's bound.
     (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
-      rows: Array.from({ length: 50 }, (_, i) => ({ id: i + 1 })),
+      rows: Array.from({ length: 51 }, (_, i) => ({ id: i + 1 })),
       fields: ["id"],
-      rowCount: 50,
+      rowCount: 51,
       executionTime: 10,
-      pagination: { limit: 50, offset: 0, hasMore: false, totalReturned: 50, wasLimited: false },
+      pagination: { limit: 50, offset: 0, hasMore: false, totalReturned: 51, wasLimited: false },
     });
 
     const req = createMockRequest("/api/db/query", {

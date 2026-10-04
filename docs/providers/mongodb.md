@@ -200,7 +200,7 @@ A `find` with no explicit `options.limit` is capped at **100** documents
 `$limit` stage can return an unbounded result set.
 
 `prepareQuery()` does **not** modify the query (it injects no limit, and the JSON is passed through unchanged), but it is **not** a true no-op: it returns `limit: options.limit || 100` and `wasLimited: false`, and the `/api/db/query` route builds its pagination metadata from them.
-The route computes `hasMore = prepared.wasLimited && rows.length === prepared.limit`, so every MongoDB result answers `hasMore: false` and `wasLimited: false`, and the provider declares `supportsResultPagination: false`, so no Load More is offered.
+The route computes `hasMore = prepared.wasLimited && rows.length > prepared.limit` (a row past the page came back, #1440), so every MongoDB result answers `hasMore: false` and `wasLimited: false`, and the provider declares `supportsResultPagination: false`, so no Load More is offered.
 Measured 2026-09-27 on MongoDB 8.3 through the route: a `find` over 150 documents returned 100 rows with `hasMore: false` and `wasLimited: false`, so a result the 100 cap cut carries no "limited" badge.
 The `unlimited` option is **not** honoured; see [Known limitations](#13-known-limitations--future-work).
 

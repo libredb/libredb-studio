@@ -61,6 +61,17 @@ export interface CellChange {
 
 const CLEAR_FILTER_LABEL = "Clear filter";
 const EMPTY_RESULT_HINT = "The operation was successful, but the result set is currently empty.";
+/**
+ * What a write statement answers: no columns, no rows, and the count of rows it changed. The
+ * grid used to draw its empty state for it, which read as "nothing happened" next to a count
+ * the API had already returned (#1425). A zero count stays on the empty state: an engine that
+ * reports none and a write that matched nothing cannot be told apart from here.
+ */
+function affectedRowsLabel(result: QueryResult | undefined): string | undefined {
+  if (!result || result.fields.length > 0 || result.rows.length > 0 || !(result.rowCount > 0)) return undefined;
+  const noun = result.rowCount === 1 ? "row" : "rows";
+  return `${result.rowCount} ${noun} affected${result.rolledBack === true ? ", rolled back" : ""}`;
+}
 const ENGINE_WARNINGS_LABEL = "The engine reported:";
 const ROW_DETAIL_COLUMN_ID = "__libredb_row_detail__";
 const ROW_DETAIL_HEADER_TITLE = "Show a row field by field";
@@ -920,12 +931,13 @@ export function ResultsGrid({
     // segment unavailable, and the stats bar that normally carries the badge is
     // not rendered in this state - so the notices are shown outright.
     const emptyWarnings = result?.warnings ?? [];
+    const affected = affectedRowsLabel(result);
     return (
       <div className="h-full flex flex-col items-center justify-center p-8 text-center text-fg-subtle animate-in fade-in zoom-in-95 duration-500">
         <div className="w-16 h-16 rounded-2xl bg-panel flex items-center justify-center mb-6 border border-hairline shadow-2xl">
           <span className="text-2xl text-fg-muted">&#x2205;</span>
         </div>
-        <p className="text-xs font-medium text-fg-tertiary">Query returned no data</p>
+        <p className="text-xs font-medium text-fg-tertiary">{affected ?? "Query returned no data"}</p>
         {emptyWarnings.length > 0 && (
           <div className="mt-3 max-w-[280px] text-xs text-warning leading-relaxed">
             <p className="font-medium">{ENGINE_WARNINGS_LABEL}</p>
@@ -936,7 +948,9 @@ export function ResultsGrid({
             </ul>
           </div>
         )}
-        <p className="text-xs text-fg-subtle mt-2 max-w-[280px] leading-relaxed">{EMPTY_RESULT_HINT}</p>
+        {affected === undefined && (
+          <p className="text-xs text-fg-subtle mt-2 max-w-[280px] leading-relaxed">{EMPTY_RESULT_HINT}</p>
+        )}
       </div>
     );
   }

@@ -152,12 +152,15 @@ describe("POST /api/db/transaction", () => {
     }));
   });
 
-  for (const [count, providerLimited, expectedLimited] of [
-    [2, false, false],
-    [50, false, true],
-    [2, true, true],
+  // `count` is what the engine answered to the statement that ran, which asks for one row past the
+  // 50-row page (#1440): 50 is a page that ended exactly full, 51 is a page with a next one.
+  for (const [count, providerLimited, expectedMore, expectedReturned, expectedLimited] of [
+    [2, false, false, 2, false],
+    [50, false, false, 50, false],
+    [51, false, true, 50, true],
+    [2, true, false, 2, true],
   ] as const) {
-    test(`reports a ${count}-row page with provider cut=${providerLimited} accurately`, async () => {
+    test(`reports a ${count}-row answer with provider cut=${providerLimited} accurately`, async () => {
       (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
         rows: Array.from({ length: count }, (_, i) => ({ id: i + 1 })),
         fields: ["id"],
@@ -175,8 +178,8 @@ describe("POST /api/db/transaction", () => {
       expect(data.pagination).toEqual({
         limit: 50,
         offset: 0,
-        hasMore: count === 50,
-        totalReturned: count,
+        hasMore: expectedMore,
+        totalReturned: expectedReturned,
         wasLimited: expectedLimited,
       });
     });
@@ -472,6 +475,19 @@ describe("POST /api/db/transaction", () => {
    * offered on a statement the limiter declined to rewrite would re-run it unchanged and
    * append the rows already on screen. One field, one meaning, both routes.
    */
+  test("refuses a limit that is not a non-negative integer before the limiter runs", async () => {
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT 1", options: { limit: "500" } },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(400);
+    expect(mockTxProvider.prepareQuery).not.toHaveBeenCalled();
+    expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+  });
+
   test("offers no next page inside a transaction when the limiter left the statement alone", async () => {
     (mockTxProvider.prepareQuery as ReturnType<typeof mock>).mockImplementation((query: string) => ({
       query,
@@ -509,10 +525,11 @@ describe("POST /api/db/transaction", () => {
       limit: 2,
       offset: 0,
     }));
+    // The statement that runs asks for one row past the page, so a next page is three rows here.
     (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockImplementation(async () => ({
-      rows: [{ id: 1 }, { id: 2 }],
+      rows: [{ id: 1 }, { id: 2 }, { id: 3 }],
       fields: ["id"],
-      rowCount: 2,
+      rowCount: 3,
       executionTime: 3,
     }));
 
@@ -521,12 +538,18 @@ describe("POST /api/db/transaction", () => {
       body: { connection: validConnection, action: "query", sql: "SELECT * FROM users" },
     });
 
-    const data = await parseResponseJSON<{ pagination: { hasMore: boolean; wasLimited: boolean } }>(
-      await POST(req as never),
-    );
+    const data = await parseResponseJSON<{
+      rows: unknown[];
+      rowCount: number;
+      pagination: { hasMore: boolean; wasLimited: boolean; totalReturned: number };
+    }>(await POST(req as never));
 
     expect(data.pagination.wasLimited).toBe(true);
     expect(data.pagination.hasMore).toBe(true);
+    // The probe row is not part of the answer (#1440).
+    expect(data.rows).toEqual([{ id: 1 }, { id: 2 }]);
+    expect(data.rowCount).toBe(2);
+    expect(data.pagination.totalReturned).toBe(2);
   });
 
   // A row edit applied while a transaction is open takes this endpoint, so the

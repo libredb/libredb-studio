@@ -855,7 +855,7 @@ const result = await provider.query(prepared.query);
 | Field | Purpose |
 |-------|---------|
 | `query` | The (possibly modified) query string to execute |
-| `wasLimited` | Whether a LIMIT was injected. This preparation flag is unchanged for short results; the query and transaction routes report it on the response's `pagination.wasLimited` only when the returned page fills that bound, which the stats strip shows as the "limited" badge. A provider that bounds its own result instead, as the Prometheus provider cuts a vector at its series cap and the Kafka provider cuts a read at its row limit, its result byte budget and its cell limit, returns `false` here and reports its bound on `QueryResult.pagination.wasLimited`, which `POST /api/db/query` keeps (#1085, section 5.4); such a bound never sets `hasMore`, because no offset can advance it |
+| `wasLimited` | Whether a LIMIT was injected. This preparation flag is unchanged for short results; the query and transaction routes report it on the response's `pagination.wasLimited` only when a row past the page came back (#1440), which the stats strip shows as the "limited" badge. A provider that bounds its own result instead, as the Prometheus provider cuts a vector at its series cap and the Kafka provider cuts a read at its row limit, its result byte budget and its cell limit, returns `false` here and reports its bound on `QueryResult.pagination.wasLimited`, which `POST /api/db/query` keeps (#1085, section 5.4); such a bound never sets `hasMore`, because no offset can advance it |
 | `limit` | The effective row limit |
 | `offset` | The effective offset |
 

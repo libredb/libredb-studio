@@ -398,6 +398,39 @@ describe("ResultsGrid", () => {
     expect(queryByText("Query returned no data")).not.toBeNull();
   });
 
+  // ── A write's affected-row count (#1425) ──────────────────────────────────
+
+  test("says how many rows a write affected instead of the empty state", () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: { ...mockEmptyResult, rowCount: 10 } }));
+
+    expect(container.textContent).toContain("10 rows affected");
+    expect(container.textContent).not.toContain("Query returned no data");
+    expect(container.textContent).not.toContain("result set is currently empty");
+  });
+
+  test("uses the singular for a single affected row", () => {
+    const { container } = render(React.createElement(ResultsGrid, { result: { ...mockEmptyResult, rowCount: 1 } }));
+
+    expect(container.textContent).toContain("1 row affected");
+    expect(container.textContent).not.toContain("1 rows");
+  });
+
+  test("says the count was rolled back when the run recorded a confirmed rollback", () => {
+    const { container } = render(
+      React.createElement(ResultsGrid, { result: { ...mockEmptyResult, rowCount: 3, rolledBack: true } }),
+    );
+
+    expect(container.textContent).toContain("3 rows affected, rolled back");
+  });
+
+  test("keeps the empty state for a SELECT that matched nothing", () => {
+    const { container } = render(
+      React.createElement(ResultsGrid, { result: { ...mockEmptyResult, fields: ["id"], rowCount: 0 } }),
+    );
+
+    expect(container.textContent).toContain("Query returned no data");
+  });
+
   // ── 2. Renders column headers from result.fields ──────────────────────────
 
   test("renders desktop-table column headers from result.fields", () => {

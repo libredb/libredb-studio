@@ -243,6 +243,17 @@ describe("storage facade: favorite connections", () => {
     expect(storage.getFavoriteConnectionIds()).toEqual(["conn-2"]);
   });
 
+  test("deleteConnection removes the connection's editor tabs and leaves another connection's alone (#1448)", () => {
+    storage.saveConnection(makeConnection({ id: "conn-1" }));
+    localStorage.setItem("libredb_workspace_tabs_v1:conn-1", '{"tabs":[{"query":"SELECT secret"}]}');
+    localStorage.setItem("libredb_workspace_tabs_v1:conn-2", '{"tabs":[]}');
+
+    storage.deleteConnection("conn-1");
+
+    expect(localStorage.getItem("libredb_workspace_tabs_v1:conn-1")).toBeNull();
+    expect(localStorage.getItem("libredb_workspace_tabs_v1:conn-2")).toBe('{"tabs":[]}');
+  });
+
   test("deleteConnection does not touch favorite_connections when the deleted id wasn't favorited", () => {
     storage.saveConnection(makeConnection({ id: "conn-1" }));
     storage.toggleFavoriteConnection("conn-2");

@@ -726,6 +726,7 @@ export function useQueryExecution({
             executionTime,
             status: "error",
             executedAt: new Date(),
+            ...(isExplain && { kind: "explain" as const }),
             errorMessage,
           });
 
@@ -752,7 +753,8 @@ export function useQueryExecution({
             executionTime: resultData.executionTime || executionTime,
             status: resultData.hasError ? "error" : "success",
             executedAt: new Date(),
-            rowCount: resultData.rowCount,
+            // An EXPLAIN's rows are the plan's, not the statement's (#1447).
+            ...(isExplain ? { kind: "explain" as const } : { rowCount: resultData.rowCount }),
             errorMessage: resultData.hasError
               ? resultData.statements?.find((s: { status: string }) => s.status === "error")?.error
               : undefined,
@@ -947,6 +949,9 @@ export function useQueryExecution({
               }),
             )
           ) {
+            // Recorded on the result the grid shows, only because the server confirmed it: the
+            // grid says "rolled back" about THIS run, never about the toggle's current state (#1425).
+            commitToTab((t) => (t.result ? { ...t, result: { ...t.result, rolledBack: true } } : t));
             toast({
               title: "Playground",
               description: "Changes auto-rolled back. No data was modified.",

@@ -286,6 +286,53 @@ describe("useQueryExecution", () => {
     expect(params.setTabs).toHaveBeenCalled();
   });
 
+  // ── An Explain run is recorded as a plan (#1447) ───────────────────────────
+
+  test("an Explain run is recorded as a plan with no row count", async () => {
+    mockGlobalFetch({
+      "/api/db/query": {
+        ok: true,
+        json: { rows: [{ "QUERY PLAN": { plan: "Seq Scan" } }], fields: ["QUERY PLAN"], rowCount: 1, executionTime: 5 },
+      },
+    });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    const historyArg = (storage.addToHistory as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
+    expect(historyArg.query).toBe("SELECT * FROM users");
+    expect(historyArg.kind).toBe("explain");
+    expect("rowCount" in historyArg).toBe(false);
+  });
+
+  test("a failed Explain run is recorded as a plan too", async () => {
+    mockGlobalFetch({ "/api/db/query": { ok: false, status: 400, json: { error: "EXPLAIN is not allowed here" } } });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users", undefined, true);
+    });
+
+    const historyArg = (storage.addToHistory as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
+    expect(historyArg.status).toBe("error");
+    expect(historyArg.kind).toBe("explain");
+  });
+
+  test("an ordinary run keeps its row count and carries no kind", async () => {
+    mockGlobalFetch({ "/api/db/query": { ok: true, json: mockQueryResult } });
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT * FROM users");
+    });
+
+    const historyArg = (storage.addToHistory as ReturnType<typeof mock>).mock.calls[0][0] as Record<string, unknown>;
+    expect(historyArg.rowCount).toBe(mockQueryResult.rowCount);
+    expect("kind" in historyArg).toBe(false);
+  });
+
   // ── executeQuery adds to history on success ────────────────────────────────
 
   test("executeQuery adds to history on success", async () => {
@@ -3502,6 +3549,78 @@ describe("useQueryExecution", () => {
 
     expect(fetchMock).toHaveBeenCalled();
     expect(mockToastError).not.toHaveBeenCalledWith("Statement Refused", expect.anything());
+  });
+
+  // ── The result says "rolled back" only about its own run (#1425) ───────
+
+  const writeResult = { rows: [], fields: [], rowCount: 4, executionTime: 2 };
+
+  test("a SANDBOX run whose rollback was confirmed marks its result rolled back", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    mockGlobalFetch({
+      "/api/db/transaction": { ok: true, json: writeResult },
+      "/api/db/query": { ok: true, json: writeResult },
+    });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs, playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    expect(tabs[0].result?.rolledBack).toBe(true);
+  });
+
+  test("a committed write is never marked rolled back, whatever SANDBOX is later set to", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    mockGlobalFetch({ "/api/db/query": { ok: true, json: writeResult } });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs, playgroundMode: false });
+    const { result, rerender } = renderHook((p) => useQueryExecution(p), { initialProps: params });
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET active = false");
+    });
+    rerender({ ...params, playgroundMode: true });
+
+    expect(tabs[0].result?.rolledBack).toBeUndefined();
+  });
+
+  test("an unconfirmed rollback never marks the result rolled back", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse((init?.body as string) || "{}");
+      if (body.action === "rollback") throw new Error("rollback network failure");
+      return new Response(JSON.stringify(writeResult), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs, playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("UPDATE users SET active = false");
+    });
+
+    expect(tabs[0].result?.rowCount).toBe(4);
+    expect(tabs[0].result?.rolledBack).toBeUndefined();
+    globalThis.fetch = originalFetch;
+  });
+
+  test("a statement that ended the SANDBOX transaction is never marked rolled back", async () => {
+    const { tabs, setTabs } = mutableTabs([createTab()]);
+    const originalFetch = globalThis.fetch;
+    transactionRoute({ ...writeResult, inTransaction: false });
+    const params = createDefaultParams({ tabs, currentTab: tabs[0], setTabs, playgroundMode: true });
+    const { result } = renderHook(() => useQueryExecution(params));
+
+    await act(async () => {
+      await result.current.executeQuery("ALTER TABLE a RENAME TO b");
+    });
+
+    expect(tabs[0].result?.rolledBack).toBeUndefined();
+    globalThis.fetch = originalFetch;
   });
 
   // ── Playground rollback fetch failures are swallowed ───────────────────
