@@ -24,6 +24,10 @@
  * standalone payload, and every I/O dependency is a seam so tests/unit/docker-discover.test.ts can drive
  * it without Docker.
  */
+import nodeFs, { constants as fsConstants, realpathSync } from "node:fs";
+import http from "node:http";
+import { basename, dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * The only environment keys that leave a service spec, case-sensitive. DFLY_requirepass is mixed case on
@@ -371,4 +375,382 @@ export function classifyDockerError(error) {
   }
   if (code === "ERESPONSETOOLARGE") return { ok: false, code: "limit_exceeded", message: clip(describeError(error)) };
   return { ok: false, code: "docker_error", message: clip(describeError(error)) };
+}
+
+const API_PREFIX = "/v1.44";
+
+/** An Error carrying a Node-style `code`, which classifyDockerError reads. */
+function codedError(message, code) {
+  return Object.assign(new Error(message), { code });
+}
+
+/** The daemon's own `{"message": ...}` text, or a generic line when the body carries none. */
+function daemonMessage(text, statusCode) {
+  try {
+    const body = JSON.parse(text);
+    if (body && typeof body.message === "string" && body.message) return body.message;
+  } catch {
+    // Not JSON: the generic line below says what is known, without echoing an unknown body.
+  }
+  return `Docker answered HTTP ${statusCode}`;
+}
+
+/**
+ * A GET-only Engine API client over the unix socket. node:http and not fetch: global fetch cannot use a
+ * unix socket without undici. `agent: false` gives each request its own connection that closes with it,
+ * so nothing keeps the process alive after the last scan. Each request is bounded in time (the whole
+ * request, not idle time) and in body size. A non-2xx answer rejects with `statusCode` and the daemon's
+ * message; a socket failure rejects with its errno `code`. `abort()` ends every request in flight, so a
+ * signal never waits on the daemon.
+ */
+export function createDockerClient({ socket, request, timeoutMs, maxBytes } = {}) {
+  const send = request ?? http.request;
+  const budgetMs = timeoutMs ?? LIMITS.requestTimeoutMs;
+  const cap = maxBytes ?? LIMITS.responseBytes;
+  const inFlight = new Set();
+
+  function get(path) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let outgoing = null;
+      const timer = setTimeout(
+        () => fail(codedError(`Docker did not answer GET ${path} within ${budgetMs} ms`, "ETIMEDOUT")),
+        budgetMs,
+      );
+      const entry = { abort: () => fail(codedError(`GET ${path} aborted`, "EABORTED")) };
+      inFlight.add(entry);
+      function settle() {
+        settled = true;
+        clearTimeout(timer);
+        inFlight.delete(entry);
+      }
+      function fail(error) {
+        if (settled) return;
+        settle();
+        outgoing?.destroy();
+        reject(error);
+      }
+      function finish(response, chunks) {
+        if (settled) return;
+        settle();
+        const text = Buffer.concat(chunks).toString("utf8");
+        const statusCode = response.statusCode ?? 0;
+        if (statusCode < 200 || statusCode >= 300) {
+          reject(Object.assign(new Error(daemonMessage(text, statusCode)), { statusCode }));
+          return;
+        }
+        try {
+          resolve(JSON.parse(text));
+        } catch {
+          reject(codedError(`Docker answered GET ${path} with a body that is not JSON`, "EBADJSON"));
+        }
+      }
+      try {
+        outgoing = send(
+          { socketPath: socket, path, method: "GET", headers: { Host: "docker" }, agent: false },
+          (response) => {
+            const chunks = [];
+            let size = 0;
+            response.on("data", (chunk) => {
+              size += chunk.length;
+              if (size > cap) {
+                fail(codedError(`Docker answered GET ${path} with more than ${cap} bytes`, "ERESPONSETOOLARGE"));
+                return;
+              }
+              chunks.push(chunk);
+            });
+            response.on("end", () => finish(response, chunks));
+            response.on("error", fail);
+          },
+        );
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      outgoing.on("error", fail);
+      outgoing.end();
+    });
+  }
+
+  function abort() {
+    for (const entry of [...inFlight]) entry.abort();
+  }
+
+  return { get, abort };
+}
+
+/** One listing: the network, then the services on it. Never throws; a failure comes back as a status. */
+export async function scanOnce({ client, config }) {
+  try {
+    const filters = encodeURIComponent(JSON.stringify({ name: [config.network] }));
+    const network = selectNetwork(await client.get(`${API_PREFIX}/networks?filters=${filters}`), config.network);
+    if (!network) {
+      return {
+        ok: false,
+        status: {
+          ok: false,
+          code: "network_not_found",
+          message: clip(`no network is named exactly ${config.network}`),
+        },
+      };
+    }
+    const services = await client.get(`${API_PREFIX}/services?status=true`);
+    if (!Array.isArray(services)) {
+      return {
+        ok: false,
+        status: {
+          ok: false,
+          code: "docker_error",
+          message: "Docker answered GET /services with something other than a list",
+        },
+      };
+    }
+    return { ok: true, network, ...selectServices(services, network, config.exclude) };
+  } catch (error) {
+    return { ok: false, status: classifyDockerError(error) };
+  }
+}
+
+/**
+ * The output directory must be a real directory owned by this process and not writable by group or
+ * others. Otherwise the web process, or anyone else, could plant a link there for this root process to
+ * follow, so the exporter writes nothing and exits. The images never create /app/discovery, so Docker
+ * creates the named volume's root as root:root 0755, which passes.
+ */
+export function checkOutputDir(dir, { fs, uid }) {
+  let stats;
+  try {
+    stats = fs.lstatSync(dir);
+  } catch (error) {
+    return { ok: false, reason: `cannot read the output directory ${dir}: ${describeError(error)}` };
+  }
+  if (!stats.isDirectory()) return { ok: false, reason: `${dir} is not a directory` };
+  if (stats.uid !== uid) {
+    return { ok: false, reason: `${dir} is owned by uid ${stats.uid}, not by this process (uid ${uid})` };
+  }
+  if ((stats.mode & 0o022) !== 0) {
+    return { ok: false, reason: `${dir} is writable by group or others (mode ${(stats.mode & 0o777).toString(8)})` };
+  }
+  return { ok: true };
+}
+
+/** `<dir>/.<base>.tmp`, in the same directory so the rename is atomic. */
+function tempPathOf(path) {
+  return join(dirname(path), `.${basename(path)}.tmp`);
+}
+
+/** Run one write step; a failure is rethrown with the step's name first, which is what gets logged. */
+function runStep(name, action) {
+  try {
+    return action();
+  } catch (error) {
+    throw new Error(`${name}: ${describeError(error)}`, { cause: error });
+  }
+}
+
+const OPEN_FLAGS = fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_WRONLY | fsConstants.O_NOFOLLOW;
+
+/**
+ * Replace `path` with `data` atomically: unlink whatever sits at the temp path (a crash leftover or a
+ * planted link), create the temp file with O_EXCL | O_NOFOLLOW and mode 0600, fchown it through the
+ * descriptor, write, fsync, close, rename over `path`. On a failure the previous file stays in place,
+ * the temp file is removed, and the error names the failing step.
+ */
+export function writeExportAtomic(path, data, { fs, uid, gid }) {
+  const temp = tempPathOf(path);
+  const leftover = runStep("lstat", () => {
+    try {
+      fs.lstatSync(temp);
+      return true;
+    } catch (error) {
+      if (error?.code === "ENOENT") return false;
+      throw error;
+    }
+  });
+  if (leftover) runStep("unlink", () => fs.unlinkSync(temp));
+  const fd = runStep("open", () => fs.openSync(temp, OPEN_FLAGS, 0o600));
+  let open = true;
+  try {
+    runStep("fchown", () => fs.fchownSync(fd, uid, gid));
+    runStep("write", () => fs.writeFileSync(fd, data, "utf8"));
+    runStep("fsync", () => fs.fsyncSync(fd));
+    open = false;
+    runStep("close", () => fs.closeSync(fd));
+    runStep("rename", () => fs.renameSync(temp, path));
+  } catch (error) {
+    // Cleanup only: the step error below is what gets reported, and the next scan unlinks any leftover.
+    if (open) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // The descriptor is unusable either way.
+      }
+    }
+    try {
+      fs.unlinkSync(temp);
+    } catch {
+      // Already gone, or the next scan's leftover check removes it.
+    }
+    throw error;
+  }
+}
+
+const LIMIT_STATUS_MESSAGE = `the export would exceed ${LIMITS.fileBytes} bytes; the rest was left out`;
+
+/**
+ * The file text, at most LIMITS.fileBytes bytes. Over the bound, services are kept in name order while
+ * they fit, and an ok status becomes limit_exceeded; a status that is already an error keeps its code.
+ * Only services are trimmed: every other field, the excluded list included (at most 500 names of at most
+ * 63 characters), is kept whole and in place, and its size is taken out of the budget first.
+ */
+export function serializeExport(data) {
+  const text = JSON.stringify(data);
+  if (Buffer.byteLength(text, "utf8") <= LIMITS.fileBytes) return text;
+  const status = data.status.ok ? { ok: false, code: "limit_exceeded", message: LIMIT_STATUS_MESSAGE } : data.status;
+  let budget = LIMITS.fileBytes - Buffer.byteLength(JSON.stringify({ ...data, status, services: [] }), "utf8");
+  const kept = [];
+  for (const service of data.services) {
+    const size = Buffer.byteLength(JSON.stringify(service), "utf8") + (kept.length > 0 ? 1 : 0);
+    if (size > budget) break;
+    budget -= size;
+    kept.push(service);
+  }
+  return JSON.stringify({ ...data, status, services: kept });
+}
+
+const LOG_PREFIX = "libredb-discovery:";
+
+/** The one-line summary of a scan: counts and codes only, never a value. */
+function summarize(result) {
+  if (!result.ok) return `scan failed: ${result.status.code}: ${result.status.message}`;
+  const cut = result.truncated ? `, cut to the first ${LIMITS.services} by name` : "";
+  return `scan ok: ${result.services.length} services exported, ${result.droppedValues} values dropped${cut}`;
+}
+
+/**
+ * Entry point. Checks the output directory, then scans and writes every DISCOVERY_INTERVAL_MS until
+ * SIGTERM or SIGINT. It runs as PID 1 in its container, where the kernel ignores a signal that has no
+ * handler, so without these handlers a redeploy would wait for Swarm's SIGKILL. A write is synchronous,
+ * so a signal can never land in the middle of one; a request in flight is aborted and its scan writes
+ * nothing. With DISCOVERY_ONCE=1 it scans once and resolves 0 when the file was written, 1 when not.
+ * Exit codes: 2 for a configuration it cannot honour, 1 for an output directory it must not use.
+ * A failed scan keeps the last good services, excluded apps and generatedAt, and updates status and
+ * checkedAt; a network_not_found scan also clears the network, because the file must say none matched.
+ */
+export async function main({ env, request, fs, now, stdout, stderr, signals } = {}) {
+  const environment = env ?? process.env;
+  const files = fs ?? nodeFs;
+  const clock = now ?? Date.now;
+  const out = stdout ?? ((chunk) => process.stdout.write(chunk));
+  const err = stderr ?? ((chunk) => process.stderr.write(chunk));
+  const events = signals ?? process;
+  const info = (line) => out(`${LOG_PREFIX} ${line}\n`);
+  const warn = (line) => err(`${LOG_PREFIX} ${line}\n`);
+
+  let config;
+  try {
+    config = readConfig(environment);
+  } catch (error) {
+    warn(`invalid configuration: ${describeError(error)}`);
+    return 2;
+  }
+  const directory = checkOutputDir(dirname(config.output), { fs: files, uid: process.getuid?.() });
+  if (!directory.ok) {
+    warn(`refusing to start: ${directory.reason}`);
+    return 1;
+  }
+
+  const client = createDockerClient({ socket: config.socket, request });
+  const last = { generatedAt: null, network: null, services: [], excluded: [], summary: "" };
+  let stopping = false;
+
+  async function scanAndWrite() {
+    const result = await scanOnce({ client, config });
+    if (stopping) return false;
+    const checkedAt = clock();
+    let status = result.status;
+    if (result.ok) {
+      last.generatedAt = new Date(checkedAt).toISOString();
+      last.network = result.network;
+      last.services = result.services;
+      last.excluded = result.excluded;
+      status = result.truncated
+        ? { ok: false, code: "limit_exceeded", message: `more than ${LIMITS.services} services on ${config.network}` }
+        : { ok: true };
+    } else if (result.status.code === "network_not_found") {
+      // Spec section 8.5: network is null when no exact match was found; services, excluded and
+      // generatedAt stay those of the last good scan.
+      last.network = null;
+    }
+    const data = buildExport({
+      now: checkedAt,
+      network: last.network,
+      services: last.services,
+      excluded: last.excluded,
+      status,
+      generatedAt: last.generatedAt,
+    });
+    try {
+      writeExportAtomic(config.output, serializeExport(data), { fs: files, uid: config.fileUid, gid: config.fileGid });
+    } catch (error) {
+      warn(`write failed at ${describeError(error)}`);
+      return false;
+    }
+    const summary = summarize(result);
+    if (summary !== last.summary) {
+      last.summary = summary;
+      if (result.ok) info(summary);
+      else warn(summary);
+    }
+    return true;
+  }
+
+  info(`watching ${config.network} every ${config.intervalMs} ms, writing ${config.output}`);
+  if (config.once) return (await scanAndWrite()) ? 0 : 1;
+
+  return new Promise((resolve) => {
+    let timer = null;
+    function stop(signal) {
+      stopping = true;
+      clearTimeout(timer);
+      events.removeListener("SIGTERM", onTerm);
+      events.removeListener("SIGINT", onInt);
+      client.abort();
+      info(`received ${signal}, exiting`);
+      resolve(0);
+    }
+    function onTerm() {
+      stop("SIGTERM");
+    }
+    function onInt() {
+      stop("SIGINT");
+    }
+    async function loop() {
+      await scanAndWrite();
+      if (!stopping) timer = setTimeout(loop, config.intervalMs);
+    }
+    events.once("SIGTERM", onTerm);
+    events.once("SIGINT", onInt);
+    loop();
+  });
+}
+
+/**
+ * Whether this module is the program being run, rather than an import. Copied from
+ * docker/bind-address.mjs, not imported, so each file in /usr/local/lib/libredb-studio stands alone; the
+ * reasons for realpath and pathToFileURL are in that file's docblock.
+ */
+export function isDirectExecution(argv1, moduleUrl) {
+  if (!argv1) return false;
+  try {
+    return pathToFileURL(realpathSync(argv1)).href === moduleUrl;
+  } catch {
+    // An unreadable or vanished argv[1] is not this module, and must not throw.
+    return false;
+  }
+}
+
+// Run only when executed directly, so importing this file in a test is inert.
+if (isDirectExecution(process.argv[1], import.meta.url)) {
+  process.exitCode = await main({});
 }

@@ -16,23 +16,52 @@
  *    adding or stripping the prefix breaks one of the two shapes.
  *  - Every bound, because the file is untrusted input for Studio and a Docker answer is untrusted input here.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import * as nodeFs from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   appNameOf,
   buildExport,
+  checkOutputDir,
   classifyDockerError,
+  createDockerClient,
   DEFAULTS,
   ENV_ALLOW_LIST,
   hostOf,
+  isDirectExecution,
   isStudioImage,
   LIMITS,
+  main,
   parseExcludeList,
   projectEnv,
   readConfig,
   requirepassEnvOf,
+  scanOnce,
   selectNetwork,
   selectServices,
+  serializeExport,
+  writeExportAtomic,
 } from "../../docker/discover.mjs";
+import { eventually } from "../helpers/node-transport-fixtures";
+import { describeIf, MISSING_POSIX_FILE_MODES, MISSING_UNIX_SOCKETS } from "../helpers/posix-tools";
 
 const NETWORK_ID = "jolhlap6b0rctoqh21rk8sidt";
 const NETWORK = { id: NETWORK_ID, name: "captain-overlay-network" };
@@ -760,5 +789,829 @@ describe("classifyDockerError", () => {
     const status = classifyDockerError(Object.assign(new Error("x".repeat(900)), { statusCode: 503 }));
     expect(JSON.stringify(status)).toContain(`"${"x".repeat(512)}"`);
     expect(JSON.stringify(status)).not.toContain("x".repeat(513));
+  });
+});
+
+/*
+  Everything below drives the exporter's I/O: a fake Docker Engine on a temp unix socket (node:http, as the
+  exporter's own client is), real files in temp directories, and the real file run under `node`. Each test
+  file runs in its own bun process (tests/run-tests.ts), so no other file's mock.module can reach the real
+  sockets used here. Socket paths stay short (`<tmpdir>/dsk-XXXXXX/d.sock`) because macOS caps a unix
+  socket path at 104 bytes and its tmpdir is long.
+*/
+
+const NOT_A_MANAGER =
+  'This node is not a swarm manager. Use "docker swarm init" or "docker swarm join" to connect this node to swarm and try again.';
+const NETWORKS_PATH = "/v1.44/networks?filters=%7B%22name%22%3A%5B%22captain-overlay-network%22%5D%7D";
+const SERVICES_PATH = "/v1.44/services?status=true";
+const NETWORKS_ANSWER = [
+  { Name: "captain-overlay-network-2", Id: "decoy", Scope: "swarm" },
+  { Name: "captain-overlay-network", Id: NETWORK_ID, Scope: "swarm" },
+];
+const SERVICES_ANSWER = [
+  dockerService({
+    id: "s-pg",
+    name: "pgtest",
+    image: "postgres:16",
+    env: ["POSTGRES_USER=postgres", "POSTGRES_PASSWORD=pg-secret-value", "POSTGRES_DB=appdb"],
+  }),
+  dockerService({
+    id: "s-web",
+    name: "blog",
+    image: "img-captain-blog:3",
+    env: ["SECRET_KEY_BASE=app-secret-value", "REDIS_PASSWORD=redis-secret-value"],
+  }),
+];
+
+type Reply = { status: number; body: string } | "hold";
+
+interface FakeDocker {
+  readonly socket: string;
+  readonly seen: { method: string; url: string; host: string | undefined }[];
+}
+
+const cleanups: Array<() => unknown> = [];
+
+afterEach(async () => {
+  // Last in, first out: servers close before the directories that hold their sockets are removed.
+  await cleanups
+    .splice(0)
+    .reverse()
+    .reduce<Promise<unknown>>((chain, cleanup) => chain.then(cleanup), Promise.resolve());
+});
+
+function tempDir(prefix = "dsc-"): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+function json(value: unknown, status = 200): Reply {
+  return { status, body: JSON.stringify(value) };
+}
+
+function healthyDocker(url: string): Reply {
+  return url.startsWith("/v1.44/networks") ? json(NETWORKS_ANSWER) : json(SERVICES_ANSWER);
+}
+
+/** A fake Engine on a temp unix socket that records every request and answers through `reply`. */
+async function fakeDocker(reply: (url: string) => Reply): Promise<FakeDocker> {
+  const socket = join(tempDir("dsk-"), "d.sock");
+  const seen: FakeDocker["seen"] = [];
+  const server = createServer((request, response) => {
+    const url = request.url ?? "";
+    seen.push({ method: request.method ?? "", url, host: request.headers.host });
+    const answer = reply(url);
+    if (answer === "hold") return;
+    response.writeHead(answer.status, { "content-type": "application/json" });
+    response.end(answer.body);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socket, () => resolve());
+  });
+  cleanups.push(
+    () =>
+      new Promise<void>((done) => {
+        server.closeAllConnections();
+        server.close(() => done());
+      }),
+  );
+  return { socket, seen };
+}
+
+describeIf(MISSING_UNIX_SOCKETS, "createDockerClient - GET over the unix socket", () => {
+  test("sends a GET with Host: docker and parses the JSON answer", async () => {
+    const docker = await fakeDocker(() => json([{ ID: "x" }]));
+    expect(await createDockerClient({ socket: docker.socket }).get("/v1.44/services")).toEqual([{ ID: "x" }]);
+    expect(docker.seen).toEqual([{ method: "GET", url: "/v1.44/services", host: "docker" }]);
+  });
+
+  test("a non-2xx answer rejects with its status and the daemon's message", async () => {
+    const docker = await fakeDocker(() => json({ message: NOT_A_MANAGER }, 503));
+    await expect(createDockerClient({ socket: docker.socket }).get(SERVICES_PATH)).rejects.toMatchObject({
+      statusCode: 503,
+      message: NOT_A_MANAGER,
+    });
+  });
+
+  test.each([
+    ["an HTML page", "<html>bad gateway</html>"],
+    ["an empty message", '{"message":""}'],
+    ["a JSON null", "null"],
+  ])("a non-2xx answer with %s says only the status", async (_label, body) => {
+    const docker = await fakeDocker(() => ({ status: 502, body }));
+    await expect(createDockerClient({ socket: docker.socket }).get(SERVICES_PATH)).rejects.toMatchObject({
+      statusCode: 502,
+      message: "Docker answered HTTP 502",
+    });
+  });
+
+  test("a 2xx answer that is not JSON is refused", async () => {
+    const docker = await fakeDocker(() => ({ status: 200, body: "not json" }));
+    await expect(createDockerClient({ socket: docker.socket }).get(SERVICES_PATH)).rejects.toMatchObject({
+      code: "EBADJSON",
+    });
+  });
+
+  test("an answer over the byte cap is refused", async () => {
+    const docker = await fakeDocker(() => json({ padding: "x".repeat(100) }));
+    const client = createDockerClient({ socket: docker.socket, maxBytes: 10 });
+    await expect(client.get(SERVICES_PATH)).rejects.toMatchObject({ code: "ERESPONSETOOLARGE" });
+  });
+
+  test("a daemon that never answers times out", async () => {
+    const docker = await fakeDocker(() => "hold");
+    const client = createDockerClient({ socket: docker.socket, timeoutMs: 50 });
+    await expect(client.get(SERVICES_PATH)).rejects.toMatchObject({ code: "ETIMEDOUT" });
+  });
+
+  test("a socket that does not exist is ENOENT", async () => {
+    const socket = join(tempDir(), "none.sock");
+    await expect(createDockerClient({ socket }).get(SERVICES_PATH)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  test("abort ends every request in flight", async () => {
+    const docker = await fakeDocker(() => "hold");
+    const client = createDockerClient({ socket: docker.socket });
+    const pending = client.get(SERVICES_PATH);
+    await eventually(() => docker.seen.length === 1, "the request to reach the fake Engine");
+    client.abort();
+    await expect(pending).rejects.toMatchObject({ code: "EABORTED" });
+  });
+
+  test("a request function that throws rejects with its error", async () => {
+    const request = () => {
+      throw new Error("bad request options");
+    };
+    await expect(createDockerClient({ socket: "unused", request }).get(SERVICES_PATH)).rejects.toThrow(
+      "bad request options",
+    );
+  });
+});
+
+describeIf(MISSING_UNIX_SOCKETS, "scanOnce - the two Engine calls", () => {
+  test("asks for exactly two paths, in order, and exports what it selects", async () => {
+    const docker = await fakeDocker(healthyDocker);
+    const result = await scanOnce({ client: createDockerClient({ socket: docker.socket }), config: readConfig({}) });
+    expect(docker.seen.map((entry) => `${entry.method} ${entry.url}`)).toEqual([
+      `GET ${NETWORKS_PATH}`,
+      `GET ${SERVICES_PATH}`,
+    ]);
+    expect(result).toEqual({ ok: true, network: NETWORK, ...selectServices(SERVICES_ANSWER, NETWORK, new Set()) });
+  });
+
+  test("the exclude list reaches the selection, and the left-out app is reported", async () => {
+    const docker = await fakeDocker(healthyDocker);
+    const result = await scanOnce({
+      client: createDockerClient({ socket: docker.socket }),
+      config: readConfig({ DISCOVERY_EXCLUDE: "blog" }),
+    });
+    expect(result).toEqual({
+      ok: true,
+      network: NETWORK,
+      ...selectServices(SERVICES_ANSWER, NETWORK, new Set(["blog"])),
+    });
+    expect(result).toMatchObject({ ok: true, excluded: ["blog"] });
+  });
+
+  test("no exact network is network_not_found, and the services are never asked for", async () => {
+    const docker = await fakeDocker(() => json([NETWORKS_ANSWER[0]]));
+    const result = await scanOnce({ client: createDockerClient({ socket: docker.socket }), config: readConfig({}) });
+    expect(result).toEqual({
+      ok: false,
+      status: { ok: false, code: "network_not_found", message: "no network is named exactly captain-overlay-network" },
+    });
+    expect(docker.seen).toHaveLength(1);
+  });
+
+  test("a node that is not a swarm manager is swarm_unavailable with the daemon's message", async () => {
+    const docker = await fakeDocker(() => json({ message: NOT_A_MANAGER }, 503));
+    const result = await scanOnce({ client: createDockerClient({ socket: docker.socket }), config: readConfig({}) });
+    expect(result).toEqual({
+      ok: false,
+      status: { ok: false, code: "swarm_unavailable", httpStatus: 503, message: NOT_A_MANAGER },
+    });
+  });
+
+  test("a services answer that is not a list is docker_error", async () => {
+    const docker = await fakeDocker((url) =>
+      url === SERVICES_PATH ? json({ message: "odd" }) : json(NETWORKS_ANSWER),
+    );
+    const result = await scanOnce({ client: createDockerClient({ socket: docker.socket }), config: readConfig({}) });
+    expect(result).toEqual({
+      ok: false,
+      status: {
+        ok: false,
+        code: "docker_error",
+        message: "Docker answered GET /services with something other than a list",
+      },
+    });
+  });
+});
+
+const NOW = Date.parse("2026-10-04T12:00:00.000Z");
+
+function injected(code = "EIO"): Error {
+  return Object.assign(new Error("injected"), { code });
+}
+
+describeIf(MISSING_POSIX_FILE_MODES, "checkOutputDir - nobody else may write where root writes", () => {
+  const uid = process.getuid?.();
+
+  test("a 0755 directory owned by this process is accepted", () => {
+    const dir = tempDir();
+    chmodSync(dir, 0o755);
+    expect(checkOutputDir(dir, { fs: nodeFs, uid })).toEqual({ ok: true });
+  });
+
+  test("a directory owned by another uid is refused", () => {
+    const dir = tempDir();
+    const other = (uid ?? 0) + 1;
+    expect(checkOutputDir(dir, { fs: nodeFs, uid: other })).toEqual({
+      ok: false,
+      reason: `${dir} is owned by uid ${uid}, not by this process (uid ${other})`,
+    });
+  });
+
+  test.each([
+    [0o775, "775"],
+    [0o757, "757"],
+  ])("a directory with mode %o is refused as group- or other-writable", (mode, shown) => {
+    const dir = tempDir();
+    chmodSync(dir, mode);
+    expect(checkOutputDir(dir, { fs: nodeFs, uid })).toEqual({
+      ok: false,
+      reason: `${dir} is writable by group or others (mode ${shown})`,
+    });
+  });
+
+  test("a file, or a link to a directory, is not a directory", () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, "file"), "");
+    mkdirSync(join(dir, "real"), { mode: 0o755 });
+    symlinkSync(join(dir, "real"), join(dir, "link"));
+    expect(checkOutputDir(join(dir, "file"), { fs: nodeFs, uid })).toEqual({
+      ok: false,
+      reason: `${join(dir, "file")} is not a directory`,
+    });
+    expect(checkOutputDir(join(dir, "link"), { fs: nodeFs, uid })).toEqual({
+      ok: false,
+      reason: `${join(dir, "link")} is not a directory`,
+    });
+  });
+
+  test("a directory that does not exist is refused with the reason", () => {
+    const missing = join(tempDir(), "absent");
+    const result = checkOutputDir(missing, { fs: nodeFs, uid });
+    expect(result).toMatchObject({ ok: false });
+    expect(JSON.stringify(result)).toContain(`cannot read the output directory ${missing}: ENOENT`);
+  });
+});
+
+describeIf(MISSING_POSIX_FILE_MODES, "writeExportAtomic - temp file, fchown, fsync, rename", () => {
+  const uid = process.getuid?.() ?? 0;
+  const gid = process.getgid?.() ?? 0;
+
+  function target() {
+    const dir = tempDir();
+    return { dir, path: join(dir, "services.json"), temp: join(dir, ".services.json.tmp") };
+  }
+
+  test("writes the content as mode 0600, owned as asked, and leaves no temp file", () => {
+    const { dir, path } = target();
+    writeExportAtomic(path, '{"version":1}', { fs: nodeFs, uid, gid });
+    expect(readFileSync(path, "utf8")).toBe('{"version":1}');
+    const stats = statSync(path);
+    expect(stats.mode & 0o777).toBe(0o600);
+    expect(stats.uid).toBe(uid);
+    expect(stats.gid).toBe(gid);
+    expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+
+  test("hands the owner to fchown on the descriptor, never to a path", () => {
+    const { path } = target();
+    const calls: unknown[][] = [];
+    const fs = {
+      ...nodeFs,
+      fchownSync: (...args: unknown[]) => {
+        calls.push(args);
+      },
+      chownSync: () => {
+        throw new Error("chown by path must not be used");
+      },
+    };
+    writeExportAtomic(path, "{}", { fs, uid: 1001, gid: 1001 });
+    expect(calls).toEqual([[expect.any(Number), 1001, 1001]]);
+  });
+
+  test("a link planted at the temp path is removed, not followed", () => {
+    const { dir, path, temp } = target();
+    const victim = join(dir, "victim");
+    writeFileSync(victim, "keep");
+    symlinkSync(victim, temp);
+    writeExportAtomic(path, "{}", { fs: nodeFs, uid, gid });
+    expect(readFileSync(victim, "utf8")).toBe("keep");
+    expect(lstatSync(path).isSymbolicLink()).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe("{}");
+    expect(readdirSync(dir).sort()).toEqual(["services.json", "victim"]);
+  });
+
+  test("a dangling link at the temp path is removed and its target never created", () => {
+    const { dir, path, temp } = target();
+    const nowhere = join(dir, "nowhere");
+    symlinkSync(nowhere, temp);
+    writeExportAtomic(path, "{}", { fs: nodeFs, uid, gid });
+    expect(existsSync(nowhere)).toBe(false);
+    expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+
+  test("a leftover temp file from a crash does not block the write", () => {
+    const { dir, path, temp } = target();
+    writeFileSync(temp, "half a file");
+    writeExportAtomic(path, "{}", { fs: nodeFs, uid, gid });
+    expect(readFileSync(path, "utf8")).toBe("{}");
+    expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+
+  test("a failed rename leaves the previous file in place and removes the temp file", () => {
+    const { dir, path } = target();
+    writeFileSync(path, "previous");
+    const fs = {
+      ...nodeFs,
+      renameSync: () => {
+        throw Object.assign(new Error("EXDEV: cross-device link"), { code: "EXDEV" });
+      },
+    };
+    expect(() => writeExportAtomic(path, "{}", { fs, uid, gid })).toThrow("rename: EXDEV: cross-device link");
+    expect(readFileSync(path, "utf8")).toBe("previous");
+    expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+
+  test.each([
+    ["lstat", "lstatSync"],
+    ["open", "openSync"],
+    ["fchown", "fchownSync"],
+    ["write", "writeFileSync"],
+    ["fsync", "fsyncSync"],
+  ])("a failure at %s names the step and keeps the previous file", (step, method) => {
+    const { dir, path } = target();
+    writeFileSync(path, "previous");
+    const fs = {
+      ...nodeFs,
+      [method]: () => {
+        throw injected();
+      },
+    };
+    expect(() => writeExportAtomic(path, "{}", { fs, uid, gid })).toThrow(`${step}: EIO (injected)`);
+    expect(readFileSync(path, "utf8")).toBe("previous");
+    expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+
+  test("a failure at close names the step and keeps the previous file", () => {
+    const { dir, path } = target();
+    writeFileSync(path, "previous");
+    const fs = {
+      ...nodeFs,
+      closeSync: (fd: number) => {
+        nodeFs.closeSync(fd);
+        throw injected();
+      },
+    };
+    expect(() => writeExportAtomic(path, "{}", { fs, uid, gid })).toThrow("close: EIO (injected)");
+    expect(readFileSync(path, "utf8")).toBe("previous");
+    expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+
+  test("a leftover that cannot be unlinked stops the write at unlink", () => {
+    const { path, temp } = target();
+    writeFileSync(temp, "half a file");
+    const fs = {
+      ...nodeFs,
+      unlinkSync: () => {
+        throw injected("EPERM");
+      },
+    };
+    expect(() => writeExportAtomic(path, "{}", { fs, uid, gid })).toThrow("unlink: EPERM (injected)");
+    expect(existsSync(path)).toBe(false);
+  });
+
+  test("a cleanup that fails too never hides the step that failed, and the next write recovers", () => {
+    const { dir, path, temp } = target();
+    const fs = {
+      ...nodeFs,
+      writeFileSync: () => {
+        throw injected();
+      },
+      closeSync: (fd: number) => {
+        nodeFs.closeSync(fd);
+        throw new Error("close failed");
+      },
+      unlinkSync: () => {
+        throw new Error("unlink failed");
+      },
+    };
+    expect(() => writeExportAtomic(path, "{}", { fs, uid, gid })).toThrow("write: EIO (injected)");
+    expect(existsSync(temp)).toBe(true);
+    writeExportAtomic(path, "{}", { fs: nodeFs, uid, gid });
+    expect(readdirSync(dir)).toEqual(["services.json"]);
+  });
+});
+
+describe("serializeExport - the 2 MiB file bound", () => {
+  function bulkyService(index: number) {
+    return {
+      id: `id-${index}`,
+      name: `app-${String(index).padStart(3, "0")}`,
+      appName: `app-${String(index).padStart(3, "0")}`,
+      host: `srv-captain--app-${index}`,
+      image: "postgres:16",
+      env: Object.fromEntries(ENV_ALLOW_LIST.map((key) => [key, "v".repeat(1000)])),
+      requirepassEnv: null,
+      tasks: { running: 1, desired: 1 },
+    };
+  }
+
+  /** The longest excluded list the exporter can write: 500 names of 63 characters. */
+  const EXCLUDED = Array.from({ length: 500 }, (_, index) => `skip-${1000 + index}`.padEnd(63, "x"));
+
+  function bulkyExport(status: Record<string, unknown>) {
+    return buildExport({
+      now: NOW,
+      network: NETWORK,
+      services: Array.from({ length: 500 }, (_, index) => bulkyService(index)),
+      excluded: EXCLUDED,
+      status,
+      generatedAt: new Date(NOW).toISOString(),
+    });
+  }
+
+  test("an export within the bound is plain JSON", () => {
+    const data = buildExport({
+      now: NOW,
+      network: NETWORK,
+      services: [],
+      excluded: [],
+      status: { ok: true },
+      generatedAt: null,
+    });
+    expect(serializeExport(data)).toBe(JSON.stringify(data));
+  });
+
+  test("over the bound, the services that fit are kept in order and the status is limit_exceeded", () => {
+    const data = bulkyExport({ ok: true });
+    const text = serializeExport(data);
+    const parsed = JSON.parse(text);
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(LIMITS.fileBytes);
+    expect(parsed.status).toEqual({
+      ok: false,
+      code: "limit_exceeded",
+      message: "the export would exceed 2097152 bytes; the rest was left out",
+    });
+    const kept = parsed.services.length;
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThan(500);
+    expect(parsed.services).toEqual(data.services.slice(0, kept));
+    const oneMore = JSON.stringify({ ...parsed, services: data.services.slice(0, kept + 1) });
+    expect(Buffer.byteLength(oneMore, "utf8")).toBeGreaterThan(LIMITS.fileBytes);
+  });
+
+  test("trimming the services keeps the whole excluded list, right after services", () => {
+    const parsed = JSON.parse(serializeExport(bulkyExport({ ok: true })));
+    expect(parsed.services.length).toBeLessThan(500);
+    expect(parsed.excluded).toEqual(EXCLUDED);
+    expect(Object.keys(parsed).slice(-2)).toEqual(["services", "excluded"]);
+  });
+
+  test("an error status keeps its own code when the services are cut", () => {
+    const status = { ok: false, code: "socket_unavailable", message: "no socket" };
+    const parsed = JSON.parse(serializeExport(bulkyExport(status)));
+    expect(parsed.status).toEqual(status);
+    expect(parsed.excluded).toEqual(EXCLUDED);
+  });
+});
+
+const EXPORTER = join(import.meta.dir, "..", "..", "docker", "discover.mjs");
+/** Secrets the fake Engine hands out: none may reach a log line; the non-allow-listed one not even the file. */
+const SECRET_VALUES = ["pg-secret-value", "redis-secret-value", "app-secret-value"];
+
+/** Every exporter variable, so nothing inherited from the developer's shell can change a run. */
+function exporterEnv(socket: string, output: string, extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    DOCKER_SOCKET: socket,
+    DISCOVERY_OUTPUT: output,
+    DISCOVERY_NETWORK: "",
+    DISCOVERY_EXCLUDE: "",
+    DISCOVERY_INTERVAL_MS: "",
+    DISCOVERY_ONCE: "",
+    DISCOVERY_FILE_UID: String(process.getuid?.() ?? 0),
+    DISCOVERY_FILE_GID: String(process.getgid?.() ?? 0),
+    ...extra,
+  };
+}
+
+function capture() {
+  const out: string[] = [];
+  const err: string[] = [];
+  return {
+    out,
+    err,
+    stdout: (chunk: string) => {
+      out.push(chunk);
+    },
+    stderr: (chunk: string) => {
+      err.push(chunk);
+    },
+  };
+}
+
+function readExport(path: string) {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+describeIf(MISSING_UNIX_SOCKETS ?? MISSING_POSIX_FILE_MODES, "main - in process, every seam injected", () => {
+  test("a configuration it cannot honour exits 2 before touching anything", async () => {
+    const logs = capture();
+    expect(await main({ env: { DISCOVERY_INTERVAL_MS: "5" }, stdout: logs.stdout, stderr: logs.stderr })).toBe(2);
+    expect(logs.err).toEqual([
+      'libredb-discovery: invalid configuration: DISCOVERY_INTERVAL_MS must be an integer of at least 2000, got "5"\n',
+    ]);
+    expect(logs.out).toEqual([]);
+  });
+
+  test("an output directory others can write exits 1 and writes nothing", async () => {
+    const dir = tempDir();
+    chmodSync(dir, 0o777);
+    const logs = capture();
+    const env = exporterEnv(join(dir, "none.sock"), join(dir, "services.json"), { DISCOVERY_ONCE: "1" });
+    expect(await main({ env, stdout: logs.stdout, stderr: logs.stderr })).toBe(1);
+    expect(logs.err).toEqual([
+      `libredb-discovery: refusing to start: ${dir} is writable by group or others (mode 777)\n`,
+    ]);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("one scan writes the export, 0600, and logs counts but never a value", async () => {
+    const docker = await fakeDocker(healthyDocker);
+    const output = join(tempDir(), "services.json");
+    const logs = capture();
+    const env = exporterEnv(docker.socket, output, { DISCOVERY_ONCE: "1" });
+    expect(await main({ env, now: () => NOW, stdout: logs.stdout, stderr: logs.stderr })).toBe(0);
+
+    expect(readExport(output)).toEqual({
+      version: 1,
+      platform: "caprover",
+      generatedAt: "2026-10-04T12:00:00.000Z",
+      checkedAt: "2026-10-04T12:00:00.000Z",
+      status: { ok: true },
+      network: { name: "captain-overlay-network", id: NETWORK_ID },
+      services: selectServices(SERVICES_ANSWER, NETWORK, new Set()).services,
+      excluded: [],
+    });
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(logs.out).toEqual([
+      `libredb-discovery: watching captain-overlay-network every 10000 ms, writing ${output}\n`,
+      "libredb-discovery: scan ok: 2 services exported, 0 values dropped\n",
+    ]);
+    expect(logs.err).toEqual([]);
+
+    const file = readFileSync(output, "utf8");
+    const logged = [...logs.out, ...logs.err].join("");
+    expect(file).toContain("pg-secret-value");
+    expect(file).toContain("redis-secret-value");
+    expect(file).not.toContain("app-secret-value");
+    for (const secret of SECRET_VALUES) expect(logged).not.toContain(secret);
+  });
+
+  test("before the first successful listing the file says why, and exports no service", async () => {
+    const docker = await fakeDocker(() => json({ message: NOT_A_MANAGER }, 503));
+    const output = join(tempDir(), "services.json");
+    const logs = capture();
+    const env = exporterEnv(docker.socket, output, { DISCOVERY_ONCE: "1" });
+    expect(await main({ env, now: () => NOW, stdout: logs.stdout, stderr: logs.stderr })).toBe(0);
+    expect(readExport(output)).toEqual({
+      version: 1,
+      platform: "caprover",
+      generatedAt: null,
+      checkedAt: "2026-10-04T12:00:00.000Z",
+      status: { ok: false, code: "swarm_unavailable", httpStatus: 503, message: NOT_A_MANAGER },
+      network: null,
+      services: [],
+      excluded: [],
+    });
+    expect(logs.err).toEqual([`libredb-discovery: scan failed: swarm_unavailable: ${NOT_A_MANAGER}\n`]);
+  });
+
+  test("more than 500 services is still a listing, exported as limit_exceeded", async () => {
+    const many = Array.from({ length: 501 }, (_, index) =>
+      dockerService({ id: `id-${index}`, name: `app-${String(index).padStart(3, "0")}`, image: "redis:7" }),
+    );
+    const docker = await fakeDocker((url) => (url === SERVICES_PATH ? json(many) : json(NETWORKS_ANSWER)));
+    const output = join(tempDir(), "services.json");
+    const logs = capture();
+    const env = exporterEnv(docker.socket, output, { DISCOVERY_ONCE: "1" });
+    expect(await main({ env, now: () => NOW, stdout: logs.stdout, stderr: logs.stderr })).toBe(0);
+    const data = readExport(output);
+    expect(data.generatedAt).toBe("2026-10-04T12:00:00.000Z");
+    expect(data.status).toEqual({
+      ok: false,
+      code: "limit_exceeded",
+      message: "more than 500 services on captain-overlay-network",
+    });
+    expect(data.services).toHaveLength(500);
+    expect(logs.out[1]).toBe(
+      "libredb-discovery: scan ok: 500 services exported, 0 values dropped, cut to the first 500 by name\n",
+    );
+  });
+
+  test("a failed write is logged with its step, and once mode answers 1", async () => {
+    const docker = await fakeDocker(healthyDocker);
+    const output = join(tempDir(), "services.json");
+    const logs = capture();
+    const fs = {
+      ...nodeFs,
+      renameSync: () => {
+        throw Object.assign(new Error("EROFS: read-only file system"), { code: "EROFS" });
+      },
+    };
+    const env = exporterEnv(docker.socket, output, { DISCOVERY_ONCE: "1" });
+    expect(await main({ env, fs, stdout: logs.stdout, stderr: logs.stderr })).toBe(1);
+    expect(logs.err).toEqual(["libredb-discovery: write failed at rename: EROFS: read-only file system\n"]);
+    expect(existsSync(output)).toBe(false);
+  });
+
+  test("an error after a good scan keeps its services and excluded apps; SIGTERM exits 0", async () => {
+    let failing = false;
+    const docker = await fakeDocker((url) => (failing ? json({ message: NOT_A_MANAGER }, 503) : healthyDocker(url)));
+    const output = join(tempDir(), "services.json");
+    const logs = capture();
+    const signals = new EventEmitter();
+    let clock = NOW;
+    let writes = 0;
+    const fs = {
+      ...nodeFs,
+      renameSync: (from: string, to: string) => {
+        nodeFs.renameSync(from, to);
+        writes += 1;
+      },
+    };
+    const env = exporterEnv(docker.socket, output, { DISCOVERY_INTERVAL_MS: "2000", DISCOVERY_EXCLUDE: "blog" });
+    const running = main({ env, fs, now: () => clock, stdout: logs.stdout, stderr: logs.stderr, signals });
+
+    await eventually(() => writes === 1, "the first export");
+    const first = readExport(output);
+    failing = true;
+    clock = NOW + 2000;
+    await eventually(() => writes === 3, "two failed scans after it", 8000);
+    signals.emit("SIGTERM");
+    expect(await running).toBe(0);
+
+    expect(readExport(output)).toEqual({
+      ...first,
+      checkedAt: "2026-10-04T12:00:02.000Z",
+      status: { ok: false, code: "swarm_unavailable", httpStatus: 503, message: NOT_A_MANAGER },
+    });
+    expect(first.generatedAt).toBe("2026-10-04T12:00:00.000Z");
+    expect(first.services).toHaveLength(1);
+    expect(first.excluded).toEqual(["blog"]);
+    expect(first.network).toEqual({ name: "captain-overlay-network", id: NETWORK_ID });
+    expect(logs.out).toEqual([
+      `libredb-discovery: watching captain-overlay-network every 2000 ms, writing ${output}\n`,
+      "libredb-discovery: scan ok: 1 services exported, 0 values dropped\n",
+      "libredb-discovery: received SIGTERM, exiting\n",
+    ]);
+    expect(logs.err).toEqual([`libredb-discovery: scan failed: swarm_unavailable: ${NOT_A_MANAGER}\n`]);
+    expect(signals.listenerCount("SIGTERM")).toBe(0);
+    expect(signals.listenerCount("SIGINT")).toBe(0);
+  }, 15000);
+
+  test("a network that disappears after a good scan writes network null and keeps the rest", async () => {
+    // Spec section 8.5: network is null when no exact match was found, and the last good services,
+    // excluded and generatedAt stay, so Studio keeps serving them until they turn stale.
+    let vanished = false;
+    const docker = await fakeDocker((url) =>
+      vanished && url.startsWith("/v1.44/networks") ? json([NETWORKS_ANSWER[0]]) : healthyDocker(url),
+    );
+    const output = join(tempDir(), "services.json");
+    const logs = capture();
+    const signals = new EventEmitter();
+    let clock = NOW;
+    let writes = 0;
+    const fs = {
+      ...nodeFs,
+      renameSync: (from: string, to: string) => {
+        nodeFs.renameSync(from, to);
+        writes += 1;
+      },
+    };
+    const env = exporterEnv(docker.socket, output, { DISCOVERY_INTERVAL_MS: "2000", DISCOVERY_EXCLUDE: "blog" });
+    const running = main({ env, fs, now: () => clock, stdout: logs.stdout, stderr: logs.stderr, signals });
+
+    await eventually(() => writes === 1, "the first export");
+    const first = readExport(output);
+    vanished = true;
+    clock = NOW + 2000;
+    await eventually(() => writes === 2, "the scan that finds no network", 5000);
+    signals.emit("SIGTERM");
+    expect(await running).toBe(0);
+
+    expect(first.network).toEqual({ name: "captain-overlay-network", id: NETWORK_ID });
+    expect(first.services.map((service: { name: string }) => service.name)).toEqual(["pgtest"]);
+    expect(first.excluded).toEqual(["blog"]);
+    expect(readExport(output)).toEqual({
+      ...first,
+      checkedAt: "2026-10-04T12:00:02.000Z",
+      status: { ok: false, code: "network_not_found", message: "no network is named exactly captain-overlay-network" },
+      network: null,
+    });
+    expect(logs.err).toEqual([
+      "libredb-discovery: scan failed: network_not_found: no network is named exactly captain-overlay-network\n",
+    ]);
+  }, 10000);
+
+  test("SIGINT while a request is in flight exits 0 at once and writes nothing", async () => {
+    const docker = await fakeDocker(() => "hold");
+    const output = join(tempDir(), "services.json");
+    const logs = capture();
+    const signals = new EventEmitter();
+    const running = main({
+      env: exporterEnv(docker.socket, output),
+      stdout: logs.stdout,
+      stderr: logs.stderr,
+      signals,
+    });
+    await eventually(() => docker.seen.length === 1, "the first request");
+    signals.emit("SIGINT");
+    expect(await running).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(existsSync(output)).toBe(false);
+    expect(logs.out.at(-1)).toBe("libredb-discovery: received SIGINT, exiting\n");
+    expect(logs.err).toEqual([]);
+  });
+});
+
+describeIf(MISSING_UNIX_SOCKETS ?? MISSING_POSIX_FILE_MODES, "running the exporter for real under node", () => {
+  test("one run against a missing socket writes the error status and exits 0", () => {
+    const dir = tempDir();
+    const output = join(dir, "services.json");
+    const run = Bun.spawnSync(["node", EXPORTER], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ...exporterEnv(join(dir, "missing.sock"), output, { DISCOVERY_ONCE: "1" }) },
+    });
+    expect(run.exitCode).toBe(0);
+    const data = readExport(output);
+    expect(data).toMatchObject({
+      version: 1,
+      platform: "caprover",
+      generatedAt: null,
+      network: null,
+      services: [],
+      excluded: [],
+      status: { ok: false, code: "socket_unavailable" },
+    });
+    expect(data.status.message).toContain("the Docker socket is not mounted into this app");
+    expect(statSync(output).mode & 0o777).toBe(0o600);
+    expect(run.stderr.toString()).toContain("libredb-discovery: scan failed: socket_unavailable: ");
+  });
+
+  test("SIGTERM stops a running exporter promptly with exit code 0", async () => {
+    const docker = await fakeDocker(healthyDocker);
+    const output = join(tempDir(), "services.json");
+    const child = Bun.spawn(["node", EXPORTER], {
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, ...exporterEnv(docker.socket, output, { DISCOVERY_INTERVAL_MS: "2000" }) },
+    });
+    cleanups.push(() => child.kill("SIGKILL"));
+    await eventually(() => existsSync(output), "the first export", 5000);
+    const sent = Date.now();
+    child.kill("SIGTERM");
+    expect(await child.exited).toBe(0);
+    expect(Date.now() - sent).toBeLessThan(1500);
+    expect(await new Response(child.stdout).text()).toContain("libredb-discovery: received SIGTERM, exiting");
+  }, 10000);
+});
+
+/** The guard that keeps an import inert; copied from bind-address.mjs, so it is pinned here too. */
+describe("isDirectExecution", () => {
+  const here = fileURLToPath(import.meta.url);
+  const hereUrl = pathToFileURL(here).href;
+
+  test("no argv[1] is never direct execution", () => {
+    expect(isDirectExecution(undefined, hereUrl)).toBe(false);
+    expect(isDirectExecution("", hereUrl)).toBe(false);
+  });
+
+  test("the module run as itself is direct execution, through its real path", () => {
+    expect(isDirectExecution(here, pathToFileURL(realpathSync(here)).href)).toBe(true);
+  });
+
+  test("a different file is not", () => {
+    expect(isDirectExecution(here, pathToFileURL(join(dirname(here), "other.mjs")).href)).toBe(false);
+  });
+
+  test("an argv[1] that cannot be resolved is not direct execution, and does not throw", () => {
+    expect(isDirectExecution(join(tmpdir(), "libredb-discover-does-not-exist.mjs"), hereUrl)).toBe(false);
   });
 });
