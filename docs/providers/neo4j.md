@@ -407,6 +407,7 @@ The read policy is tested over a shared corpus of Cypher texts, `tests/fixtures/
 
 ```bash
 bun tests/run-tests.ts tests/integration/db/neo4j-provider.test.ts
+bun tests/run-tests.ts tests/integration/db/neo4j-bolt-composed.test.ts
 bun run test
 ```
 
@@ -474,5 +475,5 @@ Each line is one run.
 ## 14. References
 
 - The design, decided with the maintainer on 2026-10-03, and its research on the driver, Cypher, the editions and Memgraph.
-- Neo4j's Cypher manual and the `neo4j-driver-lite` 6.2.0 API, for 5.26 LTS.
+- Neo4j's [Cypher manual for Neo4j 5](https://neo4j.com/docs/cypher-manual/5/) and the `neo4j-driver-lite` 6.2.0 [JavaScript driver API](https://neo4j.com/docs/api/javascript-driver/6.2/), for 5.26 LTS.
 - [`docker/neo4j/README.md`](../../docker/neo4j/README.md) and [`tests/fixtures/neo4j/5.26.31/README.md`](../../tests/fixtures/neo4j/5.26.31/README.md).
