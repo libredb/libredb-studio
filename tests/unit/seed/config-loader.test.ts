@@ -1,5 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { copyFileSync, mkdtempSync, rmSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
 import path from "path";
+
+const debug = mock(() => {});
+const info = mock(() => {});
+const warn = mock(() => {});
+const error = mock(() => {});
+mock.module("@/lib/logger", () => ({
+  logger: { debug, info, warn, error },
+}));
+
 import { loadConfig, resetCache } from "@/lib/seed/config-loader";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
@@ -7,6 +18,7 @@ const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
 describe("config-loader", () => {
   beforeEach(() => {
     resetCache();
+    for (const logger of [debug, info, warn, error]) logger.mockClear();
   });
 
   afterEach(() => {
@@ -115,5 +127,78 @@ describe("config-loader", () => {
     const config = await loadConfig();
     expect(config).not.toBeNull();
     expect(config!.connections).toHaveLength(1);
+  });
+
+  describe("missing file warning", () => {
+    const NOT_FOUND = "Seed config file not found, seed connections disabled";
+    let dir: string;
+
+    beforeEach(() => {
+      dir = mkdtempSync(path.join(tmpdir(), "seed-missing-"));
+      // A TTL of 0 re-reads the file on every call, as a short SEED_CACHE_TTL_MS does over time.
+      process.env.SEED_CACHE_TTL_MS = "0";
+    });
+
+    afterEach(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    function notFoundCalls(): unknown[][] {
+      return (warn.mock.calls as unknown[][]).filter((call) => call[0] === NOT_FOUND);
+    }
+
+    it("logs a missing file once however often it is re-read", async () => {
+      const file = path.join(dir, "seed-connections.yaml");
+      process.env.SEED_CONFIG_PATH = file;
+
+      expect(await loadConfig()).toBeNull();
+      expect(await loadConfig()).toBeNull();
+      expect(await loadConfig()).toBeNull();
+
+      expect(notFoundCalls()).toEqual([[NOT_FOUND, { route: "seed/config-loader", path: file }]]);
+    });
+
+    it("logs each missing path once", async () => {
+      const first = path.join(dir, "first.yaml");
+      const second = path.join(dir, "second.yaml");
+
+      process.env.SEED_CONFIG_PATH = first;
+      await loadConfig();
+      process.env.SEED_CONFIG_PATH = second;
+      await loadConfig();
+      process.env.SEED_CONFIG_PATH = first;
+      await loadConfig();
+      process.env.SEED_CONFIG_PATH = second;
+      await loadConfig();
+
+      expect(notFoundCalls().map((call) => (call[1] as { path: string }).path)).toEqual([first, second]);
+    });
+
+    it("logs again after the file appears and disappears", async () => {
+      const file = path.join(dir, "seed-connections.yaml");
+      process.env.SEED_CONFIG_PATH = file;
+
+      expect(await loadConfig()).toBeNull();
+      expect(notFoundCalls()).toHaveLength(1);
+
+      copyFileSync(path.join(FIXTURES, "valid-config.yaml"), file);
+      expect(await loadConfig()).not.toBeNull();
+      expect(notFoundCalls()).toHaveLength(1);
+
+      unlinkSync(file);
+      expect(await loadConfig()).toBeNull();
+      expect(await loadConfig()).toBeNull();
+      expect(notFoundCalls()).toHaveLength(2);
+    });
+
+    it("logs again after resetCache", async () => {
+      process.env.SEED_CONFIG_PATH = path.join(dir, "seed-connections.yaml");
+
+      await loadConfig();
+      resetCache();
+      await loadConfig();
+
+      expect(notFoundCalls()).toHaveLength(2);
+    });
   });
 });

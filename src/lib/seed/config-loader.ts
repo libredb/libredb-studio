@@ -8,6 +8,12 @@ const DEFAULT_PATH = "/app/config/seed-connections.yaml";
 let cachedConfig: SeedConfig | null = null;
 let cachedAt = 0;
 let cacheIsNull = false;
+/**
+ * Paths already reported missing. A deployment that ships no seed file re-reads it once per
+ * SEED_CACHE_TTL_MS, so the warning is logged once per path, and again only after the file has
+ * appeared and gone.
+ */
+const missingPathsLogged = new Set<string>();
 
 function getCacheTTL(): number {
   const raw = Number(process.env.SEED_CACHE_TTL_MS);
@@ -22,6 +28,7 @@ export function resetCache(): void {
   cachedConfig = null;
   cachedAt = 0;
   cacheIsNull = false;
+  missingPathsLogged.clear();
 }
 
 /**
@@ -54,10 +61,13 @@ export async function loadConfig(): Promise<SeedConfig | null> {
   } catch (err: unknown) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
-      logger.warn("Seed config file not found, seed connections disabled", {
-        route: "seed/config-loader",
-        path: configPath,
-      });
+      if (!missingPathsLogged.has(configPath)) {
+        missingPathsLogged.add(configPath);
+        logger.warn("Seed config file not found, seed connections disabled", {
+          route: "seed/config-loader",
+          path: configPath,
+        });
+      }
       cachedConfig = null;
       cacheIsNull = true;
       cachedAt = now;
@@ -65,6 +75,7 @@ export async function loadConfig(): Promise<SeedConfig | null> {
     }
     throw err;
   }
+  missingPathsLogged.delete(configPath);
 
   const isJSON = configPath.endsWith(".json");
   let parsed: unknown;
