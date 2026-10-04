@@ -69,6 +69,7 @@ A deployment without the driver answers `describeDriverAbsence()`'s message, "Db
 | User | Yes | "User is required for Db2" |
 | Password | No | Sent empty when none is given; sent in cleartext without TLS, see section 3.3; a password holding `!`, `^`, `[`, `]` or `\|` is refused before connecting, because `db2-node` 1.0.24 sends it wrongly (K23) |
 | SSL panel | Yes, unless you opt out | Section 3.3 |
+| Send the password without TLS | Yes, while SSL Mode is disable | A checkbox the form shows only while SSL Mode is disable; without it ticked, a connection with no TLS is refused (section 3.3) |
 
 A pasted `db2://user:password@host:50000/TESTDB` fills the fields; there is no connection-string toggle, the Oracle precedent.
 `?ssl=true`, `?ssl=1` and `?security=SSL` (any case) turn TLS on in the pasted form as Verify (system trust), never as Require, and `?ssl=false` or `?ssl=0` turn it off.
@@ -168,7 +169,7 @@ A column the driver dropped from the header cannot be named by it, so a `SELECT 
 
 ### Fixed in 1.0.24
 
-These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12), and fixed by [gurungabit/db2-node#13](https://github.com/gurungabit/db2-node/pull/13), released as [1.0.24](https://github.com/gurungabit/db2-node/releases/tag/v1.0.24); each now probes `GONE` on 12.1.0.0 and 11.5.9.0, and the provider workaround each one needed is gone with it unless the line says otherwise.
+These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](https://github.com/gurungabit/db2-node/issues/12), K18 to K22 in [a later comment](https://github.com/gurungabit/db2-node/issues/12#issuecomment-5965620029) on 2026-10-03, and fixed by [gurungabit/db2-node#13](https://github.com/gurungabit/db2-node/pull/13), released as [1.0.24](https://github.com/gurungabit/db2-node/releases/tag/v1.0.24); each now probes `GONE` on 12.1.0.0 and 11.5.9.0, and the provider workaround each one needed is gone with it unless the line says otherwise.
 
 - K1: non-ASCII text in CHAR or VARCHAR read back as EBCDIC 037 mojibake. Catalog names are still read as HEX, for the reasons section 6.1 gives.
 - K2: an INTEGER beside a DECFLOAT or BOOLEAN was byte-swapped.
@@ -208,9 +209,10 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | Maintenance | Yes | Run Statistics and Reorganize Table, per table only |
 | Connection string | Yes | A `db2://` paste fills the fields |
 | Identifier quoting | Double quotes | Declared, because port 50000 would otherwise fall to the PostgreSQL heuristic |
-| Statement terminator | None | A trailing `;` is accepted |
+| Statement terminator | Not declared | A generated statement ends with `;`, the default when none is declared; a trailing `;` is accepted |
 | Container levels | Schema | |
 | Container path shapes | Exact | Like Oracle |
+| Preview projection | Yes | `previewProjection` is `DB2_PREVIEW_PROJECTION`: the object browser's preview names each column and leaves CLOB, DBCLOB, BLOB and XML columns out, named in a comment above the statement, so K4 does not reach it; a preview whose column list is not loaded yet still reads `SELECT *`, under a comment that says so |
 
 The application's query timeout is not forwarded to Db2: on 1.0.22 the driver's own timeout left the statement running on the server (K14), and on 1.0.24 it cancels it through a second session that needs privileges this version does not ask a user to hold.
 
@@ -297,7 +299,7 @@ A routine with no text is refused with a reason chosen by its `ORIGIN`:
 
 An empty definition answers "SYSCAT answered an empty definition.", and an object that is not found raises a query error naming it.
 
-## Object edit (#789)
+### 6.6 Object edit (#789)
 
 Object edit is absent in this version: no kind declares `acceptsSourceEdits`.
 It was measured on the #787 branch and deferred: a failing `CREATE OR REPLACE PROCEDURE` or `TRIGGER` answers SQL0206N and leaves the old object valid with its old text, which is the safe outcome, but replacing a view leaves every dependent view `VALID 'N'` until its next use, so an edit would break objects the editor never showed.
@@ -424,8 +426,15 @@ Only linux x64 was measured; arm64, macOS and Windows load the addon in the rele
 - `tests/unit/db/db2/` holds the unit tests of each module.
 - `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 but K23 and for the K rows fixed in 1.0.24, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes included; neither runs in `bun run test`.
 
+The integration test needs no Db2, and runs on its own with:
+
+```bash
+bun tests/run-tests.ts tests/integration/db/db2-provider.test.ts
+```
+
 The `db2` service of `database-compose.yml` runs `icr.io/db2_community/db2:12.1.0.0` unprivileged, with `cap_add: [IPC_LOCK, IPC_OWNER]`, on port 50000.
 Its first boot creates the instance and the database and takes several minutes; wait for the health check before you connect.
+The service has no TLS, so a Studio connection to it needs "Send the password without TLS" ticked, or the provider refuses it (section 3.3).
 The fixture under `docker/db2-init/` creates the schemas `APP` and `REPORTING` with tables, a cross-schema foreign key, a view, an invalid view, a materialized query table, an alias, a sequence, a procedure, an overloaded function, an external function, two triggers (one cross-schema), a module, `APP."Mixed Case"`, `APP."O'Brien"` for the maintenance quoting, and `APP.ALLTYPES` and `APP.EMPTY_T` for the value checks.
 
 ```bash
