@@ -3,10 +3,11 @@
  *
  * Health reads the shard map afresh with the client, never the provider's brief cache, so a server that stopped
  * serving its map is seen at once; the adapter runs the dial policy over every leader as it reads it; then it asks
- * `grpc.health.v1.Health/Check`. Each call has the deadline the provider hands in. The overview's one counted fact
- * is the shard count (`tableCount`, SB2-12 D4); the namespace, the order and the leaders are in each shard's Source
- * tab. No call's failure is worded here but the two plan-defined health outcomes; every other failure is the
- * adapter's `OxiaError`, which the provider words.
+ * `grpc.health.v1.Health/Check`. Each call has the deadline the provider hands in. The overview counts no table and
+ * no index, because the shared card that draws `tableCount` is titled Tables and Oxia has none (ruling R34); the
+ * shard count, the namespace, the order and the leaders are in each shard's Source tab. No call's failure is worded
+ * here but the two plan-defined health outcomes; every other failure is the adapter's `OxiaError`, which the
+ * provider words.
  */
 import { ConnectionError } from "@/lib/db/errors";
 import type { DatabaseOverview, HealthInfo } from "@/lib/db/types";
@@ -39,15 +40,18 @@ export async function oxiaHealth(surface: OxiaSurface, deadlineMs: number, signa
   return { databaseSize: "N/A", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] };
 }
 
-/** SB2-9.5: the client API reports no version, uptime or size; the shard count is the one counted object. */
+/**
+ * SB2-9.5: the client API reports no version, uptime or size, and Oxia holds no table or index (ruling R34). The shard
+ * map is still read, so a server that serves none fails the panel instead of drawing a quiet overview.
+ */
 export async function oxiaOverview(surface: OxiaSurface, call: OxiaCallOptions): Promise<DatabaseOverview> {
-  const snapshot = await surface.snapshot(call);
+  await surface.snapshot(call);
   return {
     version: "N/A",
     uptime: "N/A",
     maxConnections: 0,
     databaseSize: "N/A",
-    tableCount: snapshot.shards.length,
+    tableCount: 0,
     indexCount: 0,
   };
 }

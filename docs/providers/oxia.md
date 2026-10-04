@@ -558,7 +558,7 @@ A Check that answers anything but SERVING:
 
 > Oxia answered the health check with \<STATUS\>: it serves no reads now.
 
-The overview shows the shard count as its one counted object; the client API reports no version, uptime or size, so those read N/A, and the namespace, the key order and each leader are in each shard's Source tab.
+The overview counts no table and no index, because Oxia has none, and the client API reports no version, uptime or size, so those read N/A; the shard count, the namespace, the key order and each leader are in each shard's Source tab.
 The other panels are empty, with these states:
 
 - Slow queries: Oxia keeps no query log

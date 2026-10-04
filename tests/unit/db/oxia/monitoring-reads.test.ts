@@ -140,20 +140,29 @@ describe("oxiaHealth (SB1-9.5)", () => {
   });
 });
 
-describe("oxiaOverview (SB2-9.5)", () => {
-  test("no version, uptime or size, and the shard count as the one counted object", async () => {
+describe("oxiaOverview (SB2-9.5, ruling R34)", () => {
+  test("no version, uptime or size, and no table or index: the shards are not counted as tables", async () => {
     const fake = createFakeOxiaClient({ order: "hierarchical", records: [], shards: 4 });
     const overview = await oxiaOverview(surfaceOf(fake).surface, {
       signal: new AbortController().signal,
       deadline: Date.now() + 10_000,
     });
+    // The card that draws `tableCount` is titled Tables by the shared UI, and Oxia has none.
     expect(overview).toEqual({
       version: "N/A",
       uptime: "N/A",
       maxConnections: 0,
       databaseSize: "N/A",
-      tableCount: 4,
+      tableCount: 0,
       indexCount: 0,
     });
+  });
+
+  test("the overview still reads the shard map, so a server that serves none fails the panel", async () => {
+    const fake = createFakeOxiaClient({ order: "hierarchical", records: [] });
+    const failure = new OxiaError("namespace-not-found", { rpc: "GetShardAssignments" });
+    fake.failNext({ rpc: "GetShardAssignments" }, failure);
+    const call = { signal: new AbortController().signal, deadline: Date.now() + 10_000 };
+    expect(await oxiaOverview(surfaceOf(fake).surface, call).catch((caught: unknown) => caught)).toBe(failure);
   });
 });

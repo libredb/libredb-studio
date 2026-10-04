@@ -677,10 +677,10 @@ describe("the surfaces, delegated", () => {
     expect((error as Error).message).not.toBe(sentence(failure, "health check"));
   });
 
-  test("the overview counts the shards", async () => {
+  test("the overview counts no table, whatever the shard count (ruling R34)", async () => {
     const { provider } = providerOver(fakeOf());
     await provider.connect();
-    expect((await provider.getOverview()).tableCount).toBe(3);
+    expect((await provider.getOverview()).tableCount).toBe(0);
   });
 
   test("an object read's failure is worded as an object read", async () => {
