@@ -3,7 +3,7 @@ import { isBareIdentifier, quoteIdentifier } from "@/lib/sql/identifier";
 import { quoteLiteral } from "@/lib/sql/values";
 import { asBytes, binaryText } from "./binary";
 import { cellOf, resolveColumns, toCsv, type CsvDelimiter } from "./csv";
-import { jsonText } from "./json";
+import { binaryCellsAsHex, jsonText } from "./json";
 import { typedLiteral } from "./typed-literals";
 import { isNonFiniteWord, nonFiniteWord, type NonFiniteWord } from "@/lib/non-finite";
 
@@ -991,7 +991,7 @@ export function buildResultExport(format: ResultExportFormat, source: ResultExpo
   const columns = resolveColumns(rows, source.fields);
 
   if (format === "json") {
-    return { content: jsonText(rows, 2), mimeType: "application/json", extension: "json" };
+    return { content: jsonText(rows.map(binaryCellsAsHex), 2), mimeType: "application/json", extension: "json" };
   }
 
   if (format === "csv") {

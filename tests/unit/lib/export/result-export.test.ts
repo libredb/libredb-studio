@@ -67,6 +67,35 @@ describe("buildResultExport — json", () => {
     expect(file.mimeType).toBe("application/json");
     expect(file.extension).toBe("json");
   });
+
+  // The CSV, the SQL forms and the grid all read a binary cell as `\x` hex; the JSON
+  // wrote `{"type":"Buffer","data":[...]}`, so one result exported three ways
+  // disagreed with itself (#1381). Measured 2026-10-03 on PostgreSQL 18.6 (`bytea`)
+  // and on SQL Server (`varbinary`), whose cells both reach the browser in that form.
+  test("writes a bytea or varbinary cell as the same text the CSV writes for it", () => {
+    for (const dialect of ["postgres", "mssql", "mysql", "sqlite", "oracle"] as const) {
+      const rows = [{ id: 1, payload: { type: "Buffer", data: [0xde, 0xad, 0xbe, 0xef, 0x00, 0xff] } }];
+      const json = buildResultExport("json", source({ rows, fields: ["id", "payload"], dialect }));
+      const csv = buildResultExport("csv", source({ rows, fields: ["id", "payload"], dialect }));
+
+      expect(JSON.parse(json.content)).toEqual([{ id: 1, payload: "\\xdeadbeef00ff" }]);
+      expect(csv.content).toBe("id,payload\n1,\\xdeadbeef00ff");
+    }
+  });
+
+  test("writes a live Uint8Array the same way", () => {
+    const rows = [{ payload: Uint8Array.from([0x00, 0xff]) }];
+
+    expect(JSON.parse(buildResultExport("json", source({ rows, fields: ["payload"] })).content)).toEqual([
+      { payload: "\\x00ff" },
+    ]);
+  });
+
+  test("leaves a document that merely looks Buffer-shaped as JSON", () => {
+    const rows = [{ doc: { type: "Buffer", data: [1, "two"] } }];
+
+    expect(JSON.parse(buildResultExport("json", source({ rows, fields: ["doc"] })).content)).toEqual(rows);
+  });
 });
 
 describe("buildResultExport — sql-insert", () => {

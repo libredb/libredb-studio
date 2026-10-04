@@ -116,8 +116,9 @@ spellings in `src/lib/llm/utils/gemini-endpoint.ts`. Give the versioned URL; a b
   uses (`establishContext` in `src/lib/agent/investigation.ts`): the alternative was a mode that knew
   your database only when an agent run had already read it in the same process. What that reads is a
   schema inventory — names, types, keys and relations — plus what the engine already RECORDS about
-  its own tables (`pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite). On
-  those two engines the catalog is read with statements the server composes; since #414 **every other
+  its own tables (`pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite,
+  `sys.partitions.rows` on SQL Server). On PostgreSQL and SQLite
+  the catalog is read with statements the server composes; since #414 **every other
   engine is read a second way** — the server asks the connection's own provider to describe its
   schema, which is the same inspection this product performs when it lists your tables in the sidebar,
   and it composes no statement at all. Nothing about your DATA is in the composed reading: no table is

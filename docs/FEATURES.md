@@ -195,6 +195,7 @@ Two components are described below and a claim true of one can be false of the o
 *   **Format Versatility:** Instantly export query result sets to CSV, JSON, SQL `INSERT` statements, or a generated `CREATE TABLE` DDL.
 *   **CSV Delimiters:** Choose comma (default), semicolon or tab in the import preview or result export menu. Changing the import delimiter reparses the preview and retains the header setting and column mappings. Export quoting, formula neutralization and UTF-8 encoding apply to every separator.
 *   **Developer-Ready:** Clean data output optimized for external analysis, reporting, or database migrations.
+*   **Binary Values:** A `bytea`, `BLOB`, `RAW` or `varbinary` value is written as the `\x` hex the grid shows (`\xdeadbeef00ff`) in the CSV and the JSON export and by Copy Row as JSON, and as the dialect's own binary literal in a SQL `INSERT`.
 *   **Formula-Safe CSV:** A cell whose value starts with `=`, `+`, `-`, `@`, a tab or a carriage return is written with a leading apostrophe, so a spreadsheet shows it as text instead of evaluating it when the file is opened; this is unconditional and has no setting, and a plain number such as `-12.5` is left exactly as it is.
 
 ### 16. Authentication & Identity Management

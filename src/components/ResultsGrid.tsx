@@ -50,6 +50,7 @@ import { hasResultOrder } from "@/lib/sql/result-order";
 import { pageOfferFor } from "@/components/results-grid/page-offer";
 import { useDismissOnOutsideClick } from "@/hooks/use-dismiss-on-outside-click";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { binaryCellsAsHex, jsonText } from "@/lib/export/json";
 
 export interface CellChange {
   rowIndex: number;
@@ -423,11 +424,12 @@ export function ResultsGrid({
             maskedRow[field] = maskValueByPattern(row[field], pattern);
           }
         }
-        copyToClipboard(JSON.stringify(maskedRow, null, 2), "Row");
+        copyToClipboard(jsonText(binaryCellsAsHex(maskedRow), 2), "Row");
         return;
       }
 
-      copyToClipboard(JSON.stringify(row, null, 2), "Row");
+      // A binary cell as the hex the cell shows, not the Buffer form it arrived in (#1381).
+      copyToClipboard(jsonText(binaryCellsAsHex(row), 2), "Row");
     },
     [copyToClipboard, effectiveMaskingEnabled, result.fields, revealedCells, sensitiveColumns],
   );

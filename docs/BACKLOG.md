@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D227, U17 · 139
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U89 · 82
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
 - [Dependencies](#dependencies) — P1-P9 · 7
 - [Documentation](#documentation) — DOC3-DOC13 · 10
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
@@ -3006,17 +3006,6 @@ Measured 2026-10-03 in the acceptance pass of the vector-family work, signed in 
 Found by the acceptance pass of the vector-family work; the default predates it.
 
 **Done when:** `MonitoringDashboard` passes the signed-in role to both tabs, a non-admin sees no maintenance or Terminate control on /monitoring, and a component test renders the dashboard as a non-admin and finds none.
-
-### X27. A JSON export writes a binary value in Node's Buffer form
-
-`buildResultExport` (`src/lib/export/result-export.ts:892-893`) writes the JSON export as `jsonText(rows)`, the raw rows, so a PostgreSQL `bytea` or SQL Server `varbinary` value is written as `{"type":"Buffer","data":[0,1,...]}`.
-The grid, Copy Cell, the row detail and the CSV export show the same value as `\x` hex, through `asBytes` in `src/lib/export/binary.ts`.
-Measured 2026-10-03 in the acceptance pass of the vector-family work: a 100-byte `bytea` and a 100-byte `varbinary` each exported to JSON as the Buffer object with 100 numbers, and copied as `\x00010203...`.
-A SQLite or libSQL `BLOB` now arrives in the same `Buffer` form, so it is written the same way.
-
-Found by the acceptance pass of the vector-family work; the JSON writer dates from #422.
-
-**Done when:** the owner has decided the JSON form of a binary value (a hex string, a base64 string, or the Buffer form kept and documented), the JSON export writes it for every engine whose driver hands back bytes, and an export test pins it for `bytea` and `varbinary`.
 
 ---
 

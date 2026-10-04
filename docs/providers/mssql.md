@@ -1812,8 +1812,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **Binary columns aren't sanitized.** `VARBINARY`/`IMAGE`/`rowversion` come back as Node `Buffer`s
   and cross the wire as `{"type":"Buffer","data":[…]}` (no `0x…` hex conversion like the MySQL
   provider) — see [§5.3](#53-data-type--parameter-handling). The client recovers them: the results
-  grid, the row detail sheet and the CSV export all classify that shape as binary and render `\x…`
-  hex (`src/lib/export/binary.ts`), so what remains is the response size — about four bytes of JSON
+  grid, the row detail sheet, the CSV export and the JSON export (#1381) all classify that shape as
+  binary and write `\x…` hex (`src/lib/export/binary.ts`), so what remains is the response size: about four bytes of JSON
   digits per byte of data.
 - **Numeric precision loss** — `DECIMAL`/`NUMERIC`/`MONEY` are returned as JS `number`s and can lose
   precision; they would need to be fetched as strings to stay exact. `BIGINT` already arrives as one

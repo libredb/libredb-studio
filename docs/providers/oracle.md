@@ -627,8 +627,8 @@ INSERT INTO r6_lob ("ID", "C", "B") VALUES (1, '{"_events":{"finish":[null]},"_r
 A `BLOB` as a `Buffer` needs nothing further: `asBytes` in
 [`src/lib/export/binary.ts`](../../src/lib/export/binary.ts) accepts both a live `Uint8Array` and the
 `{"type":"Buffer","data":[…]}` JSON it serializes to, which is the same contract a Postgres `bytea`
-and a MySQL `BLOB` already reach the binary cell renderer, the row detail sheet, the CSV and the SQL
-export's binary literal through. Verified by exporting a row and replaying it into Oracle itself:
+and a MySQL `BLOB` already reach the binary cell renderer, the row detail sheet, the CSV, the JSON
+export's `\x…` string (#1381) and the SQL export's binary literal through. Verified by exporting a row and replaying it into Oracle itself:
 
 ```
 SOURCE   {"ID":1,"C":"the quick brown fox","NC":"ncl-value-unicode-café","B":{"type":"Buffer","data":[222,173,190,239,1,2]}}
