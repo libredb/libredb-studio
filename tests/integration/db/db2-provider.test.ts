@@ -612,6 +612,22 @@ describe("Db2Provider: declaration", () => {
     expect(capabilities.objectKinds?.some((kind) => kind.acceptsSourceEdits === true)).toBe(false);
   });
 
+  // K24, measured on 12.1.0.0 and 11.5.9.0 through 1.0.24 and 1.0.25: a value bound to a CLOB,
+  // DBCLOB or BLOB column declared 32768 bytes or longer is not written and no error is raised. A
+  // result declares those columns without their length (`CLOB(1K)` and `CLOB(1M)` both read
+  // `CLOB`), so the grid's editor refuses every one of them, and only them.
+  test("the inline editor refuses a CLOB, DBCLOB or BLOB column, and no other (K24)", () => {
+    const refused = makeProvider().getCapabilities().inlineEditRefusedColumns;
+    expect(refused).toBeDefined();
+    const pattern = new RegExp(refused!.type);
+
+    for (const type of ["CLOB", "DBCLOB", "BLOB"]) expect(pattern.test(type)).toBe(true);
+    for (const type of ["VARCHAR(20)", "XML", "VARBINARY(10)", "GRAPHIC(4)", "CLOBBER"]) {
+      expect(pattern.test(type)).toBe(false);
+    }
+    expect(refused!.reason).toContain("K24");
+  });
+
   test("declares none of the methods this version leaves out", () => {
     const provider = makeProvider() as unknown as Record<string, unknown>;
     for (const method of [
@@ -794,8 +810,8 @@ describe("Db2Provider: query", () => {
   });
 
   // K24, measured on 12.1.0.0 and 11.5.9.0 through 1.0.24 and 1.0.25: a value bound to a CLOB(1M)
-  // answers 0 changed rows and is not written, so a result holding one says an edit of it is lost.
-  test("a result holding a CLOB says an inline edit of it can be lost (K24)", async () => {
+  // answers 0 changed rows and is not written, so a result holding one says the grid does not edit it.
+  test("a result holding a CLOB says the grid does not edit it (K24)", async () => {
     userQuery = async () => ({
       rows: [{ ID: 1, C_CLOB: "clob text" }],
       rowCount: 1,
@@ -806,7 +822,7 @@ describe("Db2Provider: query", () => {
     const result = await provider.query("SELECT ID, C_CLOB FROM APP.ALLTYPES");
 
     expect(result.rows).toEqual([{ ID: 1, C_CLOB: "clob text" }]);
-    expect(result.warnings?.[0]?.message).toContain("inline edit of C_CLOB (CLOB) can be lost");
+    expect(result.warnings?.[0]?.message).toContain("does not edit C_CLOB (CLOB) inline");
   });
 
   // K16, fixed in 1.0.25: measured on 12.1.0.0 and 11.5.9.0, a BOOLEAN bound as the text "true" or
@@ -953,7 +969,7 @@ describe("Db2Provider: prepareQuery", () => {
     ]);
 
     // K4 is fixed in 1.0.25, so XML is read beside the rest; a CLOB, DBCLOB or BLOB stays out,
-    // because an inline edit of it is lost with no error (K24).
+    // because db2-node writes nothing for a value bound to one (K24).
     expect(preview).toBe(
       '-- Not read by this preview: "C_CLOB" CLOB(1048576), "C_DBCLOB" DBCLOB(1024), "C_BLOB" BLOB(1048576). db2-node writes nothing, and reports no error, for an inline edit of a CLOB, DBCLOB or BLOB column, so this preview does not offer one; select such a column in a query of your own to read it (docs/providers/db2.md, K24).\n' +
         'SELECT "ID", "C_BIG", "C_VCHAR", "C_BOOL", "C_TS0", "C_XML" FROM "APP"."ALLTYPES";',

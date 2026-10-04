@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D206, U17 · 120
+- [Drivers and connections](#drivers-and-connections) — D1-D205, U17 · 119
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
@@ -2348,24 +2348,14 @@ A parameter whose target is a CLOB, DBCLOB or BLOB column declared 32768 bytes o
 Beside other parameters the whole statement writes nothing on 1.0.25, where 1.0.24 refused it with "parameter descriptor count 1 does not match parameter count 2".
 At 32767 bytes the value is written, and `CAST(? AS VARCHAR(n))` or `CAST(? AS VARBINARY(n))` is written at any declared length; the 1.0.25 README's own `CAST(? AS BLOB(1M))` example writes nothing.
 Measured 2026-10-04 on Db2 12.1.0.0 and 11.5.9.0 through `db2-node` 1.0.24 and 1.0.25 (`tests/live/db2-known-issues.ts`, row K24).
-It reaches the grid's inline editor, which binds every value: an edit of such a cell is reported saved and lost.
-The provider leaves CLOB, DBCLOB and BLOB columns out of the table preview and warns on every result that holds one (`src/lib/db/providers/sql/db2/values.ts`); an import writes literals and is not affected.
-Not reported upstream yet.
+The grid's inline editor binds every value, so an edit of such a cell would be reported saved and lost.
+Contained: the provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns` (`src/lib/db/providers/sql/db2/capabilities.ts`), so `ResultsGrid` opens no editor on such a cell and shows the reason on it; a result declares these columns without their length, so every one is refused, a short one included.
+The table preview still leaves them out and a result holding one carries a warning (`src/lib/db/providers/sql/db2/values.ts`); an import writes literals and is not affected.
+Reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31).
 
 Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.25.
 
-**Done when:** the defect is reported upstream, the pinned `db2-node` writes a bound value to a `CLOB(1M)`, a `DBCLOB(1M)` and a `BLOB(1M)` alone and beside other parameters, K24 probes `GONE` on 12.1 and 11.5, and the preview rule and the warning are removed with it.
-
-### D206. The inline editor's key check reads a Db2 count from the key's place
-
-Before it applies an edit, `keyAddressesOneRow` in `src/hooks/use-inline-editing.ts` sends `SELECT <key>, COUNT(*) ... GROUP BY <key>` and reads each count as `Object.values(row)[1]`, by position.
-Db2 names the unnamed `COUNT(*)` column `2`, and a JavaScript object lists an integer-like key before every other key, so the row `{ ID: 2, "2": 1 }` reads back as `[1, 2]` and the key is taken for the count.
-Measured 2026-10-04 on Db2 12.1.0.0 through `db2-node` 1.0.24 and 1.0.25, which both answer `{"2":1,"ID":2}`, and in the browser: an edit of the row with key 2 in a two-row table keyed by its primary key was refused with "ID does not tell these rows apart in this table: the 1 row you edited would write to 2 rows", while the row with key 1 saved, because there the key and the count are both 1.
-So a Db2 edit is refused for most keys, and for the key 1 the check passes without reading the count at all.
-
-Found 2026-10-04 by the browser check of the move to `db2-node` 1.0.25; it predates that change, which did not touch the shared hook.
-
-**Done when:** the check reads the count by the result's own column order (`fields[1]`) or aliases it, a hook test feeds it a row whose count column is named `2`, and a Db2 edit of a row keyed 2 saves in the browser.
+**Done when:** the pinned `db2-node` writes a bound value to a `CLOB(1M)`, a `DBCLOB(1M)` and a `BLOB(1M)` alone and beside other parameters, K24 probes `GONE` on 12.1 and 11.5, and the editor refusal, the preview rule and the warning are removed with it.
 
 ## Value interpolation
 

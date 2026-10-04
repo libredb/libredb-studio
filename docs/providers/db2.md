@@ -149,15 +149,15 @@ On 2026-10-04 it printed the same verdict for every row on 12.1.0.0 and on 11.5.
 
 | # | Issue | What you see | Mitigated by the provider | Workaround |
 |---|---|---|---|---|
-| K24 | A value bound to a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer is not written | The statement answers 0 changed rows, with no error and no diagnostic, and the row keeps its old value; beside other parameters the whole statement writes nothing; at 32767 bytes the value is written | Partly: the object browser's preview leaves CLOB, DBCLOB and BLOB columns out, so it offers no edit of one, and a result holding such a column carries a warning that an inline edit of it can be lost | Write the value with an `UPDATE` of your own, as a literal, or bound through `CAST(? AS VARCHAR(n))` or `CAST(? AS VARBINARY(n))`, which Db2 converts to the LOB |
+| K24 | A value bound to a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer is not written | The statement answers 0 changed rows, with no error and no diagnostic, and the row keeps its old value; beside other parameters the whole statement writes nothing; at 32767 bytes the value is written | Yes for the grid: its inline editor offers no edit of a CLOB, DBCLOB or BLOB cell and says why on the cell, the object browser's preview leaves those columns out, and a result holding one carries a warning that the grid does not edit it ([gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31)) | Write the value with an `UPDATE` of your own, as a literal, or bound through `CAST(? AS VARCHAR(n))` or `CAST(? AS VARBINARY(n))`, which Db2 converts to the LOB |
 
 K24 was found on 2026-10-04 while moving to 1.0.25, and 1.0.24 has it too: a `CLOB(1M)` or `BLOB(1M)` bound alone answered 0 rows on both, and beside another parameter 1.0.24 refused the statement with "parameter descriptor count 1 does not match parameter count 2" where 1.0.25 writes nothing.
 The README of 1.0.25 binds a Buffer through `CAST(? AS BLOB(1M))`, and that statement wrote nothing either, on 12.1.0.0 and 11.5.9.0.
 A `DBCLOB(1K)` and an `XML` column are written.
-It is not reported upstream yet; D205 in `docs/BACKLOG.md` tracks it.
+It is reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31); D205 in `docs/BACKLOG.md` tracks it.
 
-A result with a CLOB, DBCLOB or BLOB column carries a warning above the grid that names those columns and says an inline edit of them can be lost while the grid reports it saved.
-The declared length does not reach a result, a `CLOB(1M)` column arrives described as `VarChar(32777)`, so the warning names every such column, a short one included.
+The provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns`, so the grid's inline editor opens no editor on such a cell and shows the reason on it, and a result with such a column carries a warning above the grid that names those columns and says the grid does not edit them.
+The declared length does not reach a result, a `CLOB(1M)` column arrives described as `VarChar(32777)` and a `CLOB(1K)` as `CLOB`, so every such column is refused and named, a short one included.
 Reading them is exact since 1.0.25: `SELECT *` over `APP.ALLTYPES` answers all 25 columns and 3 rows, each value equal to the column read on its own (K4, fixed).
 
 ### Fixed in 1.0.25
@@ -204,7 +204,7 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | EXPLAIN | No | Db2's EXPLAIN fills the explain tables rather than answering a plan; reading them back is possible on 1.0.24, where a `CALL` runs, and is not built yet |
 | External query limiting | Yes | Inherited |
 | Create Table | No | No Db2 row of column types exists for the dialog, which would otherwise emit PostgreSQL DDL, and an import into a new table would write `TEXT`, which Db2 refuses, and `NUMERIC`, which Db2 reads as `DECIMAL(5,0)` (D145) |
-| Inline row edit | Yes | Tables only, and an edit of a large CLOB, DBCLOB or BLOB column is lost (K24). Off on 1.0.22, where a read-then-write-back stored corrupted text (K1) and a DECIMAL that did not fit was stored wrong (K22); see section 7.5 |
+| Inline row edit | Yes | Tables only, and never a CLOB, DBCLOB or BLOB column, which db2-node does not write when bound (K24). Off on 1.0.22, where a read-then-write-back stored corrupted text (K1) and a DECIMAL that did not fit was stored wrong (K22); see section 7.5 |
 | Data import | Yes | Into an existing table, the one kind that declares `acceptsRowWrites`; not into a new table, as Create Table above |
 | Result pagination | Yes | Section 7.2 |
 | Transactions and SANDBOX | No | No held session in this version; 1.0.24's `beginTransaction()` makes one possible (D148) |
@@ -320,7 +320,7 @@ A statement may start with a comment, which 1.0.22 refused (K18).
 A SELECT reports the number of rows returned; any other statement reports the driver's affected-row count, which is 0 for an UPDATE or DELETE that matched no row (on 1.0.22 it was -2147221503, K19).
 Each statement commits on its own.
 The statement is read with `rowMode: "array"`, so two columns of one name keep both values: the repeat is named `A (2)`, then `A (3)`, skipping a name the statement already used, as the Druid and Trino providers name theirs (K15, fixed in 1.0.25).
-The driver's diagnostics are passed through as result warnings, after the LOB edit warning of K24.
+The driver's diagnostics are passed through as result warnings, after the LOB warning of K24.
 A failure the driver raises itself carries a `driverCode` and no SQLSTATE: `DB2_PARAMETER_COUNT` and `DB2_PARAMETER_TYPE`, a wrong number of parameters or a value that does not fit its target, are a query error, and `DB2_PROTOCOL` and `DB2_INVALID_OPTION` are the driver's own and stay a plain database error whatever their words say, each with the driver's message (K17, fixed in 1.0.25).
 Every other error goes through the shared `mapDatabaseError()`, which reads the SQLSTATE and SQLCODE when the driver's message carries them.
 
@@ -345,8 +345,8 @@ A statement that already carries `FETCH FIRST` or `LIMIT` is left as written, an
 | DATE | `2024-02-29` | Yes |
 | TIME | `23.59.59` | Yes, in Db2's dot format |
 | TIMESTAMP(p), any p | `2024-02-29-23.59.59.123456`, with p fraction digits | Yes |
-| CLOB, DBCLOB | string | Yes; written through a bound parameter, see K24 |
-| BLOB | bytes | Yes; written through a bound parameter, see K24 |
+| CLOB, DBCLOB | string | Yes; the inline editor does not write it, see K24 |
+| BLOB | bytes | Yes; the inline editor does not write it, see K24 |
 | XML | string without the `<?xml` declaration | Yes |
 | BOOLEAN | boolean | Yes |
 
@@ -366,7 +366,7 @@ A table takes the grid's inline edits and an import into it; a view, a materiali
 An inline edit is one `UPDATE "SCHEMA"."TABLE" SET "C" = ?, ... WHERE "KEY" = ?` per row, every value bound as text and a numeric key as a number.
 Measured through 1.0.24 on 12.1.0.0 and 11.5.9.0 (`tests/live/db2-live-check.ts`): an edit of a VARCHAR to "Grüße, 世界 𝄞 çğış" and a DECIMAL(7,2) to 12345.67 read back with the same `HEX` bytes, an import of the same text into an existing table did too, and a DECIMAL that does not fit its column is refused with "Protocol error: DECIMAL parameter out of range for DECIMAL(7,2)" and leaves the stored value as it was.
 Measured through 1.0.25 on 12.1.0.0 and 11.5.9.0: a BOOLEAN edited from the grid, which binds the text `true` or `false`, is stored as that boolean (K16, fixed; 1.0.24 refused the text with "expected boolean-compatible parameter").
-An edit of a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer is lost: the driver writes nothing and reports no error (K24), so the preview leaves those columns out and a result holding one carries a warning.
+A value bound to a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer is not written and no error is reported (K24), so the inline editor offers no edit of any such column and says why on the cell, the preview leaves those columns out, and a result holding one carries a warning.
 An import writes its values as literals, so K24 does not reach it.
 
 ## 8. Maintenance

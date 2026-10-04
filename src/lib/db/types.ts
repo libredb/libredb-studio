@@ -792,6 +792,24 @@ export interface ProviderCapabilities {
    */
   supportsInlineRowEdit?: boolean;
   /**
+   * The result columns the inline editor must not write, where the engine accepts the editor's
+   * `UPDATE` for other columns but not for these.
+   *
+   * `type` is a regular expression source matched against the type the result itself declares for
+   * the column (`QueryResult.columnTypes`), because that is the only per-column fact a grid holds;
+   * a column that declares no type is never matched. `reason` is shown on each such cell, which
+   * opens no editor. A string pattern rather than a `RegExp` because capabilities travel to the
+   * client as JSON.
+   *
+   * Db2 is the case: db2-node writes nothing, and reports no error, for a value bound to a CLOB,
+   * DBCLOB or BLOB column declared 32768 bytes or longer (K24 in `docs/providers/db2.md`), and a
+   * result declares those columns without their length.
+   *
+   * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent refuses no
+   * column.
+   */
+  inlineEditRefusedColumns?: { readonly type: string; readonly reason: string };
+  /**
    * Whether this provider can be asked for the page AFTER the first one — whether
    * `prepareQuery(sql, { limit, offset })` with a positive `offset` really applies it.
    *

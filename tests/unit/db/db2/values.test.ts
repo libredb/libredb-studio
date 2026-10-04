@@ -12,7 +12,7 @@
 
 import { describe, expect, test } from "bun:test";
 import type { Db2ArrayQueryResult, Db2ColumnMeta } from "@/lib/db/providers/sql/db2/driver";
-import { db2TypeName, readResult } from "@/lib/db/providers/sql/db2/values";
+import { DB2_PREVIEW_PROJECTION, db2TypeName, readResult } from "@/lib/db/providers/sql/db2/values";
 
 function column(name: string, typeName: string, extra: Partial<Db2ColumnMeta> = {}): Db2ColumnMeta {
   return { name, typeName, nullable: true, ...extra };
@@ -146,7 +146,7 @@ describe("readResult", () => {
   // Measured on 12.1.0.0 and 11.5.9.0 through 1.0.24 and 1.0.25 (K24): a value bound to a CLOB,
   // DBCLOB or BLOB column declared 32768 bytes or longer answers 0 changed rows, no error, and is
   // not written, which is what the grid's inline editor sends for such a cell.
-  test("a CLOB, DBCLOB or BLOB column carries one warning that an inline edit of it is lost", () => {
+  test("a CLOB, DBCLOB or BLOB column carries one warning that the grid does not edit it", () => {
     const read = readResult(
       result({
         columns: [
@@ -162,19 +162,29 @@ describe("readResult", () => {
     expect(read.warnings).toEqual([
       {
         message:
-          "db2-node writes nothing, and reports no error, for a value bound to a CLOB, DBCLOB or BLOB column declared " +
-          "32768 bytes or longer, so an inline edit of C_CLOB (CLOB), C_DBCLOB (DBCLOB), C_BLOB (BLOB) can be lost " +
-          "while the grid reports it saved (K24). Change such a value with an UPDATE of your own that writes it as a " +
-          "literal.",
+          "The grid does not edit C_CLOB (CLOB), C_DBCLOB (DBCLOB), C_BLOB (BLOB) inline: db2-node writes nothing, " +
+          "and reports no error, for a value bound to a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer " +
+          "(K24). Change such a value with an UPDATE of your own that writes it as a literal.",
       },
     ]);
   });
 
-  test("the LOB edit warning comes before the driver's diagnostics, and a LOB alone carries it too", () => {
+  test("the LOB warning comes before the driver's diagnostics, and a LOB alone carries it too", () => {
     const read = readResult(result({ columns: [column("B", "BLOB")], diagnostics: ["driver says"] }));
 
     expect(read.warnings).toHaveLength(2);
-    expect(read.warnings?.[0]?.message).toContain("inline edit of B (BLOB)");
+    expect(read.warnings?.[0]?.message).toContain("does not edit B (BLOB) inline");
     expect(read.warnings?.[1]).toEqual({ message: "driver says" });
+  });
+});
+
+describe("DB2_PREVIEW_PROJECTION", () => {
+  // The grid's editor refuses a CLOB, DBCLOB or BLOB column (K24), so a preview that reads every
+  // column says the editor does not take one rather than that an edit of it is lost.
+  test("a preview without its column list says the grid does not edit a LOB column", () => {
+    expect(DB2_PREVIEW_PROJECTION.unprojectedNote).toBe(
+      "The column list is not loaded, so this reads every column; the grid does not edit a CLOB, DBCLOB or BLOB " +
+        "column inline (docs/providers/db2.md, K24).",
+    );
   });
 });

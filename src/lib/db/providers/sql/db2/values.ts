@@ -63,8 +63,18 @@ export function db2TypeName(column: Db2ColumnMeta): string {
   return column.typeName;
 }
 
-/** The column types a bound value can be lost in (K24). */
-const LARGE_OBJECT_TYPE = /^(CLOB|DBCLOB|BLOB)$/;
+/**
+ * The declared result types a bound value can be lost in (K24), as a regular expression source:
+ * the provider's `inlineEditRefusedColumns` carries it to the grid as JSON.
+ */
+export const LARGE_OBJECT_TYPE_SOURCE = "^(CLOB|DBCLOB|BLOB)$";
+const LARGE_OBJECT_TYPE = new RegExp(LARGE_OBJECT_TYPE_SOURCE);
+
+/** Why the grid's editor refuses such a column, shown on each of its cells. */
+export const LARGE_OBJECT_EDIT_REASON =
+  "Not editable inline: db2-node writes nothing, and reports no error, for a value bound to a CLOB, DBCLOB or " +
+  "BLOB column declared 32768 bytes or longer (docs/providers/db2.md, K24). Change it with an UPDATE of your own " +
+  "that writes the value as a literal.";
 
 /**
  * One warning naming the CLOB, DBCLOB and BLOB columns of a result, or nothing.
@@ -72,18 +82,19 @@ const LARGE_OBJECT_TYPE = /^(CLOB|DBCLOB|BLOB)$/;
  * Measured on 12.1.0.0 and 11.5.9.0 through db2-node 1.0.24 and 1.0.25 (K24): a value bound to
  * such a column declared 32768 bytes or longer answers 0 changed rows, with no error and no
  * diagnostic, and is not written, alone or beside other parameters; at 32767 bytes it is. That is
- * what the grid's inline editor sends for such a cell, so an edit of it would be reported saved
- * and lost. The declared length does not reach a result (a `CLOB(1M)` column arrives as
- * `VarChar(32777)`, a `CLOB(1K)` cast as `CLOB`), so every such column is named.
+ * what the grid's inline editor would send for such a cell, so the provider's
+ * `inlineEditRefusedColumns` keeps the editor off these columns, and this warning says so. The
+ * declared length does not reach a result (a `CLOB(1M)` column arrives as `VarChar(32777)`, a
+ * `CLOB(1K)` cast as `CLOB`), so every such column is named.
  */
 function largeObjectEditWarning(types: readonly (readonly [string, string])[]): string[] {
   const named = types.filter(([, type]) => LARGE_OBJECT_TYPE.test(type));
   if (named.length === 0) return [];
   const columns = named.map(([name, type]) => `${name} (${type})`).join(", ");
   return [
-    "db2-node writes nothing, and reports no error, for a value bound to a CLOB, DBCLOB or BLOB column declared " +
-      `32768 bytes or longer, so an inline edit of ${columns} can be lost while the grid reports it saved (K24). ` +
-      "Change such a value with an UPDATE of your own that writes it as a literal.",
+    `The grid does not edit ${columns} inline: db2-node writes nothing, and reports no error, for a value bound ` +
+      "to a CLOB, DBCLOB or BLOB column declared 32768 bytes or longer (K24). Change such a value with an UPDATE " +
+      "of your own that writes it as a literal.",
   ];
 }
 
@@ -146,6 +157,6 @@ export const DB2_PREVIEW_PROJECTION: PreviewProjection = {
     "db2-node writes nothing, and reports no error, for an inline edit of a CLOB, DBCLOB or BLOB column, so this " +
     "preview does not offer one; select such a column in a query of your own to read it (docs/providers/db2.md, K24).",
   unprojectedNote:
-    "The column list is not loaded, so this reads every column, and an inline edit of a CLOB, DBCLOB or BLOB column " +
-    "here is lost with no error (docs/providers/db2.md, K24).",
+    "The column list is not loaded, so this reads every column; the grid does not edit a CLOB, DBCLOB or BLOB column " +
+    "inline (docs/providers/db2.md, K24).",
 };
