@@ -257,7 +257,8 @@ const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "auth/me": "reads the caller's own session claims only (GET, no POST export)",
   "auth/oidc/callback": "completes the OIDC exchange that CREATES the session (GET, no POST export)",
   "auth/oidc/login": "starts the OIDC redirect before a session exists (GET, no POST export)",
-  "connections/managed": "reads seed config metadata only; never opens a database connection (GET, no POST export)",
+  "connections/managed":
+    "reads seed config metadata and the CapRover discovery export; never opens a database connection, and its only network use is a bare node:net reachability probe for built-image candidates when SEED_DISCOVERY_PATH is set (GET, no POST export)",
   health:
     "liveness only: returns a fixed body and touches nothing, so there is no provider to require a session for (GET, no POST export). The connection-scoped check is POST /api/db/health, which is not on this list",
   mcp: "reaches a provider, but is called by an MCP client of the user's own and verifies a scoped bearer token instead of a session (src/lib/mcp/bearer.ts): its 401 body differs from guardRoute's on purpose, and tests/security/mcp-auth.test.ts proves that no refused identity constructs a provider",
@@ -459,7 +460,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/logger": "structured logging",
     "@/lib/non-finite": "writes NaN and the infinities in held rows as words; pure, imports nothing",
     "@/lib/oidc": "the OIDC discovery and PKCE exchange",
-    "@/lib/seed": "reads seed connection metadata from config; never connects",
+    "@/lib/seed":
+      "reads seed connection metadata from config and the CapRover discovery export; its only network use is a bare node:net reachability probe for built-image candidates, through ./discovery-loader, never a database or LLM provider",
     "@/lib/storage/connection-secrets":
       "the credential field classification; withoutSecretFields copies a connection record without its secrets and opens nothing",
     "@/lib/storage/factory": "the app's own storage backend (STORAGE_PROVIDER), not a user database",
