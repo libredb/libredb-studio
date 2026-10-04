@@ -25,6 +25,15 @@
  *   for. What closes it is a SECOND engine option, `enable_external_access: 'false'`,
  *   passed beside `access_mode` when the read-only handle is opened (`client.ts`); the
  *   statement guard below is the layer above it, not the boundary.
+ * - **File access is per role on the editor handle, independently of `access_mode`
+ *   (B1 / K1).** `enable_external_access: 'false'` closes every file route on a WRITABLE
+ *   handle too, with the database still writable (measured). So a non-admin editor opens
+ *   `enable_external_access: 'false'` and keeps its writes, while an admin editor opens with
+ *   full reach, unchanged. The posture reaches the provider through
+ *   `ProviderExecutionContext.allowExternalFileAccess`, derived server-side from the session
+ *   role; `getOrCreateProvider` keys the handle cache by it so an admin and a non-admin never
+ *   share one handle. The statement denylist below is NOT added to this editor path: the
+ *   engine option is the boundary, as it is for the agent profile.
  * - **No statement router.** `SQLBaseProvider.isReadOnlyQuery` types a statement by its
  *   leading keyword, and DuckDB has four row-producing forms that keyword set does not
  *   know (`FROM tbl`, `CALL`, `SUMMARIZE`, `PIVOT`). Rather than extend a router this
@@ -372,6 +381,16 @@ export class DuckDBProvider extends SQLBaseProvider {
   private readonly readOnlyProfile: boolean;
 
   /**
+   * True when the editor handle must open with `enable_external_access: 'false'` (B1 / K1):
+   * the posture for every role but admin. Derived once in the constructor from the
+   * server-injected execution context and NEVER from `config` or `ProviderOptions`, both of
+   * which are caller-supplied. Absent means deny (fail closed). The agent read-only profile
+   * already closes file access through `readOnly`, so this stays false there and does not
+   * double up.
+   */
+  private readonly denyExternalAccess: boolean;
+
+  /**
    * Client-supplied query tokens currently in flight, so `cancelQuery` can tell "I
    * never started that" from "I interrupted it". DuckDB holds one connection, so the
    * set is at most one deep in practice; it is a set rather than a field so a
@@ -384,8 +403,13 @@ export class DuckDBProvider extends SQLBaseProvider {
     super(config, options);
     // Server-injected only (see ProviderExecutionContext): the shared editor path
     // builds providers from caller-supplied ProviderOptions, which has no route to
-    // this flag in either direction.
+    // these flags in either direction.
     this.readOnlyProfile = execution.readOnly === true;
+    // Deny the editor handle's filesystem reach unless the verified session role allowed
+    // it. `readOnly` already closes file access and keeps precedence, so an agent handle
+    // does not also carry this (it would be redundant). Absent allowExternalFileAccess is
+    // deny, which is the fail-closed polarity: a forged or missing context sandboxes.
+    this.denyExternalAccess = execution.readOnly !== true && execution.allowExternalFileAccess !== true;
     this.validate();
   }
 
@@ -619,7 +643,14 @@ export class DuckDBProvider extends SQLBaseProvider {
       // unwritable file answers "Permission denied" and reads nothing at all, and one in an
       // unwritable directory fails its first commit on the `.wal` it cannot create.
       const unwritableFile = isUnwritableExistingFile(dbPath);
-      this.client = await openDuckDBClient(dbPath, { readOnly: false, unwritableFile });
+      // The non-admin editor posture rides on `denyExternalAccess`: a writable handle with
+      // `enable_external_access: 'false'`, composed with `access_mode: 'READ_ONLY'` when the
+      // file is also unwritable. The admin editor passes neither and keeps full reach (B1/K1).
+      this.client = await openDuckDBClient(dbPath, {
+        readOnly: false,
+        unwritableFile,
+        denyExternalAccess: this.denyExternalAccess,
+      });
       // Set on every open, never carried over from an earlier handle on this provider.
       this.unwritableFile = null;
       // Logged once the open succeeded, so a file refused at open is not announced as opened.

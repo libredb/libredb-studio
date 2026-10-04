@@ -28,7 +28,10 @@
  *   create a missing file, but on its own it is not a filesystem sandbox: `COPY ... TO`,
  *   `read_text('/etc/hostname')` and `glob('/etc/*')` all succeeded on a handle whose
  *   `INSERT` was refused in the same session. `enable_external_access: 'false'` is what
- *   closes that, and it is passed alongside - see `openDuckDBClient`.
+ *   closes that, independently of `access_mode`: a WRITABLE handle with it set refuses every
+ *   file route while `CREATE`/`INSERT` on the database still run (measured on v1.5.5-r.5),
+ *   which is the non-admin editor posture (B1 / K1). It is passed alongside - see
+ *   `openDuckDBClient`.
  * - With `autoinstall_known_extensions` and `autoload_known_extensions` at their defaults,
  *   opening a SQLite file made the engine fetch the ~34 MB `sqlite_scanner` extension from
  *   extensions.duckdb.org, attach the file and checkpoint its WAL (#1404). Both are off on
@@ -98,11 +101,21 @@ export interface DuckDBOpenOptions {
   readOnly: boolean;
   /**
    * The editor on an existing file this process cannot write (a `:ro` mount, a file mode
-   * 0444, a file of another user). Opened `READ_ONLY` and nothing else: a read-write open
-   * of such a file answers "Permission denied" and cannot read it at all (measured on
-   * v1.5.5), while this is still the editor, so the filesystem around it stays reachable.
+   * 0444, a file of another user). Opened `READ_ONLY`: a read-write open of such a file
+   * answers "Permission denied" and cannot read it at all (measured on v1.5.5), while this
+   * is still the editor. On its own it leaves the filesystem around the file reachable; a
+   * non-admin editor pairs it with `denyExternalAccess` (see below).
    */
   unwritableFile?: boolean;
+  /**
+   * The non-admin editor posture (B1 / K1): open a WRITABLE editor handle, but with
+   * `enable_external_access: 'false'` so no statement reaches the filesystem around the
+   * database. Distinct from `readOnly`, which also closes file access but makes the database
+   * itself read-only; this keeps the editor's writes and takes only the file reach away.
+   * Composes with `unwritableFile` (`READ_ONLY` plus external access off). The admin editor
+   * leaves it unset and keeps full reach.
+   */
+  denyExternalAccess?: boolean;
 }
 
 // ============================================================================
@@ -312,15 +325,26 @@ const EXTENSION_POLICY = {
   allow_community_extensions: "false",
 };
 
-/** The engine options for one open; `openDuckDBClient` says why each is there. */
+/**
+ * The engine options for one open; `openDuckDBClient` says why each is there.
+ *
+ * Composed from the posture rather than enumerated per profile, so the four handles the
+ * provider opens are the four combinations of two independent facts:
+ *
+ * - `access_mode: 'READ_ONLY'` when the database itself must not be written: the agent
+ *   read-only profile (`readOnly`) or an editor on a file this process cannot write
+ *   (`unwritableFile`).
+ * - `enable_external_access: 'false'` when no statement may reach the filesystem around the
+ *   database: the agent profile (`readOnly`) or the non-admin editor (`denyExternalAccess`).
+ *
+ * So: agent read-only = both; admin editor = neither; non-admin editor = external access off,
+ * database still writable; non-admin editor on an unwritable file = both.
+ */
 function openConfig(options: DuckDBOpenOptions): Record<string, string> {
-  if (options.readOnly) {
-    return { ...EXTENSION_POLICY, access_mode: "READ_ONLY", enable_external_access: "false" };
-  }
-  if (options.unwritableFile) {
-    return { ...EXTENSION_POLICY, access_mode: "READ_ONLY" };
-  }
-  return { ...EXTENSION_POLICY };
+  const config: Record<string, string> = { ...EXTENSION_POLICY };
+  if (options.readOnly || options.unwritableFile) config.access_mode = "READ_ONLY";
+  if (options.readOnly || options.denyExternalAccess) config.enable_external_access = "false";
+  return config;
 }
 
 /**
@@ -344,29 +368,39 @@ function openConfig(options: DuckDBOpenOptions): Record<string, string> {
  *   off by default and is fixed at open the same way, so only DuckDB's own signed
  *   extensions can load on any handle.
  *
- * And on the read-only profile:
+ * Two more options draw the two boundaries, each passed independently of the other:
  *
- * - `access_mode: 'READ_ONLY'` - no write reaches the attached database.
- * - `enable_external_access: 'false'` - no statement reaches the filesystem AROUND it.
- *   This is the read-only profile's real boundary, and it is drawn here rather than in
- *   the statement guard because a name denylist cannot see a quoted function name
- *   (`"read_text"(...)`), a bare path in `FROM` (DuckDB's replacement scan makes
- *   `FROM '/tmp/x.csv'` a `read_csv_auto`), or a statement smuggled through a string
- *   literal. Measured on v1.5.5: every one of those forms answers
- *   `Permission Error: Cannot access file "..." - file system operations are disabled
- *   by configuration`, while ordinary reads of the attached database, `duckdb_*()`
- *   catalog reads, `pragma_database_size()` and `pragma_storage_info()` are untouched.
+ * - `access_mode: 'READ_ONLY'` - no write reaches the attached database. Passed on the agent
+ *   read-only profile (`readOnly`) and on an editor file this process cannot write
+ *   (`unwritableFile`).
+ * - `enable_external_access: 'false'` - no statement reaches the filesystem AROUND the
+ *   database. Passed on the agent profile (`readOnly`) AND on the non-admin editor
+ *   (`denyExternalAccess`, B1 / K1). It is drawn here rather than in the statement guard
+ *   because a name denylist cannot see a quoted function name (`"read_text"(...)`), a bare
+ *   path in `FROM` (DuckDB's replacement scan makes `FROM '/tmp/x.csv'` a `read_csv_auto`),
+ *   or a statement smuggled through a string literal. Measured on v1.5.5: every one of those
+ *   forms answers `Permission Error: Cannot access file "..." - file system operations are
+ *   disabled by configuration`, while ordinary reads of the attached database, `duckdb_*()`
+ *   catalog reads, `pragma_database_size()` and `pragma_storage_info()` are untouched - and,
+ *   on a writable handle with external access off, `CREATE`/`INSERT`/`UPDATE`/`DELETE` and
+ *   `ATTACH ':memory:'` still run, which is what makes the non-admin editor read-write.
  *
  * Both are fixed at OPEN and neither can be undone by a later statement: `SET`
  * and `SET GLOBAL enable_external_access = true` both answer `Invalid Input Error:
  * Cannot enable external access while database is running` (measured). That is the
- * property that lets the profile rely on them - `SET memory_limit` IS allowed on a
+ * property that lets the postures rely on them - `SET memory_limit` IS allowed on a
  * read-only handle, so "the engine refuses to be reconfigured" is not a given.
  *
- * The WRITABLE handle passes neither of those two. It is the ordinary editor connection,
- * where `COPY ... TO` and `read_csv_auto('...')` are features rather than escapes;
- * measured unaffected by this change. On a file it cannot write it adds `access_mode`
- * alone (`DuckDBOpenOptions.unwritableFile`).
+ * So the handle has three editor postures and the agent one:
+ *
+ * - AGENT READ-ONLY (`readOnly`): both options. The database is read-only and no file is
+ *   reachable.
+ * - ADMIN EDITOR (neither extra option): the ordinary editor connection, where `COPY ... TO`
+ *   and `read_csv_auto('...')` are features rather than escapes; measured unaffected. On a
+ *   file it cannot write it adds `access_mode` alone (`unwritableFile`).
+ * - NON-ADMIN EDITOR (`denyExternalAccess`): writable, but `enable_external_access: 'false'`,
+ *   so the database is editable and no file is reachable. On a file it cannot write it also
+ *   carries `access_mode` (`unwritableFile`).
  */
 export async function openDuckDBClient(path: string, options: DuckDBOpenOptions): Promise<DuckDBClient> {
   // Inside the function, never at module scope - see the file header. Through

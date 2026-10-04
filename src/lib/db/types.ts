@@ -1991,6 +1991,22 @@ export interface ProviderExecutionContext {
    * them true.
    */
   readOnly?: boolean;
+  /**
+   * Whether an ordinary (editor) DuckDB handle may reach the filesystem (B1 / K1).
+   *
+   * Server-derived from the verified session role and never from the request body: the db
+   * routes set it with `editorExecutionContext(guard.session)` in `src/lib/api/execution-context.ts`,
+   * which answers `true` only for an admin. ONLY DuckDB reads it, and only on its writable
+   * (editor) open: `false` opens the handle with `enable_external_access: 'false'`, so every
+   * route to a file is refused by the engine while the main database stays read-write, and
+   * `true` keeps the full editor reach. Every other engine ignores it.
+   *
+   * ABSENT MEANS DENY (fail closed): a caller that forgets to pass it gets the sandboxed
+   * handle, never the open one, so a forged or missing context cannot widen file access.
+   * `readOnly: true` already implies external access off and keeps precedence, so the agent
+   * read-only profile does not set this field.
+   */
+  allowExternalFileAccess?: boolean;
 }
 
 // ============================================================================
