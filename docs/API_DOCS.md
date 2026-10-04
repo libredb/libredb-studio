@@ -1397,6 +1397,13 @@ The exact strings differ: `explain` and `query-safety` return `"Query is require
 `describe-schema` returns `"Schema context required"` — treat the status code, not the message text,
 as the contract.
 
+`query-safety` bounds its wait for the model: a provider request that has not finished after 30 seconds
+(`QUERY_SAFETY_ROUTE_TIMEOUT_MS` in `src/lib/llm/query-safety.ts`) is aborted, and a request that had not
+started streaming answers `504 { "error": "The AI safety analysis did not finish in time.", "code": "TIMEOUT_ERROR" }`;
+one that had started ends there. A caller that disconnects aborts the provider request as well. The bound is
+fixed, not configurable: the Query Safety dialog, the only caller in this repo, stops waiting after 15 seconds
+(`QUERY_SAFETY_ANALYSIS_TIMEOUT_MS`), aborts its request and lets the statement run without the analysis.
+
 **Provider-surfaced errors**
 
 These come from the configured **LLM provider** (bad API key, quota, safety filter), not from session
@@ -2130,7 +2137,7 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
 | `CONFIG_ERROR` | Invalid database configuration (400) |
 | `AUTH_ERROR` | Authentication failed (401) |
-| `TIMEOUT_ERROR` | Query exceeded time limit (408) |
+| `TIMEOUT_ERROR` | Query exceeded time limit (408); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
 | `POOL_EXHAUSTED` | Connection pool exhausted (503) |
 | `DATABASE_ERROR` | Generic database error (500) |

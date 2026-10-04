@@ -20,8 +20,12 @@ import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 
 /**
  * Statements that only read. Wider than the query limiter's SELECT set on purpose:
- * `SHOW`, `DESCRIBE`, `EXPLAIN` and `PRAGMA` return rows without a `SELECT`, and the
- * SQLite provider needs all of them on its `all()` branch.
+ * `SHOW`, `DESCRIBE`, `EXPLAIN` and `PRAGMA` return rows without a `SELECT`.
+ *
+ * NOT a list of the statements that return rows, and nothing may route on it as one:
+ * `WITH`, `VALUES` and any write with a `RETURNING` clause return rows too. The SQLite
+ * provider routed `all()` against `run()` on this set and dropped exactly those rows; it
+ * now asks its driver for the statement's result column count instead.
  */
 const READ_ONLY_KEYWORDS = new Set(["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "PRAGMA"]);
 
@@ -112,12 +116,13 @@ export abstract class SQLBaseProvider extends BaseDatabaseProvider {
    *
    * Both pass `this.type`, so the leading comment is read the way THIS engine reads
    * it - which for a dialect that nests block comments is not where a flat reading
-   * ends one (#300). No provider's answer changes today: `isReadOnlyQuery`'s only
-   * caller is the SQLite provider's `all()`/`run()` routing and SQLite reads comments
-   * flat, while `isSchemaModifyingQuery` has no caller in `src/` at all. The grammar is
-   * threaded anyway, so that the day a nesting dialect routes on either predicate it
-   * reads the statement the way its own server will - and so that no reader in this
-   * class disagrees with the limiter one method below it.
+   * ends one (#300). Neither predicate has a caller in `src/` today: the SQLite provider
+   * used to route `all()` against `run()` on `isReadOnlyQuery` and now asks its driver
+   * whether the statement has result columns, because a leading keyword cannot see a
+   * `RETURNING` clause (see `READ_ONLY_KEYWORDS`). The grammar is threaded anyway, so
+   * that the day a nesting dialect reads either predicate it reads the statement the way
+   * its own server will - and so that no reader in this class disagrees with the limiter
+   * one method below it.
    */
   protected isReadOnlyQuery(sql: string): boolean {
     const keyword = readLeadingKeyword(sql, resolveSqlGrammar(this.type))?.keyword;

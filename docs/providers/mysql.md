@@ -345,6 +345,46 @@ The declared type is unaffected — `columnTypes` still names the column `bigint
 ([§5.4](#54-declared-column-types)) — so the SQL-DDL export writes `BIGINT` for a column whose values
 now arrive as strings, rather than the `TEXT` a value-shaped guess would produce.
 
+### 3.8 On a server that sends UTF-8 under a utf8mb3 label, utf8mb3 columns are read as UTF-8
+
+mysql2 picks a column's decoder from the collation id in its metadata and ships the whole utf8mb3
+family (33 `utf8mb3_general_ci`, 76 `utf8mb3_tolower_ci`, 83 `utf8mb3_bin`, 192-215, 223 and
+MariaDB's utf8mb3 ids) as **`cesu8`**. Databend, StarRocks and Apache Doris label **every** text
+column 33 whatever the session asked for, while the bytes they send are plain UTF-8. CESU-8 has no
+4-byte form, so every character outside the BMP came back as four U+FFFD, in the grid, the row
+detail, `/api/db/query` and every export. Two-byte and three-byte characters (Turkish letters, CJK)
+were unaffected, which is what hid it.
+
+Measured 2026-10-04 on Databend 1.2.881, StarRocks 4.1.6 and Doris 4.1.3: `hex()` of a stored value
+holds `f09f9880` for U+1F600, so the wire is right and the decoder is not. Asking for utf8mb4 does not
+help: mysql2 already asks for `UTF8MB4_UNICODE_CI` (224), and `UTF8MB4_GENERAL_CI`,
+`UTF8MB4_0900_AI_CI` or a `SET NAMES utf8mb4` left the column at 33 on all three.
+
+**Measured at connect, not keyed on the type id.** `probeUtf8UnderUtf8mb3()`
+([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)) sends `SELECT '<U+1F600>' AS probe` and flags
+the server when the column comes back labelled utf8mb3 and the value decodes to U+FFFD, that is when
+the server sent 4-byte UTF-8 under a utf8mb3 label. MySQL 26.7.0, MariaDB 13.0.2 and TiDB v7.5.1
+answer the probe with a utf8mb4 label and the character itself, so they are not flagged and decode
+exactly as mysql2 decides. A refused probe is a "no".
+
+**Scoped to the statement, not the process.** For a flagged pool, every acquired connection is marked,
+and `runStatement` sends its statements through mysql2's callback API, where the command object is
+visible. The command emits `fields` once the column definitions are read and before the row parser is
+built, and both the text and the binary parser read `field.encoding` when a row arrives, so
+`readUtf8mb3AsUtf8()` relabels that statement's `cesu8` columns to `utf8` and the values decode right.
+mysql2's shared `CharsetToEncoding` table is never written, so another provider's pool, or a host
+application's own mysql2 when this runs as the npm package, keeps its decoding. A `typeCast` could not
+do this: mysql2 3.24 hands it the type and column name but not the collation, so it cannot tell a
+utf8mb3 `VARCHAR` from a latin1 one or from a `VARBINARY`.
+
+Only `cesu8` columns move: latin1, binary (63) and utf8mb4 columns keep their decoder, so `BLOB`,
+`VARBINARY` and `BINARY` still arrive as bytes ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)).
+Errors reach the caller unchanged.
+
+> **A column NAME outside the BMP still reads as U+FFFD on these servers.** mysql2 decodes the name
+> while it parses the definition, before `fields` fires, so `SELECT 1 AS "<U+1F600>"` comes back with
+> a four-U+FFFD key. Values are repaired; aliases are not.
+
 ---
 
 ## 4. Connection
@@ -1779,6 +1819,16 @@ branch, `prepareQuery`, error mapping (`ER_ACCESS_DENIED`, `ECONNREFUSED`), the 
 literals, the wire protocol each statement takes, and wide integers (the pool option on both
 connection forms, and two ids differing only past 2^53 staying two values through `query()` and
 through the JSON the API response is made of).
+
+utf8mb3 decoding ([§3.8](#38-on-a-server-that-sends-utf-8-under-a-utf8mb3-label-utf8mb3-columns-are-read-as-utf-8))
+is pinned in its own file,
+[`tests/integration/db/mysql-wire-decoding.test.ts`](../../tests/integration/db/mysql-wire-decoding.test.ts),
+because the mock above never runs mysql2's parsers. Nothing is mocked there: the real provider and the
+real mysql2 pool talk to mysql2's own `createServer()`, run once as a server that labels UTF-8 text 33
+and once as an honest one. It pins a value outside the BMP decoding right over the text and the
+prepared protocol, a binary column staying bytes, a refusal failing exactly as on mysql2's own path, an
+unflagged pool decoding a 33 column as mysql2 alone does while a flagged one is connected beside it,
+and mysql2's `CharsetToEncoding` table left as it ships after every test.
 
 It also covers **the object surface** ([§7.1](#71-the-object-surface-789)) in two blocks. `object
 surface` holds the seven conformance tests: the declared kinds and roles on each server, the

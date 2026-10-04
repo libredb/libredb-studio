@@ -163,10 +163,23 @@ function decodeInteger(raw: unknown): number | string | null {
   return Number.isSafeInteger(parsed) ? parsed : raw;
 }
 
-/** Base64 as bytes. Blobs are the one SQLite type JSON cannot carry directly. */
+/**
+ * Base64 as bytes. Blobs are the one SQLite type JSON cannot carry directly.
+ *
+ * A `Buffer`, not a plain `Uint8Array`, because the rows leave through
+ * `JSON.stringify` on their way to the browser: a plain `Uint8Array` is written as an
+ * object keyed by index (`{"0":222,"1":173,...}`), which the grid showed as JSON and
+ * the SQL export wrote back as quoted text. A `Buffer` IS a `Uint8Array`, and it
+ * serializes to `{"type":"Buffer","data":[...]}`, the form `asBytes` in
+ * `src/lib/export/binary.ts` reads. The SQLite driver seam makes the same choice.
+ *
+ * A small decoded value is a slice of Node's shared Buffer pool, so its `.buffer` is
+ * that pool: a consumer that reaches past the view must honour `byteOffset` and
+ * `byteLength`, or copy the bytes out first.
+ */
 function decodeBlob(raw: unknown): Uint8Array | null {
   if (typeof raw !== "string") return null;
-  return Uint8Array.from(Buffer.from(raw, "base64"));
+  return Buffer.from(raw, "base64");
 }
 
 /**

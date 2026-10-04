@@ -651,6 +651,7 @@ export const BottomPanel = React.memo(function BottomPanel({
                 userRole={userRole}
                 maskingConfig={maskingConfig}
                 editingEnabled={hydratedHere ? false : editingEnabled}
+                inlineEditRefusedColumns={metadata?.capabilities.inlineEditRefusedColumns}
                 pendingChanges={pendingChanges}
                 onCellChange={onCellChange}
                 onApplyChanges={onApplyChanges}
