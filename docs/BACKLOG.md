@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D218, U17 · 133
+- [Drivers and connections](#drivers-and-connections) — D1-D221, U17 · 136
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
@@ -2471,6 +2471,34 @@ No CI job starts the `oxia-cluster` profile; `tests/unit/db/oxia/cluster-policy.
 Found 2026-10-04 while designing the Oxia provider (DECISIONS O15).
 
 **Done when:** a CI job runs `tests/live/oxia-live-check.ts --cluster` against the profile, or the entry is closed because the synthetic test is judged enough.
+
+### D219. The Keys panel and tab titles print a key's control characters raw
+
+The shared Keys panel rows and the tab titles print a key as it is, so a key holding a control character is drawn with it.
+A key `a` followed by U+0000 shows as `a` and a box in its row and title, and its Source tab reads "Source: a", the same as a key `a`.
+Measured on Oxia, which reaches such a key from the Keys panel by design; the panel and the titles are shared, so every engine with such keys draws them the same way.
+
+Found 2026-10-04 by the browser pass of the Oxia provider (step 4).
+
+**Done when:** a key's control characters are shown escaped in the Keys panel rows and in tab titles, for every engine.
+
+### D220. An empty value read successfully is headed as a failed read
+
+The shared Source tab heads an `unavailable` part "This definition could not be read", with an error icon, even when the read succeeded and the value is empty.
+Oxia and etcd both show it above their own "The value is empty (0 bytes)" sentence.
+
+Found 2026-10-04 by the browser pass of the Oxia provider (step 6).
+
+**Done when:** an empty value reads as an empty value, with no failure heading or error icon.
+
+### D221. The Keys panel's empty state under a prefix says the database holds no keys
+
+With a prefix that matches nothing, the shared Keys panel says "This database holds no keys the walk has seen", though only the prefix matched none: measured on an Oxia namespace of 20,077 keys.
+The sentence is the shared panel's, not a provider's.
+
+Found 2026-10-04 by the browser pass of the Oxia provider (step 9).
+
+**Done when:** under a prefix the empty state says that no key under the prefix has been seen, for every engine.
 
 ## Value interpolation
 
