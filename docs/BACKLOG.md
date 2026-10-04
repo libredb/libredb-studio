@@ -1189,7 +1189,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 42 hits, re-measured 2026-10-03. Ten of
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 43 hits, re-measured 2026-10-04. Eleven of
 them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`,
 the agent routes' pattern). Thirty write out the same five-key object - `getSession`, `signJWT`,
 `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token
@@ -1219,7 +1219,7 @@ process boundary cannot do is make the stub the right SHAPE.
 **Done when:** one factory in `tests/helpers/`, typed `(): typeof import("@/lib/auth")`, replaces the
 hand-written stubs, so adding an export to `src/lib/auth.ts` fails `typecheck` in every file that
 mocks it instead of at run time in one of them. The same shape then covers the other layer-wide
-mocks, `@/lib/db` in fifteen files and `@/lib/audit` in four.
+mocks, `@/lib/db` in twenty-one files and `@/lib/audit` in six.
 
 ### D86. `bun test --isolate` has not been re-probed, and the runner pays a process per test file
 
