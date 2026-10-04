@@ -97,6 +97,8 @@ const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `timeseries/influxdb/` with `influxdb`. A different engine generation (Rust, Arrow, DataFusion), counted as its
   // own engine.
   influxdb3: true,
+  // Oxia (#424): its own provider, doc and integration test, read over its gRPC client API (DECISIONS O2).
+  oxia: true,
   libredb: true,
 });
 
@@ -161,6 +163,8 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   influxdb: true,
   // A server the user already runs, reached over InfluxDB 3's HTTP SQL API.
   influxdb3: true,
+  // A server or cluster the user already runs, reached over Oxia's gRPC client API.
+  oxia: true,
   // The one false entry. SQLite is a file rather than a server and is still
   // external: it is the user's file, opened from a path they give us. libredb is
   // ours, created by this app, so it is the only id that answers no here.
@@ -239,6 +243,10 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and
   // the 3.12 planner refuses every write besides.
   influxdb3: true,
+  // Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan`
+  // and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it
+  // holds (O1).
+  oxia: true,
   libredb: false,
 });
 
@@ -250,8 +258,8 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
  *
  * The etcd provider (#1089) is the engine this record exists for: MCP is outside its first version, so
  * its entry answers false, and that entry lands with the provider's registration, which the compiler
- * forces. Every other engine answers true. An exhaustive Record for the reason `EXTERNAL` gives, so a
- * new type-id cannot join without someone answering, and frozen like the records above it.
+ * forces. etcd and Oxia answer false; every other engine answers true. An exhaustive Record for the reason
+ * `EXTERNAL` gives, so a new type-id cannot join without someone answering, and frozen like the records above it.
  */
 export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
@@ -273,8 +281,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // The one engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and
-  // a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  // One of the two engines MCP is not offered for (#1089 E12; Oxia is the other): the provider implements no
+  // read-only query path, and a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
   // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
@@ -289,6 +297,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // neither provider implements `queryReadOnly`.
   influxdb: true,
   influxdb3: true,
+  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), so no MCP
+  // surface lists them until one is designed (BACKLOG B100).
+  oxia: false,
   libredb: true,
 });
 

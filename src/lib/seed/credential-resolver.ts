@@ -12,6 +12,8 @@ const RESOLVABLE_FIELDS = [
   "user",
   "host",
   "database",
+  // Oxia's data servers (O6): addresses a deployment keeps out of the seed file, as `host` is.
+  "dataServers",
   // Elasticsearch API key pair (#708). A seeded `${ELASTIC_API_KEY_ID}` / `${vault:...}`
   // that is not on this list is sent literally and the cluster answers 401 on a key
   // that works. Both halves, not one: either left unresolved is a half-filled pair
@@ -46,6 +48,7 @@ interface VaultResolvableConnection {
   user?: string;
   host?: string;
   database?: string;
+  dataServers?: string;
   apiKeyId?: string;
   apiKeySecret?: string;
   ssl?: ResolvableSsl;

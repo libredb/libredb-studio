@@ -26,6 +26,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
+import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { quoteIdentifier } from "./keyspace";
 import {
   CouchbaseError,
@@ -147,9 +148,20 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * The body as JSON, or null when it is not JSON at all.
+ *
+ * `quoteUnsafeIntegers` runs first because a document's number reaches this
+ * process as the UNQUOTED literal it was stored as: measured on 8.0.2 CE, a
+ * document holding 9007199254740993 came back from a plain JSON.parse as
+ * 9007199254740992, in the grid and in every export, with no error. Quoted, it
+ * arrives as its exact digits, the way Druid's transport hands one over. Every
+ * other body passes through untouched, since the counts and sizes this provider
+ * reads from the REST API all sit far inside the safe range.
+ */
 function parseJsonBody(text: string): unknown {
   try {
-    return JSON.parse(text) as unknown;
+    return JSON.parse(quoteUnsafeIntegers(text)) as unknown;
   } catch {
     return null;
   }

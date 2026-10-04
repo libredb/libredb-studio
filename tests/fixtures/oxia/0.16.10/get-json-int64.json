@@ -1,0 +1,143 @@
+{
+  "calls": [
+    {
+      "authority": "127.0.0.1:6648",
+      "end": {
+        "kind": "open"
+      },
+      "messageBytes": [
+        111
+      ],
+      "messages": [
+        {
+          "allowed_authorities": [],
+          "namespaces": {
+            "default": {
+              "assignments": [
+                {
+                  "int32_hash_range": {
+                    "max_hash_inclusive": 1431655765,
+                    "min_hash_inclusive": 0
+                  },
+                  "leader": "127.0.0.1:6648",
+                  "shard": "0",
+                  "shard_boundaries": "int32_hash_range"
+                },
+                {
+                  "int32_hash_range": {
+                    "max_hash_inclusive": 2863311531,
+                    "min_hash_inclusive": 1431655766
+                  },
+                  "leader": "127.0.0.1:6648",
+                  "shard": "1",
+                  "shard_boundaries": "int32_hash_range"
+                },
+                {
+                  "int32_hash_range": {
+                    "max_hash_inclusive": 4294967295,
+                    "min_hash_inclusive": 2863311532
+                  },
+                  "leader": "127.0.0.1:6648",
+                  "shard": "2",
+                  "shard_boundaries": "int32_hash_range"
+                }
+              ],
+              "shard_key_router": "XXHASH3"
+            }
+          }
+        }
+      ],
+      "method": "io.oxia.proto.v1.OxiaClient/GetShardAssignments",
+      "request": {
+        "namespace": "default"
+      },
+      "target": "127.0.0.1:6648",
+      "tls": {
+        "mode": "disable"
+      },
+      "token": false
+    },
+    {
+      "authority": "127.0.0.1:6648",
+      "end": {
+        "code": 0,
+        "details": "",
+        "kind": "status"
+      },
+      "messageBytes": [
+        53
+      ],
+      "messages": [
+        {
+          "gets": [
+            {
+              "_value": "value",
+              "status": "OK",
+              "value": {
+                "$bytes": "eyJpZCI6OTAwNzE5OTI1NDc0MDk5M30="
+              },
+              "version": {
+                "created_timestamp": "1791092455022",
+                "modifications_count": "0",
+                "modified_timestamp": "1791092455022",
+                "version_id": "20"
+              }
+            }
+          ]
+        }
+      ],
+      "method": "io.oxia.proto.v1.OxiaClient/Read",
+      "request": {
+        "gets": [
+          {
+            "comparison_type": "EQUAL",
+            "include_value": true,
+            "key": "/values/json-int64"
+          }
+        ],
+        "shard": "2"
+      },
+      "target": "127.0.0.1:6648",
+      "tls": {
+        "mode": "disable"
+      },
+      "token": false
+    }
+  ],
+  "file": "0.16.10/get-json-int64.json",
+  "result": {
+    "ok": {
+      "columnTypes": {
+        "client_identity": "string, client-reported",
+        "version_id": "int64, per shard"
+      },
+      "fields": [
+        "key",
+        "value",
+        "value_encoding",
+        "version_id",
+        "modifications_count",
+        "created_timestamp",
+        "modified_timestamp",
+        "ephemeral",
+        "session_id",
+        "client_identity"
+      ],
+      "rowCount": 1,
+      "rows": [
+        {
+          "client_identity": null,
+          "created_timestamp": "2026-10-04T05:40:55.022Z",
+          "ephemeral": false,
+          "key": "/values/json-int64",
+          "modifications_count": "0",
+          "modified_timestamp": "2026-10-04T05:40:55.022Z",
+          "session_id": null,
+          "value": "{\"id\":9007199254740993}",
+          "value_encoding": "json",
+          "version_id": "20"
+        }
+      ]
+    }
+  }
+}

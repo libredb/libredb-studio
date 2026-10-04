@@ -68,9 +68,9 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the two InfluxDB controls, one per type-id", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-3)).toEqual(["3.11", "3.12", "3.13"]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(30);
+  test("the programme ends with the two InfluxDB controls, one per type-id, then the two Oxia controls", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-5)).toEqual(["3.11", "3.12", "3.13", "3.14", "3.15"]);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(32);
   });
 
   test("ignores a table that is not the control table", () => {

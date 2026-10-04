@@ -64,3 +64,12 @@ describe("providerCacheKey frames Db2's consent to a cleartext password (#786)",
     expect(await providerCacheKey({ ...db2, allowInsecureAuth: false })).toBe(await providerCacheKey(db2));
   });
 });
+
+describe("providerCacheKey frames the data servers a token may be sent to", () => {
+  test("a connection whose list changed is not handed a provider whose policy admitted other hosts", async () => {
+    const listed = await providerCacheKey({ ...base, dataServers: "a.internal:6648" });
+    expect(listed).not.toBe(await providerCacheKey(base));
+    expect(listed).not.toBe(await providerCacheKey({ ...base, dataServers: "b.internal:6648" }));
+    expect(await providerCacheKey({ ...base, dataServers: "" })).toBe(await providerCacheKey(base));
+  });
+});

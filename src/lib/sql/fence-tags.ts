@@ -107,6 +107,9 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // An ```influxdb3 block holds one DataFusion SQL statement. No alias is registered below: `sql` names no
   // engine, and `influxql` and `flux` are not this type-id's language.
   influxdb3: true,
+  // A ```oxia block holds one `oxia client` read command the editor runs as it is (O14). No alias: `oxia` already
+  // names the engine and its CLI.
+  oxia: true,
 });
 
 /**

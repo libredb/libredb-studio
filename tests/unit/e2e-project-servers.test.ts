@@ -20,6 +20,7 @@ const SECOND_SERVER_SPECS = [
   "milvus-provider.spec.ts",
   "qdrant-provider.spec.ts",
   "influxdb-providers.spec.ts",
+  "oxia-provider.spec.ts",
 ];
 
 type Project = NonNullable<typeof config.projects>[number];

@@ -111,11 +111,11 @@ npx @libredb/studio
 
 ## <span dir="rtl">بنیادی صلاحیتیں</span>
 
-### <span dir="rtl">پچیس engines، ایک interface</span>
+### <span dir="rtl">چھبیس engines، ایک interface</span>
 
 </div>
 
-PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL)
+PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · DuckDB · MongoDB · Redis · Couchbase · ClickHouse · Apache Druid · Elasticsearch · OpenSearch · Trino · Apache Cassandra · Prometheus · Apache Kafka · etcd · Neo4j · Milvus · Qdrant · InfluxDB (InfluxQL) · InfluxDB 3 (SQL) · Oxia
 
 <div dir="rtl" align="right">
 
@@ -149,6 +149,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **Qdrant** | <span dir="rtl">کوئی نہیں، HTTP (Qdrant کا REST API، port 6333)</span> | <span dir="rtl">Editor میں Qdrant کی اپنی REST requests (ایک JSON body کے ساتھ `METHOD /path`)، سترہ read routes: points پڑھنا، scroll، exact counts، facets، اور dense، sparse اور multivector data پر queries، batches اور grouped queries، local BM25 model سمیت؛ tree میں collections، ان کے vectors، payload indexes اور payload keys کا sampled view؛ dimension کے ساتھ vector cells اور پوری value کی copy۔ Studio کچھ نہیں لکھتا، local BM25 کے سوا ہر inference input refuse کرتا ہے، اور بغیر expiry یا manage access والے JWT پر warning دیتا ہے۔ Custom CA اور client certificates کے ساتھ TLS؛ key صرف TLS پر، loopback پر یا SSH tunnel سے؛ seed میں اعلان کردہ read-only mode</span> |
 | **InfluxDB (InfluxQL)** | <span dir="rtl">کوئی نہیں، HTTP (InfluxDB کا v1 API، port 8086)</span> | <span dir="rtl">Editor میں read-only InfluxQL، v1 `/query` API پر InfluxDB 1.x، 2.x اور 3 کے لیے، ہر run میں ایک `SELECT`، `SHOW` یا `EXPLAIN`؛ tree میں databases اور measurements، ہر measurement کے tags اور fields اس کے columns کے طور پر، اور grid میں 2^53 سے بڑے integers اور nanosecond timestamps بالکل درست۔ Connection میں کچھ بھی لکھا ہو، read-only: 1.x اور 2.x پر `DROP DATABASE` سے پہلے Studio کی اپنی read policy ہی واحد رکاوٹ ہے، اس لیے ہر دوسرا statement کسی بھی request سے پہلے refuse ہوتا ہے، اور کوئی write endpoint نہیں چھوا جاتا۔ User اور password، یا password field میں token؛ plain HTTP پر ایسے host کو credential، جو نہ loopback ہے نہ tunnel سے، تب تک refuse ہوتا ہے جب تک connection رضامندی نہ دے؛ InfluxDB 3 server پر `_internal` کبھی نہیں پڑھا جاتا</span> |
 | **InfluxDB 3 (SQL)** | <span dir="rtl">کوئی نہیں، HTTP (InfluxDB 3 کا SQL API، port 8181)</span> | <span dir="rtl">Editor میں read-only SQL، InfluxDB 3 Core اور Enterprise کے لیے؛ tree میں connection کے database کی tables، ان کے columns کے ساتھ۔ Connection میں کچھ بھی لکھا ہو، read-only: route table کسی write، token، cache یا plugin endpoint تک نہیں پہنچتی، اور configure endpoints میں سے صرف database listing تک، ایک GET، جو statement read keyword سے شروع نہیں ہوتا وہ کسی بھی request سے پہلے refuse ہوتا ہے، اور اس کے اوپر server کا planner ہر write refuse کرتا ہے۔ ایک token، کوئی user نام نہیں؛ plain HTTP پر ایسے host کو token، جو نہ loopback ہے نہ tunnel سے، تب تک refuse ہوتا ہے جب تک connection رضامندی نہ دے؛ 1.x یا 2.x server پر لگانے سے InfluxDB (InfluxQL) چننے کو کہتا ہے</span> |
+| **Oxia** | <span dir="rtl">`@grpc/grpc-js` (pure JavaScript، gRPC، port 6648)</span> | <span dir="rtl">Read-only `oxia client` commands (`get`، `list`، `range-scan`)، tree میں shards اور Keys panel میں ہر key</span> |
 | **Redis** | `ioredis` | <span dir="rtl">command editor، keys explorer، INFO پر مبنی monitoring</span> |
 
 <div dir="rtl" align="right">

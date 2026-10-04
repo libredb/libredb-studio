@@ -3491,6 +3491,7 @@ describe("the identity a held inventory is filed under", () => {
     // The case B45 describes, and the one an id-keyed hold could not see: same record,
     // same id, different database.
     expect(repointed({ database: "staging" })).not.toBe(connectionIdentity(CONNECTION));
+    expect(repointed({ dataServers: "a.internal:6648" })).not.toBe(connectionIdentity(CONNECTION));
     expect(repointed({ schema: "tiny" })).not.toBe(connectionIdentity(CONNECTION));
   });
 

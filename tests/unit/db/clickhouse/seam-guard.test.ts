@@ -56,6 +56,7 @@ const WIRE_TOKENS = [
   "X-ClickHouse-Format",
   "default_format",
   "output_format_json_quote_64bit_integers",
+  "output_format_json_quote_decimals",
   "elapsed_ns",
   "rows_before_limit_at_least",
 ];

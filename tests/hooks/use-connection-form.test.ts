@@ -22,6 +22,7 @@ const DEFAULT_PORTS: Record<string, string> = {
   qdrant: "6333",
   influxdb: "8086",
   influxdb3: "8181",
+  oxia: "6648",
 };
 
 // The engines whose addressing fields diverge from the networked default. Spelled out
@@ -56,6 +57,9 @@ const MOCK_CONNECTION_FIELDS: Record<string, string[]> = {
   // its token being the password (InfluxDB spec A.3).
   influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
   influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
+  // No User: Oxia has no user name; the token is the password, the namespace the database, and a cluster's data
+  // servers and the consent to a cleartext token are fields of Oxia's own (SB3-1.5).
+  oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
 };
 const mockFields = (type: string): string[] =>
   MOCK_CONNECTION_FIELDS[type] ?? ["host", "port", "user", "password", "database"];
@@ -1647,6 +1651,7 @@ describe("useConnectionForm", () => {
     qdrant: true,
     influxdb: true,
     influxdb3: true,
+    oxia: true,
   };
 
   test("dbTypes offers every database type a connection can carry", () => {
@@ -3219,5 +3224,116 @@ describe("offersReadOnlyToggle (#1089)", () => {
   test("never where the engine does not enforce the mode", () => {
     expect(offersReadOnlyToggle(false, null)).toBe(false);
     expect(offersReadOnlyToggle(false, own)).toBe(false);
+  });
+});
+
+describe("the dataServers field", () => {
+  const props = {
+    isOpen: true,
+    onClose: mock(() => {}),
+    onConnect: mock<(connection: DatabaseConnection) => void>(() => {}),
+    onTestConnection: async () => ({ success: true }),
+    editConnection: null as DatabaseConnection | null,
+  };
+  beforeEach(() => {
+    props.onConnect.mockClear();
+  });
+
+  test("typed text is saved as typed for a type that takes the field", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("  a.internal:6648, b.internal:6648 "));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0].dataServers).toBe("  a.internal:6648, b.internal:6648 ");
+  });
+
+  test.each(["", "   "])("an empty or blank box writes no key (%p)", async (typed) => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers(typed));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("a type that does not take the field drops it", async () => {
+    const { result } = renderHook(() => useConnectionForm(props));
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("a.internal:6648"));
+    act(() => result.current.setType("postgres"));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("editing a connection without one shows an empty box", () => {
+    const listed: DatabaseConnection = {
+      id: "c1",
+      name: "Cluster",
+      type: "oxia",
+      host: "a.internal",
+      port: 6648,
+      dataServers: "a.internal:6648",
+      createdAt: new Date(),
+    };
+    const unlisted: DatabaseConnection = {
+      id: "c2",
+      name: "Other cluster",
+      type: "oxia",
+      host: "b.internal",
+      port: 6648,
+      createdAt: new Date(),
+    };
+
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, editConnection: listed },
+    });
+    expect(result.current.dataServers).toBe("a.internal:6648");
+
+    rerender({ ...props, editConnection: unlisted });
+    expect(result.current.dataServers).toBe("");
+  });
+
+  test("emptying the box of an edited connection clears the list it had", async () => {
+    // The text box owns the field: a list kept from the stored connection would keep sending the
+    // token to servers the user took off it.
+    const listed: DatabaseConnection = {
+      id: "c1",
+      name: "Cluster",
+      type: "oxia",
+      host: "a.internal",
+      port: 6648,
+      dataServers: "a.internal:6648,b.internal:6648",
+      createdAt: new Date(),
+    };
+    const { result } = renderHook(() => useConnectionForm({ ...props, editConnection: listed }));
+    expect(result.current.dataServers).toBe("a.internal:6648,b.internal:6648");
+    act(() => result.current.setDataServers(""));
+    await act(async () => {
+      await result.current.handleConnect();
+    });
+    expect(props.onConnect).toHaveBeenCalledTimes(1);
+    expect(props.onConnect.mock.calls[0][0]).not.toHaveProperty("dataServers");
+  });
+
+  test("closing the dialog resets it", () => {
+    const { result, rerender } = renderHook((p) => useConnectionForm(p), {
+      initialProps: { ...props, isOpen: true },
+    });
+    act(() => result.current.setType("oxia"));
+    act(() => result.current.setDataServers("a.internal:6648"));
+    expect(result.current.dataServers).toBe("a.internal:6648");
+
+    rerender({ ...props, isOpen: false });
+    rerender({ ...props, isOpen: true, editConnection: null });
+    expect(result.current.dataServers).toBe("");
+    expect(CONNECTION_FORM_DEFAULTS.dataServers).toBe("");
   });
 });

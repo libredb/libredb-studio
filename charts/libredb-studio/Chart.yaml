@@ -1,8 +1,8 @@
 apiVersion: v2
 name: libredb-studio
-description: Web-based SQL IDE for cloud-native teams supporting twenty-five engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB and InfluxDB 3
+description: Web-based SQL IDE for cloud-native teams supporting twenty-six engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Apache Trino, Apache Cassandra, libSQL, Prometheus, Apache Kafka, etcd, Neo4j, Milvus, Qdrant, InfluxDB, InfluxDB 3 and Oxia
 type: application
-version: 0.1.76
+version: 0.1.77
 appVersion: "0.17.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -75,6 +75,9 @@ keywords:
   - influxdb
   - influxql
   - influxdb3
+  # One keyword, like kafka above: `oxia` is the type-id and the word an evaluator looking for an
+  # Oxia client types, so there is no second spelling to catch.
+  - oxia
   - web-ide
 maintainers:
   - name: cevheri
@@ -179,6 +182,8 @@ annotations:
   # the README; no template, value or default moves.
   # False: 0.1.76 changes chart metadata only, naming Milvus, Qdrant and InfluxDB in the
   # description, the keywords and the README; no template, value or default moves.
+  # False: 0.1.77 changes chart metadata only, naming Oxia in the description, the keywords and
+  # the README; no template, value or default moves.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -194,7 +199,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "The application image gains the Milvus, Qdrant and InfluxDB providers; no template, value or default moves, and it acts once an application release moves appVersion."
+    - "The application image gains the Oxia provider; no template, value or default moves, and it acts once an application release moves appVersion."
 dependencies:
   - name: postgresql
     version: "16.x.x"

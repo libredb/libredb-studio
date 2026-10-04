@@ -45,6 +45,20 @@ export const GRPC_SEAM_HOLDINGS: Readonly<Record<string, GrpcSeamHolding>> = {
     ],
     providerDirectory: "src/lib/db/providers/vector/milvus",
   },
+  oxia: {
+    held: [
+      /^src\/lib\/db\/providers\/keyvalue\/oxia\//,
+      /^scripts\/generate-oxia-descriptor\.mjs$/,
+      /^tests\/unit\/db\/oxia\//,
+      /^tests\/helpers\/oxia-/,
+      /^tests\/live\/oxia-/,
+    ],
+    transportImporters: [
+      "src/lib/db/providers/keyvalue/oxia/connection-options.ts",
+      "src/lib/db/providers/keyvalue/oxia/grpc-client.ts",
+    ],
+    providerDirectory: "src/lib/db/providers/keyvalue/oxia",
+  },
 };
 
 /** Whether a repository path is held by a guard other than etcd's: any row's `held` pattern matches it. */

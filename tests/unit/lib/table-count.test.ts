@@ -90,6 +90,8 @@ const EXPECTED_COUNT: Readonly<Record<DatabaseType, string | null>> = Object.fre
   // DataFusion SQL with no container level (R16) and `double-always` quoting (R41): every segment double-quoted, no
   // terminator. Unwindowed (R9): past the file limit on Core it meets the file-limit sentence, which names the fix.
   influxdb3: 'SELECT COUNT(*) AS row_count\nFROM "Order""Items"',
+  // One `oxia client` read command (SB2-4.3): the dialect's record withholds the action, and Oxia has no count.
+  oxia: null,
 });
 
 async function censusCapabilities(type: DatabaseType): Promise<ProviderCapabilities> {

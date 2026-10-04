@@ -41,6 +41,7 @@ import {
 import { hasResultOrder } from "@/lib/sql/result-order";
 import { pageOfferFor } from "@/components/results-grid/page-offer";
 import { useDismissOnOutsideClick } from "@/hooks/use-dismiss-on-outside-click";
+import type { ProviderCapabilities } from "@/lib/db/types";
 
 export interface CellChange {
   rowIndex: number;
@@ -120,6 +121,8 @@ interface ResultsGridProps {
   maskingConfig?: MaskingConfig;
   // Inline editing props
   editingEnabled?: boolean;
+  /** The provider's columns the editor must not write (`ProviderCapabilities.inlineEditRefusedColumns`). */
+  inlineEditRefusedColumns?: ProviderCapabilities["inlineEditRefusedColumns"];
   pendingChanges?: CellChange[];
   onCellChange?: (change: CellChange) => void;
   onDiscardChanges?: () => void;
@@ -177,6 +180,7 @@ export function ResultsGrid({
   userRole,
   maskingConfig,
   editingEnabled,
+  inlineEditRefusedColumns,
   pendingChanges,
   onCellChange,
   onDiscardChanges,
@@ -406,6 +410,19 @@ export function ResultsGrid({
     setColumnFilters(new Map());
     setActiveFilterCol(null);
   }, []);
+
+  // The reason a column cannot be edited inline, keyed by field, for the columns whose declared
+  // type the provider refuses (K24 on Db2). Such a cell opens no editor and shows the reason.
+  const editRefusals = useMemo(() => {
+    const refusals = new Map<string, string>();
+    if (inlineEditRefusedColumns === undefined) return refusals;
+    const refused = new RegExp(inlineEditRefusedColumns.type);
+    for (const field of result.fields) {
+      const declared = declaredTypeOf(result.columnTypes, field);
+      if (declared !== undefined && refused.test(declared)) refusals.set(field, inlineEditRefusedColumns.reason);
+    }
+    return refusals;
+  }, [inlineEditRefusedColumns, result.fields, result.columnTypes]);
 
   const columns = useMemo<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>[]>(() => {
     // `truncate` carries its own `white-space: nowrap`, so wrapping has to replace it here,
@@ -657,9 +674,13 @@ export function ResultsGrid({
         // required it, so without this a cell offered an input whose edit was
         // silently discarded — including where the provider declares no inline row
         // editing at all (issue #269).
-        if (!editingEnabled) {
+        const editRefusal = editRefusals.get(column.id);
+        if (!editingEnabled || editRefusal !== undefined) {
           return (
-            <div className={cn("w-full", valueFlow, pendingChange && "bg-warning-tint/10 rounded px-0.5")}>
+            <div
+              className={cn("w-full", valueFlow, pendingChange && "bg-warning-tint/10 rounded px-0.5")}
+              title={editingEnabled ? editRefusal : undefined}
+            >
               <span className={cn(className, pendingChange && "text-warning")}>{display}</span>
             </div>
           );
@@ -698,6 +719,7 @@ export function ResultsGrid({
     effectiveMaskingEnabled,
     sensitiveColumns,
     editingEnabled,
+    editRefusals,
     onCellChange,
     getCellChange,
     getDisplayedCellValue,

@@ -60,6 +60,9 @@ export const EXPECTED_EDIT_ABSTAINERS: readonly DatabaseType[] = Object.freeze([
   "neo4j",
   "opensearch",
   "oracle",
+  // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: v1 reads only, whatever `readOnly` says
+  // (DECISIONS O1), which docs/providers/oxia.md names.
+  "oxia",
   // No kind declares `acceptsRowWrites` or `acceptsSourceEdits`: the product offers no write
   // path to Prometheus at all (#1085 sections 2 and 4.5), which docs/providers/prometheus.md names.
   "prometheus",

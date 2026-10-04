@@ -12,7 +12,7 @@ import type { QueryTab } from "@/lib/types";
  *
  * Keyed by tab type rather than by dialect, because the tab type is the value a tab persists: a restored tab
  * resolves its language from this record without the connection's capabilities. It therefore holds the tab types
- * no dialect declares too (`sql`, `mongodb`, `promql`), beside the six dialects' (`src/lib/db/query-dialects.ts`).
+ * no dialect declares too (`sql`, `mongodb`, `promql`), beside the seven dialects' (`src/lib/db/query-dialects.ts`).
  */
 export interface DialectEditor {
   /** The Monaco language id a tab of this type renders in. */
@@ -89,6 +89,9 @@ export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> 
   // InfluxQL declares a language and no dialect, as PromQL and Cypher do, and has no formatter: no Format for an
   // InfluxQL tab (InfluxDB spec I12).
   influxql: Object.freeze({ monacoId: "influxql" }),
+  // An Oxia command line renders in the language `oxia-language.ts` registers over the provider's own lexer, and has
+  // no formatter: the SQL formatter rewrites a command line, and the console formatter is the HTTP grammar's (SB2-4.5).
+  oxia: Object.freeze({ monacoId: "oxia" }),
 });
 
 /**

@@ -1,0 +1,524 @@
+// Copyright 2023-2025 The Oxia Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * OxiaClient
+ */
+syntax = "proto3";
+
+package io.oxia.proto.v1;
+
+option go_package = "github.com/oxia-db/oxia/common/proto";
+option java_multiple_files = true;
+
+/**
+ * Oxia service that allows clients to discover shard-to-server assignments and
+ * submit batches of requests.
+ *
+ * Clients should connect to a random server to discover the shard-to-server
+ * assignments and then send the actual batched requests to the appropriate
+ * shard leader. In the future, this may be handled server-side in a proxy
+ * layer to allows clients to not be concerned with sharding.
+ */
+service OxiaClient {
+  /**
+   * Gets all shard-to-server assignments as a stream. Each set of assignments
+   * in the response stream will contain all the assignments to bring the client
+   * up to date. For example, if a shard is split, the stream will return a
+   * single response containing all the new shard assignments as opposed to
+   * multiple stream responses, each containing a single shard assignment.
+   *
+   * Clients should connect to a single random server which will stream the
+   * assignments for all shards on all servers.
+   */
+  rpc GetShardAssignments(ShardAssignmentsRequest)
+      returns (stream ShardAssignments);
+
+  /**
+   * Batches put, delete and delete_range requests.
+   *
+   * Clients should send this request to the shard leader. In the future,
+   * this may be handled server-side in a proxy layer.
+   *
+   * Deprecated
+   */
+  rpc Write(WriteRequest) returns (WriteResponse);
+
+  /**
+   * Batches put, delete and delete_range requests.
+   *
+   * Clients should send this request to the shard leader. In the future,
+   * this may be handled server-side in a proxy layer.
+   */
+  rpc WriteStream(stream WriteRequest) returns (stream WriteResponse);
+
+  /**
+   * Batches get requests.
+   *
+   * Clients should send this request to the shard leader. In the future,
+   * this may be handled server-side in a proxy layer.
+   */
+  rpc Read(ReadRequest) returns (stream ReadResponse);
+
+  /**
+   * Requests all the keys between a range of keys.
+   *
+   * Clients should send an equivalent request to all respective shards,
+   * unless a particular partition key was specified.
+   */
+  rpc List(ListRequest) returns (stream ListResponse);
+
+  /**
+   * Requests all the records between a range of keys.
+   *
+   * Clients should send an equivalent request to all respective shards,
+   * unless a particular partition key was specified.
+   */
+  rpc RangeScan(RangeScanRequest) returns (stream RangeScanResponse);
+
+  /**
+   * Requests all the records between a range of keys.
+   */
+  rpc GetSequenceUpdates(GetSequenceUpdatesRequest) returns (stream GetSequenceUpdatesResponse);
+
+  rpc GetNotifications(NotificationsRequest) returns (stream NotificationBatch);
+
+  /*
+   * Creates a new client session. Sessions are kept alive by regularly sending
+   * heartbeats via the KeepAlive rpc.
+   */
+  rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+
+  /*
+   * Sends a heartbeat to prevent the session from timing out.
+   */
+  rpc KeepAlive(SessionHeartbeat) returns (KeepAliveResponse);
+
+  /*
+   * Closes a session and removes all ephemeral values associated with it.
+   */
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+/**
+ * A shard assignments request. Gets all shard-to-server assignments as a
+ * stream. Each set of assignments in the response stream will contain all the
+ * assignments to bring the client up to date. For example, if a shard is split,
+ * the stream will return a single response containing all the new shard
+ * assignments as opposed to multiple stream responses, each containing a single
+ * shard assignment.
+ */
+message ShardAssignmentsRequest {
+  string namespace = 1;
+}
+
+/**
+ * The response to a shard assignments request.
+ */
+message ShardAssignments {
+  map<string, NamespaceShardsAssignment> namespaces = 1;
+  repeated string allowed_authorities = 2;
+}
+
+/**
+ * The shards assignments for a given namespace
+ */
+message NamespaceShardsAssignment {
+  // All assignments in the response stream will contain all the
+  // assignments to bring the client up to date. For example, if a shard is
+  // split, the stream will return a single response containing all the new
+  // shard assignments as opposed to multiple stream responses, each containing
+  // a single shard assignment.
+  repeated ShardAssignment assignments = 1;
+
+  // Indicates the mechanism by which the keys are assigned to the individual
+  // shards.
+  ShardKeyRouter shard_key_router = 2;
+}
+
+/**
+ * The assignment of a shard to a server.
+ */
+message ShardAssignment {
+  // The shard id
+  int64 shard = 1;
+
+  // The shard leader, e.g. `host:port`
+  string leader = 2;
+
+  // There could be multiple ways to describe the boundaries of a shard
+  oneof shard_boundaries {
+    Int32HashRange int32_hash_range = 3;
+  }
+}
+
+enum ShardKeyRouter {
+  UNKNOWN = 0;
+
+  XXHASH3 = 1;
+}
+
+/**
+ * Represents a range of hash values [min, max)
+ */
+message Int32HashRange {
+  // The minimum inclusive hash that the shard can contain
+  fixed32 min_hash_inclusive = 1;
+
+  // The maximum inclusive hash that the shard can contain
+  fixed32 max_hash_inclusive = 2;
+}
+
+/**
+ * A batch write request. Applies the batches of requests. Requests are
+ * processed in positional order within batches and the batch types are
+ * processed in the following order: puts, deletes, delete_ranges.
+ */
+message WriteRequest {
+  // The shard id. This is optional allow for support for server-side hashing
+  // and proxying in the future.
+  optional int64 shard = 1;
+  // The put requests
+  repeated PutRequest puts = 2;
+  // The delete requests
+  repeated DeleteRequest deletes = 3;
+  // The delete range requests
+  repeated DeleteRangeRequest delete_ranges = 4;
+}
+
+/**
+ * The response to a batch write request. Responses of each type respect the
+ * order of the original requests.
+ */
+message WriteResponse {
+  // The put responses
+  repeated PutResponse puts = 1;
+  // The delete responses
+  repeated DeleteResponse deletes = 2;
+  // The delete range responses
+  repeated DeleteRangeResponse delete_ranges = 3;
+}
+
+/**
+ * A batch read request. Applies the batches of requests.
+ */
+message ReadRequest {
+  // The shard id. This is optional allow for support for server-side hashing
+  // and proxying in the future.
+  optional int64 shard = 1;
+  // The get requests
+  repeated GetRequest gets = 2;
+}
+
+/**
+ * The response to a batch read request. Responses of each type respect the
+ * order of the original requests.
+ */
+message ReadResponse {
+  // The get responses
+  repeated GetResponse gets = 1;
+}
+
+message SecondaryIndex {
+  string index_name = 1;
+  string secondary_key = 2;
+}
+
+/**
+ * A put request. Persists the specified key and value
+ */
+message PutRequest {
+  // The key
+  string key = 1;
+  // The value
+  bytes value = 2;
+  // An optional expected version_id. The put will fail if the server's current version_id
+  // does not match
+  optional int64 expected_version_id = 3;
+  // Optional. Associate the new record with the session (i.e. ephemeral record).
+  // When the session expires or is explicitly closed, the record will be automatically
+  // removed
+  optional int64 session_id = 4;
+
+  // Client identifier used to track the client that last modified an
+  // ephemeral record.
+  optional string client_identity = 5;
+
+  // If a partition key is present, it supersedes the regular record key in determining the routing of
+  // a record to a particular shard. It is passed to the server because it needs to be persisted as
+  // part of the record. We would need the partition_key if we're going to do a split of the shards.
+  optional string partition_key = 6;
+
+  // If one or more sequence key are specified. The key will get added suffixes
+  // based on adding the delta to the current highest key with the same prefix
+  repeated uint64 sequence_key_delta = 7;
+
+  repeated SecondaryIndex secondary_indexes = 8;
+
+  // Optional overrides for version metadata, used during data migration.
+  // When set, the server will use these values instead of auto-generating them.
+  optional int64 override_version_id = 9;
+  optional int64 override_modifications_count = 10;
+}
+
+/**
+ * The response to a put request.
+ */
+message PutResponse {
+  // Includes the error or OK
+  Status status = 1;
+  // The version if the put was successful
+  Version version = 2;
+
+  // If the key was generated by Oxia, it will be returned as part
+  // of the response
+  optional string key = 3;
+}
+
+/**
+ * A delete request. Deletes the specified key.
+ */
+message DeleteRequest {
+  // The key
+  string key = 1;
+  // An optional expected version_id. The delete will fail if the server's current version_id
+  // does not match
+  optional int64 expected_version_id = 2;
+}
+
+/**
+ * The response to a delete request or an item in a response to the
+ * delete range request.
+ */
+message DeleteResponse {
+  // Includes the error or OK
+  Status status = 1;
+}
+
+/**
+ * The type of key comparison to apply in a get() request
+ */
+enum KeyComparisonType {
+  // The stored key must be equal to the requested key
+  EQUAL = 0;
+  // Search for a key that is the highest key that is <= to the requested key
+  FLOOR = 1;
+  // Search for a key that is the lowest key that is >= to the requested key
+  CEILING = 2;
+  // Search for a key that is the highest key that is < to the requested key
+  LOWER = 3;
+  // Search for a key that is the lowest key that is > to the requested key
+  HIGHER = 4;
+}
+
+/**
+ * A get request. Gets the stat and optionally the value for the specified
+ * key.
+ */
+message GetRequest {
+  // The key
+  string key = 1;
+  // Specifies whether the response should include the value
+  bool include_value = 2;
+
+  KeyComparisonType comparison_type = 3;
+  optional string secondary_index_name = 4;
+}
+
+/**
+ * The response to a get request.
+ */
+message GetResponse {
+  // Includes the error or OK
+  Status status = 1;
+  // The version of the record
+  Version version = 2;
+  // The value, if it was requested and there was no error
+  optional bytes value = 3;
+  // In case of non-exact queries (eg. floor, ceiling) the found key will be
+  // returned in the GetResponse.
+  optional string key = 4;
+  optional string secondary_index_key = 5;
+}
+
+/**
+ * Input to a delete range request. Key ranges assume a UTF-8 byte sort order.
+ */
+message DeleteRangeRequest {
+  // The start of the range, inclusive
+  string start_inclusive = 1;
+  // The end of the range, exclusive
+  string end_exclusive = 2;
+}
+
+/**
+ * The response for a delete range request.
+ */
+message DeleteRangeResponse {
+  // Includes the error or OK
+  Status status = 1;
+}
+
+/**
+ * Input to a list request. Key ranges assume a UTF-8 byte sort order.
+ */
+message ListRequest {
+  // The shard id. This is optional allow for support for server-side hashing
+  // and proxying in the future.
+  optional int64 shard = 1;
+  // The start of the range, inclusive
+  string start_inclusive = 2;
+  // The end of the range, exclusive
+  string end_exclusive = 3;
+
+  optional string secondary_index_name = 4;
+
+  bool include_internal_keys = 5;
+}
+
+/**
+ * The response to a list request.
+ */
+message ListResponse {
+  // A portion of the keys found within the specified range
+  repeated string keys = 1;
+}
+
+/**
+ * Input to a range-scan request
+ */
+message RangeScanRequest {
+  // The shard id. This is optional allow for support for server-side hashing
+  // and proxying in the future.
+  optional int64 shard = 1;
+  // The start of the range, inclusive
+  string start_inclusive = 2;
+  // The end of the range, exclusive
+  string end_exclusive = 3;
+
+  optional string secondary_index_name = 4;
+
+  bool include_internal_keys = 5;
+}
+
+/**
+ * The response to a range-scan request.
+ */
+message RangeScanResponse {
+  // A portion of the records found within the specified range
+  repeated GetResponse records = 1;
+}
+
+message GetSequenceUpdatesRequest {
+  int64 shard = 1;
+  string key = 2;
+}
+
+message GetSequenceUpdatesResponse {
+  string highest_sequence_key = 1;
+}
+
+/**
+ * Version contains info about the state of a record.
+ */
+message Version {
+  // The version identifier of the record
+  int64 version_id = 1;
+
+  // The number of modifications made to the record since
+  // it was created
+  int64 modifications_count = 2;
+
+  // The creation timestamp of the first version of the record
+  fixed64 created_timestamp = 3;
+  // The modified timestamp of the current version of the record
+  fixed64 modified_timestamp = 4;
+
+  // Identifier of the session if the record is ephemeral
+  optional int64 session_id = 5;
+
+  optional string client_identity = 6;
+}
+
+/**
+ * Represents all the possible status.
+ */
+enum Status {
+  // Operation was successful
+  OK = 0;
+  // The key was not found
+  KEY_NOT_FOUND = 1;
+  // The existing version does not match the expected version
+  UNEXPECTED_VERSION_ID = 2;
+  // The session that the put request referred to is not alive
+  SESSION_DOES_NOT_EXIST = 3;
+}
+
+message CreateSessionRequest {
+  int64 shard = 1;
+  uint32 session_timeout_ms = 2;
+  string client_identity = 3;
+}
+
+message CreateSessionResponse {
+  int64 session_id = 1;
+}
+
+message SessionHeartbeat {
+  int64 shard = 1;
+  int64 session_id = 2;
+}
+
+message KeepAliveResponse {}
+
+message CloseSessionRequest {
+  int64 shard = 1;
+  int64 session_id = 2;
+}
+
+message CloseSessionResponse {}
+
+enum NotificationType {
+  KEY_CREATED = 0;
+  KEY_MODIFIED = 1;
+  KEY_DELETED = 2;
+  KEY_RANGE_DELETED = 3;
+}
+
+message NotificationsRequest {
+  int64 shard = 1;
+
+  optional int64 start_offset_exclusive = 2;
+}
+
+message NotificationBatch {
+  int64 shard = 1;
+  int64 offset = 2;
+  fixed64 timestamp = 3;
+
+  map<string, Notification> notifications = 4;
+}
+
+message Notification {
+  NotificationType type = 1;
+  optional int64 version_id = 2;
+
+  optional string key_range_last = 3;
+}
+
+
+message LeaderHint {
+  int64 shard = 1;
+  string leader_address = 2;
+}

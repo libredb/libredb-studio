@@ -10,7 +10,8 @@
  *
  * WHAT IS DRAWN IS A SAMPLE, and it says so. `Scanned n/m` is the walk's progress against the count
  * the declaration's `totalScope` names: the server's own key count on Redis, and on etcd the exact
- * count of the range the walk covers. A folder's number is how many keys the walk found under it, and
+ * count of the range the walk covers. An engine that publishes no count declares `none`, and the line is
+ * `Scanned n` alone. A folder's number is how many keys the walk found under it, and
  * a prefix whose keys have not arrived yet does not appear at all. The alternative, presenting a
  * sample as a catalog, is the defect this panel exists to avoid.
  *
@@ -446,10 +447,17 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    * exact count of the keys this walk covers, the prefix's range or the whole key space, and a prefix
    * walk is a position in an ordered range rather than a filtered pass, so the word stays Scanned. The
    * tooltip says what both numbers are, since neither word explains the pair on its own.
+   *
+   * UNDER `none` THERE IS NO DENOMINATOR (Keys panel totals). The engine publishes no key count and its
+   * pages pin no revision, so the provider answers a total of 0 that nothing reads: the line is the
+   * numerator alone, the word stays Scanned whatever the prefix, and the tooltip says that no total is
+   * shown and why.
    */
   const walkScoped = shape.totalScope === "walk";
-  const progressPrefix = walkScoped || pattern === "" ? "Scanned" : "Matched";
-  const progressSuffix = total === null ? "" : walkScoped || pattern === "" ? `/${total}` : ` of ${total}`;
+  // An engine that publishes no key count (`"none"`): the line is the numerator alone, and `total` is not read.
+  const uncounted = shape.totalScope === "none";
+  const progressPrefix = walkScoped || uncounted || pattern === "" ? "Scanned" : "Matched";
+  const progressSuffix = total === null || uncounted ? "" : walkScoped || pattern === "" ? `/${total}` : ` of ${total}`;
   /*
    * THE NUMERATOR NEVER READS ABOVE THE PANEL'S OWN BUDGET, and that is the whole point of clamping a
    * number that is otherwise honest: `scanned` counts what the server HANDED over, and a page is
@@ -470,13 +478,15 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
    * and "not clustered" would be a claim from a refusal.
    */
   const nodeScoped = clustered === true;
-  const countScope = walkScoped
-    ? sent === ""
-      ? "out of every key this connection may read"
-      : `out of the keys under ${sent} this connection may read`
-    : nodeScoped
-      ? "out of every key this NODE holds (this server is clustered: SCAN and DBSIZE are per node)"
-      : "out of every key this database holds";
+  const countScope = uncounted
+    ? "keys read so far: this engine publishes no key count, so no total is shown"
+    : walkScoped
+      ? sent === ""
+        ? "out of every key this connection may read"
+        : `out of the keys under ${sent} this connection may read`
+      : nodeScoped
+        ? "out of every key this NODE holds (this server is clustered: SCAN and DBSIZE are per node)"
+        : "out of every key this database holds";
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="key-browser">
@@ -776,7 +786,7 @@ export function KeyBrowser({ connection, capability, databaseLevel, request, onO
                     }
                     className="ml-auto shrink-0 pl-2 text-[10px] tabular-nums text-muted-foreground"
                   >
-                    {total === null ? "" : total.toLocaleString("en-US")}
+                    {total === null || uncounted ? "" : total.toLocaleString("en-US")}
                   </span>
                 </div>
               );

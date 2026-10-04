@@ -24,6 +24,7 @@ mock.module("@/components/QuerySafetyDialog", () => ({
 }));
 
 import { useQueryExecution } from "@/hooks/use-query-execution";
+import { oxiaRefusal } from "@/lib/db/providers/keyvalue/oxia/guard";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
 import { qdrantRefusal } from "@/lib/db/providers/vector/qdrant/guard";
 import { statementRefusal } from "@/lib/db/destructive-commands";
@@ -4561,6 +4562,64 @@ describe("the real qdrant row", () => {
     ]);
     expect(history).toHaveBeenCalledTimes(1);
     expect(history.mock.calls[0][0]).toMatchObject({ status: "error", errorMessage: SENTENCE, query: text });
+  });
+});
+
+// =============================================================================
+// The real oxia row (SB2-4.2)
+// =============================================================================
+//
+// A write is refused by guard.ts, which the real vocabulary row applies in the browser: nothing is posted to any
+// route and no history is written. A read asks nothing and runs.
+describe("the real oxia row", () => {
+  const oxiaConnection: DatabaseConnection = { ...mockConnection, id: "qe-oxia", name: "Metadata", type: "oxia" };
+  let history: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    history = spyOn(storage, "addToHistory").mockImplementation(() => {});
+    isDangerousQueryMock.mockClear();
+  });
+
+  afterEach(() => {
+    history.mockRestore();
+    restoreGlobalFetch();
+  });
+
+  function mount(route: MockFetchResponse) {
+    const tabs = [createTab({ result: { ...mockQueryResult } })];
+    const setTabs = mock((fn: unknown) => {
+      if (typeof fn === "function") tabs.splice(0, tabs.length, ...(fn as (prev: QueryTab[]) => QueryTab[])(tabs));
+    });
+    const fetchMock = mockGlobalFetch({ "/api/": route });
+    const params = createDefaultParams({ activeConnection: oxiaConnection, tabs, currentTab: tabs[0], setTabs });
+    const { result } = renderHook(() => useQueryExecution(params));
+    return { result, tabs, fetchMock };
+  }
+
+  test("put /a b is refused in the browser with guard.ts's sentence, before any request", async () => {
+    const sentence = oxiaRefusal("put /a b");
+    expect(sentence).toBeDefined();
+    const { result, tabs, fetchMock } = mount({ json: mockQueryResult });
+    let returned: boolean | undefined;
+    await act(async () => {
+      returned = await result.current.executeQuery("put /a b");
+    });
+    expect(returned).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(history).not.toHaveBeenCalled();
+    expect(isDangerousQueryMock).not.toHaveBeenCalled();
+    expect(tabs[0].runError).toBe(sentence);
+  });
+
+  test("get /a runs with no prompt", async () => {
+    const { result, fetchMock } = mount({ json: mockQueryResult });
+    await act(async () => {
+      await result.current.executeQuery("get /a");
+    });
+    expect(result.current.safetyCheckQuery).toBeNull();
+    expect(fetchMock.mock.calls.map(([input]) => new URL(String(input), "http://localhost:3000").pathname)).toEqual([
+      "/api/db/query",
+    ]);
   });
 });
 

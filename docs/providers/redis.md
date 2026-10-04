@@ -210,11 +210,12 @@ answers is a floor rather than a total. The keyspace walk below
 caller drives, one batch at a time, with the cursor kept. Both are bounded alike, which is why the
 walk's `maxCount` is the same 1,000 that `KEY_SCAN_LIMIT` puts on this one.
 
-### 3.3 Generic command dispatch via `call()`
+### 3.3 Generic command dispatch via `callBuffer()`
 
 Rather than hand-coding a method per Redis command, `runCommand()`
 ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)) funnels everything through `ioredis`'s
-low-level `client.call(command, ...args)`.
+low-level `client.callBuffer(command, ...args)`, and `decodeReply()` turns the raw reply into what
+the grid shows ([§3.5a](#35a-integer-replies-are-exact-past-253)).
 This means **any** Redis command works without code changes — `GET`, `LPUSH`, `XADD`, `JSON.GET`,
 module commands, etc. The trade-off is that there is no per-command validation; an unknown or
 mis-arity command surfaces as a Redis-side error wrapped in `QueryError`.
@@ -291,6 +292,33 @@ Redis replies are heterogeneous (status strings, integers, nil, flat arrays, has
 `INFO` text). `formatResult()` ([`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts))
 normalises each into the standard `{ rows, fields, rowCount }` envelope so the existing
 `ResultsGrid` renders them unchanged. See the [reply table](#52-result-shaping) below.
+
+### 3.5a Integer replies are exact past 2^53
+
+By default ioredis parses an integer reply into a JS number, which rounds one past 2^53 with no
+error. Measured on redis 8.10.2 through ioredis 5.11.1 on 2026-10-04: `INCR` on a key holding
+9223372036854775806 was shown as `(integer) 9223372036854778000`, and `INCRBY` 0 on
+9007199254740993 as `(integer) 9007199254740992`, in the grid, the API and every export. The same
+held on every relative in [§1](#valkey-dragonflydb-keydb-and-garnet), since the rounding is the
+driver's.
+
+The connection therefore sets ioredis's **`stringNumbers: true`**, which hands every integer reply
+over as its digits. Two consequences follow, and both are handled in
+[`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts):
+
+- **A command typed in the editor is sent with `callBuffer`, not `call`.** Under `stringNumbers`,
+  `call` decodes an integer reply and a string reply to the same text, so `(integer)` could no
+  longer be told apart from a value that happens to be digits. `callBuffer` leaves a bulk or status
+  string as a Buffer and an integer as its digit string, and `decodeReply()` decodes the first from
+  UTF-8, as `call` does, and turns the second into a number when it is exact as one and a bigint
+  when it is not. An integer nested in an array reply is shown as JSON with the unsafe ones as
+  their quoted digits (`[2,"9223372036854775807","x"]`); an integer in the safe range stays a
+  number.
+- **The counts the provider reads for itself arrive as digit strings too.** `DBSIZE` answers `"42"`
+  rather than `42`, so the overview's key count and the key-space page's `total` go through
+  `integerReply()`, which reads one back as a number (and accepts a JS number too). A reply that is
+  not a count is refused in both places rather than shown as 0 keys, a number nobody measured.
+  `SLOWLOG GET` was already read through `String()` and `Number()`.
 
 ### 3.6 No connection pool
 
@@ -461,7 +489,7 @@ HGETALL user:1
 | Redis reply | `fields` | Example cell |
 |-------------|----------|--------------|
 | Simple string / status (`GET`, `PING`, `SET`) | `result` | `OK`, `PONG`, `hello-world` |
-| Integer (`DEL`, `DBSIZE`, `INCR`) | `result` | `(integer) 42` |
+| Integer (`DEL`, `DBSIZE`, `INCR`) | `result` | `(integer) 42`; past 2^53 the server's exact digits, `(integer) 9223372036854775807` ([§3.5a](#35a-integer-replies-are-exact-past-253)) |
 | `nil` | `result` | `(nil)` (rowCount `0`) |
 | Empty array | `result` | `(empty list)` (rowCount `0`) |
 | Array (`KEYS`, `SMEMBERS`, `LRANGE`) | `index`, `value` | `1 \| user:1` |
@@ -1742,8 +1770,10 @@ Integration tests live in
 In keeping with the project's test architecture, the `ioredis` driver is replaced with an in-process
 mock via `mock.module('ioredis', …)` **before** the provider is imported — there is no live Redis
 container in the suite. The mock simulates a Redis 7.2.x server (`redis_version:7.2.4`,
-`INFO`/`SCAN`/`CLIENT LIST`/`call()` responses), which exercises the same code paths as a real
-Redis 6.0+ instance.
+`INFO`/`SCAN`/`CLIENT LIST`/`call()`/`callBuffer()` responses), which exercises the same code paths as a real
+Redis 6.0+ instance. The mock also honours `stringNumbers` the way ioredis does, answering an integer
+reply as its digit string when the option is set, so a count read with `typeof x === "number"`
+fails in the suite as it would against a live server.
 
 > ⚠️ **Mock isolation:** `bun`'s `mock.module()` is process-wide. Run the suite with
 > `bun run test`, which gives every test file its own bun process, never bare `bun test` across
@@ -1756,7 +1786,8 @@ The suite covers: validation, connect/disconnect, capabilities, labels, `prepare
 formats (JSON, plain, empty, `HGETALL`, `INFO`, nil), error handling (malformed JSON, missing
 `command`, Redis-side error, disconnected provider), schema scanning, health, overview, performance,
 slow queries, active sessions, table/index/storage stats, `getMonitoringData`, maintenance, a
-battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), the whole object surface
+battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), integer replies past 2^53
+(`INCR`, `INCRBY`, `DECRBY` and a nested array, [§3.5a](#35a-integer-replies-are-exact-past-253)), the whole object surface
 ([§6.1](#61-the-object-surface-789)) through `assertObjectSurface` plus per-method assertions, and
 **every `ssl.mode` branch**
 asserted against the options object the `Redis` constructor received. The same captured options carry
