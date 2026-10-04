@@ -131,6 +131,7 @@ A leader is dialled when it is byte for byte the authority Studio sent to the en
 - leaders the connection does not list: `The cluster sends clients to data servers this connection does not list: <a>, <b>. Studio dials only the endpoint and the addresses under Data servers, and sends the token to no other. To allow them, list under Data servers these addresses and every other data server of the cluster: <a>, <b>`
 - more leaders than Data servers can hold: `The cluster sends clients to <n> data servers this connection does not list, more than the 64 that Data servers can hold, so Studio cannot reach this namespace's shards and nothing was read.`
 
+Without a tunnel, one refused leader that is a loopback name on the endpoint's port, such as `localhost:6648` for Host `127.0.0.1`, gets the second sentence, because that name is this machine too.
 In the unlisted-leaders sentence the clause "and every other data server of the cluster" precedes the list, and the list of every refused address, at most 64 of them, ends the sentence, ready to paste into Data servers, with nothing after it.
 More than 64 distinct refused leaders refuse the connection outright with the last sentence, since Data servers could not hold them.
 This policy is [row 3.14](../SECURITY.md) of the security page.

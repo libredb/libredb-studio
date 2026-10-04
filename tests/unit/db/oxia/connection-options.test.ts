@@ -531,6 +531,23 @@ describe("admitLeaders: the dial policy over every leader (SB1-5.4)", () => {
     );
   });
 
+  test("(b) one refused loopback leader on a loopback endpoint's port: that name is this machine too (ruling R35)", () => {
+    // Host 127.0.0.1 against a server that calls itself localhost:6648: typing localhost in Host connects.
+    expect(admitLeaders(build({ host: "127.0.0.1" }), ["localhost:6648"]).refusal).toBe(
+      "This server calls itself localhost:6648: type localhost in Host, or add localhost:6648 to Data servers.",
+    );
+    // Another port, a second refused leader, or a tunnel keeps (a): only the forward is reachable there.
+    expect(admitLeaders(build({ host: "127.0.0.1" }), ["localhost:6649"]).refusal).toStartWith(
+      "This connection reaches Oxia through a port-forward or tunnel at 127.0.0.1:6648",
+    );
+    expect(admitLeaders(build({ host: "127.0.0.1" }), ["localhost:6648", "127.0.0.2:6648"]).refusal).toStartWith(
+      "This connection reaches Oxia through a port-forward or tunnel at 127.0.0.1:6648",
+    );
+    expect(admitLeaders(build(TUNNEL), ["localhost:6648"]).refusal).toStartWith(
+      "This connection reaches Oxia through a port-forward or tunnel at 127.0.0.1:41000",
+    );
+  });
+
   test("(c) otherwise, every refused address listed in shard order", () => {
     const listed =
       "The cluster sends clients to data servers this connection does not list: b.example:7000, a.example:7000. Studio dials only the endpoint and the addresses under Data servers, and sends the token to no other. To allow them, list under Data servers these addresses and every other data server of the cluster: b.example:7000, a.example:7000";

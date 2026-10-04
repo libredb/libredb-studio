@@ -313,12 +313,20 @@ function policyRefusal(
   // Under a tunnel Studio reaches only the local forward and Data servers cannot be set, so every refused leader is
   // (a), the far end's own host included: (b) and (c) would offer a remedy the builder refuses (ruling R21).
   const unreachable = options.tunnelled ? (away ?? refused[0]) : away;
-  if ((isLoopback(options.endpoint.host) || options.tunnelled) && (unreachable !== undefined || unparsed)) {
+  const [only] = refused;
+  const renamed =
+    refused.length === 1 && !unparsed && only.port === options.endpoint.port && only.host !== options.endpoint.host;
+  // Without a tunnel a loopback leader on the endpoint's port is this machine under another name, so (b) (ruling R35).
+  const loopbackRename = renamed && !options.tunnelled && isLoopback(only.host);
+  if (
+    !loopbackRename &&
+    (isLoopback(options.endpoint.host) || options.tunnelled) &&
+    (unreachable !== undefined || unparsed)
+  ) {
     const leader = unreachable === undefined ? UNPARSED_LEADER : `${unreachable.host}:${unreachable.port}`;
     return `This connection reaches Oxia through a port-forward or tunnel at ${options.sentAuthority}, but the cluster sends clients to ${leader} for its shards, which this machine cannot be assumed to reach. Run Studio where ${leader} resolves and is reachable; the Oxia provider doc shows the hosts-file and per-pod port-forward workaround.`;
   }
-  const [only] = refused;
-  if (refused.length === 1 && !unparsed && only.port === options.endpoint.port && only.host !== options.endpoint.host) {
+  if (renamed) {
     const leader = `${only.host}:${only.port}`;
     return `This server calls itself ${leader}: type ${only.host} in Host, or add ${leader} to Data servers.`;
   }
