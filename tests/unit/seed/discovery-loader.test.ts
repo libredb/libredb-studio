@@ -920,7 +920,7 @@ describe("discovery-loader", () => {
       expect((await getDiscoveredConnections(deps())).map((c) => c.id)).toEqual(["caprover-maria"]);
     });
 
-    it("keeps the cache it stored when the logger throws, so only that call fails", async () => {
+    it("keeps the cache it stored when the logger throws, so only the callers of that recompute fail", async () => {
       write("not json");
       const { reads, readFile: read } = countingRead();
       warn.mockImplementationOnce(() => {

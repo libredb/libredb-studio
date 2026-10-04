@@ -11,8 +11,10 @@
  * is re-read, at most every STALE_REREAD_MS, and the connections are withdrawn only once the file
  * itself is older than SEED_DISCOVERY_MAX_AGE_MS, without waiting for the TTL.
  *
- * Never throws. A failure here would otherwise turn into the 500 of GET /api/connections/managed
- * and hide the seed-file connections and the samples along with the discovered ones.
+ * Never throws, except that an error thrown by the logger itself is raised, not swallowed: it rejects
+ * every caller that shares that recompute, and the cache stored before logging serves later calls. Any
+ * other failure is caught here, because it would turn into the 500 of GET /api/connections/managed and
+ * hide the seed-file connections and the samples along with the discovered ones.
  */
 import { open } from "fs/promises";
 import { logger } from "@/lib/logger";
@@ -159,7 +161,8 @@ function snapshotFor(path: string, at: number, deps: DiscoveryDeps): Promise<Sna
   const pending: Promise<Snapshot> = recompute(path, at, previous, deps).then((next) => {
     // A resetDiscoveryCache() while this ran began a new generation, so this result is not cached.
     if (inflight === pending) {
-      // The cache is complete before anything is logged, so a logger that throws fails this call only.
+      // The cache is complete before anything is logged, so a logger that throws fails only the callers
+      // that share this recompute, never a later call.
       cache = next;
       inflight = null;
       reportChanges(previous, next, path);
@@ -302,7 +305,7 @@ async function readExportFile(path: string): Promise<string> {
   try {
     const stats = await handle.stat();
     // A directory reports size 0 on Windows and on some filesystems, and a read of 0 bytes never reaches
-    // the OS, so it would come back as empty text instead of EISDIR. The type is checked first instead.
+    // the OS, so it would come back as empty text instead of EISDIR. The type is checked first.
     if (!stats.isFile()) throw new ExportFileNotRegular();
     const { size } = stats;
     if (size > DISCOVERY_FILE_MAX_BYTES) throw new ExportFileTooLarge();
