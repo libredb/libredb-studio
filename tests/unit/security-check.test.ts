@@ -68,6 +68,11 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
+  test("the programme ends with the two InfluxDB controls, one per type-id", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-3)).toEqual(["3.11", "3.12", "3.13"]);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(30);
+  });
+
   test("ignores a table that is not the control table", () => {
     const other = ["| A | B |", "|---|---|", "| 1 | 2 |", ""].join("\n");
 
