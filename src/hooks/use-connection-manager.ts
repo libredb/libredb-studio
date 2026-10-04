@@ -1,7 +1,7 @@
 "use client";
 
 import { appFetch } from "@/lib/config/base-path";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import type { DatabaseConnection } from "@/lib/types";
 import { detailedObjects, schemaContextOf, type DetailedObject } from "@/lib/db/detailed-object";
 import { relationKindIds } from "@/lib/db/object-kinds";
@@ -41,6 +41,12 @@ export function managedRefreshIntervalMs(cacheHint: number | null): number {
 export function useConnectionManager(storageReady = false) {
   const [connections, setConnections] = useState<DatabaseConnection[]>([]);
   const [activeConnection, setActiveConnection] = useState<DatabaseConnection | null>(null);
+  /**
+   * The active connection as last committed, for the managed refresh: the refresh runs inside
+   * the storage effect, whose closure never sees a later render, and it has to know which
+   * connection is open to keep it open or to say that it is gone.
+   */
+  const activeConnectionRef = useRef<DatabaseConnection | null>(null);
   /**
    * The server's own seed descriptors, kept alongside the merged list rather than
    * folded into it. The merge deliberately prefers an existing editable copy over the
@@ -430,15 +436,34 @@ export function useConnectionManager(storageReady = false) {
     let refreshTimer: ReturnType<typeof setInterval> | null = null;
     let refreshInFlight = false;
 
+    /*
+      The active connection keeps its object identity while its id is still listed: a new
+      object for the same connection resets the transaction, discards edits and re-reads the
+      schema (Studio's connection-change effect). When its id is gone, the first remaining
+      connection becomes active and the user is told, once, because the next refresh finds
+      the new active connection listed.
+    */
+    const applyManagedRefresh = (next: DatabaseConnection[]) => {
+      setConnections(next);
+      const active = activeConnectionRef.current;
+      if (active === null) {
+        setActiveConnection((prev) => prev ?? next[0] ?? null);
+        return;
+      }
+      if (next.some((c) => c.id === active.id)) return;
+      setActiveConnection(next[0] ?? null);
+      toast({ title: "Connection removed", description: `${active.name} is no longer available.` });
+    };
+
     const refreshManaged = () => {
       if (refreshInFlight || document.visibilityState !== "visible") return;
       refreshInFlight = true;
       fetchManaged({ quiet: true })
         .then(({ merged, failed }) => {
-          if (cancelled || failed || merged === null) return;
-          const next: DatabaseConnection[] = merged;
-          setConnections(next);
-          setActiveConnection((prev) => prev ?? next[0] ?? null);
+          if (cancelled || failed) return;
+          // An empty list is an answer too: the server withdrew every managed entry, and
+          // fetchManaged maps it to `merged: null`, so what remains is the user's own list.
+          applyManagedRefresh(merged ?? storage.getConnections());
         })
         .catch((err) => {
           logger.debug("Managed connection refresh failed", {
@@ -526,10 +551,11 @@ export function useConnectionManager(storageReady = false) {
       stopPoll();
       stopManagedRefresh();
     };
-  }, [storageReady]);
+  }, [storageReady, toast]);
 
   // Persist active connection ID
   useEffect(() => {
+    activeConnectionRef.current = activeConnection;
     if (activeConnection) {
       storage.setActiveConnectionId(activeConnection.id);
     }

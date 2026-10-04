@@ -1501,6 +1501,109 @@ describe("useConnectionManager", () => {
       expect(managedCallCount(fetchMock)).toBe(atUnmount);
     });
   });
+  describe("managed connection withdrawal", () => {
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS;
+    });
+
+    test("an empty managed list withdraws the managed entries and leaves only the user's own", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.saveConnection(makeConnection({ id: "plain-1", name: "Plain" }));
+      let managedCalls = 0;
+      mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return { ok: true, json: { connections: managedCalls === 1 ? [firstManaged()] : [] } };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections.map((c) => c.id)).toEqual(["managed-1", "plain-1"]);
+      });
+      expect(result.current.activeConnection?.id).toBe("managed-1");
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.connections.map((c) => c.id)).toEqual(["plain-1"]);
+      });
+      expect(result.current.activeConnection?.id).toBe("plain-1");
+      expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+      expect(mockToastSuccess).toHaveBeenCalledWith("Connection removed", {
+        description: "First DB is no longer available.",
+      });
+    });
+
+    test("the active connection keeps its object identity while it is still listed", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      let managedCalls = 0;
+      mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return {
+            ok: true,
+            json: { connections: managedCalls === 1 ? [firstManaged()] : [firstManaged(), secondManaged()] },
+          };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("managed-1");
+      });
+      const activeBefore = result.current.activeConnection;
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.connections).toHaveLength(2);
+      });
+      // A new object for the same id would reset the transaction, discard edits and re-read
+      // the schema in Studio's connection-change effect.
+      expect(result.current.activeConnection).toBe(activeBefore);
+      expect(mockToastSuccess).not.toHaveBeenCalled();
+    });
+
+    test("a withdrawn active connection falls back to the first remaining one with exactly one notice", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.setActiveConnectionId("managed-2");
+      let managedCalls = 0;
+      const fetchMock = mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return {
+            ok: true,
+            json: { connections: managedCalls === 1 ? [firstManaged(), secondManaged()] : [firstManaged()] },
+          };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("managed-2");
+      });
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("managed-1");
+      });
+      expect(result.current.connections.map((c) => c.id)).toEqual(["managed-1"]);
+      expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+      expect(mockToastSuccess).toHaveBeenCalledWith("Connection removed", {
+        description: "Second DB is no longer available.",
+      });
+
+      // The next refresh finds the new active connection listed and says nothing more.
+      focusWindow();
+      await waitFor(() => {
+        expect(managedCallCount(fetchMock)).toBe(3);
+      });
+      await sleep(50);
+      expect(mockToastSuccess).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 // =============================================================================
