@@ -316,13 +316,6 @@ const MOCK_FIELD_COPY: Record<string, MockFieldCopy> = {
     },
     showSshTunnel: false,
   },
-  // Mirrored from the real entry (#786); tests/unit/lib/db-ui-config.test.ts pins the real one.
-  db2: {
-    fieldHints: {
-      password:
-        "Without TLS, Db2's driver can send this password in cleartext. Turn on SSL below and use the server's TLS port.",
-    },
-  },
   // Mirrored from the real entry (#1089 6.1); tests/unit/lib/db-ui-config.test.ts pins the real one.
   etcd: {
     fieldHints: {
@@ -560,6 +553,20 @@ describe("ConnectionModal", () => {
     mockFormOverrides = { type: "postgres", sslMode: "disable" };
     rerender(React.createElement(ConnectionModal, createDefaultProps()));
     expect(queryByLabelText("Send the password without TLS")).toBeNull();
+  });
+
+  test("warns about a cleartext Db2 password only while SSL Mode is disable", () => {
+    // The browser check on #1303: with verify-ca on port 50001 the password field still said the
+    // driver could send it in cleartext. The warning is the consent box's, drawn only without TLS.
+    mockFormOverrides = { type: "db2", sslMode: "verify-ca" };
+    const { container, queryByTestId, rerender } = render(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.textContent).not.toContain("cleartext");
+    expect(queryByTestId("password-hint")).toBeNull();
+    expect(container.querySelector("#password")?.getAttribute("aria-describedby")).toBeNull();
+
+    mockFormOverrides = { type: "db2", sslMode: "disable" };
+    rerender(React.createElement(ConnectionModal, createDefaultProps()));
+    expect(container.textContent).toContain("sends the password in cleartext");
   });
 
   test("shows the saved query timeout when editing", () => {
@@ -1488,7 +1495,7 @@ describe("ConnectionModal", () => {
       ["mysql", "mysql", {}, NETWORKED, {}],
       ["redis", "redis", {}, NETWORKED, {}],
       ["oracle", "oracle", {}, NETWORKED, {}],
-      ["db2", "db2", {}, NETWORKED, MOCK_FIELD_COPY.db2.fieldHints ?? {}],
+      ["db2", "db2", {}, NETWORKED, {}],
       ["mssql", "mssql", {}, NETWORKED, {}],
       ["clickhouse", "clickhouse", {}, NETWORKED, {}],
       ["mongodb", "mongodb", {}, { ...NETWORKED, authSource: "Authentication Database" }, {}],

@@ -215,8 +215,8 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     connectionFields: ["host", "port", "user", "password", "database", "serviceName"],
   },
   // IBM Db2 LUW (#786). No connection-string toggle: a `db2://` paste fills the fields, the Oracle
-  // precedent. The password hint is there because the driver's default security mechanism can send
-  // the password in cleartext when the connection has no TLS.
+  // precedent. No password hint: a declared hint is drawn whatever SSL Mode says, and the cleartext
+  // warning belongs only to a connection without TLS, where the `allowInsecureAuth` box carries it.
   db2: {
     icon: Db2Icon,
     color: "text-hue-purple",
@@ -224,10 +224,6 @@ export const DB_UI_CONFIG: Record<DatabaseType, DatabaseUIConfig> = {
     defaultPort: "50000",
     showConnectionStringToggle: false,
     connectionFields: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
-    fieldHints: {
-      password:
-        "Without TLS, Db2's driver can send this password in cleartext. Turn on SSL below and use the server's TLS port.",
-    },
   },
   mssql: {
     icon: MSSQLIcon,

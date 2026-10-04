@@ -496,7 +496,7 @@ describe("db-ui-config", () => {
     });
   });
 
-  test("db2 declares its label, DRDA port, fields and the cleartext password hint (#786)", () => {
+  test("db2 declares its label, DRDA port and fields, and no password hint (#786)", () => {
     const db2 = getDBConfig("db2");
     expect(db2).toMatchObject({
       label: "Db2 LUW",
@@ -510,10 +510,10 @@ describe("db-ui-config", () => {
     });
     expect(takesConnectionField("db2", "allowInsecureAuth")).toBe(true);
     expect(takesConnectionField("postgres", "allowInsecureAuth")).toBe(false);
-    expect(db2.fieldHints).toEqual({
-      password:
-        "Without TLS, Db2's driver can send this password in cleartext. Turn on SSL below and use the server's TLS port.",
-    });
+    // No password hint: a declared hint is drawn whatever SSL Mode says, so a cleartext warning there
+    // stood under a verify-ca connection on the TLS port too. The warning lives in the consent box
+    // above, which is drawn only while SSL Mode is disable.
+    expect(db2.fieldHints).toBeUndefined();
     expect(db2.fieldLabels).toBeUndefined();
   });
 
@@ -666,11 +666,11 @@ describe("declared connection-field copy (#1085)", () => {
     expect(milvus.credentialWarnings).toBe(CREDENTIAL_WARNINGS.milvus);
   });
 
-  test("only db2, prometheus, kafka, etcd, neo4j, milvus and qdrant declare field copy, so every other engine draws every label and hint it drew before", () => {
+  test("only prometheus, kafka, etcd, neo4j, milvus and qdrant declare field copy, so every other engine draws every label and hint it drew before", () => {
     const declared = Object.entries(DB_UI_CONFIG)
       .filter(([, config]) => config.fieldLabels !== undefined || config.fieldHints !== undefined)
       .map(([type]) => type);
-    expect(declared).toEqual(["db2", "prometheus", "kafka", "etcd", "neo4j", "milvus", "qdrant"]);
+    expect(declared).toEqual(["prometheus", "kafka", "etcd", "neo4j", "milvus", "qdrant"]);
     // The control that the walk saw the whole table rather than nothing.
     expect(Object.keys(DB_UI_CONFIG).sort()).toEqual([...ALL_TYPES].sort());
     for (const type of ALL_TYPES.filter((candidate) => !declared.includes(candidate))) {
