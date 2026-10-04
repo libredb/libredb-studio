@@ -113,6 +113,14 @@ describe("what this repository requires of the template", () => {
     expect(environment.AUTH_COOKIE_SECURE).toBe("false");
   });
 
+  test("the login rate limiter keys on the address CapRover's nginx saw", () => {
+    // CapRover's nginx is one proxy hop in front of the app. With TRUSTED_PROXY_HOPS at its
+    // default of 0 the limiter keys on the leftmost X-Forwarded-For entry, which the client
+    // writes, so a client could choose the bucket it lands in (docs/SECURITY.md, Known
+    // limits). Read from the parsed env block, for the reason the cookie test gives.
+    expect(environment.TRUSTED_PROXY_HOPS).toBe("1");
+  });
+
   test("the instructions say what the override costs, not just its name", () => {
     // The house rule in tests/unit/marketplace-copy.test.ts, applied to every channel whose
     // provisioning writes AUTH_COOKIE_SECURE=false: naming the variable is not the
