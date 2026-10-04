@@ -814,7 +814,7 @@ The exporter's codes are `socket_unavailable`, `swarm_unavailable`, `api_version
 When the file is still missing twice `SEED_DISCOVERY_MAX_AGE_MS` after Studio first looked, the waiting message says that the discovery app may not be running or may run on another node than Studio.
 Studio's own messages about an unreadable or invalid file never quote the file's content.
 
-The skipped list holds one entry per discovered service Studio refused, with its reason: a missing required variable, a host name Studio refuses, "id taken by the seed file", "id taken by another discovered service", or "did not answer on port" followed by the port number, for an environment-matched candidate.
+The skipped list holds one entry per discovered service Studio refused, with its reason: a missing required variable, a host name Studio refuses, "the connection is not valid" followed by each field the seed schema refused and its issue code, such as id (too_big) for a hand-made service whose name is over 55 characters, "id taken by the seed file", "id taken by another discovered service", or "did not answer on port" followed by the port number, for an environment-matched candidate.
 While Studio serves discovered data, that is in the state `ok` and in the state `error` with a fresh last good scan, the list also holds one entry per app name in the export's `excluded` list, after the others, with the reason "listed in Apps to skip".
 An image that matches no engine is not a skipped entry, and neither is an app that is not on the CapRover network.
 
@@ -999,7 +999,7 @@ This is expected: deleting a `managed: false` connection adds its seed ID to `li
    Check its logs and restart it.
    The state also becomes `stale` while the exporter still runs, once its scans have kept failing for longer than `SEED_DISCOVERY_MAX_AGE_MS` since the last good one.
    The card then shows the exporter's error, so the cause is in steps 4 to 7.
-9. A database in the skipped list carries its reason: a missing required variable, a host name Studio refuses, an id the seed file already uses ("id taken by the seed file"), an id another discovered service already took ("id taken by another discovered service"), or no answer to the probe for an image CapRover built.
+9. A database in the skipped list carries its reason: a missing required variable, a host name Studio refuses, a connection the seed schema refuses ("the connection is not valid" followed by the field and its issue code, for example id (too_big) when a hand-made service's name is over 55 characters, too long for the 64-character id), an id the seed file already uses ("id taken by the seed file"), an id another discovered service already took ("id taken by another discovered service"), or no answer to the probe for an image CapRover built.
 10. An app named in "Apps to skip" (`DISCOVERY_EXCLUDE` of the `-discovery` app) is in the skipped list with the reason "listed in Apps to skip", and the exporter writes nothing about it but its name.
    To connect it after all, remove it from `DISCOVERY_EXCLUDE` under the `-discovery` app's **App Configs** and save.
 11. A database whose image is neither in the [detection table](#engine-detection) nor built by CapRover is not recognised: add it as a seed connection or by hand.
