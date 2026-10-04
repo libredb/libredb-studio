@@ -1,7 +1,8 @@
 /**
- * Unit tests for the CapRover one-click template (deploy/caprover/libredb-studio.yml).
+ * Unit tests for the CapRover one-click templates (deploy/caprover/libredb-studio.yml and
+ * deploy/caprover/libredb-studio-autoconnect.yml).
  *
- * This file is the source a submission to caprover/one-click-apps is cut from, and that
+ * These files are the source a submission to caprover/one-click-apps is cut from, and that
  * repository validates what it receives: scripts/validate_apps.js rejects an app whose
  * `description` runs past 200 characters, and its CI runs that validator on every pull
  * request. Nothing here measured it, so the description grew to 293 characters while the
@@ -13,9 +14,11 @@
  * EXTERNAL_DATABASE_TYPES and an exhaustive list to name every engine, and this limit is what
  * makes the abridged form ("and more") the only one that fits.
  *
- * Two describes, because the two sets of rules have different owners. The first is what
- * upstream's validator actually enforces, read from its source. The second is ours, and a
- * single describe claiming upstream enforced all of it was itself a false statement.
+ * Two describes run over every template, because the two sets of rules have different
+ * owners. The first is what upstream's validator actually enforces, read from its source.
+ * The second is ours, and a single describe claiming upstream enforced all of it was itself
+ * a false statement. A third describe holds what only the auto-connect variant carries: the
+ * Docker socket, and the companion app that is the only thing allowed to mount it.
  */
 import { describe, expect, test } from "bun:test";
 import * as fs from "fs";
@@ -25,36 +28,75 @@ import { parse } from "yaml";
 /** The limit scripts/validate_apps.js enforces in caprover/one-click-apps. */
 const DESCRIPTION_LIMIT = 200;
 
-const TEMPLATE = path.join(__dirname, "../../deploy/caprover/libredb-studio.yml");
+const CAPROVER_DIR = path.join(__dirname, "../../deploy/caprover");
 
-/** The logo upstream looks for beside the app, as public/v4/logos/<app>.png. */
-const LOGO = path.join(__dirname, "../../deploy/caprover/libredb-studio.png");
+interface TemplateService {
+  image?: string;
+  command?: unknown;
+  environment?: Record<string, unknown>;
+  volumes?: string[];
+  caproverExtra?: Record<string, unknown>;
+}
 
-/** Read once as text too: some rules below are about the submitted artifact rather than the
- *  parsed document, including the YAML comments, which no parsed read returns at all.
- *  Everything a parsed read can see is asserted against the parsed document, because that is
- *  what CapRover itself acts on. */
-const RAW = fs.readFileSync(TEMPLATE, "utf8");
+interface TemplateVariable {
+  id: string;
+  label?: string;
+  defaultValue?: string;
+  description?: string;
+  validRegex?: string;
+}
 
-const template = parse(RAW) as {
+interface Template {
   captainVersion?: number | string;
-  services?: Record<string, { image?: string; environment?: Record<string, unknown> }>;
+  services?: Record<string, TemplateService>;
   caproverOneClickApp?: {
+    displayName?: string;
     description?: string;
     instructions?: { start?: string; end?: string };
-    variables?: Array<{ id: string; defaultValue?: string; description?: string }>;
+    variables?: TemplateVariable[];
   };
-};
+}
 
-/** The service CapRover deploys, read once. A rename, which CapRover would reject, reddens
+/** Every template this folder submits, each with the logo upstream looks for beside it, as
+ *  public/v4/logos/<app>.png. A mutable array: bun's describe.each takes a readonly table
+ *  only when its rows are tuples. */
+const TEMPLATES: { name: string; file: string; logo: string }[] = [
+  { name: "libredb-studio", file: "libredb-studio.yml", logo: "libredb-studio.png" },
+  {
+    name: "libredb-studio-autoconnect",
+    file: "libredb-studio-autoconnect.yml",
+    logo: "libredb-studio-autoconnect.png",
+  },
+];
+
+/** Read as text too: some rules below are about the submitted artifact rather than the
+ *  parsed document, including the YAML comments, which no parsed read returns at all.
+ *  Everything a parsed read can see is asserted against the parsed document, because that is
+ *  what CapRover itself acts on.
+ *
+ *  The service CapRover deploys is read once. A rename, which CapRover would reject, reddens
  *  both the blocks test and the cookie override test, and the blocks test is the one that
  *  names the real cause. */
-const service = template.services?.["$$cap_appname"];
-const environment = service?.environment ?? {};
-const instructionsEnd = template.caproverOneClickApp?.instructions?.end ?? "";
-const versionVariable = template.caproverOneClickApp?.variables?.find((variable) => variable.id === "$$cap_version");
+function loadTemplate(file: string) {
+  const raw = fs.readFileSync(path.join(CAPROVER_DIR, file), "utf8");
+  const template = parse(raw) as Template;
+  const service = template.services?.["$$cap_appname"];
+  return {
+    raw,
+    template,
+    service,
+    environment: service?.environment ?? {},
+    instructionsStart: template.caproverOneClickApp?.instructions?.start ?? "",
+    instructionsEnd: template.caproverOneClickApp?.instructions?.end ?? "",
+    variables: template.caproverOneClickApp?.variables ?? [],
+    versionVariable: template.caproverOneClickApp?.variables?.find((variable) => variable.id === "$$cap_version"),
+  };
+}
 
-describe("what caprover/one-click-apps validate_apps.js enforces", () => {
+describe.each(TEMPLATES)("$name: what caprover/one-click-apps validate_apps.js enforces", ({ file, logo }) => {
+  const { template, service, instructionsEnd } = loadTemplate(file);
+  const LOGO = path.join(CAPROVER_DIR, logo);
+
   test("captainVersion is 4, the version of the directory it is submitted to", () => {
     // validate_apps.js compares String(content.captainVersion) to "4" and throws on any
     // other value. Nothing here asserted it, so a typo would have been caught only by the
@@ -87,7 +129,9 @@ describe("what caprover/one-click-apps validate_apps.js enforces", () => {
   });
 });
 
-describe("what this repository requires of the template", () => {
+describe.each(TEMPLATES)("$name: what this repository requires of the template", ({ file }) => {
+  const { raw: RAW, environment, instructionsEnd, versionVariable } = loadTemplate(file);
+
   test("the version variable offers a pinned tag, never latest", () => {
     expect(versionVariable?.defaultValue).toMatch(/^\d+\.\d+\.\d+$/);
   });
@@ -251,5 +295,160 @@ describe("what this repository requires of the template", () => {
     // not, so the whole class closes here.
     const nonAscii = [...RAW].filter((character) => character.codePointAt(0)! > 0x7f);
     expect(nonAscii).toEqual([]);
+  });
+});
+
+describe("what only the auto-connect variant carries", () => {
+  const {
+    raw: RAW,
+    template,
+    service,
+    environment,
+    instructionsStart,
+    instructionsEnd,
+    variables,
+    versionVariable,
+  } = loadTemplate("libredb-studio-autoconnect.yml");
+  const plain = loadTemplate("libredb-studio.yml");
+  const companion = template.services?.["$$cap_appname-discovery"];
+  const companionEnvironment = companion?.environment ?? {};
+  const skipApps = variables.find((variable) => variable.id === "$$cap_skip_apps");
+
+  const SOCKET = "/var/run/docker.sock:/var/run/docker.sock";
+  const SHARED_VOLUME = "$$cap_appname-discovered:/app/discovery";
+
+  /** The paragraph instructions.start must open with, word for word (whitespace collapsed,
+   *  because the block is wrapped by hand). It is the disclosure a reader sees before the
+   *  install form, so a softer rewording is a change to what the operator agreed to. */
+  const DISCLOSURE =
+    "This variant adds a second app, named after this one with -discovery appended, that reads the settings of the other apps on this server through the Docker socket so Studio can connect to your databases without you typing their passwords. Access to the Docker socket is equivalent to root access on this server. The discovery app has no port and is not exposed to the internet. It records the name and image of every app on this server and the database password settings of your database apps, in a file that only Studio can read. Connected databases are visible to the Studio admin login only. Enable HTTPS for Studio before you sign in for the first time. If you do not want the Docker socket on this server, install the plain LibreDB Studio entry instead.";
+
+  const flat = (text: string) => text.replace(/\s+/g, " ").trim();
+  const paragraphs = (text: string) => text.split(/\n\s*\n/);
+
+  test("it deploys exactly two services, Studio and its discovery companion", () => {
+    expect(Object.keys(template.services ?? {}).sort()).toEqual(["$$cap_appname", "$$cap_appname-discovery"]);
+    expect(template.caproverOneClickApp?.displayName).toBe("LibreDB Studio (auto-connect)");
+  });
+
+  test("both services run the same Studio image and version", () => {
+    expect(service?.image).toBe("ghcr.io/libredb/libredb-studio:$$cap_version");
+    expect(companion?.image).toBe(service?.image);
+  });
+
+  test("the pinned version is a release that ships the exporter", () => {
+    // docker/discover.mjs and SEED_DISCOVERY_PATH first ship in 0.18.0. An older tag deploys
+    // a companion whose command names a file the image does not have.
+    const [major, minor] = (versionVariable?.defaultValue ?? "0.0.0").split(".").map(Number);
+    expect(major > 0 || minor >= 18).toBe(true);
+  });
+
+  test("the companion runs the exporter through command, which replaces the image entrypoint", () => {
+    // Measured on CapRover 1.15.4: a one-click command becomes ContainerSpec.Command, which
+    // replaces the ENTRYPOINT, so the process runs as uid 0 and the gosu drop in
+    // docker-entrypoint.sh never happens. Opening the socket needs root.
+    expect(companion?.command).toEqual(["node", "/usr/local/lib/libredb-studio/discover.mjs"]);
+  });
+
+  test("only the companion mounts the Docker socket, and the plain entry never does", () => {
+    expect(companion?.volumes).toContain(SOCKET);
+    expect((service?.volumes ?? []).filter((volume) => volume.includes("docker.sock"))).toEqual([]);
+    expect(plain.raw).not.toContain("docker.sock");
+    expect(Object.keys(plain.template.services ?? {})).toEqual(["$$cap_appname"]);
+  });
+
+  test("the companion has no port and is not exposed as a web app", () => {
+    expect(companion?.caproverExtra?.notExposeAsWebApp).toBe("true");
+    expect(companion?.caproverExtra?.containerHttpPort).toBeUndefined();
+  });
+
+  test("Studio reads the file the companion writes, on the volume both mount", () => {
+    expect(service?.volumes).toContain(SHARED_VOLUME);
+    expect(companion?.volumes).toContain(SHARED_VOLUME);
+    expect(environment.SEED_DISCOVERY_PATH).toBe("/app/discovery/services.json");
+    expect(companionEnvironment.DISCOVERY_OUTPUT).toBe(environment.SEED_DISCOVERY_PATH);
+    expect(companionEnvironment.DISCOVERY_NETWORK).toBe("captain-overlay-network");
+  });
+
+  test("the shared volume stays out of the directory the entrypoint chowns", () => {
+    // docker-entrypoint.sh chowns the directory of STORAGE_SQLITE_PATH to uid 1001 when it
+    // starts as root. A shared volume under it would be writable by the web process, which
+    // could then plant a symlink for the root exporter to follow; the exporter refuses to
+    // start on such a directory, so discovery would never run.
+    const dataDirectory = path.posix.dirname(String(environment.STORAGE_SQLITE_PATH));
+    expect(dataDirectory).toBe("/app/data");
+    expect(path.posix.dirname(String(environment.SEED_DISCOVERY_PATH))).toBe("/app/discovery");
+    expect(String(environment.SEED_DISCOVERY_PATH).startsWith(`${dataDirectory}/`)).toBe(false);
+  });
+
+  test("the export is re-read every five seconds and the built-in samples are off", () => {
+    expect(environment.SEED_CACHE_TTL_MS).toBe("5000");
+    expect(environment.LIBREDB_EMBEDDED_SAMPLE).toBe("false");
+    expect(environment.SQLITE_EMBEDDED_SAMPLE).toBe("false");
+  });
+
+  test("the variables are the plain template's, plus the apps-to-skip field", () => {
+    const ids = (list: TemplateVariable[]) => list.map((variable) => variable.id);
+    expect(ids(variables).filter((id) => id !== "$$cap_skip_apps")).toEqual(ids(plain.variables));
+    expect(skipApps?.label).toBe("Apps to skip (optional)");
+    expect(skipApps?.defaultValue).toBe("");
+    expect(companionEnvironment.DISCOVERY_EXCLUDE).toBe("$$cap_skip_apps");
+  });
+
+  test("the apps-to-skip field admits only app names separated by commas", () => {
+    // caprover-frontend reads validRegex as /<source>/<flags> and tests the typed value with
+    // it (OneClickVariablesSection.tsx, isFieldValueValid). The value is then substituted
+    // into the deploy JSON with no escaping, so a quote or a backslash must never pass.
+    const parts = /\/(.*)\/(.*)/.exec(skipApps?.validRegex ?? "");
+    expect(parts).not.toBeNull();
+    const valid = new RegExp(parts?.[1] ?? "", parts?.[2]);
+    for (const accepted of ["", "wordpress-db", "wordpress-db,umami-postgres"]) {
+      expect(valid.test(accepted)).toBe(true);
+    }
+    for (const refused of ["wordpress-db, umami-postgres", "a,", ",a", "Wordpress", 'a"b', "a\\b", "a b"]) {
+      expect(valid.test(refused)).toBe(false);
+    }
+  });
+
+  test("instructions.start opens with the socket disclosure, before anything else", () => {
+    expect(flat(instructionsStart).startsWith(DISCLOSURE)).toBe(true);
+  });
+
+  test("the description names the Docker socket, and the file publishes no engine count", () => {
+    // The copy gate in tests/unit/lib/catalog-copy-engine-count.test.ts reads this file too.
+    // A count here would go stale with the next engine, and this entry connects a few
+    // families, not the product's whole set.
+    const description = template.caproverOneClickApp?.description ?? "";
+    expect(description).toContain("Docker socket");
+    expect(RAW).not.toMatch(/\bengines\b/i);
+  });
+
+  test("instructions.end carries the plain template's sign-in, credentials and cookie text word for word", () => {
+    // Every paragraph of the plain closing text except the first two (deployed, open at) is
+    // what an operator of either entry has to know: the cookie cost and its undo order, the
+    // two logins, what the standard account can do, where the passwords stay readable, the
+    // volume, the key and the SSO caveats. A rewording in one file only would let the two
+    // entries drift apart, and the shared describes above would not notice, because each
+    // checks its own file against a shape rather than against the other file.
+    const carried = paragraphs(plain.instructionsEnd).slice(2);
+    expect(carried.length).toBeGreaterThan(0);
+    expect(carried.some((paragraph) => paragraph.includes("AUTH_COOKIE_SECURE"))).toBe(true);
+    expect(carried.some((paragraph) => paragraph.includes("$$cap_admin_password"))).toBe(true);
+    const own = paragraphs(instructionsEnd);
+    const missing = carried.filter((paragraph) => !own.includes(paragraph));
+    expect(missing).toEqual([]);
+  });
+
+  test("instructions.end says when the databases appear, how to stop discovery and where both apps run", () => {
+    const end = flat(instructionsEnd);
+    expect(end).toContain(
+      "Your CapRover databases appear in Studio for the admin login within about 30 seconds, and databases you add or remove later follow on their own.",
+    );
+    expect(end).toContain(
+      "To stop discovery, delete the $$cap_appname-discovery app. Studio then withdraws the discovered connections within about two minutes.",
+    );
+    expect(end).toContain(
+      "Both apps must run on the same node, and that node must be a swarm manager. On a single-server CapRover this is always the case. On a cluster, pin both apps to the manager in their App Configs.",
+    );
   });
 });
