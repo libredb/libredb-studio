@@ -51,6 +51,39 @@ describe("providerCacheKey frames the read-only mode (#1089)", () => {
   });
 });
 
+describe("providerCacheKey frames the DuckDB file-access posture, and only DuckDB's (B1/K1)", () => {
+  const duck: DatabaseConnection = {
+    id: "warehouse",
+    name: "Warehouse",
+    type: "duckdb",
+    database: "/srv/data/warehouse.duckdb",
+    createdAt: new Date(0),
+  };
+
+  test("a non-admin (deny) DuckDB handle keys apart from an admin (allow) one, so they never share a handle", async () => {
+    const deny = await providerCacheKey(duck, false);
+    const allow = await providerCacheKey(duck, true);
+
+    expect(deny).not.toBe(allow);
+  });
+
+  test("only the deny posture adds bytes: allow and an absent posture are the key as it was before this field", async () => {
+    const bare = await providerCacheKey(duck);
+    expect(await providerCacheKey(duck, true)).toBe(bare);
+    expect((await providerCacheKey(duck, false)).endsWith("23:duckdb-deny-file-access")).toBe(true);
+  });
+
+  test("the posture segment follows the mode, length-framed like every other part", async () => {
+    expect((await providerCacheKey(duck, false)).endsWith("10:read-write23:duckdb-deny-file-access")).toBe(true);
+  });
+
+  test("a non-DuckDB connection's key is byte-identical whatever the posture, because only DuckDB reads it", async () => {
+    const baseline = await providerCacheKey(base);
+    expect(await providerCacheKey(base, true)).toBe(baseline);
+    expect(await providerCacheKey(base, false)).toBe(baseline);
+  });
+});
+
 describe("the read-only mode is part of no identity digest (#1089)", () => {
   test("the server a plan is sealed to does not move with it", async () => {
     expect(await connectionFingerprint({ ...base, readOnly: true })).toBe(await connectionFingerprint(base));

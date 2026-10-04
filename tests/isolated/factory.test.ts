@@ -2132,6 +2132,49 @@ describe("single-writer file reuse", () => {
     expect(findOpenSingleWriterProvider(makeConnection("mongodb", { database: undefined }))).toBeNull();
   });
 
+  // DuckDB file-access posture in the cache and the borrow (B1/K1). This is the
+  // critical ruling: an admin's full handle must never be shared with, nor borrowed
+  // by, a non-admin, and the reverse. Run against the real @duckdb/node-api driver.
+
+  test("an admin and a non-admin resolving the same DuckDB connection get two distinct handles", async () => {
+    // Same connection id and :memory: target; only the server-derived posture differs, so the
+    // cache key's posture segment is what keeps them apart. Reaching the admin handle would hand
+    // a non-admin full filesystem access, which is the whole of the fix.
+    const conn = makeConnection("duckdb", { id: "duck-posture-split", database: ":memory:" });
+    const admin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+    const nonAdmin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false });
+
+    expect(nonAdmin).not.toBe(admin);
+    // Each asked again under its own posture is served from the cache, so the split is stable.
+    expect(await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true })).toBe(admin);
+    expect(await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false })).toBe(nonAdmin);
+    // And the handles really do differ in reach: the engine reports it.
+    const setting = "SELECT current_setting('enable_external_access') AS v";
+    expect((await admin.query!(setting)).rows).toEqual([{ v: true }]);
+    expect((await nonAdmin.query!(setting)).rows).toEqual([{ v: false }]);
+    await removeProvider(conn.id);
+  });
+
+  test("findOpenSingleWriterProvider does not hand an admin DuckDB handle to a non-admin caller, nor the reverse", async () => {
+    const file = join(dir, "posture-borrow.duckdb");
+    const conn = makeConnection("duckdb", { id: "duck-borrow-admin", database: file });
+    const admin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+
+    // A non-admin borrow is refused the admin's full handle (it would open its own instead);
+    // the admin posture borrows its own handle back.
+    expect(findOpenSingleWriterProvider(conn, false)).toBeNull();
+    expect(findOpenSingleWriterProvider(conn, true)).toBe(admin);
+    // And a bare lookup (no posture) reads as deny, so it does not reach the admin handle either.
+    expect(findOpenSingleWriterProvider(conn)).toBeNull();
+    await removeProvider(conn.id);
+
+    // The reverse: a non-admin handle open, an admin borrow does not reach it.
+    const nonAdmin = await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false });
+    expect(findOpenSingleWriterProvider(conn, true)).toBeNull();
+    expect(findOpenSingleWriterProvider(conn, false)).toBe(nonAdmin);
+    await removeProvider(conn.id);
+  });
+
   test("an engine that admits many handles is not borrowed from, and keeps its read-only boundary", async () => {
     // SQLite is the engine a reader would expect to declare singleWriterFile. It does
     // not, and this is what declaring it would have cost: the agent handle here is a
