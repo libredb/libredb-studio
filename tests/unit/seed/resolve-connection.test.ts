@@ -13,6 +13,7 @@ process.env.USER_MYSQL_PASS = "user-secret";
 process.env.SHARED_PG_PASS = "shared-secret";
 process.env.BOTH_PG_PASS = "both-secret";
 
+import { getManagedConnections } from "@/lib/seed";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { resetCache } from "@/lib/seed/config-loader";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
@@ -202,6 +203,40 @@ describe("resolve-connection with discovered connections", () => {
     const result = await resolveConnection({ connectionId: "seed:caprover-x" }, ADMIN);
     expect(result.password).toBe("vault-resolved-secret");
     expect((result as ManagedConnection).literal).toBeUndefined();
+    expect(readVaultSecret).toHaveBeenCalledTimes(1);
+    expect(readVaultSecret).toHaveBeenCalledWith("secret/data/x", "y", undefined);
+  });
+
+  // The marker is set in code only. A seed file that writes `literal: true` on its own connection is not the
+  // discovery source, so that connection is listed without the field and its ${vault:...} is still resolved.
+  it("ignores a literal key written in the seed file: no marker is listed and Vault is still read", async () => {
+    const seedFile = path.join(scratch, "seed-with-literal-key.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "file-literal",
+            name: "File seed that asks to be literal",
+            type: "postgres",
+            host: "file-pg.internal",
+            password: VAULT_REFERENCE,
+            roles: ["admin"],
+            literal: true,
+          },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+
+    const listed = (await getManagedConnections(["admin"])).find((c) => c.seedId === "file-literal");
+    expect(listed?.host).toBe("file-pg.internal");
+    expect(listed).not.toHaveProperty("literal");
+
+    const result = await resolveConnection({ connectionId: "seed:file-literal" }, ADMIN);
+    expect(result.password).toBe("vault-resolved-secret");
     expect(readVaultSecret).toHaveBeenCalledTimes(1);
     expect(readVaultSecret).toHaveBeenCalledWith("secret/data/x", "y", undefined);
   });

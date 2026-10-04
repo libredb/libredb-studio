@@ -27,7 +27,9 @@ import { closeAll, httpListener, jsonAnswer, type Listener } from "../../helpers
 const VAULT_REFERENCE = "${vault:secret/data/a#b}";
 
 const mockProvider = createMockProvider();
-const mockGetOrCreateProvider = mock(async (_connection: DatabaseConnection) => mockProvider);
+const mockGetOrCreateProvider = mock<(connection: DatabaseConnection) => Promise<typeof mockProvider>>(
+  async () => mockProvider,
+);
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
 );
