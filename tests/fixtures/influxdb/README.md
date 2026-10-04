@@ -26,7 +26,8 @@ A corpus entry is a fixed part, a separator and the hidden statement `SHOW DATAB
 
 ## The differential corpus
 
-`<version>/differential/` holds the corpus as each server read it: twenty entries per line, and on 3.12.0 also `two-statements`, the multi-statement answer whose results arrive as back-to-back documents.
+`<version>/differential/` holds the corpus as each server read it: twenty-five entries per line, and on 3.12.0 also `two-statements`, the multi-statement answer whose results arrive as back-to-back documents.
+The five `r42-*` entries separate two statements with whitespace or a comment alone: 1.13.1 and 2.9.1 answer "found SHOW, expected ;", and 3.12.0 runs both (R42).
 `tests/unit/db/influxdb/influxql-differential.test.ts` reads each capture for the server's parse error or its statements and first statement, and holds `evaluateInfluxql` to refusing every entry the server read as more than one statement or as a first statement that is not a read.
 
 ## Re-recording

@@ -351,9 +351,12 @@ describe("evaluateInfluxql: namedDatabases", () => {
     ["SHOW MEASUREMENTS ON past", ["past"]],
     // MEASURED on 3.12.0: its parser takes a keyword as a later segment and reads the first as the database.
     ['SELECT * FROM "_internal".database.m', ["_internal"]],
-    // The server never parses a subquery in a SHOW source or after WITH MEASUREMENT.
-    ['SHOW MEASUREMENTS WITH MEASUREMENT = (SELECT * FROM "x".."m")', []],
-    ['SHOW TAG KEYS FROM (SELECT * FROM "x".."m")', []],
+    // R42 (c): a source behind a parenthesis is read whatever the statement, a SHOW's included.
+    ['SHOW TAG KEYS FROM ("_internal".."m")', ["_internal"]],
+    ['SHOW MEASUREMENTS WITH MEASUREMENT = ("_internal".."m")', ["_internal"]],
+    ['SHOW FIELD KEYS FROM "a".."m", ("_internal".."m")', ["a", "_internal"]],
+    ['SELECT * FROM (("_internal".."m"))', ["_internal"]],
+    ['SELECT * FROM (), "db".."m"', ["db"]],
     // Deduplicated, in first-seen order.
     ['SELECT * FROM "b".."m", "a".."m", "b".."n"', ["b", "a"]],
     // A stray `)` closes nothing.
@@ -371,9 +374,89 @@ describe("evaluateInfluxql: namedDatabases", () => {
   });
 
   test("a subquery nested thousands deep is read without recursion", () => {
-    const depth = 9000;
-    const text = `SELECT * FROM ${"(".repeat(depth)}SELECT * FROM "db".."m"${")".repeat(depth)}`;
+    const depth = 3000;
+    const text = `SELECT * FROM ${"(SELECT * FROM ".repeat(depth)}"db".."m"${")".repeat(depth)}`;
     expect(named(text)).toEqual(["db"]);
+  });
+});
+
+const second = (line: number, column: number): [InfluxqlRefusalReason, string] => [
+  "multiple-statements",
+  `InfluxQL runs one statement at a time here; remove the text from line ${line}, column ${column} on, where a second statement begins.`,
+];
+
+const writeWord = (word: string): [InfluxqlRefusalReason, string] => [
+  "not-a-read",
+  `This statement holds the word ${word}, which only a writing statement uses, and an InfluxDB connection in Studio runs reads only; if ${word} is a name, write it in double quotes.`,
+];
+
+/**
+ * R42: InfluxDB 3.12.0 reads statements separated by whitespace alone as separate statements (measured:
+ * `SHOW DATABASES SHOW DATABASES` answers statement_id 0 and 1), so a `;` count is not a statement count there.
+ */
+describe("evaluateInfluxql: a second statement with no semicolon (R42)", () => {
+  test.each([
+    // (a) a read keyword anywhere but the statement's start, after EXPLAIN, or opening a FROM subquery.
+    ["SHOW DATABASES SHOW DATABASES", second(1, 16)],
+    ["SHOW MEASUREMENTS SHOW DATABASES", second(1, 19)],
+    ["SHOW DATABASES\tSHOW DATABASES", second(1, 16)],
+    ["SHOW DATABASES\nSHOW DATABASES", second(2, 1)],
+    ["SHOW DATABASES\r\nSHOW DATABASES", second(2, 1)],
+    ["SHOW DATABASES/* c */SHOW DATABASES", second(1, 22)],
+    ["SHOW DATABASES -- c\nSHOW DATABASES", second(2, 1)],
+    ["SHOW TAG KEYS FROM e\tSHOW DATABASES", second(1, 22)],
+    ["SELECT * FROM m SELECT * FROM n", second(1, 17)],
+    ["SELECT * FROM m EXPLAIN SELECT * FROM n", second(1, 17)],
+    ['SHOW DATABASES SELECT * FROM (SELECT * FROM "_internal".."x")', second(1, 16)],
+    ["EXPLAIN SELECT * FROM m SHOW DATABASES", second(1, 25)],
+    ["EXPLAIN EXPLAIN SELECT * FROM m", explainTarget("EXPLAIN")],
+    ["EXPLAIN ANALYZE SELECT * FROM m SELECT * FROM n", second(1, 33)],
+    // A subquery opens only in a SELECT's FROM list, and only straight after its `(`.
+    ['SHOW TAG KEYS FROM (SELECT * FROM "x".."m")', second(1, 21)],
+    ['SHOW MEASUREMENTS WITH MEASUREMENT = (SELECT * FROM "x".."m")', second(1, 39)],
+    ['EXPLAIN SHOW TAG KEYS FROM (SELECT * FROM "x".."m")', second(1, 29)],
+    ["SELECT * FROM ((SELECT * FROM m))", second(1, 17)],
+    ["SELECT (SELECT 1) FROM m", second(1, 9)],
+    ["SELECT * FROM m WHERE x = (SELECT 1)", second(1, 28)],
+    ["SELECT * FROM m GROUP BY time(1m), (SELECT 1)", second(1, 37)],
+    ["SELECT * FROM a.select.b", second(1, 17)],
+    // (b) a write word anywhere outside quotes, comments and regex literals, whatever its case.
+    ['SHOW DATABASES DROP MEASUREMENT "x"', writeWord("DROP")],
+    ["SELECT * FROM m DELETE FROM m", writeWord("DELETE")],
+    ["SHOW DATABASES\nDELETE WHERE time < 0", writeWord("DELETE")],
+    ["SHOW DATABASES\tdelete from m", writeWord("DELETE")],
+    ["SHOW DATABASES/**/CREATE DATABASE x", writeWord("CREATE")],
+    ["SHOW DATABASES ALTER RETENTION POLICY r ON d DEFAULT", writeWord("ALTER")],
+    ["SHOW DATABASES GRANT ALL TO u", writeWord("GRANT")],
+    ["SHOW DATABASES REVOKE ALL FROM u", writeWord("REVOKE")],
+    ["SHOW DATABASES KILL QUERY 1", writeWord("KILL")],
+    ["SHOW DATABASES INSERT m v=1", writeWord("INSERT")],
+    ["SHOW DATABASES SET PASSWORD FOR u = 'p'", writeWord("SET")],
+    ["SELECT * FROM (SELECT * FROM m DROP SERIES FROM m)", writeWord("DROP")],
+    ["EXPLAIN ANALYZE SELECT * FROM m DELETE FROM m", writeWord("DELETE")],
+    // The first offending token by position decides.
+    ["SHOW DATABASES SELECT * FROM m DROP SERIES FROM m", second(1, 16)],
+    ["SHOW DATABASES DROP SERIES FROM m SELECT * FROM m", writeWord("DROP")],
+  ] as const)("%s", (text, expected) => {
+    expect(refusal(text)).toEqual([...expected]);
+  });
+
+  test.each([
+    ["EXPLAIN ANALYZE VERBOSE SELECT * FROM m", "EXPLAIN"],
+    ["EXPLAIN VERBOSE SHOW DATABASES", "EXPLAIN"],
+    ['SELECT * FROM (SELECT * FROM (SELECT * FROM "db".."m"))', "SELECT"],
+    ['SELECT * FROM "a".."m", (SELECT * FROM "b".."m")', "SELECT"],
+    ['SELECT * FROM ( /* c */ SELECT * FROM "a".."m" ) , ( SELECT * FROM "b".."m" )', "SELECT"],
+    ['EXPLAIN SELECT * FROM (SELECT mean(v) FROM "db".."m" GROUP BY time(1m))', "EXPLAIN"],
+    ['SHOW GRANTS FOR "u"', "SHOW"],
+    ['SELECT "select", "drop" FROM "show".."delete" WHERE t = \'SHOW DATABASES DROP x\'', "SELECT"],
+    ["SELECT * FROM /SELECT|DROP|delete/ WHERE t =~ /show databases/", "SELECT"],
+    ["SELECT * FROM m -- SHOW DATABASES DROP DATABASE x", "SELECT"],
+    ["SELECT * FROM m /* SELECT * FROM n; DELETE FROM m */", "SELECT"],
+    ["SELECT dropped, created_at, settings, inserts FROM m", "SELECT"],
+  ] as const)("still allows %s", (text, statement) => {
+    const verdict = evaluateInfluxql(text);
+    expect(verdict.allowed && verdict.statement).toBe(statement);
   });
 });
 
@@ -401,6 +484,8 @@ describe("the gate exports", () => {
     expect(INFLUXQL_POLICY_SENTENCES.multipleStatements(2, 3)).toBe(multiple(2, 3)[1]);
     expect(INFLUXQL_POLICY_SENTENCES.notARead("DROP")).toBe(notARead("DROP")[1]);
     expect(INFLUXQL_POLICY_SENTENCES.explainTarget("DROP")).toBe(explainTarget("DROP")[1]);
+    expect(INFLUXQL_POLICY_SENTENCES.secondStatement(2, 3)).toBe(second(2, 3)[1]);
+    expect(INFLUXQL_POLICY_SENTENCES.writeWord("DROP")).toBe(writeWord("DROP")[1]);
     expect(INFLUXQL_POLICY_SENTENCES.fault("unterminated-string", 4, 2, false)).toBe(
       "A string that starts at line 4, column 2 never closes.",
     );

@@ -98,7 +98,7 @@ describe("loadInfluxCapture", () => {
 describe("loadDifferentialCorpus", () => {
   test("reads every differential capture of a line, sorted by name", () => {
     const corpus = loadDifferentialCorpus("2.9.1");
-    expect(corpus.length).toBe(20);
+    expect(corpus.length).toBe(25);
     const names = corpus.map((entry) => entry.name);
     expect(names).toEqual([...names].sort());
     for (const entry of corpus) expect(entry.name.startsWith("differential/")).toBe(true);

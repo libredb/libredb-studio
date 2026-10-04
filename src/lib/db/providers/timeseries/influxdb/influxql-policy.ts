@@ -11,10 +11,17 @@
  * in today's parsers is the server's choice, and the policy does not rest on it. A text
  * that does not lex, holds a bound parameter, or is Flux is refused before any request.
  *
+ * A `;` count is not a statement count on InfluxDB 3: 3.12.0 runs `SHOW DATABASES SHOW DATABASES`
+ * as two statements (R42, measured). So a `SELECT`, `SHOW` or `EXPLAIN` is allowed only where a
+ * statement of this one begins (its start, after `EXPLAIN [ANALYZE] [VERBOSE]`, and opening a
+ * `SELECT`'s `FROM` subquery), and a write word (`WRITE_KEYWORDS`) is refused anywhere outside
+ * quotes, comments and regex literals.
+ *
  * The steps run in a fixed order and the first that fails decides the sentence: the byte cap, the
  * newlines, the lexer, the empty check, Flux (before the lexical faults, because Flux text commonly
  * lexes with faults and the Flux sentence is the useful one), the first fault, a bound parameter,
- * the statement count, the first keyword and what an `EXPLAIN` explains, `INTO`. No sentence echoes user text beyond one keyword.
+ * the statement count, the first keyword and what an `EXPLAIN` explains, `INTO`, then the first
+ * misplaced read keyword or write word by position. No sentence echoes user text beyond one keyword.
  * The verdict is the same whatever generation the server reports (C7): this module imports only the
  * lexer.
  *
@@ -103,6 +110,12 @@ export const INFLUXQL_POLICY_SENTENCES = {
     `This statement is ${grouped(bytes)} bytes; an InfluxDB connection in Studio sends at most ${grouped(INFLUXQL_MAX_TEXT_BYTES)}.`,
   multipleStatements: (line: number, column: number): string =>
     `InfluxQL runs one statement at a time here; remove the text after the first \`;\` (line ${line}, column ${column}).`,
+  /** A read keyword where no statement of one begins, which InfluxDB 3 reads as a second statement (R42). */
+  secondStatement: (line: number, column: number): string =>
+    `InfluxQL runs one statement at a time here; remove the text from line ${line}, column ${column} on, where a second statement begins.`,
+  /** `word` is a folded keyword of `WRITE_KEYWORDS`, never user text. */
+  writeWord: (word: string): string =>
+    `This statement holds the word ${word}, which only a writing statement uses, and an InfluxDB connection in Studio runs reads only; if ${word} is a name, write it in double quotes.`,
   /** `word` is a folded keyword, "a quoted name" or "a symbol", never user text. */
   notARead: (word: string): string =>
     `Only SELECT, SHOW and EXPLAIN statements run on an InfluxDB connection in Studio: this one begins with ${word}.`,
@@ -121,6 +134,23 @@ const READ_KEYWORDS: ReadonlySet<string> = new Set<InfluxqlStatementKind>(["SELE
 
 /** What `EXPLAIN` may come before (R37). */
 const EXPLAINED_KEYWORDS: ReadonlySet<string> = new Set<InfluxqlStatementKind>(["SELECT", "SHOW"]);
+
+/**
+ * The words only a writing or administering statement uses (R42 (b)), refused anywhere outside quotes, comments and
+ * regex literals: InfluxDB 3.12.0 runs a second statement that whitespace alone separates from the first, so a write
+ * word after a read is a write. `GRANTS` (of `SHOW GRANTS FOR`) is another keyword.
+ */
+const WRITE_KEYWORDS: ReadonlySet<string> = new Set([
+  "DELETE",
+  "DROP",
+  "CREATE",
+  "ALTER",
+  "GRANT",
+  "REVOKE",
+  "KILL",
+  "INSERT",
+  "SET",
+]);
 
 /** The characters a backslash escapes in a string or a quoted identifier (`ScanString`). */
 const ESCAPED = "n\\\"'";
@@ -187,9 +217,11 @@ function isFlux(text: string, tokens: readonly InfluxqlToken[], significant: rea
  *   read after one belongs to a statement the server fails;
  * - every source after `FROM` and after each `,` of that list, and the one source after
  *   `WITH MEASUREMENT =` or `=~` (`parser.go:1132-1145`);
- * - a `(` where a `SELECT`'s `FROM` list expects a source opens a subquery, read at any depth, and
- *   its `)` returns to the outer list. A `SHOW` source and the `WITH MEASUREMENT` source are
- *   parsed without subqueries, so the server fails on a `(` there and the reader stops;
+ * - a `(` where a `SELECT`'s `FROM` list expects a source, straight before the keyword `SELECT`,
+ *   opens a subquery, read at any depth, and its `)` returns to the outer list. Any other `(` where
+ *   a source is expected (in a `SHOW` source, after `WITH MEASUREMENT`, or a second `(`) is one the
+ *   server fails, and the reader reads past it as a source all the same (R42 (c)): a refused
+ *   statement costs nothing, and a name it hides could be a second statement's on InfluxDB 3;
  * - a source is a run of segments joined by dots. Whitespace or a comment BEFORE a dot ends the
  *   run, because the parser looks for the dot with `Scan`; AFTER a dot they are skipped, because
  *   the next segment is read with `ScanIgnoreWhitespace`. The last segment may be a regex;
@@ -202,9 +234,18 @@ function isFlux(text: string, tokens: readonly InfluxqlToken[], significant: rea
  * 2.9.1, and the 3.12.0 parser takes a keyword as a later segment (measured: `"home".database.home`
  * looks up the database `home`). The loop holds its own stack, so a subquery nested to the text
  * cap cannot overflow it.
+ *
+ * The same walk says where a subquery opens: the index of each `SELECT` that begins one, which is
+ * where R42 (a) lets a read keyword stand after the statement's start. `select` says whether the
+ * statement is a `SELECT` (explained or not), the only statement with a subquery source.
  */
-function readNamedDatabases(text: string, tokens: readonly InfluxqlToken[], show: boolean): readonly string[] {
+function readSources(
+  text: string,
+  tokens: readonly InfluxqlToken[],
+  select: boolean,
+): { readonly names: readonly string[]; readonly subqueries: ReadonlySet<number> } {
   const names: string[] = [];
+  const subqueries = new Set<number>();
   const name = (database: string): void => {
     if (!names.includes(database)) names.push(database);
   };
@@ -252,6 +293,8 @@ function readNamedDatabases(text: string, tokens: readonly InfluxqlToken[], show
   const open: number[] = [0];
   /** What the next token is read as: a source of a `FROM` list, the one `WITH MEASUREMENT` source, or neither. */
   let expects: "list" | "single" | "none" = "none";
+  /** Whether the expected source follows a `(` that opened no subquery, where no subquery can open. */
+  let inParenthesis = false;
   let i = skip(0);
 
   while (i < tokens.length) {
@@ -259,13 +302,19 @@ function readNamedDatabases(text: string, tokens: readonly InfluxqlToken[], show
 
     if (expects !== "none") {
       const list = expects === "list";
-      expects = "none";
       if (isPunctuation(i, "(")) {
-        if (show || !list) return names;
         open.push(0);
-        i = skip(i + 1);
+        const after = skip(i + 1);
+        const opens = tokens[after]?.kind === "keyword" && tokens[after].value === "SELECT";
+        if (opens && select && list && !inParenthesis) subqueries.add(after);
+        // A subquery's own text is read as a statement; any other parenthesis holds a source.
+        if (opens) expects = "none";
+        inParenthesis = !opens;
+        i = after;
         continue;
       }
+      expects = "none";
+      inParenthesis = false;
       i = readSource(i);
       if (list && isPunctuation(i, ",")) {
         expects = "list";
@@ -306,7 +355,7 @@ function readNamedDatabases(text: string, tokens: readonly InfluxqlToken[], show
     i = next;
   }
 
-  return names;
+  return { names, subqueries };
 }
 
 /** What a sentence calls a token: its folded keyword, or a class of token, never its text. */
@@ -376,9 +425,9 @@ export function evaluateInfluxql(text: string): InfluxqlVerdict {
   }
 
   if (first.value === "EXPLAIN") {
-    const explained = explainedToken(significant);
-    if (explained?.kind !== "keyword" || !EXPLAINED_KEYWORDS.has(explained.value as string)) {
-      const word = explained === undefined ? "nothing" : wordOf(explained);
+    const target = explainedToken(significant);
+    if (target?.kind !== "keyword" || !EXPLAINED_KEYWORDS.has(target.value as string)) {
+      const word = target === undefined ? "nothing" : wordOf(target);
       return refuse("not-a-read", INFLUXQL_POLICY_SENTENCES.explainTarget(word));
     }
   }
@@ -387,8 +436,20 @@ export function evaluateInfluxql(text: string): InfluxqlVerdict {
     return refuse("into", INFLUXQL_POLICY_SENTENCES.into);
   }
 
-  const statement = first.value as InfluxqlStatementKind;
-  return { allowed: true, statement, namedDatabases: readNamedDatabases(normalised, tokens, statement === "SHOW") };
+  const explained = first.value === "EXPLAIN" ? explainedToken(significant) : first;
+  const sources = readSources(normalised, tokens, explained?.value === "SELECT");
+  // R42: InfluxDB 3.12.0 runs a second statement that only whitespace or a comment separates from the first.
+  for (const [index, token] of tokens.entries()) {
+    if (token.kind !== "keyword") continue;
+    const word = token.value as string;
+    if (READ_KEYWORDS.has(word) && token !== first && token !== explained && !sources.subqueries.has(index)) {
+      const { line, column } = positionOf(normalised, token.start);
+      return refuse("multiple-statements", INFLUXQL_POLICY_SENTENCES.secondStatement(line, column));
+    }
+    if (WRITE_KEYWORDS.has(word)) return refuse("not-a-read", INFLUXQL_POLICY_SENTENCES.writeWord(word));
+  }
+
+  return { allowed: true, statement: first.value as InfluxqlStatementKind, namedDatabases: sources.names };
 }
 
 /** The confirmation gate row's `refuse`: the refusal sentence, or undefined to send. */

@@ -165,7 +165,8 @@ const NOWHERE = `"${EVIDENCE_NOWHERE_DATABASE}"`;
  * The parts of capture 8. B1 to B5 are J1 1.2's bypass shapes, cut to end in the hidden statement; the INTO shapes
  * are J1 1.3's, aimed at the database that does not exist; the C1 entries are each lexical edge in a second
  * position; the R13 entry is the `WITH MEASUREMENT = /.../` source; the F5 entries are kiro F5's division and regex
- * shapes. Every `\` here is one backslash on the wire.
+ * shapes; the R42 entries separate two statements with whitespace or a comment alone, which 3.12.0 runs as two.
+ * Every `\` here is one backslash on the wire.
  */
 const CORPUS_PARTS: readonly (readonly [string, string, string])[] = [
   ["b1-cr-ends-comment", "SELECT count(temp) FROM home -- c", "\r; "],
@@ -188,6 +189,11 @@ const CORPUS_PARTS: readonly (readonly [string, string, string])[] = [
   ["f5-regex-after-from", "SELECT * FROM /.*/", "; "],
   ["f5-regex-after-match", "SELECT * FROM home WHERE room =~ /kitchen.*/", "; "],
   ["f5-regex-after-with-measurement", "SHOW MEASUREMENTS WITH MEASUREMENT = /h.*/", "; "],
+  ["r42-space-show", "SHOW DATABASES", " "],
+  ["r42-tab-show", "SHOW DATABASES", "\t"],
+  ["r42-newline-show", "SHOW DATABASES", "\n"],
+  ["r42-comment-show", "SHOW DATABASES", "/* c */"],
+  ["r42-space-select", "SELECT count(temp) FROM home", " "],
 ];
 
 /** The preview text of SPEC 6.6 for a measurement of database home. */

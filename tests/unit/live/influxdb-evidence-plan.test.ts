@@ -72,6 +72,11 @@ const DIFFERENTIAL_IDS = [
   "f5-regex-after-from",
   "f5-regex-after-match",
   "f5-regex-after-with-measurement",
+  "r42-space-show",
+  "r42-tab-show",
+  "r42-newline-show",
+  "r42-comment-show",
+  "r42-space-select",
 ];
 
 /** The capture list of the plan (T01), the synthetic captures aside: capture 14 and `sql-truncated-mid-line` (R39). */
@@ -241,6 +246,14 @@ describe("the differential corpus (E22)", () => {
     );
     expect(text(V1, "b5-nul")).toBe("SELECT count(temp) FROM home\u0000; SHOW DATABASES");
     expect(text(V3, "two-statements")).toBe("SHOW DATABASES; SHOW DATABASES");
+    // R42: a second statement that only whitespace or a comment separates from the first, on every line.
+    for (const line of ALL) {
+      expect(text(line, "r42-space-show")).toBe("SHOW DATABASES SHOW DATABASES");
+      expect(text(line, "r42-tab-show")).toBe("SHOW DATABASES\tSHOW DATABASES");
+      expect(text(line, "r42-newline-show")).toBe("SHOW DATABASES\nSHOW DATABASES");
+      expect(text(line, "r42-comment-show")).toBe("SHOW DATABASES/* c */SHOW DATABASES");
+      expect(text(line, "r42-space-select")).toBe("SELECT count(temp) FROM home SHOW DATABASES");
+    }
   });
 });
 

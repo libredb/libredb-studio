@@ -94,10 +94,16 @@ function firstIsNotARead(first: string | null): boolean {
   return /\bINTO\b/i.test(first) || !/^(SELECT|SHOW|EXPLAIN)\b/i.test(first);
 }
 
+/**
+ * The R42 entries: two statements that only whitespace or a comment separates. 1.13.1 and 2.9.1 answer "found SHOW,
+ * expected ;"; 3.12.0 runs both (captures of 2026-10-04).
+ */
+const R42 = ["r42-comment-show", "r42-newline-show", "r42-space-select", "r42-space-show", "r42-tab-show"];
+
 /** The entries each server refused as a parse error, read from the captures of 2026-10-04. */
 const PARSE_ERRORS: Readonly<Record<InfluxFixtureVersion, readonly string[]>> = {
-  "1.13.1": ["c1-nul-in-string"],
-  "2.9.1": ["c1-nul-in-string"],
+  "1.13.1": ["c1-nul-in-string", ...R42],
+  "2.9.1": ["c1-nul-in-string", ...R42],
   "3.12.0-core": ["b5-nul", "into-explain", "into-lowercase", "into-subquery"],
 };
 
@@ -109,9 +115,9 @@ const CORPUS = INFLUX_FIXTURE_VERSIONS.map((version) => [version, loadDifferenti
 const idOf = (capture: InfluxCapture) => capture.name.slice("differential/".length);
 
 describe("the differential corpus as the servers read it (E4)", () => {
-  test("every line holds the twenty entries, and 3.12.0 the two-statement answer too", () => {
+  test("every line holds the twenty-five entries, and 3.12.0 the two-statement answer too", () => {
     for (const [version, corpus] of CORPUS) {
-      expect(corpus.length).toBe(version === "3.12.0-core" ? 21 : 20);
+      expect(corpus.length).toBe(version === "3.12.0-core" ? 26 : 25);
       for (const capture of corpus) expect(capture.request.form?.q.endsWith(HIDDEN)).toBe(true);
     }
   });
@@ -144,7 +150,7 @@ describe("the differential corpus as the servers read it (E4)", () => {
     }
   });
 
-  test("1.13.1 parsed every text but one, and its reprint of the first statement never holds the hidden one", () => {
+  test("1.13.1 parsed every text but the NUL and R42 ones, and its reprint of the first statement never holds the hidden one", () => {
     for (const capture of loadDifferentialCorpus("1.13.1")) {
       const reading = readCapture(capture);
       if (!reading.parsed) continue;
@@ -186,8 +192,26 @@ describe("the policy against the corpus (E4)", () => {
         });
       }
     }
-    // The 36 texts 2.9.1 and 3.12.0 parsed, and the three 1.13.1 writes: never a vacuous pass.
-    expect(shown).toBe(36 + V1_WRITES.length);
+    // The 41 texts 2.9.1 and 3.12.0 parsed, and the three 1.13.1 writes: never a vacuous pass.
+    expect(shown).toBe(41 + V1_WRITES.length);
+  });
+
+  test("refuses each text 3.12.0 ran as two statements with no semicolon between them (R42)", () => {
+    const corpus = loadDifferentialCorpus("3.12.0-core").filter((capture) => R42.includes(idOf(capture)));
+    expect(corpus.map(idOf)).toEqual(R42);
+    for (const capture of corpus) {
+      const text = capture.request.form?.q ?? "";
+      expect(text).not.toContain(";");
+      expect({ id: idOf(capture), reading: readCapture(capture) }).toEqual({
+        id: idOf(capture),
+        reading: { parsed: true, statements: 2, first: null },
+      });
+      const verdict = evaluateInfluxql(text);
+      expect({ id: idOf(capture), reason: verdict.allowed ? "allowed" : verdict.reason }).toEqual({
+        id: idOf(capture),
+        reason: "multiple-statements",
+      });
+    }
   });
 
   test("refuses every corpus text, the ones a server refused as a parse error included", () => {
