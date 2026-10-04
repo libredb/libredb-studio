@@ -1380,6 +1380,132 @@ describe("ResultsGrid", () => {
       expect(queryAllByPlaceholderText(/^Filter /).length).toBeGreaterThan(0);
     });
 
+    /**
+     * A filter belongs to the result it was typed against (#1409). A different query in the
+     * same tab used to inherit it, and a column the new rows lack reads as "" so every row
+     * was hidden while the strip still reported the real count.
+     */
+    test("a new result without the filtered column starts unfiltered", () => {
+      const { container, getByTestId, rerender } = render(React.createElement(ResultsGrid, { result: mockResult }));
+      fireEvent.click(getByTestId("view-table"));
+      fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[1]);
+      fireEvent.change(container.querySelector('input[placeholder="Filter name..."]')!, { target: { value: "Alice" } });
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain("1 filtered");
+
+      const other: QueryResult = {
+        rows: [{ sku: "a" }, { sku: "b" }],
+        fields: ["sku"],
+        rowCount: 2,
+        executionTime: 1,
+      };
+      rerender(React.createElement(ResultsGrid, { result: other }));
+
+      expect(container.querySelector('[data-testid="filtered-count"]')?.textContent).toContain("2 filtered");
+      expect(container.querySelector('[data-testid="clear-filters"]')).toBeNull();
+    });
+
+    test("filter matching folds the Turkish dotted and dotless I", () => {
+      const turkish: QueryResult = {
+        rows: [{ city: "İzmir" }, { city: "IZMIR" }, { city: "ızmir" }, { city: "Ankara" }],
+        fields: ["city"],
+        rowCount: 4,
+        executionTime: 1,
+      };
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: turkish }));
+      fireEvent.click(getByTestId("view-table"));
+      fireEvent.click(container.querySelector('button[title="Filter column"]')!);
+      const input = () => container.querySelector('input[placeholder="Filter city..."]')!;
+      const count = () => container.querySelector('[data-testid="filtered-count"]')?.textContent;
+
+      fireEvent.change(input(), { target: { value: "izmir" } });
+      expect(count()).toContain("3 filtered");
+      fireEvent.change(input(), { target: { value: "İZMİR" } });
+      expect(count()).toContain("3 filtered");
+      fireEvent.change(input(), { target: { value: "ANK" } });
+      expect(count()).toContain("1 filtered");
+    });
+
+    test("filter matching keeps other accents and scripts apart", () => {
+      const mixed: QueryResult = {
+        rows: [{ w: "caf\u00e9" }, { w: "cafe" }, { w: "\ud55c\uad6d" }, { w: "\u017caba" }],
+        fields: ["w"],
+        rowCount: 4,
+        executionTime: 1,
+      };
+      const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mixed }));
+      fireEvent.click(getByTestId("view-table"));
+      fireEvent.click(container.querySelector('button[title="Filter column"]')!);
+      const input = () => container.querySelector('input[placeholder="Filter w..."]')!;
+      const count = () => container.querySelector('[data-testid="filtered-count"]')?.textContent;
+
+      fireEvent.change(input(), { target: { value: "cafe" } });
+      expect(count()).toContain("1 filtered");
+      fireEvent.change(input(), { target: { value: "\ud558" } });
+      expect(count()).toContain("0 filtered");
+      fireEvent.change(input(), { target: { value: "zaba" } });
+      expect(count()).toContain("0 filtered");
+    });
+
+    describe("filter lifetime (#1409)", () => {
+      const resultA = (fields = ["id", "name", "email"]): QueryResult => ({
+        rows: [
+          { id: 1, name: "Alice", email: "a@x" },
+          { id: 2, name: "Bob", email: "b@x" },
+        ].map((r) => Object.fromEntries(fields.map((f) => [f, (r as Record<string, unknown>)[f]]))),
+        fields,
+        rowCount: 2,
+        executionTime: 1,
+      });
+      const renderGrid = (result: QueryResult, resultQuery: string | undefined) =>
+        React.createElement(ResultsGrid, { result, resultQuery });
+      const typeNameFilter = (container: HTMLElement) => {
+        fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[1]);
+        fireEvent.change(container.querySelector('input[placeholder="Filter name..."]')!, {
+          target: { value: "Alice" },
+        });
+      };
+      const count = (c: HTMLElement) => c.querySelector('[data-testid="filtered-count"]')?.textContent;
+
+      test("A, then B without the column, then A again starts unfiltered", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "select * from a"));
+        fireEvent.click(getByTestId("view-table"));
+        typeNameFilter(container);
+        expect(count(container)).toContain("1 filtered");
+        rerender(renderGrid({ rows: [{ sku: "x" }], fields: ["sku"], rowCount: 1, executionTime: 1 }, "select sku"));
+        rerender(renderGrid(resultA(), "select * from a"));
+        expect(count(container)).toContain("2 filtered");
+        expect(container.querySelector('[data-testid="clear-filters"]')).toBeNull();
+      });
+
+      test("a different query with the same columns starts unfiltered", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "select * from a"));
+        fireEvent.click(getByTestId("view-table"));
+        typeNameFilter(container);
+        rerender(renderGrid(resultA(), "select * from b"));
+        expect(count(container)).toContain("2 filtered");
+      });
+
+      test("the same run keeps its filter across a page that changes the columns", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "db.a.find()"));
+        fireEvent.click(getByTestId("view-table"));
+        typeNameFilter(container);
+        rerender(renderGrid(resultA(["id", "name"]), "db.a.find()"));
+        expect(count(container)).toContain("1 filtered");
+        // a column that vanished takes its own filter with it, the others stay
+        rerender(renderGrid(resultA(["id"]), "db.a.find()"));
+        expect(count(container)).toContain("2 filtered");
+      });
+
+      test("an open filter panel closes when its column leaves the result", () => {
+        const { container, getByTestId, rerender } = render(renderGrid(resultA(), "q"));
+        fireEvent.click(getByTestId("view-table"));
+        fireEvent.click(container.querySelectorAll('button[title="Filter column"]')[1]);
+        expect(container.querySelector('input[placeholder="Filter name..."]')).not.toBeNull();
+        rerender(renderGrid(resultA(["id"]), "q"));
+        expect(container.querySelector('input[placeholder="Filter name..."]')).toBeNull();
+      });
+    });
+
     test("clicking filter button opens filter dropdown with input", () => {
       const { container, getByTestId } = render(React.createElement(ResultsGrid, { result: mockResult }));
       fireEvent.click(getByTestId("view-table"));

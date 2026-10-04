@@ -32,7 +32,13 @@ import { writeToClipboard } from "@/components/copy-button";
 import { ResultCard } from "@/components/results-grid/ResultCard";
 import { RowDetailSheet } from "@/components/results-grid/RowDetailSheet";
 import { StatsBar } from "@/components/results-grid/StatsBar";
-import { describeWarning, formatCellCopy, formatCellValue, renderContextFor } from "@/components/results-grid/utils";
+import {
+  describeWarning,
+  foldFilterCase,
+  formatCellCopy,
+  formatCellValue,
+  renderContextFor,
+} from "@/components/results-grid/utils";
 import {
   getHeaderFitColumnSize,
   RESULT_COLUMN_MAX_SIZE,
@@ -192,7 +198,7 @@ export function ResultsGrid({
   const [viewMode, setViewMode] = useState<"card" | "table">("card");
   const [wrapText, setWrapText] = useState(false);
   const [selectedRow, setSelectedRow] = useState<{ row: Record<string, unknown>; index: number } | null>(null);
-  const [columnFilters, setColumnFilters] = useState<Map<string, string>>(new Map());
+  const [typedFilters, setColumnFilters] = useState<Map<string, string>>(new Map());
   const [activeFilterCol, setActiveFilterCol] = useState<string | null>(null);
   /**
    * Which fields are hidden, as TanStack's own visibility map (#870).
@@ -237,6 +243,38 @@ export function ResultsGrid({
 
   const hasSensitive = sensitiveColumns.size > 0;
 
+  /**
+   * A filter belongs to the run it was typed against (#1409).
+   *
+   * A column the rows lack reads as "", so a filter carried into a different query matched nothing
+   * and hid every row while the strip still counted them. Two things end a filter, both decided
+   * during render so no frame draws the stale one:
+   *
+   * - A different RUN clears them all. The run is the statement that produced the rows
+   *   (`resultQuery`, unchanged by Load More, which only appends a page to the same run); with none
+   *   given, as for a hydrated result, the column set stands in for it.
+   * - Within one run a changed column set (Load More on a document engine re-derives it from the
+   *   rows) only drops the filters whose column is gone, so the user's filter survives the page.
+   *
+   * The same statement re-run keeps its filter on purpose: it is the same question asked again.
+   */
+  const fieldsKey = JSON.stringify(result.fields);
+  const runKey = resultQuery === undefined ? `fields:${fieldsKey}` : `query:${resultQuery}`;
+  const [seenRun, setSeenRun] = useState(runKey);
+  const [seenFields, setSeenFields] = useState(fieldsKey);
+  if (seenRun !== runKey) {
+    setSeenRun(runKey);
+    setSeenFields(fieldsKey);
+    setColumnFilters(new Map());
+    setActiveFilterCol(null);
+  } else if (seenFields !== fieldsKey) {
+    setSeenFields(fieldsKey);
+    const present = new Set(result.fields);
+    setColumnFilters((prev) => new Map([...prev].filter(([col]) => present.has(col))));
+    if (activeFilterCol !== null && !present.has(activeFilterCol)) setActiveFilterCol(null);
+  }
+  const columnFilters = typedFilters;
+
   // Clear revealed cells when result changes
   useEffect(() => {
     setRevealedCells(new Set());
@@ -269,11 +307,13 @@ export function ResultsGrid({
   // Filter rows based on column filters
   const filteredRows = useMemo(() => {
     if (columnFilters.size === 0) return result.rows;
+    // Folded once here, not once per row.
+    const wanted = [...columnFilters]
+      .filter(([, filterVal]) => filterVal)
+      .map(([col, filterVal]) => [col, foldFilterCase(filterVal)] as const);
     return result.rows.filter((row) => {
-      for (const [col, filterVal] of columnFilters) {
-        if (!filterVal) continue;
-        const cellVal = String(row[col] ?? "").toLowerCase();
-        if (!cellVal.includes(filterVal.toLowerCase())) return false;
+      for (const [col, folded] of wanted) {
+        if (!foldFilterCase(String(row[col] ?? "")).includes(folded)) return false;
       }
       return true;
     });
