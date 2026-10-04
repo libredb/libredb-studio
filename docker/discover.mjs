@@ -14,7 +14,8 @@
  *     command line is the NAME of the variable a Redis `--requirepass` reads, never a value;
  *   - it interprets nothing else: engine detection, credential mapping, staleness and validation live
  *     in src/lib/seed/, where the coverage gate measures them;
- *   - it never logs an environment value: log lines carry counts, codes and paths only;
+ *   - it never logs a value from a service's environment: no part of a 2xx answer's body, where those
+ *     values are, reaches a log line;
  *   - it refuses to start when the output directory could be written by anyone but itself, and it
  *     writes through an O_EXCL | O_NOFOLLOW temp file, so the web process cannot plant a link that the
  *     root exporter follows.

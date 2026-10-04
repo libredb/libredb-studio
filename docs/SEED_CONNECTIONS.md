@@ -700,7 +700,7 @@ A service whose image or app name is empty, or whose name, host or image is long
 On a Docker error it keeps the services, the `excluded` list and the `generatedAt` of its last good scan, and updates only the status and `checkedAt`.
 When no network is named exactly `DISCOVERY_NETWORK`, it also writes `network` as null.
 After a restart it starts from empty lists, with `generatedAt` null until its first good scan.
-It never logs an environment value.
+It never logs a value from a service's environment.
 Its variables are listed in `.env.example` under "Platform Discovery Exporter".
 `DISCOVERY_INTERVAL_MS` takes an integer from 2000 to 2147483647, the longest delay Node's timers honour, and `DISCOVERY_FILE_UID` and `DISCOVERY_FILE_GID` take an integer from 0 to 4294967294.
 A value outside its range, or one that is not a whole number, stops the exporter at start, before its first scan, with `<NAME> must be an integer of at least <minimum>, got "<value>"` or `<NAME> must be an integer of at most <maximum>, got "<value>"` in its log.
