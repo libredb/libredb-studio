@@ -142,3 +142,28 @@ export function splitStatements(input: string, grammar: SqlGrammar = DEFAULT_SQL
 export function isMultiStatement(input: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): boolean {
   return splitStatements(input, grammar).length > 1;
 }
+
+/** Does this fragment hold anything but whitespace and comments? */
+function carriesCode(fragment: string, grammar: SqlGrammar): boolean {
+  let i = 0;
+  while (i < fragment.length) {
+    const span = readSqlSpan(fragment, i, grammar);
+    if (span === null) return true;
+    if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") return true;
+    i = span.end;
+  }
+  return false;
+}
+
+/**
+ * How many statements the text holds, not counting a fragment of comments only.
+ *
+ * `splitStatements` keeps such a fragment, so `SELECT 1; -- note` splits in two. That
+ * is the right answer for the multi-statement ROUTE, whose behaviour for it is settled
+ * and left alone here, but the wrong one for a caller asking whether a text is one
+ * statement: the explain path refuses more than one (#1311), and counting the note
+ * refused a single SELECT the run itself accepts.
+ */
+export function countCodeStatements(input: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): number {
+  return splitStatements(input, grammar).filter((statement) => carriesCode(statement.sql, grammar)).length;
+}

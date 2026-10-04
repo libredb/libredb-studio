@@ -900,13 +900,19 @@ describe("POST /api/db/query with an explain request", () => {
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
   });
 
-  test("a statement with a trailing semicolon or a quoted semicolon is still one statement", async () => {
+  // A comment is not a statement: the splitter keeps a note after the last `;` as a
+  // fragment of its own, and counting it refused a single SELECT the run itself accepts.
+  test.each<[string, string]>([
+    ["a trailing and a quoted semicolon", "SELECT ';' AS s;"],
+    ["a trailing line comment", "SELECT 1; -- note"],
+    ["a trailing block comment", "SELECT 1; /* c */"],
+  ])("a statement with %s is still one statement", async (_label, sql) => {
     const provider = explainCapableProvider();
     mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
 
     const req = createMockRequest("/api/db/query", {
       method: "POST",
-      body: { connection: validConnection, sql: "SELECT ';' AS s;", options: {}, explain: { mode: "estimate" } },
+      body: { connection: validConnection, sql, options: {}, explain: { mode: "estimate" } },
     });
 
     const res = await POST(req as never);

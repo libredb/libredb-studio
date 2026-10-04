@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
 import { consoleTextByteLimit, statementRefusal } from "@/lib/db/destructive-commands";
-import { isMultiStatement } from "@/lib/sql/statement-splitter";
+import { countCodeStatements, isMultiStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { shouldRefreshSchema } from "@/lib/query-generators";
@@ -361,9 +361,12 @@ export function useQueryExecution({
       // ...` explains the SELECT and then RUNS the INSERT: measured on Materialize 26.44.1,
       // AlloyDB Omni 17.9 and Cloudberry 2.1.0, a RUN of that text applied the INSERT twice
       // through its background plan request (#1311). Read under the connection's own
-      // dialect, the same reading that sends a run to `/api/db/multi-query` below, so the
-      // two can never disagree about what one statement is.
-      const oneStatement = !isMultiStatement(queryToExecute, resolveSqlGrammar(activeConnection.type));
+      // dialect, the same reading that sends a run to `/api/db/multi-query` below, and the
+      // same count `POST /api/db/query` refuses an explain by. A fragment of comments only
+      // is not counted: `SELECT 1; -- note` is one statement to explain, though the run
+      // route below still splits it in two.
+      const grammar = resolveSqlGrammar(activeConnection.type);
+      const oneStatement = countCodeStatements(queryToExecute, grammar) <= 1;
       const explainSupported = !metadata || metadata.capabilities.supportsExplain;
       const explainAccepted =
         isExplain &&
@@ -475,7 +478,7 @@ export function useQueryExecution({
           // reads the statement with: whether a `;` is code depends on the
           // engine's comment, quoting and bracket rules, and a fragment this
           // disagrees about is a fragment the route RUNS (S1).
-          !oneStatement;
+          isMultiStatement(queryToExecute, grammar);
 
         // Use transaction endpoint if a transaction is active or in playground mode
         const useTransaction = (transactionActive || isPlaygroundRun) && !isExplain;

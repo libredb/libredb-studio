@@ -1985,9 +1985,12 @@ function assertAgentRoleIsUnprivileged(rows: unknown[]): void {
  *   MEMORY, found SELECT` for `EXPLAIN ANALYZE`, which is a different statement
  *   there. The plain `EXPLAIN` is the only plan grammar it publishes.
  *
- * Each probe is the statement its strategy really sends, so a grammar that answers
- * here is one the panel can use. `SELECT 1` is what they run: the first two forms
- * execute what they explain, and this one has nothing to execute.
+ * Each probe is the statement its strategy sends for the Explain button (`analyze`),
+ * so a grammar that answers here is one the panel can use. The background plan asks
+ * for the `estimate`, which `postgres-json` builds as `EXPLAIN (FORMAT JSON)` (#1311);
+ * that form is not probed, because a server accepting the parenthesised ANALYZE form
+ * accepts it too. `SELECT 1` is what they run: the first two forms execute what they
+ * explain, and this one has nothing to execute.
  */
 const EXPLAIN_PROBES: readonly (readonly [sql: string, format: ExplainFormat])[] = [
   ["EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT 1", "postgres-json"],

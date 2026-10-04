@@ -2508,6 +2508,50 @@ describe("useQueryExecution", () => {
     ).toBe(true);
   });
 
+  // A note after the final `;` is not a second statement: the splitter keeps it as a
+  // fragment of its own, and counting it dropped the plan and refused the Explain
+  // button for one SELECT.
+  test("a trailing comment does not make one SELECT a multi-statement explain", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; -- note", undefined, true);
+    });
+
+    const queryCalls = fetchMock.mock.calls.filter(
+      (call) => typeof call[0] === "string" && call[0].includes("/api/db/query"),
+    );
+    expect(queryCalls).toHaveLength(1);
+    expect(JSON.parse((queryCalls[0][1] as RequestInit).body as string).explain).toEqual({ mode: "analyze" });
+    expect(mockToastError).not.toHaveBeenCalledWith("Not Supported", expect.anything());
+  });
+
+  test("a trailing comment keeps the background plan of one SELECT", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+      "/api/db/multi-query": {
+        ok: true,
+        json: { ...mockQueryResult, multiStatement: true, statementCount: 2, executedCount: 2, statements: [] },
+      },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1; -- note");
+    });
+
+    const planCalls = fetchMock.mock.calls.filter((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return typeof init?.body === "string" && JSON.parse(init.body).explain !== undefined;
+    });
+    expect(planCalls).toHaveLength(1);
+  });
+
   test("the Explain button refuses a multi-statement text and sends nothing", async () => {
     const fetchMock = mockGlobalFetch({
       "/api/db/query": { ok: true, json: mockQueryResult },

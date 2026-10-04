@@ -147,7 +147,7 @@ tier and no version column for it - the number is the finding:
   `pg_statio_user_tables`, `pg_stat_user_tables` or `pg_tablespace`, so health, performance
   metrics, table statistics and storage cannot run; the slow-query and session reads fail earlier
   still, on `NULLS LAST`. A plain `EXPLAIN` works through the provider and shows QuestDB's own plan
-  (`PageFrame`, `Row forward scan`) while the Explain button's `EXPLAIN (ANALYZE, BUFFERS,
+  (`PageFrame`, `Row forward scan`) while PostgreSQL's `EXPLAIN (ANALYZE, BUFFERS,
   FORMAT JSON)` is rejected outright. Neither `ANALYZE` nor `VACUUM` is a QuestDB statement. Errors
   are classified correctly with QuestDB's own text. The version panel would read PostgreSQL 12.3 -
   `version()` names QuestDB only at the end of its string, and the real build is in `build()`,

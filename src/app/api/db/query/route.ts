@@ -8,7 +8,7 @@ import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
-import { isMultiStatement } from "@/lib/sql/statement-splitter";
+import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
 import type { ExplainFormat, OpenQueryTransactionOutcome } from "@/lib/db/types";
@@ -97,8 +97,13 @@ export async function POST(req: NextRequest) {
     // and once in its background plan request. A plan of several statements is not a
     // plan of anything, so the text is refused before a provider is opened. It is read
     // under the connection's own grammar, the one the editor splits a run with, so a
-    // `;` inside a quote or a comment is not a second statement.
-    if (explain.explain && typeof sql === "string" && isMultiStatement(sql, resolveSqlGrammar(connection.type))) {
+    // `;` inside a quote or a comment is not a second statement, and neither is a note
+    // after the final `;` (a fragment of comments only is not counted).
+    if (
+      explain.explain &&
+      typeof sql === "string" &&
+      countCodeStatements(sql, resolveSqlGrammar(connection.type)) > 1
+    ) {
       return NextResponse.json({ error: "Only a single statement can be explained" }, { status: 400 });
     }
 
