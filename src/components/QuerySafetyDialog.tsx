@@ -481,6 +481,25 @@ export function QuerySafetyDialog({
 const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRANT", "REVOKE", "UPDATE"]);
 
 /**
+ * The words that open a procedural block or a branch of one rather than a statement of
+ * their own, in PL/SQL, T-SQL and SQLite trigger bodies. A statement read with one of
+ * these as its keyword is the block, and what it does is written after it.
+ */
+const CONTROL_FLOW_KEYWORDS = new Set([
+  "BEGIN",
+  "DECLARE",
+  "IF",
+  "ELSE",
+  "ELSIF",
+  "THEN",
+  "WHILE",
+  "LOOP",
+  "FOR",
+  "EXCEPTION",
+  "WHEN",
+]);
+
+/**
  * Whether ONE statement's own code asks for a confirmation, read under `grammar`.
  *
  * Its own function because the caller below asks the question twice over different
@@ -488,9 +507,48 @@ const DANGEROUS_KEYWORDS = new Set(["DELETE", "DROP", "TRUNCATE", "ALTER", "GRAN
  * will run. Re-deriving the two keyword tests per call site is how the gate and the
  * runner drifted apart in the first place.
  */
+/**
+ * Whether a procedural block's code writes, as far as its words can say.
+ *
+ * Any dangerous keyword in the block's code counts, except two shapes that only look like
+ * one: a T-SQL variable (`@alter`, `@delete`) and a cursor's `FOR UPDATE` lock clause.
+ * Dynamic SQL counts whatever its text says, because the text is a literal the reader
+ * cannot see into: `EXECUTE IMMEDIATE 'DROP TABLE t PURGE'` drops a table, and Oracle
+ * used to refuse the block it sits in when the runner cut it at its first `;` (#1312).
+ */
+function blockWrites(text: string, grammar: SqlGrammar): boolean {
+  const execute = findCodeWord(text, "EXECUTE", 0, grammar);
+  if (execute !== null && findCodeWord(text, "IMMEDIATE", execute.end, grammar) !== null) return true;
+  if (findCodeWord(text, "DBMS_SQL", 0, grammar) !== null) return true;
+
+  for (const word of DANGEROUS_KEYWORDS) {
+    let found = findCodeWord(text, word, 0, grammar);
+    while (found !== null) {
+      const before = text.slice(0, found.start);
+      const variable = before.endsWith("@");
+      const lockClause = word === "UPDATE" && /\bFOR\s+$/i.test(before);
+      if (!variable && !lockClause) return true;
+      found = findCodeWord(text, word, found.end, grammar);
+    }
+  }
+  return false;
+}
+
 function writesUnderGrammar(text: string, grammar: SqlGrammar): boolean {
   const keyword = readOperativeKeyword(text, grammar)?.keyword;
   if (keyword !== undefined && DANGEROUS_KEYWORDS.has(keyword)) return true;
+
+  // A statement led by a control-flow word, or by a `<<label>>` no keyword reading
+  // passes, does what the words AFTER it say: `BEGIN DELETE FROM emp; END;` is a PL/SQL
+  // block that deletes, and `IF @@ROWCOUNT > 0 DELETE FROM t` a T-SQL statement that
+  // does. Its own keyword is `BEGIN` or `IF`, so for these the dangerous words are looked
+  // for anywhere in the statement's CODE (#1312). Before procedural bodies were a grammar
+  // fact the runner cut such a block at its first `;` and Oracle refused the fragment, so
+  // nothing ran unasked; now the whole block runs, and the gate has to read into it.
+  const labelled = keyword === undefined && text.trimStart().startsWith("<<");
+  if ((labelled || (keyword !== undefined && CONTROL_FLOW_KEYWORDS.has(keyword))) && blockWrites(text, grammar)) {
+    return true;
+  }
 
   // A write the statement's own keyword does not report: PostgreSQL's data-modifying
   // CTE is OPERATED by its SELECT (`WITH x AS (UPDATE … SET …) SELECT * FROM x`), so

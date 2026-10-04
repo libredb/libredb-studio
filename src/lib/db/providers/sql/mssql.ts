@@ -1515,6 +1515,12 @@ function timeText(value: Date, scale: number | undefined): string {
  * All three query paths call it as the recordset is taken, before anything measures or
  * shapes the result.
  */
+/** A result set's column names: its declared columns, or the first row's keys without them. */
+function mssqlFields(recordset: Record<string, unknown>[] & { columns?: object }): string[] {
+  if (recordset.columns) return Object.keys(recordset.columns);
+  return recordset.length > 0 ? Object.keys(recordset[0]) : [];
+}
+
 function convertZonelessValues(recordset: Record<string, unknown>[]): void {
   const columns = (recordset as { columns?: Record<string, MssqlColumnMetadata> }).columns;
   if (!columns) return;
@@ -1883,29 +1889,34 @@ export class MSSQLProvider extends SQLBaseProvider {
         }
       });
 
-      // A batch answers with its LAST result set (#1312). The editor sends a T-SQL batch
-      // as one request, so `DECLARE @x INT = 5; SELECT @x * 2` or a `#temp` script that
-      // reads twice reaches here whole, and the multi-statement route shows a script's
-      // last result too. `recordset` is the driver's FIRST, which is what a single
-      // statement has and every caller before batches asked for.
-      const recordsets = (result.recordsets ?? []) as (typeof result.recordset)[];
-      const several = recordsets.length > 1;
-      const recordset = several ? recordsets[recordsets.length - 1] : result.recordset || [];
+      const recordset = result.recordset || [];
       convertZonelessValues(recordset);
-      const fields = recordset.columns
-        ? Object.keys(recordset.columns)
-        : recordset.length > 0
-          ? Object.keys(recordset[0])
-          : [];
+
+      // A text with several result sets carries all of them (#1312). The editor sends a
+      // T-SQL batch as one request, so `SELECT * FROM a; SELECT * FROM b` reaches here whole,
+      // and the multi-statement route shows the last one with rows, as it does across a
+      // script's statements. `rows` stays the FIRST set, which is what `EXEC sp_help` and
+      // every caller before batches were shown.
+      const recordsets = (result.recordsets ?? []) as (typeof result.recordset)[];
+      const resultSets =
+        recordsets.length > 1
+          ? recordsets.map((set) => {
+              if (set !== recordset) convertZonelessValues(set);
+              return {
+                rows: set as Record<string, unknown>[],
+                fields: mssqlFields(set),
+                ...mssqlColumnTypes(set.columns),
+              };
+            })
+          : undefined;
 
       return {
         rows: recordset as Record<string, unknown>[],
-        fields,
-        // `rowsAffected[0]` is the FIRST statement's count, which says nothing about the
-        // result set shown when it is not the first.
-        rowCount: several ? recordset.length : (result.rowsAffected?.[0] ?? recordset.length),
+        fields: mssqlFields(recordset),
+        rowCount: result.rowsAffected?.[0] ?? recordset.length,
         executionTime,
         ...mssqlColumnTypes(recordset.columns),
+        ...(resultSets && { resultSets }),
       };
     });
   }

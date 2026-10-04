@@ -123,6 +123,8 @@ left at the default because no reading of them was measured: MySQL and MariaDB
 `DELIMITER`, a client command the server never sees), Db2 SQL PL (`BEGIN ATOMIC … END` and routine
 bodies) and Trino SQL routines (`CREATE FUNCTION … BEGIN … END`). On those the editor still cuts the body
 at its inner `;` and the multi-statement route runs the fragments, the shape #1312 measured on Oracle.
+Oracle's own inline PL/SQL in a query (`WITH FUNCTION f RETURN NUMBER IS BEGIN … END; SELECT f FROM dual`)
+is the same gap inside a dialect that is read: it is not a unit, so it is still cut at its inner `;`.
 
 **Done when:** each dialect's body rule is measured on a live server and written as its `script` row, with
 a test per dialect in `tests/unit/sql/statement-splitter.test.ts` (the MySQL one there pins today's cut).

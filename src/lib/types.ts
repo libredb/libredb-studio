@@ -611,6 +611,23 @@ export interface QueryResult {
    * **Absent** when the result has no vector column, never an empty object.
    */
   vectorColumns?: Readonly<Record<string, VectorColumn>>;
+  /**
+   * Every result set the text produced, in order, when it produced MORE than one: a T-SQL
+   * batch sent as one request (#1312), or a procedure that returns several. `rows`, `fields`
+   * and `columnTypes` above stay the first set's, as they always were. **Absent** for a text
+   * with one result set or none.
+   *
+   * The multi-statement route reads it to show a batch's last result with rows, the same
+   * rule it applies across a script's statements; `POST /api/db/query` and `POST /api/db/transaction` do not send it.
+   */
+  resultSets?: QueryResultSet[];
+}
+
+/** One result set of a text that produced several (`QueryResult.resultSets`). */
+export interface QueryResultSet {
+  rows: Record<string, unknown>[];
+  fields: string[];
+  columnTypes?: Record<string, string>;
 }
 
 /**

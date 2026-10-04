@@ -397,9 +397,16 @@ say where it is not, and the splitter reads them:
 | every other dialect | none: PostgreSQL's routine bodies are `$$` literals the span reader already holds | none | one statement |
 
 Inside a body, `CASE … END` closes a frame and `END IF` / `END LOOP` are skipped, and a declaration
-section shares its block's `END`. A unit whose frames never close (a call spec, a compound trigger)
-runs to the next `/` line or the end of the input: one statement too long, never a fragment stored
-INVALID. `GO 5`, sqlcmd's repeat count, is not a separator; it reaches the server, which refuses it.
+section shares its block's `END`. A compound trigger's section holds its timing points
+(`BEFORE STATEMENT IS BEGIN … END BEFORE STATEMENT;`) to its own last `END`, a `<<label>>` before a
+block is read past, and a call spec (`AS LANGUAGE …`, `AS EXTERNAL …`, `AS MLE MODULE …`) has no body,
+so the `;` after it ends it. A unit whose frames still never close runs to the next `/` line or the end
+of the input: one statement too long, never a fragment stored INVALID. `GO 5`, sqlcmd's repeat count, is
+not a separator; it reaches the server, which refuses it (measured on SQL Server 2025 RTM-CU9: `Incorrect syntax near 'GO'.`).
+
+Two shapes the reader does not model, both recorded rather than guessed at: an unquoted, unqualified column named
+`end` inside a SQLite trigger body closes the body early (quote it, as `"end"`), and an Oracle
+`WITH FUNCTION` read is not a unit and is still cut at its inner `;`.
 
 Measured in the end-to-end pass of 2026-10-03/04 before these facts existed: Oracle 26ai Free stored a
 procedure cut at its inner `;` INVALID (PLS-00103) while this route reported its first fragment
@@ -407,14 +414,35 @@ procedure cut at its inner `;` INVALID (PLS-00103) while this route reported its
 `Must declare the scalar variable "@x"` for `DECLARE @x INT = 5; SELECT @x * 2`, because each fragment
 was its own request on a pooled connection.
 
-A T-SQL batch of several statements is sent as written, with **no** row bound: the bound belongs to one
-statement, and the batch's last statement may sit inside a `CREATE PROCEDURE` body that runs to the end
-of the batch. SQL Server's provider answers a batch with its **last** result set. Across a `GO`, a
-`#temp` table survives only if the next batch borrows the same pooled connection, which nothing
-guarantees (`docs/BACKLOG.md` D92). The editor's "run the statement at the cursor" runs the cursor's
-unit, so on SQL Server it is the batch. The confirmation gate keeps reading the statements inside a
-body, so a `DELETE` inside a PL/SQL block still asks. MySQL, Db2 and Trino compound statements are not
-read yet (`docs/BACKLOG.md` S7).
+When the script's last unit is a T-SQL batch of several statements, its last statement is bounded
+when it is a read and spliced back in place, so `SELECT 1; SELECT * FROM big` is bounded as it was when
+the two were separate requests. The exception is a batch that is a module definition: its first
+statement is `CREATE`, `ALTER` or `CREATE OR ALTER` of a procedure, function, trigger or view, which
+T-SQL requires first in its batch, and everything after it is the body the server stores, where a
+`TOP` would change the procedure rather than the result; that batch is sent as written. SQL Server's
+provider carries every result set of a batch, and the route shows the last one with rows, the same rule
+it applies across a script's statements. A batch's earlier result sets are not sent back one by one,
+which costs nothing the grid showed before: it shows one result, and `statements[i]` is now the
+batch. Across a `GO`, a `#temp` table survives only if the next batch borrows the same pooled
+connection, which nothing guarantees (`docs/BACKLOG.md` D92).
+
+"Run the statement at the cursor" runs a whole body (a PL/SQL unit, a SQLite trigger, a T-SQL module
+batch), but in a T-SQL batch that is a run of statements it still runs only the caret's own statement,
+so a caret on a `SELECT` never sends the `DELETE` written after it. A script whose statements share a
+`DECLARE @x` is run by selecting it, or by running the whole editor.
+
+The confirmation gate keeps reading the `;`-statements inside a body, and reads INTO a statement led
+by a control-flow word (`BEGIN`, `DECLARE`, `IF`, `ELSE`, `ELSIF`, `THEN`, `WHILE`, `LOOP`, `FOR`,
+`EXCEPTION`, `WHEN`) or a `<<label>>`: there it looks for every dangerous keyword anywhere in the
+statement's code, so `BEGIN DELETE FROM emp; END;`, `BEGIN IF c THEN DELETE FROM emp; END IF; END;` and
+T-SQL's `IF @@ROWCOUNT > 0 DELETE FROM t` ask. Dynamic SQL in such a block (`EXECUTE IMMEDIATE`,
+`DBMS_SQL`) asks whatever its text says, because the text is a literal the gate cannot read into, so
+`BEGIN EXECUTE IMMEDIATE 'DROP TABLE t PURGE'; END;` asks. Two shapes that only look like a write are
+skipped: a T-SQL variable (`@alter`, `@delete`) and a cursor's `FOR UPDATE` lock clause. Before
+procedural bodies were read, Oracle refused the
+fragment `BEGIN DELETE FROM emp` and nothing ran; now the whole block runs, so the gate has to read
+into it. What a procedure call does (`EXEC sp_cleanup`, `BEGIN p; END;`) is the server's, and it does
+not ask, as before. MySQL, Db2 and Trino compound statements are not read yet (`docs/BACKLOG.md` S7).
 
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.

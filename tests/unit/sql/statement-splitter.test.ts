@@ -1,5 +1,11 @@
 import { describe, test, expect } from "bun:test";
-import { splitStatements, isMultiStatement, splitExecutionUnits } from "@/lib/sql/statement-splitter";
+import {
+  splitStatements,
+  isMultiStatement,
+  splitExecutionUnits,
+  splitCursorTargets,
+  unitIsModuleBody,
+} from "@/lib/sql/statement-splitter";
 import type { SplitStatement } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
@@ -697,11 +703,54 @@ describe("splitStatements: Oracle PL/SQL units", () => {
     expect(linesOf(result)).toEqual([0, 2, 4]);
   });
 
-  test("a unit whose frames never close runs to the `/` line, SQL*Plus's own rule", () => {
-    const callSpec = 'CREATE FUNCTION f RETURN NUMBER AS LANGUAGE C NAME "f" LIBRARY lib;';
+  test.each([
+    "CREATE OR REPLACE FUNCTION f RETURN NUMBER AS LANGUAGE JAVA NAME 'x.y() return int'",
+    'CREATE FUNCTION f RETURN NUMBER AS LANGUAGE C NAME "f" LIBRARY lib',
+    'CREATE PROCEDURE p IS EXTERNAL NAME "p" LIBRARY lib',
+    "CREATE FUNCTION f RETURN NUMBER AS MLE MODULE m SIGNATURE 'f()'",
+  ])("a call spec has no body, so the script after it still splits: %s", (callSpec) => {
+    // Its `;` stays: Oracle 26ai stored a Java call spec sent without it INVALID (PLS-00103).
+    expect(sqlsOf(splitStatements(`${callSpec};\nSELECT 1 FROM dual; DELETE FROM t;`, ORACLE))).toEqual([
+      `${callSpec};`,
+      "SELECT 1 FROM dual",
+      "DELETE FROM t",
+    ]);
+  });
 
-    expect(sqlsOf(splitStatements(`${callSpec}\n/\nSELECT 1 FROM dual`, ORACLE))).toEqual([
-      callSpec,
+  test.each(["language", "external", "mle"])("a declaration named %s is a declaration, not a call spec", (name) => {
+    const unit = `CREATE PROCEDURE p AS ${name} VARCHAR2(10); BEGIN ${name} := 'x'; END;`;
+
+    expect(sqlsOf(splitStatements(`${unit}\nSELECT 1 FROM dual`, ORACLE))).toEqual([unit, "SELECT 1 FROM dual"]);
+  });
+
+  test("a call spec word at the end of the input opens a declaration section, the fail-safe reading", () => {
+    expect(splitStatements("CREATE PROCEDURE p AS LANGUAGE", ORACLE)).toHaveLength(1);
+  });
+
+  test("a compound trigger is one unit, each timing point a block of its own", () => {
+    const trigger = [
+      "CREATE OR REPLACE TRIGGER t FOR INSERT ON emp COMPOUND TRIGGER",
+      "  v NUMBER;",
+      "  BEFORE STATEMENT IS BEGIN v := 0; END BEFORE STATEMENT;",
+      "  AFTER EACH ROW IS BEGIN v := v + 1; END AFTER EACH ROW;",
+      "END t;",
+    ].join("\n");
+
+    expect(sqlsOf(splitStatements(`${trigger}\nSELECT 1 FROM dual`, ORACLE))).toEqual([trigger, "SELECT 1 FROM dual"]);
+  });
+
+  test("a labelled anonymous block is still a block", () => {
+    const block = "<<outer>> BEGIN NULL; <<inner>> BEGIN NULL; END inner; END outer;";
+
+    expect(sqlsOf(splitStatements(`${block}\nSELECT 1 FROM dual`, ORACLE))).toEqual([block, "SELECT 1 FROM dual"]);
+  });
+
+  test("a unit whose frames never close runs to the `/` line, SQL*Plus's own rule", () => {
+    // An unclosed BEGIN stands in for any construct the reader does not model.
+    const unclosed = "BEGIN NULL; IF x THEN NULL;";
+
+    expect(sqlsOf(splitStatements(`${unclosed}\n/\nSELECT 1 FROM dual`, ORACLE))).toEqual([
+      unclosed,
       "SELECT 1 FROM dual",
     ]);
   });
@@ -756,6 +805,12 @@ describe("splitStatements: SQLite and libSQL trigger bodies", () => {
     ]);
   });
 
+  test("a qualified `end` is a column, not the body's END", () => {
+    const trigger = "CREATE TRIGGER tr AFTER INSERT ON t BEGIN UPDATE t SET a = NEW.end; DELETE FROM u; END";
+
+    expect(sqlsOf(splitStatements(`${trigger}; SELECT 1`, SQLITE))).toEqual([trigger, "SELECT 1"]);
+  });
+
   test("BEGIN is a transaction there, not a block", () => {
     expect(sqlsOf(splitStatements("BEGIN; INSERT INTO t VALUES (1); COMMIT;", SQLITE))).toEqual([
       "BEGIN",
@@ -803,6 +858,29 @@ describe("splitStatements and splitExecutionUnits: T-SQL batches", () => {
     expect(sqlsOf(units)).toEqual(["CREATE PROCEDURE p AS BEGIN SET NOCOUNT ON; SELECT 1; END", "EXEC p;\nSELECT 2"]);
     expect(linesOf(units)).toEqual([0, 3]);
     for (const unit of units) expect(input.slice(unit.start, unit.end)).toBe(unit.sql);
+  });
+
+  test.each([
+    ["CREATE PROCEDURE p AS SELECT 1; SELECT 2", true],
+    ["CREATE OR ALTER PROC p AS SELECT 1; SELECT 2", true],
+    ["ALTER TRIGGER t ON a AFTER INSERT AS SELECT 1; SELECT 2", true],
+    ["/* note */ CREATE VIEW v AS SELECT 1; SELECT 2", true],
+    ["CREATE TABLE #t (a INT); SELECT * FROM #t", false],
+    ["CREATE OR", false],
+    ["(SELECT 1); SELECT 2", false],
+  ])("%s is a module body: %s", (text, expected) => {
+    expect(unitIsModuleBody(splitExecutionUnits(text, MSSQL)[0], MSSQL)).toBe(expected);
+  });
+
+  test("the cursor targets a run of statements one by one and a module body whole", () => {
+    const input = "SELECT 1; DELETE FROM t\nGO\nCREATE PROCEDURE p AS SELECT 1; SELECT 2";
+
+    expect(sqlsOf(splitCursorTargets(input, MSSQL))).toEqual([
+      "SELECT 1",
+      "DELETE FROM t",
+      "CREATE PROCEDURE p AS SELECT 1; SELECT 2",
+    ]);
+    expect(sqlsOf(splitCursorTargets("SELECT 1; SELECT 2"))).toEqual(["SELECT 1", "SELECT 2"]);
   });
 
   test("an empty batch between two GO lines is no unit", () => {

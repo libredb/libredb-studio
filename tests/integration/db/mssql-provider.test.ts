@@ -2053,23 +2053,30 @@ describe("MSSQLProvider declared column types", () => {
     });
   });
 
-  // #1312: the editor sends a T-SQL batch as one request, and a batch with several result
-  // sets answers with its last, as the multi-statement route shows a script's last result.
-  test("query() answers a batch with its LAST result set, counted by its own rows", async () => {
+  // #1312: the editor sends a T-SQL batch as one request. A text with several result sets
+  // still answers with its FIRST, as `EXEC sp_help` always did, and carries every set for the
+  // multi-statement route to choose from.
+  test("query() carries every result set of a batch and still answers with the first", async () => {
     const first = withColumns([{ a: 1 }], { a: { declaration: "int" } });
     const last = withColumns([{ doubled: 10 }, { doubled: 20 }], { doubled: { declaration: "int" } });
-    mockQueryFn = async () => ({ recordset: first, recordsets: [first, last], rowsAffected: [1, 1, 2] });
+    const bare = Object.assign([{ z: 1 }], {});
+    const empty = Object.assign([] as Record<string, unknown>[], {});
+    mockQueryFn = async () => ({ recordset: first, recordsets: [first, last, bare, empty], rowsAffected: [1, 2, 1] });
 
     await provider.connect();
-    const result = await provider.query("SELECT 1 AS a; DECLARE @x INT = 5; SELECT @x * 2 AS doubled");
+    const result = await provider.query("SELECT 1 AS a; SELECT d FROM t; SELECT 1 AS z; SELECT * FROM e");
 
-    expect(result.rows).toEqual([{ doubled: 10 }, { doubled: 20 }]);
-    expect(result.fields).toEqual(["doubled"]);
-    expect(result.rowCount).toBe(2);
-    expect(result.columnTypes).toEqual({ doubled: "int" });
+    expect(result.rows).toEqual([{ a: 1 }]);
+    expect(result.rowCount).toBe(1);
+    expect(result.resultSets).toEqual([
+      { rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: "int" } },
+      { rows: [{ doubled: 10 }, { doubled: 20 }], fields: ["doubled"], columnTypes: { doubled: "int" } },
+      { rows: [{ z: 1 }], fields: ["z"] },
+      { rows: [], fields: [] },
+    ]);
   });
 
-  test("query() keeps the driver's own count when the batch has one result set", async () => {
+  test("query() carries no result sets for a text that produced one", async () => {
     const only = withColumns([{ n: 1 }], { n: { declaration: "int" } });
     mockQueryFn = async () => ({ recordset: only, recordsets: [only], rowsAffected: [7, 1] });
 
@@ -2077,7 +2084,7 @@ describe("MSSQLProvider declared column types", () => {
     const result = await provider.query("UPDATE t SET a = 1; SELECT 1 AS n");
 
     expect(result.rows).toEqual([{ n: 1 }]);
-    expect(result.rowCount).toBe(7);
+    expect(Object.hasOwn(result, "resultSets")).toBe(false);
   });
 
   test("the key is omitted entirely when the recordset carries no column map", async () => {

@@ -2025,6 +2025,7 @@ interface QueryResult {
   warnings?: QueryWarning[];             // Notices the engine attached; ABSENT when it reported none
   columnTypes?: Record<string, string>;  // Declared type per column, keyed by its name in `fields`
   vectorColumns?: Readonly<Record<string, VectorColumn>>; // Vector columns by name; ABSENT when the result has none
+  resultSets?: QueryResultSet[];         // Every set of a multi-result text; never sent by /api/db/query or /api/db/transaction
 }
 
 interface QueryPagination {

@@ -1,3 +1,4 @@
+import { firstResultSet } from "@/lib/api/first-result-set";
 import { NextRequest, NextResponse } from "next/server";
 import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
@@ -243,9 +244,8 @@ export async function POST(req: NextRequest) {
     // pagination is offered; if it is the user's, or the statement could not be
     // rewritten, it is not.
     const hasMore = prepared.wasLimited && result.rows.length === prepared.limit;
-
     return NextResponse.json({
-      ...result,
+      ...firstResultSet(result),
       ...(explainFormat !== undefined && { explainFormat }),
       // Present only when there was a transaction to end, the way `/api/db/multi-query`
       // reports it, so an always-present "none" would announce something that did not happen.

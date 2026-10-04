@@ -349,18 +349,23 @@ to the newer name would change the wording on the form without changing a single
 { rows: recordset, fields, rowCount: rowsAffected[0] ?? recordset.length, executionTime, columnTypes? }
 ```
 
-A batch that returns several result sets answers with its **last** one, and `rowCount` is then that
-set's own row count, because `rowsAffected[0]` is the first statement's (#1312).
+A text that returns several result sets still answers with its **first**, as `EXEC sp_help` always
+did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `POST /api/db/transaction` do not send that field; the
+multi-statement route reads it to show a batch's last result with rows.
 
 **The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
 of one request the batch between `GO` lines (`src/lib/sql/grammar.ts`), so `DECLARE @x INT = 5;
 SELECT @x * 2` reaches the server as one request and answers 10, a `#temp` table created in a batch is
 there for the batch's next statement, and `CREATE PROCEDURE … AS BEGIN …; …; END` is created as written.
 A line holding only `GO` (any case, optionally followed by a `--` comment) separates batches and is
-never sent; `GO 5` is not read as a separator and the server refuses it. Each batch is its own request
-on a pooled connection, so a `#temp` table created in one batch is visible to the next only if it
-borrows the same connection (`docs/BACKLOG.md` D92), and a batch of several statements is sent with no
-row bound (`docs/editor/query-optimization.md`, multi-statement runs). Measured before this on SQL
+never sent; `GO 5` is not read as a separator and the server refuses it (measured on SQL Server 2025 RTM-CU9: `Incorrect syntax near 'GO'.`). Each batch is
+its own request on a pooled connection, so a `#temp` table created in one batch is visible to the next
+only if it borrows the same connection (`docs/BACKLOG.md` D92). The last batch's last statement is
+bounded with `TOP` when it is a read, unless the batch is a module definition (its first statement
+creates or alters a procedure, function, trigger or view), whose tail is the stored body. "Run the
+statement at the cursor" runs the caret's own statement in a batch that is a run of statements and the
+whole batch only for a module definition (`docs/editor/query-optimization.md`, multi-statement runs).
+Measured before this on SQL
 Server 2025 RTM-CU9: each `;`-fragment was its own request, so the same script answered `Must declare
 the scalar variable "@x"`, `Invalid object name '#t'` and `Incorrect syntax near 'GO'`.
 
@@ -419,8 +424,9 @@ throw — it does **not** confirm the cancellation actually took effect. Exposed
   stringified by the provider, so it reaches the client as the JSON shape a `Buffer` serializes to and
   is rendered as hex there (§7). Every provider answers this way since 2026-08-24, when MySQL and
   Cassandra stopped spelling their bytes `0x…` in the provider.
-- **Only one result set is returned.** `query()` returns the batch's last result set (§5.1), so a
-  batch or a stored procedure returning several result sets surfaces just that one.
+- **One result set is shown.** `query()` answers with the first result set and carries the others in
+  `resultSets` (§5.1); the single-statement route shows the first and the multi-statement route a
+  batch's last one with rows.
 
 ### 5.4 Declared column types
 

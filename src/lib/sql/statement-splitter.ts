@@ -136,12 +136,31 @@ function nextCodeWord(text: string, from: number, grammar: SqlGrammar): (SqlWord
   return word === null ? null : { ...word, start: i };
 }
 
+/** Reads the code word after `from`, or after the word being taken when `from` is omitted. */
+type Peek = (from?: number) => (SqlWord & { start: number }) | null;
+
 /** Words SQL*Plus allows between `CREATE` and the kind of PL/SQL unit being created. */
 const PLSQL_CREATE_MODIFIERS = new Set(["OR", "REPLACE", "EDITIONABLE", "NONEDITIONABLE", "EDITIONING"]);
 /** The unit kinds whose header ends at an `AS` or `IS` that opens their declarations. */
 const PLSQL_ROUTINES = new Set(["PROCEDURE", "FUNCTION", "PACKAGE"]);
 /** The closers that end a construct this reader never counted as opened. */
 const UNCOUNTED_CLOSERS = new Set(["IF", "LOOP"]);
+/**
+ * What may follow a routine header's `AS`/`IS` in place of a body: a call spec
+ * (`AS LANGUAGE JAVA NAME '…'`, `AS LANGUAGE C …`, `AS EXTERNAL …`) or an MLE module call
+ * (`AS MLE MODULE …`). None of them has an `END`, so none opens a frame; reading one as a
+ * declaration section held every `;` after it and swallowed the rest of the script.
+ */
+const PLSQL_CALL_SPECS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  // Keyed by the word after `AS`/`IS`, valued by the words that may follow IT: a call spec is
+  // that pair, while a declaration whose NAME is `language` (`AS language VARCHAR2(10);`) is
+  // followed by its type and opens a declaration section like any other.
+  ["LANGUAGE", new Set(["JAVA", "C", "JAVASCRIPT"])],
+  ["EXTERNAL", new Set(["LIBRARY", "NAME", "PARAMETERS", "WITH", "LANGUAGE", "AGENT", "CALLING"])],
+  ["MLE", new Set(["MODULE", "LANGUAGE"])],
+]);
+/** The words that open a compound trigger's timing point (`BEFORE EACH ROW IS …`). */
+const PLSQL_TIMING_POINTS = new Set(["BEFORE", "AFTER", "INSTEAD"]);
 
 /**
  * What a frame on the body stack is.
@@ -152,12 +171,16 @@ const UNCOUNTED_CLOSERS = new Set(["IF", "LOOP"]);
  *   frames and not a counter of `BEGIN`s.
  * - `body` - a `BEGIN` block, or a declaration section past its `BEGIN`.
  * - `case` - a `CASE`, statement or expression, both of which close with `END`.
+ * - `section` - a compound trigger's own declaration section (`COMPOUND TRIGGER` up to
+ *   its last `END`). Unlike `declare` it is never merged into by a `BEGIN`: each timing
+ *   point inside it (`BEFORE STATEMENT IS BEGIN … END BEFORE STATEMENT;`) is a block of
+ *   its own.
  *
  * `IF … END IF` and `LOOP … END LOOP` are not frames at all: their closer is `END`
  * followed by the opener's own word, so the reader skips that pair rather than counting
  * the opener, which also covers `WHILE … LOOP` and `FOR … LOOP`.
  */
-type Frame = "declare" | "body" | "case";
+type Frame = "declare" | "body" | "case" | "section";
 
 /**
  * Whether the statement being read has a procedural body, and where that body ends.
@@ -168,9 +191,8 @@ type Frame = "declare" | "body" | "case";
  * `script` fact existed. A unit holds every `;` while a frame is open, and the first
  * `;` after its last frame closes ends it as usual.
  *
- * A unit whose frames never close - a call spec (`AS LANGUAGE C …`), a compound
- * trigger, a construct this reader does not model - holds its `;` to the end of the
- * input or to the next separator line, which is SQL*Plus's own rule for a PL/SQL unit:
+ * A unit whose frames never close - a construct this reader does not model - holds its
+ * `;` to the end of the input or to the next separator line, which is SQL*Plus's own rule for a PL/SQL unit:
  * it ends at `/`. That is the fail-safe direction, one statement too long rather than a
  * fragment the engine stores INVALID.
  */
@@ -179,6 +201,8 @@ class BodyReader {
   private readonly lead: string[] = [];
   private readonly frames: Frame[] = [];
   private opened = false;
+  /** The unit creates a procedure, function, package or type body. */
+  private routine = false;
   /** A routine header has been read and its `AS`/`IS` would open its declarations. */
   private header = false;
   private parens = 0;
@@ -199,9 +223,13 @@ class BodyReader {
     return this.frames.length > 0;
   }
 
-  /** Whether the `;` that ends the statement is part of it: PL/SQL's `END;`. */
+  /**
+   * Whether the `;` that ends the statement is part of it: PL/SQL's `END;`, and the `;` a
+   * routine's call spec ends with, which Oracle refuses the unit without as well (measured
+   * on 26ai Free 23.26.3: a Java call spec sent without it is stored INVALID, PLS-00103).
+   */
   get keepsTerminator(): boolean {
-    return this.rule === "pl-sql" && this.opened;
+    return this.rule === "pl-sql" && (this.opened || this.routine);
   }
 
   semicolon(): void {
@@ -214,11 +242,16 @@ class BodyReader {
   }
 
   /**
-   * Take one code word. `peek` reads the word after it, which only an `END` asks for;
-   * the answer is how far the reader consumed, the word's end or the peeked word's.
+   * Take one code word. `peek` reads the word after it, which `END`, `AS`/`IS` and
+   * `COMPOUND` ask for; the answer is how far the reader consumed, the word's end or the
+   * peeked word's. `label` says the word is a `<<label>>`, which names a block rather than
+   * starting a statement, so it decides nothing about the statement's kind.
    */
-  word(word: SqlWord, peek: () => (SqlWord & { start: number }) | null): number {
-    if (this.state === "lead") this.classify(word.text);
+  word(word: SqlWord, peek: Peek, label = false): number {
+    if (this.state === "lead") {
+      if (label) return word.end;
+      this.classify(word.text);
+    }
     if (this.state !== "unit") return word.end;
 
     switch (word.text) {
@@ -237,17 +270,29 @@ class BodyReader {
       }
     }
 
-    if (this.rule === "pl-sql" && this.parens === 0) this.plsqlWord(word.text);
+    if (this.rule === "pl-sql" && this.parens === 0) return this.plsqlWord(word, peek);
     return word.end;
   }
 
-  private plsqlWord(text: string): void {
+  private plsqlWord(word: SqlWord, peek: Peek): number {
+    const text = word.text;
     if (text === "DECLARE") this.open("declare");
     else if (text === "PROCEDURE" || text === "FUNCTION") this.header = true;
+    else if (PLSQL_TIMING_POINTS.has(text) && this.frames.at(-1) === "section") this.header = true;
     else if ((text === "AS" || text === "IS") && this.header) {
       this.header = false;
-      this.open("declare");
+      const next = peek();
+      const follows = next === null ? undefined : PLSQL_CALL_SPECS.get(next.text);
+      const after = next === null || follows === undefined ? null : peek(next.end);
+      if (after === null || follows === undefined || !follows.has(after.text)) this.open("declare");
+    } else if (text === "COMPOUND") {
+      const next = peek();
+      if (next !== null && next.text === "TRIGGER") {
+        this.open("section");
+        return next.end;
+      }
     }
+    return word.end;
   }
 
   private open(frame: Frame): void {
@@ -277,9 +322,11 @@ class BodyReader {
       // `CREATE TYPE … AS OBJECT (…)` is plain SQL; only its BODY is PL/SQL.
       this.state = text === "BODY" ? "unit" : "plain";
       this.header = text === "BODY";
+      this.routine = text === "BODY";
     } else if (PLSQL_ROUTINES.has(text)) {
       this.state = "unit";
       this.header = true;
+      this.routine = true;
     } else if (text === "TRIGGER") {
       // A trigger's body is a block that starts with `DECLARE` or `BEGIN`; its header has
       // no `AS`/`IS` of its own (`REFERENCING NEW AS n` is an alias), so none is read.
@@ -383,8 +430,14 @@ function scan(input: string, grammar: SqlGrammar): Scan {
 
     if (body.reading) {
       const word = i > 0 && (IDENTIFIER_PART.test(input[i - 1]) || input[i - 1] === "$") ? null : readSqlWord(input, i);
+      // A word after a `.` is a qualified name's part (`NEW.end`, `t.begin`), never a keyword.
+      if (word !== null && input[i - 1] === ".") {
+        i = word.end;
+        continue;
+      }
       if (word !== null) {
-        const end = body.word(word, () => nextCodeWord(input, word.end, grammar));
+        const peek: Peek = (from = word.end) => nextCodeWord(input, from, grammar);
+        const end = body.word(word, peek, input.startsWith("<<", i - 2));
         currentLine += countNewlines(input, i, end);
         i = end;
         continue;
@@ -446,6 +499,45 @@ export function splitExecutionUnits(input: string, grammar: SqlGrammar = DEFAULT
     }
   }
   return units;
+}
+
+/** The objects whose `CREATE` or `ALTER` must open a T-SQL batch and whose body runs to its end. */
+const BATCH_MODULES = new Set(["PROC", "PROCEDURE", "FUNCTION", "TRIGGER", "VIEW"]);
+
+/**
+ * Whether this unit is ONE module definition rather than a run of statements: its first
+ * statement is `CREATE`, `ALTER` or `CREATE OR ALTER` of a procedure, function, trigger or
+ * view. T-SQL requires such a statement to be the first in its batch (Msg 111) and reads
+ * everything after it, to the end of the batch, as the module's body, so the `;`-statements
+ * inside it are not statements the server runs.
+ *
+ * Every other multi-statement unit IS a run of statements sent together, and the callers
+ * that ask treat it as one: the cursor runs only the statement it is in, and the route
+ * bounds the last statement when it is a read.
+ */
+export function unitIsModuleBody(unit: ExecutionUnit, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): boolean {
+  const first = unit.statements[0].sql;
+  const verb = nextCodeWord(first, 0, grammar);
+  if (verb === null || (verb.text !== "CREATE" && verb.text !== "ALTER")) return false;
+  let kind = nextCodeWord(first, verb.end, grammar);
+  if (kind?.text === "OR") {
+    const alter = nextCodeWord(first, kind.end, grammar);
+    kind = alter === null ? null : nextCodeWord(first, alter.end, grammar);
+  }
+  return kind !== null && BATCH_MODULES.has(kind.text);
+}
+
+/**
+ * What "run the statement the cursor is in" may send: each unit, except that a batch which
+ * is a run of statements offers its statements one by one. A caret on a `SELECT` must never
+ * send the `DELETE` written after it in the same batch; a caret anywhere in a procedure body
+ * sends the whole `CREATE PROCEDURE`, which is the only statement that body belongs to.
+ */
+export function splitCursorTargets(input: string, grammar: SqlGrammar = DEFAULT_SQL_GRAMMAR): SplitStatement[] {
+  return splitExecutionUnits(input, grammar).flatMap((unit) => {
+    const { statements, ...whole } = unit;
+    return statements.length > 1 && !unitIsModuleBody(unit, grammar) ? statements : [whole];
+  });
 }
 
 /**

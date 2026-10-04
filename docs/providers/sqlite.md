@@ -478,7 +478,8 @@ whole trigger as one statement, closing it at the `END` that matches its `BEGIN`
 inside the body is counted, so it does not close it early). A bare `BEGIN` stays the statement that
 opens a transaction. Measured before this through node:sqlite 3.50.4: the trigger was cut at its
 inner `;`, the run answered `incomplete input`, and in a longer script every statement after the
-trigger was skipped.
+trigger was skipped. One shape is not modelled: an unquoted, unqualified column named `end` inside the body reads as
+the body's `END` and closes it early, so write it quoted (`"end"`).
 
 `EXPLAIN QUERY PLAN` is supported (`supportsExplain: true`, `explainFormat: "sqlite-queryplan"`) — the UI renders the plan as a tree; SQLite reports no per-node cost or timing metrics, so none are shown.
 

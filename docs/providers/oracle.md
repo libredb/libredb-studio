@@ -535,9 +535,16 @@ an anonymous block that starts with `DECLARE` or `BEGIN`, and `CREATE [OR REPLAC
 is read to the `END` that closes its outermost block, and the `;` after that `END` is kept, because
 Oracle refuses the unit without it (`PLS-00103`, "Encountered the symbol end-of-file"). A line holding
 only `/` ends the statement in progress and is never sent, as in SQL*Plus, so a script written for
-SQL*Plus or SQL Developer runs unchanged; a unit the reader cannot close on its own (a call spec, a
-compound trigger) needs that `/`, as it does there. A `WITH FUNCTION` read is not a unit and is still
-cut at its inner `;`.
+SQL*Plus or SQL Developer runs unchanged. A compound trigger is read to its last `END` with each timing
+point a block of its own, a `<<label>>` before a block is read past, and a call spec (`AS LANGUAGE
+JAVA …`, `AS LANGUAGE C …`, `AS EXTERNAL …`, `AS MLE MODULE …`) has no body, so the `;` after it ends
+it. A unit the reader still cannot close on its own needs that `/`, as it does there. A `WITH FUNCTION`
+read is not a unit and is still cut at its inner `;`.
+
+A write inside a block still asks for confirmation: the gate reads into a statement led by `BEGIN`,
+`DECLARE`, `IF`, `THEN` and the other control-flow words, so `BEGIN DELETE FROM emp; END;` asks, and so
+does a block that runs dynamic SQL (`EXECUTE IMMEDIATE`, `DBMS_SQL`), whose text the gate cannot read
+(`docs/editor/query-optimization.md`, multi-statement runs).
 
 Measured before this on 26ai Free 23.26.3: the editor cut `CREATE OR REPLACE PROCEDURE raise_sal(p_pct IN
 NUMBER) AS BEGIN UPDATE emp SET salary = salary * (1 + p_pct/100); END;` at its inner `;`, the first

@@ -203,6 +203,28 @@ describe("POST /api/db/query", () => {
     );
   });
 
+  test("answers a multi-result text with its first set and sends no copy of the others (#1312)", async () => {
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ a: 1 }],
+      fields: ["a"],
+      rowCount: 1,
+      executionTime: 1,
+      resultSets: [
+        { rows: [{ a: 1 }], fields: ["a"] },
+        { rows: [{ b: 2 }], fields: ["b"] },
+      ],
+    });
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "EXEC sp_help" },
+    });
+    const data = await parseResponseJSON<Record<string, unknown>>(await POST(req as never));
+
+    expect(data.rows).toEqual([{ a: 1 }]);
+    expect(Object.hasOwn(data, "resultSets")).toBe(false);
+  });
+
   // ── Bound parameters (#290) ───────────────────────────────────────────────
   //
   // A generated statement (the inline row editor) sends its values here instead of

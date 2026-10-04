@@ -240,6 +240,28 @@ describe("POST /api/db/transaction", () => {
     expect(mockTxProvider.rollbackTransaction).toHaveBeenCalledTimes(1);
   });
 
+  test("query action sends no copy of a multi-result text's every set (#1312)", async () => {
+    (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ a: 1 }],
+      fields: ["a"],
+      rowCount: 1,
+      executionTime: 1,
+      resultSets: [
+        { rows: [{ a: 1 }], fields: ["a"] },
+        { rows: [{ b: 2 }], fields: ["b"] },
+      ],
+    });
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT 1 AS a; SELECT 2 AS b" },
+    });
+
+    const data = await parseResponseJSON<Record<string, unknown>>(await POST(req as never));
+
+    expect(data.rows).toEqual([{ a: 1 }]);
+    expect(Object.hasOwn(data, "resultSets")).toBe(false);
+  });
+
   test("query action with sql returns result with pagination", async () => {
     const req = createMockRequest("/api/db/transaction", {
       method: "POST",

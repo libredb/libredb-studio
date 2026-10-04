@@ -1396,6 +1396,48 @@ describe("isDangerousQuery", () => {
     expect(isDangerousQuery("BEGIN x := 1; SELECT 1 INTO y FROM dual; END;", "oracle")).toBe(false);
   });
 
+  // The block's FIRST statement is the write, so the fragment the gate reads starts with
+  // the block's own word. Before #1312 Oracle refused that fragment; now the block runs.
+  test.each([
+    ["oracle", "BEGIN DELETE FROM emp; END;"],
+    ["oracle", "BEGIN IF 1=1 THEN DELETE FROM emp; END IF; END;"],
+    ["oracle", "DECLARE v NUMBER; BEGIN DELETE FROM emp; END;"],
+    ["oracle", "BEGIN NULL; EXCEPTION WHEN OTHERS THEN DROP TABLE t; END;"],
+    ["oracle", "<<outer>> BEGIN TRUNCATE TABLE t; END outer;"],
+    ["mssql", "IF @@ROWCOUNT > 0 DELETE FROM t"],
+    ["mssql", "DECLARE @n INT = 1; WHILE @n > 0 BEGIN DELETE TOP (1) FROM t; SET @n = 0; END"],
+  ] as const)("a write that opens a block asks on %s: %s", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(true);
+  });
+
+  test.each([
+    "BEGIN EXECUTE IMMEDIATE 'DROP TABLE t PURGE'; EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;",
+    "BEGIN EXECUTE IMMEDIATE 'TRUNCATE TABLE t'; END;",
+    "DECLARE c INTEGER := DBMS_SQL.OPEN_CURSOR; BEGIN DBMS_SQL.PARSE(c, 'DROP TABLE t', DBMS_SQL.NATIVE); END;",
+  ])("dynamic SQL in a block asks, its text being a literal the gate cannot read: %s", (sql) => {
+    expect(isDangerousQuery(sql, "oracle")).toBe(true);
+  });
+
+  test("a variable or a FOR UPDATE lock clause named like a write does not ask", () => {
+    expect(isDangerousQuery("DECLARE @alter INT = 1; SELECT @alter", "mssql")).toBe(false);
+    expect(isDangerousQuery("DECLARE @drop INT = 1, @update INT = 2, @delete INT = 3; SELECT @drop", "mssql")).toBe(
+      false,
+    );
+    expect(
+      isDangerousQuery("DECLARE CURSOR c IS SELECT id FROM emp FOR UPDATE; BEGIN OPEN c; CLOSE c; END;", "oracle"),
+    ).toBe(false);
+    // The exception names only those two shapes: a real write after them still asks.
+    expect(isDangerousQuery("DECLARE @alter INT = 1; IF @alter = 1 DELETE FROM t", "mssql")).toBe(true);
+    expect(isDangerousQuery("BEGIN SELECT 1 INTO x FROM t FOR UPDATE; UPDATE t SET a = 1; END;", "oracle")).toBe(true);
+  });
+
+  test("a block that only reads, or a word inside a literal, does not ask", () => {
+    expect(isDangerousQuery("BEGIN SELECT 'delete' INTO x FROM dual; END;", "oracle")).toBe(false);
+    expect(isDangerousQuery("IF @x > 0 SELECT 1", "mssql")).toBe(false);
+    // A procedure call cannot be read into: what it does is the server's, as before.
+    expect(isDangerousQuery("EXEC sp_cleanup", "mssql")).toBe(false);
+  });
+
   test("a write after a separator line asks", () => {
     expect(isDangerousQuery("SELECT 1\nGO\nDROP TABLE t", "mssql")).toBe(true);
     expect(isDangerousQuery("SELECT 1 FROM dual\n/\nDROP TABLE t", "oracle")).toBe(true);
