@@ -2,6 +2,7 @@
 
 import { appFetch } from "@/lib/config/base-path";
 import { useEffect, useState } from "react";
+import { PlatformDiscoveryCard } from "@/components/admin/PlatformDiscoveryCard";
 import { OverviewTab, type AdminUser } from "@/components/admin/tabs/OverviewTab";
 
 export default function AdminOverviewPage() {
@@ -20,8 +21,11 @@ export default function AdminOverviewPage() {
       });
   }, []);
 
+  // The discovery card sits outside OverviewTab: OverviewTab returns its empty state early when
+  // there are no connections, which is exactly when discovery has failed.
   return (
-    <div data-testid="admin-content-overview" className="mx-auto max-w-7xl px-4 sm:px-6 py-6">
+    <div data-testid="admin-content-overview" className="mx-auto max-w-7xl px-4 sm:px-6 py-6 space-y-6">
+      <PlatformDiscoveryCard />
       <OverviewTab user={user} />
     </div>
   );
