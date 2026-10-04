@@ -28,7 +28,7 @@ import {
   type GraphStatementGate,
 } from "@/lib/db/graph/graph-base-provider";
 import type { GraphCatalogEntry, GraphIndexRow, GraphKindId, GraphPropertyRow } from "@/lib/db/graph/objects";
-import { DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   ActiveSessionDetails,
@@ -75,6 +75,8 @@ class FakeTransport {
     truncated: false,
   });
   closeError: unknown;
+  /** Set to hold every close open until the test settles it. */
+  closeHeld: Promise<void> | undefined;
 
   readonly factory: GraphClientFactory = (config) => {
     this.configs.push(config);
@@ -89,6 +91,7 @@ class FakeTransport {
       },
       close: async () => {
         this.closes++;
+        if (this.closeHeld !== undefined) await this.closeHeld;
         if (this.closeError !== undefined) throw this.closeError;
       },
     };
@@ -105,6 +108,8 @@ class FakeCatalog implements GraphCatalog {
   home = "graph";
   homeCalls = 0;
   homeError: unknown;
+  /** Replaces the home-database answer, as `FakeTransport.verify` does the verify's. */
+  homeAnswer: (() => Promise<string>) | undefined;
   readonly lists: Partial<Record<GraphKindId, ListAnswer | unknown>> = {
     label: { entries: entries("Service", "Team"), truncated: false },
     relationship_type: { entries: entries("OWNS"), truncated: false },
@@ -140,7 +145,7 @@ class FakeCatalog implements GraphCatalog {
   async homeDatabase(): Promise<string> {
     this.homeCalls++;
     if (this.homeError !== undefined) throw this.homeError;
-    return this.home;
+    return this.homeAnswer === undefined ? this.home : this.homeAnswer();
   }
 
   async listKind(_client: Pick<GraphClient, "run">, database: string, kind: GraphKindId): Promise<ListAnswer> {
@@ -236,6 +241,9 @@ class TestGraphProvider extends GraphBaseProvider {
   }
   public exposedDatabase(): string | undefined {
     return this.currentDatabase();
+  }
+  public exposedLastError(): Error | undefined {
+    return this.state.lastError;
   }
 }
 
@@ -510,6 +518,109 @@ describe("connect", () => {
     transport.verify = async () => SERVER;
     await provider.connect();
     expect(provider.isConnected()).toBe(true);
+  });
+
+  test("a disconnect during verify wins: the attempt closes its own client and rejects", async () => {
+    const { provider, transport } = setup();
+    const held = deferred<GraphServerInfo>();
+    transport.verify = () => held.promise;
+    const outcome = provider.connect().catch((error: unknown) => error);
+    expect(transport.verifies).toBe(1);
+    await provider.disconnect();
+    held.resolve(SERVER);
+    const error = await outcome;
+    expect([transport.closes, provider.isConnected(), provider.exposedDatabase()]).toEqual([1, false, undefined]);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe("Disconnected while connecting; the connection was closed.");
+    // The provider's state is the disconnect's: the attempt that lost records no error on it.
+    expect(provider.exposedLastError()).toBeUndefined();
+    // A connect after it all is a first connect again: one more client, and it stays open.
+    transport.verify = async () => SERVER;
+    await provider.connect();
+    expect([transport.configs.length, transport.closes, provider.isConnected()]).toEqual([2, 1, true]);
+  });
+
+  test("a disconnect during the home-database read wins the same way", async () => {
+    const { provider, transport, catalog } = setup({ config: { database: undefined } });
+    const asked = deferred<void>();
+    const home = deferred<string>();
+    catalog.homeAnswer = () => {
+      asked.resolve();
+      return home.promise;
+    };
+    const outcome = provider.connect().catch((error: unknown) => error);
+    await asked.promise;
+    await provider.disconnect();
+    home.resolve("graph");
+    const error = await outcome;
+    expect([transport.closes, provider.isConnected(), provider.exposedDatabase()]).toEqual([1, false, undefined]);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(provider.exposedLastError()).toBeUndefined();
+    catalog.homeAnswer = undefined;
+    await provider.connect();
+    expect([transport.configs.length, transport.closes, provider.exposedDatabase()]).toEqual([2, 1, "graph"]);
+  });
+
+  test("a disconnect during a reconnect's cleanup wins too", async () => {
+    const { provider, transport } = await connected();
+    const held = deferred<void>();
+    transport.closeHeld = held.promise;
+    const outcome = provider.connect().catch((error: unknown) => error);
+    // The reconnect is still closing the previous client when the disconnect lands.
+    expect(transport.closes).toBe(1);
+    const disconnecting = provider.disconnect();
+    held.resolve();
+    await disconnecting;
+    expect(await outcome).toBeInstanceOf(ConnectionError);
+    expect([transport.configs.length, transport.closes, provider.isConnected()]).toEqual([2, 2, false]);
+  });
+
+  test("an attempt that fails after losing to a disconnect rejects with its own failure and records nothing", async () => {
+    const { provider, transport } = setup();
+    const held = deferred<GraphServerInfo>();
+    transport.verify = () => held.promise;
+    const outcome = provider.connect().catch((error: unknown) => error);
+    await provider.disconnect();
+    held.reject(new GraphClientError("auth", "bad credentials"));
+    expect(((await outcome) as Error).message).toBe("TestGraph says: bad credentials");
+    expect([transport.closes, provider.isConnected(), provider.exposedLastError()]).toEqual([1, false, undefined]);
+  });
+
+  test("a connect after the disconnect starts its own attempt, and the one that lost leaves it alone", async () => {
+    const { provider, transport } = setup();
+    const lost = deferred<GraphServerInfo>();
+    transport.verify = () => lost.promise;
+    const first = provider.connect();
+    const outcome = first.catch((error: unknown) => error);
+    await provider.disconnect();
+    transport.verify = async () => SERVER;
+    const second = provider.connect();
+    // Joining the attempt in flight would hand this caller the rejection the disconnect causes.
+    expect(second).not.toBe(first);
+    await second;
+    lost.resolve(SERVER);
+    expect(await outcome).toBeInstanceOf(ConnectionError);
+    expect([transport.configs.length, transport.closes, provider.isConnected()]).toEqual([2, 1, true]);
+    expect(provider.exposedDatabase()).toBe("movies");
+    expect(provider.exposedLastError()).toBeUndefined();
+  });
+
+  test("the attempt that lost, settling, leaves the memo to the attempt that replaced it", async () => {
+    const { provider, transport } = setup();
+    const lost = deferred<GraphServerInfo>();
+    const next = deferred<GraphServerInfo>();
+    transport.verify = () => lost.promise;
+    const outcome = provider.connect().catch((error: unknown) => error);
+    await provider.disconnect();
+    transport.verify = () => next.promise;
+    const second = provider.connect();
+    lost.resolve(SERVER);
+    expect(await outcome).toBeInstanceOf(ConnectionError);
+    // Still in flight, so an overlapping connect joins it rather than building a third client.
+    expect(provider.connect()).toBe(second);
+    next.resolve(SERVER);
+    await second;
+    expect([transport.configs.length, transport.closes, provider.isConnected()]).toEqual([2, 1, true]);
   });
 
   test("disconnect before connect closes nothing", async () => {

@@ -56,6 +56,8 @@ Any other failed version read leaves the version unknown and does not fail the c
 A second `connect()` closes the previous driver first and aborts its statements.
 A `connect()` that overlaps one still in flight awaits that attempt instead of starting its own, so two calls build one driver.
 `disconnect()` aborts every statement in flight and closes the driver.
+A `disconnect()` that lands while a `connect()` is still verifying connectivity or resolving the database wins: that attempt closes the driver it opened instead of keeping it, and rejects with a `ConnectionError` ("Disconnected while connecting; the connection was closed.").
+The provider stays disconnected and records no error from that attempt, and a `connect()` called after the disconnect starts its own attempt rather than joining the one that lost.
 
 ### 2.4 The client, and why
 
