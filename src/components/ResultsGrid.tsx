@@ -4,6 +4,7 @@ import React, { useMemo, useState, useRef, useCallback, useEffect } from "react"
 import { QueryResult, type DatabaseType } from "@/lib/types";
 import {
   type ColumnDef,
+  type SortFn,
   type SortingState,
   columnResizingFeature,
   columnSizingFeature,
@@ -38,6 +39,7 @@ import {
   RESULT_COLUMN_MAX_SIZE,
   RESULT_COLUMN_MIN_SIZE,
 } from "@/components/results-grid/column-sizing";
+import { isNumericColumn, numericCellComparator } from "@/components/results-grid/numeric-sort";
 import { hasResultOrder } from "@/lib/sql/result-order";
 import { pageOfferFor } from "@/components/results-grid/page-offer";
 import { useDismissOnOutsideClick } from "@/hooks/use-dismiss-on-outside-click";
@@ -424,6 +426,25 @@ export function ResultsGrid({
     return refusals;
   }, [inlineEditRefusedColumns, result.fields, result.columnTypes]);
 
+  // One comparator per numeric column, each with its own parse cache, built once per result
+  // rather than on every render or edit keystroke.
+  const numericSortFns = useMemo(() => {
+    const sortFns = new Map<string, SortFn<typeof tableFeatureSet, Record<string, unknown>>>();
+    for (const field of result.fields) {
+      if (!isNumericColumn(declaredTypeOf(result.columnTypes, field), result.rows, field)) continue;
+      const compare = numericCellComparator();
+      sortFns.set(field, (rowA, rowB, columnId) =>
+        compare(
+          rowA.getValue(columnId),
+          rowB.getValue(columnId),
+          // The table inverts a descending comparison, so the NULL placement needs the direction.
+          rowA.table.atoms.sorting?.get().some((sort) => sort.id === columnId && sort.desc) === true,
+        ),
+      );
+    }
+    return sortFns;
+  }, [result.fields, result.columnTypes, result.rows]);
+
   const columns = useMemo<ColumnDef<typeof tableFeatureSet, Record<string, unknown>>[]>(() => {
     // `truncate` carries its own `white-space: nowrap`, so wrapping has to replace it here,
     // on the element holding the value, not only on the cell around it.
@@ -478,6 +499,9 @@ export function ResultsGrid({
       // something off the prototype chain.
       id: field,
       accessorFn: (row: Record<string, unknown>) => (Object.hasOwn(row, field) ? row[field] : undefined),
+      // A numeric column sorts as numbers, not as the strings it travels as (#1384).
+      // Every other column keeps the table's own comparison.
+      ...(numericSortFns.has(field) ? { sortFn: numericSortFns.get(field) } : {}),
       header: ({ column }) => {
         const hasFilter = columnFilters.has(field) && !!columnFilters.get(field);
         const isSensitive = effectiveMaskingEnabled && sensitiveColumns.has(field);
@@ -712,6 +736,7 @@ export function ResultsGrid({
     detailColumnId,
     wrapText,
     result.fields,
+    numericSortFns,
     result.columnTypes,
     result.vectorColumns,
     editingCell,

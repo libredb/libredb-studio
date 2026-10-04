@@ -2095,6 +2095,66 @@ describe("ResultsGrid", () => {
     expect(descending[2]).toContain("Alice");
   });
 
+  /**
+   * 64-bit integers and decimals reach the grid as digit strings (#1384), and the table's
+   * default comparison orders a string lexicographically: 1, 10, 100, 9. The column's declared
+   * type picks a numeric comparison, and a text column keeps the default.
+   */
+  describe("sorting numeric columns (#1384)", () => {
+    const numericResult: QueryResult = {
+      rows: [
+        { id: "10", total: "100.00", label: "10", memo: "b" },
+        { id: "9", total: "1.25", label: "9", memo: "a" },
+        { id: "9007199254740993", total: "-5.5", label: "9007199254740993", memo: "d" },
+        { id: null, total: null, label: "100", memo: "c" },
+        { id: "-5", total: "1000.00", label: "-5", memo: "e" },
+        { id: "9007199254740992", total: "10.00", label: "1", memo: "f" },
+      ],
+      fields: ["id", "total", "label", "memo"],
+      columnTypes: { id: "bigint", total: "numeric(12,2)", label: "varchar(30)", memo: "text" },
+      rowCount: 6,
+      executionTime: 1,
+    };
+
+    /** The memo column names each row with one letter, so the order read back is unambiguous. */
+    const memoOrder = (container: HTMLElement) =>
+      Array.from(container.querySelectorAll("[data-index]:not([data-testid]):not(button)"))
+        .map((row) => /[a-f]$/.exec(row.textContent ?? "")?.[0])
+        .join("");
+
+    const clickHeader = (utils: ReturnType<typeof render>, name: RegExp) =>
+      fireEvent.click(utils.getAllByRole("button", { name })[0]);
+
+    test("a bigint column sorts ascending and descending as numbers, NULL last both ways", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^id, bigint$/);
+      // -5, 9, 10, 2^53, 2^53 + 1, NULL
+      expect(memoOrder(utils.container)).toBe("eabfdc");
+      clickHeader(utils, /^id, bigint, sorted ascending$/);
+      // 2^53 + 1, 2^53, 10, 9, -5, NULL
+      expect(memoOrder(utils.container)).toBe("dfbaec");
+    });
+
+    test("a numeric(12,2) column sorts decimals of different magnitudes as numbers", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^total, numeric\(12,2\)$/);
+      // -5.5, 1.25, 10.00, 100.00, 1000.00, NULL
+      expect(memoOrder(utils.container)).toBe("dafbec");
+      clickHeader(utils, /^total, numeric\(12,2\), sorted ascending$/);
+      expect(memoOrder(utils.container)).toBe("ebfadc");
+    });
+
+    test("a text column of digit strings keeps the text order", () => {
+      const utils = render(React.createElement(ResultsGrid, { result: numericResult }));
+      fireEvent.click(utils.getByTestId("view-table"));
+      clickHeader(utils, /^label, varchar\(30\)$/);
+      // "-5" < "1" < "10" < "100" < "9" < "9007199254740993" as text
+      expect(memoOrder(utils.container)).toBe("efbcad");
+    });
+  });
+
   // ── A11y semantics (#100): keyboard-reachable interactive elements ────────
 
   describe("a11y semantics", () => {
