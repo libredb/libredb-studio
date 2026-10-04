@@ -7,7 +7,7 @@
  */
 import type { ContainerLevels, ObjectKindSpec, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import { MAINTAINED_KINDS } from "./maintenance";
-import { DB2_PREVIEW_PROJECTION } from "./values";
+import { DB2_PREVIEW_PROJECTION, LARGE_OBJECT_EDIT_REASON, LARGE_OBJECT_TYPE_SOURCE } from "./values";
 
 /**
  * One level, the schema. A connection opens one database, and nothing in the product can switch
@@ -68,6 +68,10 @@ export function db2Capabilities(base: ProviderCapabilities): ProviderCapabilitie
     // The grid's inline editor is a read-then-write-back, which db2-node 1.0.24 carries intact (K1
     // and K22 fixed; see `DB2_OBJECT_KINDS`).
     supportsInlineRowEdit: true,
+    // Except a CLOB, DBCLOB or BLOB column: db2-node writes nothing, and reports no error, for a
+    // value bound to one declared 32768 bytes or longer (K24), and a result declares these columns
+    // without their length, so the editor refuses every one of them.
+    inlineEditRefusedColumns: { type: LARGE_OBJECT_TYPE_SOURCE, reason: LARGE_OBJECT_EDIT_REASON },
     // `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own `prepareQuery`.
     supportsResultPagination: true,
     // No held session in this version.

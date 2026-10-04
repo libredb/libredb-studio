@@ -573,7 +573,9 @@ the load-bearing part; a naive digit-run rewrite corrupts `"id: 9007199254740993
 Either way the number reaches the UI as an exact string, which is what the `pg` driver already does
 for `int8`. The generalisable lesson: check the widest integer type your engine supports against
 `Number.MAX_SAFE_INTEGER` before trusting `JSON.parse`, and expect to write the fix yourself when the
-server offers no switch.
+server offers no switch. Check the exact decimal type too: ClickHouse's 64-bit setting does not cover
+`Decimal`, which needs `output_format_json_quote_decimals=1` as well, and a fraction cannot be rescued
+from the text afterwards, because nothing in it tells a lossy decimal from a float printed in full.
 
 **The response envelope does not always describe the rows.** Couchbase's `signature` is `"*"` for
 `SELECT *`, and `{ id, "*" }` for a wildcard mixed with named projections. Taking those keys
@@ -783,6 +785,7 @@ Every field and what it controls:
 | `supportsExternalQueryLimiting` | `boolean` | Whether route applies LIMIT to queries (SQL) or provider handles it (MongoDB) |
 | `supportsCreateTable` | `boolean` | "Create Table" button in SchemaExplorer |
 | `supportsInlineRowEdit` | `boolean?` | Whether the results grid offers inline row editing. `false` hides the EDIT toggle and every editable cell — set it where the engine has no `UPDATE <table> SET <col> = <val> WHERE <pk> = <val>` statement, which is what `use-inline-editing.ts` builds. Optional only because the interface is published and a required addition breaks external implementers; every provider here declares it, and an absent flag reads as unsupported |
+| `inlineEditRefusedColumns` | `{ type: string; reason: string }?` | The result columns the inline editor must not write where the engine takes its `UPDATE` for other columns. `type` is a regular expression source matched against the type the result declares for the column (`QueryResult.columnTypes`); each matching cell opens no editor and shows `reason`. Db2 sets it for CLOB, DBCLOB and BLOB, which db2-node does not write when bound (K24). Absent refuses no column |
 | `supportsResultPagination` | `boolean?` | Whether your `prepareQuery` really applies a positive `offset`. `false` hides the results grid's Load More control. Not the same question as `supportsExternalQueryLimiting`; measure it, do not infer it. Optional and gated on `=== true` for the same published-interface reason as the flag above |
 | `supportsTransactions` | `boolean?` | Whether THIS PROVIDER implements the interactive transaction session `POST /api/db/transaction` drives (`beginTransaction`/`commitTransaction`/`rollbackTransaction` over one held connection). `false` withholds the editor toolbar's BEGIN/COMMIT/ROLLBACK trio **and** the SANDBOX toggle, which auto-rolls-back through the same route. It is about the provider's surface, not the engine: SQLite has `BEGIN` and still declares `false`. Optional for the published-interface reason above; the UI gates on `=== true`, so an absent flag and an unresolved metadata fetch both read as no transactions (#464) |
 | `declaresForeignKeys` | `boolean?` | Whether this engine has foreign keys in its model at all. `false` says an empty foreign-key list means "no such constraint exists here", not "this schema declares none" — set it on every engine without referential constraints. Optional for the published-interface reason above; consumers gate on `=== false`, so an absent flag reads as "may declare them" |

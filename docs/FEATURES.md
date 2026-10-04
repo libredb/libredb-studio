@@ -161,6 +161,7 @@ Two components are described below and a claim true of one can be false of the o
 ### 10. AI Reliability & Error Management
 *   **Intelligent Error Handling:** Comprehensive English error messages for API quotas, rate limits, and service availability issues.
 *   **In-Place Error Alerts:** The Query Safety dialog and schema-documentation panel render AI failures inline. Query Safety omits the credentials error only when no provider is configured at all, retaining the plain warning and explicit Cancel/Execute controls. Setting `LLM_PROVIDER` without its credentials is an unfinished setup, so that error stays visible, as do invalid provider settings, missing models or service URLs, authentication errors and service failures.
+*   **Bounded Safety Analysis:** The Query Safety dialog's AI analysis is advisory, and waiting for it is bounded. While it runs, **Skip analysis** stops the request and enables Execute at once; an analysis that has not finished within 15 seconds is stopped, the dialog says the analysis could not be completed, and Execute is enabled. A typed confirmation the engine asks for still has to be typed either way. `POST /api/ai/query-safety` itself stops waiting for the model after 30 seconds and answers `504` `TIMEOUT_ERROR`. Both values are constants in `src/lib/llm/query-safety.ts`.
 *   **Graceful Degradation:** Robust backend logic to handle API timeouts and authentication failures without crashing the UI.
 
 ### 11. DevOps & Enterprise Deployment

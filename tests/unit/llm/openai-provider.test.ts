@@ -294,3 +294,47 @@ describe("OpenAIProvider", () => {
     });
   });
 });
+
+// A caller that bounds its wait (the query safety route does) hands a signal in, and a signal that never
+// reaches fetch bounds nothing: the request would keep the endpoint busy after the caller gave up.
+describe("OpenAIProvider abort signal", () => {
+  let fetchSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    fetchSpy = spyOn(globalThis, "fetch");
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  test("hands the caller's signal to fetch", async () => {
+    fetchSpy.mockResolvedValueOnce(createSSEResponse([makeSSEChunk("Hi"), "data: [DONE]\n\n"]));
+    const controller = new AbortController();
+    await new OpenAIProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal }));
+    expect((fetchSpy.mock.calls[0][1] as RequestInit).signal).toBe(controller.signal);
+  });
+
+  test("a request whose signal already aborted is never sent", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      new OpenAIProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal })),
+    ).rejects.toThrow();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  test("an abort during the retry backoff sends no second request", async () => {
+    const controller = new AbortController();
+    fetchSpy.mockImplementation(async () => {
+      setTimeout(() => controller.abort(), 10);
+      throw new TypeError("fetch failed");
+    });
+    const started = Date.now();
+    await expect(
+      new OpenAIProvider(makeConfig()).stream(makeStreamOptions({ signal: controller.signal })),
+    ).rejects.toThrow();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(Date.now() - started).toBeLessThan(900);
+  });
+});
