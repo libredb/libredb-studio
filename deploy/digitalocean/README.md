@@ -131,7 +131,10 @@ host name `02-configure.sh` gives gid 1001, the container's `nodejs` group, so
 no later login on the Droplet is handed that id. Every first boot removes the
 previous seed file and status before it looks for the credentials file, so a
 Droplet created from a customer's snapshot never reports a database it no
-longer connects. Without the file nothing else changes.
+longer connects. A Droplet created from a customer's own snapshot that still
+holds `/root/.digitalocean_dbaas_credentials` seeds that same cluster again at
+first boot; deleting the file before taking the snapshot prevents it. Without
+the file nothing else changes.
 
 | `db_protocol` / `keystore_protocol` | Studio type | Connection id | Evidence for the value |
 | --- | --- | --- | --- |
