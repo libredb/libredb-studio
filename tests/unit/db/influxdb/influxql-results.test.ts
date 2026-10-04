@@ -11,7 +11,11 @@ import {
   type InfluxShapeLimits,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { INFLUX_ERROR_SENTENCES, InfluxAnswerShapeError } from "@/lib/db/providers/timeseries/influxdb/errors";
-import { shapeInfluxqlBody, splitJsonDocuments } from "@/lib/db/providers/timeseries/influxdb/influxql-results";
+import {
+  readInfluxqlCatalogRows,
+  shapeInfluxqlBody,
+  splitJsonDocuments,
+} from "@/lib/db/providers/timeseries/influxdb/influxql-results";
 import {
   INFLUX_FIXTURE_VERSIONS,
   type InfluxFixtureVersion,
@@ -375,5 +379,82 @@ describe("bounds (spec 5.5)", () => {
     const shaped = shapeCapture("1.13.1", "group-by-room-partial", { rowCut: 26, cellBudget: 78 });
     expect(shaped.rows).toHaveLength(26);
     expect(shaped.cut).toBe(false);
+  });
+});
+
+describe("readInfluxqlCatalogRows (R43)", () => {
+  function catalogFault(text: string, columns: readonly string[]): string {
+    try {
+      readInfluxqlCatalogRows(text, columns);
+    } catch (error) {
+      expect(error).toBeInstanceOf(InfluxAnswerShapeError);
+      return (error as InfluxAnswerShapeError).fault;
+    }
+    throw new Error("the body was read, not refused");
+  }
+
+  test("the rows of every line's catalog captures, in server order, with no grid", () => {
+    for (const version of INFLUX_FIXTURE_VERSIONS) {
+      const fields = loadInfluxCapture(version, "show-field-keys-home").body;
+      expect(readInfluxqlCatalogRows(fields, ["fieldKey", "fieldType"])).toEqual([
+        ["co", "integer"],
+        ["hum", "float"],
+        ["temp", "float"],
+      ]);
+      const tags = loadInfluxCapture(version, "show-tag-keys-home").body;
+      expect(readInfluxqlCatalogRows(tags, ["tagKey"])).toEqual([["room"]]);
+    }
+  });
+
+  test("an empty answer is no row: zero bytes, or a statement with no series", () => {
+    expect(readInfluxqlCatalogRows("", ["name"])).toEqual([]);
+    expect(readInfluxqlCatalogRows('{"results":[{"statement_id":0}]}', ["name"])).toEqual([]);
+  });
+
+  test("rows across several series and a partial continuation are read in order", () => {
+    const first = JSON.stringify({
+      results: [
+        { statement_id: 0, partial: true, series: [{ name: "d", columns: ["name"], values: [["a"]], partial: true }] },
+      ],
+    });
+    const second = JSON.stringify({
+      results: [
+        {
+          statement_id: 0,
+          series: [
+            { name: "d", columns: ["name"], values: [["b"]] },
+            { name: "d", columns: ["name"], values: [["c"]] },
+          ],
+        },
+      ],
+    });
+    expect(readInfluxqlCatalogRows(`${first}\n${second}\n`, ["name"])).toEqual([["a"], ["b"], ["c"]]);
+  });
+
+  test("a series with any other columns is refused, however few", () => {
+    const body = (columns: readonly string[]) =>
+      JSON.stringify({ results: [{ statement_id: 0, series: [{ name: "d", columns, values: [] }] }] });
+    expect(catalogFault(body(["name", "extra"]), ["name"])).toBe("not-json");
+    expect(catalogFault(body(["other"]), ["name"])).toBe("not-json");
+    expect(catalogFault(body([]), ["name"])).toBe("not-json");
+    expect(catalogFault(body(["fieldType", "fieldKey"]), ["fieldKey", "fieldType"])).toBe("not-json");
+  });
+
+  test("100,000 one-column series are refused at the first, in time linear in the answer", () => {
+    const series = Array.from({ length: 100_000 }, (_, index) => ({
+      name: "d",
+      columns: [`c${index}`],
+      values: [["x"]],
+    }));
+    const started = performance.now();
+    expect(catalogFault(JSON.stringify({ results: [{ statement_id: 0, series }] }), ["name"])).toBe("not-json");
+    expect(performance.now() - started).toBeLessThan(2000);
+  });
+
+  test("C5, a statement's error and a top-level error apply as they do to a run", () => {
+    expect(catalogFault('{"results":[{"statement_id":0},{"statement_id":1}]}', ["name"])).toBe("lexer-disagreement");
+    expect(catalogFault('{"results":[{"statement_id":0,"error":"no"}]}', ["name"])).toBe("statement-error");
+    expect(catalogFault('{"error":"boom"}', ["name"])).toBe("top-level-error");
+    expect(catalogFault("not json", ["name"])).toBe("not-json");
   });
 });

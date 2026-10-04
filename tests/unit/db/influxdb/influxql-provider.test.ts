@@ -209,6 +209,42 @@ function hangingAfter(
   return Object.assign(wrap, { held: () => Math.max(seen - answered, 0) });
 }
 
+/** A hostile catalog answer (R43): `count` series of one row each, every one with its own one column. */
+function oneColumnSeries(name: string, count: number): InfluxCapture {
+  const entries = Array.from({ length: count }, (_, index) => ({ name, columns: [`c${index}`], values: [["x"]] }));
+  return built(200, `${JSON.stringify({ results: [{ statement_id: 0, series: entries }] })}\n`);
+}
+
+/**
+ * A transport that answers the first `answered` requests at once and every later one after `delayMs`, unless its
+ * signal aborts first, failing then as the shared transport fails an aborted request; `seen` counts every request.
+ */
+function slowAfter(
+  answered: number,
+  delayMs: number,
+): ((transport: NodeTransport) => NodeTransport) & { readonly seen: () => number } {
+  let seen = 0;
+  const wrap = (transport: NodeTransport): NodeTransport => ({
+    request(request) {
+      seen += 1;
+      if (seen <= answered) return transport.request(request);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => resolve(transport.request(request)), delayMs);
+        request.signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(new TransportError("timeout", "The request did not finish within its time limit"));
+          },
+          { once: true },
+        );
+      });
+    },
+    close: () => transport.close(),
+  });
+  return Object.assign(wrap, { seen: () => seen });
+}
+
 describe("declarations", () => {
   test("every capability field is written out, and the absent ones are absent (spec 6.3)", () => {
     const { provider } = harness([]);
@@ -326,6 +362,40 @@ describe("connect (spec 6.2)", () => {
     expect(error).toBeInstanceOf(ConnectionError);
     expect(error.message).toBe(S.noPing("127.0.0.1:8086"));
     expect(made.closed()).toBe(1);
+  });
+
+  for (const count of [5000, 20_000]) {
+    test(`R43: a SHOW DATABASES answer of ${count} one-column series fails the connect promptly, unread`, async () => {
+      const made = harness([
+        capture("1.13.1", "ping-anon"),
+        capture("1.13.1", "health-anon"),
+        oneColumnSeries("databases", count),
+      ]);
+      const error = await rejection(made.provider.connect());
+      expect(error.message).toBe(S.notReadable);
+      expect(made.closed()).toBe(1);
+    });
+  }
+
+  test("R43: 20,000 listed databases are listed as the first 2,000, and the overview reads only those, as a floor", async () => {
+    const many = listing(...Array.from({ length: 20_000 }, (_, index) => `d${index}`));
+    const made = harness([
+      capture("1.13.1", "ping-anon"),
+      capture("1.13.1", "health-anon"),
+      many,
+      many,
+      ...Array.from({ length: INFLUX_LIST_CAP }, () => EMPTY_RESULT),
+    ]);
+    await made.provider.connect();
+    providers.push(made.provider);
+    const containers = await made.provider.listContainers();
+    expect(containers).toHaveLength(INFLUX_LIST_CAP);
+    expect(containers.at(-1)?.name).toBe("d1999");
+    const overview = await made.provider.getOverview();
+    expect(overview.tableCount).toBe(0);
+    expect(overview.tableCountSampledFrom).toBeDefined();
+    expect(made.requests).toHaveLength(4 + INFLUX_LIST_CAP);
+    expect(made.requests.at(-1)?.form?.db).toBe("d1999");
   });
 
   test("a refused SHOW DATABASES fails the connect with the grants sentence", async () => {
@@ -494,6 +564,49 @@ describe("the query pipeline (spec 5.1)", () => {
     expect(requests[4].form?.db).toBeUndefined();
   });
 
+  // R44 (2): each answered with no db by 1.13.1 as admin, measured live (E1B-fix.md).
+  const SERVER_WIDE_TEXTS = [
+    "SHOW USERS",
+    'SHOW GRANTS FOR "admin"',
+    "show grants for reader",
+    "SHOW QUERIES",
+    "SHOW STATS",
+    "SHOW DIAGNOSTICS",
+    "SHOW SHARDS",
+    "SHOW SHARD GROUPS",
+    "SHOW SUBSCRIPTIONS",
+    "SHOW CONTINUOUS QUERIES",
+    "  show /* c */ continuous\nqueries",
+  ];
+
+  test("R44: every server-wide SHOW form is sent with no db, with or without a connection database", async () => {
+    for (const config of [{}, { database: "home" }]) {
+      // oxlint-disable-next-line no-await-in-loop -- each configuration connects its own provider in turn.
+      const { provider, requests } = await connected(
+        "v1",
+        SERVER_WIDE_TEXTS.map(() => EMPTY_RESULT),
+        config,
+      );
+      for (const text of SERVER_WIDE_TEXTS) {
+        // oxlint-disable-next-line no-await-in-loop -- one run at a time, in order.
+        await provider.query(text);
+      }
+      expect(requests.slice(3).map((request) => request.form)).toEqual(
+        SERVER_WIDE_TEXTS.map((q) => Object.assign({ q }, QUERY_FORM)),
+      );
+    }
+  });
+
+  test("R44: a SHOW form that merely starts like a server-wide one still needs a database", async () => {
+    const { provider, requests } = await connected("v1", [], {});
+    for (const text of ["SHOW SHARD", "SHOW GRANTS", "SHOW CONTINUOUS", "SHOW TAG KEYS", "SHOW SERIES"]) {
+      // oxlint-disable-next-line no-await-in-loop -- one run at a time, in order.
+      const error = await rejection(provider.query(text));
+      expect(error.message).toBe(RUN_DATABASE_SENTENCES.chooseDatabase);
+    }
+    expect(requests).toHaveLength(3);
+  });
+
   test("SHOW MEASUREMENTS with no ON needs a database like a SELECT does", async () => {
     const { provider, requests } = await connected("v1", [], {});
     expect((await rejection(provider.query("SHOW MEASUREMENTS"))).message).toBe(RUN_DATABASE_SENTENCES.chooseDatabase);
@@ -520,6 +633,15 @@ describe("the query pipeline (spec 5.1)", () => {
       expect(requests).toHaveLength(CONNECT[line].length);
       expect(field.requests).toHaveLength(CONNECT[line].length);
     }
+  });
+
+  test("R44: on 2.x, which hides _internal, the refusal names no line it is not true of, and nothing is sent", async () => {
+    const { provider, requests } = await connected("v2");
+    const error = await rejection(provider.query('SHOW MEASUREMENTS ON "_internal" LIMIT 3'));
+    expect(error.message).toBe(
+      "Studio does not read the _internal database on this server; on InfluxDB 3 it holds the server's token table.",
+    );
+    expect(requests).toHaveLength(3);
   });
 
   test("E13: on 1.x the same texts are sent with db=_internal", async () => {
@@ -753,6 +875,31 @@ describe("the object surface (spec 4)", () => {
     expect(error.message).toBe(S.readerCannotRead("edge"));
   });
 
+  for (const count of [5000, 20_000]) {
+    test(`R43: a SHOW TAG KEYS answer of ${count} one-column series fails describeObject promptly, unread`, async () => {
+      const { provider, requests } = await connected("v1", [oneColumnSeries("home", count)]);
+      const error = await rejection(provider.describeObject(["home", "home"], "measurement"));
+      expect(error.message).toBe(S.notReadable);
+      expect(requests).toHaveLength(4);
+    });
+  }
+
+  test("R43: every read of describeObjects shares the call's one deadline", async () => {
+    const names = Array.from({ length: 40 }, (_, index) => [`m${index}`]);
+    const slow = slowAfter(4, 15);
+    const { provider } = await connected(
+      "v1",
+      [built(200, series("measurements", ["name"], names)), ...Array.from({ length: 80 }, () => EMPTY_RESULT)],
+      {},
+      { queryTimeout: 150 },
+      slow,
+    );
+    const error = await rejection(provider.describeObjects(["home"], "measurement"));
+    expect(error).toBeInstanceOf(TimeoutError);
+    // Eighty key reads of 15 ms each would take 1.2 s; the call's 150 ms deadline stops them early.
+    expect(slow.seen() - 4).toBeLessThan(40);
+  });
+
   test("describeObjects describes every listed measurement, and a caller bound is reported", async () => {
     const keys = (request: RecordedInfluxRequest): InfluxCapture => {
       const q = request.form?.q ?? "";
@@ -896,6 +1043,29 @@ describe("monitoring (spec 7)", () => {
       expect(error.message).not.toBe(S.unrecognised);
       expect(requests).toHaveLength(4);
     }
+  });
+
+  test("R43: the overview stops at its one deadline, however many databases are listed", async () => {
+    const names = Array.from({ length: 200 }, (_, index) => `d${index}`);
+    const slow = slowAfter(3, 15);
+    const made = harness(
+      [
+        capture("1.13.1", "ping-anon"),
+        capture("1.13.1", "health-anon"),
+        listing(...names),
+        ...names.map(() => EMPTY_RESULT),
+      ],
+      {},
+      { queryTimeout: 150 },
+      slow,
+    );
+    await made.provider.connect();
+    providers.push(made.provider);
+    const error = await rejection(made.provider.getOverview());
+    expect(error).toBeInstanceOf(TimeoutError);
+    expect(error.message).toBe(S.timeout("150"));
+    // Two hundred reads of 15 ms each would take 3 s; one 150 ms deadline for the call stops them early.
+    expect(slow.seen() - 3).toBeLessThan(names.length / 2);
   });
 
   test("a transport failure in the overview is thrown, worded", async () => {

@@ -15,8 +15,9 @@
  *
  * One limiter covers every client call (E16): the connect reads, the tree, monitoring and the runs, each taking one
  * permit of the engine key `influxdb` per request in flight. A run's signal carries its deadline (the connection's
- * query timeout) and its cancel (`createRunRegistry`); every other read carries the surface deadline. No
- * `KILL QUERY` is ever sent: a cancel or a disconnect drops the socket, which stops the server's work (spec 5.6).
+ * query timeout) and its cancel (`createRunRegistry`); every other call carries one surface deadline, which all of
+ * its reads share (R43). No `KILL QUERY` is ever sent: a cancel or a disconnect drops the socket, which stops the
+ * server's work (spec 5.6).
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
@@ -85,6 +86,7 @@ import {
   INFLUXQL_OBJECT_KINDS,
   type InfluxqlCatalogContext,
   listInfluxqlMeasurements,
+  readInfluxqlDatabaseListing,
   readInfluxqlDatabases,
 } from "./influxql-objects";
 import { evaluateInfluxql, INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES } from "./influxql-policy";
@@ -122,8 +124,23 @@ const REFUSAL_STATUSES: ReadonlySet<number> = new Set([401, 403, 404]);
 /** What a timeout says while a call waits for a permit, in the shared transport's words. */
 const WAIT_TIMEOUT = "The request did not finish within its time limit";
 
-/** The one statement that reads no database: `SHOW DATABASES`, as its first two keywords. */
-const SERVER_WIDE_STATEMENT: readonly string[] = ["SHOW", "DATABASES"];
+/**
+ * The statements that read no database, as their leading keywords: `SHOW DATABASES` (spec 5.8) and the server-wide
+ * `SHOW` forms R44 names, each of which 1.13.1 answered as admin with no `db` (measured live, E1B-fix).
+ */
+const SERVER_WIDE_STATEMENTS: readonly (readonly string[])[] = [
+  ["SHOW", "DATABASES"],
+  ["SHOW", "USERS"],
+  ["SHOW", "GRANTS", "FOR"],
+  ["SHOW", "QUERIES"],
+  ["SHOW", "STATS"],
+  ["SHOW", "DIAGNOSTICS"],
+  ["SHOW", "SHARDS"],
+  ["SHOW", "SHARD", "GROUPS"],
+  ["SHOW", "SUBSCRIPTIONS"],
+  ["SHOW", "CONTINUOUS", "QUERIES"],
+];
+const SERVER_WIDE_WORDS = Math.max(...SERVER_WIDE_STATEMENTS.map((statement) => statement.length));
 const INSIGNIFICANT: ReadonlySet<string> = new Set(["whitespace", "line-comment", "block-comment"]);
 
 const CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
@@ -138,12 +155,14 @@ const OBJECT_PATH_ENGINE: ObjectPathShapeEngine = {
   attachedSegment: "required",
 };
 
-/** False exactly for `SHOW DATABASES`, which is sent with no `db` (spec 5.8); read from an allowed text's tokens. */
+/** False exactly for a server-wide statement, which is sent with no `db` (spec 5.8, R44); read from its tokens. */
 function needsDatabase(text: string): boolean {
   const words = lexInfluxql(text)
     .filter((token) => !INSIGNIFICANT.has(token.kind))
-    .slice(0, SERVER_WIDE_STATEMENT.length);
-  return !SERVER_WIDE_STATEMENT.every((word, index) => words[index]?.value === word);
+    .slice(0, SERVER_WIDE_WORDS);
+  return !SERVER_WIDE_STATEMENTS.some((statement) =>
+    statement.every((word, index) => words[index]?.kind === "keyword" && words[index].value === word),
+  );
 }
 
 /** A permit wait the deadline ended rejects with the signal's own reason; worded as the transport words a timeout. */
@@ -164,8 +183,10 @@ interface InfluxqlSession {
   readonly client: InfluxClient<InfluxqlRouteId>;
   readonly options: InfluxConnectionOptions;
   readonly version: InfluxServerVersion;
-  /** The databases `SHOW DATABASES` listed at connect, `_internal` left out where the generation hides it. */
+  /** The databases `SHOW DATABASES` listed at connect, `_internal` left out where the generation hides it, capped. */
   readonly visible: readonly string[];
+  /** The listing held more than `INFLUX_LIST_CAP` databases, so a count over `visible` is a floor (R43). */
+  readonly visibleCut: boolean;
 }
 
 export class InfluxDBProvider extends BaseDatabaseProvider {
@@ -262,12 +283,18 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
         : undefined;
       const version = readPing(ping, health);
       generation = version.generation;
-      const containers = await readInfluxqlDatabases(
+      const listing = await readInfluxqlDatabaseListing(
         { send: (request, read) => this.send(opened, request, read), signal: () => signal, generation },
         options.database,
       );
       const previous = this.session;
-      this.session = { client: opened, options, version, visible: containers.map((container) => container.name) };
+      this.session = {
+        client: opened,
+        options,
+        version,
+        visible: listing.containers.map((container) => container.name),
+        visibleCut: listing.cut,
+      };
       // A second connect replaces the session; the first one's client is closed, not left open.
       previous?.client.close();
     } catch (error) {
@@ -415,14 +442,18 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
   // Object surface (spec 4), answered by influxql-objects.ts
   // ==========================================================================
 
-  /** One surface call: its reads under the surface deadline, each with its own permit, and its failure worded. */
+  /**
+   * One surface call: every read of the call under the call's one surface deadline (R43), so a listing of many
+   * databases or measurements cannot stretch it read by read; each read has its own permit; the failure is worded.
+   */
   private async surface<T>(read: (context: InfluxqlCatalogContext) => Promise<T>): Promise<T> {
     const session = this.requireSession();
     const { client, options, version } = session;
+    const deadline = AbortSignal.timeout(options.surfaceTimeoutMs);
     try {
       return await read({
         send: (request, signal) => this.send(client, request, signal),
-        signal: () => AbortSignal.timeout(options.surfaceTimeoutMs),
+        signal: () => deadline,
         generation: version.generation,
       });
     } catch (error) {
@@ -522,7 +553,8 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * The version and the measurements of every database listed at connect (R24), each listing capped; a database
+   * The version and the measurements of every database listed at connect (R24), each listing capped, and a floor
+   * when the database listing itself was capped (R43); all under the call's one deadline. A database
    * whose listing the server refuses (a 401, 403 or 404, or a statement error) counts none, never a throw (spec 7);
    * any other failure, a 5xx or a lexer disagreement (C5) among them, is thrown, worded.
    */
@@ -530,7 +562,7 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     const session = this.requireSession();
     return this.surface(async (context) => {
       let objectCount = 0;
-      let objectCountCut = false;
+      let objectCountCut = session.visibleCut;
       for (const database of session.visible) {
         let count: KindCount;
         try {

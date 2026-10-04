@@ -208,6 +208,24 @@ function engineWarnings(statements: readonly Result[]): readonly QueryWarning[] 
   return warnings;
 }
 
+/**
+ * A catalog answer's rows, read with no grid (R43): steps 1 to 4 as `shapeInfluxqlBody` takes them, then every
+ * series must carry exactly `columns`, in that order, and its rows are taken as they are. A series with any other
+ * columns is refused as not an answer of the statement before a row is read, so no answer costs more than time
+ * linear in its size, however many series it holds. Throws `InfluxAnswerShapeError`.
+ */
+export function readInfluxqlCatalogRows(text: string, columns: readonly string[]): readonly (readonly unknown[])[] {
+  const statements = statementResults(splitJsonDocuments(text).map(readDocument));
+  const rows: (readonly unknown[])[] = [];
+  for (const entry of statements.flatMap((result) => result.series)) {
+    const expected =
+      entry.columns.length === columns.length && entry.columns.every((column, index) => column === columns[index]);
+    if (!expected) throw notJson();
+    for (const values of entry.values) rows.push(values);
+  }
+  return rows;
+}
+
 /** A `/query` 200 body as one grid (spec 5.1 step 10). Throws `InfluxAnswerShapeError`. */
 export function shapeInfluxqlBody(text: string, limits: InfluxShapeLimits): ShapedResult {
   const statements = statementResults(splitJsonDocuments(text).map(readDocument));

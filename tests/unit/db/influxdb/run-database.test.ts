@@ -16,7 +16,9 @@ import {
 
 const CHOOSE =
   'Choose a database: open the statement from a database in the tree, set Database on the connection, or name it in the statement as "db".."measurement".';
-const INTERNAL = "The _internal database of an InfluxDB 3 server holds its token table, so Studio does not read it.";
+// R44 (1): one sentence true on every line that hides `_internal`, 2.x and an unknown generation included.
+const INTERNAL =
+  "Studio does not read the _internal database on this server; on InfluxDB 3 it holds the server's token table.";
 
 function namedIn(text: string): readonly string[] {
   const verdict = evaluateInfluxql(text);

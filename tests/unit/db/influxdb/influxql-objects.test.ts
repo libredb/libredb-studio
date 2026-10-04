@@ -17,6 +17,7 @@ import {
   INFLUXQL_OBJECT_KINDS,
   type InfluxqlCatalogContext,
   listInfluxqlMeasurements,
+  readInfluxqlDatabaseListing,
   readInfluxqlDatabases,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
 import { evaluateInfluxql, INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
@@ -56,6 +57,18 @@ const body = (version: InfluxFixtureVersion, name: string): string => loadInflux
 /** A one-series `/query` document. */
 function series(name: string, columns: readonly string[], values: readonly (readonly unknown[])[]): string {
   return JSON.stringify({ results: [{ statement_id: 0, series: [{ name, columns, values }] }] });
+}
+
+/** A hostile answer (R43): `count` series of one row each, every one with its own one column. */
+function oneColumnSeries(name: string, count: number): string {
+  const entries = Array.from({ length: count }, (_, index) => ({ name, columns: [`c${index}`], values: [["x"]] }));
+  return JSON.stringify({ results: [{ statement_id: 0, series: entries }] });
+}
+
+/** `count` series of the expected one column, one name each: well formed, and as long as a hostile server likes. */
+function sameColumnSeries(name: string, column: string, count: number): string {
+  const entries = Array.from({ length: count }, (_, index) => ({ name, columns: [column], values: [[`d${index}`]] }));
+  return JSON.stringify({ results: [{ statement_id: 0, series: entries }] });
 }
 
 const measurementNames = (count: number): string =>
@@ -155,6 +168,94 @@ describe("readInfluxqlDatabases", () => {
     expect(error).toBeInstanceOf(InfluxAnswerError);
     expect((error as InfluxAnswerError).answer).toBe(answer);
     expect((error as InfluxAnswerError).route).toBe(INFLUXQL_ROUTES.query.path);
+  });
+});
+
+describe("R43: a catalog answer is read in time linear in its size", () => {
+  for (const count of [5000, 20_000]) {
+    test(`a SHOW DATABASES answer of ${count} one-column series is refused, never shaped as a grid`, async () => {
+      const { context } = recordingSend([oneColumnSeries("databases", count)]);
+      const error = await rejection(readInfluxqlDatabases(context("v1"), undefined));
+      expect(error).toBeInstanceOf(InfluxAnswerShapeError);
+      expect((error as InfluxAnswerShapeError).fault).toBe("not-json");
+    });
+
+    test(`a SHOW TAG KEYS answer of ${count} one-column series is refused, never shaped as a grid`, async () => {
+      const { sent, context } = recordingSend([oneColumnSeries("home", count), series("home", ["fieldKey"], [])]);
+      const error = await rejection(describeInfluxqlMeasurement(context("v1"), "home", "home"));
+      expect((error as InfluxAnswerShapeError).fault).toBe("not-json");
+      expect(sent).toHaveLength(1);
+    });
+
+    test(`a SHOW FIELD KEYS answer of ${count} one-column series is refused, never shaped as a grid`, async () => {
+      const { context } = recordingSend(["", oneColumnSeries("home", count)]);
+      const error = await rejection(describeInfluxqlMeasurement(context("v1"), "home", "home"));
+      expect((error as InfluxAnswerShapeError).fault).toBe("not-json");
+    });
+  }
+
+  test("a series whose columns are not exactly the expected ones is refused", async () => {
+    for (const columns of [["name", "extra"], ["extra"], [], ["fieldType", "fieldKey"]]) {
+      const { context } = recordingSend([series("databases", columns, [])]);
+      // oxlint-disable-next-line no-await-in-loop -- each answer is read in turn.
+      const error = await rejection(readInfluxqlDatabases(context("v1"), undefined));
+      expect((error as InfluxAnswerShapeError).fault).toBe("not-json");
+    }
+    const { context } = recordingSend(["", series("m", ["fieldType", "fieldKey"], [["float", "f"]])]);
+    const error = await rejection(describeInfluxqlMeasurement(context("v1"), "home", "m"));
+    expect((error as InfluxAnswerShapeError).fault).toBe("not-json");
+  });
+
+  test("a row shorter than its series' columns is refused", async () => {
+    const { context } = recordingSend(["", series("m", ["fieldKey", "fieldType"], [["f"]])]);
+    const error = await rejection(describeInfluxqlMeasurement(context("v1"), "home", "m"));
+    expect((error as InfluxAnswerShapeError).fault).toBe("not-json");
+  });
+
+  test("a statement error and C5 still apply to a catalog read", async () => {
+    const failed = recordingSend(['{"results":[{"statement_id":0,"error":"database not found: x"}]}']);
+    const error = await rejection(listInfluxqlMeasurements(failed.context("v1"), "x"));
+    expect((error as InfluxAnswerShapeError).fault).toBe("statement-error");
+    const two = recordingSend([
+      '{"results":[{"statement_id":0,"series":[{"name":"databases","columns":["name"],"values":[["a"]]}]},{"statement_id":1}]}',
+    ]);
+    const disagreement = await rejection(readInfluxqlDatabases(two.context("v1"), undefined));
+    expect((disagreement as InfluxAnswerShapeError).fault).toBe("lexer-disagreement");
+  });
+
+  test("a SHOW TAG KEYS answer of 20,000 well-formed series is read whole", async () => {
+    const { context } = recordingSend([sameColumnSeries("home", "tagKey", 20_000), ""]);
+    const detail = await describeInfluxqlMeasurement(context("v1"), "home", "home");
+    expect(detail.columns).toHaveLength(20_001);
+    expect(detail.columns.at(-1)?.name).toBe("d19999");
+  });
+});
+
+describe("R43: the database listing keeps at most INFLUX_LIST_CAP names", () => {
+  test("20,000 listed databases yield the first 2,000, and the listing says it was cut", async () => {
+    const { context } = recordingSend([
+      sameColumnSeries("databases", "name", 20_000),
+      sameColumnSeries("databases", "name", 20_000),
+    ]);
+    const containers = await readInfluxqlDatabases(context("v1"), undefined);
+    expect(containers).toHaveLength(INFLUX_LIST_CAP);
+    expect(containers.at(-1)?.name).toBe("d1999");
+    const listing = await readInfluxqlDatabaseListing(context("v1"), undefined);
+    expect(listing.containers).toEqual(containers);
+    expect(listing.cut).toBe(true);
+  });
+
+  test("exactly 2,000 is whole, and _internal left out on a hiding generation does not count toward the cap", async () => {
+    const exact = recordingSend([sameColumnSeries("databases", "name", INFLUX_LIST_CAP)]);
+    expect((await readInfluxqlDatabaseListing(exact.context("v1"), undefined)).cut).toBe(false);
+    const names = [["_internal"], ...Array.from({ length: INFLUX_LIST_CAP }, (_, index) => [`d${index}`])];
+    const hidden = recordingSend([series("databases", ["name"], names), series("databases", ["name"], names)]);
+    const v3 = await readInfluxqlDatabaseListing(hidden.context("v3"), undefined);
+    expect(v3.cut).toBe(false);
+    expect(v3.containers).toHaveLength(INFLUX_LIST_CAP);
+    const v1 = await readInfluxqlDatabaseListing(hidden.context("v1"), undefined);
+    expect(v1.cut).toBe(true);
+    expect(v1.containers[0].name).toBe("_internal");
   });
 });
 

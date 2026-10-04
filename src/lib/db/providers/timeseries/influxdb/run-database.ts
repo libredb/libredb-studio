@@ -33,7 +33,9 @@ const SESSION_NAMES_SHOWN = 10;
 export const RUN_DATABASE_SENTENCES = {
   chooseDatabase:
     'Choose a database: open the statement from a database in the tree, set Database on the connection, or name it in the statement as "db".."measurement".',
-  internalHidden: "The _internal database of an InfluxDB 3 server holds its token table, so Studio does not read it.",
+  // One sentence for every generation that hides `_internal`, 2.x and unknown included, with no branch (R44).
+  internalHidden:
+    "Studio does not read the _internal database on this server; on InfluxDB 3 it holds the server's token table.",
   sessionMany: (names: readonly string[]): string => {
     const shown = names.slice(0, SESSION_NAMES_SHOWN).join(", ");
     const more = names.length > SESSION_NAMES_SHOWN ? ` and ${names.length - SESSION_NAMES_SHOWN} more` : "";
