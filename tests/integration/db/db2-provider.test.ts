@@ -652,6 +652,16 @@ describe("Db2Provider: connect and disconnect", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
+  test("a password db2-node 1.0.22 cannot send is refused before the driver is reached (K23)", async () => {
+    const provider = makeProvider({ password: "Password123!" });
+    const error = await provider.connect().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toContain("contains !");
+    expect(built).toEqual([]);
+    expect(provider.isConnected()).toBe(false);
+  });
+
   test("a connection with no TLS and the consent connects without TLS", async () => {
     const provider = await connected({ ssl: undefined, allowInsecureAuth: true });
     expect(built[0].ssl).toBe(false);

@@ -67,7 +67,7 @@ A deployment without the driver answers `describeDriverAbsence()`'s message, "Db
 | Port | No | `50000`, Db2's conventional DRDA listener |
 | Database | Yes | "Database name is required for Db2" |
 | User | Yes | "User is required for Db2" |
-| Password | No | Sent empty when none is given; sent in cleartext without TLS, see section 3.3. `db2-node` 1.0.24 refuses a password holding `!`, `^`, `[`, `]` or `\|` that the server accepts, with and without TLS (D159 in `docs/BACKLOG.md`) |
+| Password | No | Sent empty when none is given; sent in cleartext without TLS, see section 3.3; a password holding `!`, `^`, `[`, `]` or `\|` is refused before connecting, because `db2-node` 1.0.24 sends it wrongly (K23) |
 | SSL panel | Yes, unless you opt out | Section 3.3 |
 
 A pasted `db2://user:password@host:50000/TESTDB` fills the fields; there is no connection-string toggle, the Oracle precedent.
@@ -144,16 +144,24 @@ Then paste `ca.arm` (it is PEM) into the SSL panel's CA certificate field, set t
 
 ## 4. Known issues (db2-node 1.0.24)
 
-The live script `tests/live/db2-known-issues.ts` probes each row below, and each row fixed in 1.0.24, against a running Db2 and prints `PRESENT` or `GONE`, so a driver bump starts by running it.
+The live script `tests/live/db2-known-issues.ts` probes each row below but K23, and each row fixed in 1.0.24, against a running Db2 and prints `PRESENT` or `GONE`, so a driver bump starts by running it.
 On 2026-10-04 it printed the same verdict for every row on 12.1.0.0 and on 11.5.9.0: `PRESENT` for K4, K15, K16 and K17, and `GONE` for every other row.
-K4 in its 1.0.24 shape, K16's BOOLEAN refusal, K15 and K17 are not among the numbered cases of the upstream report.
+Each row still present is reported upstream on its own, linked from the row.
 
 | # | Issue | What you see | Mitigated by the provider | Workaround |
 |---|---|---|---|---|
-| K4 | A LOB or XML column read beside other columns can come back wrong, lose rows or fail | A BLOB beside a CLOB answered the CLOB's bytes; a CLOB beside a GRAPHIC answered no row of three; a CLOB beside a DOUBLE answered "Protocol error: Invalid SQLDTAGRP indicator 0xEF"; `ID, C_VCHAR, C_CLOB` answered "Protocol error: Non-null fetch SQLDIAGGRP is not supported"; `SELECT *` over `APP.ALLTYPES` answered 1 row of 3 and 23 of 25 columns | Partly: the object browser's preview leaves LOB and XML columns out, no catalog query selects a LOB beside another column, and a result holding a LOB or XML column beside others carries an integrity warning naming them | Select each LOB or XML column on its own, with the key that tells its rows apart if you need one: a CLOB beside an INTEGER, a BIGINT, a DECIMAL, a DATE, a TIMESTAMP or a CHAR read exactly |
-| K15 | Duplicate column names collapse in a row | `columns` lists both, the row holds one value | Yes, by visibility: the result carries a warning naming the column | Alias each column |
-| K16 | A BOOLEAN parameter must be a JS boolean | The text `true` is refused with "expected boolean-compatible parameter, got VarChar("true")", alone or beside other parameters | No: the grid's inline editor binds text, so editing a BOOLEAN cell fails with that message and writes nothing | Write the BOOLEAN with an `UPDATE` of your own, as a literal |
-| K17 | Client-side failures carry no SQLSTATE | A protocol message only: an out-of-range DECIMAL parameter answers "Protocol error: DECIMAL parameter out of range for DECIMAL(5,2)" | No | Read the message |
+| K4 | A LOB or XML column read beside other columns can come back wrong, lose rows or fail ([gurungabit/db2-node#19](https://github.com/gurungabit/db2-node/issues/19): a BLOB after a CLOB answers the CLOB's bytes; [gurungabit/db2-node#20](https://github.com/gurungabit/db2-node/issues/20): a CLOB(1M) beside a fixed-length column drops rows when later LOBs are NULL) | A BLOB beside a CLOB answered the CLOB's bytes; a CLOB beside a GRAPHIC answered no row of three; a CLOB beside a DOUBLE answered "Protocol error: Invalid SQLDTAGRP indicator 0xEF"; `ID, C_VCHAR, C_CLOB` answered "Protocol error: Non-null fetch SQLDIAGGRP is not supported"; `SELECT *` over `APP.ALLTYPES` answered 1 row of 3 and 23 of 25 columns | Partly: the object browser's preview leaves LOB and XML columns out, no catalog query selects a LOB beside another column, and a result holding a LOB or XML column beside others carries an integrity warning naming them | Select each LOB or XML column on its own, with the key that tells its rows apart if you need one: a CLOB beside an INTEGER, a BIGINT, a DECIMAL, a DATE, a TIMESTAMP or a CHAR read exactly |
+| K15 | Duplicate column names collapse in a row ([gurungabit/db2-node#21](https://github.com/gurungabit/db2-node/issues/21)) | `columns` lists both, the row holds one value | Yes, by visibility: the result carries a warning naming the column | Alias each column |
+| K16 | A BOOLEAN parameter must be a JS boolean ([gurungabit/db2-node#22](https://github.com/gurungabit/db2-node/issues/22)) | The text `true` is refused with "expected boolean-compatible parameter, got VarChar("true")", alone or beside other parameters | No: the grid's inline editor binds text, so editing a BOOLEAN cell fails with that message and writes nothing | Write the BOOLEAN with an `UPDATE` of your own, as a literal |
+| K17 | Client-side failures carry no SQLSTATE ([gurungabit/db2-node#23](https://github.com/gurungabit/db2-node/issues/23)) | A protocol message only: an out-of-range DECIMAL parameter answers "Protocol error: DECIMAL parameter out of range for DECIMAL(5,2)" | No | Read the message |
+| K23 | A password holding `!`, `^`, `[`, `]` or `\|` is sent wrongly ([gurungabit/db2-node#25](https://github.com/gurungabit/db2-node/issues/25)) | The server answers "Security check failed: check_code=0x0F (user id or password invalid)" for a password that is right | Yes: the provider refuses such a password before connecting and names the characters, instead of letting the server call it wrong | Change the Db2 user's password to one without those five characters |
+
+K23 was first measured through 1.0.22 (#1301) and measured again on 2026-10-04 through 1.0.24 against Db2 12.1.0.0, by changing one test user's password one character at a time.
+On 1.0.24 each of the five is refused over TLS under the driver's default security mechanism, over TLS and without TLS under `securityMechanism: "userPassword"`, the mechanism the insecure opt-in asks for (section 3.3), and with `credentialEncoding: "utf8"`; every other ASCII punctuation character is accepted.
+The IBM CLP inside the container signed in over TCP with `Password123!`, so the server takes the password and the driver sends it wrongly.
+The five are exactly the printable ASCII characters EBCDIC code page 037 places differently from code page 500.
+`tests/live/db2-known-issues.ts` has no probe for K23, because it needs a Db2 user whose password holds one of the five; to re-measure it, set such a password with `chpasswd` in the container and connect with db2-node directly.
+D159 in `docs/BACKLOG.md` tracks the driver fix, after which the refusal goes.
 
 A result with a CLOB, DBCLOB, BLOB or XML column and any other column carries an integrity warning above the grid that names those columns, says the driver can return wrong values or drop rows there, and says that exported or copied rows carry the same values; copy and export stay available, so read the warning before you hand the rows on.
 A column the driver dropped from the header cannot be named by it, so a `SELECT *` over a table with LOB columns is best not trusted at all.
@@ -407,14 +415,14 @@ The addons statically link 62 Rust crates whose licences the npm package does no
 
 The `rustls` and `rustls-webpki` versions compiled into the addons fall inside published RustSec advisories: `rustls` 0.23.37 is inside RUSTSEC-2026-0285 (patched in 0.23.45), and `rustls-webpki` 0.103.10 inside RUSTSEC-2026-0098, RUSTSEC-2026-0099 and RUSTSEC-2026-0104 (patched in 0.103.13).
 Checked on 2026-10-04 through the OSV API, the 1.0.24 `Cargo.lock` carries the same two versions as 1.0.22, and the same crate set.
-They are compiled into the addon, so only a new `db2-node` release can pick the fixes up; P7 in `docs/BACKLOG.md` tracks it.
+They are compiled into the addon, so only a new `db2-node` release can pick the fixes up; it is reported upstream as [gurungabit/db2-node#24](https://github.com/gurungabit/db2-node/issues/24), and P7 in `docs/BACKLOG.md` tracks it.
 Only linux x64 was measured; arm64, macOS and Windows load the addon in the release probes but were not run against a Db2.
 
 ## 13. Testing
 
 - `tests/integration/db/db2-provider.test.ts` drives the provider against a mocked driver that mirrors the fixture, and ends with the shared object-surface conformance check.
 - `tests/unit/db/db2/` holds the unit tests of each module.
-- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 and for the K rows fixed in 1.0.24, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes included; neither runs in `bun run test`.
+- `tests/live/db2-known-issues.ts` prints `PRESENT` or `GONE` for every row of section 4 but K23 and for the K rows fixed in 1.0.24, so a regression back to a fixed defect shows as `PRESENT`, and `tests/live/db2-live-check.ts` runs the provider against a live Db2, writes included; neither runs in `bun run test`.
 
 The `db2` service of `database-compose.yml` runs `icr.io/db2_community/db2:12.1.0.0` unprivileged, with `cap_add: [IPC_LOCK, IPC_OWNER]`, on port 50000.
 Its first boot creates the instance and the database and takes several minutes; wait for the health check before you connect.

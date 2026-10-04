@@ -551,7 +551,7 @@ docker compose -f database-compose.yml --profile druid down -v
 | **MySQL** | localhost | 3306 | root | root | mysql |
 | **SQL Server** | localhost | 1433 | sa | Password123! | master |
 | **Oracle** | localhost | 1521 | system | Password123! | freepdb1 |
-| **Db2 LUW** | localhost | 50000 | db2inst1 | Password123! | TESTDB |
+| **Db2 LUW** | localhost | 50000 | db2inst1 | Password123 | TESTDB |
 | **MongoDB** | localhost | 27017 | admin | admin | — |
 | **Apache Druid** | localhost | 8888 (Router) or 8082 (Broker) | — | — | — (one catalog, always `druid`) |
 | **Trino** | localhost | 8080 | — | — | `tpch` (a *catalog*; `tpcds`, `memory`, `system` and `jmx` are configured too) |

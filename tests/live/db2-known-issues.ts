@@ -10,6 +10,8 @@
  * the lines. On 1.0.24 the expected report is GONE for every row but K4, K15, K16 and K17; a GONE
  * that turns PRESENT again is a regression the provider no longer guards against. It drives
  * db2-node directly, never the provider, because the question is what the driver does on its own.
+ * K23, the password characters the driver sends wrongly, has no probe: it needs a Db2 user whose
+ * password holds one of them, and section 4 of docs/providers/db2.md says how to re-measure it.
  *
  * It is a REPORT and exits 0 whatever it finds: one line per known issue,
  * `K<n> <short name>: PRESENT | GONE | ERROR <message>`, under a header naming the driver version
@@ -39,7 +41,7 @@ const BASE: ConnectionConfig = {
   port: Number(process.env.DB2_PORT ?? 50000),
   database: process.env.DB2_DATABASE ?? "TESTDB",
   user: process.env.DB2_USER ?? "db2inst1",
-  password: process.env.DB2_PASSWORD ?? "Password123!",
+  password: process.env.DB2_PASSWORD ?? "Password123",
   // The compose service has no TLS listener and the stock AUTHENTICATION=SERVER, so the plaintext
   // mechanism is asked for by name, as the provider does behind its insecure opt-in: since 1.0.24
   // the driver refuses to fall back to it otherwise (K11).

@@ -272,7 +272,7 @@ provider's integration pass.
 | PostgreSQL | `postgres` | localhost | 5432 | `postgres` | `postgres` | `postgres` | — |
 | MySQL | `mysql` | localhost | 3306 | `root` | `root` | `mysql` | — |
 | Oracle | `oracle` | localhost | 1521 | `system` | `Password123!` | `XEPDB1` (service name) | — |
-| Db2 LUW | `db2` | localhost | 50000 | `db2inst1` | `Password123!` | `TESTDB` | — |
+| Db2 LUW | `db2` | localhost | 50000 | `db2inst1` | `Password123` | `TESTDB` | — |
 | SQL Server | `mssql` | localhost | 1433 | `sa` | `Password123!` | `master` | — |
 | MongoDB | `mongodb` | localhost | 27017 | `admin` | `admin` | any; auth source `admin` | — |
 | Redis | `redis` | localhost | 6379 | *none* | *none* | *none* (db index 0) | — |

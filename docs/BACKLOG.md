@@ -2190,17 +2190,18 @@ Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 
 
 ### D159. db2-node refuses a password holding `!` that the server accepts
 
-The Db2 compose service sets `DB2INST1_PASSWORD=Password123!`, and the server takes it: `CONNECT TO TESTDB USER db2inst1 USING "Password123!"` succeeds in the container's own command line processor.
+The Db2 compose service set `DB2INST1_PASSWORD=Password123!` until #1301 changed it to `Password123`, and the server takes it: `CONNECT TO TESTDB USER db2inst1 USING "Password123!"` succeeds in the container's own command line processor.
 Studio, over `db2-node` 1.0.22 with the insecure opt-in, is refused with "Authentication failed: Security check failed: severity=8, check_code=0x0F (user id or password invalid), requested_secmec=0x0009, accepted_secmec=0x0003, credential_encoding=Ebcdic037", and `db2diag` logs "Password validation for user db2inst1 failed".
 After the password is changed to letters and digits only, the same connection succeeds at once.
 The likely cause is how the driver encodes `!` in EBCDIC code page 037 (the refusal names `credential_encoding=Ebcdic037`).
 Measured 2026-10-04 through `db2-node` 1.0.24 on 12.1, by changing one test user's password one character at a time: `!`, `^`, `[`, `]` and `|` are refused and every other ASCII punctuation character is accepted, the five being the ones EBCDIC code pages 037 and 500 place differently.
 The refusal is the same over TLS with the driver's default mechanism, over TLS with `securityMechanism: "userPassword"`, and without TLS with it, and `credentialEncoding: "utf8"` is refused too.
-`docs/providers/db2.md` now names the five characters beside the password field.
+The provider refuses such a password before connecting and names the characters (K23 in `docs/providers/db2.md`, from #1301), so the server's "user id or password invalid" no longer sends a person to check a password that is right.
+Reported upstream on 2026-10-04 as [gurungabit/db2-node#25](https://github.com/gurungabit/db2-node/issues/25).
 
 Found 2026-10-03 by the browser pass of #1246, whose change does not touch Db2.
 
-**Done when:** the measurement above goes upstream with that evidence, and either the pinned `db2-node` carries the fix or the entry is deleted with `docs/providers/db2.md` naming the characters.
+**Done when:** the pinned `db2-node` carries the fix for gurungabit/db2-node#25, measured live with each of the five characters with and without TLS, and the provider's refusal (`assertPasswordSendable`) and K23 are removed with it.
 
 ### D160. The Db2 compose service can skip its object fixture on a fresh volume
 
@@ -3708,6 +3709,7 @@ Checked on 2026-10-03 against the RustSec advisory database, `rustls` 0.23.37 is
 That library is what protects a Db2 connection's password on the wire, since without TLS the password travels in cleartext (section 3.3 of `docs/providers/db2.md`).
 The crates are linked into the `.node` binary, so no lockfile, override or `cargo update` on our side reaches them: only a new `db2-node` release can.
 Re-checked on 2026-10-04 for the move to 1.0.24: its `Cargo.lock` carries the same `rustls` 0.23.37 and `rustls-webpki` 0.103.10, and OSV still places both inside those four advisories.
+Reported upstream on 2026-10-04 as [gurungabit/db2-node#24](https://github.com/gurungabit/db2-node/issues/24).
 
 **Done when:** a `db2-node` release links `rustls` 0.23.45 or later and `rustls-webpki` 0.103.13 or later, its `Cargo.lock` is re-checked against the advisory database, `tests/live/db2-known-issues.ts` and `tests/live/db2-live-check.ts` are re-run on it, and the pin in `package.json` and section 12 of `docs/providers/db2.md` move to it.
 
