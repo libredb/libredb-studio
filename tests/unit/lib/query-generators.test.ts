@@ -652,6 +652,33 @@ describe("Trino (declared capabilities, port 8080) generation", () => {
 });
 
 // ============================================================================
+// The "double-always" declaration, which InfluxDB 3 makes: the "double" arm above
+// leaves a plain lowercase name bare and lets a `$` through bare, and the InfluxDB 3
+// read policy refuses a bare `$`, so a generated Count of a table named `a$b` was
+// refused by Studio itself. This arm quotes every name.
+// ============================================================================
+
+describe('identifierQuoting "double-always"', () => {
+  const alwaysCaps = makeCaps({ defaultPort: 8181, identifierQuoting: "double-always", statementTerminator: "none" });
+
+  test("quoteIdentifier quotes every name, the plain lowercase ones the double arm leaves bare included", () => {
+    expect(quoteIdentifier("home", alwaysCaps)).toBe('"home"');
+    expect(quoteIdentifier("time", alwaysCaps)).toBe('"time"');
+    expect(quoteIdentifier("a$b", alwaysCaps)).toBe('"a$b"');
+    expect(quoteIdentifier("Home", alwaysCaps)).toBe('"Home"');
+  });
+
+  test("quoteIdentifier doubles an embedded double quote so it cannot terminate its quoting", () => {
+    expect(quoteIdentifier('a"b', alwaysCaps)).toBe('"a""b"');
+  });
+
+  test("the object path and the Count text name each segment quoted", () => {
+    expect(quoteObjectPath(["home"], alwaysCaps)).toBe('"home"');
+    expect(generators.generateCountQuery(["a$b"], alwaysCaps)).toBe('SELECT COUNT(*) AS row_count\nFROM "a$b"');
+  });
+});
+
+// ============================================================================
 // Apache Cassandra (issue #424 Phase 4) - the engine that needed NO branch, and the
 // tests that establish that rather than assuming it. Port 9042 is Cassandra's alone,
 // so the port heuristic is not asked to answer for two dialects, and every string

@@ -947,8 +947,13 @@ export interface ProviderCapabilities {
    * and nothing about the old behaviour moves. A provider sets this when the port
    * is not a faithful proxy for its dialect - which is any engine that shares a
    * default port with a differently-quoting one.
+   *
+   * `"double"` and `"backtick"` quote only a name that would not round-trip bare;
+   * `"double-always"` quotes every name. InfluxDB 3 declares it: its read policy
+   * refuses a bare `$`, which the `"double"` rule lets through, so a generated Count
+   * of a table named `a$b` was refused by Studio itself.
    */
-  identifierQuoting?: "double" | "backtick";
+  identifierQuoting?: "double" | "backtick" | "double-always";
   /**
    * Whether a statement this product runs may end with `;`.
    *

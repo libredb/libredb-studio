@@ -40,7 +40,7 @@ function couchbaseQuote(name: string): string {
 
 /**
  * Quote only when the name would not round-trip bare, in the two styles a provider
- * may DECLARE (`ProviderCapabilities.identifierQuoting`).
+ * may DECLARE (`ProviderCapabilities.identifierQuoting`), or always, in the third.
  *
  * One object rather than two functions, and looked up rather than branched on: bun's
  * lcov attributes a freshly added function's declaration line to nothing, so two new
@@ -48,9 +48,10 @@ function couchbaseQuote(name: string): string {
  * this repo's coverage notes describe. A table has one executable line per entry and
  * no declaration line to lose.
  */
-const DECLARED_QUOTING: Record<"backtick" | "double", (name: string) => string> = {
+const DECLARED_QUOTING: Record<NonNullable<ProviderCapabilities["identifierQuoting"]>, (name: string) => string> = {
   backtick: (name) => (/^[A-Za-z_][\w$]*$/.test(name) ? name : couchbaseQuote(name)),
   double: (name) => (/^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replaceAll('"', '""')}"`),
+  "double-always": (name) => `"${name.replaceAll('"', '""')}"`,
 };
 
 /**
