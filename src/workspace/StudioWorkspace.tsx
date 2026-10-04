@@ -353,6 +353,8 @@ export function StudioWorkspace({
         rows: tabMgr.currentTab.result.rows,
         fields: tabMgr.currentTab.result.fields,
         tabName: tabMgr.currentTab.name,
+        // The statement that fetched these rows names their table when it reads exactly one (#1386).
+        query: tabMgr.currentTab.resultQuery,
         // Was missing from this callback's dependencies, so a SQL export written
         // after the host switched connections quoted its literals for whichever
         // engine happened to be active on the first render.

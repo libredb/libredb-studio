@@ -644,6 +644,16 @@ form; the strategy publishes no timings and fabricates none. See §3.6 for the f
 
 ---
 
+### What the SQL INSERT and DDL exports write
+
+`@duckdb/node-api` answers an INTERVAL as `{months, days, micros}`, a MAP as a list of `{key, value}` entries and a STRUCT as an object.
+Written as JSON, the INTERVAL and the MAP were `Conversion Error` on replay, so the SQL INSERT export reads the declared type (#1386, [`typed-literals.ts`](../../src/lib/export/typed-literals.ts)) and writes `INTERVAL '14 months 3 days 14706000001 microseconds'`, `MAP {'k': 1}` (`MAP {}` when empty), `{'a': 7, 'b': ['p']}` and `[1, 2, 3]`, recursing through the element types, with a number inside a container written bare.
+A quoted scalar (`'170141183460469231731687303715884105727'` into a `HUGEINT`) is left as it was, since DuckDB reads it back.
+The DDL keeps `STRUCT("a" INTEGER, "b" VARCHAR[])`, `INTEGER[3]`, `INTEGER[][]` and `MAP(INTEGER, VARCHAR[])` instead of writing `TEXT`.
+A composite that does not have its declared shape is skipped with a `-- Row N skipped` comment naming the column.
+
+Measured 2026-10-04 on DuckDB 1.5.5: a table of `INTERVAL`, `MAP(VARCHAR, INTEGER)`, `MAP(INTEGER, VARCHAR[])`, `INTEGER[]`, `VARCHAR[]` holding a quote and a comma, `STRUCT`, `HUGEINT`, `UBIGINT`, `DECIMAL(18,3)`, `TIMESTAMPTZ`, `TIMESTAMP_NS`, `UUID`, `BLOB`, an `ENUM`, `BIT`, `INTEGER[3]` and `INTEGER[][]` was exported through the provider and replayed into `CREATE TABLE copy AS SELECT * FROM src WHERE false` and into the exported DDL's own table, and `EXCEPT` both ways answered no row.
+
 ## 6. Schema introspection
 
 Every reading of this engine's objects goes through the object surface below. The flat reading that
