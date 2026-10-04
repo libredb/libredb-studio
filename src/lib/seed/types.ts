@@ -169,8 +169,8 @@ export const SeedConnectionSchema = z
     // naming the field. Accepted only on an engine whose provider enforces it (the second refine
     // below), and only on a managed seed (SeedConfigSchema).
     readOnly: z.boolean().optional(),
-    // Db2 (#786), and Oxia for its token: accept that a connection with no TLS sends its password in cleartext, which
-    // the Db2 provider otherwise refuses. Declared for the reason skipObjectScan is: zod strips an
+    // Db2 (#786), both InfluxDB types and Oxia: accept that a connection with no TLS sends its password or token in
+    // cleartext, which the provider otherwise refuses. Declared for the reason skipObjectScan is: zod strips an
     // undeclared key silently, and a seed file's consent would validate and vanish, leaving a
     // connection the provider refuses with a message naming a field the file did set.
     allowInsecureAuth: z.boolean().optional(),
