@@ -243,6 +243,7 @@ const LIMITATION_IDS: readonly string[] = [
   "D216",
   "D217",
   "D218",
+  "D224",
   "B100",
 ];
 
@@ -1028,6 +1029,14 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     const entry = backlogEntry("D215");
     expect(entry).toContain("`src/lib/db/console/shell-words.ts`");
     expect(entry).toContain("`tests/unit/db/etcd/lexer.test.ts`");
+  });
+
+  test("P15. a key several shards hold is one key in every walk, and D224 files its one record (ruling R38)", () => {
+    expect(flat(sectionOf(DOC, "## 13. Known limitations"))).toContain(
+      "A key stored on several shards under different partition keys is one key in every walk, and `range-scan` shows one record for it, read on the lowest shard id that listed it; read the others with `get -p` ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).",
+    );
+    expect(backlogEntry("D224")).toContain("lowest shard id");
+    expect(backlogEntry("D224")).not.toMatch(PRIVATE_FINDING_ID);
   });
 
   test("P14. no Oxia BACKLOG entry cites a private finding id", () => {

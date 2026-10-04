@@ -96,8 +96,8 @@ class CursorHeap {
 }
 
 /**
- * Merges the shards' items in the order's sequence, emitting only items at or below the bound: the least last key of
- * the incomplete shards. A shard cut short may hold keys below another shard's later keys, so nothing above its last
+ * Merges the shards' items in the order's sequence, each key once however many shards list it, emitting only items at
+ * or below the bound: the least last key of the incomplete shards. A shard cut short may hold keys below another shard's later keys, so nothing above its last
  * key is emitted until it is read further.
  */
 function mergeShards<T>(
@@ -130,12 +130,17 @@ function mergeShards<T>(
   const items: T[] = [];
   for (let head = heap.peek(); head !== undefined && items.length < count; head = heap.peek()) {
     if (bound !== undefined && compareBytes(head.head, bound) > 0) break;
-    const cursor = heap.pop();
-    items.push(shards[cursor.shard].items[cursor.position]);
-    cursor.position++;
-    if (cursor.position < encoded[cursor.shard].length) {
-      cursor.head = encoded[cursor.shard][cursor.position];
-      heap.push(cursor);
+    const emitted = head.head;
+    items.push(shards[head.shard].items[head.position]);
+    // A key several shards hold (written under different partition keys) is answered once, from the first input that
+    // holds it (ruling R38): every copy is taken off the heap now, so none is answered later or counted as more.
+    for (let same = heap.peek(); same !== undefined && compareBytes(same.head, emitted) === 0; same = heap.peek()) {
+      const cursor = heap.pop();
+      cursor.position++;
+      if (cursor.position < encoded[cursor.shard].length) {
+        cursor.head = encoded[cursor.shard][cursor.position];
+        heap.push(cursor);
+      }
     }
   }
   return { items, more: shards.some((shard) => !shard.complete) || heap.size > 0 };

@@ -529,8 +529,9 @@ async function round(walk: KeyWalk, ask: Round, run: Run<string>, frontiers: Fro
 }
 
 /**
- * The shard each merged key came from (ruling R32). The merge answers each input's least keys in order, ties by input
- * index, so a key answered is the next one of the first input whose answered keys still hold it.
+ * The shard each merged key is read on (rulings R32 and R38). The merge answers each input's least keys in order, and
+ * a key once however many inputs hold it, so a key answered is the next one of every input whose answered keys hold
+ * it; of those inputs' shards, the lowest id.
  */
 function homesOf(
   inputs: readonly (readonly string[])[],
@@ -548,11 +549,11 @@ function homesOf(
     }
   });
   const next = inputs.map(() => 0);
-  return answered.map((key) => {
-    const input = (holders.get(key) as number[]).shift() as number;
-    return home(input, next[input]++);
-  });
+  return answered.map((key) => lowest((holders.get(key) as number[]).map((input) => home(input, next[input]++))));
 }
+
+/** The shard of the lowest id among `shards`, which holds at least one. */
+const lowest = (shards: readonly OxiaShard[]): OxiaShard => [...shards].sort(byShardId)[0];
 
 /** The kept keys from `values.next` up to `end` that the same shard listed, at most `most` gets: the next group. */
 function nextGroup(values: Values, run: Run<string>, end: number, most: number): readonly string[] {
@@ -734,7 +735,8 @@ async function bandWalk(
   const bands = prefixBands(ask.prefix, await readDepth(client, { ...snapshot, shards }, call));
   const gets = bands.flatMap((band) => band.extraGets);
   const holders = await holdersOf(client, shards, gets, call);
-  const found = new Map(gets.map((key, i) => [key, holders[i][0]]));
+  // A key several shards hold is read on the lowest id among them (ruling R38).
+  const found = new Map(gets.map((key, i) => [key, [...holders[i]].sort((a, b) => byShardId(a.shard, b.shard))[0]]));
   const after = afterCursor(order, ask.cursor);
   const level = ask.cursor === undefined ? 0 : hierarchicalLevel(ask.cursor);
   for (const band of bands) {

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S6 · 4
-- [Drivers and connections](#drivers-and-connections) — D1-D223, U17 · 138
+- [Drivers and connections](#drivers-and-connections) — D1-D224, U17 · 139
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X27, U2-U81 · 75
@@ -2517,6 +2517,16 @@ Oxia's hex dump and etcd's base64 view of a binary value both carry that caption
 Found 2026-10-04 by the review of the Oxia provider (ruling R37 of its PR).
 
 **Done when:** a binary dump part carries a caption that says what it is, for every engine.
+
+### D224. An Oxia key on several shards shows one record in a record walk
+
+Oxia stores a record on the shard its partition key names, so one key written under two partition keys is two records on two shards.
+Every Oxia key walk answers such a key once, and `range-scan` (with or without `--prefix`) reads its record on the lowest shard id that listed it, so the other records are not shown.
+They are read in the editor with `get -p` and their partition key, and the Source tab of such a key names how many shards hold it.
+
+Found 2026-10-04 by the review of the Oxia provider (ruling R38 of its PR).
+
+**Done when:** a record walk shows every record of such a key, each with its shard, or the entry is closed because `get -p` is judged enough.
 
 ## Value interpolation
 

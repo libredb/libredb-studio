@@ -131,6 +131,22 @@ describe("mergePage (SB1-7.5)", () => {
     );
   });
 
+  test("a key two shards list is answered once, and a page that ends on it holds no more (ruling R38)", () => {
+    const shards = [
+      { keys: ["a", "b"], complete: true },
+      { keys: ["b", "c"], complete: true },
+      { keys: ["b"], complete: true },
+    ];
+    for (const order of ORDERS) {
+      expect(mergePage(shards, order, 10)).toEqual({ keys: ["a", "b", "c"], more: false });
+      expect(mergePage(shards, order, 2)).toEqual({ keys: ["a", "b"], more: true });
+      expect(mergePage(shards.slice(0, 1).concat([{ keys: ["b"], complete: true }]), order, 2)).toEqual({
+        keys: ["a", "b"],
+        more: false,
+      });
+    }
+  });
+
   test("the order decides the sequence", () => {
     const shards = [
       { keys: ["/x"], complete: true },

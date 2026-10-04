@@ -2275,29 +2275,113 @@ describe("the order probe's sample paths list a partition-keyed key on the shard
   });
 });
 
-describe("a key stored on two shards under different partition keys (ruling R32)", () => {
-  for (const order of ORDERS) {
-    test(`a range-scan answers each shard's record with its own value (${order})`, async () => {
-      const shell = await fakeOf(order, []);
-      const home = shardFor(shell.snapshot, "/dup");
-      const [first, second] = shell.snapshot.shards.filter((shard) => shard !== home);
-      const records = [
-        { key: "/dup", partitionKey: offHome(shell.snapshot, "/dup", second), value: Uint8Array.of(2) },
-        { key: "/dup", partitionKey: offHome(shell.snapshot, "/dup", first), value: Uint8Array.of(1) },
-        { key: "/a", value: Uint8Array.of(0) },
-        { key: "/z", value: Uint8Array.of(9) },
-      ];
-      const { fake, snapshot } = await fakeOf(order, records);
-      const scanned = await rangeScanPage(fake, snapshot, order, { range: ALL, limit: 100 }, callOf());
-      const ids = snapshot.shards.map((shard) => shard.id);
-      const dup = scanned.records.filter((record) => record.key === "/dup");
-      expect(dup.map((record) => [record.shard, [...(record.value ?? [])]])).toEqual(
-        [
-          [first.id, [1]],
-          [second.id, [2]],
-        ].sort((a, b) => ids.indexOf(a[0] as string) - ids.indexOf(b[0] as string)),
-      );
-      expect(scanned.records.map((record) => record.key)).toEqual([...sortedKeys(["/a", "/dup", "/dup", "/z"], order)]);
+/** A shard id's place in ascending order, as walks.ts reads it: the shorter decimal id is the smaller. */
+const lowestId = (shards: readonly OxiaShard[]) =>
+  [...shards].sort((a, b) => a.id.length - b.id.length || (a.id < b.id ? -1 : 1))[0].id;
+
+/**
+ * `/x/dup` and `/x//` each stored on the two shards other than their own hash's, under different partition keys, the
+ * copy on each shard with its own value (that shard's id), beside `/x/a` and `/x/z`. With `relabelled`, the shards in
+ * hash order are ids 10, 9 and 1, so the lowest id is neither the first shard read nor the least id as text.
+ */
+async function twoShardFake(order: KeyOrder, keys: readonly string[], relabelled = false) {
+  const { fake, snapshot: even } = await fakeOf(order, []);
+  if (relabelled)
+    fake.setSnapshot({
+      ...even,
+      shards: even.shards.map(({ minHash, maxHash, leader }, i) => ({
+        id: ["10", "9", "1"][i],
+        minHash,
+        maxHash,
+        leader,
+      })),
     });
+  const snapshot = await fake.getSnapshot(callOf());
+  const holdersOf = (key: string) => snapshot.shards.filter((shard) => shard !== shardFor(snapshot, key));
+  for (const key of keys) {
+    if (key === "/x/dup" || key === "/x//")
+      for (const on of holdersOf(key))
+        fake.put({ key, partitionKey: offHome(snapshot, key, on), value: new TextEncoder().encode(on.id) });
+    else fake.put({ key, value: Uint8Array.of(0) });
+  }
+  return { fake, snapshot, unique: [...sortedKeys([...new Set(keys)], order)], holdersOf };
+}
+
+const SPREAD = ["/x/a", "/x/dup", "/x/z"];
+const SPREAD_DEEP = [...SPREAD, "/x//"];
+const PAGE_COUNTS = [1, 2, 3, 5, 7];
+
+describe("a key stored on two shards under different partition keys is one key in every key walk (ruling R38)", () => {
+  for (const order of ORDERS) {
+    test(`the Keys panel pages answer it once at counts 1, 2, 3, 5 and 7 (${order})`, async () => {
+      const { fake, snapshot, unique } = await twoShardFake(order, SPREAD_DEEP);
+      const children = await twoShardFake(order, SPREAD);
+      for (const count of PAGE_COUNTS) {
+        // oxlint-disable-next-line no-await-in-loop -- one page size after the other.
+        const full = await walkAll((cursor) => fullWalkPage(fake, snapshot, order, { cursor, count }, callOf()), count);
+        expect({ count, keys: full }).toEqual({ count, keys: unique });
+        // oxlint-disable-next-line no-await-in-loop -- one page size after the other.
+        const prefixed = await walkAll(
+          (cursor) => prefixWalkPage(fake, snapshot, order, { prefix: "/x/", cursor, count }, callOf()),
+          count,
+        );
+        expect({ count, keys: prefixed }).toEqual({ count, keys: unique });
+        // oxlint-disable-next-line no-await-in-loop -- one page size after the other.
+        const under = await walkAll(
+          (cursor) => childrenPage(children.fake, children.snapshot, order, { parent: "/x", cursor, count }, callOf()),
+          count,
+        );
+        expect({ count, keys: under }).toEqual({ count, keys: children.unique });
+      }
+    });
+
+    test(`list and list --prefix answer it once at every limit (${order})`, async () => {
+      const { fake, snapshot, unique } = await twoShardFake(order, SPREAD_DEEP);
+      for (const limit of [...PAGE_COUNTS, 100]) {
+        // oxlint-disable-next-line no-await-in-loop -- one limit after the other.
+        const listed = await listRange(fake, snapshot, order, { range: ALL, limit }, callOf());
+        expect({ limit, keys: listed.keys, more: listed.more }).toEqual({
+          limit,
+          keys: unique.slice(0, limit),
+          more: limit < unique.length,
+        });
+        // oxlint-disable-next-line no-await-in-loop -- one limit after the other.
+        const prefixed = await prefixListPage(fake, snapshot, order, { prefix: "/x/", limit }, callOf());
+        expect({ limit, keys: prefixed.keys, more: prefixed.more }).toEqual({
+          limit,
+          keys: unique.slice(0, limit),
+          more: limit < unique.length,
+        });
+      }
+    });
+
+    for (const relabelled of [false, true]) {
+      test(`range-scan and range-scan --prefix read it once, on the lowest shard id that holds it (${order}${relabelled ? ", shard ids 10, 9 and 1" : ""})`, async () => {
+        const { fake, snapshot, unique, holdersOf } = await twoShardFake(order, SPREAD_DEEP, relabelled);
+        const expected = (key: string) => (key === "/x/dup" || key === "/x//" ? lowestId(holdersOf(key)) : undefined);
+        for (const limit of [...PAGE_COUNTS, 100]) {
+          // oxlint-disable-next-line no-await-in-loop -- one limit after the other.
+          const scanned = await rangeScanPage(fake, snapshot, order, { range: ALL, limit }, callOf());
+          // oxlint-disable-next-line no-await-in-loop -- one limit after the other.
+          const prefixed = await prefixScanPage(fake, snapshot, order, { prefix: "/x/", limit }, callOf());
+          for (const answer of [scanned, prefixed]) {
+            expect({ limit, keys: answer.records.map((record) => record.key), more: answer.more }).toEqual({
+              limit,
+              keys: unique.slice(0, limit),
+              more: limit < unique.length,
+            });
+            for (const record of answer.records) {
+              const id = expected(record.key);
+              if (id === undefined) continue;
+              expect({ key: record.key, shard: record.shard, value: new TextDecoder().decode(record.value) }).toEqual({
+                key: record.key,
+                shard: id,
+                value: id,
+              });
+            }
+          }
+        }
+      });
+    }
   }
 });
