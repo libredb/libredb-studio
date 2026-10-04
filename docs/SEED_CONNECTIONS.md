@@ -666,6 +666,9 @@ services:
       SEED_DISCOVERY_PATH: /app/discovery/services.json
     volumes:
       - discovered:/app/discovery
+    networks:
+      - default
+      - captain-overlay-network
   discovery:
     image: ghcr.io/libredb/libredb-studio:0.18.0
     entrypoint: ["node", "/usr/local/lib/libredb-studio/discover.mjs"]
@@ -677,7 +680,12 @@ services:
       - discovered:/app/discovery
 volumes:
   discovered:
+networks:
+  captain-overlay-network:
+    external: true
 ```
+
+Studio must also join the network `DISCOVERY_NETWORK` names, because the discovered host names resolve only there: in Compose as an external network, as above, and with `docker run` through `--network`; CapRover creates its network attachable.
 
 It lists Swarm services, so it needs a swarm manager: a node that sees the network but is not a manager reports `swarm_unavailable`, and an engine with no network of that name reports `network_not_found` first, because it asks for the network before the services.
 
