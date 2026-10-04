@@ -486,6 +486,22 @@ const NO_OVERRIDE = Symbol("no override");
  */
 let dbsizeOverride: unknown = NO_OVERRIDE;
 
+/**
+ * When set, `connect()` fails the way ioredis 5.11.1 fails it: every error in the list is EMITTED
+ * as an `error` event, in order, and the promise then rejects with the plain "Connection is
+ * closed." (#1356).
+ *
+ * Measured 2026-10-04 through ioredis 5.11.1 against redis 8.10.2 and valkey 9.1.2: a wrong
+ * password, a refused port, an unknown host and a self-signed certificate ALL reject `connect()`
+ * with that one sentence, and the reason travels only on the event: a `ReplyError` "WRONGPASS
+ * ...", an `Error` with `code` ECONNREFUSED / ENOTFOUND / SELF_SIGNED_CERT_IN_CHAIN. A plaintext
+ * client on a TLS-only port emits nothing at all, which an empty list stands for.
+ */
+let connectFailure: Error[] | null = null;
+
+/** Every `error` listener each opened connection carries, in the order the connections opened. */
+const errorListeners: Array<Array<(error: Error) => void>> = [];
+
 /** Every pipelined batch the provider sent, by command name, in the order it sent it. */
 const pipelineBatches: string[][] = [];
 
@@ -512,7 +528,20 @@ mock.module("ioredis", () => {
     /** This connection's entry in `openedClients`, kept current as it moves and closes. */
     private readonly _state = { database: 0, disconnected: false };
 
+    /** This connection's `error` listeners, registered through `on`: the one event read. */
+    private readonly _errorListeners: Array<(error: Error) => void> = [];
+
+    on(event: string, listener: (error: Error) => void) {
+      if (event === "error") this._errorListeners.push(listener);
+      return this;
+    }
+
     async connect() {
+      errorListeners.push(this._errorListeners);
+      if (connectFailure !== null) {
+        for (const error of connectFailure) for (const listener of this._errorListeners) listener(error);
+        throw new Error("Connection is closed.");
+      }
       this._state.database = this._db;
     }
 
@@ -707,7 +736,10 @@ mock.module("ioredis", () => {
 // ============================================================================
 
 const { RedisProvider } = await import("@/lib/db/providers/keyvalue/redis");
-const { DatabaseConfigError, QueryError } = await import("@/lib/db/errors");
+const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, isRetryableError } = await import(
+  "@/lib/db/errors"
+);
+const { logger } = await import("@/lib/logger");
 
 // ============================================================================
 // Test Config
@@ -809,6 +841,150 @@ describe("RedisProvider", () => {
 
       await provider.connect();
       expect(openedDatabases()).toEqual([2]);
+    });
+
+    /*
+     * THE REASON A CONNECT FAILED IS THE DRIVER'S FIRST `error` EVENT (#1356).
+     *
+     * ioredis rejects `connect()` with "Connection is closed." whatever went wrong and emits the
+     * reason as an `error` event; with no listener that reason reached only the server log, as
+     * "[ioredis] Unhandled error event". Each event below is one measured on 2026-10-04 through
+     * ioredis 5.11.1 against redis 8.10.2 and valkey 9.1.2.
+     */
+    describe("a refused connect names its reason", () => {
+      afterEach(() => {
+        connectFailure = null;
+      });
+
+      const refusal = async (events: Error[], config: Partial<DatabaseConnection> = {}): Promise<Error> => {
+        connectFailure = events;
+        provider = new RedisProvider({ ...baseConfig, ...config });
+        const raised = await provider.connect().then(
+          () => new Error("connect() resolved"),
+          (error: Error) => error,
+        );
+        expect(provider.isConnected()).toBe(false);
+        return raised;
+      };
+
+      const networkError = (message: string, code: string): Error => Object.assign(new Error(message), { code });
+
+      /**
+       * A refused `AUTH` reply as ioredis 5.11.1 emits it: `DataHandler` sets `command` to the
+       * command the reply answered, so the password the user typed rides on the error object.
+       */
+      const authReply = (message: string): Error =>
+        Object.assign(replyError(message), { command: { name: "auth", args: ["not-the-password"] } });
+
+      test("a wrong password is an AuthenticationError in the server's words, and not retryable", async () => {
+        const error = await refusal([authReply("WRONGPASS invalid username-password pair or user is disabled.")], {
+          password: "not-the-password",
+        });
+        expect(error).toBeInstanceOf(AuthenticationError);
+        expect(error.message).toBe(
+          "Failed to connect to Redis: WRONGPASS invalid username-password pair or user is disabled.",
+        );
+        expect(isRetryableError(error)).toBe(false);
+        // The driver's error, and with it the AUTH command, is carried nowhere.
+        expect(error.message).not.toContain("not-the-password");
+        expect(JSON.stringify(error)).not.toContain("not-the-password");
+        expect(error.cause).toBeUndefined();
+        expect(Object.values(error).some((value) => JSON.stringify(value)?.includes("not-the-password"))).toBe(false);
+      });
+
+      // Measured on redis 5.0.14 with `--requirepass`: no ACL, and the refusal's first word is ERR.
+      test("a wrong password on a server without ACLs (Redis 5) is an AuthenticationError too", async () => {
+        const error = await refusal([authReply("ERR invalid password")], { password: "not-the-password" });
+        expect(error).toBeInstanceOf(AuthenticationError);
+        expect(error.message).toBe("Failed to connect to Redis: ERR invalid password");
+      });
+
+      // Measured: a connect that never answers emits "connect ETIMEDOUT" with code ETIMEDOUT.
+      test("a connect timeout is a ConnectionError, retryable", async () => {
+        const error = await refusal([networkError("connect ETIMEDOUT", "ETIMEDOUT")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: connect ETIMEDOUT");
+        expect(isRetryableError(error)).toBe(true);
+      });
+
+      test("no password against a server that requires one is an AuthenticationError", async () => {
+        const error = await refusal([replyError("NOAUTH Authentication required.")]);
+        expect(error).toBeInstanceOf(AuthenticationError);
+        expect(error.message).toBe("Failed to connect to Redis: NOAUTH Authentication required.");
+      });
+
+      test("a refused port is a ConnectionError naming the address", async () => {
+        const error = await refusal([networkError("connect ECONNREFUSED 127.0.0.1:40009", "ECONNREFUSED")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: connect ECONNREFUSED 127.0.0.1:40009");
+        expect(isRetryableError(error)).toBe(true);
+      });
+
+      test("an unknown host is a ConnectionError naming the host", async () => {
+        const error = await refusal([networkError("getaddrinfo ENOTFOUND nonexistent.invalid", "ENOTFOUND")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: getaddrinfo ENOTFOUND nonexistent.invalid");
+      });
+
+      test("a certificate the chain check refuses is a ConnectionError with the TLS reason", async () => {
+        const error = await refusal(
+          [networkError("self-signed certificate in certificate chain", "SELF_SIGNED_CERT_IN_CHAIN")],
+          { ssl: { mode: "verify-full" } },
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: self-signed certificate in certificate chain");
+      });
+
+      test("a server error reply that is not about credentials stays a ConnectionError", async () => {
+        const error = await refusal([replyError("LOADING Redis is loading the dataset in memory")]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: LOADING Redis is loading the dataset in memory");
+      });
+
+      test("the FIRST event is the reason, not a later one", async () => {
+        const error = await refusal([
+          replyError("WRONGPASS invalid username-password pair or user is disabled."),
+          networkError("connect ECONNREFUSED 127.0.0.1:6379", "ECONNREFUSED"),
+        ]);
+        expect(error).toBeInstanceOf(AuthenticationError);
+      });
+
+      // Measured: a plaintext client on a TLS-only port has its socket closed with no event at all.
+      test("with no event the driver's own sentence is all there is", async () => {
+        const error = await refusal([]);
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: Connection is closed.");
+      });
+
+      test("every connection carries an error listener, so no event is left unhandled", async () => {
+        errorListeners.length = 0;
+        await provider.connect();
+        expect(errorListeners).toHaveLength(1);
+        expect(errorListeners[0]).toHaveLength(1);
+      });
+
+      test("an event after the connect is logged as a warning with its message only", async () => {
+        errorListeners.length = 0;
+        await provider.connect();
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        try {
+          const late = Object.assign(replyError("NOAUTH Authentication required."), {
+            command: { name: "auth", args: ["not-the-password"] },
+          });
+          expect(() => errorListeners[0][0](late)).not.toThrow();
+          expect(warn).toHaveBeenCalledTimes(1);
+          expect(warn.mock.calls[0]).toEqual(["[Redis] NOAUTH Authentication required.", { provider: "redis" }]);
+          expect(JSON.stringify(warn.mock.calls)).not.toContain("not-the-password");
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      test("an object read on its own connection raises the same typed error", async () => {
+        await provider.connect();
+        connectFailure = [replyError("WRONGPASS invalid username-password pair or user is disabled.")];
+        await expect(provider.countObjects(["0"])).rejects.toBeInstanceOf(AuthenticationError);
+      });
     });
   });
 

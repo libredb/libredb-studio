@@ -461,6 +461,45 @@ does, so the pair is what distinguishes a wired path from a documented shape.
 > redis://localhost:6390  -> sslMode disable | FAILED: Failed to connect to Redis: Connection is closed.
 > ```
 
+### 4.4 Why a connect failed (#1356)
+
+ioredis rejects `connect()` with the same *"Connection is closed."* whatever went wrong, and emits
+the reason as an `error` event. `openClient()` attaches an `error` listener before it connects and
+keeps the FIRST event as the reason, so `connect()`, Test Connection and every per-database object
+read raise a typed error that names it (`connectFailure()` in
+[`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts)). Before the listener existed, every case
+below showed only *"Connection is closed."* (HTTP 503, `retryable: true` even for a bad password),
+and the reason reached nothing but the server log, as *"[ioredis] Unhandled error event"*.
+
+Measured 2026-10-04 through ioredis 5.11.1 against `redis:latest` (8.10.2) and
+`valkey/valkey:latest` (9.1.2), through Test Connection on a production build (Valkey answers the
+wrong-password row word for word). The Redis 5 row (`redis:5`, 5.0.14) and the timeout row were
+measured on the driver directly:
+
+| Case | Raised as | Message after *"Failed to connect to Redis: "* |
+|------|-----------|-----------------------------------------------|
+| Wrong password, or an ACL user that does not exist | `AuthenticationError` (401) | `WRONGPASS invalid username-password pair or user is disabled.` |
+| No password against `requirepass` | `AuthenticationError` (401) | `NOAUTH Authentication required.` |
+| Wrong password on Redis 5 (5.0.14, `requirepass`, no ACL) | `AuthenticationError` (401) | `ERR invalid password` |
+| The connect never answers (`connectTimeout`) | `ConnectionError` (503) | `connect ETIMEDOUT` |
+| Nothing listening on the port | `ConnectionError` (503) | `connect ECONNREFUSED 127.0.0.1:40009` |
+| Host name that does not resolve | `ConnectionError` (503) | `getaddrinfo ENOTFOUND nonexistent.invalid` |
+| Verifying mode, self-signed server, no CA pasted | `ConnectionError` (503) | `self-signed certificate in certificate chain` |
+| Plaintext client on a TLS-only port | `ConnectionError` (503) | `Connection is closed.` (the server closes the socket and ioredis emits no event) |
+
+Only the message is carried, never the driver's error object: a `ReplyError` to `AUTH` holds the
+command it answered, password included, on its `command` field (ioredis 5.11.1 `DataHandler`). A
+credential is told apart by how the server's reply begins (`WRONGPASS`, `NOAUTH`, or Redis 5's
+`ERR invalid password`, whose first word is the generic `ERR`); a password sent to a server that
+requires none is not refused at all (ioredis warns and connects). Any other
+reply during the connect, such as the `LOADING` a server answers while it reads its dataset, stays a
+`ConnectionError`, which the client may retry. With the CA pasted, the TLS server of the table
+connects (`verify-full`, host `localhost`).
+
+The listener stays attached after the connect settles, and from then on logs each event as a
+warning, `[Redis] <message>` with `provider: "redis"`, so a dropped socket and the reconnects after
+it stay visible in the server log. The message only, for the same reason as above.
+
 ---
 
 ## 5. Query interface
@@ -1751,7 +1790,8 @@ The provider raises the shared error classes from
 |-----------|-------|
 | Missing `host` at construction | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
-| `connect()` fails | `ConnectionError` |
+| `connect()` refused for a credential (`WRONGPASS`, `NOAUTH`, `ERR invalid password`) | `AuthenticationError`, *"Failed to connect to Redis: WRONGPASS …"*, not retryable ([§4.4](#44-why-a-connect-failed-1356)) |
+| `connect()` fails any other way | `ConnectionError`, *"Failed to connect to Redis: &lt;reason&gt;"* ([§4.4](#44-why-a-connect-failed-1356)) |
 | Malformed JSON command | `QueryError` — *"Invalid JSON command format"* |
 | JSON without `command` | `QueryError` — *"Command is required…"* |
 | Empty command | `QueryError` — *"Empty command"* |
@@ -1793,7 +1833,9 @@ battery of common commands (`KEYS`, `SET`, `DEL`, `PING`, `DBSIZE`), integer rep
 asserted against the options object the `Redis` constructor received. The same captured options carry
 the **ACL user** assertions ([§4.1a](#41a-acl-users-d29)) — `username` present for a named user,
 absent for both an empty string and an unset field — and a refused `INFO` is asserted to raise the
-server's own `NOPERM` sentence out of `getHealth()`.
+server's own `NOPERM` sentence out of `getHealth()`. The mock's `connect()` can emit the measured
+`error` events of [§4.4](#44-why-a-connect-failed-1356) before it rejects, which pins the typed error and
+the message each one becomes.
 
 ### 11.3 Run it
 

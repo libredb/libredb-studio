@@ -16,6 +16,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import Redis, { type RedisOptions } from "ioredis";
+import { logger } from "@/lib/logger";
 import { BaseDatabaseProvider } from "../../base-provider";
 import {
   applySourceBound,
@@ -72,7 +73,7 @@ import {
   type ObjectSourceDocument,
   type OpenQueryTransactionOutcome,
 } from "../../types";
-import { DatabaseConfigError, QueryError, ConnectionError } from "../../errors";
+import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "../../errors";
 
 /**
  * Redis's identity for the shared container-path renderer.
@@ -821,6 +822,41 @@ function isServerErrorReply(error: unknown): boolean {
 }
 
 /**
+ * How a server's reply to a refused credential begins.
+ *
+ * Measured 2026-10-04 through ioredis 5.11.1. On redis 8.10.2 and valkey 9.1.2 a wrong password,
+ * or an ACL user that does not exist, is answered "WRONGPASS invalid username-password pair or
+ * user is disabled.", and no password against `requirepass` is "NOAUTH Authentication required."
+ * Redis 5.0.14 has no ACL and answers a wrong `requirepass` password "ERR invalid password", whose
+ * first word is the generic ERR, so the prefix is matched rather than the code. A password sent to
+ * a server that requires none is not refused at all: ioredis warns and the connect succeeds.
+ */
+const REDIS_AUTH_REPLIES: readonly string[] = Object.freeze(["WRONGPASS ", "NOAUTH ", "ERR invalid password"]);
+
+/**
+ * A failed connect, as the typed error that names its reason (#1356).
+ *
+ * `cause` is the first `error` event ioredis emitted while connecting, or the `connect()` rejection
+ * when it emitted none. The event is the one that says WHY: measured on ioredis 5.11.1, a wrong
+ * password, a refused port, an unknown host and a certificate the chain check refuses all reject
+ * `connect()` with the same "Connection is closed.", and the reason ("WRONGPASS ...",
+ * "connect ECONNREFUSED 127.0.0.1:6379", "getaddrinfo ENOTFOUND host",
+ * "self-signed certificate in certificate chain") travels only on the event.
+ *
+ * Only the MESSAGE is carried, never the error object: a `ReplyError` to `AUTH` holds the command
+ * it answered, password included, on its `command` field. None of the measured messages contains
+ * a credential; the host and port in a network one are the ones the user typed.
+ */
+function connectFailure(cause: unknown, host: string | undefined, port: number): DatabaseError {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  const message = `Failed to connect to Redis: ${reason}`;
+  if (isServerErrorReply(cause) && REDIS_AUTH_REPLIES.some((prefix) => reason.startsWith(prefix))) {
+    return new AuthenticationError(message, "redis");
+  }
+  return new ConnectionError(message, "redis", host, port);
+}
+
+/**
  * The exact command the revision token is a digest OF, as a plan reader will see it.
  *
  * `ObjectEditRevision.basis` is "the engine expression the comparison is over", so it carries the
@@ -1191,11 +1227,31 @@ export class RedisProvider extends BaseDatabaseProvider {
    * unhandled `error` event, and every later command ran in database 0. A `SELECT` ioredis saw
    * answered is also the one it re-sends after a reconnect, so the connection stays where it was
    * put.
+   *
+   * The `error` listener is attached before `connect()` and stays for the client's life. While
+   * connecting, its first event is the reason a refused connect names (`connectFailure`). After
+   * that it logs the message as a warning, so a dropped socket and the reconnects that follow stay
+   * visible to an operator; without any listener ioredis printed every event as
+   * "[ioredis] Unhandled error event" (#1356). The message only, never the error: a `ReplyError`
+   * carries the command it answered, which for `AUTH` holds the password.
    */
   private async openClient(db: number): Promise<Redis> {
     const client = new Redis(this.redisOptions());
+    let connecting = true;
+    let firstError: Error | undefined;
+    client.on("error", (error: Error) => {
+      if (connecting) firstError ??= error;
+      else logger.warn(`[Redis] ${error.message}`, { provider: "redis" });
+    });
     try {
-      await client.connect();
+      await client
+        .connect()
+        .catch((error: unknown) => {
+          throw connectFailure(firstError ?? error, this.config.host, this.config.port || 6379);
+        })
+        .finally(() => {
+          connecting = false;
+        });
       if (db !== 0) {
         await client.select(db).catch((error: unknown) => {
           throw new QueryError(
@@ -1234,8 +1290,8 @@ export class RedisProvider extends BaseDatabaseProvider {
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
       // A database the config cannot name or the server does not have is a request fault, not an
-      // unreachable host.
-      if (error instanceof QueryError || error instanceof DatabaseConfigError) throw error;
+      // unreachable host, and a refused connect already carries its typed reason.
+      if (error instanceof DatabaseError) throw error;
       throw new ConnectionError(
         `Failed to connect to Redis: ${error instanceof Error ? error.message : String(error)}`,
         "redis",
