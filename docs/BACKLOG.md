@@ -1189,7 +1189,7 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses two exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 43 hits, re-measured 2026-10-04. Eleven of
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 44 hits, re-measured 2026-10-04. Twelve of
 them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`,
 the agent routes' pattern). Thirty write out the same five-key object - `getSession`, `signJWT`,
 `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token

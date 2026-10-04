@@ -1949,6 +1949,17 @@ A role change, disabling, a password reset and a passkey clear end that account'
 Both answer `404` for an unknown email, and `409` when the change would leave no enabled admin, or when another change to the same account landed after this request read it: `409 "The account changed at the same time. Reload the page and try again."`, with nothing written.
 Every change, and every refused one, is an `account` event in the audit log naming the acting admin.
 
+#### GET /api/admin/discovery
+
+The status of the CapRover discovery source ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md)), read by the admin Overview page.
+It goes through the shared route guard: `401` with no session, `403` for a non-admin.
+With `SEED_DISCOVERY_PATH` unset it answers `{ "discovery": null }`.
+Otherwise it answers `{ "discovery": { "platform": "caprover", "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "name", "type" }], "skipped": [{ "appName", "reason" }] }, "transport": { "plainHttp", "cookieSecureOff" } }`, where `state` is `ok`, `waiting`, `stale` or `error`.
+It names apps and engine types only, never a host name or an environment value.
+`plainHttp` is true when the request arrived over http on a host that is not loopback; `X-Forwarded-Proto` and `X-Forwarded-Host` are read only while `TRUST_PROXY_HEADERS` is not `false`.
+`cookieSecureOff` is true when `AUTH_COOKIE_SECURE` is set to `false`.
+Both flags drive a display warning and never a security decision.
+
 ---
 
 > **Internal routes (not part of this public reference).** The frontend also calls several internal `/api/db/*` endpoints that mirror provider internals and change with the UI: `multi-query`, `transaction`, `cancel`, `disconnect`, `test-connection`, `monitoring`, `pool-stats`, `profile`, `provider-meta`, and the object-surface routes under `objects/` that are not documented above (`describe`, `edit-plan` and `edit-apply` are). They're auth-gated by the middleware like everything else; consult the route handlers in `src/app/api/db/` for their shapes.

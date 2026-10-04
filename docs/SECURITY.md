@@ -200,8 +200,8 @@ audited. A forged, tampered or truncated `auth-token` reaches the trailing `catc
 other two refusals both emit: `origin_mismatch` and `insufficient_role`. See
 [`docs/BACKLOG.md`](./BACKLOG.md) H12.
 
-Everything the row once described short of that is audited. Role failures are recorded at all eight
-sites that refuse on role, seven in handlers and one in the proxy, and the seven handler sites are the
+Everything the row once described short of that is audited. Role failures are recorded at all nine
+sites that refuse on role, eight in handlers and one in the proxy, and the eight handler sites are the
 ones the Admin Audit tab can read:
 
 | site | call |
@@ -213,11 +213,12 @@ ones the Admin Audit tab can read:
 | `src/app/api/db/maintenance/route.ts` | `auditRoleDenial` |
 | `src/app/api/db/maintenance/preview/route.ts` | `auditRoleDenial` |
 | `src/app/api/admin/fleet-health/route.ts` | `auditRoleDenial` |
+| `src/app/api/admin/discovery/route.ts` | `auditRoleDenial` |
 | `src/proxy.ts` | `emitAuditEvent`, `insufficient_role` |
 
 `auditRoleDenial`
 ([`src/lib/api/require-session.ts`](../src/lib/api/require-session.ts)) emits `permission_denied`
-with `reason: "insufficient_role"`, so those seven reach the tab. An earlier version of this note
+with `reason: "insufficient_role"`, so those eight reach the tab. An earlier version of this note
 claimed the opposite and pointed at an `H12` that did not exist.
 
 Two qualifiers the grade rests on, both deliberate and documented at each call site:
