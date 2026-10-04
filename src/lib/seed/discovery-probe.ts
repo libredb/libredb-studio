@@ -27,6 +27,10 @@ export interface ProbeDeps {
 }
 
 export interface Probe {
+  /**
+   * Resolves true when the port accepts a connection and false on a timeout or a connection error; it
+   * rejects only when the connect seam throws.
+   */
   check(host: string, port: number): Promise<boolean>;
   reset(): void;
 }

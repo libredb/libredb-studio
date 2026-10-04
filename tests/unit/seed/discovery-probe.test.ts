@@ -17,6 +17,22 @@ function countingConnect() {
   return counter;
 }
 
+/**
+ * A connect seam whose sockets never connect by themselves: a test emits connect or error on one, or the
+ * probe's timeout destroys it.
+ */
+function neverConnecting() {
+  const sockets: Socket[] = [];
+  return {
+    sockets,
+    connect: (): Socket => {
+      const socket = new Socket();
+      sockets.push(socket);
+      return socket;
+    },
+  };
+}
+
 /** A port nothing listens on: a listener's port after it closed. */
 async function closedPort(): Promise<number> {
   const listener = await countingListener();
@@ -59,30 +75,35 @@ describe("discovery probe", () => {
   });
 
   it("answers false when the socket never connects within the timeout, and destroys it", async () => {
-    const sockets: Socket[] = [];
-    const probe = createProbe(
-      {
-        connect: () => {
-          const socket = new Socket();
-          sockets.push(socket);
-          return socket;
-        },
-      },
-      { timeoutMs: 50 },
-    );
+    const never = neverConnecting();
+    const probe = createProbe({ connect: never.connect }, { timeoutMs: 50 });
 
     expect(await probe.check("db.invalid", 5432)).toBe(false);
-    expect(sockets).toHaveLength(1);
-    expect(sockets[0].destroyed).toBe(true);
+    expect(never.sockets).toHaveLength(1);
+    expect(never.sockets[0].destroyed).toBe(true);
     expect(await probe.check("db.invalid", 5432)).toBe(false);
-    expect(sockets).toHaveLength(2);
+    expect(never.sockets).toHaveLength(2);
   });
 
-  it("caches a success per host:port for cacheMs and probes again once it lapses", async () => {
+  it("swallows a second error from a socket that already settled the probe", async () => {
+    const never = neverConnecting();
+    const probe = createProbe({ connect: never.connect });
+
+    const check = probe.check("db", 5432);
+    await eventually(() => never.sockets.length === 1, "the probe to dial");
+    never.sockets[0].emit("error", new Error("connect ECONNREFUSED"));
+    expect(await check).toBe(false);
+
+    // An EventEmitter throws an "error" nobody listens for, so the probe's listener has to outlive the probe.
+    expect(() => never.sockets[0].emit("error", new Error("read ECONNRESET"))).not.toThrow();
+  });
+
+  it("caches a success per host:port for 30 seconds and probes again once it lapses", async () => {
     const listener = await countingListener();
     const dial = countingConnect();
     let clock = 1_000;
-    const probe = createProbe({ connect: dial.connect, now: () => clock }, { cacheMs: 30_000 });
+    // No cacheMs option: the 29,999 ms and 1 ms steps below pin the default.
+    const probe = createProbe({ connect: dial.connect, now: () => clock });
 
     expect(await probe.check(HOST, listener.port)).toBe(true);
     clock += 29_999;
@@ -133,65 +154,74 @@ describe("discovery probe", () => {
   });
 
   it("a probe that settles after a reset leaves the newer pending probe shared", async () => {
-    const sockets: Socket[] = [];
-    const probe = createProbe({
-      connect: () => {
-        const socket = new Socket();
-        sockets.push(socket);
-        return socket;
-      },
-    });
+    const never = neverConnecting();
+    const probe = createProbe({ connect: never.connect });
 
     const before = probe.check("db", 5432);
     probe.reset();
     const after = probe.check("db", 5432);
     expect(after).not.toBe(before);
-    await eventually(() => sockets.length === 2, "both probes to dial");
+    await eventually(() => never.sockets.length === 2, "both probes to dial");
 
-    sockets[0].emit("error", new Error("connect ECONNREFUSED"));
+    never.sockets[0].emit("error", new Error("connect ECONNREFUSED"));
     expect(await before).toBe(false);
     expect(probe.check("db", 5432)).toBe(after);
 
-    sockets[1].emit("connect");
+    never.sockets[1].emit("connect");
     expect(await after).toBe(true);
   });
 
   it("does not open more sockets than the concurrency cap and starts a waiting probe when a slot frees", async () => {
-    const sockets: Socket[] = [];
-    const probe = createProbe(
-      {
-        connect: () => {
-          const socket = new Socket();
-          sockets.push(socket);
-          return socket;
-        },
-      },
-      { concurrency: 2 },
-    );
+    const never = neverConnecting();
+    const probe = createProbe({ connect: never.connect }, { concurrency: 2 });
 
     const checks = ["a", "b", "c"].map((host) => probe.check(host, 6379));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(sockets).toHaveLength(2);
+    expect(never.sockets).toHaveLength(2);
 
-    sockets[0].emit("connect");
-    await eventually(() => sockets.length === 3, "the waiting probe to start");
-    sockets[1].emit("connect");
-    sockets[2].emit("connect");
+    never.sockets[0].emit("connect");
+    await eventually(() => never.sockets.length === 3, "the waiting probe to start");
+    never.sockets[1].emit("connect");
+    never.sockets[2].emit("connect");
     expect(await Promise.all(checks)).toEqual([true, true, true]);
   });
+
+  // A leaked slot leaves the second check waiting forever: the wait below then fails by name after 500 ms, and
+  // the 1 s test timeout is the backstop.
+  it("frees its slot when the connect seam throws, so the next check still runs", async () => {
+    const boom = new Error("Port should be >= 0 and < 65536");
+    const never = neverConnecting();
+    let dials = 0;
+    const probe = createProbe(
+      {
+        connect: () => {
+          dials += 1;
+          if (dials === 1) throw boom;
+          return never.connect();
+        },
+      },
+      { concurrency: 1 },
+    );
+
+    await expect(probe.check("db", 5432)).rejects.toBe(boom);
+
+    const second = probe.check("other-db", 5432);
+    await eventually(() => never.sockets.length === 1, "the second check to dial", 500);
+    never.sockets[0].emit("connect");
+    expect(await second).toBe(true);
+  }, 1_000);
 
   // Review focus (Task 4), at probe level: 100 fallback candidates, at most 16 sockets open at once,
   // and a pass over them that takes one probe timeout per batch of 16, not one per candidate.
   it("probe level: probes 100 candidates with at most 16 sockets open and finishes within one timeout per batch", async () => {
     const timeoutMs = 200;
-    const sockets: Socket[] = [];
+    const never = neverConnecting();
     let peakOpen = 0;
     const probe = createProbe(
       {
         connect: () => {
-          const socket = new Socket();
-          sockets.push(socket);
-          peakOpen = Math.max(peakOpen, sockets.filter((s) => !s.destroyed).length);
+          const socket = never.connect();
+          peakOpen = Math.max(peakOpen, never.sockets.filter((s) => !s.destroyed).length);
           return socket;
         },
       },
@@ -205,9 +235,11 @@ describe("discovery probe", () => {
     const elapsed = performance.now() - started;
 
     expect(results.every((reachable) => reachable === false)).toBe(true);
-    expect(sockets).toHaveLength(100);
+    expect(never.sockets).toHaveLength(100);
     expect(peakOpen).toBe(16);
-    expect(sockets.every((socket) => socket.destroyed)).toBe(true);
-    expect(elapsed).toBeLessThan((batches + 1) * timeoutMs);
+    expect(never.sockets.every((socket) => socket.destroyed)).toBe(true);
+    // The ideal is batches * timeoutMs (1400 ms). Two timeouts of slack absorb timer granularity across the waves on
+    // the Windows and macOS runners; a cap of 8 needs 13 waves (2600 ms) and still fails.
+    expect(elapsed).toBeLessThan((batches + 3) * timeoutMs);
   });
 });
