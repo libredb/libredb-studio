@@ -1775,6 +1775,48 @@ describe("a non-admin editor handle has no filesystem reach (B1/K1)", () => {
     }
   });
 
+  test("a refusal says it is Studio's file-access posture, in front of the engine's own sentence", async () => {
+    // The engine says only "disabled by configuration", which reads like a server fault to the
+    // user and tells the operator nothing about the role. The reason goes in front of it, the way
+    // the read-only reason does for an unwritable file (#1405), and the engine's words stay intact.
+    const secret = scratchSecret("na-reason-secret.json");
+    provider = await nonAdmin(":memory:");
+    const refusalOf = (sql: string) =>
+      provider.query(sql).then(
+        () => "no refusal",
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
+    const REASON =
+      "File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use: Permission Error: ";
+
+    const read = await refusalOf(`SELECT * FROM read_text('${secret}')`);
+    expect(read.startsWith(REASON)).toBe(true);
+    expect(read).toContain(`Cannot access file "${secret}" - file system operations are disabled by configuration`);
+    expect(read).not.toContain(SECRET_PLACEHOLDER);
+    expect((await refusalOf("INSTALL httpfs")).startsWith(REASON)).toBe(true);
+    expect((await refusalOf("LOAD httpfs")).startsWith(REASON)).toBe(true);
+
+    // Only the posture's own refusals: an ordinary error keeps the engine's sentence alone.
+    expect(await refusalOf("SELECT * FROM no_such_table")).toStartWith("Catalog Error:");
+  });
+
+  test("an admin editor's errors carry no posture reason", async () => {
+    const admin = new DuckDBProvider(makeConfig({ database: ":memory:" }), {}, { allowExternalFileAccess: true });
+    await admin.connect();
+    try {
+      // The admin turns its own handle's access off at run time: the engine refuses, and the
+      // refusal is not dressed as a role restriction, because this handle was not opened under one.
+      await admin.query("SET enable_external_access = false");
+      const refusal = await admin.query("SELECT * FROM read_text('/proc/self/environ')").then(
+        () => "no refusal",
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      );
+      expect(refusal).toStartWith("Permission Error:");
+    } finally {
+      await admin.disconnect();
+    }
+  });
+
   test("admin positive control: an admin editor handle keeps read_csv, read_text and COPY ... TO", async () => {
     // The posture is per role: an admin editor is unchanged from today. Without this control,
     // denying everywhere would look the same in every refusal above.

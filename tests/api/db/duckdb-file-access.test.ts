@@ -122,6 +122,15 @@ describe("POST /api/db/query reads no file for a standard user on DuckDB (K1/B1)
     expect(JSON.stringify(body)).not.toContain(SECRET_PLACEHOLDER);
   });
 
+  test("the refusal names Studio's file-access policy, so it does not read as a server fault", async () => {
+    role = "user";
+    const { body } = await postQuery(`SELECT * FROM read_text('${secretFile}')`);
+
+    expect(String(body.error)).toStartWith(
+      "File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use: Permission Error: Cannot access file",
+    );
+  });
+
   test("the same request as an admin returns the file's contents", async () => {
     role = "admin";
     const { status, body } = await postQuery(`SELECT content FROM read_text('${secretFile}')`);

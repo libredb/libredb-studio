@@ -1254,6 +1254,7 @@ message do not accidentally select an unrelated shared classification.
 | `INTERRUPT Error` | `QueryCancelledError` | `Query was cancelled` |
 | Conflicting file lock | `ConnectionError` | `DuckDB file <path> is locked by <process>. DuckDB admits one operating-system process per database file, in read-only mode too, so the other process has to release it first. Engine message: <engine message>` |
 | A write in the editor on a file opened read-only because this process cannot write it (§3.15) | `QueryError` | `DuckDB database <path> is open read-only because this process cannot write the file or its directory: <engine message>` |
+| A `Permission Error` on an editor handle opened with file access denied (§3.16) | `QueryError` | `File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use: <engine message>` |
 | `Parser Error`, `Binder Error`, `Catalog Error`, `Conversion Error`, `Invalid Input Error`, `Constraint Error`, `Out of Range Error`, `Not implemented Error`, `Permission Error`, `Serialization Error`, `TransactionContext Error` | `QueryError` | The engine message, with the query attached when one is available |
 | Anything else | shared database error | `mapDatabaseError()` classifies the error using the common provider rules |
 

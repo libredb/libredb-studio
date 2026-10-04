@@ -205,6 +205,24 @@ const READ_ONLY_REFUSAL =
 /** The lock message; shared with `client.ts`'s open-time diagnosis. */
 const LOCK_CONFLICT_MARKER = "conflicting lock is held";
 
+/**
+ * How the engine opens every refusal `enable_external_access: 'false'` raises, measured on
+ * v1.5.5-r.5: a file read or write ("Cannot access file"), `INSTALL` and `CREATE SECRET`
+ * ("Cannot access directory"), `LOAD` and `SET temp_directory`.
+ */
+const PERMISSION_REFUSAL_PREFIX = "Permission Error:";
+
+/**
+ * The reason put in front of such a refusal on an editor handle opened with file access denied
+ * (B1 / K1). The engine says only that file system operations are "disabled by configuration",
+ * which reads like a server fault to the user and tells the operator nothing about the role, so
+ * the policy is named the way the read-only reason is for an unwritable file (#1405). It names
+ * both cases the posture covers: a non-admin role, and every role on a seed a non-admin role can
+ * use.
+ */
+const FILE_ACCESS_DENIED_REASON =
+  "File and network access is off on this DuckDB connection, because Studio allows it only to an admin on a connection no non-admin role can use";
+
 export function mapDuckDBError(error: unknown, sql?: string): Error {
   if (error instanceof DatabaseError || error instanceof ExecutionProfileError) return error;
 
@@ -736,6 +754,11 @@ export class DuckDBProvider extends SQLBaseProvider {
                 "duckdb",
                 sql,
               );
+            }
+            // The same for the file-access posture (B1/K1): only on a handle opened with file
+            // access denied, and only for the engine's permission refusals.
+            if (this.denyExternalAccess && mapped.message.startsWith(PERMISSION_REFUSAL_PREFIX)) {
+              throw new QueryError(`${FILE_ACCESS_DENIED_REASON}: ${mapped.message}`, "duckdb", sql);
             }
             throw mapped;
           }
