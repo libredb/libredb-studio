@@ -551,6 +551,10 @@ SEED_CACHE_TTL_MS=300000
 
 In Kubernetes, ConfigMap updates propagate in ~60-120s (kubelet sync period). Combined with the cache TTL, expect ~2-3 minutes for changes to take effect.
 
+The same TTL governs the [Platform discovery (CapRover)](#platform-discovery-caprover) export: Studio re-reads that file at most once per `SEED_CACHE_TTL_MS`, which the CapRover template sets to 5 seconds.
+An open tab refetches the managed list every `max(SEED_CACHE_TTL_MS, 5000)` milliseconds, at most 60 seconds, while it is visible, and on focus, so a change to the seed file or to the export reaches it without a reload.
+With the default of 60000 an open tab refreshes once a minute; the auto-connect template sets 5000, so its tabs refresh every 5 seconds.
+
 ---
 
 ## Deployment Examples
@@ -638,6 +642,179 @@ extraEnvFrom:
 
 ---
 
+## Platform discovery (CapRover)
+
+Studio can connect itself to the databases a CapRover server runs, with no seed file and no typed password.
+A companion process, the exporter, reads the Docker socket and writes a file, and Studio turns every database it recognises in that file into a managed connection for the admin role.
+It is off unless `SEED_DISCOVERY_PATH` is set.
+The CapRover template that sets it up is `deploy/caprover/libredb-studio-autoconnect.yml`, needs Studio 0.18.0 or later, and is described in [`deploy/caprover/README.md`](../deploy/caprover/README.md#auto-connect-variant), which also covers adding discovery to an existing install.
+What the Docker socket costs is recorded in [`docs/SECURITY.md`](./SECURITY.md#known-limits).
+
+### The exporter
+
+`docker/discover.mjs` ships in every image as `/usr/local/lib/libredb-studio/discover.mjs`, owned by root, so the web process cannot replace it.
+It has no dependency and no listening port, and it sends GET requests only, to two Docker Engine API paths pinned to v1.44: the network list filtered by name, and `/v1.44/services?status=true`.
+It must run as root with the socket mounted, so it has to replace the image entrypoint, because `docker-entrypoint.sh` drops every command it starts to uid 1001.
+A CapRover one-click `command` replaces the entrypoint.
+With Docker Compose or `docker run`, set the entrypoint instead:
+
+```yaml
+discovery:
+  image: ghcr.io/libredb/libredb-studio:0.18.0
+  entrypoint: ["node", "/usr/local/lib/libredb-studio/discover.mjs"]
+  volumes:
+    - /var/run/docker.sock:/var/run/docker.sock
+    - discovered:/app/discovery
+```
+
+It lists Swarm services, so it needs a swarm manager; anywhere else it reports `swarm_unavailable`.
+
+Before its first scan it checks that the directory of `DISCOVERY_OUTPUT` is owned by its own uid and is not writable by group or others, and it exits non-zero otherwise.
+A directory the web process could write would let it plant a link for the root process to follow.
+For that reason the images never create `/app/discovery`: a named volume mounted there starts as root-owned with mode 0755.
+
+Every `DISCOVERY_INTERVAL_MS` (10 seconds by default) it:
+
+1. picks the network whose name equals `DISCOVERY_NETWORK` exactly, because Docker's name filter matches substrings;
+2. keeps the services attached to that network, except CapRover's own (`captain-` prefix), Studio's own image, and the app names listed in `DISCOVERY_EXCLUDE`;
+3. records for each the service id and name, the app name (the name without `srv-captain--`), the host alias on that network (`srv-captain--<app>`, or the service name for legacy and alias-less apps), the image, the task counts and the allow-listed environment keys below;
+4. records the app names it left out because of `DISCOVERY_EXCLUDE` in the export's `excluded` list, sorted and at most 500, with nothing else about those apps;
+5. writes the export atomically: a temporary file opened with `O_CREAT | O_EXCL | O_NOFOLLOW` and mode 0600, given to `DISCOVERY_FILE_UID:DISCOVERY_FILE_GID` (1001:1001 by default), synced, then renamed over `DISCOVERY_OUTPUT`.
+
+The temporary file always has the same name, `.<file name>.tmp` in the directory of `DISCOVERY_OUTPUT` (`.services.json.tmp` by default), so two exporters writing to the same volume would race.
+Run one exporter per shared volume.
+
+A service whose image or app name is empty, or whose name, host or image is longer than its bound, is left out of the export and counted in the scan's dropped values.
+On a Docker error it keeps the services, the `excluded` list and the `generatedAt` of its last good scan, and updates only the status and `checkedAt`.
+When no network is named exactly `DISCOVERY_NETWORK`, it also writes `network` as null.
+After a restart it starts from empty lists, with `generatedAt` null until its first good scan.
+It never logs an environment value.
+Its variables are listed in `.env.example` under "Platform Discovery Exporter".
+`DISCOVERY_INTERVAL_MS` takes an integer from 2000 to 2147483647, the longest delay Node's timers honour, and `DISCOVERY_FILE_UID` and `DISCOVERY_FILE_GID` take an integer from 0 to 4294967294.
+A value outside its range, or one that is not a whole number, stops the exporter at start, before its first scan, with `<NAME> must be an integer of at least <minimum>, got "<value>"` or `<NAME> must be an integer of at most <maximum>, got "<value>"` in its log.
+
+Every service on the network that is not excluded is listed with its name, host, image and task counts, database or not; only the environment is filtered.
+The environment allow-list is exactly these ten keys, case-sensitive: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `MYSQL_ROOT_PASSWORD`, `MONGO_INITDB_ROOT_USERNAME`, `MONGO_INITDB_ROOT_PASSWORD`, `REDIS_PASSWORD`, `VALKEY_EXTRA_FLAGS`, `KEYDB_PASSWORD`, `DFLY_requirepass`.
+`DFLY_requirepass` is mixed case because that is Dragonfly's own spelling.
+The list lives once, as `ENV_ALLOW_LIST` in `docker/discover.mjs`, and a unit test fails when a key Studio reads is missing from it.
+Every service in the export also carries `requirepassEnv`, which only the Redis mapping reads.
+It is the name of the allow-listed variable that a `--requirepass $NAME` in the service's command refers to, or null when there is none, and never the command itself.
+
+### Engine detection
+
+Studio parses the image repository (digest, tag, registry host and a leading `library/` removed) and matches it:
+
+| Repository | Studio type | Label |
+|------------|-------------|-------|
+| `postgres`, `postgis/postgis`, `timescale/timescaledb`, `timescale/timescaledb-ha`, `pgvector/pgvector` | `postgres` | PostgreSQL |
+| `mysql` | `mysql` | MySQL |
+| `mariadb` | `mysql` | MariaDB |
+| `percona`, `percona/percona-server` | `mysql` | Percona |
+| `mongo` | `mongodb` | MongoDB |
+| `redis` | `redis` | Redis |
+| `valkey/valkey` | `redis` | Valkey |
+| `eqalpha/keydb` | `redis` | KeyDB |
+| `dragonflydb/dragonfly` | `redis` | Dragonfly |
+
+An image CapRover built itself (its last path segment starts with `img-captain-`, as the mariadb and keydb templates produce) is matched by its environment instead:
+
+| Key present | Studio type | Label |
+|-------------|-------------|-------|
+| `MYSQL_ROOT_PASSWORD` | `mysql` | MySQL-compatible |
+| `KEYDB_PASSWORD` | `redis` | KeyDB |
+| `POSTGRES_PASSWORD` | `postgres` | PostgreSQL |
+| `MONGO_INITDB_ROOT_PASSWORD` | `mongodb` | MongoDB |
+| `REDIS_PASSWORD`, with a `requirepassEnv` | `redis` | Redis |
+
+Many apps CapRover builds carry these keys without being a database, so an environment match is listed only when a TCP connection to its port opens within 1 second.
+A successful probe is cached for 30 seconds, a failed one is not cached, and at most 16 probes run at once.
+A repository match is never probed: a stopped database stays listed and shows its connection error when opened.
+Any other image is ignored and is not reported as skipped.
+
+### Credential mapping
+
+| Type | Port | User | Password | Database | Extra |
+|------|------|------|----------|----------|-------|
+| `postgres` | 5432 | `POSTGRES_USER`, else `postgres` | `POSTGRES_PASSWORD`, required | `POSTGRES_DB`, else the user | none |
+| `mysql` | 3306 | `root` | `MYSQL_ROOT_PASSWORD`, required | `mysql` | none |
+| `mongodb` | 27017 | `MONGO_INITDB_ROOT_USERNAME`, required | `MONGO_INITDB_ROOT_PASSWORD`, required | none | `authSource: admin` |
+| `redis` (Redis) | 6379 | none | the variable `requirepassEnv` names, else none | `0` | none |
+| `redis` (Valkey) | 6379 | none | the token after `--requirepass` in `VALKEY_EXTRA_FLAGS`, quotes removed, else none | `0` | none |
+| `redis` (KeyDB) | 6379 | none | `KEYDB_PASSWORD`, else none | `0` | none |
+| `redis` (Dragonfly) | 6379 | none | `DFLY_requirepass`, else none | `0` | none |
+
+The host is always the exporter's host for that service and must match `^[a-z0-9]([a-z0-9-]{0,251}[a-z0-9])?$`; a service whose host does not is skipped with a reason.
+A missing required field skips the service with a reason.
+The official redis image ignores `REDIS_PASSWORD` on its own, and the redis one-click template makes it effective through `--requirepass $REDIS_PASSWORD` in its command, which is why the password comes through `requirepassEnv`.
+Credentials are a snapshot of the environment CapRover set: a password changed later inside the database makes the connection fail with an authentication error.
+
+### What every discovered connection gets
+
+- id `caprover-<app name>`, name `<app name> (<label>)`, group `CapRover`;
+- `ssl: { mode: "disable" }`, so an app whose name contains a cloud provider's name is not mistaken for a managed cloud host;
+- `managed: true`, `roles: ["admin"]`, no `mcp`, no `readOnly` and no `connectionString`, all set in code and never read from the export file.
+
+The values are used as literal text.
+A discovered value that looks like a reference, `${NAME}` or `${vault:...}`, is sent to the database as written, and Studio never resolves it from its own environment or from Vault, neither when listing connections nor when one is opened.
+Any app on the CapRover network can carry these keys, and resolving a reference in them would hand Studio's own secrets to that app as a password.
+The marker that does this is set by the discovery source, not derived from the id, so a seed-file connection whose id starts with `caprover-` keeps the usual resolution.
+`GET /api/connections/managed` strips the marker, so its response shape is unchanged.
+
+### Precedence
+
+- The managed list holds the seed-file connections first, then the discovered ones, then the built-in samples.
+- A discovered id that equals a seed-file id is dropped and reported as skipped, with the reason "id taken by the seed file".
+- Two services can map to the same id, for example `srv-captain--foo` and a hand-made service named `foo`, which both become `caprover-foo`; the first one Studio accepts, in the order of the export, is listed, and every later one is reported as skipped, with the reason "id taken by another discovered service".
+- An app named in the export's `excluded` list (the "Apps to skip" field, `DISCOVERY_EXCLUDE`) is never listed and, while Studio serves fresh data, is reported as skipped, with the reason "listed in Apps to skip".
+- Each discovered connection is validated on its own with the seed schema; an invalid one is skipped with its reason and the others are listed.
+- Discovered connections go through the same role filter as file seeds, so a standard user receives none of them, and naming a discovered id answers the same 404 as an unknown id.
+- No discovery failure reaches the managed list: every error is caught inside the source, so file seeds and samples are listed as before.
+
+### Freshness and state
+
+Studio re-reads the export at most once per `SEED_CACHE_TTL_MS`, and concurrent requests share one read.
+The age of `generatedAt` is checked on every request against the cached export, so a withdrawal does not wait for the next read.
+A `generatedAt` ahead of Studio's own clock counts as fresh.
+
+| Condition | State | Discovered connections |
+|-----------|-------|------------------------|
+| `SEED_DISCOVERY_PATH` unset | off (`discovery: null` in the admin status) | none |
+| Export file missing | `waiting` | none |
+| File unreadable, over 2 MiB, not JSON or not the expected shape | `error`, code `invalid_export` | none |
+| `generatedAt` null and the exporter reports an error | `error`, with the exporter's code and message | none |
+| `generatedAt` older than `SEED_DISCOVERY_MAX_AGE_MS` | `stale`, with the exporter's error if any | none, withdrawn |
+| `generatedAt` fresh and the exporter reports an error | `error`, with the exporter's code and message | the last good scan |
+| `generatedAt` fresh and status ok | `ok` | listed |
+
+The exporter's codes are `socket_unavailable`, `swarm_unavailable`, `api_version`, `network_not_found`, `docker_error` and `limit_exceeded`.
+When the file is still missing twice `SEED_DISCOVERY_MAX_AGE_MS` after Studio first looked, the waiting message says that the discovery app may not be running or may run on another node than Studio.
+Error messages never quote the file's content.
+
+The skipped list holds one entry per discovered service Studio refused, with its reason: a missing required variable, a host name Studio refuses, "id taken by the seed file", "id taken by another discovered service", or "did not answer on port" followed by the port number, for an environment-matched candidate.
+While Studio serves discovered data, that is in the state `ok` and in the state `error` with a fresh last good scan, the list also holds one entry per app name in the export's `excluded` list, after the others, with the reason "listed in Apps to skip".
+An image that matches no engine is not a skipped entry, and neither is an app that is not on the CapRover network.
+
+### Admin status
+
+`GET /api/admin/discovery` (admin only, [`docs/API_DOCS.md`](./API_DOCS.md#admin-api)) and a card on the admin Overview page (`/admin/overview`) report the state and its message, the last successful scan, the exporter's error, the connected databases and the skipped apps with their reasons.
+Neither carries a host name beyond app names, nor any environment value.
+`GET /api/connections/managed` carries no status, because every role can read it.
+While the request reached Studio over plain HTTP, or `AUTH_COOKIE_SECURE` is `false`, and at least one database is connected, the card warns:
+
+> The Studio session cookie can travel over plain HTTP, and it unlocks every discovered database.
+> Enable HTTPS and Force HTTPS for this app in CapRover, then set AUTH_COOKIE_SECURE to true and restart.
+
+### In an open tab
+
+After its first successful load, an open tab refetches the managed list every `max(SEED_CACHE_TTL_MS, 5000)` milliseconds, at most 60 seconds, while the tab is visible, and at once when the window regains focus or the tab becomes visible again.
+The 5000 is the floor `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS`, which is inlined at build time (see [Environment Variables](#environment-variables)).
+An install that keeps the default `SEED_CACHE_TTL_MS` of 60000 therefore refreshes an open tab once a minute, while the auto-connect template sets 5000, so its tabs refresh every 5 seconds.
+With the template's values a database appears or disappears in an open tab within about 20 seconds of the change in CapRover: the exporter scans every 10 seconds, Studio re-reads the export at most every 5, and the tab refreshes every 5.
+The active connection stays open while its id is still listed; when it is withdrawn, the first remaining connection becomes active and Studio says so once.
+Pages that use the lighter connection list (the admin Overview and Operations tabs, Schema Diff and Monitoring) load it once and need a reload.
+
+---
+
 ## Error Handling
 
 | Scenario | Behavior |
@@ -657,6 +834,13 @@ extraEnvFrom:
 | User role doesn't match any connection | Empty list returned. Normal behavior. |
 | Seed connection not found at query time | 404 response. |
 | User doesn't have access to seed connection | 403 response. |
+| `SEED_DISCOVERY_PATH` set and the export file missing | No discovered connections and discovery state `waiting`, while file seeds and samples are unaffected. |
+| Export file unreadable, over 2 MiB, not JSON or not the expected shape | No discovered connections and state `error` with code `invalid_export`, whose message never quotes the file. |
+| Export older than `SEED_DISCOVERY_MAX_AGE_MS` (the exporter stopped or was deleted) | Discovered connections withdrawn; state `stale`. |
+| The exporter reports a Docker error (socket, swarm, network, API) | The last good scan stays listed while it is fresh; state `error` with the exporter's code. |
+| One discovered service maps to an invalid connection, or its id is taken by the seed file or by another discovered service | That service is skipped with a reason in the admin status; the others are listed. |
+| An environment-matched candidate does not accept a TCP connection | Not listed and reported as skipped; listed on a later read once it accepts connections. |
+| An app is named in "Apps to skip" (`DISCOVERY_EXCLUDE` of the exporter) | Never listed, and reported as skipped with the reason "listed in Apps to skip" while the export is fresh. |
 
 **Design principle:** One broken connection never breaks the others. Each connection is resolved independently.
 
@@ -694,8 +878,13 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 |----------|---------|-------------|
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in milliseconds |
+| `SEED_DISCOVERY_PATH` | unset (off) | Path of the discovery export file inside the Studio container; see [Platform discovery (CapRover)](#platform-discovery-caprover) |
+| `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn |
+| `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` | `5000` | Shortest interval of an open tab's managed-list refresh, inlined at build time, so it only affects source builds and tests, not packaged artifacts |
 
 The `VAULT_*` variables that back `${vault:...}` references are listed under [Vault Environment Variables](#vault-environment-variables).
+The exporter's own variables (`DISCOVERY_*` and `DOCKER_SOCKET`) are read by `docker/discover.mjs` only, never by the Studio server, and are listed in `.env.example`.
+`NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` is inlined at build time like `NEXT_PUBLIC_MANAGED_POLL_MS` (see [Built-in Sample Connections](#built-in-sample-connections)), so it is not in `.env.example` and setting it on a running container has no effect.
 
 These are unrelated to the embedded sample connection described below, which uses its own `LIBREDB_EMBEDDED_SAMPLE` / `LIBREDB_EMBEDDED_SAMPLE_PATH` variables.
 
@@ -730,7 +919,8 @@ The sample files are only created if they don't already exist — the seeding is
 ### Connections don't appear after login
 
 1. Check if the config file exists at `SEED_CONFIG_PATH`
-2. Check server logs for `Seed config file not found` warning
+2. Check server logs for `Seed config file not found` warning.
+   Studio logs it once per path per process, at the first look, and again only after the file has appeared and gone, so a long-running instance may not show it among its recent log lines.
 3. Verify the YAML is valid: `cat seed-connections.yaml | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)"`
 4. Check if `${ENV_VAR}` values are set: connections with unresolvable vars are skipped
 5. `${vault:...}` references do not stop a connection appearing, but opening it fails with the Vault error. Check `VAULT_ADDR`, that the path is the KV v2 shape (`<mount>/data/<name>`) and that the token has a read policy on it. See [Secret Rotation](#secret-rotation) for how long a cached value can outlive a change in Vault.
@@ -754,6 +944,25 @@ Clear browser localStorage (`libredb_connections` key) and refresh. This can hap
 
 This is expected: deleting a `managed: false` connection adds its seed ID to `libredb_dismissed_seeds` in localStorage, and it is intentionally excluded from re-import on every subsequent load (see [Dismissed Seeds](#dismissed-seeds)). Remove the ID from that key (or clear it) to let the connection be re-imported.
 
+### Discovered CapRover databases don't appear
+
+1. Sign in as the admin: discovered connections are never listed for the standard user.
+2. Open the admin Overview page and read the discovery status.
+3. `waiting`: the export file does not exist yet.
+   Check that the `-discovery` app is running, and on a cluster that it runs on the same node as Studio.
+4. `error` with `socket_unavailable`: the exporter cannot open the Docker socket.
+   It must run as root with `/var/run/docker.sock` mounted; a Compose `command:` alone goes through the image entrypoint, which drops it to uid 1001.
+5. `error` with `swarm_unavailable`: the exporter runs on a worker node or outside a swarm.
+   Pin the `-discovery` app to the manager.
+6. `error` with `network_not_found`: no Docker network has exactly the name `DISCOVERY_NETWORK` gives.
+   Check the variable against `docker network ls` on the manager; CapRover's own network is `captain-overlay-network`.
+7. `stale`: the exporter stopped writing.
+   Check its logs and restart it.
+8. A database in the skipped list carries its reason: a missing required variable, a host name Studio refuses, an id the seed file already uses ("id taken by the seed file"), an id another discovered service already took ("id taken by another discovered service"), or no answer to the probe for an image CapRover built.
+9. An app named in "Apps to skip" (`DISCOVERY_EXCLUDE` of the `-discovery` app) is in the skipped list with the reason "listed in Apps to skip", and the exporter writes nothing about it but its name.
+   To connect it after all, remove it from `DISCOVERY_EXCLUDE` under the `-discovery` app's **App Configs** and save.
+10. A database whose image is neither in the [detection table](#engine-detection) nor built by CapRover is not recognised: add it as a seed connection or by hand.
+
 ---
 
 ## Architecture
@@ -773,6 +982,10 @@ seed-connections.yaml (volume mount)
   │ ConnectionFilter    │  Role filter + defaults merge → ManagedConnection[]
   └─────┬──────────────┘
         │         ┌───────────────────────────────────────┐
+        ├─────────┤ Platform discovery (discovery-*.ts,    │  Appended after the file seeds when
+        │         │ reads SEED_DISCOVERY_PATH)             │  it is set; admin role only, literal
+        │         └───────────────────────────────────────┘
+        │         ┌───────────────────────────────────────┐
         ├─────────┤ Embedded samples (libredb-sample.ts,   │  Appended if enabled and the
         │         │ sqlite-sample.ts)                      │  sample file exists
         │         └───────────────────────────────────────┘
@@ -786,14 +999,14 @@ seed-connections.yaml (volume mount)
         │
   ┌─────▼────────────────────────────┐
   │ resolveConnection() (all routes) │  seed: prefix → server-side credential resolution
-  └─────┬────────────────────────────┘
+  └─────┬────────────────────────────┘  a literal (discovered) connection skips Vault
         │
   ┌─────▼────────────────────┐
   │ VaultClient (lazy)       │  ${vault:...} → KV v2 read + per-path TTL cache
   └──────────────────────────┘
 ```
 
-**Module:** `src/lib/seed/` (9 files, about 900 lines total)
+**Module:** `src/lib/seed/` (13 files)
 
 | File | Responsibility |
 |------|---------------|
@@ -806,3 +1019,9 @@ seed-connections.yaml (volume mount)
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
 | `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
 | `index.ts` | Public API: `getManagedConnections()` |
+| `discovery-export.ts` | Zod schema and parser of the platform discovery export file, with its 2 MiB cap |
+| `discovery-fingerprint.ts` | Image repository parsing, engine detection and credential mapping of discovered services |
+| `discovery-probe.ts` | TCP probe for environment-matched candidates: 1 s timeout, 30 s positive cache, 16 at a time |
+| `discovery-loader.ts` | Platform discovery source: cached read, freshness state, validation, admin status |
+
+The exporter, `docker/discover.mjs`, lives outside `src/`: it ships in the container images only, and Studio never imports it.
