@@ -999,6 +999,26 @@ describe("MongoDBProvider", () => {
       expect(typeof result.rows[0]._id).toBe("string");
     });
 
+    // Measured 2026-10-03 on mongo 8.2.12: two documents of different shape answered
+    // the first document's keys as the columns, so the other document's fields were in
+    // the rows (and the JSON export) but in no grid column and no CSV/SQL/DDL export.
+    test("find answers the union of the documents' keys as columns, first seen first", async () => {
+      mockDocumentsByNs["testdb.mixed"] = [
+        { _id: new MockObjectId("b1"), name: "B", ts: 1 },
+        { _id: new MockObjectId("a1"), name: "A", balance: 10, tags: ["x"] },
+        { _id: new MockObjectId("c1"), ts: 2, re: "^a" },
+      ];
+      const result = await provider.query(JSON.stringify({ collection: "mixed", operation: "find", filter: {} }));
+      expect(result.fields).toEqual(["_id", "name", "ts", "balance", "tags", "re"]);
+      expect(result.rows.length).toBe(3);
+    });
+
+    test("an empty find answers no columns", async () => {
+      mockDocumentsByNs["testdb.empty"] = [];
+      const result = await provider.query(JSON.stringify({ collection: "empty", operation: "find", filter: {} }));
+      expect(result.fields).toEqual([]);
+    });
+
     // #843: `database` names the database a command runs in, so a collection outside
     // the connected one is reachable. Before the key existed, the same statement
     // silently read the same-named collection in the CONNECTED database instead - a

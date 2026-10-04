@@ -317,6 +317,15 @@ every returned document passes through `serializeDocument()`. There is no `prepa
 injection, no transactions, and no `cancelQuery`. `EXPLAIN` is not supported
 (`supportsExplain: false`).
 
+**The result's `fields` (the grid columns, and the columns the CSV, SQL INSERT and DDL exports
+write) are the union of the returned documents' keys, first seen first**
+([`result-fields.ts`](../../src/lib/db/utils/result-fields.ts)). Documents of one collection need
+not share a shape; until 2026-10 the columns were the first document's keys only, so measured on
+mongo 8.2.12 a `find` over two differently shaped documents hid every key only the second one
+carried from the grid and from those exports (the JSON export kept them). A uniform result still
+answers exactly the first document's keys in their order. The union covers top-level keys only:
+a subdocument stays one column.
+
 **`options` handling differs per operation** (a real source of surprise — see
 [Known limitations](#13-known-limitations--future-work)):
 
