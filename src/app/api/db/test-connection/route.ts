@@ -64,6 +64,13 @@ export async function POST(req: NextRequest) {
           await provider.connect();
         }
 
+        // A connect can succeed onto something other than what was asked for, and the
+        // server's own caution is the only sign: Materialize opens a session on a database
+        // that does not exist and says so in a startup NOTICE (#1401). Carried on both
+        // answers below, so a plain "Connection successful" no longer hides it.
+        const cautions = provider.connectWarnings?.() ?? [];
+        const warnings = cautions.length > 0 ? { warnings: cautions } : {};
+
         /*
           The health read is a SECOND fact, and conflating the two is the defect this
           replaced: `getHealth()` is the richest surface a provider has, so a failure
@@ -92,6 +99,7 @@ export async function POST(req: NextRequest) {
             message: `Connected, but this server answered no health data: ${
               healthError instanceof Error ? healthError.message : String(healthError)
             }`,
+            ...warnings,
           });
         }
         const latency = Date.now() - startTime;
@@ -102,6 +110,7 @@ export async function POST(req: NextRequest) {
           success: true,
           message: "Connection successful",
           latency,
+          ...warnings,
         });
       } finally {
         // Only reached when the block above threw before its own release, and never

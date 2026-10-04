@@ -2080,6 +2080,7 @@ interface QueryPagination {
 interface QueryWarning {
   message: string;         // The notice, as the engine worded it
   code?: number | string;  // The engine's own identifier, when it reported one
+  severity?: string;       // The level it was raised at (`WARNING`, `NOTICE`), as the server spells it (may be localized), when it reports one
 }
 
 interface VectorColumn {                            // One entry of `vectorColumns`

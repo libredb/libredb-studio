@@ -20,6 +20,7 @@ import type {
   DatabaseType,
   DatabaseConnection,
   QueryResult,
+  QueryWarning,
   ColumnSchema,
   IndexSchema,
   ForeignKeySchema,
@@ -1483,6 +1484,15 @@ export interface DatabaseProvider {
    * Initialize connection pool or single connection
    */
   connect(): Promise<void>;
+
+  /**
+   * What the server cautioned while `connect()` opened the connection, in the server's own
+   * words; empty when it said nothing worth showing. A connect that succeeded is not always
+   * the connection asked for: Materialize accepts a session database that does not exist and
+   * reports it only as a startup NOTICE (#1401). Optional, because most engines have no such
+   * channel; `POST /api/db/test-connection` reads it when it is there.
+   */
+  connectWarnings?(): QueryWarning[];
 
   /**
    * Close all connections and cleanup resources

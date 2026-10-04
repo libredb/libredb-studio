@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -162,6 +162,51 @@ describe("POST /api/db/test-connection", () => {
     expect(data.success).toBe(true);
     expect(data.message).toBe("Connection successful");
     expect(typeof data.latency).toBe("number");
+    // A provider that reports no connect cautions adds no key to the answer.
+    expect("warnings" in data).toBe(false);
+  });
+
+  describe("what the server cautioned while the connection opened (#1401)", () => {
+    // Materialize v26.44.1's own startup NOTICE, measured 2026-10-04.
+    const caution = { message: 'session database "nosuchdb" does not exist', code: "MZ004", severity: "NOTICE" };
+    const withCautions = mockProvider as typeof mockProvider & { connectWarnings?: () => unknown[] };
+
+    afterEach(() => {
+      delete withCautions.connectWarnings;
+    });
+
+    test("rides along with a successful answer", async () => {
+      withCautions.connectWarnings = () => [caution];
+      const res = await POST(
+        createMockRequest("/api/db/test-connection", { method: "POST", body: validConnection }) as never,
+      );
+      const data = await parseResponseJSON<{ success: boolean; warnings?: unknown[] }>(res);
+
+      expect(data.success).toBe(true);
+      expect(data.warnings).toEqual([caution]);
+    });
+
+    test("rides along with a degraded answer too", async () => {
+      withCautions.connectWarnings = () => [caution];
+      (mockProvider.getHealth as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new Error("no health here");
+      });
+      const res = await POST(
+        createMockRequest("/api/db/test-connection", { method: "POST", body: validConnection }) as never,
+      );
+      const data = await parseResponseJSON<{ degraded?: boolean; warnings?: unknown[] }>(res);
+
+      expect(data.degraded).toBe(true);
+      expect(data.warnings).toEqual([caution]);
+    });
+
+    test("is left out when the provider has the channel and the server said nothing", async () => {
+      withCautions.connectWarnings = () => [];
+      const res = await POST(
+        createMockRequest("/api/db/test-connection", { method: "POST", body: validConnection }) as never,
+      );
+      expect("warnings" in (await parseResponseJSON<Record<string, unknown>>(res))).toBe(false);
+    });
   });
 
   test("returns 400 when connection type is missing", async () => {

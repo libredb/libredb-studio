@@ -10,7 +10,9 @@ import {
   SSLMode,
   SSLConfig,
   SSHTunnelConfig,
+  type QueryWarning,
 } from "@/lib/types";
+import { describeWarning } from "@/components/results-grid/utils";
 import { getDBConfig, hostUriSchemes, offersSshTunnel } from "@/lib/db-ui-config";
 import { parseConnectionString } from "@/lib/connection-string-parser";
 import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
@@ -209,11 +211,17 @@ interface UseConnectionFormProps {
    *
    * `degraded` carries the same distinction the route makes: the server accepted the
    * connection and refused the health read. An adapter that does not report it keeps
-   * the old two-outcome behaviour.
+   * the old two-outcome behaviour. `warnings` is what the server cautioned while the
+   * connection opened (#1401), and is read the same way.
    */
-  onTestConnection?: (
-    connection: DatabaseConnection,
-  ) => Promise<{ success: boolean; latency?: number; error?: string; degraded?: boolean; message?: string }>;
+  onTestConnection?: (connection: DatabaseConnection) => Promise<{
+    success: boolean;
+    latency?: number;
+    error?: string;
+    degraded?: boolean;
+    message?: string;
+    warnings?: QueryWarning[];
+  }>;
 }
 
 /** What the test route answered, in the shape both call sites read. */
@@ -223,6 +231,7 @@ interface TestOutcome {
   error?: string;
   degraded?: boolean;
   message?: string;
+  warnings?: QueryWarning[];
 }
 
 /**
@@ -234,6 +243,23 @@ interface TestOutcome {
  */
 function degradedSentence(result: TestOutcome): string {
   return result.message ?? result.error ?? "Connected, but this server answered no health data.";
+}
+
+/**
+ * The caution a successful connect carries, or null when there is none to give.
+ *
+ * Two sources, and either one makes the outcome a caution rather than a green tick: a
+ * health read the server refused (`degraded`), and what the server itself said while
+ * the connection opened (#1401). The second is the only sign that Materialize accepted
+ * a session database that does not exist, which is a connection to the wrong place
+ * rather than a degraded one, so its words are given whole.
+ */
+function cautionSentence(result: TestOutcome): string | null {
+  const reported = result.warnings?.length
+    ? `The server reported: ${result.warnings.map(describeWarning).join("; ")}`
+    : null;
+  if (result.degraded) return reported ? `${degradedSentence(result)} ${reported}` : degradedSentence(result);
+  return reported ? `Connected. ${reported}` : null;
 }
 
 /**
@@ -295,8 +321,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   );
   const [pasteInput, setPasteInput] = useState("");
   const [showPasteInput, setShowPasteInput] = useState(false);
-  /** Whether the user has been shown, and clicked past, a connection with no health surface. */
-  const [degradedSaveAcknowledged, setDegradedSaveAcknowledged] = useState(false);
+  /**
+   * The caution the user has been shown on a save and may now click past: a connection with no
+   * health surface, or what the server said while it opened (#1401). The sentence itself rather
+   * than a flag, so a DIFFERENT caution on the next click is shown before anything is saved.
+   */
+  const [acknowledgedCaution, setAcknowledgedCaution] = useState<string | null>(null);
 
   // SSL/TLS
   const [showSSL, setShowSSL] = useState(D.showSSL);
@@ -435,7 +465,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     setShowPasteInput(false);
     setPasteInput("");
     // The next connection typed into this dialog has not been warned about anything.
-    setDegradedSaveAcknowledged(false);
+    setAcknowledgedCaution(null);
   };
 
   // Populate form when editing.
@@ -821,18 +851,18 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
 
     try {
       const result = await probeConnection(buildConnection());
+      const caution = cautionSentence(result);
 
       setTestResult({
         // A degraded connection IS connected, so it is not an error - but saying
         // "Connected successfully" and nothing else is what hid the missing
         // monitoring surface until the dashboard showed an error page. It is not a
         // plain success either: it is the same caution `handleConnect` offers below,
-        // so it gets the same warning tone rather than the green tick.
-        tone: !result.success ? "error" : result.degraded ? "warning" : "success",
+        // so it gets the same warning tone rather than the green tick. A server's own
+        // caution at connect is the same class (#1401).
+        tone: !result.success ? "error" : caution !== null ? "warning" : "success",
         message: result.success
-          ? result.degraded
-            ? degradedSentence(result)
-            : `Connected successfully${result.latency ? ` (${result.latency}ms)` : ""}`
+          ? (caution ?? `Connected successfully${result.latency ? ` (${result.latency}ms)` : ""}`)
           : result.error || "Connection failed",
         latency: result.latency,
       });
@@ -866,26 +896,26 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
         while the editor and the object browser worked in full.
 
         What the save may NOT become is silent. The first click reports what the server
-        refused, in its own words, and saves nothing; only a second one saves. The
-        acknowledgement is withdrawn when the dialog closes, and when a different edit
+        refused, or what it cautioned while the connection opened (#1401), in its own
+        words, and saves nothing; only a second click that meets the SAME caution saves.
+        The acknowledgement is withdrawn when the dialog closes, and when a different edit
         target is applied while it stays open, so the next connection shown here is told
         too.
       */
-      if (result.degraded === true && !degradedSaveAcknowledged) {
-        setDegradedSaveAcknowledged(true);
+      const caution = cautionSentence(result);
+      if (caution !== null && caution !== acknowledgedCaution) {
+        setAcknowledgedCaution(caution);
         setTestResult({
           // The save is being OFFERED, not refused, and not yet completed either - a
           // sentence that asks the user to click again does not belong under a
-          // "success" tick (#498). This is the same class as the degraded
+          // "success" tick (#498). This is the same class as the cautioned
           // `handleTestConnection` message above: connected, but the server answered
-          // no health data.
+          // no health data or said something the user has to see first.
           tone: "warning",
           // The button's own label, because the dialog renders two of them: "Save
           // Changes" when editing and "Establish Connection" when creating, and naming
           // a button that is not on screen is worse than naming none.
-          message: `${degradedSentence(result)} Click ${
-            isEditMode ? "Save Changes" : "Establish Connection"
-          } again to save it anyway.`,
+          message: `${caution} Click ${isEditMode ? "Save Changes" : "Establish Connection"} again to save it anyway.`,
         });
         return;
       }
@@ -910,7 +940,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       */
       if (!isEditMode) {
         resetConnectionFields();
-        setDegradedSaveAcknowledged(false);
+        setAcknowledgedCaution(null);
       }
       setTestResult(null);
     } catch {
@@ -920,7 +950,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
     }
   }, [
     buildConnection,
-    degradedSaveAcknowledged,
+    acknowledgedCaution,
     isEditMode,
     onConnect,
     probeConnection,

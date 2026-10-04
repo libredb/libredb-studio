@@ -1320,8 +1320,49 @@ acquires a pooled client, optionally records its backend PID for cancellation, r
 (optionally parameterized — `$1`, `$2`, …) statement, and returns the standard envelope:
 
 ```ts
-{ rows, fields: string[], rowCount, executionTime, columnTypes? }
+{ rows, fields: string[], rowCount, executionTime, columnTypes?, warnings? }
 ```
+
+#### Server notices (#1401)
+
+The NOTICE and WARNING messages the server sends while a statement that SUCCEEDS runs come back in
+`warnings`, one entry per notice: `message` is the server's primary message line, `code` its
+SQLSTATE and `severity` its level as the server spells it (`NOTICE`, `WARNING`, `INFO`), which may
+be localized by the server's `lc_messages`. A notice's DETAIL and HINT fields are not carried. The
+results panel shows them beside the result, `NOTICE: ...` the way `psql` prints it; a statement the
+server sent none for has no `warnings` key at all. `queryInTransaction()` reports them the same way.
+
+A statement that FAILS reports only its error: notices it raised before the error are dropped.
+
+At most 100 notices are kept per statement. A `RAISE NOTICE` in a loop can send millions, and each
+kept one is held in memory and drawn as a line of the results panel, so the rest are only counted and
+the list ends with one entry saying how many were not shown (`5 more notices not shown`).
+
+`pg` only emits a notice as an event on the client that received it, so the pool builds its clients
+from a subclass that keeps each client's notices, and a statement takes what arrived on its own
+client between its start and its answer. What a client held before the statement (its startup
+greeting, the cancel-PID read) is dropped first, and a client returned to the pool drops what it
+held, so one statement's notice never surfaces on another's result.
+
+On the PostgreSQL-wire relatives these are often the only sign a statement did not do what it
+looks like. Measured on 2026-10-04:
+
+| Engine | Statement | Notice |
+| --- | --- | --- |
+| PostgreSQL 18 | `DO $$BEGIN RAISE NOTICE 'n'; RAISE WARNING 'w'; END$$` | `NOTICE 00000 n`, `WARNING 01000 w` |
+| PostgreSQL 18 | `DROP TABLE IF EXISTS nope` | `NOTICE 00000 table "nope" does not exist, skipping` |
+| Apache Cloudberry 2.1.0 | `ALTER TABLE ... ADD CONSTRAINT ... FOREIGN KEY ...` | `WARNING referential integrity (FOREIGN KEY) constraints are not supported in Apache Cloudberry, will not be enforced` |
+| RisingWave | `BEGIN` (typed in the editor) | `NOTICE 00000 ... no transaction is actually started` |
+
+Notices the server sends while a connection OPENS are read once, by `connect()`, and returned by
+`connectWarnings()`; Test Connection shows them as a caution instead of "Connected successfully",
+and the first save asks for a second click, as a degraded connection does. Materialize is the case:
+it opens a session on a database that does not exist and reports only `NOTICE MZ004 session
+database "nosuchdb" does not exist`. Startup notices of SQLSTATE class `00` (successful completion)
+are left out, because Materialize greets every session with one (`connected to Materialize ...`).
+
+The agent's read-only path (`queryReadOnly()`, section 12) and the internal catalog and monitoring
+reads do not report notices.
 
 Native `pg` errors are normalised through `mapDatabaseError()` into the shared
 [`errors.ts`](../../src/lib/db/errors.ts) classes (syntax → `QueryError`, auth → `AuthenticationError`,
