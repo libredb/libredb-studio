@@ -349,7 +349,7 @@ describe("what only the auto-connect variant carries", () => {
    *  because the block is wrapped by hand). It is the disclosure a reader sees before the
    *  install form, so a softer rewording is a change to what the operator agreed to. */
   const DISCLOSURE =
-    "This variant adds a second app, named after this one with -discovery appended, that reads the settings of the other apps on this server through the Docker socket so Studio can connect to your databases without you typing their passwords. Access to the Docker socket is equivalent to root access on this server. The discovery app has no port and is not exposed to the internet. It records the name and image of every app on this server and the database password settings of your database apps, in a file that only Studio can read. Connected databases are visible to the Studio admin login only. Enable HTTPS for Studio before you sign in for the first time. If you do not want the Docker socket on this server, install the plain LibreDB Studio entry instead.";
+    "This variant adds a second app, named after this one with -discovery appended, that reads the settings of the other apps on this server through the Docker socket so Studio can connect to your databases without you typing their passwords. Access to the Docker socket is equivalent to root access on this server. The discovery app has no port and is not exposed to the internet. It records the name and image of every app on this server and the database password settings of your database apps, in a file that only the Studio app can read. Connected databases are listed for the Studio admin login only, but the standard login can read that file through a DuckDB connection, so give it only to someone you trust with those passwords. Enable HTTPS for Studio before you sign in for the first time. If you do not want the Docker socket on this server, install the plain LibreDB Studio entry instead.";
 
   const flat = (text: string) => text.replace(/\s+/g, " ").trim();
   const paragraphs = (text: string) => text.split(/\n\s*\n/);
@@ -498,6 +498,14 @@ describe("what only the auto-connect variant carries", () => {
     );
     expect(end).toContain(
       "Both apps must run on the same node, and that node must be a swarm manager. On a single-server CapRover this is always the case. On a cluster, pin both apps to the manager in their App Configs.",
+    );
+  });
+
+  test("instructions.end says what the standard login can read on this variant", () => {
+    // The disclosure that opens instructions.start says it too, but this is the screen that hands out the
+    // standard login's password.
+    expect(flat(instructionsEnd)).toContain(
+      "On this variant the standard login can also read the passwords of the databases Studio found: a DuckDB connection reads any file the Studio app can read, the discovery file included. Give the standard login only to someone you trust with every database on this server.",
     );
   });
 

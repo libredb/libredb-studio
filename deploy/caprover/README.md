@@ -72,7 +72,8 @@ What it adds to the plain template:
   The exporter refuses to start when that directory is not owned by its own uid or is writable by group or others.
 - **Studio settings.**
   `SEED_DISCOVERY_PATH` turns the discovery source on, `SEED_CACHE_TTL_MS=5000` re-reads the export at most every 5 seconds, and both built-in samples are off, so only the CapRover databases are listed.
-  Discovered connections are visible to the admin login only.
+  Discovered connections are listed for the admin login only.
+  The standard login can still read the export file, and with it every discovered database's password, through a DuckDB connection, which reads any file the Studio process can (section 14.3 of [`docs/providers/duckdb.md`](../../docs/providers/duckdb.md)), so give the standard login only to someone you trust with those passwords.
 - **Apps to skip.**
   The optional "Apps to skip" field becomes `DISCOVERY_EXCLUDE` of the companion: comma-separated CapRover app names whose databases Studio must not connect to.
   The exporter writes only the names of those apps to the export, and Studio's discovery status lists each one as skipped with the reason "listed in Apps to skip".

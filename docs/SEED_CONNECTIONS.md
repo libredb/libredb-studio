@@ -780,6 +780,7 @@ The marker that does this is set by the discovery source, not derived from the i
 - An app named in the export's `excluded` list (the "Apps to skip" field, `DISCOVERY_EXCLUDE`) is never listed and, while Studio serves fresh data, is reported as skipped, with the reason "listed in Apps to skip".
 - Each discovered connection is validated on its own with the seed schema; an invalid one is skipped with its reason and the others are listed.
 - Discovered connections go through the same role filter as file seeds, so a standard user receives none of them, and naming a discovered id answers the same 404 as an unknown id.
+  The filter does not cover the export file itself: a DuckDB connection reads any file the Studio process can ([`docs/providers/duckdb.md`](./providers/duckdb.md) section 14.3), so any signed-in user, the standard one included, can read every discovered database's password from it.
 - No discovery failure reaches the managed list: every error is caught inside the source, so file seeds and samples are listed as before.
 
 ### Freshness and state

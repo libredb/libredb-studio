@@ -117,11 +117,13 @@ caproverOneClickApp:
             socket is equivalent to root access on this server. The discovery
             app has no port and is not exposed to the internet. It records the
             name and image of every app on this server and the database
-            password settings of your database apps, in a file that only Studio
-            can read. Connected databases are visible to the Studio admin login
-            only. Enable HTTPS for Studio before you sign in for the first time.
-            If you do not want the Docker socket on this server, install the
-            plain LibreDB Studio entry instead.
+            password settings of your database apps, in a file that only the
+            Studio app can read. Connected databases are listed for the Studio
+            admin login only, but the standard login can read that file through
+            a DuckDB connection, so give it only to someone you trust with
+            those passwords. Enable HTTPS for Studio before you sign in for the
+            first time. If you do not want the Docker socket on this server,
+            install the plain LibreDB Studio entry instead.
 
             LibreDB Studio is a modern, open-source, web-based SQL IDE for the cloud era.
             This variant connects itself to the PostgreSQL, MySQL, MariaDB,
@@ -187,6 +189,11 @@ caproverOneClickApp:
             admin does, so what it can change is decided by the database user in
             the connection rather than by Studio. Give it a database user with
             the rights you actually want it to have.
+
+            On this variant the standard login can also read the passwords of
+            the databases Studio found: a DuckDB connection reads any file the
+            Studio app can read, the discovery file included. Give the standard
+            login only to someone you trust with every database on this server.
 
             Save these credentials now. This screen does not show them again,
             but they stay readable as ADMIN_PASSWORD and USER_PASSWORD under the
