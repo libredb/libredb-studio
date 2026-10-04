@@ -147,7 +147,9 @@ function idiomNotice(range: OxiaCommandRange, verdict: OrderVerdict | undefined)
   const { min, max } = range;
   if (verdict.order === "natural" && min.endsWith("/") && max === `${min}/`) {
     const parent = min.slice(0, -1);
-    return `This namespace sorts keys naturally, so ${shownKey(max)} does not bound ${shownKey(parent)}'s children; --prefix ${shownKey(min)} lists everything under ${shownKey(min)}.`;
+    // The root is the empty parent, which a quoted word would print as '' (ruling R39).
+    const owner = parent === "" ? "the root" : shownKey(parent);
+    return `This namespace sorts keys naturally, so ${shownKey(max)} does not bound ${owner}'s children; --prefix ${shownKey(min)} lists everything under ${shownKey(min)}.`;
   }
   if (verdict.order === "hierarchical" && min.endsWith("//") && max === `${min}/`)
     return `A key ending in / sorts one level up under hierarchical order, so this range does not hold its children; --prefix ${shownKey(min)} lists everything under it.`;

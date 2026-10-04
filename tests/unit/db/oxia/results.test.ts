@@ -289,6 +289,12 @@ describe("the notices of SB2-5.4, word for word", () => {
     expect(messages(listResult("list -s /xyz/ -e /xyz/z", { keys: ["/xyz/a"] }, NATURAL))).toEqual([]);
   });
 
+  test("N6 on the root: an empty parent is named as the root, never as an empty quoted word (ruling R39)", () => {
+    expect(messages(listResult("list / //", {}, NATURAL))).toEqual([
+      "This namespace sorts keys naturally, so // does not bound the root's children; --prefix / lists everything under /.",
+    ]);
+  });
+
   test("N7: MIN ending in // and MAX = MIN + / under hierarchical order", () => {
     expect(messages(listResult("list /xyz// /xyz///", {}, HIERARCHICAL))).toEqual([
       "A key ending in / sorts one level up under hierarchical order, so this range does not hold its children; --prefix /xyz// lists everything under it.",

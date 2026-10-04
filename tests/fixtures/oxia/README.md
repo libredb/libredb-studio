@@ -38,7 +38,7 @@ No file here is written by hand: the harness writes every capture and this READM
 | 0.16.10-natural/list-children-trail.json | a7282e14a43dc2ea8481b141c3da9fdf53420a5182e04bc0d8be1e14b9cebbe2 |
 | 0.16.10-natural/list-full-walk.json | 980c3e30778632483b3e80d345f307439c0f0abdc0804712e4da849aef870b00 |
 | 0.16.10-natural/list-nul-keys.json | 55a86083660b94239e97eae79374fbd503e280868a1b81322bb1799856dffb95 |
-| 0.16.10-natural/list-root-level.json | 4f4ce8efdfd4dbd8d97b5f13f3cd98cd9ed59ad290365539996ec9c766178174 |
+| 0.16.10-natural/list-root-level.json | c3183c0317996393734bb6b6e8795f688c513d68bbb59e1a6961c29db6600718 |
 | 0.16.10-natural/probe-order.json | 4860a619a6695e0e386763e139040d2a42eeaa14b405067a39adb0e0479c48f5 |
 | 0.16.10/assignments-default.json | e4ceb3ac98fc0dbe11cc67884b39311c79d2def63cc6af6dace5ab494bf3af8b |
 | 0.16.10/assignments-unknown-namespace.json | 5715992a7b1ac632c459275993857a5e339f2799224216c7e9600a4c2b2a3489 |
