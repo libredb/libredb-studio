@@ -411,7 +411,12 @@ Execute SQL query on connected database.
 ```
 
 A cell holding NaN, Infinity or -Infinity as a number is answered as the string `"NaN"`, `"Infinity"` or `"-Infinity"`, at any depth inside an array or object cell, because JSON has no form for the three and `JSON.stringify` would write each as `null`, which reads as SQL NULL ([`src/lib/non-finite.ts`](../src/lib/non-finite.ts)).
-`POST /api/db/multi-query`, `POST /api/db/transaction`, the agent's row rendering and the MCP serializer write them the same way, and so do the JSON, CSV and SQL INSERT exports (the SQL form as a quoted literal, `'NaN'`).
+`POST /api/db/multi-query`, `POST /api/db/transaction`, `GET /api/agent/runs/{runId}/artifacts/{correlationId}`, the agent's row rendering and the MCP serializer write them the same way.
+In the rows a word cell cannot be told from a text cell that holds the same word; only `columnTypes`, where the provider declares it, says which one it is.
+The JSON export writes the words.
+The CSV export writes `NaN` and `Infinity` as they are, and `-Infinity` as `'-Infinity`, because the formula guard prefixes a cell that opens with `-` and is not a plain number.
+The SQL INSERT export writes a non-finite JavaScript number, or a word in a column whose `columnTypes` entry is a float type, in the form the dialect reads back, each replayed into the engine on 2026-10-04: PostgreSQL and DuckDB the quoted word (`'NaN'`); SQLite `9e999` and `-9e999`, and NULL for NaN, which SQLite cannot store; Oracle `BINARY_DOUBLE_NAN`, `BINARY_DOUBLE_INFINITY` and `-BINARY_DOUBLE_INFINITY`; every other dialect NULL, as before.
+A word in a column with no declared float type is written as the quoted text it is.
 A value the engine itself sends as `null` stays `null`: ClickHouse's JSON format does that for `nan` and `inf` unless `output_format_json_quote_denormals` is set, and SQLite stores a NaN as NULL.
 
 The `pagination` object reports the auto-limiting applied by the server.

@@ -210,7 +210,7 @@ mock.module("@/components/ui/select", () => ({
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
-import { DataCharts, PieSliceLabel } from "@/components/DataCharts";
+import { chartNumber, DataCharts, PieSliceLabel } from "@/components/DataCharts";
 import { mockToastError } from "../helpers/mock-sonner";
 import type { QueryResult } from "@/lib/types";
 
@@ -693,6 +693,45 @@ describe("DataCharts", () => {
     await waitFor(() => {
       expect(queryByText("Buckets")).not.toBeNull();
     });
+  });
+
+  // The server writes NaN and the infinities as words, and `Number("Infinity")` passes a
+  // NaN check: in a histogram that made a bin index of NaN, which threw during render.
+  test("draws a histogram over NaN and infinite cells instead of throwing", async () => {
+    const nonFinite: QueryResult = {
+      ...mockNumericResult,
+      rows: mockNumericResult.rows.map((row, i) =>
+        i === 0 ? { ...row, revenue: "Infinity" } : i === 1 ? { ...row, revenue: Number.NEGATIVE_INFINITY } : row,
+      ),
+    };
+    capturedChartProps.length = 0;
+    const { queryByText } = render(React.createElement(DataCharts, { result: nonFinite }));
+    fireEvent.click(queryByText("Histogram")!);
+    await waitFor(() => {
+      expect(queryByText("Buckets")).not.toBeNull();
+    });
+    const bins = capturedChartProps.at(-1)?.data as Array<{ count: number }>;
+    expect(bins.reduce((sum, bin) => sum + bin.count, 0)).toBe(5);
+  });
+
+  test("draws a NaN or infinite bar like a null, at 0", () => {
+    const nonFinite: QueryResult = {
+      ...mockNumericResult,
+      rows: mockNumericResult.rows.map((row, i) => (i === 0 ? { ...row, revenue: Number.POSITIVE_INFINITY } : row)),
+    };
+    capturedChartProps.length = 0;
+    render(React.createElement(DataCharts, { result: nonFinite }));
+    const data = capturedChartProps.at(-1)?.data as Array<Record<string, unknown>>;
+    expect(data.every((point) => Number.isFinite(point.revenue))).toBe(true);
+  });
+
+  test("chartNumber keeps finite numbers and draws everything else at 0", () => {
+    expect(chartNumber(1.5)).toBe(1.5);
+    expect(chartNumber("2.5")).toBe(2.5);
+    expect(chartNumber(null)).toBe(0);
+    for (const nonFinite of [Number.NaN, Number.POSITIVE_INFINITY, "NaN", "Infinity", "-Infinity", "abc"]) {
+      expect(chartNumber(nonFinite)).toBe(0);
+    }
   });
 
   // -----------------------------------------------------------------------

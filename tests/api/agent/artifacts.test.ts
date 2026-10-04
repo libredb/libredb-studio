@@ -122,6 +122,23 @@ describe("GET /api/agent/runs/[runId]/artifacts/[correlationId]", () => {
     expect((body.result as typeof RESULT).rows).toEqual(RESULT.rows);
   });
 
+  // The grid this feeds would otherwise show NULL where the model's text said NaN.
+  test("hands back NaN and the infinities as words, not as null", async () => {
+    held.set("corr_9", {
+      ...READ_ARTIFACT,
+      value: {
+        ...RESULT,
+        rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, z: null }],
+      },
+    });
+
+    const res = await GET(request(), params("arun_1", "corr_9"));
+    const body = await parseResponseJSON<{ result: { rows: unknown[] } }>(res);
+
+    expect(res.status).toBe(200);
+    expect(body.result.rows).toEqual([{ f: "NaN", r: "Infinity", n: "-Infinity", z: null }]);
+  });
+
   test("the operation reported is the ledger's, not the in-memory copy's", async () => {
     // The ledger is the record that outlives the process; the store is what this
     // process happens to hold. Where they disagree, the durable one is the answer.

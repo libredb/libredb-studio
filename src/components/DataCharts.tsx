@@ -360,6 +360,17 @@ export function PieSliceLabel({ ink, x, y, textAnchor, name = "", percent = 0 }:
   );
 }
 
+/**
+ * A cell as a number the chart can draw. NaN and the infinities, as numbers or as the
+ * words the server writes them as (`src/lib/non-finite.ts`), are drawn like a null, at
+ * 0: `Number("Infinity")` passes a NaN check, and in a histogram it made a bin index of
+ * NaN, which threw during render.
+ */
+export function chartNumber(value: unknown): number {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
 // Histogram bin calculation
 export function computeHistogramBins(
   values: number[],
@@ -549,7 +560,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
 
     // Histogram: special data preparation
     if (chartType === "histogram" && yAxis.length > 0) {
-      const values = result.rows.map((r) => Number(r[yAxis[0]]) || 0).filter((v) => !isNaN(v));
+      const values = result.rows.map((r) => chartNumber(r[yAxis[0]]));
       return computeHistogramBins(values, histogramBuckets);
     }
 
@@ -557,8 +568,8 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
     if (chartType === "scatter") {
       if (!xAxis || !scatterY) return [];
       return result.rows.map((row) => ({
-        [xAxis]: typeof row[xAxis] === "number" ? row[xAxis] : Number(row[xAxis]) || 0,
-        [scatterY]: typeof row[scatterY] === "number" ? row[scatterY] : Number(row[scatterY]) || 0,
+        [xAxis]: chartNumber(row[xAxis]),
+        [scatterY]: chartNumber(row[scatterY]),
       }));
     }
 
@@ -567,8 +578,7 @@ export function DataCharts({ result, spec = null }: DataChartsProps) {
     const baseData = result.rows.map((row) => {
       const dataPoint: Record<string, unknown> = { [xAxis]: row[xAxis] };
       yAxis.forEach((field) => {
-        const value = row[field];
-        dataPoint[field] = typeof value === "number" ? value : Number(value) || 0;
+        dataPoint[field] = chartNumber(row[field]);
       });
       return dataPoint;
     });

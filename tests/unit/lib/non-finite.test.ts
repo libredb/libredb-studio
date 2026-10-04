@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { nonFiniteWord, rowsWithNonFiniteWords, withNonFiniteWords } from "@/lib/non-finite";
+import { isNonFiniteWord, nonFiniteWord, rowsWithNonFiniteWords, withNonFiniteWords } from "@/lib/non-finite";
 
 describe("nonFiniteWord", () => {
   test("names the three numbers JSON has no form for", () => {
@@ -11,6 +11,15 @@ describe("nonFiniteWord", () => {
   test("answers nothing for a finite number, zero and the extremes included", () => {
     for (const finite of [0, -0, 1.5, -2, Number.MAX_VALUE, -Number.MAX_VALUE, Number.MIN_VALUE]) {
       expect(nonFiniteWord(finite)).toBeUndefined();
+    }
+  });
+});
+
+describe("isNonFiniteWord", () => {
+  test("is true for exactly the three words, spelled as they are written", () => {
+    expect(["NaN", "Infinity", "-Infinity"].every(isNonFiniteWord)).toBe(true);
+    for (const other of ["nan", "infinity", "-infinity", "+Infinity", "Inf", "", Number.NaN, null]) {
+      expect(isNonFiniteWord(other)).toBe(false);
     }
   });
 });

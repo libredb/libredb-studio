@@ -34,26 +34,30 @@ function isPlainObject(value: object): value is Record<string, unknown> {
  * objects at any depth (a `float8[]`, a Mongo sub-document).
  *
  * Nothing is written to `value`, and the same reference comes back when there was
- * nothing to replace, so the common result is not copied at all; when a number is
- * replaced, only the containers on its path are. A Date, a Buffer or a driver's class
- * instance is left whole, because it serialises through its own `toJSON` and a plain
- * copy would lose that.
+ * nothing to replace, so a result with no such number is walked but never copied; when
+ * a number is replaced, only the containers on its path are. The walk uses plain `for`
+ * and `for...in` loops, so it adds one stack frame per level of nesting and builds no
+ * key array per object. A Date, a Buffer or a driver's class instance is left whole,
+ * because it serialises through its own `toJSON` and a plain copy would lose that.
  */
 export function withNonFiniteWords(value: unknown): unknown {
   if (typeof value === "number") return nonFiniteWord(value) ?? value;
   if (Array.isArray(value)) {
     let copy: unknown[] | undefined;
-    value.forEach((item, index) => {
+    for (let index = 0; index < value.length; index++) {
+      const item: unknown = value[index];
       const next = withNonFiniteWords(item);
-      if (next === item) return;
+      if (next === item) continue;
       copy ??= value.slice();
       copy[index] = next;
-    });
+    }
     return copy ?? value;
   }
   if (typeof value !== "object" || value === null || !isPlainObject(value)) return value;
   let copy: Record<string, unknown> | undefined;
-  for (const key of Object.keys(value)) {
+  // A plain object's prototype is Object.prototype or null, neither of which holds an
+  // enumerable key, so every key `for...in` visits here is the object's own.
+  for (const key in value) {
     const item = value[key];
     const next = withNonFiniteWords(item);
     if (next === item) continue;
@@ -63,6 +67,11 @@ export function withNonFiniteWords(value: unknown): unknown {
     Object.defineProperty(copy, key, { value: next, enumerable: true, writable: true, configurable: true });
   }
   return copy ?? value;
+}
+
+/** Whether `value` is one of the three words, the way a cell that crossed JSON carries it. */
+export function isNonFiniteWord(value: unknown): value is NonFiniteWord {
+  return value === "NaN" || value === "Infinity" || value === "-Infinity";
 }
 
 /** The rows of a result, ready for `JSON.stringify`. */
