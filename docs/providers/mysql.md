@@ -1718,8 +1718,8 @@ validates that the target parses as an integer connection id.
 
 ### The verdict is in the result set, not in the absence of an exception
 
-`ANALYZE`, `OPTIMIZE` and `CHECK TABLE` answer a **result set** — one row per (table, message)
-with `Table` / `Op` / `Msg_type` / `Msg_text` — and a statement the server refuses resolves
+On MySQL, `ANALYZE`, `OPTIMIZE` and `CHECK TABLE` answer a **result set**, one row per (table, message)
+with `Table` / `Op` / `Msg_type` / `Msg_text`, and a statement the server refuses resolves
 normally. Measured through the driver against MySQL 26.7.0 (`libredb-mysql`) on 2026-08-25:
 
 | Statement | Rows MySQL answers |
@@ -1746,6 +1746,26 @@ thing the user asked for. `readMaintenanceReport()` reads those rows:
 After the fix, through the provider: `check real1` → *"CHECK: OK"*, `optimize missing` →
 `success: false` *"OPTIMIZE failed: u9t.missing: Table 'u9t.missing' doesn't exist"*. This is the
 same read SQLite's `check` already did with `PRAGMA integrity_check`.
+
+**Some relatives answer with an OK packet, not a report.** Measured through mysql2 3.24.2 on
+2026-10-04, a table named `big`:
+
+| Server | `ANALYZE TABLE big` | `OPTIMIZE TABLE big` | `CHECK TABLE big` | a missing table |
+|--------|---------------------|----------------------|-------------------|-----------------|
+| MySQL 26.7.0 (`mysql:latest`) | rows, `status` *"OK"* | rows, `note` + `status` *"OK"* | rows, `status` *"OK"* | `Error` row, as above |
+| TiDB v8.5.8 (`pingcap/tidb:v8.5.8`) | OK packet, `warningStatus` 1 (a sample-rate Note) | throws 8200 *"OPTIMIZE TABLE is not supported"* | throws 1064 (syntax) | throws 1146 |
+| OceanBase CE 4.4.2.1 (`oceanbase/oceanbase-ce:latest`) | OK packet | OK packet | rows, `status` *"OK"* | throws 1146 |
+| Databend v1.2.925 (`datafuselabs/databend:v1.2.925-patch-13`) | OK packet | throws 1105 (syntax: wants `ALL`, `PURGE` or `COMPACT`) | throws 1105 (syntax) | throws 1105 *"Unknown table"* |
+
+On an OK packet mysql2 hands back a `ResultSetHeader` object, not an array, and the reader called
+`.filter` on it, so Analyze on TiDB, OceanBase and Databend, and Optimize on OceanBase, failed the
+route with 500 *"rows.filter is not a function"*. These servers refuse a table by throwing, so a
+header carries no failure to read: `readMaintenanceReport()` answers `success: true` with
+*"ANALYZE completed; the server returned no report"*, and says the same for a result set with no
+row. When the OK packet counts warnings the message names them, *"(1 warning, see SHOW
+WARNINGS)"* on TiDB, whose sample-rate Note is only there; this read does not send `SHOW WARNINGS`
+itself. A refusal that throws reaches the caller as the engine's own error, unchanged. The TiDB and Databend rows that throw are
+actions offered on an engine that does not run them; that is a separate defect.
 
 **A database with no tables runs no statement.** `OPTIMIZE TABLE ${getAllTablesForMaintenance()}`
 string-joined an empty list, and MySQL answered *"You have an error in your SQL syntax … near

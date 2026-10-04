@@ -313,17 +313,13 @@ identifier-quoting decision rather than a string concat - or asking mysql2 for t
 with the parameters bound client-side. Neither is a one-line change, which is why this is filed
 rather than done inside a labelling PR, and why Databend's registry row reads `query-only` today.
 
-**A second, smaller defect surfaced on the same engine, and it is a crash rather than a failure.**
-`runMaintenance('analyze')` throws `TypeError: rows.filter is not a function`: Databend answers
-`ANALYZE TABLE` with an object where the reader expects an array of `Msg_type` rows. A provider
-that cannot run a maintenance action should report that, not throw a type error out of the route -
-and this is the same shape already recorded once, a mysql2 reply whose type depends on the
-statement.
+The `rows.filter is not a function` crash `runMaintenance('analyze')` hit on the same engine is
+gone: Databend answers `ANALYZE TABLE` with an OK packet, as TiDB and OceanBase do, and the report
+reader now reads that as a statement that ran without a report (`docs/providers/mysql.md` section 9).
 
 **Done when:** the six reads above answer on Databend, with the identifier path decided rather
-than concatenated, and `runMaintenance` on an engine that answers `ANALYZE` with a non-array
-reports a result instead of throwing - both verified against the container, and the reading
-unchanged on MySQL, MariaDB and one analytics relative.
+than concatenated, verified against the container, and the reading unchanged on MySQL, MariaDB and
+one analytics relative.
 
 ### D34. A pinned SSH host key has no way to be set, so the protection resets on restart
 
