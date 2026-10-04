@@ -274,6 +274,10 @@ export function TestDataGenerator({
       return `(${values.join(", ")})`;
     });
 
+    // One statement per row where an INSERT takes a single row (CQL, #1410).
+    if (capabilities?.supportsMultiRowInsert === false) {
+      return rows.map((row) => `INSERT INTO ${target} (${colNames})\nVALUES\n  ${row};`).join("\n\n");
+    }
     return `INSERT INTO ${target} (${colNames})\nVALUES\n  ${rows.join(",\n  ")};`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tableSchema, columnConfigs, rowCount, queryLanguage, target, tablePathKey, databaseType, refreshKey]);

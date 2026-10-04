@@ -122,6 +122,35 @@ describe("TestDataGenerator", () => {
     expect(container.textContent).toContain("INSERT INTO employees");
   });
 
+  // CQL's INSERT takes one row: on Cassandra 5.0.9 a multi-row VALUES list answered "mismatched input ','
+  // expecting EOF" (#1410), so an engine declaring no multi-row insert gets one statement per row.
+  test("writes one INSERT per row where the engine declares no multi-row insert", () => {
+    const renderWith = (capabilities: ProviderCapabilities): string => {
+      const { container } = render(
+        <TestDataGenerator
+          isOpen
+          onClose={mock(() => {})}
+          tablePath={["shop", "employees"]}
+          tableSchema={schema}
+          capabilities={capabilities}
+          onExecuteQuery={mock(() => {})}
+        />,
+      );
+      const text = container.textContent ?? "";
+      cleanup();
+      return text;
+    };
+    const single = renderWith(capsOf({ defaultPort: 9042, supportsMultiRowInsert: false }));
+    const inserts = single.match(/INSERT INTO shop\.employees/g) ?? [];
+    expect(inserts.length).toBeGreaterThan(1);
+    expect(single.match(/VALUES/g)?.length).toBe(inserts.length);
+    expect(single).not.toContain("),");
+
+    const multi = renderWith(postgresCaps);
+    expect(multi.match(/INSERT INTO/g)?.length).toBe(1);
+    expect(multi).toContain("),");
+  });
+
   test("quotes COLUMN names the way the connected engine reads an identifier", () => {
     // The target moved onto `quoteObjectPath` (#789) while the column list kept a
     // hardcoded `"`, so the two halves of one statement spoke different dialects.

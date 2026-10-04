@@ -63,6 +63,8 @@ export interface NodeTransportOptions {
   readonly maxSockets: number;
   /** Set once per connection, the credential header among them. */
   readonly headers: Readonly<Record<string, string>>;
+  /** How long a pooled socket may sit idle before the transport closes it; IDLE_SOCKET_MS when absent. */
+  readonly idleSocketMs?: number;
 }
 
 export interface NodeRequest {
@@ -413,7 +415,7 @@ export function createNodeTransport(options: NodeTransportOptions): NodeTranspor
   const connectionHeaders = lowerCased(options.headers);
   const shared: AgentOptions = {
     keepAlive: true,
-    timeout: IDLE_SOCKET_MS,
+    timeout: options.idleSocketMs ?? IDLE_SOCKET_MS,
     maxSockets,
     ...(lookup === undefined ? {} : { lookup }),
   };

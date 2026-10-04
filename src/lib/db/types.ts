@@ -1178,8 +1178,9 @@ export interface ProviderCapabilities {
   /**
    * Whether one INSERT may carry several rows in its VALUES list (#1410).
    *
-   * Absent means it may, and the import builder writes up to 100 rows per INSERT. `false` says an
-   * INSERT takes exactly one row, so the builder writes one statement per row. Measured on Cassandra
+   * Absent means it may: the import builder writes up to 100 rows per INSERT and the Test Data
+   * Generator one INSERT for all its rows. `false` says an INSERT takes exactly one row, so both write
+   * one statement per row. Measured on Cassandra
    * 5.0.9: `INSERT INTO shop.e2e_t (id, v, n) VALUES (10, 'on', 100), (11, 'x', 110);` answers
    * "line 3:17 mismatched input ',' expecting EOF" and inserts nothing.
    */

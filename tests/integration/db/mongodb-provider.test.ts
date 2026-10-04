@@ -1918,8 +1918,8 @@ describe("MongoDBProvider", () => {
           i32: new BSON.Int32(7),
           code: new BSON.Code("function () { return 1; }"),
           min: new BSON.MinKey(),
-          other: new BSON.Binary(Buffer.from("abc"), 0),
-          short: new BSON.Binary(Buffer.from("abc"), BSON.Binary.SUBTYPE_UUID),
+          // The suite's driver double for Binary: a plain Binary keeps the placeholder users see.
+          other: new MockBinary(Buffer.from("abc")),
           nested: { big, ts, at: new Date("2026-10-04T00:00:00.000Z") },
           list: [big, uid, new MockObjectId("aaa"), [ts], { re: /z/g }],
           // A document's own field named like the class marker is data, not a class.
@@ -1936,8 +1936,7 @@ describe("MongoDBProvider", () => {
         i32: 7,
         code: '{"$code":"function () { return 1; }"}',
         min: '{"$minKey":1}',
-        other: '{"$binary":{"base64":"YWJj","subType":"00"}}',
-        short: '{"$binary":{"base64":"YWJj","subType":"04"}}',
+        other: "<Binary: 3 bytes>",
         nested: { big: "9007199254740993", ts: "Timestamp(1700000000, 1)", at: "2026-10-04T00:00:00.000Z" },
         list: [
           "9007199254740993",
@@ -2472,6 +2471,8 @@ describe("object surface", () => {
         re: /ab+c/i,
         uid: new BSON.UUID("3b241101-e2bb-4255-8caf-4136c566a962"),
         min: new BSON.MinKey(),
+        // Subtype 4 but not 16 bytes: not a UUID, so an ordinary binary field.
+        short: new BSON.Binary(Buffer.from("abc"), BSON.Binary.SUBTYPE_UUID),
         weird: Object.create({ _bsontype: "Unlisted" }),
         address: { city: "Ankara" },
       },
@@ -2484,6 +2485,7 @@ describe("object surface", () => {
       ["big", "long"],
       ["min", "minKey"],
       ["re", "regex"],
+      ["short", "binary"],
       ["ts", "timestamp"],
       ["uid", "uuid"],
       ["weird", "Unlisted"],

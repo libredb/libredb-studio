@@ -836,7 +836,7 @@ function categorize(spec: SearchDialectSpec, engineType: string | null): SearchE
 }
 
 /** A fault name that is about who is asking rather than about what was asked. */
-const SECURITY_FAULT_TYPE = /security|authenticat|authoriz/i;
+const SECURITY_FAULT_TYPE = /security|authenticat|authoriz|permission|access|credential|forbidden/i;
 
 /**
  * Whether an `error` envelope names an engine fault that is NOT a security one (#1413).

@@ -180,6 +180,17 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
     }
   });
 
+  test.each([
+    "authorization_exception",
+    "permission_denied_exception",
+    "access_denied_exception",
+    "invalid_credentials_exception",
+    "ForbiddenException",
+  ])("a 403 naming %s is a refused login", async (type) => {
+    const error = await failureOf(403, JSON.stringify({ error: { type, reason: "denied" }, status: 403 }));
+    expect(error.category).toBe("auth");
+  });
+
   test("a 401 or 403 with no readable fault in its body stays a refused login", async () => {
     for (const [status, body] of [
       [401, ""],

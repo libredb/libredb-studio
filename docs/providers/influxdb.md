@@ -74,6 +74,7 @@ The constructor validates nothing and opens nothing, so a provider built from an
 `connect()` checks the connection's fields first, then sends `GET /ping`, `GET /health` when `/ping` names no version (section 4.6), and the authenticated read `SHOW DATABASES`, whose listing is kept for the run database's only-visible step (section 4.7).
 All three share one deadline (section 5.5).
 `disconnect()` closes the connection's keep-alive agent, which drops every request in flight.
+The shared transport closes a pooled socket left idle for 4 s itself, below a server keep-alive such as Qdrant's 5 s, so a request is never written on a socket the server is closing (#1419); a request in flight is not cut.
 The transport never goes through an `http_proxy` or `https_proxy` variable and never follows a redirect: use an SSH tunnel to reach a private endpoint.
 
 ## 3. Design decisions

@@ -371,7 +371,8 @@ fault that has nothing to do with credentials: measured on 9.5.3 on 2026-10-04, 
 closed_idx` after `POST closed_idx/_close` answers HTTP 403 with `error.type`
 `cluster_block_exception` and the reason `index [closed_idx] blocked by: [FORBIDDEN/4/index
 closed];`. A 401/403 whose body is an `error` object naming a type that is not a security one
-(nothing matching `security`, `authenticat` or `authoriz`) is therefore classified by that type
+(nothing matching `security`, `authenticat`, `authoriz`, `permission`, `access`, `credential`
+or `forbidden`) is therefore classified by that type
 like any other fault and carries the engine's reason; one with no body, a text body, a string
 `error` or a `security_exception` stays `auth`.
 
