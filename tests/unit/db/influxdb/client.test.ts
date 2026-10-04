@@ -20,6 +20,7 @@ import {
 import {
   buildInfluxConnectionOptions,
   INFLUX_MAX_IN_FLIGHT,
+  INFLUX_RESPONSE_CAP_BYTES,
   type InfluxConnectionOptions,
   type InfluxType,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
@@ -139,7 +140,7 @@ describe("what the client hands the transport", () => {
         url: "http://127.0.0.1:8086/query",
         form: { db: "home", q: 'SELECT * FROM "home"', chunked: "true", chunk_size: "1000" },
         signal: controller.signal,
-        maxResponseBytes: 33_554_432,
+        maxResponseBytes: INFLUX_RESPONSE_CAP_BYTES,
       },
     ]);
     expect(wire.requests[0].signal).toBe(controller.signal);

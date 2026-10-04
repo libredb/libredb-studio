@@ -6,7 +6,7 @@
  *
  * Built rather than captured: the database listings other than the seed's (the seed creates `home`, `edge` and
  * `bench`, R1), the table listing (the iox rows of `sql-tables`, which was read with no `WHERE`), the 403 of
- * `configure/database`, the 32 MiB body, the 10,001-row body and the 2,001-table listing.
+ * `configure/database`, the body over the cap, the 10,001-row body and the 2,001-table listing.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
@@ -25,6 +25,7 @@ import {
   INFLUX_CONNECTION_SENTENCES,
   INFLUX_LIMITER_OPTIONS,
   INFLUX_LIST_CAP,
+  INFLUX_RESPONSE_CAP_BYTES,
   INFLUX_ROW_CUT,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
@@ -652,9 +653,9 @@ describe("the query pipeline (spec 5.2)", () => {
     expect((await rejection(provider.query("SELECT 1"))).message).toBe(S.notReadableRow);
   });
 
-  test("E16: an answer over the 32 MiB cap is the cap sentence", async () => {
-    const { provider } = await connected([built(200, "x".repeat(32 * 1024 * 1024 + 1), "application/jsonl")]);
-    expect((await rejection(provider.query("SELECT 1"))).message).toBe(S.tooLarge("32 MiB"));
+  test("E16: an answer over the 16 MiB cap is the cap sentence", async () => {
+    const { provider } = await connected([built(200, "x".repeat(INFLUX_RESPONSE_CAP_BYTES + 1), "application/jsonl")]);
+    expect((await rejection(provider.query("SELECT 1"))).message).toBe(S.tooLarge("16 MiB"));
   });
 
   test("E16: the row cut is reported on pagination.wasLimited", async () => {

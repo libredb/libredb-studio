@@ -84,13 +84,16 @@ export const INFLUXDB3_DEFAULT_PORT = 8181;
 /** The calls in flight for one provider, and so the sockets of its one Agent. */
 export const INFLUX_MAX_IN_FLIGHT = 2;
 /**
- * The limiter of each type-id: one provider's calls, the whole engine's, and the queue behind them (K3, R45).
- * Measured in the image runtime under its heap flag and the chart's 512Mi limit, four runs at the 32 MiB cap fit
- * on the InfluxQL 1.x line and eight do not; the two type-ids' engines add up in one process, so each keeps two.
+ * The limiter of each type-id: one provider's calls, the whole engine's, and the queue behind them (K3, R45, R49).
+ * The two type-ids' engines add up in one process, so the worst case is four calls at the response cap at once.
  */
 export const INFLUX_LIMITER_OPTIONS = { perProvider: INFLUX_MAX_IN_FLIGHT, perEngine: 2, queueDepth: 64 } as const;
-/** The transport's cap on one response, past which the socket is destroyed (K3). */
-export const INFLUX_RESPONSE_CAP_BYTES = 32 * 1024 * 1024;
+/**
+ * The transport's cap on one response, past which the socket is destroyed (K3, R49). Measured in the image runtime
+ * under its heap flag and the chart's 512Mi limit, the worst case the limiter admits (both engines kept full at the
+ * cap) peaks at about 270 MiB here and over 512 MiB at 32 MiB. The row cut keeps 10,000 rows of a smaller answer.
+ */
+export const INFLUX_RESPONSE_CAP_BYTES = 16 * 1024 * 1024;
 /** The longest a tree, connect or monitoring read may take, under the query timeout. */
 export const INFLUX_SURFACE_TIMEOUT_MS = 10_000;
 /** The most rows one result holds before it is cut (K3). Here because both results modules read it. */

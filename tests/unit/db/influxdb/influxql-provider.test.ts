@@ -4,7 +4,7 @@
  * factory, so every request the provider would put on the wire is seen and answered from a capture or from an answer
  * built here in the shape the captures show. `mock.module()` is not used.
  *
- * Built rather than captured: the `/health` 401 that leaves the generation unknown, the 32 MiB body, the 10,001-row
+ * Built rather than captured: the `/health` 401 that leaves the generation unknown, the body over the cap, the 10,001-row
  * body, the `messages` notice, the empty key listings of measurements other than `home`, and the `/query` cut, which
  * no pinned line produced (R39): it is `preview-home` with `cut` set, named `synthetic` below.
  */
@@ -25,6 +25,7 @@ import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers
 import {
   INFLUX_LIMITER_OPTIONS,
   INFLUX_LIST_CAP,
+  INFLUX_RESPONSE_CAP_BYTES,
   INFLUX_ROW_CUT,
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
@@ -694,10 +695,12 @@ describe("the query pipeline (spec 5.1)", () => {
     },
   );
 
-  test("E16: an answer over the 32 MiB cap is the cap sentence", async () => {
-    const { provider } = await connected("v1", [built(200, "x".repeat(32 * 1024 * 1024 + 1))], { database: "home" });
+  test("E16: an answer over the 16 MiB cap is the cap sentence", async () => {
+    const { provider } = await connected("v1", [built(200, "x".repeat(INFLUX_RESPONSE_CAP_BYTES + 1))], {
+      database: "home",
+    });
     const error = await rejection(provider.query("SELECT * FROM m", undefined));
-    expect(error.message).toBe(S.tooLarge("32 MiB"));
+    expect(error.message).toBe(S.tooLarge("16 MiB"));
   });
 
   test("E16: the row cut is reported on pagination.wasLimited", async () => {

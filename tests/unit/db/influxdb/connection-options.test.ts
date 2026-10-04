@@ -527,14 +527,14 @@ describe("the bounds of 5.5 and the timeouts", () => {
   test("the constants are the spec's", () => {
     expect(INFLUX_MAX_IN_FLIGHT).toBe(2);
     expect(INFLUX_LIMITER_OPTIONS).toEqual({ perProvider: 2, perEngine: 2, queueDepth: 64 });
-    expect(INFLUX_RESPONSE_CAP_BYTES).toBe(33_554_432);
+    expect(INFLUX_RESPONSE_CAP_BYTES).toBe(16_777_216);
     expect(INFLUX_SURFACE_TIMEOUT_MS).toBe(10_000);
     expect(INFLUX_ROW_CUT).toBe(10_000);
     expect(INFLUX_CELL_BUDGET).toBe(250_000);
     expect(INFLUX_LIST_CAP).toBe(2000);
   });
 
-  test("the socket bound is the in-flight bound, and the response cap is 32 MiB", () => {
+  test("the socket bound is the in-flight bound, and the response cap is 16 MiB", () => {
     for (const type of TYPES) {
       expect(build(type).maxSockets).toBe(INFLUX_MAX_IN_FLIGHT);
       expect(build(type).responseCapBytes).toBe(INFLUX_RESPONSE_CAP_BYTES);
