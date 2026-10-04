@@ -16,7 +16,7 @@
 | **Connection pooling** | Yes — `pg.Pool` (min 2 / max 10 by default) |
 | **Connection string** | Supported (`postgres://` / `postgresql://`) |
 | **Transactions** | Yes — explicit `BEGIN`/`COMMIT`/`ROLLBACK` with auto-rollback timeout |
-| **Query cancellation** | Yes — PID tracking + `pg_cancel_backend` |
+| **Query cancellation** | Yes: PID tracking + `pg_cancel_backend`, then the wire-protocol CancelRequest where that is refused ([§5.3](#53-query-cancellation)) |
 | **Agent read-only profile** | Yes — `BEGIN READ ONLY` + extended-protocol single statement (#328, §12) |
 | **Source** | [`src/lib/db/providers/sql/postgres.ts`](../../src/lib/db/providers/sql/postgres.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
@@ -1267,7 +1267,7 @@ The statement timeout is **separate** from pool config: `ProviderOptions.queryTi
 `DEFAULT_QUERY_TIMEOUT` = 60000 ms) is applied as the pool's `statement_timeout`.
 
 `connect()` is idempotent (a second call while a pool exists is a no-op). `getPoolStats()` exposes
-live `{ total, idle, active, waiting }` counts. Every query acquires a client from the pool and
+live `{ total, max, idle, active, waiting }` counts: `total` is the clients open right now and `max` is the configured pool ceiling, which the Monitoring > Pool tab shows as its own number and uses as the utilization denominator. Every query acquires a client from the pool and
 releases it in a `finally` block.
 
 #### Idle-client failures are handled, not fatal
@@ -1422,10 +1422,43 @@ comment-led final `SELECT`; it now reads `isSelectQuery()` from the same classif
 
 ### 5.3 Query cancellation
 
-A query issued with a `queryId` records its backend PID in a `Map`. `cancelQuery(queryId)`
-([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the PID up and calls
-`pg_cancel_backend(pid)` on a fresh pooled client, returning whether the cancel signalled. Exposed
-via `POST /api/db/cancel`.
+A query issued with a `queryId` records its backend PID and its pooled client in a `Map`.
+`cancelQuery(queryId)` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) looks the run up
+and calls `pg_cancel_backend(pid)` on a fresh pooled client, returning true when the cancel
+signalled. Exposed via `POST /api/db/cancel`.
+
+Three engines this provider connects to do not honour `pg_cancel_backend`, measured on 2026-10-03
+and 2026-10-04: CockroachDB v26.3.2 answers `unknown function: pg_cancel_backend()`, Materialize
+26.44.1 refuses it with a bound parameter (`pg_cancel_backend in this position not yet supported`),
+and RisingWave 3.1.0 answers `f`. Each kept running the statement, and before #1364 that was the end
+of the cancel. Where `pg_cancel_backend` is refused or answers false, `cancelQuery` now sends the
+wire protocol's own CancelRequest for the run's session
+([`pg-wire-cancel.ts`](../../src/lib/db/providers/sql/pg-wire-cancel.ts)): a fresh connection to the
+address the client connected to (a tunnel's local end when there is one), carrying the process id and
+secret key the server handed that session at startup. CockroachDB v26.3.2 ended `SELECT
+pg_sleep(20)` on it within a second, and RisingWave's wire-protocol cancel was seen to work in the
+same test pass; Materialize was not measured with it.
+
+The server never answers a CancelRequest, so `cancelQuery` answers true only once the run has ended,
+within 3 s of sending it; a run still going after that is false, and the editor says the cancel was
+not confirmed.
+
+**Encrypted wherever the session is.** When the connection uses TLS (any SSL mode but `disable`), the
+cancel connection sends an SSLRequest first, upgrades with the same TLS options and server name the
+session itself used, and only then sends the CancelRequest, as `pg`'s own cancel and libpq since
+PostgreSQL 17 do. A server that answers the SSLRequest with `N` gets nothing, since the session was
+configured to require TLS, and a certificate the session's settings do not trust gets nothing either;
+both are reported as not confirmed. A connection without TLS sends the request in plaintext, as the
+session itself goes. Behind an SNI-routing proxy (a managed service that routes on the TLS server
+name), only the encrypted request can reach the session at all, which is one more reason it is not
+sent in clear. Measured 2026-10-04: over TLS the request stopped `SELECT pg_sleep(20)` about 1.5 s
+into the run on PostgreSQL 18.6 (`ssl=on`) and on CockroachDB v26.3.2 in secure mode alike.
+
+**A window of one round trip remains.** The request is sent only while the run still holds its
+session, checked once the cancel socket is open, because a released session can already be running
+another request's statement. The check narrows the race to the request's own flight time and cannot
+close it: a statement that ends while the 16 bytes travel leaves the key on a session the pool may
+have handed on. That window is inherent to the protocol's cancel, the same one `psql`'s Ctrl+C has.
 
 ### 5.4 Declared column types
 
@@ -1483,6 +1516,7 @@ reconstructing. `columnTypes` is consumed by the results grid's column labels, b
 The pool carries its own type parsers (`ZONELESS_AS_TEXT` in [`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)), passed as the `types` option in `buildPoolConfig()`, so the structured form and a pasted connection string both get them.
 `date`, `date[]`, `timestamp` (without time zone) and `timestamp[]` arrive as the engine's own text, `'2026-09-01'` and `'2026-09-01 10:30:00'`, whatever the TZ of the Node process.
 `timestamptz` and `timestamptz[]` still arrive as a JavaScript `Date`, which is an instant, so the JSON the routes answer with carries its ISO UTC form, `'2026-09-01T10:30:00.000Z'`, in every TZ.
+Their two infinities are the exception and arrive as the engine's text, `'infinity'` and `'-infinity'`, alone and as array elements: `pg-types` reads them as the number `Infinity`, which no `Date` holds and `JSON.stringify` writes as `null`, so measured 2026-10-04 on PostgreSQL 18.6 a stored `'-infinity'::timestamptz` reached the grid as NULL.
 `time` and `timetz` were already the engine's text and are unchanged.
 Every other type is what `pg-types` makes of it.
 
@@ -1506,6 +1540,15 @@ The parsers are per pool on purpose: `pg.types.setTypeParser` is process-wide, a
 Only the text format is intercepted, since the binary one has no text to return.
 An in-process consumer of the library surface now receives strings, not `Date` objects, for these four types.
 Every relative that goes through `PostgresProvider` (the `via: "postgres"` entries in [`compatibility.ts`](../../src/lib/db/compatibility.ts)) shares the change.
+
+### 5.6 NaN and the float infinities
+
+`real` and `double precision` (and their arrays) are still whatever `pg-types` makes of them, a JavaScript number, so `'NaN'`, `'Infinity'` and `'-Infinity'` arrive as `NaN`, `Infinity` and `-Infinity`.
+JSON has no form for those three, and the routes, the agent's row rendering, the MCP serializer and the exports write each as the string `"NaN"`, `"Infinity"` or `"-Infinity"` rather than the `null` `JSON.stringify` would make of it ([`src/lib/non-finite.ts`](../../src/lib/non-finite.ts), [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
+`numeric` was already the engine's text, `'NaN'` and `'Infinity'` included.
+
+Measured 2026-10-04 on PostgreSQL 18.6, `SELECT 'NaN'::float8, 'Infinity'::real, '-Infinity'::float8` answered `null` in all three cells of `POST /api/db/query` before and `"NaN"`, `"Infinity"`, `"-Infinity"` after, while psql shows `NaN | Infinity | -Infinity`.
+The SQL INSERT export writes them as quoted literals, `'NaN'`, which PostgreSQL reads back into a `real`, `double precision` or `timestamptz` column, so a replayed file stores the same values where it used to store NULL.
 
 ---
 
@@ -1585,7 +1628,7 @@ has nothing to divide:
 
 In both cases **`getHealth().cacheHitRatio` is `"N/A"` and `getPerformanceMetrics().cacheHitRatio`
 is absent from the object**, and the Overview and Performance tabs render "Not measured" rather
-than a figure. A ratio that *is* measured as `0` is kept and shown as `0.0%`: a cold cache is a real
+than a figure. When a ratio is measured, `getPerformanceMetrics().cacheHitAdvice` carries the PostgreSQL-specific tip ("Increase shared_buffers") that the Performance tab shows under a ratio below 90%; engines that declare none get a generic line naming no setting. The advice appears only where the PostgreSQL heap counters move: engines that speak the PostgreSQL wire protocol with their own storage report no ratio ("Not measured") and so get no tip. A ratio that *is* measured as `0` is kept and shown as `0.0%`: a cold cache is a real
 reading, and the one the panel most needs to show.
 
 Both SQL statements used to wrap the `NULL` in `COALESCE(..., 100)`, so an unmeasured database

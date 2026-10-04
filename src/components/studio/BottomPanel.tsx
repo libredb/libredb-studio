@@ -636,27 +636,54 @@ export const BottomPanel = React.memo(function BottomPanel({
                 }}
               />
             ) : displayedResult ? (
-              <ResultsGrid
-                result={displayedResult}
-                onLoadMore={hydratedHere ? undefined : onLoadMore}
-                isLoadingMore={isLoadingMore}
-                supportsResultPagination={metadata?.capabilities.supportsResultPagination}
-                // The statement these ROWS came from, for the ordering notice. Withheld
-                // for a hydrated result for the same reason `onLoadMore` is: those rows
-                // are an agent run's, and the tab's own statement did not produce them.
-                resultQuery={hydratedHere ? undefined : resultQuery}
-                databaseType={activeConnection?.type}
-                maskingEnabled={maskingEnabled}
-                onToggleMasking={onToggleMasking}
-                userRole={userRole}
-                maskingConfig={maskingConfig}
-                editingEnabled={hydratedHere ? false : editingEnabled}
-                inlineEditRefusedColumns={metadata?.capabilities.inlineEditRefusedColumns}
-                pendingChanges={pendingChanges}
-                onCellChange={onCellChange}
-                onApplyChanges={onApplyChanges}
-                onDiscardChanges={onDiscardChanges}
-              />
+              <div className="h-full flex flex-col">
+                {/*
+                  A result AND a run error on the same tab is a script that stopped on a failing
+                  statement (#1385): the earlier statements' rows stay, the failure stands above
+                  them, and a grid with no rows is left out because its "The operation was
+                  successful" would contradict the banner. A hydrated result is another run's.
+                */}
+                {runError !== undefined && !hydratedHere && (
+                  <div
+                    role="alert"
+                    className="shrink-0 px-3 py-2 border-b border-destructive/30 bg-destructive/10 text-destructive"
+                    data-testid="script-failure"
+                  >
+                    <p className="text-xs font-medium">The script stopped at a failing statement.</p>
+                    <p
+                      className="mt-1 break-words whitespace-pre-wrap font-mono text-xs"
+                      data-testid="script-failure-message"
+                    >
+                      {runError}
+                    </p>
+                  </div>
+                )}
+                {(runError === undefined || hydratedHere || displayedResult.rows.length > 0) && (
+                  <div className="flex-1 min-h-0">
+                    <ResultsGrid
+                      result={displayedResult}
+                      onLoadMore={hydratedHere ? undefined : onLoadMore}
+                      isLoadingMore={isLoadingMore}
+                      supportsResultPagination={metadata?.capabilities.supportsResultPagination}
+                      // The statement these ROWS came from, for the ordering notice. Withheld
+                      // for a hydrated result for the same reason `onLoadMore` is: those rows
+                      // are an agent run's, and the tab's own statement did not produce them.
+                      resultQuery={hydratedHere ? undefined : resultQuery}
+                      databaseType={activeConnection?.type}
+                      maskingEnabled={maskingEnabled}
+                      onToggleMasking={onToggleMasking}
+                      userRole={userRole}
+                      maskingConfig={maskingConfig}
+                      editingEnabled={hydratedHere ? false : editingEnabled}
+                      inlineEditRefusedColumns={metadata?.capabilities.inlineEditRefusedColumns}
+                      pendingChanges={pendingChanges}
+                      onCellChange={onCellChange}
+                      onApplyChanges={onApplyChanges}
+                      onDiscardChanges={onDiscardChanges}
+                    />
+                  </div>
+                )}
+              </div>
             ) : runError !== undefined ? (
               /*
                 The tab's last run failed, and its failure stands where its rows would.

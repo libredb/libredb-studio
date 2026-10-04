@@ -19,6 +19,7 @@
  * better labelled in the file than left to a stack trace in the console.
  */
 
+import { nonFiniteWord } from "@/lib/non-finite";
 import { asBytes, binaryText } from "./binary";
 
 /** What stands in for a value that contains itself. */
@@ -37,6 +38,9 @@ const CIRCULAR_PLACEHOLDER = "[Circular]";
  */
 function jsonSafe(value: unknown, ancestors: readonly object[]): unknown {
   if (typeof value === "bigint") return value.toString();
+  // Not a throw but a silent change: `JSON.stringify` writes NaN and the infinities as
+  // `null`, which the file's reader takes for SQL NULL. The word survives instead.
+  if (typeof value === "number") return nonFiniteWord(value) ?? value;
   if (value === null || typeof value !== "object") return value;
 
   const custom = (value as { toJSON?: unknown }).toJSON;

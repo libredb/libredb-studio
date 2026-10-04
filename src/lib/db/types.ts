@@ -863,6 +863,40 @@ export interface ProviderCapabilities {
    */
   supportsTransactions?: boolean;
   /**
+   * Whether `POST /api/db/cancel` can reach a running statement on this provider: whether it
+   * implements `cancelQuery(queryId)`. The route answers 400 "Query cancellation is not
+   * supported for this database type" everywhere else, and the editor used to offer Cancel
+   * there anyway and report it as done (#1364): measured on SQLite, ClickHouse and libSQL, the
+   * statement kept running and the toast said "Query Cancelled".
+   *
+   * NOT declared by a provider. `/api/db/provider-meta` stamps it from the same shape check
+   * the cancel route and the query route make (`supportsQueryCancel` in
+   * `src/lib/db/query-cancel.ts`), so the declaration and the route cannot disagree, which a
+   * second, hand-written declaration of the same fact would allow.
+   *
+   * It says the provider CAN ask; whether one cancel worked is the route's `cancelled`
+   * answer, because a provider's engine can still refuse (a PostgreSQL-wire engine that does
+   * not honour `pg_cancel_backend`, a statement that ended first).
+   *
+   * Optional, and the UI reads it only on `=== false`: an embedded host declares its own
+   * capabilities and runs its own queries, so an absent flag keeps the control it had. Where
+   * it is false the control reads "Stop waiting": it ends the editor's wait and says the
+   * statement keeps running on the server.
+   */
+  supportsQueryCancel?: boolean;
+  /**
+   * The engine runs a statement on the Studio server's own JavaScript thread, synchronously,
+   * so while one runs the server answers no other request: SQLite, whose `node:sqlite` and
+   * `bun:sqlite` drivers are both synchronous (#1364; measured 2026-10-03, `/api/health`
+   * answered after 69.7 s during one statement).
+   *
+   * Declared by the provider, unlike `supportsQueryCancel`: it is a property of the driver,
+   * and nothing on the provider's surface shows it. It is why the editor disables its
+   * Cancel control there instead of offering "Stop waiting": with the server blocked,
+   * nothing else the user could do next would be answered before the statement ends.
+   */
+  blocksServerWhileRunning?: boolean;
+  /**
    * The statements that can END the transaction they run inside on this engine, beyond the
    * `COMMIT` / `ROLLBACK` / `ABORT` every engine has: the ones it COMMITS IMPLICITLY (MySQL
    * and Oracle DDL), a dialect's own synonym for COMMIT (PostgreSQL's `END`), or code that
@@ -1386,6 +1420,30 @@ export interface QueryPrepareOptions {
  * script's unfinished transaction reach another user.
  */
 export type OpenQueryTransactionOutcome = "none" | "rolled-back";
+
+/** What the caller of `beginTransaction()` needs from the transaction it is opening. */
+export interface BeginTransactionOptions {
+  /**
+   * Refuse a transaction the server does not report the state of, and leave nothing open.
+   * SANDBOX asks for this: it promises the user a rollback, and on a server that never says
+   * whether a transaction is open no answer can show that the rollback undid anything.
+   */
+  requireReportedState?: boolean;
+}
+
+/**
+ * What a provider that reads the server's transaction state learned when it opened one.
+ *
+ * `stateReported: false` means the server answered the BEGIN without saying whether a
+ * transaction is open, and will not say it after any later statement either. Measured
+ * 2026-10-04 over the MySQL wire: Databend 1.2.881, StarRocks 4.1.6 and Apache Doris 4.1.3
+ * answer every OK packet with status 0, inside a transaction and outside one, although all
+ * three roll back what ran after a `BEGIN`. The session is then the user's own to drive,
+ * and nothing in it is judged by a status the server never sends.
+ */
+export interface BeginTransactionResult {
+  stateReported: boolean;
+}
 
 /**
  * A fresh name for one caller's call scope (D87). One per request, minted by the route
@@ -1939,6 +1997,13 @@ export interface PerformanceMetrics {
    * to a healthy 100 when it is absent.
    */
   cacheHitRatio?: number;
+  /**
+   * What to do about a low `cacheHitRatio`, declared by a provider whose engine has a
+   * setting to point at ("Increase shared_buffers" on PostgreSQL). Absent where the engine
+   * has no such knob, so the Performance tab falls back to a line that names no setting
+   * rather than advising a ClickHouse or MySQL server to tune PostgreSQL.
+   */
+  cacheHitAdvice?: string;
   /** Transactions per second */
   transactionsPerSecond?: number;
   /** Queries per second */

@@ -1,11 +1,12 @@
 import { firstResultSet } from "@/lib/api/first-result-set";
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateProvider } from "@/lib/db";
-import type { QueryResult } from "@/lib/db/types";
+import type { BeginTransactionOptions, BeginTransactionResult, QueryResult } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { readBoundParams } from "@/lib/api/bound-params";
+import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import {
   claimTransaction,
   OWNERSHIP_IDLE_MS,
@@ -15,7 +16,8 @@ import {
 } from "@/lib/api/transaction-ownership";
 
 interface TransactionProvider {
-  beginTransaction(): Promise<void>;
+  // `void` from the providers that read no transaction state when they open one.
+  beginTransaction(options?: BeginTransactionOptions): Promise<BeginTransactionResult | void>;
   commitTransaction(): Promise<void>;
   rollbackTransaction(): Promise<void>;
   isInTransaction(): boolean;
@@ -89,10 +91,18 @@ export async function POST(req: NextRequest) {
 
     switch (action) {
       case "begin": {
-        await provider.beginTransaction();
+        // SANDBOX sends `requireReportedState: true`: it is about to promise a rollback, so a
+        // server that never says whether a transaction is open is refused rather than trusted.
+        const opened = await provider.beginTransaction({ requireReportedState: body.requireReportedState === true });
         // After the provider, never before: a begin that throws must leave no owner behind.
         claimTransaction(connection.id, guard.session.username);
-        return NextResponse.json({ status: "active", message: "Transaction started" });
+        // `stateReported: false` lets the UI say Studio cannot verify this transaction; `null`
+        // is a provider that does not say, which is not a claim either way.
+        return NextResponse.json({
+          status: "active",
+          message: "Transaction started",
+          stateReported: opened ? opened.stateReported : null,
+        });
       }
 
       case "commit": {
@@ -154,6 +164,8 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({
           ...firstResultSet(result),
+          // NaN and the infinities as words, as on `/api/db/query` (`src/lib/non-finite.ts`).
+          rows: rowsWithNonFiniteWords(result.rows),
           inTransaction: stillInTransaction,
           pagination: {
             limit: prepared.limit,

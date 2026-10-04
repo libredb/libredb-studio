@@ -28,12 +28,12 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D226, U17 · 138
+- [Drivers and connections](#drivers-and-connections) — D1-D227, U17 · 139
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U85 · 78
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
 - [Dependencies](#dependencies) — P1-P9 · 7
-- [Documentation](#documentation) — DOC3-DOC10 · 7
+- [Documentation](#documentation) — DOC3-DOC13 · 10
 - [Release pipeline](#release-pipeline) — REL1-REL7 · 7
 - [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -313,17 +313,13 @@ identifier-quoting decision rather than a string concat - or asking mysql2 for t
 with the parameters bound client-side. Neither is a one-line change, which is why this is filed
 rather than done inside a labelling PR, and why Databend's registry row reads `query-only` today.
 
-**A second, smaller defect surfaced on the same engine, and it is a crash rather than a failure.**
-`runMaintenance('analyze')` throws `TypeError: rows.filter is not a function`: Databend answers
-`ANALYZE TABLE` with an object where the reader expects an array of `Msg_type` rows. A provider
-that cannot run a maintenance action should report that, not throw a type error out of the route -
-and this is the same shape already recorded once, a mysql2 reply whose type depends on the
-statement.
+The `rows.filter is not a function` crash `runMaintenance('analyze')` hit on the same engine is
+gone: Databend answers `ANALYZE TABLE` with an OK packet, as TiDB and OceanBase do, and the report
+reader now reads that as a statement that ran without a report (`docs/providers/mysql.md` section 9).
 
 **Done when:** the six reads above answer on Databend, with the identifier path decided rather
-than concatenated, and `runMaintenance` on an engine that answers `ANALYZE` with a non-array
-reports a result instead of throwing - both verified against the container, and the reading
-unchanged on MySQL, MariaDB and one analytics relative.
+than concatenated, verified against the container, and the reading unchanged on MySQL, MariaDB and
+one analytics relative.
 
 ### D34. A pinned SSH host key has no way to be set, so the protection resets on restart
 
@@ -1497,7 +1493,7 @@ D37's consolidation removes this if the shared TLS path is built on the Promethe
 ### D105. `StorageStats.sizeBytes` and `TableStats.totalSizeBytes` are required, so an engine that measures no size publishes a zero
 
 `StorageStats` in `src/lib/db/types.ts` declares `sizeBytes: number`, so a storage row carries a number even where the engine publishes no byte count for what the row names.
-Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts:877-878`), and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
+Trino writes `size: "N/A"` with `sizeBytes: 0` (`src/lib/db/providers/sql/trino/introspect.ts:877-878`), and its per-table "0 B" comes from `readTableStatistics` summing `data_size ?? 0` (`:637-644`), and since #1085 the Prometheus head-block row does the same, because neither its TSDB status nor its runtime information publishes a stored byte count.
 The agent's `storage` reading forwards the field unchanged (`sizeBytes: store.sizeBytes` in `CURATED_READINGS`, `src/lib/agent/tools.ts`), so a model is handed a zero-byte store that nobody measured.
 The search provider takes the other route and emits no storage row for a size it was not given (`toStorageStats` in `src/lib/db/providers/sql/search/index.ts`).
 D44 is the same fabrication on `DatabaseOverview.databaseSizeBytes`, where the type already allows absence; here the type itself forbids it.
@@ -2535,6 +2531,17 @@ Found 2026-10-04 by the review of the #1351 fix; pre-existing, not measured end 
 
 **Done when:** on a Materialize connection, search, inventory and the agent's grounding answer for tables, views and materialized views, with the two routine kinds reported as unavailable rather than failing the read.
 
+### D227. A long SQLite statement blocks the whole Studio server, and no cancel or timeout reaches it
+
+`sqlite.ts` runs every statement through `bun:sqlite` or `node:sqlite`, both synchronous, on the server's one JavaScript thread, and neither exposes `sqlite3_interrupt` or a progress handler (Node 24.11's `DatabaseSync` has `setAuthorizer` and neither of those; Bun 1.4.2's `Database` has neither).
+So a running statement cannot be stopped from inside the process, and while it runs no other request is served: measured 2026-10-03 on node:sqlite (SQLite 3.50.4), a 300M-row recursive CTE from the editor made `/api/health` answer after 69.7 s instead of 6 ms, and the 60 s query timeout, checked only after the statement returns, did not end it.
+Since #1364 the editor no longer offers Cancel there (`supportsQueryCancel: false`, `docs/providers/sqlite.md` section 3.4); the block itself is unchanged.
+A1 is the same property on the agent and MCP path.
+
+Found 2026-10-04 while fixing #1364.
+
+**Done when:** SQLite statements run in a worker thread that the provider terminates on cancel and on the query timeout, the SQLite provider implements `cancelQuery`, and a test shows `/api/health` answering while a long statement runs.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -2568,7 +2575,9 @@ Two constraints from #269 that do not go away:
   newline-joined payload cannot come back.
 - **Primary-key detection is heuristic.** The hook picks a result column named `id` or ending in
   `_id`. Acceptable for a control gated on an opt-in capability; per-dialect editing on real tables
-  should derive the key from the schema.
+  should derive the key from the schema. A table whose key is named otherwise is refused with
+  "No primary key column detected" (`src/hooks/use-inline-editing.ts:854-859`), which reads as if
+  the table had none (found by the end-to-end test pass of 2026-10-03 and 2026-10-04).
 
 Whether row editing should be universal at all is a product decision. The published
 `WorkspaceFeatures.inlineEditing` flag is deprecated against this entry (#288): it becomes real, or
@@ -3590,6 +3599,7 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec E10).
 ### U58. TablesTab's Vacuum summary card reads 0 and "OK" on an engine that declares no vacuum
 
 `vacuumStateKnown` ignores `vacuumSupported` (`src/components/monitoring/tabs/TablesTab.tsx`, where the card reads it), so on an engine that supports maintenance and declares no `vacuum` the card counts the tables whose `bloatRatio` passes 10 as if the engine had a vacuum.
+The table's "Vacuum" column header (`TablesTab.tsx:443`) is drawn on those engines too.
 Ten engines declare `supportsMaintenance: true`, set or inherited from `BaseDatabaseProvider.getCapabilities()`, with no `vacuum` among their `maintenanceOperations`: MySQL, libSQL, Oracle, SQL Server, ClickHouse, Trino, Redis, Couchbase and etcd today, and Db2 LUW after the Db2 PR (#786), which reads no table statistics in its first version.
 All but MySQL publish no `bloatRatio`, so their card shows 0 with a green "OK" wherever the tab has table statistics to read; Redis answers none, so its card reads that only while its database is empty, and N/A once the database holds a key.
 MySQL's `bloatRatio` is `DATA_FREE` as a percentage of the table's data and index bytes, so its card counts the tables past 10 percent under the Vacuum title, a count the fix takes off the card too.
@@ -3615,15 +3625,6 @@ Reproduce with a hook test: type a client certificate under `verify-full`, switc
 Found 2026-09-30 while designing the etcd provider (R12 UX-8).
 
 **Done when:** a mode that draws no client certificate sends none, or draws what it sends, and a hook test pins the switch.
-
-### U61. The editor's cancel discards the cancel route's answer, so a write etcd applied is shown as cancelled
-
-`use-query-execution.ts` aborts its own request, posts the cancel and shows the statement as cancelled whatever the route answers (`cancelQuery` and the cancellation branch of the run's error handling), so a write the engine had applied, for which the etcd provider's `cancelQuery` answers `false`, is shown as cancelled.
-The etcd provider states it as a limit (`docs/providers/etcd.md`, section 13).
-
-Found 2026-09-30 while designing the etcd provider (R12 CF-11).
-
-**Done when:** a cancel whose route answer is `cancelled: false` says that the statement may have run, and a hook test pins both answers.
 
 ### U62. The object-edit wire checks answer for an array with a hole in it
 
@@ -3878,6 +3879,47 @@ Found by the final browser pass of the Oxia provider (#1310).
 Not fixed there: the rail is shared by every engine, and the PR does not touch it.
 
 **Done when:** in-app navigation away from Studio and back either keeps following the conversation or says what actually ended it, the reload wording appears only after a reload, and a test remounts the rail without a reload and asserts the notice.
+
+### U86. A MongoDB view's row menu offers Validate, Compact and Check Collection
+
+X25's MongoDB sibling. MongoDB's `maintenanceOperationSpecs` (`src/lib/db/providers/document/mongodb.ts:821-825`) declares `vacuum` ("Compact Collection"), `analyze` ("Validate Collection") and `check` ("Check Collection") with no `kinds`, and an absent `kinds` means every kind, so the object tree's row menu offers all three on a row of kind `view` (`MONGODB_KIND_VIEW`, `:384`).
+The entry opens `/admin/operations?path=...&path=paid_orders`, which says "No tables found ... this page has no row for "paid_orders" to run it on", and nothing is sent.
+Measured on MongoDB 8.2.12 (`mongo:8.2`), view `paid_orders`.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** MongoDB declares `kinds: ["collection"]` on the three specs, and a test asserts that a MongoDB view's row menu offers no maintenance entry.
+
+### U87. Monitoring's Overview and Storage tiles name tables, indexes and a buffer pool on key-value and streaming engines
+
+The Overview and Storage tabs draw the same SQL-shaped tiles for every engine, so a Redis connection reads "Tables 23 · 0 indexes" (23 is `DBSIZE`), "Buffer Pool", "Deadlocks" and "Checkpoint" as "Not measured", and Storage "Tables 0 B / Indexes 0 B / WAL N/A"; Kafka and Redpanda put every byte of topic data under "Other (unattributed)" beside "Tables 0 B 0.0%".
+Measured on Redis 8.10.2, Kafka 4.3.1 and Redpanda v26.2.3.
+The labels are fixed strings in `src/components/monitoring/tabs/OverviewTab.tsx` (`{overview?.indexCount ?? 0} indexes` at line 210, "Buffer Pool" at 291) and `src/components/monitoring/tabs/StorageTab.tsx` ("Tables" 138, "Indexes" 161, "WAL" 176, "Other (unattributed)" 242).
+U71 is the same gap on the Tables tab.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** a provider declares the noun its objects take (keys, topics, collections) and which overview and storage tiles it fills, the two tabs draw only those under that noun, and a test renders each tab for an engine that fills none of the SQL tiles.
+
+### U88. The result tab strip scrolls with no visible sign, so the last tabs look clipped
+
+`src/components/studio/BottomPanel.tsx:445` makes the result mode tabs a horizontally scrolling strip with its scrollbar hidden, on purpose, so the Export group on the right is never pushed out (comment at `:439-444`).
+At 1440x900 with the Agent panel open, the strip is narrower than its tabs, and "Dashboard" shows as "Dashboar" / "Dashbc" against the Export button; on Neo4j, whose results add a Graph tab, Dashboard is not visible at all (Prometheus 3.15.0, Kafka 4.3.1, Neo4j 2026.09.0).
+Nothing tells the reader the strip scrolls.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** an overflowing strip shows that more tabs exist (an edge fade, scroll buttons, or an overflow menu for the hidden tabs), the Export group still never moves, and a component test pins the overflow indicator.
+
+### U89. A Prometheus rule group's Source tab is titled with its internal key
+
+A Source tab is titled `Source: ${objectPathLabel(object.path)}` (`src/hooks/use-tab-manager.ts:66`), the qualified path joined by dots, so two same-named objects in different containers stay distinguishable.
+A Prometheus rule group's path segment is the engine's `GroupKey`, `<file>;<group>` (`src/lib/db/providers/timeseries/prometheus/objects.ts:189-193`), so the tab reads `Source: /etc/prometheus/rules.yml;e2e_group`, and a rule's tab adds `.<position>:<name>` (Prometheus 3.15.0).
+The tree already shows the readable `name`.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** a Source tab title can use a provider-supplied display form of the path (for a rule group, `e2e_group (rules.yml)`), still unique per path, without a type-id branch in the tab manager, and a test pins the Prometheus rule group's title.
 
 ## Dependencies
 
@@ -4184,6 +4226,36 @@ Found 2026-10-04 while moving the Db2 provider to `db2-node` 1.0.25.
 Not fixed there: the change was English-only, and seven translations of a provider row are a documentation change of their own.
 
 **Done when:** each translated Db2 row says what `README.md`'s does, and `bun run readme:check` passes.
+
+### DOC11. Two PostgreSQL-relative caveats no longer hold on the current images: CockroachDB sessions and OrioleDB index sizes
+
+`src/lib/db/compatibility.ts:380` (CockroachDB, probed on v26.2.6) says "Performance metrics, slow queries and active sessions do work: the pg_stat_* views CockroachDB provides are enough for them."
+On v26.3.2 (`cockroachdb/cockroach:latest`, single node, insecure) Monitoring > Sessions reads "No active sessions found", Overview reads "Connections 0" and Queries reads "pg_stat_statements required", while Studio held connections: `pg_stat_activity` returned 0 rows and `crdb_internal.cluster_sessions` returned 3.
+`src/lib/db/compatibility.ts:419` (OrioleDB, probed on beta 16) and the OrioleDB row of `docs/providers/README.md` say "every index reads 0 bytes".
+On beta 19 (`orioledb/orioledb:latest-pg18`, PostgreSQL 18.6) `pg_indexes_size()` is non-zero and Monitoring > Tables reads 48 kB for `orders` and 8192 bytes for `customers`.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** both caveats and their `probedVersion` are re-measured and rewritten in `src/lib/db/compatibility.ts` and `docs/providers/README.md` to match v26.3.2 and beta 19.
+Reading CockroachDB sessions from `crdb_internal.cluster_sessions` instead of an empty `pg_stat_activity` is a separate change and needs its own entry or issue if wanted.
+
+### DOC12. The FerretDB compatibility entry omits Check Collection, views and Compact, and a maintenance request has no deadline
+
+`src/lib/db/compatibility.ts:696-705` lists FerretDB as `tier: "full"` with three caveats, all about sign-in, version and deployment.
+Measured on FerretDB 2.7.0 (`ghcr.io/ferretdb/ferretdb:latest` over `postgres-documentdb`): Operations > Check Collection answers HTTP 500 `no such command: 'dbCheck'`; a view created in mongosh is listed and counted as an empty collection (count 0); and Run Compact never returns, a self-deadlock in FerretDB itself, so the button stays disabled because `/api/db/maintenance` (`src/app/api/db/maintenance/route.ts`, called from `src/hooks/use-monitoring-data.ts:222` and `:259`) sets no deadline on the operation.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** the FerretDB entry names the three gaps (or the tier is lowered with the reason), and either the maintenance request carries a bounded wait whose expiry the Operations page reports, or the entry's caveat says Compact can hang on FerretDB 2.7.0.
+
+### DOC13. The Elasticsearch and OpenSearch docs say aliases and data streams are not in the tree, and the tree lists them
+
+Section 13 of `docs/providers/elasticsearch.md:1656-1660` and `docs/providers/opensearch.md:1633-1637` still says "Aliases and data streams are not listed in the schema tree", citing `transport.ts:205-219`.
+The same docs' object-kind table (`elasticsearch.md:904`, `opensearch.md:869`) lists the `alias` kind read from `GET /_alias`, and the tree on Elasticsearch 9.5.3 shows Indices, Aliases, Data Streams, Ingest Pipelines and Index Templates.
+
+Found by the end-to-end test pass of 2026-10-03 and 2026-10-04.
+
+**Done when:** both section 13 bullets are removed or rewritten to what the tree shows, the cited `transport.ts` comment is checked for the same stale claim, and the provider-doc tests still pass.
 
 ## Release pipeline
 

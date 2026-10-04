@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ColumnSchema, DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ObjectKindSpec } from "@/lib/db/types";
-import { DatabaseConfigError, NO_TRANSACTION_OPENED } from "@/lib/db/errors";
+import { DatabaseConfigError, NO_TRANSACTION_OPENED, TRANSACTION_STATE_UNREPORTED } from "@/lib/db/errors";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
@@ -1484,12 +1484,110 @@ describe("MySQLProvider", () => {
       expect(statements.some((sql) => sql.startsWith("OPTIMIZE TABLE"))).toBe(false);
     });
 
+    // Not every MySQL-wire server answers the table verbs with a report. Measured
+    // 2026-10-04 through mysql2 3.24.2: `pingcap/tidb:v8.5.8` answers `ANALYZE TABLE big`
+    // with an OK packet (warningStatus 1, a sample-rate Note in SHOW WARNINGS, tested below),
+    // `datafuselabs/databend:v1.2.925-patch-13` does the same, and
+    // `oceanbase/oceanbase-ce:latest` (4.4.2.1) answers both `ANALYZE TABLE big` and
+    // `OPTIMIZE TABLE big` that way, so mysql2 hands back a `ResultSetHeader` object
+    // where MySQL 26.7.0 hands back rows. The row reader called `.filter` on it and the
+    // route answered 500 "rows.filter is not a function". A table the server refuses
+    // still throws on all three, so a header carries no failure to read.
+    const okPacket = { fieldCount: 0, affectedRows: 0, insertId: 0, info: "", serverStatus: 2, warningStatus: 0 };
+
+    test.each(["analyze", "optimize", "check"] as const)(
+      "%s answered with an OK packet instead of a report succeeds and says there was no report",
+      async (op) => {
+        mockExecuteFn = (sql: string) => {
+          if (sql.startsWith(`${op.toUpperCase()} TABLE`)) {
+            return Promise.resolve([okPacket, undefined]);
+          }
+          return defaultMockExecute(sql);
+        };
+
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        const result = await provider.runMaintenance(op, "big");
+
+        expect(result.success).toBe(true);
+        expect(result.message).toBe(`${op.toUpperCase()} completed; the server returned no report`);
+      },
+    );
+
+    test("the whole-database form answered with an OK packet succeeds too", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.resolve([okPacket, undefined]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe("ANALYZE completed; the server returned no report");
+    });
+
+    test.each([
+      [1, "ANALYZE completed; the server returned no report (1 warning, see SHOW WARNINGS)"],
+      [2, "ANALYZE completed; the server returned no report (2 warnings, see SHOW WARNINGS)"],
+    ])("an OK packet carrying %i warning(s) says where to read them", async (warningStatus, expected) => {
+      // TiDB v8.5.8's ANALYZE answers warningStatus 1: a sample-rate Note that only
+      // SHOW WARNINGS shows, so the message points there instead of hiding it.
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.resolve([{ ...okPacket, warningStatus }, undefined]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze", "big");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe(expected);
+    });
+
+    test("a result set with no row says there was no report", async () => {
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.resolve([[], []]);
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const result = await provider.runMaintenance("analyze", "big");
+
+      expect(result.success).toBe(true);
+      expect(result.message).toBe("ANALYZE completed; the server returned no report");
+    });
+
+    test("a table the server refuses with an error still fails with the engine's error", async () => {
+      // The OK-packet servers report a missing table by THROWING (TiDB v8.5.8 and
+      // OceanBase 4.4.2.1 both answer errno 1146), not with an Error row, so the
+      // engine's own message is what reaches the caller.
+      mockExecuteFn = (sql: string) => {
+        if (sql.startsWith("ANALYZE TABLE")) {
+          return Promise.reject(
+            Object.assign(new Error("Table 'e2e.missing' doesn't exist"), { errno: 1146, code: "ER_NO_SUCH_TABLE" }),
+          );
+        }
+        return defaultMockExecute(sql);
+      };
+
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await expect(provider.runMaintenance("analyze", "missing")).rejects.toThrow("Table 'e2e.missing' doesn't exist");
+    });
+
     test("a statement that answers a header rather than a result set still succeeds", async () => {
-      // KILL is the one maintenance statement here that does NOT answer a result set -
-      // mysql2 hands back a `ResultSetHeader` object - so it never reaches the row reader
-      // and keeps the generic sentence. The three that do (ANALYZE/OPTIMIZE/CHECK TABLE)
-      // always answer rows, measured on 26.7.0, which is why the reader does not have to
-      // defend against a header shape it is never given.
+      // KILL never answers a result set - mysql2 hands back a `ResultSetHeader` object -
+      // so it never reaches the report reader and keeps the generic sentence.
       mockExecuteFn = (sql: string) => {
         if (sql.startsWith("KILL")) {
           return Promise.resolve([{ affectedRows: 0, warningStatus: 0 }, undefined]);
@@ -1534,9 +1632,9 @@ describe("MySQLProvider", () => {
 
     /**
      * The OK-packet status flags measured on MySQL 26.7.0 on 2026-10-04 through mysql2:
-     * 16387 after `START TRANSACTION`, 3 after an `INSERT` inside it, 16386 after a
-     * `CREATE TABLE` inside it. Bit 0 is `SERVER_STATUS_IN_TRANS`, and the CREATE cleared it
-     * because MySQL committed the transaction implicitly.
+     * 16387 after `BEGIN` (and `START TRANSACTION`), 3 after an `INSERT` inside it, 16386
+     * after a `CREATE TABLE` inside it. Bit 0 is `SERVER_STATUS_IN_TRANS`, and the CREATE
+     * cleared it because MySQL committed the transaction implicitly.
      */
     function answering(statuses: Record<string, number>) {
       return (sql: string, params?: unknown[]) => {
@@ -1550,8 +1648,9 @@ describe("MySQLProvider", () => {
       };
     }
 
-    test("a START TRANSACTION the server answers without opening one is refused, and the connection goes back", async () => {
-      mockExecuteFn = answering({ "START TRANSACTION": 2 });
+    test("a BEGIN the server answers with a closed transaction is refused, and the connection goes back", async () => {
+      // Bit 1 (autocommit) without bit 0: the server reports its state, and the state is closed.
+      mockExecuteFn = answering({ BEGIN: 2 });
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       const release = spyOn(mockConnection, "release");
@@ -1564,16 +1663,104 @@ describe("MySQLProvider", () => {
       }
     });
 
-    test("a START TRANSACTION that fails releases the connection it borrowed", async () => {
+    test("a BEGIN the server answers with the transaction open is reported as verified", async () => {
+      mockExecuteFn = answering({ BEGIN: 16387 });
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(await provider.beginTransaction({ requireReportedState: true })).toEqual({ stateReported: true });
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    /**
+     * Databend 1.2.881, StarRocks 4.1.6 and Apache Doris 4.1.3 answer every OK packet with
+     * status 0, inside a transaction and out of one (measured 2026-10-04): neither bit 0 nor
+     * bit 1, so the flags say nothing either way.
+     */
+    test("a BEGIN answered with no status bit opens a session whose state is unreported", async () => {
+      mockExecuteFn = answering({ BEGIN: 0, INSERT: 0 });
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(await provider.beginTransaction()).toEqual({ stateReported: false });
+      expect(provider.isInTransaction()).toBe(true);
+
+      // StarRocks and Doris answer an INSERT inside the transaction with status 0 too. That is
+      // not the server ending the transaction, so the session (and the INSERT) are kept.
+      const release = spyOn(mockConnection, "release");
+      try {
+        protocolCalls.length = 0;
+        await provider.queryInTransaction("INSERT INTO t VALUES (1)");
+        expect(provider.isInTransaction()).toBe(true);
+        expect(release).not.toHaveBeenCalled();
+        expect(protocolCalls.some((call) => call.sql === "ROLLBACK")).toBe(false);
+      } finally {
+        release.mockRestore();
+      }
+      await provider.commitTransaction();
+      expect(provider.isInTransaction()).toBe(false);
+    });
+
+    test("a BEGIN answered with no header at all is unreported, not refused", async () => {
       mockExecuteFn = (sql: string) =>
-        sql.startsWith("START TRANSACTION")
-          ? Promise.reject(new Error("Connection lost"))
+        sql === "BEGIN"
+          ? Promise.resolve([[], []] as [unknown, unknown[]])
           : (defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      expect(await provider.beginTransaction()).toEqual({ stateReported: false });
+      await provider.rollbackTransaction();
+    });
+
+    test("an unreported state is refused when the caller needs the rollback proven, and nothing is left open", async () => {
+      mockExecuteFn = answering({ BEGIN: 0 });
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       const release = spyOn(mockConnection, "release");
       try {
-        await expect(provider.beginTransaction()).rejects.toThrow("Connection lost");
+        protocolCalls.length = 0;
+        await expect(provider.beginTransaction({ requireReportedState: true })).rejects.toThrow(
+          TRANSACTION_STATE_UNREPORTED,
+        );
+        expect(provider.isInTransaction()).toBe(false);
+        expect(release).toHaveBeenCalledTimes(1);
+        // On Databend and Doris the BEGIN did open a transaction; it is rolled back before the
+        // connection returns to the pool.
+        expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN", "ROLLBACK"]);
+      } finally {
+        release.mockRestore();
+      }
+      // The refusal left nothing behind: a manual transaction opens on the same provider.
+      expect(await provider.beginTransaction()).toEqual({ stateReported: false });
+      await provider.rollbackTransaction();
+    });
+
+    test("a server that refuses a bare BEGIN gets START TRANSACTION instead", async () => {
+      // MariaDB with sql_mode=ORACLE reads BEGIN as the start of a block and answers 1064;
+      // START TRANSACTION opens the transaction there (status 32771, measured on 13.0.2).
+      mockExecuteFn = (sql: string, params?: unknown[]) =>
+        sql === "BEGIN"
+          ? Promise.reject(Object.assign(new Error("You have an error in your SQL syntax"), { errno: 1064 }))
+          : answering({ "START TRANSACTION": 32771 })(sql, params);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      protocolCalls.length = 0;
+      expect(await provider.beginTransaction()).toEqual({ stateReported: true });
+      expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN", "START TRANSACTION"]);
+      await provider.rollbackTransaction();
+    });
+
+    test("a BEGIN that fails in both forms raises the BEGIN's own error and releases the connection", async () => {
+      mockExecuteFn = (sql: string) =>
+        sql === "BEGIN"
+          ? Promise.reject(Object.assign(new Error("syntax error near BEGIN"), { errno: 1064 }))
+          : sql === "START TRANSACTION"
+            ? Promise.reject(new Error("START TRANSACTION refused too"))
+            : (defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>);
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const release = spyOn(mockConnection, "release");
+      try {
+        await expect(provider.beginTransaction()).rejects.toThrow("syntax error near BEGIN");
         expect(provider.isInTransaction()).toBe(false);
         expect(release).toHaveBeenCalledTimes(1);
       } finally {
@@ -1581,8 +1768,35 @@ describe("MySQLProvider", () => {
       }
     });
 
+    /**
+     * On Databend and Doris `START TRANSACTION` opens nothing, so falling back after a BEGIN
+     * that failed for a reason other than its grammar would hand the user a session that only
+     * looks open. Doris answers its own errors with 1105; a fatal error is a dead connection.
+     */
+    for (const [label, failure] of [
+      ["a non-parse error (1105)", Object.assign(new Error("transaction already begun"), { errno: 1105 })],
+      ["a fatal parse error", Object.assign(new Error("Connection lost"), { errno: 1064, fatal: true })],
+    ] as const) {
+      test(`a BEGIN refused with ${label} is raised as is, with no START TRANSACTION`, async () => {
+        mockExecuteFn = (sql: string) =>
+          sql === "BEGIN" ? Promise.reject(failure) : (answering({ "START TRANSACTION": 0 })(sql) as never);
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        const release = spyOn(mockConnection, "release");
+        try {
+          protocolCalls.length = 0;
+          await expect(provider.beginTransaction()).rejects.toBe(failure);
+          expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN"]);
+          expect(provider.isInTransaction()).toBe(false);
+          expect(release).toHaveBeenCalledTimes(1);
+        } finally {
+          release.mockRestore();
+        }
+      });
+    }
+
     test("a statement MySQL commits implicitly ends the session, so no rollback is pretended", async () => {
-      mockExecuteFn = answering({ "START TRANSACTION": 16387, INSERT: 3, CREATE: 16386 });
+      mockExecuteFn = answering({ BEGIN: 16387, INSERT: 3, CREATE: 16386 });
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       await provider.beginTransaction();
@@ -1609,7 +1823,7 @@ describe("MySQLProvider", () => {
     });
 
     test("a ROLLBACK that fails on an ended session still releases the connection", async () => {
-      const statuses = answering({ "START TRANSACTION": 16387, CREATE: 16386 });
+      const statuses = answering({ BEGIN: 16387, CREATE: 16386 });
       mockExecuteFn = (sql: string, params?: unknown[]) =>
         sql === "ROLLBACK" ? Promise.reject(new Error("Connection lost")) : statuses(sql, params);
       provider = new MySQLProvider(makeMySQLConfig());
@@ -1626,7 +1840,7 @@ describe("MySQLProvider", () => {
     });
 
     test("a ROLLBACK queued behind a statement that ended the session does not release the connection twice", async () => {
-      const statuses = answering({ "START TRANSACTION": 16387, CREATE: 16386 });
+      const statuses = answering({ BEGIN: 16387, CREATE: 16386 });
       let finish: () => void = () => {};
       mockExecuteFn = async (sql: string, params?: unknown[]) => {
         if (sql.startsWith("CREATE")) {
@@ -1664,7 +1878,7 @@ describe("MySQLProvider", () => {
       const header = (serverStatus: number) => ({ fieldCount: 0, affectedRows: 0, serverStatus });
       let callStatus = 3;
       mockExecuteFn = (sql: string) => {
-        if (sql.startsWith("START TRANSACTION")) return Promise.resolve([header(16387), undefined]);
+        if (sql.startsWith("BEGIN")) return Promise.resolve([header(16387), undefined]);
         if (sql.startsWith("CALL")) return Promise.resolve([[[{ id: 1 }], header(callStatus)], undefined]);
         return defaultMockExecute(sql) as Promise<[unknown, unknown[] | undefined]>;
       };
@@ -1683,7 +1897,7 @@ describe("MySQLProvider", () => {
       mockExecuteFn = (sql: string) =>
         sql.startsWith("SELECT")
           ? Promise.resolve([[{ serverStatus: 0 }], [{ name: "serverStatus" }]])
-          : (answering({ "START TRANSACTION": 16387 })(sql) as Promise<[unknown, unknown[] | undefined]>);
+          : (answering({ BEGIN: 16387 })(sql) as Promise<[unknown, unknown[] | undefined]>);
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
       await provider.beginTransaction();

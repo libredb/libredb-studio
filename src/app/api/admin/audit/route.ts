@@ -18,7 +18,7 @@ export async function GET(request: Request) {
     const limit = parseInt(searchParams.get("limit") || "100", 10);
 
     const buffer = getServerAuditBuffer();
-    const events = type ? buffer.filter({ type }) : buffer.getRecent(limit);
+    const events = type ? buffer.filter({ type, limit }) : buffer.getRecent(limit);
 
     return NextResponse.json({ events, total: buffer.size });
   } catch (error) {

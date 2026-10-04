@@ -53,3 +53,19 @@ export function formatCellCopy(value: unknown, context?: RenderContext): string 
   const renderer = getRenderer(classifyValue(value, context));
   return renderer.renderCopy?.(value, context) ?? renderer.renderCompact(value, context).display;
 }
+
+/**
+ * Case folding for the column filter (#1409).
+ *
+ * `"İ".toLowerCase()` is "i" plus U+0307 (combining dot above), so the filter `izmir` never found
+ * the dotted capital spelling; and under a Turkish locale `toLocaleLowerCase` turns a plain "I" into the
+ * dotless "ı", which would break the same match the other way. So the combining dot is dropped after
+ * lowercasing and the dotless "ı" is read as "i". Nothing else is normalised: no NFD, which would make
+ * `e` match `é` and a Hangul syllable match its first jamo.
+ */
+export function foldFilterCase(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\u0307/g, "")
+    .replace(/\u0131/g, "i");
+}

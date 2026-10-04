@@ -325,6 +325,7 @@ import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { QueryTab } from "@/lib/types";
 import { generateTableQuery } from "@/lib/query-generators";
+import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
 
 const { StudioWorkspace } = await import("@/workspace/StudioWorkspace");
 
@@ -919,6 +920,16 @@ describe("StudioWorkspace", () => {
 
     act(() => sidebarActions().onGenerateTestData?.(usersObject));
     expect(queryByTestId("testdatagenerator")).not.toBeNull();
+  });
+
+  test("the profiler keeps masking the built-in kinds, though this shell's grid masks nothing (#1421)", () => {
+    renderWorkspace();
+
+    act(() => sidebarActions().onProfileObject?.(usersObject));
+    // The summary a host's onDescribeSchema receives held emails, passwords and tokens masked
+    // before #1421; handing the profiler the grid's no-op configuration would send them in clear.
+    expect(capturedDataProfilerProps.maskingConfig).toBe(DEFAULT_MASKING_CONFIG);
+    expect(capturedDataProfilerProps.maskingEnabled).toBe(true);
   });
 
   test("each modal opens on the object that was CLICKED, where two containers share one label", () => {

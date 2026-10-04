@@ -362,6 +362,56 @@ describe("BottomPanel", () => {
     expect(queryByText("Export")).toBeNull();
   });
 
+  /**
+   * A script that stopped on a failing statement keeps the earlier statements' result AND says it
+   * stopped (#1385). With no rows to show, the grid is left out: its "The operation was
+   * successful" would contradict the failure.
+   */
+  describe("a script that stopped on a failing statement", () => {
+    const scriptTab = (rows: Record<string, unknown>[]) => ({
+      id: "tab-1",
+      name: "Query 1",
+      query: "SELECT 1 AS a; SELECT * FROM nope",
+      result: { rows, fields: ["a"], rowCount: rows.length, executionTime: 5 },
+      runError: "Statement 2 of 3 failed: unknown catalog item 'nope'\nSELECT * FROM nope",
+      isExecuting: false,
+      type: "sql" as const,
+    });
+
+    test("shows the failure above the earlier statement's rows", () => {
+      const props = createDefaultProps({ mode: "results", currentTab: scriptTab([{ a: 1 }]) });
+      const { getByTestId, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(getByTestId("script-failure").textContent).toContain("The script stopped at a failing statement.");
+      expect(getByTestId("script-failure-message").textContent).toContain("Statement 2 of 3 failed");
+      expect(getByTestId("resultsgrid")).toBeTruthy();
+      expect(queryByTestId("run-failure")).toBeNull();
+    });
+
+    test("leaves out an empty grid, so nothing says the operation was successful", () => {
+      const props = createDefaultProps({ mode: "results", currentTab: scriptTab([]) });
+      const { getByTestId, queryByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(getByTestId("script-failure-message").textContent).toContain("unknown catalog item");
+      expect(queryByTestId("resultsgrid")).toBeNull();
+    });
+
+    test("a result without a run error shows no banner", () => {
+      const tab = { ...scriptTab([{ a: 1 }]), runError: undefined };
+      const props = createDefaultProps({ mode: "results", currentTab: tab });
+      const { queryByTestId, getByTestId } = render(
+        <BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />,
+      );
+
+      expect(queryByTestId("script-failure")).toBeNull();
+      expect(getByTestId("resultsgrid")).toBeTruthy();
+    });
+  });
+
   test("tab click fires onSetMode with correct mode", () => {
     const onSetMode = mock(() => {});
     const props = createDefaultProps({ onSetMode });

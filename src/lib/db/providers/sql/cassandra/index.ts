@@ -39,9 +39,10 @@
  * - THERE IS NO CANCELLATION, so `cancelQuery` is deliberately NOT implemented. The
  *   native protocol has no cancellation frame, CQL has no `KILL`, and the driver's own
  *   client publishes no cancel, abort or kill method (checked against its API
- *   surface). Both routes detect the method by name (`"cancelQuery" in provider`), so
+ *   surface). Both routes detect the method by presence (`supportsQueryCancel`), so
  *   its ABSENCE is what makes them answer "cancellation is not supported for this
- *   database type" - which is true - rather than reporting a cancellation that failed.
+ *   database type" - which is true - rather than reporting a cancellation that failed,
+ *   and what makes the editor's control read "Stop waiting" here (#1364).
  *   `search/index.ts` declined the same method for the same reason (#424 Phase 1).
  *   The only bound on a running statement is the client-side `readTimeout`, after
  *   which this client stops WAITING and the coordinator carries on.

@@ -455,6 +455,7 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/passkey/webauthn": "WebAuthn verification through @simplewebauthn/server; computation only",
     "@/lib/password-hash": "scrypt for stored account passwords; no provider",
     "@/lib/logger": "structured logging",
+    "@/lib/non-finite": "writes NaN and the infinities in held rows as words; pure, imports nothing",
     "@/lib/oidc": "the OIDC discovery and PKCE exchange",
     "@/lib/seed": "reads seed connection metadata from config; never connects",
     "@/lib/storage/connection-secrets":

@@ -140,10 +140,76 @@ describe("buildResultExport — sql-insert", () => {
     expect(file.content).toContain("VALUES (1.5, 9007199254740993, true);");
   });
 
-  test("writes a non-finite number as NULL, because NaN is not a SQL number", () => {
-    const file = buildResultExport("sql-insert", source({ rows: [{ a: NaN, b: Infinity }], fields: ["a", "b"] }));
+  // NaN is not a SQL number literal, and NULL is a different value. The quoted word is
+  // what PostgreSQL reads back into a float column, and it is the same text the cell
+  // carries when it arrived over HTTP, where the server already wrote it as a word.
+  test("writes a non-finite number as its quoted word, not as NULL", () => {
+    const file = buildResultExport(
+      "sql-insert",
+      source({ rows: [{ a: NaN, b: Infinity, c: -Infinity }], fields: ["a", "b", "c"] }),
+    );
 
-    expect(file.content).toContain("VALUES (NULL, NULL);");
+    expect(file.content).toContain("VALUES ('NaN', 'Infinity', '-Infinity');");
+  });
+
+  // Each spelling was replayed into its engine: SQLite stores a quoted 'Infinity' as
+  // TEXT and has no NaN, Oracle reads its own constants into BINARY_DOUBLE.
+  test.each([
+    ["sqlite", "VALUES (NULL, 9e999, -9e999);"],
+    ["oracle", "VALUES (BINARY_DOUBLE_NAN, BINARY_DOUBLE_INFINITY, -BINARY_DOUBLE_INFINITY);"],
+    ["duckdb", "VALUES ('NaN', 'Infinity', '-Infinity');"],
+    ["mysql", "VALUES (NULL, NULL, NULL);"],
+    ["mssql", "VALUES (NULL, NULL, NULL);"],
+    [undefined, "VALUES (NULL, NULL, NULL);"],
+  ] as const)("writes a non-finite number the way %s reads it back", (dialect, expected) => {
+    const file = buildResultExport(
+      "sql-insert",
+      source({ rows: [{ a: NaN, b: Infinity, c: -Infinity }], fields: ["a", "b", "c"], dialect }),
+    );
+
+    expect(file.content).toContain(expected);
+  });
+
+  // Over HTTP the server sends the words as strings, which are floats only where the
+  // column was declared one; a text column may hold the word itself.
+  test("writes a non-finite word as a float only in a column declared as a float", () => {
+    const file = buildResultExport(
+      "sql-insert",
+      source({
+        rows: [{ f: "Infinity", d: "-Infinity", r: "NaN", t: "Infinity" }],
+        fields: ["f", "d", "r", "t"],
+        dialect: "sqlite",
+        columnTypes: { f: "REAL", d: " double precision ", r: "FLOAT", t: "TEXT" },
+      }),
+    );
+
+    expect(file.content).toContain("VALUES (9e999, -9e999, NULL, 'Infinity');");
+  });
+
+  test("leaves a word in a column whose declared type is not a string as text", () => {
+    const file = buildResultExport(
+      "sql-insert",
+      source({
+        rows: [{ f: "NaN" }],
+        fields: ["f"],
+        dialect: "sqlite",
+        columnTypes: { f: 7 } as unknown as Record<string, string>,
+      }),
+    );
+
+    expect(file.content).toContain("VALUES ('NaN');");
+  });
+
+  test("writes a non-finite number as JSON and CSV words too", () => {
+    const rows = [{ a: NaN, b: Infinity, c: -Infinity }];
+    const fields = ["a", "b", "c"];
+
+    expect(JSON.parse(buildResultExport("json", source({ rows, fields })).content)).toEqual([
+      { a: "NaN", b: "Infinity", c: "-Infinity" },
+    ]);
+    // `-Infinity` opens with a formula lead and is not a plain number, so the CSV formula
+    // guard prefixes it the way it does PostgreSQL's `numeric` text `-Infinity`.
+    expect(buildResultExport("csv", source({ rows, fields })).content).toBe('a,b,c\nNaN,Infinity,"\'-Infinity"');
   });
 
   test("writes a date as an ISO literal rather than as a locale string", () => {

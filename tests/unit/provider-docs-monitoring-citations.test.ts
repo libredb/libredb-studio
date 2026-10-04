@@ -356,6 +356,7 @@ const NAMED_CITATIONS = [
       "connect",
       "disconnect",
       "query",
+      "cancelQuery",
       "mapClickHouseError",
       "countObjects",
       "listObjects",

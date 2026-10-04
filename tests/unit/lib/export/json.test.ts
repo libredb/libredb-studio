@@ -30,6 +30,15 @@ describe("jsonText", () => {
     expect(jsonText(BigInt(10))).toBe('"10"');
   });
 
+  // `JSON.stringify` writes these three as `null`, which reads as SQL NULL in the file.
+  test("writes NaN and the infinities as words rather than as null", () => {
+    expect(jsonText({ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, ok: 1.5 })).toBe(
+      '{"f":"NaN","r":"Infinity","n":"-Infinity","ok":1.5}',
+    );
+    expect(jsonText({ arr: [Number.NaN, 2] })).toBe('{"arr":["NaN",2]}');
+    expect(jsonText(Number.NaN)).toBe('"NaN"');
+  });
+
   // The value contains itself: there is no JSON form, so the cycle is named and
   // everything around it still lands in the file.
   test("names a cycle instead of throwing, and keeps the rest of the value", () => {

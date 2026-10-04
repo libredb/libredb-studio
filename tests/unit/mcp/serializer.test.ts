@@ -54,14 +54,21 @@ describe("MCP Safe Serializer", () => {
     expect(Object.hasOwn(serialized, "missing")).toBe(true);
   });
 
-  test("handles non-finite numbers (NaN, Infinity)", () => {
+  // A stored NaN is a value, not SQL NULL, so it is written as the word rather than as the
+  // `null` that `JSON.stringify` would make of it.
+  test("writes non-finite numbers (NaN, Infinity, -Infinity) as words", () => {
     const raw = {
       valNan: Number.NaN,
       valInf: Number.POSITIVE_INFINITY,
+      valNegInf: Number.NEGATIVE_INFINITY,
+      valFinite: 1.5,
     };
-    const serialized = safeSerialize(raw);
-    expect(serialized.valNan).toBeNull();
-    expect(serialized.valInf).toBeNull();
+    // Typed as the input, but the three non-finite numbers come back as strings.
+    const serialized = safeSerialize(raw) as unknown as Record<string, unknown>;
+    expect(serialized.valNan).toBe("NaN");
+    expect(serialized.valInf).toBe("Infinity");
+    expect(serialized.valNegInf).toBe("-Infinity");
+    expect(serialized.valFinite).toBe(1.5);
   });
 
   test("prevents overflow on circular references", () => {

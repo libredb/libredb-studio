@@ -151,7 +151,7 @@ const startServer = (textLabel: number): Promise<{ port: number; close: () => vo
     // mysql2's server side never resets its packet counter between commands, so each answer
     // restarts it where a real server does, one past the client's command packet, and leaves
     // it at 0 for the next command.
-    // SERVER_STATUS_AUTOCOMMIT (2), plus SERVER_STATUS_IN_TRANS (1) between START TRANSACTION and
+    // SERVER_STATUS_AUTOCOMMIT (2), plus SERVER_STATUS_IN_TRANS (1) between BEGIN and
     // COMMIT, which is how a server that really opened a transaction answers.
     let inTransaction = false;
     const status = () => 2 | (inTransaction ? 1 : 0);
@@ -170,7 +170,7 @@ const startServer = (textLabel: number): Promise<{ port: number; close: () => vo
         connection.writeTextResult(rows, result.map(definition));
       } else if (sql.startsWith("SELECT legacy")) {
         connection.writeTextResult([{ legacy: TEXT }], legacy);
-      } else if (sql.startsWith("START TRANSACTION")) {
+      } else if (/^(BEGIN|START TRANSACTION)/.test(sql)) {
         inTransaction = true;
         connection.writeOk({ serverStatus: status() });
       } else if (/^(COMMIT|ROLLBACK)/.test(sql)) {

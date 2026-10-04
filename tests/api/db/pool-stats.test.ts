@@ -114,6 +114,22 @@ describe("POST /api/db/pool-stats", () => {
     expect(data.waiting).toBe(2);
   });
 
+  test("passes the configured maximum through when the provider reports one", async () => {
+    const providerWithMax = {
+      ...createMockProvider(),
+      getPoolStats: mock(() => ({ total: 2, max: 10, idle: 0, active: 2, waiting: 0 })),
+    };
+    mockGetOrCreateProvider.mockResolvedValueOnce(providerWithMax);
+
+    const res = await POST(
+      createMockRequest("/api/db/pool-stats", { method: "POST", body: { connection: validConnection } }) as never,
+    );
+    const data = await parseResponseJSON<{ total: number; max: number }>(res);
+
+    expect(data.total).toBe(2);
+    expect(data.max).toBe(10);
+  });
+
   test("returns fallback stats when provider lacks getPoolStats", async () => {
     // Default mockProvider does not have getPoolStats
     const req = createMockRequest("/api/db/pool-stats", {

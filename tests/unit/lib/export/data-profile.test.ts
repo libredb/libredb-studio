@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { dataProfileText, type ColumnProfile, type ProfileData } from "@/lib/export/data-profile";
-import type { MaskingRule } from "@/lib/data-masking";
+import type { MaskingPattern } from "@/lib/data-masking";
 
 const headers = "Column,Type,Total Rows,Null Count,Null %,Distinct Count,Min,Max,Sample Values,Error";
 
@@ -18,8 +18,16 @@ const column: ColumnProfile = {
 
 const profile = (columns: ColumnProfile[]): ProfileData => ({ tableName: "users", totalRows: 100, columns });
 
-const emailRule: MaskingRule = { pattern: /email/i, label: "Email", mask: () => "****" };
-const sensitive = new Map<string, MaskingRule>([["email", emailRule]]);
+const emailPattern: MaskingPattern = {
+  id: "custom-email",
+  name: "Email",
+  columnPatterns: ["email"],
+  maskType: "custom",
+  customMask: "****",
+  enabled: true,
+  isBuiltin: false,
+};
+const sensitive = new Map<string, MaskingPattern>([["email", emailPattern]]);
 
 describe("dataProfileText", () => {
   test("empty CSV retains all ten headers", () => {
@@ -80,7 +88,7 @@ describe("dataProfileText", () => {
   });
 
   test("an absent min and max stay empty on a sensitive column rather than becoming the mask", () => {
-    // `maskValue` answers `NULL` for an absent value, which reads back as a column
+    // `maskValueByPattern` answers `NULL` for an absent value, which reads back as a column
     // that genuinely holds that word. A column with no MIN has nothing to hide.
     const empty: ColumnProfile = { name: "email", totalRows: 0, nullCount: 0, nullPercent: 0, distinctCount: 0 };
     expect(dataProfileText(profile([empty]), sensitive, "csv")).toBe(`${headers}\nemail,,0,0,0,0,,,,`);

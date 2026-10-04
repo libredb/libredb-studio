@@ -425,6 +425,9 @@ describe("SQLiteProvider", () => {
       // one, so POST /api/db/transaction refuses the call and the controls must not
       // be offered (#464). The flag describes the provider's surface, not the engine.
       expect(caps.supportsTransactions).toBe(false);
+      // Both drivers are synchronous, so a running statement holds the server's thread and
+      // the editor disables Cancel rather than offering "Stop waiting" (#1364).
+      expect(caps.blocksServerWhileRunning).toBe(true);
       // Inherited from the base capabilities: this engine declares foreign keys, so
       // an empty `foreignKeys` list is a fact about the schema or the role, never
       // about the engine (#414).

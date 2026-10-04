@@ -32,6 +32,7 @@
  *   applied. The number the server gave is the number reported.
  */
 
+import { randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
@@ -491,6 +492,16 @@ export class ClickHouseProvider extends SQLBaseProvider {
   /** The configuration with a hand-typed connection string already resolved. */
   private readonly connection: DatabaseConnection;
 
+  /**
+   * The statements running now: the caller's id for each, and the query id it runs under
+   * on the server, which this provider makes up (a random UUID) rather than taking the
+   * caller's. ClickHouse keeps a query id unique per server USER only, so a caller-chosen id
+   * that another Studio user's run already carries, on the same ClickHouse account, would
+   * let `KILL QUERY WHERE query_id = ...` stop both. `cancelQuery` refuses an id this map does
+   * not hold, so the cancel route reaches only statements this provider started.
+   */
+  private readonly runningQueryIds = new Map<string, string>();
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
     super(config, options);
     this.validate();
@@ -716,7 +727,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
   // Query execution
   // ==========================================================================
 
-  public async query(sql: string, params?: unknown[]): Promise<QueryResult> {
+  public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     const transport = this.requireTransport();
     if (params !== undefined && params.length > 0) {
       // The HTTP interface binds named `{name:Type}` parameters only, so there
@@ -735,17 +746,48 @@ export class ClickHouseProvider extends SQLBaseProvider {
           // Both halves of the same promise: max_execution_time bounds the server
           // once it has accepted the statement, timeoutMs bounds everything before
           // and after that - connect, handshake, and the body still arriving.
+          const serverQueryId = queryId === undefined ? undefined : randomUUID();
+          if (queryId !== undefined && serverQueryId !== undefined) this.runningQueryIds.set(queryId, serverQueryId);
           return await transport.query(sql, {
             settings: { max_execution_time: this.deadlineSeconds() },
             timeoutMs: this.queryTimeout,
+            ...(serverQueryId !== undefined && { queryId: serverQueryId }),
           });
         } catch (error) {
           throw this.mapClickHouseError(error, sql);
+        } finally {
+          if (queryId !== undefined) this.runningQueryIds.delete(queryId);
         }
       });
 
       return toQueryResult(result, executionTime);
     });
+  }
+
+  /**
+   * Stop a statement `query()` is running under `queryId` (#1364).
+   *
+   * Aborting the HTTP request does not stop a ClickHouse statement: measured on 26.9.9.28,
+   * `system.processes` still listed it 19 s and 29 s after the editor's Cancel, until it
+   * was killed by hand. `KILL QUERY ... SYNC` answers once the statement has stopped, with
+   * one row per statement it reached (`kill_status` `finished`, measured on 26.9.9.28), and
+   * with an empty body when nothing matched because the statement had already ended. So
+   * true means stopped, and anything else, including `cant_cancel`, is false. The KILL names
+   * the server query id `query()` generated for this run, never the caller's own id.
+   */
+  public async cancelQuery(queryId: string): Promise<boolean> {
+    const serverQueryId = this.runningQueryIds.get(queryId);
+    if (serverQueryId === undefined) return false;
+    const transport = this.requireTransport();
+    try {
+      const { rows } = await transport.query(`KILL QUERY WHERE query_id = ${literal(serverQueryId)} SYNC`, {
+        timeoutMs: this.queryTimeout,
+      });
+      return rows.some((row) => row.kill_status === "finished");
+    } catch (error) {
+      this.logError("cancelQuery", error);
+      return false;
+    }
   }
 
   /**

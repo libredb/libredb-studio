@@ -19,13 +19,14 @@ import {
   mapDatabaseError,
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
+import type { BeginTransactionOptions, BeginTransactionResult } from "@/lib/db/types";
 
 // ─── Create mock provider with transaction methods ──────────────────────────
 const baseMockProvider = createMockProvider();
 
 const mockTxProvider = {
   ...baseMockProvider,
-  beginTransaction: mock(async () => {}),
+  beginTransaction: mock(async (_options?: BeginTransactionOptions): Promise<BeginTransactionResult | void> => {}),
   commitTransaction: mock(async () => {}),
   rollbackTransaction: mock(async () => {}),
   isInTransaction: mock(() => true),
@@ -181,6 +182,27 @@ describe("POST /api/db/transaction", () => {
     });
   }
 
+  // `JSON.stringify` writes NaN and both infinities as `null`; inside a transaction they
+  // travel as words just as on `/api/db/query`.
+  test("answers NaN and the infinities as words, not as null", async () => {
+    (mockTxProvider.queryInTransaction as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, ok: 1.5, z: null }],
+      fields: ["f", "r", "n", "ok", "z"],
+      rowCount: 1,
+      executionTime: 1,
+    });
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "query", sql: "SELECT * FROM floats" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ rows: unknown[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.rows).toEqual([{ f: "NaN", r: "Infinity", n: "-Infinity", ok: 1.5, z: null }]);
+  });
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 
@@ -209,6 +231,41 @@ describe("POST /api/db/transaction", () => {
     expect(data.status).toBe("active");
     expect(data.message).toBe("Transaction started");
     expect(mockTxProvider.beginTransaction).toHaveBeenCalledTimes(1);
+    // A manual BEGIN does not ask for a reported state, and a provider that says nothing
+    // about the state is answered with `null`, not with a claim either way.
+    expect(mockTxProvider.beginTransaction.mock.calls[0]?.[0]).toEqual({ requireReportedState: false });
+    expect((data as { stateReported?: unknown }).stateReported).toBeNull();
+  });
+
+  test("begin carries what the provider learned about the server's transaction state", async () => {
+    mockTxProvider.beginTransaction.mockImplementation(async () => ({ stateReported: false }));
+    const req = createMockRequest("/api/db/transaction", {
+      method: "POST",
+      body: { connection: validConnection, action: "begin" },
+    });
+
+    const data = await parseResponseJSON<{ stateReported: boolean | null }>(await POST(req as never));
+    expect(data.stateReported).toBe(false);
+  });
+
+  test("SANDBOX's begin asks the provider for a reported state", async () => {
+    // Only a literal `true` asks: the flag refuses work, so nothing truthy-but-odd turns it on.
+    for (const [requireReportedState, expected] of [
+      [true, true],
+      ["yes", false],
+    ] as const) {
+      mockTxProvider.beginTransaction.mockClear();
+      const req = createMockRequest("/api/db/transaction", {
+        method: "POST",
+        body: {
+          connection: { ...validConnection, id: `sandbox-flag-${expected}` },
+          action: "begin",
+          requireReportedState,
+        },
+      });
+      expect((await POST(req as never)).status).toBe(200);
+      expect(mockTxProvider.beginTransaction.mock.calls[0]?.[0]).toEqual({ requireReportedState: expected });
+    }
   });
 
   test("commit action returns status committed", async () => {

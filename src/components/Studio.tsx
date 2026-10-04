@@ -16,6 +16,7 @@ import {
   QueryToolbar,
   BottomPanel,
 } from "@/components/studio/index";
+import { cancelControlMode } from "@/components/studio/QueryToolbar";
 import { StudioModals } from "@/components/studio/StudioModals";
 import { StudioOverlays } from "@/components/studio/StudioOverlays";
 import { AgentRail } from "@/components/agent/AgentRail";
@@ -684,6 +685,11 @@ export default function Studio() {
     });
   }, []);
   const toggleMasking = userCanToggle ? handleToggleMasking : undefined;
+  // The grid's three masking inputs, handed to the profiler as one value it can memoize on.
+  const profilerMasking = useMemo(
+    () => ({ config: maskingConfig, enabled: effectiveMasking, role: user?.role }),
+    [maskingConfig, effectiveMasking, user?.role],
+  );
 
   const handleLoadQuery = useCallback(
     (q: string) => {
@@ -1199,6 +1205,7 @@ export default function Studio() {
               onClearQuery={handleClearQuery}
               onExecuteQuery={handleMobileExecuteQuery}
               onCancelQuery={cancelEditorQuery}
+              cancelMode={cancelControlMode(metadata)}
               {...transactionHandlers}
               onToggleEditing={onToggleEditing}
               onImport={openImport}
@@ -1552,6 +1559,7 @@ export default function Studio() {
         showCodeGenerator
         profilerPath={profilerPath}
         onCloseProfiler={closeProfiler}
+        profilerMasking={profilerMasking}
         codeGenPath={codeGenPath}
         onCloseCodeGen={closeCodeGen}
         showTestDataGenerator

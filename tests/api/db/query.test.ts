@@ -165,6 +165,36 @@ describe("POST /api/db/query", () => {
     });
   }
 
+  // `JSON.stringify` writes NaN and both infinities as `null`, so a stored NaN reached the
+  // grid as SQL NULL (PostgreSQL 18.6 `'NaN'::float8`, 2026-10-04). They travel as words.
+  test("answers NaN and the infinities as words, not as null", async () => {
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [
+        {
+          f: Number.NaN,
+          r: Number.POSITIVE_INFINITY,
+          n: Number.NEGATIVE_INFINITY,
+          arr: [Number.NaN, 2],
+          ok: 1.5,
+          z: null,
+        },
+      ],
+      fields: ["f", "r", "n", "arr", "ok", "z"],
+      rowCount: 1,
+      executionTime: 1,
+    });
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM floats" },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ rows: unknown[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.rows).toEqual([{ f: "NaN", r: "Infinity", n: "-Infinity", arr: ["NaN", 2], ok: 1.5, z: null }]);
+  });
+
   test("returns 401 when no session exists", async () => {
     mockGetSession.mockResolvedValueOnce(null);
 
@@ -178,6 +208,19 @@ describe("POST /api/db/query", () => {
 
     expect(res.status).toBe(401);
     expect(data.error).toContain("Authentication required");
+  });
+
+  test("a queryId that is not a string returns 400 (#1364)", async () => {
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1", queryId: 42 },
+    });
+
+    const res = await POST(req as never);
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(data.error).toBe("queryId must be a string");
   });
 
   test("passes queryId to provider when cancellation is supported", async () => {

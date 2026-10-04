@@ -14,7 +14,7 @@
  * out of here masks the same three fields the component renders masked.
  */
 
-import { maskValue, type MaskingRule } from "@/lib/data-masking";
+import { maskValueByPattern, type MaskingPattern } from "@/lib/data-masking";
 import { csvRow } from "./csv";
 import { jsonText } from "./json";
 
@@ -76,10 +76,10 @@ const HEADERS = [
  * `column` with its sensitive values masked and its absent ones written as empty.
  *
  * Absent stays empty rather than becoming the mask: a column with no `MIN` has
- * nothing to hide, and `maskValue` answers `NULL` for an absent value, which reads
+ * nothing to hide, and `maskValueByPattern` answers `NULL` for an absent value, which reads
  * back as a column that genuinely holds that word.
  */
-function exportedColumn(column: ColumnProfile, rule: MaskingRule | undefined): ExportedColumn {
+function exportedColumn(column: ColumnProfile, pattern: MaskingPattern | undefined): ExportedColumn {
   return {
     name: column.name,
     type: column.type || "",
@@ -87,9 +87,9 @@ function exportedColumn(column: ColumnProfile, rule: MaskingRule | undefined): E
     nullCount: column.nullCount ?? "",
     nullPercent: column.nullPercent ?? "",
     distinctCount: column.distinctCount ?? "",
-    minValue: column.minValue && rule ? maskValue(column.minValue, rule) : column.minValue || "",
-    maxValue: column.maxValue && rule ? maskValue(column.maxValue, rule) : column.maxValue || "",
-    sampleValues: column.sampleValues?.map((value) => (rule ? maskValue(value, rule) : value)) || [],
+    minValue: column.minValue && pattern ? maskValueByPattern(column.minValue, pattern) : column.minValue || "",
+    maxValue: column.maxValue && pattern ? maskValueByPattern(column.maxValue, pattern) : column.maxValue || "",
+    sampleValues: column.sampleValues?.map((value) => (pattern ? maskValueByPattern(value, pattern) : value)) || [],
     // A refused measure is written beside a whole-column failure, so the file says why a
     // figure is empty just as the screen does.
     error: [column.error, ...(column.warnings ?? [])].filter(Boolean).join("; "),
@@ -105,7 +105,7 @@ function exportedColumn(column: ColumnProfile, rule: MaskingRule | undefined): E
  */
 export function dataProfileText(
   profile: ProfileData,
-  sensitive: ReadonlyMap<string, MaskingRule>,
+  sensitive: ReadonlyMap<string, MaskingPattern>,
   format: "csv" | "json",
 ): string {
   const columns = profile.columns.map((column) => exportedColumn(column, sensitive.get(column.name)));

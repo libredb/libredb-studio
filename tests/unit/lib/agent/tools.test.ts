@@ -2057,6 +2057,22 @@ describe("runReadQueryTool — the allowed path", () => {
     expect(outcome.modelText).toContain("9007199254740993");
   });
 
+  // `JSON.stringify` writes NaN and both infinities as `null`, which the model would read
+  // as SQL NULL; PostgreSQL's `pg` driver hands a stored `'NaN'::float8` back as NaN.
+  test("renders NaN and the infinities as words, not as null", async () => {
+    const h = harness({}, async () =>
+      queryResult({
+        rows: [{ f: Number.NaN, r: Number.POSITIVE_INFINITY, n: Number.NEGATIVE_INFINITY, ok: 1.5 }],
+        fields: ["f", "r", "n", "ok"],
+      }),
+    );
+
+    const outcome = await runReadQueryTool(h.context, { sql: "SELECT f, r, n, ok FROM floats" });
+
+    expect(outcome.kind).toBe("completed");
+    expect(outcome.modelText).toContain('{"f":"NaN","r":"Infinity","n":"-Infinity","ok":1.5}');
+  });
+
   test("renders a Buffer-shaped binary column as hex, not its wire JSON", async () => {
     // `JSON.stringify` on a serialized `Buffer` gives `{"type":"Buffer","data":[…]}` —
     // four characters of digits per byte. The model should read the same hex the grid,

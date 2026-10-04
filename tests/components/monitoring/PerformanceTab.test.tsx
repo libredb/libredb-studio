@@ -110,6 +110,32 @@ describe("PerformanceTab", () => {
     expect(queryByText("Attention")).not.toBeNull();
   });
 
+  test("names a setting only where the provider declares one", () => {
+    const pg = render(
+      <PerformanceTab
+        data={makeData({ cacheHitRatio: 80, cacheHitAdvice: "Increase shared_buffers" })}
+        loading={false}
+      />,
+    );
+    expect(pg.queryByText("Increase shared_buffers")).not.toBeNull();
+    cleanup();
+
+    const ch = render(<PerformanceTab data={makeData({ cacheHitRatio: 80 })} loading={false} />);
+    expect(ch.queryByText("Low Cache Hit")).not.toBeNull();
+    expect(ch.container.textContent).not.toContain("shared_buffers");
+    expect(ch.queryByText("The working set does not fit in the engine's cache")).not.toBeNull();
+    cleanup();
+
+    const healthy = render(
+      <PerformanceTab
+        data={makeData({ cacheHitRatio: 95, cacheHitAdvice: "Increase shared_buffers" })}
+        loading={false}
+      />,
+    );
+    expect(healthy.queryByText("Low Cache Hit")).toBeNull();
+    expect(healthy.container.textContent).not.toContain("shared_buffers");
+  });
+
   test("renders the measured cache hit ratio with a bar and a rating", () => {
     const { queryByText } = render(<PerformanceTab data={makeData()} loading={false} />);
     const card = queryByText("Cache Hit")!.closest('[data-slot="card"]')!;
