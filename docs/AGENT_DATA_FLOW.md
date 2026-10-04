@@ -116,7 +116,8 @@ spellings in `src/lib/llm/utils/gemini-endpoint.ts`. Give the versioned URL; a b
   uses (`establishContext` in `src/lib/agent/investigation.ts`): the alternative was a mode that knew
   your database only when an agent run had already read it in the same process. What that reads is a
   schema inventory — names, types, keys and relations — plus what the engine already RECORDS about
-  its own tables (`pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite). On
+  its own tables (`pg_class.reltuples` and `pg_stats` on PostgreSQL, `sqlite_stat1` on SQLite,
+  `sys.partitions.rows` on SQL Server). On
   those two engines the catalog is read with statements the server composes; since #414 **every other
   engine is read a second way** — the server asks the connection's own provider to describe its
   schema, which is the same inspection this product performs when it lists your tables in the sidebar,
@@ -545,7 +546,7 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 | Bound | Value | What it caps |
 | --- | --- | --- |
 | `maxResultRows` / `maxResultBytes` | 200 rows / 256 KiB | The most one read can return — and therefore the most one tool result can send |
-| `maxStatementsPerRun` | 18-45, by workflow | Reads per run, folded across its drives (#999), grounding reads and repairs included: the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other nineteen. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
+| `maxStatementsPerRun` | 18-45, by workflow | Reads per run, folded across its drives (#999), grounding reads and repairs included: the composed catalog reads and, since #414, the one `db.schema.read` call that replaces them on the other twenty-two. The figures did not move for it: that path is the cheapest of the three, so nothing had to be bought (`docs/AGENT.md`, the budget arithmetic) |
 | `AGENT_CONTEXT_PACK_MAX_CHARS` | 6000 | The fenced schema inventory |
 | `MAX_ER_CHARS` | 2000 | The fenced relations block |
 | `AGENT_MAX_OBJECTIVE_LENGTH` | 4000 | Your objective |
