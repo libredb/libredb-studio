@@ -651,12 +651,18 @@ describe("-a and -n", () => {
       code: "connection-flag",
       // Plain text, as the result panel shows it: no Markdown backticks (ruling R34).
       message:
-        "-n names another namespace than this connection's default: Namespace is set on the connection, and empty means default.",
+        "-n names a namespace other than this connection's default: Namespace is set on the connection, and empty means default.",
       line: 1,
       column: 4,
     });
     expect(refusal("-n '' get /a", SERVER)).toMatchObject({
       code: "connection-flag",
+    });
+    // The connection's namespace as quoteShellWord writes it, so a name with a space reads back as one word.
+    expect(refusal("-n other get /a", { ...SERVER, namespace: "team a" })).toMatchObject({
+      code: "connection-flag",
+      message:
+        "-n names a namespace other than this connection's 'team a': Namespace is set on the connection, and empty means default.",
     });
   });
 });

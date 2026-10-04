@@ -364,7 +364,9 @@ A `-a` or `-n` that does not name the connection's own endpoint or namespace is 
 
 > -a names another address than this connection's \<host\>:\<port\>: Host and Port on the connection decide where Studio connects.
 
-> -n names another namespace than this connection's \<namespace\>: Namespace is set on the connection, and empty means default.
+> -n names a namespace other than this connection's \<namespace\>: Namespace is set on the connection, and empty means default.
+
+The namespace in that sentence is one shell word, as a command reads it: bare when every character can stand in a word unquoted, in single quotes otherwise (`'team a'`).
 
 `--index` with an empty upper bound is refused, because Oxia reads index keys up to the upper bound and an empty one reads nothing:
 

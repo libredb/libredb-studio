@@ -12,7 +12,7 @@
  * Every refusal is a whole sentence that names a place or a flag and never quotes a value the user typed; a typed
  * word is echoed at most 40 characters, and a typed value never.
  */
-import type { ShellRefusalCode, ShellWord } from "@/lib/db/console/shell-words";
+import { quoteShellWord, type ShellRefusalCode, type ShellWord } from "@/lib/db/console/shell-words";
 import {
   OXIA_DEFAULT_PORT,
   OXIA_ECHO_WORD_CHARS,
@@ -417,7 +417,7 @@ function checkGlobal(
   if (value !== context.namespace)
     return refusal(
       "connection-flag",
-      `-n names another namespace than this connection's ${context.namespace}: Namespace is set on the connection, and empty means default.`,
+      `-n names a namespace other than this connection's ${quoteShellWord(context.namespace)}: Namespace is set on the connection, and empty means default.`,
       word,
     );
   state.matched.push("namespace");
