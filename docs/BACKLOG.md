@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2–S7 · 5
-- [Drivers and connections](#drivers-and-connections) — D1-D227, U17 · 139
+- [Drivers and connections](#drivers-and-connections) — D1-D231, U17 · 143
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U89 · 81
@@ -2546,6 +2546,44 @@ A1 is the same property on the agent and MCP path.
 Found 2026-10-04 while fixing #1364.
 
 **Done when:** SQLite statements run in a worker thread that the provider terminates on cancel and on the query timeout, the SQLite provider implements `cancelQuery`, and a test shows `/api/health` answering while a long statement runs.
+
+### D228. Platform discovery recognises only four engine families
+
+`detectEngine` in `src/lib/seed/discovery-fingerprint.ts` matches the PostgreSQL family, the MySQL family (MySQL, MariaDB, Percona), MongoDB and the Redis family (Redis, Valkey, KeyDB, Dragonfly), and `ENV_ALLOW_LIST` in `docker/discover.mjs` exports only the ten environment keys those need.
+A SQL Server, ClickHouse or Neo4j app installed from the CapRover catalog is therefore never listed, and the admin adds it by hand; the admin status does not claim it either.
+Each engine widens what the exporter copies to the shared volume, so each one is its own reviewed change.
+
+Deferred by the CapRover auto-connect work.
+
+**Done when:** each added engine has its keys in `ENV_ALLOW_LIST`, a detection row and a mapping row in `src/lib/seed/discovery-fingerprint.ts`, tests in `tests/unit/docker-discover.test.ts` and `tests/unit/seed/discovery-fingerprint.test.ts`, and rows in the detection and mapping tables of `docs/SEED_CONNECTIONS.md`.
+
+### D229. Platform discovery reads CapRover's Swarm services only
+
+The exporter, `docker/discover.mjs`, lists the Swarm services of one overlay network (`scanOnce`), and `DiscoveryExportSchema` in `src/lib/seed/discovery-export.ts` accepts `platform: "caprover"` only.
+Kubernetes, plain Docker Compose and other Docker Swarm platforms have no discovery source, so a database they run is a seed-file entry or a hand-made connection.
+
+Deferred by the CapRover auto-connect work.
+
+**Done when:** a second platform writes the same export contract under its own `platform` value, with its own exporter tests, or the decision not to support one is stated in `docs/SEED_CONNECTIONS.md` and this entry is deleted.
+
+### D230. `useAllConnections` loads the managed list once
+
+`useAllConnections` (`src/hooks/use-all-connections.ts`) fetches `/api/connections/managed` in its mount effect and never again, while `useConnectionManager` refreshes the same list on an interval and on focus.
+Its callers, the admin Overview and Operations tabs, Schema Diff and the Monitoring dashboard, keep showing a discovered database that was withdrawn, and miss one that appeared, until the page is reloaded.
+
+Deferred by the CapRover auto-connect work.
+
+**Done when:** `useAllConnections` refreshes on the schedule `useConnectionManager` uses (`MANAGED_REFRESH_DEFAULT_FLOOR_MS`, `MANAGED_REFRESH_MAX_MS`, visible tabs only), and a hook test shows a withdrawn connection disappearing without a reload.
+
+### D231. The auto-connect template cannot place its two apps on one manager node
+
+`deploy/caprover/libredb-studio-autoconnect.yml` deploys Studio and its `-discovery` companion as two Swarm services that share a named volume, and a one-click template cannot express placement.
+A named volume is local to a node, and only a swarm manager answers the exporter's service listing, so on a multi-node CapRover the companion can land on a worker (status `swarm_unavailable`) or on another node than Studio (Studio never sees the export and keeps waiting).
+Today the template's closing text tells the operator to pin both apps to the manager under App Configs.
+
+Deferred by the CapRover auto-connect work.
+
+**Done when:** both apps land on the same manager node without a manual pin, or the export reaches Studio across nodes, measured on a two-node CapRover cluster.
 
 ## Value interpolation
 
