@@ -277,6 +277,18 @@ describe("Collection name completions", () => {
     expect((usersSugg as unknown as { detail: string }).detail).toBe("Collection (100 docs)");
   });
 
+  test("a collection nobody counted states no count (#1397)", () => {
+    const monaco = createMockMonaco();
+    const cache = createSchemaCache();
+    cache.tableItems = [{ label: "events", labelLower: "events", columnNames: "_id" }];
+    registerMongoDBCompletionProvider(monaco, cache);
+    const result = monaco
+      ._getProvider()!
+      .provideCompletionItems(createMockModel('  "collection": "', '{ "collection": "" }'), createPosition(1, 18));
+    const events = result.suggestions.find((s) => s.label === "events");
+    expect((events as unknown as { detail: string }).detail).toBe("Collection");
+  });
+
   test('does not suggest collections outside "collection" key context', () => {
     const monaco = createMockMonaco();
     const cache = createSchemaCache();

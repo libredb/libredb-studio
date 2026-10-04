@@ -99,6 +99,12 @@ interface QueryEditorProps {
   databaseType?: DatabaseType;
   schemaContext?: string;
   capabilities?: import("@/lib/db/types").ProviderCapabilities;
+  /**
+   * The container the session resolves a bare name in, as the object inventory reported it.
+   * A table outside it completes to its qualified address (#1397); absent, every table keeps
+   * the bare name it always had, because a default nobody reported cannot be assumed.
+   */
+  defaultContainer?: readonly string[];
 }
 
 /**
@@ -174,6 +180,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       databaseType,
       schemaContext,
       capabilities,
+      defaultContainer,
     },
     ref,
   ) => {
@@ -307,13 +314,24 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       const columnMap = new Map<string, SchemaColumnItem[]>();
       const allColumns = new Map<string, SchemaColumnItem>();
 
+      const defaultKey = defaultContainer === undefined ? undefined : JSON.stringify(defaultContainer);
       parsedSchema.forEach((table) => {
         const tableLower = table.name.toLowerCase();
+        const path = table.path;
+        const container = path && path.length > 0 ? path.slice(0, -1) : undefined;
         tableItems.push({
           label: table.name,
           labelLower: tableLower,
-          rowCount: table.rowCount || 0,
+          // Absent stays absent: the detail line says "(0 rows)" only for a measured zero (#1397).
+          ...(table.rowCount === undefined ? {} : { rowCount: table.rowCount }),
           columnNames: table.columns?.map((c) => c.name).join(", ") || "",
+          ...(container === undefined
+            ? {}
+            : {
+                container,
+                segment: path![path!.length - 1],
+                qualify: container.length > 0 && defaultKey !== undefined && JSON.stringify(container) !== defaultKey,
+              }),
         });
 
         const tableColumns: SchemaColumnItem[] = [];
@@ -336,7 +354,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       });
 
       return { tableItems, columnMap, allColumns };
-    }, [parsedSchema]);
+    }, [parsedSchema, defaultContainer]);
 
     // The formatter of the tab's language, from its `DIALECT_EDITORS` record: SQL's, the JSON one MongoDB and
     // Kafka share, or none, in which case the toolbar draws no Format button and the shortcut does nothing.

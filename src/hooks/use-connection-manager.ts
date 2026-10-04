@@ -36,6 +36,12 @@ export function useConnectionManager(storageReady = false) {
   const [servedSeeds, setServedSeeds] = useState<ServedSeeds>(NO_SERVED_SEEDS);
   const [schema, setSchema] = useState<readonly DetailedObject[]>([]);
   /**
+   * The container the session resolves a bare name in, as the inventory reported it, so the
+   * editor can tell which tables complete to a qualified name (#1397). Written with `schema`
+   * and cleared with it, so it never describes another connection's catalog.
+   */
+  const [defaultContainer, setDefaultContainer] = useState<readonly string[] | undefined>(undefined);
+  /**
    * Why the object browser is empty, in the engine's own words, or null when it is
    * empty because the database really has nothing in it.
    *
@@ -119,6 +125,7 @@ export function useConnectionManager(storageReady = false) {
         if (kinds.length === 0) {
           if (isCurrent()) {
             setSchema([]);
+            setDefaultContainer(undefined);
             setSchemaError(null);
           }
           return;
@@ -131,10 +138,11 @@ export function useConnectionManager(storageReady = false) {
           const body = await objectsRes.json().catch(() => ({}));
           throw new Error(body.error || "Failed to read the database objects");
         }
-        const { objects, details, truncated } = (await objectsRes.json()) as {
+        const { objects, details, truncated, defaultContainer } = (await objectsRes.json()) as {
           objects?: DatabaseObject[];
           details?: ObjectDetail[];
           truncated?: { limit: number; reason: string };
+          defaultContainer?: readonly string[];
         };
         if (!Array.isArray(objects)) throw new Error("The object inventory answered a body this list cannot render");
         if (!isCurrent()) return;
@@ -151,6 +159,7 @@ export function useConnectionManager(storageReady = false) {
           });
         }
         setSchema(detailedObjects(objects, details ?? []));
+        setDefaultContainer(defaultContainer);
         setSchemaError(null);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -162,6 +171,7 @@ export function useConnectionManager(storageReady = false) {
         // Nothing read for THIS connection, so nothing may stay on screen as its
         // objects - the previous connection's list is not evidence about this one.
         setSchema([]);
+        setDefaultContainer(undefined);
         setSchemaError(errorMessage);
         toast({ title: "Schema Error", description: errorMessage, variant: "destructive" });
       } finally {
@@ -205,6 +215,7 @@ export function useConnectionManager(storageReady = false) {
         // failure #414 measured, since `schemaContext` is what the AI panels and the agent
         // rail are handed.
         setSchema([]);
+        setDefaultContainer(undefined);
         setSchemaError(null);
         // The superseded read will not clear this: its own `finally` asks whether it is still
         // current and it is not. Nothing is being read here, so a spinner would report a read
@@ -475,5 +486,6 @@ export function useConnectionManager(storageReady = false) {
     objectScanDeferred: activeConnection !== null && scanDeferred(activeConnection),
     loadObjects,
     schemaContext,
+    defaultContainer,
   };
 }

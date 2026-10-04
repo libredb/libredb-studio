@@ -177,8 +177,20 @@ export const SNIPPET_ITEMS: PrecomputedItem[] = SQL_SNIPPETS.map((s) => ({
 export interface SchemaTableItem {
   label: string;
   labelLower: string;
-  rowCount: number;
+  /** Only where the engine counted: an unmeasured count is absent, never 0 (#1397). */
+  rowCount?: number;
   columnNames: string;
+  /** The container path the object sits in, where the schema carried its address. */
+  container?: readonly string[];
+  /** The object's own segment of that address. */
+  segment?: string;
+  /**
+   * Whether accepting the table inserts its container too: true when the container is known
+   * and is not the session's default one. A bare name outside it is a name the engine does not
+   * resolve, measured on PostgreSQL 18.6 as `relation "regions" does not exist` for a table of
+   * a schema off the search path (#1397).
+   */
+  qualify?: boolean;
 }
 
 export interface SchemaColumnItem {
@@ -231,26 +243,61 @@ export function registerSQLCompletionProvider(
       // Monaco replaces only the current word. A qualified table suggestion must
       // match and replace the already typed qualifier as well as that word.
       const typedQualifier = line.substring(0, word.startColumn - 1).match(/((?:[\w$]+\.)+)$/)?.[1] ?? "";
+      // Preserve ordinary identifiers; quote catalog names only when needed
+      // to preserve case, escape special characters, or avoid keywords.
+      const formatSegment = (segment: string) =>
+        databaseType === "postgres" ? formatPostgresIdentifier(segment) : segment;
+      const tableItem = (table: SchemaTableItem, insertText: string, tableRange: Monaco.IRange) => ({
+        label: table.label,
+        kind: monaco.languages.CompletionItemKind.Class,
+        insertText,
+        range: tableRange,
+        // The count only where the engine measured one: "(0 rows)" for a count nobody
+        // took read as an empty table (#1397).
+        detail: table.rowCount === undefined ? "Table" : `Table (${table.rowCount} rows)`,
+        documentation: table.columnNames,
+        sortText: "2" + table.label,
+      });
+
+      // A typed qualifier that names a CONTAINER (`sales.`, `e2e_other.`, `demo.`) offers that
+      // container's tables, which are inserted by their own segment because the qualifier is
+      // already in the text. It is matched against the trailing segments of each table's
+      // container path, so `db.sales.` and `sales.` both reach a SQL Server `[db, sales]`.
+      const qualifierSegments = typedQualifier.toLowerCase().split(".").slice(0, -1);
+      const inTypedContainer = (table: SchemaTableItem) => {
+        const container = table.container;
+        if (!container || table.segment === undefined || qualifierSegments.length > container.length) return false;
+        const tail = container.slice(container.length - qualifierSegments.length);
+        return tail.every((segment, index) => segment.toLowerCase() === qualifierSegments[index]);
+      };
+      const containerTables =
+        qualifierSegments.length > 0 ? schemaCompletionCache.tableItems.filter(inTypedContainer) : [];
+
       const qualifiedMatch = schemaCompletionCache.tableItems.some((table) =>
         table.labelLower.startsWith(typedQualifier.toLowerCase() + prefix),
       );
       const qualifier = typedQualifier && qualifiedMatch ? typedQualifier : "";
       const tablePrefix = qualifier.toLowerCase() + prefix;
-      const tableRange = { ...range, startColumn: range.startColumn - qualifier.length };
-      const tableSuggestions = schemaCompletionCache.tableItems
-        .filter((table) => (!qualifier && prefix.length < 2) || table.labelLower.startsWith(tablePrefix))
-        .map((table) => ({
-          label: table.label,
-          kind: monaco.languages.CompletionItemKind.Class,
-          // Preserve ordinary identifiers; quote catalog names only when needed
-          // to preserve case, escape special characters, or avoid keywords.
-          insertText:
-            databaseType === "postgres" ? table.label.split(".").map(formatPostgresIdentifier).join(".") : table.label,
-          range: tableRange,
-          detail: `Table (${table.rowCount} rows)`,
-          documentation: table.columnNames,
-          sortText: "2" + table.label,
-        }));
+      const tableSuggestions =
+        containerTables.length > 0
+          ? containerTables
+              .filter((table) => table.segment!.toLowerCase().startsWith(prefix))
+              .map((table) => tableItem(table, formatSegment(table.segment!), range))
+          : schemaCompletionCache.tableItems
+              .filter((table) => (!qualifier && prefix.length < 2) || table.labelLower.startsWith(tablePrefix))
+              .map((table) =>
+                tableItem(
+                  table,
+                  // Outside the session's default container the address is the name the
+                  // engine resolves; inside it the label is, as it always was.
+                  table.qualify && table.container && table.segment !== undefined
+                    ? [...table.container, table.segment].map(formatSegment).join(".")
+                    : databaseType === "postgres"
+                      ? table.label.split(".").map(formatPostgresIdentifier).join(".")
+                      : table.label,
+                  { ...range, startColumn: range.startColumn - qualifier.length },
+                ),
+              );
 
       // Dot-triggered: Show columns for specific table or alias
       if (lastChar === ".") {
@@ -284,14 +331,18 @@ export function registerSQLCompletionProvider(
 
           // 2. If not found, try alias resolution
           if (!columns) {
-            const textToCursor = model.getValueInRange({
-              startLineNumber: 1,
-              startColumn: 1,
-              endLineNumber: position.lineNumber,
-              endColumn: position.column - 1,
-            });
+            // The whole statement around the cursor, not only the text before it: in
+            // `SELECT c. FROM e2e.customers c` the alias is defined AFTER the cursor, and a
+            // read that stopped at the cursor offered nothing there (#1397). The text before
+            // is everything up to the dot, as it always was; the text after runs to the
+            // statement's terminator, so a later statement's aliases are not read.
+            const text = model.getValue();
+            const offset = model.getOffsetAt(position);
+            const after = text.slice(offset);
+            const terminator = after.indexOf(";");
+            const statement = `${text.slice(0, offset - 1)} ${terminator < 0 ? after : after.slice(0, terminator)}`;
 
-            const { aliases } = extractAliases(textToCursor);
+            const { aliases } = extractAliases(statement);
             const resolvedTableName = resolveAlias(identifier, aliases);
             columns = findColumns(resolvedTableName);
           }
@@ -310,7 +361,8 @@ export function registerSQLCompletionProvider(
             });
           }
         }
-        if (qualifier && suggestions.length === 0) suggestions.push(...tableSuggestions);
+        if ((qualifier || containerTables.length > 0) && suggestions.length === 0)
+          suggestions.push(...tableSuggestions);
         return { suggestions };
       }
 

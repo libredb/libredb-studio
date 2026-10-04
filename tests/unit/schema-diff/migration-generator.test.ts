@@ -220,6 +220,57 @@ describe("generateMigrationSQL: CREATE TABLE", () => {
       'ALTER TABLE "users" ADD CONSTRAINT "fk_users_dept_id" FOREIGN KEY ("dept_id") REFERENCES "departments"("id");',
     );
   });
+
+  // #1395: PostgreSQL 18.6 creates `ui_t_pkey` with the PRIMARY KEY line, so a second
+  // `CREATE UNIQUE INDEX "ui_t_pkey"` stopped the replay with "relation already exists".
+  function withKeyIndex(name: string, columns: string[], unique = true): SchemaDiff {
+    const diff = makeAddedTableDiff();
+    diff.tables[0].indexes.push({
+      action: "added",
+      indexName: name,
+      targetColumns: columns,
+      targetUnique: unique,
+      changes: ["Added index"],
+    });
+    return diff;
+  }
+
+  test("the index that backs the primary key is not created a second time (#1395)", () => {
+    const sql = generateMigrationSQL(withKeyIndex("users_pkey", ["id"]), "postgres");
+    expect(sql).toContain('PRIMARY KEY ("id")');
+    expect(sql).not.toContain("users_pkey");
+    // An ordinary unique index on other columns is still created.
+    expect(sql).toContain('CREATE UNIQUE INDEX "idx_users_email" ON "users" ("email")');
+  });
+
+  test("MySQL's PRIMARY index is skipped the same way (#1395)", () => {
+    const sql = generateMigrationSQL(withKeyIndex("PRIMARY", ["id"]), "mysql");
+    expect(sql).toContain("PRIMARY KEY (`id`)");
+    expect(sql).not.toContain("INDEX `PRIMARY`");
+  });
+
+  test("a composite key's index is recognised whatever its column order (#1395)", () => {
+    const diff = withKeyIndex("users_pkey", ["name", "id"]);
+    diff.tables[0].columns[1].targetIsPrimary = true;
+    const sql = generateMigrationSQL(diff, "postgres");
+    expect(sql).toContain('PRIMARY KEY ("id", "name")');
+    expect(sql).not.toContain("users_pkey");
+  });
+
+  test("an index that only overlaps the key, or is not unique, is still created (#1395)", () => {
+    const partial = generateMigrationSQL(withKeyIndex("idx_users_id_name", ["id", "name"]), "postgres");
+    expect(partial).toContain('CREATE UNIQUE INDEX "idx_users_id_name" ON "users" ("id", "name");');
+    const plain = generateMigrationSQL(withKeyIndex("idx_users_id", ["id"], false), "postgres");
+    expect(plain).toContain('CREATE INDEX "idx_users_id" ON "users" ("id");');
+  });
+
+  test("a table with no key keeps every unique index (#1395)", () => {
+    const diff = withKeyIndex("users_id_key", ["id"]);
+    diff.tables[0].columns[0].targetIsPrimary = false;
+    const sql = generateMigrationSQL(diff, "postgres");
+    expect(sql).not.toContain("PRIMARY KEY");
+    expect(sql).toContain('CREATE UNIQUE INDEX "users_id_key" ON "users" ("id");');
+  });
 });
 
 // ============================================================================

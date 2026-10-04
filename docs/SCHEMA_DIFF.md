@@ -21,6 +21,13 @@ column order or uniqueness replace its old definition; a uniqueness change can f
 data violates the new constraint. Identifier quoting escapes delimiters;
 line breaks in informational comments are flattened so metadata cannot start a SQL statement.
 
+A created table's primary key is written inside its `CREATE TABLE`, which builds the key's index
+with it, so the unique index over exactly the key's columns that PostgreSQL (`<table>_pkey`) and
+MySQL (`PRIMARY`) report in the index list is not created again (#1395). Emitting it stopped a
+PostgreSQL 18.6 replay with `relation "<table>_pkey" already exists`. Every other index of the
+table is still created. An existing table's added indexes are all emitted, because the generator
+writes no key for one.
+
 MongoDB, Redis, LibreDB, Couchbase, Druid, Elasticsearch, OpenSearch, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant and Oxia receive an explanatory
 comment instead of relational table DDL. Trino and ClickHouse refuse foreign-key clauses;
 Trino refuses primary keys too. Trino has no index grammar, and the diff does not retain enough

@@ -5695,6 +5695,69 @@ describe("PostgreSQL bulk column read", () => {
   });
 });
 
+describe("PostgreSQL primary-key columns (#1394)", () => {
+  // Measured on PostgreSQL 18.6: `array_agg(kcu.column_name)` is `sql_identifier[]`, which
+  // node-postgres hands back as the text `{id}`. `includes()` on that text flagged every
+  // column whose name it contains, so `i` and `d` were keys of `{id}`.
+  const COLUMNS = ["order_id", "id", "user_id", "role_id", "user", "role", "_", "i", "d"].map((name) => ({
+    name,
+    type: "integer",
+    nullable: false,
+    defaultValue: null,
+  }));
+
+  async function keysFor(pkColumns: unknown): Promise<{ keys: string[]; sql: string[] }> {
+    const sql: string[] = [];
+    mockQueryFn = async (text) => {
+      sql.push(text);
+      if (!text.includes("object_columns")) return { rows: [] };
+      return { rows: [{ pk_columns: pkColumns, columns: COLUMNS, indexes: null, foreign_keys: null }] };
+    };
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    const detail = await provider.describeObject(["public", "t"], "table");
+    await provider.disconnect();
+    return { keys: detail.columns.filter((column) => column.isPrimary).map((column) => column.name), sql };
+  }
+
+  test("the key list is read as text[] in its declared order", async () => {
+    const { sql } = await keysFor(["id"]);
+    const detail = sql.find((text) => text.includes("object_columns"));
+    expect(detail).toContain("array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) as pk_columns");
+  });
+
+  test("a key named order_id marks order_id and not id", async () => {
+    expect((await keysFor(["order_id"])).keys).toEqual(["order_id"]);
+  });
+
+  test("a key named id marks id and not i or d", async () => {
+    expect((await keysFor(["id"])).keys).toEqual(["id"]);
+  });
+
+  test("a composite key marks exactly its columns", async () => {
+    expect((await keysFor(["role_id", "user_id"])).keys).toEqual(["user_id", "role_id"]);
+  });
+
+  test("an unparsed array literal marks nothing rather than every substring", async () => {
+    expect((await keysFor("{user_id,role_id}")).keys).toEqual([]);
+  });
+
+  test("index statistics read their column names as text[]", async () => {
+    const sql: string[] = [];
+    mockQueryFn = async (text) => {
+      sql.push(text);
+      return { rows: [] };
+    };
+    const provider = new PostgresProvider(makePgConfig());
+    await provider.connect();
+    await provider.getIndexStats();
+    await provider.disconnect();
+    expect(sql.find((text) => text.includes("pg_stat_user_indexes"))).toContain(
+      "array_agg(a.attname::text ORDER BY array_position(ix.indkey, a.attnum)) as columns",
+    );
+  });
+});
+
 /**
  * The source read (#789 Phase 2).
  *

@@ -439,10 +439,16 @@ mock.module("@/components/TestDataGenerator", () => ({
 }));
 
 mock.module("@/components/CreateTableModal", () => ({
-  CreateTableModal: (props: { isOpen?: boolean }) => {
+  CreateTableModal: (props: { isOpen?: boolean; container?: readonly string[] }) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
-    return props.isOpen ? React.createElement("div", { "data-testid": "createtablemodal" }, "CreateTableModal") : null;
+    return props.isOpen
+      ? React.createElement(
+          "div",
+          { "data-testid": "createtablemodal", "data-container": JSON.stringify(props.container ?? null) },
+          "CreateTableModal",
+        )
+      : null;
   },
 }));
 
@@ -1184,8 +1190,9 @@ describe("Studio", () => {
     act(() => actions.onOpenMaintenance?.(usersObject));
     expect(mockRouterPush).toHaveBeenCalledWith("/admin/operations?path=app&path=users");
 
-    act(() => actions.onCreateObject?.());
-    expect(queryByTestId("createtablemodal")).not.toBeNull();
+    // The folder's container reaches the modal, so the table lands where it was asked for (#1391).
+    act(() => actions.onCreateObject?.(["app"]));
+    expect(queryByTestId("createtablemodal")?.getAttribute("data-container")).toBe('["app"]');
   });
 
   test("a non-admin is handed no maintenance action, because the page it opens is the admin one", () => {
@@ -2240,7 +2247,8 @@ describe("Studio", () => {
     act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("schema"));
     const fn = capturedSchemaExplorerProps.onCreateTableClick as () => void;
     act(() => fn());
-    expect(queryByTestId("createtablemodal")).not.toBeNull();
+    // The flat explorer names no container, so the statement stays unqualified (#1391).
+    expect(queryByTestId("createtablemodal")?.getAttribute("data-container")).toBe("[]");
   });
 
   test("Sidebar onShowDiagram opens schema diagram", async () => {

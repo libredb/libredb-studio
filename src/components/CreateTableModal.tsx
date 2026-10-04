@@ -10,6 +10,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Plus, Trash2, Table as TableIcon, Type, Settings2, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import type { DatabaseType } from "@/lib/types";
+import type { ProviderCapabilities } from "@/lib/db/types";
+import { objectPathLabel } from "@/lib/db/object-path";
+import { quoteObjectPath } from "@/lib/query-generators";
 
 interface ColumnDefinition {
   name: string;
@@ -25,6 +28,16 @@ interface CreateTableModalProps {
   onClose: () => void;
   onTableCreated: (sql: string) => void;
   dbType?: DatabaseType;
+  /**
+   * The container the table is created in: the path of the object-tree folder it was asked
+   * for in. Without it the statement named the table alone and it landed in the session's
+   * default container, measured on MySQL 26.7.0 as `e2e.ct_other` for a Create Table asked
+   * for under `e2e_other` (#1391). Empty or absent keeps the bare name, which is what the
+   * flat explorer's button and an engine with no container level ask for.
+   */
+  container?: readonly string[];
+  /** The connection's capabilities, which quote the qualified name in its own dialect. */
+  capabilities?: ProviderCapabilities;
 }
 
 /**
@@ -40,6 +53,9 @@ interface CreateTableModalProps {
  * resolves it against the connected engine.
  */
 const AUTO_INCREMENT = "__auto_increment__";
+
+/** No container, so the bare table name. One shared reference rather than a literal per render. */
+const NO_CONTAINER: readonly string[] = [];
 
 /**
  * Per-engine spellings for the two things this form actually offers.
@@ -290,6 +306,8 @@ function CreateTableForm({
   onClose,
   onTableCreated,
   dbType,
+  container = NO_CONTAINER,
+  capabilities,
   dialect,
 }: CreateTableModalProps & { dialect: CreateTableDialect }) {
   const [tableName, setTableName] = useState("");
@@ -334,6 +352,12 @@ function CreateTableForm({
     setColumns(columns.map((col, i) => (i === index ? { ...col, ...updates } : col)));
   };
 
+  // Qualified only when there is a container AND the capabilities to quote it with. The
+  // tree offers the item only once capabilities have loaded, so the second half guards an
+  // imperative caller rather than a reachable state.
+  const qualified = container.length > 0 && capabilities !== undefined;
+  const nameInContainer = (name: string) => (qualified ? quoteObjectPath([...container, name], capabilities) : name);
+
   const generateSQL = () => {
     if (!tableName.trim()) return "";
 
@@ -361,8 +385,10 @@ function CreateTableForm({
           // fails the second time. The surviving sequence resumes its count, which costs
           // a few ids and nothing else.
           const sequence = `${tableName}_${col.name}_seq`;
-          prelude.push(`CREATE SEQUENCE IF NOT EXISTS ${sequence};`);
-          clause += ` DEFAULT nextval('${sequence}')`;
+          // In the table's own container, so the two land side by side.
+          const sequenceName = nameInContainer(sequence);
+          prelude.push(`CREATE SEQUENCE IF NOT EXISTS ${sequenceName};`);
+          clause += ` DEFAULT nextval('${sequenceName.replaceAll("'", "''")}')`;
         }
         return `  ${clause}`;
       }
@@ -383,7 +409,7 @@ function CreateTableForm({
       return `  ${def}`;
     });
 
-    const create = `CREATE TABLE ${tableName} (\n${colDefs.join(",\n")}\n);`;
+    const create = `CREATE TABLE ${nameInContainer(tableName)} (\n${colDefs.join(",\n")}\n);`;
     return prelude.length ? `${prelude.join("\n")}\n${create}` : create;
   };
 
@@ -415,7 +441,9 @@ function CreateTableForm({
             </div>
             <div>
               <DialogTitle className="text-xs font-medium">Create New Table</DialogTitle>
-              <p className="text-xs text-fg-muted mt-1 font-medium">Define schema structure</p>
+              <p className="text-xs text-fg-muted mt-1 font-medium">
+                {qualified ? `In ${objectPathLabel(container)}` : "Define schema structure"}
+              </p>
             </div>
           </div>
         </DialogHeader>

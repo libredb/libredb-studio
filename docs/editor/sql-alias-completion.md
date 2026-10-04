@@ -117,7 +117,11 @@ User types: "e."
 - **No external SQL parser**: Keeps bundle size small
 - **Regex-based parsing**: Fast execution (<10ms for typical queries)
 - **Lazy evaluation**: Alias extraction only runs on dot-trigger
-- **Cursor-limited parsing**: Only parses text from start to cursor position
+- **Statement-limited parsing**: Parses the text from the start to the cursor plus the rest of
+  the cursor's statement, up to its `;`. The part after the cursor is read because an alias is
+  often defined there: in `SELECT c. FROM e2e.customers c`, `c.` offered nothing while only the
+  text before the cursor was read (#1397). It stops at the terminator, so a later statement's
+  alias of the same name is not taken.
 - **Early exit**: Skips parsing if no FROM/JOIN/WITH keywords found
 
 ## Examples
@@ -153,6 +157,23 @@ FROM active_employees ae
 WHERE ae.department_id = 1
 ```
 The `ae` alias resolves to the CTE `active_employees`.
+
+## Containers and qualified names
+
+The editor holds each table's address as well as its name, and the session's default container
+as the object inventory reported it (`defaultContainer`). Three rules follow (#1397):
+
+- **A table outside the default container inserts its qualified address.** On PostgreSQL 18.6, a
+  `sales.regions` with `sales` off the search path used to insert `regions`, which runs as
+  `relation "regions" does not exist`; it now inserts `sales.regions`, each segment quoted the
+  way the dialect needs. A table in the default container keeps its bare name. Where no default
+  was reported (the embedded workspace), every table keeps its bare name.
+- **A container qualifier offers that container's tables.** `sales.`, a MySQL `e2e_other.` or a
+  ClickHouse `demo.` lists the tables of that schema or database, matched against the trailing
+  segments of each table's container, and inserts each by its own name after the qualifier
+  already typed. Columns of a table or alias with that name still come first.
+- **A row count is shown only where the engine measured one.** A table whose count is absent
+  reads `Table`, not `Table (0 rows)`; RisingWave 3.1.0 reports no count for a four-row table.
 
 ## Integration
 

@@ -1616,6 +1616,16 @@ base) fans these out in parallel.
 `getTableStats()` / `getIndexStats()` accept an optional `{ schema }` filter; with none they cover
 all user schemas.
 
+**Every catalog name list is read as `text[]` (#1394).** node-postgres parses no array of
+`information_schema.sql_identifier` or of `name`, so `array_agg(kcu.column_name)` and
+`array_agg(a.attname)` reached the provider as the text `{id}`. On the key read that turned
+`includes()` into a substring test: measured on PostgreSQL 18.6, a table keyed on `id` showed its
+columns `i` and `d` as keys too in the tree, the ERD and Docs. On the index statistics read the
+array guard turned every index's column list into `[]`. Both aggregates now cast each name to
+`text`, the key list in `ordinal_position` order, and a key list that still arrives as anything
+but an array marks no column. The index lists inside the `jsonb` object reads were never
+affected: `jsonb_build_object` serialises the array itself.
+
 **Database size is absent, never zeroed, when it is not measured.** `getOverview()` sizes the
 database with `pg_database_size($1)` and reads the byte figure only, the shape `mssql.ts` uses:
 `databaseSize` is `formatBytes()` over that number, so no `pg_size_pretty()` column is selected. A

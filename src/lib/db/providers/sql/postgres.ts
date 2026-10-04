@@ -362,12 +362,17 @@ function schemaExclusion(column: string): string {
   return `${column} NOT IN (${SYSTEM_SCHEMA_LIST}) AND ${column} NOT IN (${EXTENSION_OWNED_SCHEMAS_SQL})`;
 }
 
+// `kcu.column_name` is `information_schema.sql_identifier`, and node-postgres has no array
+// parser for `sql_identifier[]`: uncast, the list reached `objectDetailFromRow` as the text
+// `{id}`, where `includes()` became a substring test that flagged `i` and `d` as keys too,
+// measured on PostgreSQL 18.6 (#1394). The `text` cast makes it a `text[]` the driver
+// parses, and `ordinal_position` hands the key back in its declared order.
 const CTE_PK_INFO = `
         pk_info AS MATERIALIZED (
           SELECT
             tc.table_schema,
             tc.table_name,
-            array_agg(kcu.column_name) as pk_columns
+            array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) as pk_columns
           FROM information_schema.table_constraints tc
           JOIN information_schema.key_column_usage kcu
             ON tc.constraint_name = kcu.constraint_name
@@ -1601,7 +1606,9 @@ function objectPath(container: readonly string[], row: ObjectRow): string[] {
  */
 
 function objectDetailFromRow(path: readonly string[], row: ObjectDetailRow): ObjectDetail {
-  const pkColumns: string[] = row.pk_columns || [];
+  // Only an array is a key list: a string here is an unparsed array literal, and a
+  // substring test on it is how a column named `i` became a key of `{id}` (#1394).
+  const pkColumns: string[] = Array.isArray(row.pk_columns) ? row.pk_columns : [];
   return {
     path: [...path],
     columns: (row.columns || []).map((col) => ({
@@ -1882,7 +1889,9 @@ const TABLE_STATS_ORDER_SQL = `
       `;
 
 // getIndexStats: per-index stats. A schema WHERE clause is interpolated
-// between the two fragments at the call site.
+// between the two fragments at the call site. `attname` is cast to `text` because
+// node-postgres parses no `name[]`: uncast, the column list arrived as the text
+// `{id}` and the mapping's array guard turned every index's columns into [] (#1394).
 const INDEX_STATS_SELECT_SQL = `
         SELECT
           s.schemaname as schema_name,
@@ -1896,7 +1905,7 @@ const INDEX_STATS_SELECT_SQL = `
           s.idx_tup_fetch as tuples_fetched,
           ix.indisunique as is_unique,
           ix.indisprimary as is_primary,
-          array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) as columns,
+          array_agg(a.attname::text ORDER BY array_position(ix.indkey, a.attnum)) as columns,
           CASE
             WHEN (SELECT seq_scan + idx_scan FROM pg_stat_user_tables t WHERE t.relid = s.relid) > 0
             THEN ROUND(
