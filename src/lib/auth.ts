@@ -108,7 +108,7 @@ function warnOnce(message: string): void {
  * "on"/"true"/"1", trimmed, case-insensitive); anything else warns and falls
  * through to the default, so a typo never silently flips the security posture.
  */
-function readCookieSecureOverride(): boolean | undefined {
+export function readCookieSecureOverride(): boolean | undefined {
   const raw = process.env.AUTH_COOKIE_SECURE;
   const normalized = raw?.trim().toLowerCase();
   if (!normalized) return undefined;
@@ -120,7 +120,7 @@ function readCookieSecureOverride(): boolean | undefined {
   return undefined;
 }
 
-function isLoopbackHost(host: string | null): boolean {
+export function isLoopbackHost(host: string | null): boolean {
   if (!host) return false;
   // Strip the port, then the brackets of an IPv6 literal ("[::1]:3000" -> "::1").
   const hostname = host

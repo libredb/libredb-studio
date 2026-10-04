@@ -41,7 +41,16 @@ mock.module("next/headers", () => ({
 // Import module under test (after mocks)
 // ============================================================================
 
-const { signJWT, verifyJWT, getSession, login, logout, resetCookieSecurityWarning } = await import("@/lib/auth");
+const {
+  signJWT,
+  verifyJWT,
+  getSession,
+  login,
+  logout,
+  resetCookieSecurityWarning,
+  readCookieSecureOverride,
+  isLoopbackHost,
+} = await import("@/lib/auth");
 
 // ============================================================================
 // Tests — use real jose sign/verify with JWT_SECRET from tests/setup.ts
@@ -348,5 +357,82 @@ describe("auth", () => {
       await logout();
       expect(mockDeleteCalls).toContainEqual({ name: "auth-token", path: "/tools/libredb" });
     });
+  });
+});
+
+// Exported for GET /api/admin/discovery, which reports an operator's AUTH_COOKIE_SECURE=false as a
+// display warning, and for src/lib/api/request-scheme.ts. These cases call each one directly.
+describe("readCookieSecureOverride()", () => {
+  beforeEach(() => {
+    delete process.env.AUTH_COOKIE_SECURE;
+    resetCookieSecurityWarning();
+  });
+
+  afterEach(() => {
+    delete process.env.AUTH_COOKIE_SECURE;
+    resetCookieSecurityWarning();
+  });
+
+  test("answers false for every off spelling, trimmed and case-insensitive", () => {
+    for (const off of ["false", "0", "off", " FALSE "]) {
+      process.env.AUTH_COOKIE_SECURE = off;
+      expect(readCookieSecureOverride()).toBe(false);
+    }
+  });
+
+  test("answers true for every on spelling, trimmed and case-insensitive", () => {
+    for (const on of ["true", "1", "on", " TRUE "]) {
+      process.env.AUTH_COOKIE_SECURE = on;
+      expect(readCookieSecureOverride()).toBe(true);
+    }
+  });
+
+  test("answers undefined when the variable is unset or blank", () => {
+    expect(readCookieSecureOverride()).toBeUndefined();
+    process.env.AUTH_COOKIE_SECURE = "   ";
+    expect(readCookieSecureOverride()).toBeUndefined();
+  });
+
+  test("answers undefined and warns once for an unrecognized value", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    process.env.AUTH_COOKIE_SECURE = "yes-please";
+    try {
+      expect(readCookieSecureOverride()).toBeUndefined();
+      expect(readCookieSecureOverride()).toBeUndefined();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain("AUTH_COOKIE_SECURE");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+describe("isLoopbackHost()", () => {
+  test("accepts the loopback names with or without a port, in any letter case", () => {
+    for (const host of [
+      "localhost",
+      "localhost:3000",
+      "LOCALHOST:3000",
+      "127.0.0.1",
+      "127.0.0.1:41234",
+      "[::1]",
+      "[::1]:3000",
+    ]) {
+      expect(isLoopbackHost(host)).toBe(true);
+    }
+  });
+
+  test("refuses a missing host, an empty host and every other name", () => {
+    expect(isLoopbackHost(null)).toBe(false);
+    expect(isLoopbackHost("")).toBe(false);
+    for (const host of [
+      "studio.example.com",
+      "studio.example.com:443",
+      "localhost.example.com",
+      "127.0.0.2",
+      "10.0.0.5:3000",
+    ]) {
+      expect(isLoopbackHost(host)).toBe(false);
+    }
   });
 });
