@@ -679,6 +679,113 @@ describe('identifierQuoting "double-always"', () => {
 });
 
 // ============================================================================
+// previewTimeWindow (InfluxDB spec 6.6, I20): a preview that reads a recent window,
+// newest first, driven by the capability and never by the type-id. The window here
+// is the one InfluxDB 3 declares, written out so the generator's rule is pinned on
+// its own; `sql-provider.test.ts` pins the provider's declaration against the same text.
+// ============================================================================
+
+describe("previewTimeWindow", () => {
+  const windowed = makeCaps({
+    defaultPort: 8181,
+    identifierQuoting: "double-always",
+    statementTerminator: "none",
+    previewTimeWindow: {
+      column: "time",
+      since: "now() - INTERVAL '1 hour'",
+      note: "Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.",
+      examples: [
+        "A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'",
+        "One row per minute: SELECT date_bin(INTERVAL '1 minute', \"time\") AS minute, avg({column}) FROM {table} WHERE \"time\" >= now() - INTERVAL '1 hour' GROUP BY 1 ORDER BY 1",
+        "Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
+      ],
+    },
+  });
+  const homeColumns: ColumnSchema[] = [
+    { name: "time", type: "time", nullable: false, isPrimary: false },
+    { name: "room", type: "tag", nullable: true, isPrimary: false },
+    { name: "co", type: "integer", nullable: true, isPrimary: false },
+    { name: "temp", type: "float", nullable: true, isPrimary: false },
+  ];
+  const PREVIEW =
+    "-- Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.\n" +
+    'SELECT * FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC';
+
+  test("the table query is the spec 6.6 preview, with no LIMIT in the text", () => {
+    expect(generateTableQuery(["home"], windowed)).toBe(PREVIEW);
+    expect(generateTableQuery(["home"], windowed, homeColumns)).toBe(PREVIEW);
+    expect(generateTableQuery(["home"], windowed)).not.toContain("LIMIT");
+  });
+
+  test("the select query adds the example lines, naming the first float or integer column", () => {
+    const temp: ColumnSchema[] = [homeColumns[0], homeColumns[1], homeColumns[3], homeColumns[2]];
+    expect(generateSelectQuery(["home"], temp, windowed)).toBe(
+      `${PREVIEW}\n` +
+        "-- A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'\n" +
+        '-- One row per minute: SELECT date_bin(INTERVAL \'1 minute\', "time") AS minute, avg("temp") FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' GROUP BY 1 ORDER BY 1\n' +
+        "-- Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
+    );
+    expect(generateSelectQuery(["home"], homeColumns, windowed)).toContain('avg("co")');
+    expect(generateSelectQuery(["home"], homeColumns, windowed)).not.toContain("LIMIT");
+  });
+
+  test('with no numeric column the example names "value"', () => {
+    expect(generateSelectQuery(["home"], [homeColumns[0], homeColumns[1]], windowed)).toContain('avg("value")');
+    expect(generateSelectQuery(["home"], [], windowed)).toContain('avg("value")');
+  });
+
+  test("a table name that needs quotes is quoted with its quote doubled, in the statement and the example", () => {
+    const text = generateSelectQuery(['we"ird name;x'], [], windowed);
+    expect(text.split("\n")[1]).toBe(
+      'SELECT * FROM "we""ird name;x" WHERE "time" >= now() - INTERVAL \'1 hour\' ORDER BY "time" DESC',
+    );
+    expect(text).toContain('FROM "we""ird name;x" WHERE');
+  });
+
+  test("a name holding a line break cannot end an example's comment line early", () => {
+    const text = generateSelectQuery(
+      ["a\nb"],
+      [{ name: "x\ry", type: "float", nullable: true, isPrimary: false }],
+      windowed,
+    );
+    const lines = text.split("\n");
+    // The statement keeps the name as written, inside its quotes; every example line stays one comment line.
+    expect(lines[1]).toBe('SELECT * FROM "a');
+    expect(lines.slice(3).every((line) => line.startsWith("-- "))).toBe(true);
+    expect(lines.slice(3)).toHaveLength(3);
+    expect(text).toContain('avg("x y") FROM "a b"');
+  });
+
+  test("a replacement pattern in a name is the name, never the matched placeholder", () => {
+    const text = generateSelectQuery(
+      ["a$&b"],
+      [{ name: "$'", type: "integer", nullable: true, isPrimary: false }],
+      windowed,
+    );
+    expect(text).toContain('avg("$\'") FROM "a$&b" WHERE');
+  });
+
+  test("the window column goes through quoteIdentifier", () => {
+    const declared = makeCaps({
+      identifierQuoting: "double-always",
+      statementTerminator: "none",
+      previewTimeWindow: { column: "ts", since: "now() - INTERVAL '1 hour'", note: "n", examples: [] },
+    });
+    expect(generateTableQuery(["t"], declared)).toBe(
+      '-- n\nSELECT * FROM "t" WHERE "ts" >= now() - INTERVAL \'1 hour\' ORDER BY "ts" DESC',
+    );
+    expect(generateSelectQuery(["t"], [], declared)).toBe(generateTableQuery(["t"], declared));
+  });
+
+  test("a capability set without previewTimeWindow is unchanged", () => {
+    expect(generateTableQuery(["users"], makeCaps())).toBe("SELECT * FROM users;");
+    expect(generateSelectQuery(["users"], sampleColumns, makeCaps())).toBe(
+      "SELECT\n  id,\n  name\nFROM users\nWHERE 1=1\nLIMIT 100;",
+    );
+  });
+});
+
+// ============================================================================
 // Apache Cassandra (issue #424 Phase 4) - the engine that needed NO branch, and the
 // tests that establish that rather than assuming it. Port 9042 is Cassandra's alone,
 // so the port heuristic is not asked to answer for two dialects, and every string

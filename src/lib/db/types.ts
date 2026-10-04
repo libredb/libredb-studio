@@ -238,6 +238,28 @@ export interface PreviewProjection {
   readonly unprojectedNote: string;
 }
 
+/**
+ * A preview that reads a recent window, newest first (see `ProviderCapabilities.previewTimeWindow`):
+ * `SELECT * FROM <table> WHERE <column> >= <since> ORDER BY <column> DESC`, under `note`.
+ */
+export interface PreviewTimeWindow {
+  /** The time column, written through `quoteIdentifier`. */
+  readonly column: string;
+  /** The window's lower bound as the engine's own expression, InfluxDB 3's `now() - INTERVAL '1 hour'`. */
+  readonly since: string;
+  /**
+   * The preview's first comment line, written without its `-- `: why an empty preview is empty.
+   * Nothing reads it back, and no provider recognises its own generated text.
+   */
+  readonly note: string;
+  /**
+   * The commented lines Generate Query writes below its statement, each without its `-- `.
+   * `{table}` is filled with the quoted table and `{column}` with the first `float` or
+   * `integer` column of the described columns, quoted, else `"value"`.
+   */
+  readonly examples: readonly string[];
+}
+
 /** Where a surface wants to put a control: on one row, or on a whole-database card. */
 export type MaintenancePlacement = "perEntity" | "global";
 
@@ -994,6 +1016,18 @@ export interface ProviderCapabilities {
    * `unprojectedNote` comment, because no list exists to project.
    */
   previewProjection?: PreviewProjection;
+  /**
+   * A preview that reads a recent window, newest first (InfluxDB spec 6.6, I20), for an engine
+   * where an unwindowed `SELECT *` reads the oldest rows first or past a file limit.
+   *
+   * Absent means a preview is the engine's usual `SELECT *`. Present, the SQL arms of the
+   * generators write `WHERE <column> >= <since> ORDER BY <column> DESC` under the `note`
+   * comment, with no `LIMIT` in the text: the preview cap travels as the `limit` execution
+   * option, so the limiter appends it and Load More pages. Generate Query adds the `examples`
+   * as comment lines. Count and Profile stay unwindowed. Read by the generators, never by a
+   * type-id.
+   */
+  previewTimeWindow?: PreviewTimeWindow;
   /**
    * The container levels this engine nests its objects in, outermost first (#789).
    *

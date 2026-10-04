@@ -7,7 +7,12 @@ import { quoteGoString, quoteTxnWord, quoteWord } from "@/lib/db/providers/keyva
 import { metricSelector } from "@/lib/db/providers/timeseries/prometheus/promql";
 import { milvusSelectQuery, milvusTableQuery } from "@/lib/db/providers/vector/milvus/generators";
 import { qdrantSelectQuery, qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
-import { type ObjectReadRange, offersCountQuery, type ProviderCapabilities } from "@/lib/db/types";
+import {
+  type ObjectReadRange,
+  offersCountQuery,
+  type PreviewTimeWindow,
+  type ProviderCapabilities,
+} from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 
 /** Couchbase management port, the capability signal for the SQL++ dialect. */
@@ -762,12 +767,47 @@ export function generateTableQuery(
   if (projection !== undefined) {
     return projectedPreview(table, projection, columns ?? [], capabilities);
   }
+  // An engine whose preview reads a recent window, newest first (InfluxDB spec 6.6, I20).
+  const window = capabilities.previewTimeWindow;
+  if (window !== undefined) return windowedPreview(table, window, capabilities);
   // Every other SQL dialect, Oracle and SQL Server included. They had branches of their
   // own only to spell their row bound — `FETCH FIRST 50 ROWS ONLY` and `SELECT TOP 50` —
   // and with no bound to spell, one statement serves all of them. Issue #264's rule, that
   // a ClickHouse bound must sit after any `FORMAT` or `SETTINGS` clause, is moot for the
   // same reason: there is no generated bound to misplace.
   return `SELECT * FROM ${table}${terminator(capabilities)}`;
+}
+
+/**
+ * The preview of an engine that declares `previewTimeWindow` (InfluxDB spec 6.6, I20): the newest rows of the
+ * window under the declaration's note, with no `LIMIT` in the text, so the limiter appends the preview cap after
+ * `ORDER BY ... DESC` and Load More pages (finding F5).
+ */
+function windowedPreview(table: string, window: PreviewTimeWindow, capabilities: ProviderCapabilities): string {
+  const column = quoteIdentifier(window.column, capabilities);
+  return `-- ${window.note}\nSELECT * FROM ${table} WHERE ${column} >= ${window.since} ORDER BY ${column} DESC${terminator(capabilities)}`;
+}
+
+/**
+ * The declaration's example lines as comments, `{table}` and `{column}` filled: the first `float` or `integer`
+ * column, else `"value"`, each quoted. Filled through a function, so a `$&` in a name is the name; a line break in a
+ * name becomes a space, so no name can end a comment line and turn its rest into a statement.
+ */
+function windowExamples(
+  table: string,
+  window: PreviewTimeWindow,
+  columns: readonly ColumnSchema[],
+  capabilities: ProviderCapabilities,
+): string[] {
+  const numeric = columns.find((c) => c.type === "float" || c.type === "integer");
+  const column = quoteIdentifier(numeric?.name ?? "value", capabilities);
+  return window.examples.map(
+    (example) =>
+      `-- ${example
+        .replaceAll("{table}", () => table)
+        .replaceAll("{column}", () => column)
+        .replace(/[\r\n]/g, " ")}`,
+  );
 }
 
 /**
@@ -1004,6 +1044,13 @@ export function generateSelectQuery(
         : [`  ${COUCHBASE_ALIAS}.*`];
     const projection = [`  ${COUCHBASE_KEY_PROJECTION}`, ...projected].join(",\n");
     return `SELECT\n${projection}\nFROM ${table} AS ${COUCHBASE_ALIAS}\nWHERE 1=1\nLIMIT 100;`;
+  }
+  // The windowed preview with its example lines below it (InfluxDB spec 6.6, I20).
+  const window = capabilities.previewTimeWindow;
+  if (window !== undefined) {
+    return [windowedPreview(table, window, capabilities), ...windowExamples(table, window, columns, capabilities)].join(
+      "\n",
+    );
   }
   const cols = columns.map((c) => `  ${quoteIdentifier(c.name, capabilities)}`).join(",\n") || "  *";
   // Oracle
