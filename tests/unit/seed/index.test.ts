@@ -119,6 +119,16 @@ describe("seed/index with discovered connections", () => {
     expect(seedIds).toEqual(["admin-only", "everyone", "admin-and-user", "caprover-pg", SQLITE_SAMPLE_SEED_ID]);
   });
 
+  it("lists the discovered connections when there is no seed file at all, as the auto-connect template ships", async () => {
+    process.env.SEED_CONFIG_PATH = path.join(scratch, "no-seed-file.yaml");
+    resetCache();
+
+    const admin = await getManagedConnections(["admin"]);
+    expect(admin.map((c) => c.seedId)).toEqual(["caprover-pg", SQLITE_SAMPLE_SEED_ID]);
+    expect(admin.find((c) => c.seedId === "caprover-pg")?.literal).toBe(true);
+    expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual([SQLITE_SAMPLE_SEED_ID]);
+  });
+
   it("marks a discovered connection literal and leaves the file seeds and samples unmarked", async () => {
     const conns = await getManagedConnections(["admin"]);
     expect(conns.find((c) => c.seedId === "caprover-pg")?.literal).toBe(true);
