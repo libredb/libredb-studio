@@ -118,6 +118,13 @@ describe("config/auth-env derivedSigningKey", () => {
     }
   });
 
+  test("a derived key honours the JWT_SECRET options and refuses a missing secret without the fallback", async () => {
+    delete (process.env as Record<string, string>).JWT_SECRET;
+    await expect(
+      derivedSigningKey("a", { allowDevFallback: false, missingMessage: "custom missing-secret message" }),
+    ).rejects.toThrow("custom missing-secret message");
+  });
+
   test("a token signed with a derived key does not verify as a session", async () => {
     process.env.JWT_SECRET = "a-valid-secret-that-is-32-chars!";
     const token = await new SignJWT({ role: "admin", username: "admin" })
