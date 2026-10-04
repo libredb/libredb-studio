@@ -864,6 +864,16 @@ describe("foldLedgerEntries", () => {
     expect(view.items.at(-1)?.detail).toBe("The model provider is not configured or could not be reached.");
   });
 
+  test("a run the loop ended on a model timeout keeps its stop reason beside a null failure reason (#1461)", () => {
+    const view = foldLedgerEntries([
+      OPENED,
+      event({ kind: "event", event: { kind: "run-finished", atMs: 9, status: "failed", stopReason: "model-timeout" } }),
+    ]);
+
+    expect(view.failureReason).toBeNull();
+    expect(view.stopReason).toBe("model-timeout");
+  });
+
   test("an ending with no reason claims none", () => {
     // Most endings need none: succeeded, cancelled, and a loop that stopped on its
     // own terms are fully described by the status. A default sentence here would
@@ -874,6 +884,7 @@ describe("foldLedgerEntries", () => {
     ]);
 
     expect(view.failureReason).toBeNull();
+    expect(view.stopReason).toBeNull();
     expect(view.items.at(-1)?.detail).toBeUndefined();
   });
 

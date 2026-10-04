@@ -377,6 +377,15 @@ export interface AgentRunTimeline {
    * can say why a run ended without walking the timeline it renders.
    */
   readonly failureReason: AgentRunFailureReason | null;
+  /**
+   * How the loop ended, as `run-finished` recorded it; null before the run finishes or for a
+   * ledger written before the field existed.
+   *
+   * Folded beside `failureReason` because a run the loop itself ended as `failed` (a model
+   * timeout, a deadline) carries a stop reason and NO failure reason, and a surface that read
+   * only the failure reason called that run unclassified (#1461).
+   */
+  readonly stopReason: AgentRunStopReason | null;
   readonly budget: readonly AgentBudgetGauge[];
   /**
    * How many of this run's CHARGED statements carry no duration on the ledger, so the
@@ -861,11 +870,27 @@ const READING_REFUSAL_HEADLINES: Readonly<Record<AgentReadingDenyCode, string>> 
 /**
  * The sentence for a reason, for a surface that shows it outside the timeline.
  *
- * Exported so the rail's status line and the timeline entry cannot drift into two
- * wordings of the same failure.
+ * Read through `describeRunFailure` below, so the rail's status line, the answer card and
+ * the timeline entry cannot drift into two wordings of the same failure.
  */
-export function describeFailureReason(reason: AgentRunFailureReason): string {
+function describeFailureReason(reason: AgentRunFailureReason): string {
   return FAILURE_SENTENCES[reason];
+}
+
+/**
+ * The sentence a FAILED run is described with outside the timeline, or null when its record
+ * names no cause at all (#1461).
+ *
+ * The failure reason wins, as it does in `endingSentence`. Without one, a run the loop ended as
+ * `failed` still says how: `model-timeout` and `deadline-exceeded` are on the record, and the
+ * sentence is the one the timeline entry shows for the run's mode, from the same map, so the
+ * card, the rail and the timeline cannot disagree. A run that did not fail never gets a stop
+ * sentence here, because the surfaces that read this are failure lines.
+ */
+export function describeRunFailure(timeline: AgentRunTimeline): string | null {
+  if (timeline.failureReason !== null) return describeFailureReason(timeline.failureReason);
+  if (timeline.status !== "failed" || timeline.stopReason === null) return null;
+  return STOP_SENTENCES[timeline.mode]?.[timeline.stopReason] ?? null;
 }
 
 function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id" | "atMs" | "tone"> {
@@ -1440,6 +1465,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
   let status: AgentRunStatus = "queued";
   let stopRequested = false;
   let failureReason: AgentRunFailureReason | null = null;
+  let stopReason: AgentRunStopReason | null = null;
   let statements = 0;
   let databaseMs = 0;
   /** Charged statements whose entry records no duration (#512). See the field's doc. */
@@ -1578,6 +1604,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
       } else if (event.kind === "run-finished") {
         status = event.status;
         failureReason = event.reason ?? null;
+        stopReason = event.stopReason ?? null;
       } else if (event.kind === "closing-statement") closings.push({ index: items.length, mode });
       else if (event.kind === "plan-statement-drafted") drafted = true;
       else if (event.kind === "context-captured") {
@@ -1685,6 +1712,7 @@ export function foldLedgerEntries(entries: readonly AgentLedgerEntry[]): AgentRu
     stopRequested,
     mode,
     failureReason,
+    stopReason,
     workflowType,
     workflowSource,
     workflowReading,
