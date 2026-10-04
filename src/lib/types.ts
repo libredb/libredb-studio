@@ -329,7 +329,7 @@ export interface DatabaseConnection {
    * An explicit acceptance of a risk, and never a default. A stock Db2 server without TLS offers
    * only DRDA SECMEC 3, user and cleartext password, so the Db2 provider REFUSES a connection with
    * no TLS unless this is `true`, and then asks db2-node for that mechanism by name, which 1.0.24
-   * refuses to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by Db2 and by both
+   * and later refuse to fall back to otherwise (`docs/providers/db2.md`, section 3.3). Read by Db2 and by both
    * InfluxDB types (`influxdb`, `influxdb3`, InfluxDB spec I7), each of which refuses a non-empty secret
    * with TLS off, to a host that is not loopback and outside a tunnel, unless this is `true`. Read by no
    * other engine: each of those either encrypts the password itself or follows its own driver's default.

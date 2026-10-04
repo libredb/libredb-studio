@@ -8,13 +8,13 @@
  * THREE RULES SHAPE EVERY STATEMENT BELOW:
  *
  * 1. No LOB is selected beside other columns (M1). `SYSCAT.COLUMNS."DEFAULT"` and the `TEXT` of a
- *    view, a routine and a trigger are CLOBs. db2-node 1.0.22 could not fetch a CLOB at all (K7);
- *    1.0.24 fetches one read on its own, but a LOB beside other columns can still come back wrong
- *    or fail (K4, measured on 12.1.0.0: a CLOB beside a DOUBLE failed with a protocol error, and
- *    beside a GRAPHIC answered no row). So a LOB is read as `VARCHAR(SUBSTRING(x, start, n,
- *    OCTETS), n)`, which never truncates: SUBSTRING with an explicit length PADS a shorter value
- *    with blanks rather than warning, and the reader cuts the padding off by the byte length
- *    `LENGTH(x)` reports beside it.
+ *    view, a routine and a trigger are CLOBs. db2-node 1.0.22 could not fetch a CLOB at all (K7),
+ *    and 1.0.24 fetched one read on its own while a LOB beside other columns could come back wrong
+ *    or fail (K4, fixed in 1.0.25, where such reads answered what each column read alone does,
+ *    measured on 12.1.0.0 and 11.5.9.0). Reading the CLOB whole is D165; until then a LOB is
+ *    read as `VARCHAR(SUBSTRING(x, start, n, OCTETS), n)`, which never truncates: SUBSTRING with
+ *    an explicit length PADS a shorter value with blanks rather than warning, and the reader cuts
+ *    the padding off by the byte length `LENGTH(x)` reports beside it.
  * 2. Catalog text is read as HEX, under an alias ending `_HEX`, and decoded here. 1.0.22 decoded
  *    every non-ASCII byte of a VARCHAR as EBCDIC 037 (K1), which is why this started; 1.0.24
  *    decodes a Unicode database's text correctly. It stays because a SUBSTRING chunk of a

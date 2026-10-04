@@ -4,20 +4,21 @@
  * Every driver shape below was measured through db2-node against Db2 LUW 12.1.0.0: the `typeName`
  * spellings (`Integer`, `VarChar(50)`, `Decimal { precision: 9, scale: 2 }`, `Xml`), the GRAPHIC
  * columns that alone carry a `db2TypeName`, and the duplicate column name the driver lists twice
- * and keys once on 1.0.22 and 1.0.24; the CLOB that 1.0.24 describes as `VarChar(32777)` (a
+ * and keys once in an object row on 1.0.22 to 1.0.25, and keeps as two values in an array row on
+ * 1.0.25 (K15); the CLOB that 1.0.24 describes as `VarChar(32777)` (a
  * `CLOB(1M)` table column, a `CLOB(2G)` cast and `SYSCAT.VIEWS.TEXT` all did, while a `CLOB(1K)`
  * cast answered `CLOB`), on 1.0.24.
  */
 
 import { describe, expect, test } from "bun:test";
-import type { Db2ColumnMeta, Db2QueryResult } from "@/lib/db/providers/sql/db2/driver";
+import type { Db2ArrayQueryResult, Db2ColumnMeta } from "@/lib/db/providers/sql/db2/driver";
 import { db2TypeName, readResult } from "@/lib/db/providers/sql/db2/values";
 
 function column(name: string, typeName: string, extra: Partial<Db2ColumnMeta> = {}): Db2ColumnMeta {
   return { name, typeName, nullable: true, ...extra };
 }
 
-function result(overrides: Partial<Db2QueryResult> = {}): Db2QueryResult {
+function result(overrides: Partial<Db2ArrayQueryResult> = {}): Db2ArrayQueryResult {
   return { rows: [], rowCount: 0, columns: [], diagnostics: [], ...overrides };
 }
 
@@ -77,11 +78,10 @@ describe("readResult", () => {
     expect(read.warnings).toBeUndefined();
   });
 
-  test("a result set counts its rows, whatever rowCount the driver answered", () => {
-    const rows = [{ ID: 1 }, { ID: 2 }];
-    const read = readResult(result({ columns: [column("ID", "Integer")], rows, rowCount: 99 }));
+  test("a result set counts its rows, whatever rowCount the driver answered, and keys each array row by column", () => {
+    const read = readResult(result({ columns: [column("ID", "Integer")], rows: [[1], [2]], rowCount: 99 }));
 
-    expect(read.rows).toBe(rows);
+    expect(read.rows).toEqual([{ ID: 1 }, { ID: 2 }]);
     expect(read.rowCount).toBe(2);
   });
 
@@ -99,21 +99,32 @@ describe("readResult", () => {
     expect(readResult(result({ rowCount: 0 })).rowCount).toBe(0);
   });
 
-  test("M7: a duplicated column name is named in a warning, once per name", () => {
+  // Measured on 12.1.0.0 and 11.5.9.0 through 1.0.25: `SELECT 1 AS A, 2 AS A` answers the array
+  // row [1, 2] under `rowMode: "array"` and the object row {A: 2} without it (K15, fixed).
+  test("a duplicated column name keeps every value, the repeats numbered as Druid and Trino number them", () => {
     const read = readResult(
       result({
-        columns: [column("A", "Integer"), column("A", "Integer"), column("B", "Integer"), column("A", "Integer")],
-        rows: [{ A: 2, B: 3 }],
+        columns: [column("A", "Integer"), column("A", "Integer"), column("B", "Integer"), column("A", "BigInt")],
+        rows: [[1, 2, 3, 4]],
       }),
     );
 
-    expect(read.fields).toEqual(["A", "A", "B", "A"]);
-    expect(read.warnings).toEqual([
-      {
-        message:
-          "Db2 returned more than one column named A; db2-node keys rows by column name, so only the last value is shown. Give each column its own alias.",
-      },
-    ]);
+    expect(read.fields).toEqual(["A", "A (2)", "B", "A (3)"]);
+    expect(read.rows).toEqual([{ A: 1, "A (2)": 2, B: 3, "A (3)": 4 }]);
+    expect(read.columnTypes).toEqual({ A: "INTEGER", "A (2)": "INTEGER", B: "INTEGER", "A (3)": "BIGINT" });
+    expect(read.warnings).toBeUndefined();
+  });
+
+  test("the numbering skips a name the statement already used", () => {
+    const read = readResult(
+      result({
+        columns: [column("A", "Integer"), column("A (2)", "Integer"), column("A", "Integer")],
+        rows: [[1, 2, 3]],
+      }),
+    );
+
+    expect(read.fields).toEqual(["A", "A (2)", "A (3)"]);
+    expect(read.rows).toEqual([{ A: 1, "A (2)": 2, "A (3)": 3 }]);
   });
 
   test("the driver's own diagnostics are passed through as warnings", () => {
@@ -122,11 +133,20 @@ describe("readResult", () => {
     expect(read.warnings).toEqual([{ message: "SQLSTATE 01003: null values were eliminated" }]);
   });
 
-  // Measured on 12.1.0.0 through 1.0.24 (K4): `C_CLOB, C_BLOB` answered the CLOB's bytes as the
-  // BLOB, `C_GRAPH, C_CLOB` answered no row of three, `C_DBL, C_CLOB` failed with a protocol
-  // error, and `SELECT *` over APP.ALLTYPES answered one row of three; each LOB read on its own
-  // was exact.
-  test("a LOB or XML column beside another column carries an integrity warning naming them", () => {
+  // Measured on 12.1.0.0 and 11.5.9.0 through 1.0.25 (K4, fixed): `SELECT *` over APP.ALLTYPES
+  // and every mixed read of a CLOB(1M) beside a GRAPHIC, a DOUBLE, a BLOB and XML, NULL LOB rows
+  // and a 50000-byte CLOB included, answered what each column read alone answers.
+  test("a LOB or XML column beside other columns carries no integrity warning", () => {
+    const read = readResult(
+      result({ columns: [column("ID", "Integer"), column("C_XML", "Xml"), column("C_VCHAR", "VarChar(50)")] }),
+    );
+    expect(read.warnings).toBeUndefined();
+  });
+
+  // Measured on 12.1.0.0 and 11.5.9.0 through 1.0.24 and 1.0.25 (K24): a value bound to a CLOB,
+  // DBCLOB or BLOB column declared 32768 bytes or longer answers 0 changed rows, no error, and is
+  // not written, which is what the grid's inline editor sends for such a cell.
+  test("a CLOB, DBCLOB or BLOB column carries one warning that an inline edit of it is lost", () => {
     const read = readResult(
       result({
         columns: [
@@ -136,42 +156,25 @@ describe("readResult", () => {
           column("C_BLOB", "BLOB"),
           column("C_XML", "Xml"),
         ],
-        rows: [{ ID: 1 }],
       }),
     );
 
     expect(read.warnings).toEqual([
       {
         message:
-          "This result may not be what Db2 stored: db2-node can return wrong values, or drop rows, when a LOB or " +
-          "XML column is read beside other columns, here C_CLOB (CLOB), C_DBCLOB (DBCLOB), C_BLOB (BLOB), C_XML " +
-          "(XML). Select each of them on its own to read it exactly (K4). Exported or copied rows carry the same values.",
+          "db2-node writes nothing, and reports no error, for a value bound to a CLOB, DBCLOB or BLOB column declared " +
+          "32768 bytes or longer, so an inline edit of C_CLOB (CLOB), C_DBCLOB (DBCLOB), C_BLOB (BLOB) can be lost " +
+          "while the grid reports it saved (K24). Change such a value with an UPDATE of your own that writes it as a " +
+          "literal.",
       },
     ]);
   });
 
-  test("a LOB or XML column read on its own carries no warning, and neither does a result without one", () => {
-    expect(readResult(result({ columns: [column("C_CLOB", "CLOB")] })).warnings).toBeUndefined();
-    expect(
-      readResult(
-        result({
-          columns: [column("C_BIG", "BigInt"), column("C_DECF", "DecFloat(34)"), column("C_BOOL", "Boolean")],
-        }),
-      ).warnings,
-    ).toBeUndefined();
-  });
+  test("the LOB edit warning comes before the driver's diagnostics, and a LOB alone carries it too", () => {
+    const read = readResult(result({ columns: [column("B", "BLOB")], diagnostics: ["driver says"] }));
 
-  test("warnings keep their order: integrity, duplicates, then the driver's", () => {
-    const read = readResult(
-      result({
-        columns: [column("X", "Xml"), column("X", "Xml")],
-        diagnostics: ["driver says"],
-      }),
-    );
-
-    expect(read.warnings).toHaveLength(3);
-    expect(read.warnings?.[0]?.message).toContain("here X (XML).");
-    expect(read.warnings?.[1]?.message).toContain("more than one column named X");
-    expect(read.warnings?.[2]).toEqual({ message: "driver says" });
+    expect(read.warnings).toHaveLength(2);
+    expect(read.warnings?.[0]?.message).toContain("inline edit of B (BLOB)");
+    expect(read.warnings?.[1]).toEqual({ message: "driver says" });
   });
 });
