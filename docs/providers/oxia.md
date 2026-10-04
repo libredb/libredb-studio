@@ -512,6 +512,10 @@ A shard's Source tab is JSON: the namespace, the shard id, its hash range, its l
 A key's Source tab has two parts.
 The Value part shows JSON pretty-printed, text as stored, or a hex dump; an empty value and a withheld value each have their own sentence instead of a value.
 The Metadata part shows the version fields of section 5.5 with the value's encoding and size, and an ephemeral record carries a badge in its label, naming the session it ends with.
+A key the shard its own hash names does not hold is looked for on every other shard without a value, since a key written with a partition key lives on that key's shard, and its value is read on the one shard that holds it.
+A key held by more than one shard is refused:
+
+> The key \<key\> is stored on \<n\> shards under different partition keys: read it in the editor with get -p and its partition key.
 
 ### 6.3 Generated commands
 

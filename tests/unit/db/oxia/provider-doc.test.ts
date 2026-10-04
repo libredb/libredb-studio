@@ -84,7 +84,11 @@ import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import { OXIA_CURSOR_KEY_TOO_LONG_SENTENCE, OXIA_KEY_SCAN } from "@/lib/db/providers/keyvalue/oxia/key-scan";
 import { keyOrderWords, OXIA_LABELS, OXIA_STATEMENT_EXAMPLES } from "@/lib/db/providers/keyvalue/oxia/labels";
 import { oxiaHealth } from "@/lib/db/providers/keyvalue/oxia/monitoring-reads";
-import { OXIA_KEYS_LISTED_ELSEWHERE, OXIA_OBJECT_KINDS } from "@/lib/db/providers/keyvalue/oxia/objects";
+import {
+  OXIA_KEYS_LISTED_ELSEWHERE,
+  OXIA_OBJECT_KINDS,
+  oxiaKeyOnShardsSentence,
+} from "@/lib/db/providers/keyvalue/oxia/objects";
 import { OXIA_RECORD_FIELDS } from "@/lib/db/providers/keyvalue/oxia/results";
 import { SNAPSHOT_PROBLEM_REASONS, type SnapshotProblem } from "@/lib/db/providers/keyvalue/oxia/routing";
 import { WITHHELD_VALUE_TEXT } from "@/lib/db/providers/keyvalue/oxia/values";
@@ -644,6 +648,13 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
       expect(surface).toContain(kind.label);
     }
     expect(surface).toContain(OXIA_KEYS_LISTED_ELSEWHERE);
+  });
+
+  test("17a. the Source tab's partition-key refusal is objects.ts's (ruling R33)", () => {
+    const source = flat(sectionOf(DOC, "### 6.2 Object source"));
+    expect(source).toContain(
+      placeholder(oxiaKeyOnShardsSentence("/k", 2), { "/k": "<key>", "2 shards": "<n> shards" }),
+    );
   });
 
   test("18. the object edit section is there, naming the absence", () => {

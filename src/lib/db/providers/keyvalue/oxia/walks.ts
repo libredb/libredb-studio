@@ -86,6 +86,9 @@ export interface OxiaConsoleAsk {
   readonly limit: number;
 }
 
+/** A key read wherever it is stored: its record, or the number of shards holding it when that is not one (ruling R33). */
+export type KeyAnywhere = { readonly record: OxiaRecordView } | { readonly holders: number };
+
 export interface DiscoveryResult {
   /** Representative keys, one per top-level node, in the order found. */
   readonly representatives: readonly string[];
@@ -1158,6 +1161,28 @@ async function holdersOf(
     });
   });
   return holders;
+}
+
+/**
+ * One key read wherever it is stored (ruling R33): with its value on the shard its own hash names, then, on a miss, an
+ * existence check asking no value on every other shard, and the value on the one shard that holds it. Answers that
+ * record, or how many shards hold the key when that is not one: none, or several under different partition keys.
+ */
+export async function readKeyAnywhere(
+  client: OxiaClient,
+  snapshot: OxiaSnapshot,
+  key: string,
+  call: OxiaCallOptions,
+): Promise<KeyAnywhere> {
+  const home = shardFor(snapshot, key);
+  const [own] = await readBatch(client, home, [{ key, includeValue: true }], call);
+  if (own !== undefined) return { record: own };
+  const others = snapshot.shards.filter((shard) => shard !== home);
+  const [holders] = await holdersOf(client, others, [key], call);
+  if (holders.length !== 1) return { holders: holders.length };
+  const [held] = await readBatch(client, holders[0].shard, [{ key, includeValue: true }], call);
+  // Gone between the check and the read: a concurrent delete, answered as a key no shard holds.
+  return held === undefined ? { holders: 0 } : { record: held };
 }
 
 /** SB1-7.6: fan-out without values, selection, then one EQUAL get on the winner's shard. Also every `--index` get, EQUAL included. */

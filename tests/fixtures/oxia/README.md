@@ -42,7 +42,7 @@ No file here is written by hand: the harness writes every capture and this READM
 | 0.16.10-natural/probe-order.json | 4860a619a6695e0e386763e139040d2a42eeaa14b405067a39adb0e0479c48f5 |
 | 0.16.10/assignments-default.json | e4ceb3ac98fc0dbe11cc67884b39311c79d2def63cc6af6dace5ab494bf3af8b |
 | 0.16.10/assignments-unknown-namespace.json | 5715992a7b1ac632c459275993857a5e339f2799224216c7e9600a4c2b2a3489 |
-| 0.16.10/conformance.json | 93667ce23cf3562ac80557717f052df369a8fb1e33bc683ed5c0250793150ac2 |
+| 0.16.10/conformance.json | 11573bdf2cdd8106c870ec9f047975541554a2a792d62a56d08eb091a0d18b93 |
 | 0.16.10/get-binary-hex.json | 145c720bcf525a8fa19e44af5617328ee92302a5802d0e42e4e70c33c085be05 |
 | 0.16.10/get-binary.json | 18d3deb28aee5ca2e2ba19c0f683722aa95cfae71bdf41f6b350a2a46e4e1e36 |
 | 0.16.10/get-ceiling.json | 3a2d83985db23002ead52b71cab23f07652883883f5d4a53a15a0655b88e2df2 |

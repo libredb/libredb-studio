@@ -341,6 +341,80 @@
         "mode": "disable"
       },
       "token": false
+    },
+    {
+      "authority": "127.0.0.1:6648",
+      "end": {
+        "code": 0,
+        "details": "",
+        "kind": "status"
+      },
+      "messageBytes": [
+        4
+      ],
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            }
+          ]
+        }
+      ],
+      "method": "io.oxia.proto.v1.OxiaClient/Read",
+      "request": {
+        "gets": [
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/no/such/key"
+          }
+        ],
+        "shard": "1"
+      },
+      "target": "127.0.0.1:6648",
+      "tls": {
+        "mode": "disable"
+      },
+      "token": false
+    },
+    {
+      "authority": "127.0.0.1:6648",
+      "end": {
+        "code": 0,
+        "details": "",
+        "kind": "status"
+      },
+      "messageBytes": [
+        4
+      ],
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            }
+          ]
+        }
+      ],
+      "method": "io.oxia.proto.v1.OxiaClient/Read",
+      "request": {
+        "gets": [
+          {
+            "comparison_type": "EQUAL",
+            "include_value": false,
+            "key": "/no/such/key"
+          }
+        ],
+        "shard": "2"
+      },
+      "target": "127.0.0.1:6648",
+      "tls": {
+        "mode": "disable"
+      },
+      "token": false
     }
   ],
   "file": "0.16.10/conformance.json",

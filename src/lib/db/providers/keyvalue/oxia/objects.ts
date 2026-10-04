@@ -25,7 +25,7 @@ import { OXIA_INTERNAL_KEY_SENTENCE } from "./commands";
 import { OXIA_INTERNAL_PREFIX, OXIA_RECEIVE_CAP_BYTES, OXIA_SOURCE_HEX_BYTES, OXIA_TYPE } from "./constants";
 import { keyOrderWords } from "./labels";
 import { hexDump, isoFromEpochMs, shownKey, viewOxiaValue } from "./values";
-import { type OxiaSurface, readKeys } from "./walks";
+import { type OxiaSurface, readKeyAnywhere } from "./walks";
 
 /** SB2-7.1: the shard folder, and the key the Keys panel enumerates; neither declares columns, edits or children. */
 export const OXIA_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
@@ -220,7 +220,15 @@ function metadataPart(key: string, record: OxiaRecordView, limit: number | undef
   return renderedJson("metadata", label, metadata, limit);
 }
 
-/** SB2-7.5: one EQUAL get on the key's shard; an internal key is refused before any call. */
+/** Ruling R33: a key stored on more than one shard under different partition keys, which the Source tab cannot tell apart. */
+export function oxiaKeyOnShardsSentence(key: string, shards: number): string {
+  return `The key ${shownKey(key)} is stored on ${shards} shards under different partition keys: read it in the editor with get -p and its partition key.`;
+}
+
+/**
+ * SB2-7.5: one EQUAL get on the key's shard, then, on a miss, on the shard of a partition key that holds it (ruling
+ * R33); an internal key is refused before any call.
+ */
 async function keySource(
   surface: OxiaSurface,
   key: string,
@@ -229,9 +237,12 @@ async function keySource(
 ): Promise<ObjectSourceDocument> {
   if (key.startsWith(OXIA_INTERNAL_PREFIX)) throw new QueryError(OXIA_INTERNAL_KEY_SENTENCE, OXIA_TYPE);
   const snapshot = await surface.snapshot(call);
-  const [record] = await readKeys(surface.client, snapshot, [{ key, includeValue: true }], call);
-  if (record === undefined)
+  const found = await readKeyAnywhere(surface.client, snapshot, key, call);
+  if ("holders" in found) {
+    if (found.holders > 1) throw new QueryError(oxiaKeyOnShardsSentence(key, found.holders), OXIA_TYPE);
     throw new QueryError(`Oxia holds no key ${shownKey(key)} in namespace \`${snapshot.namespace}\`.`, OXIA_TYPE);
+  }
+  const { record } = found;
   return { path: [key], kind: "key", parts: [valuePart(record, limit), metadataPart(key, record, limit)] };
 }
 

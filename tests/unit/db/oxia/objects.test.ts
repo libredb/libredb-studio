@@ -385,3 +385,71 @@ describe("a key's Source (SB2-7.5)", () => {
     expect((error as QueryError).provider as string).toBe("oxia");
   });
 });
+
+/** Partition keys that store `key` on each shard other than the one its own hash names, in shard order. */
+function offHomeKeys(snapshot: OxiaSnapshot, key: string): string[] {
+  const home = shardFor(snapshot, key);
+  const byShard = new Map<string, string>();
+  for (let i = 0; i < 10_000 && byShard.size < snapshot.shards.length - 1; i++) {
+    const shard = shardFor(snapshot, "", `pk-${i}`);
+    if (shard !== home && !byShard.has(shard.id)) byShard.set(shard.id, `pk-${i}`);
+  }
+  return snapshot.shards.flatMap((shard) => {
+    const partitionKey = byShard.get(shard.id);
+    return partitionKey === undefined ? [] : [partitionKey];
+  });
+}
+
+describe("a key written with a partition key opens in the Source tab (ruling R33)", () => {
+  test("a partition-keyed key opens, read on the shard that holds it", async () => {
+    const { fake, surface } = setup();
+    const snapshot = await surface.snapshot(call());
+    const [partitionKey] = offHomeKeys(snapshot, "/pk/tenant-a/2");
+    fake.put({ key: "/pk/tenant-a/2", partitionKey, value: utf8("two") });
+    const [value, metadata] = (await readOxiaObjectSource(surface, ["/pk/tenant-a/2"], "key", undefined, call())).parts;
+    expect(textOf(value)).toBe("two");
+    expect(JSON.parse(textOf(metadata)).shard).toBe(shardFor(snapshot, "", partitionKey).id);
+  });
+
+  test("a key stored on two shards under different partition keys is refused with get -p", async () => {
+    const { fake, surface } = setup();
+    const snapshot = await surface.snapshot(call());
+    const [first, second] = offHomeKeys(snapshot, "/dup");
+    fake.put({ key: "/dup", partitionKey: first, value: utf8("1") });
+    fake.put({ key: "/dup", partitionKey: second, value: utf8("2") });
+    const reading = readOxiaObjectSource(surface, ["/dup"], "key", undefined, call());
+    await expect(reading).rejects.toBeInstanceOf(QueryError);
+    await expect(reading).rejects.toThrow(
+      "The key /dup is stored on 2 shards under different partition keys: read it in the editor with get -p and its partition key.",
+    );
+  });
+
+  test("a partition-keyed key deleted between the check and the read answers the existing sentence", async () => {
+    const { fake, surface } = setup();
+    const snapshot = await surface.snapshot(call());
+    const [partitionKey] = offHomeKeys(snapshot, "/gone");
+    fake.put({ key: "/gone", partitionKey, value: utf8("x") });
+    const holder = shardFor(snapshot, "", partitionKey).id;
+    fake.onCall((made) => {
+      if (made.shard === holder && made.gets?.[0].includeValue === true) fake.remove("/gone");
+    });
+    await expect(readOxiaObjectSource(surface, ["/gone"], "key", undefined, call())).rejects.toThrow(
+      "Oxia holds no key /gone in namespace `default`.",
+    );
+  });
+
+  test("an absent key answers the existing sentence after the fan-out, which asks no value", async () => {
+    const { fake, surface } = setup();
+    const snapshot = await surface.snapshot(call());
+    const before = fake.calls.length;
+    await expect(readOxiaObjectSource(surface, ["/no/such/key"], "key", undefined, call())).rejects.toThrow(
+      "Oxia holds no key /no/such/key in namespace `default`.",
+    );
+    const reads = fake.calls.slice(before).filter((made) => made.rpc === "Read");
+    const home = shardFor(snapshot, "/no/such/key").id;
+    expect(reads.map((made) => [made.shard, made.gets?.[0].includeValue])).toEqual([
+      [home, true],
+      ...snapshot.shards.filter((shard) => shard.id !== home).map((shard) => [shard.id, false]),
+    ]);
+  });
+});
