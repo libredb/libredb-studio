@@ -18,11 +18,17 @@ describe("postgresJsonStrategy", () => {
     );
   });
 
-  // PR-1 preserves current behavior: estimate mode also runs ANALYZE.
-  // PR-5 (#194 B5) will make estimate return plain EXPLAIN (FORMAT JSON).
-  test("buildSql estimate mode currently matches analyze mode", () => {
-    expect(postgresJsonStrategy.buildSql("SELECT 1", "estimate")).toBe(
-      postgresJsonStrategy.buildSql("SELECT 1", "analyze"),
+  /**
+   * The estimate is the background plan request the editor sends beside EVERY run of a
+   * SELECT, so it must plan without executing. It used to build the ANALYZE form too,
+   * which ran the user's statement a second time: measured on PostgreSQL 18.6, one RUN
+   * of `SELECT nextval('my_seq')` left `last_value` at 2, and on Citus and TimescaleDB
+   * `create_distributed_table` / `create_hypertable` did their work in the hidden
+   * request before the user's own call failed with "already distributed" (#1311).
+   */
+  test("buildSql estimate mode plans without ANALYZE, so nothing executes", () => {
+    expect(postgresJsonStrategy.buildSql("SELECT nextval('s')", "estimate")).toBe(
+      "EXPLAIN (FORMAT JSON) SELECT nextval('s')",
     );
   });
 
@@ -105,7 +111,8 @@ describe("postgresJsonStrategy", () => {
   // every CTE that touches an `updated_at` column, which would be most of them.
   test("buildSql still explains a CTE over a column whose name merely contains a keyword", () => {
     const cte = "WITH t AS (SELECT updated_at FROM u) SELECT * FROM t";
-    expect(postgresJsonStrategy.buildSql(cte, "estimate")).toBe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${cte}`);
+    expect(postgresJsonStrategy.buildSql(cte, "estimate")).toBe(`EXPLAIN (FORMAT JSON) ${cte}`);
+    expect(postgresJsonStrategy.buildSql(cte, "analyze")).toBe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${cte}`);
   });
 
   // The screen is scoped to the WITH form on purpose. A statement leading with SELECT

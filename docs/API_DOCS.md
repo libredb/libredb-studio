@@ -521,8 +521,21 @@ A `params` array may accompany an explain request. The strategies only prefix th
 placeholders are the same ones in the same order and the values bind the built statement, which is how a
 generated statement that sends its values separately still gets a plan.
 
-Two refusals, each a 400 that runs nothing:
+`estimate` never executes the statement, on any strategy: on PostgreSQL it is `EXPLAIN (FORMAT JSON)`,
+and only `analyze` builds `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)`, which runs it. The editor asks for
+the estimate in the background beside every run of a SELECT, so an executing estimate would run every
+SELECT twice; until #1311 the PostgreSQL strategy did exactly that.
 
+A `queryId` may accompany an explain request like any other, and `POST /api/db/cancel` with that id
+stops the plan statement on the server. The editor gives its background plan request an id of its own
+and cancels it together with the run.
+
+Three refusals, each a 400 that runs nothing:
+
+- `Only a single statement can be explained` when `sql` holds more than one statement, read under the
+  connection type's own grammar (a `;` inside a quote or a comment does not count, and neither does a
+  trailing one). An EXPLAIN prefixes one statement: handed `SELECT 1; INSERT ...`, PostgreSQL explains
+  the SELECT and then runs the INSERT. Refused before a provider is opened (#1311).
 - `This server does not support EXPLAIN` when the provider declares `supportsExplain: false` or no plan
   format at all.
 - `Only SELECT statements can be explained` when the dialect's strategy declines the statement. The

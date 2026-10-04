@@ -841,13 +841,78 @@ describe("POST /api/db/query with an explain request", () => {
     const data = await parseResponseJSON<{ explainFormat: string }>(res);
 
     expect(res.status).toBe(200);
+    // The estimate plans without ANALYZE, so the statement is never executed (#1311).
+    expect(provider.query).toHaveBeenCalledWith(
+      "EXPLAIN (FORMAT JSON) SELECT * FROM users LIMIT 50",
+      undefined,
+      undefined,
+      expect.any(String),
+    );
+    expect(data.explainFormat).toBe("postgres-json");
+  });
+
+  test("an analyze request builds the executing form the Explain button asks for", async () => {
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT * FROM users", options: {}, explain: { mode: "analyze" } },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
     expect(provider.query).toHaveBeenCalledWith(
       "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users LIMIT 50",
       undefined,
       undefined,
       expect.any(String),
     );
-    expect(data.explainFormat).toBe("postgres-json");
+  });
+
+  /**
+   * An EXPLAIN prefixes ONE statement. Handed `SELECT 1 AS a; INSERT ...` it explained
+   * the SELECT and the simple-query protocol then ran the INSERT as a statement of its
+   * own: measured on Materialize 26.44.1, AlloyDB Omni 17.9 and Cloudberry 2.1.0, a RUN
+   * of that text applied the INSERT twice, once in the run and once in its background
+   * plan request (#1311). Refused before any provider is opened, so nothing runs.
+   */
+  test.each<[string, string]>([
+    ["a SELECT followed by a write", "SELECT 1 AS a; INSERT INTO t VALUES (7)"],
+    ["two SELECTs", "SELECT 1; SELECT 2"],
+  ])("returns 400 and runs nothing for an explain of %s", async (_label, sql) => {
+    // No provider is queued: the refusal comes before one is opened, and a queued
+    // `mockResolvedValueOnce` nobody consumed would leak into the next test.
+    for (const mode of ["estimate", "analyze"]) {
+      const req = createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql, explain: { mode } },
+      });
+
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe("Only a single statement can be explained");
+    }
+    expect(mockProvider.query).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("a statement with a trailing semicolon or a quoted semicolon is still one statement", async () => {
+    const provider = explainCapableProvider();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider as never);
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT ';' AS s;", options: {}, explain: { mode: "estimate" } },
+    });
+
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(200);
+    expect(provider.query).toHaveBeenCalledTimes(1);
   });
 
   test("returns 400 and runs nothing when the provider declares no EXPLAIN support", async () => {
@@ -952,7 +1017,7 @@ describe("POST /api/db/query with an explain request", () => {
 
     expect(res.status).toBe(200);
     expect(provider.query).toHaveBeenCalledWith(
-      "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
+      "EXPLAIN (FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
       [7],
       undefined,
       expect.any(String),

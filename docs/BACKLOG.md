@@ -988,6 +988,11 @@ from `query()`, and `src/app/api/db/query/route.ts` reads `result.rows.length`.
 
 Found while probing D74. Not caused by it and not fixed by it.
 
+The route's `explain` arm refuses such a text since #1311 (`Only a single statement can be explained`,
+read under the connection type's grammar, before a provider is opened), because there the second
+statement was not only a 500: the background plan request re-ran the INSERT after a leading SELECT. A
+plain run without `explain` still reaches the provider and is what this entry is about.
+
 **Done when:** the route either refuses a text carrying more than one statement with a sentence, or the
 provider names which result of an array it answers with. The first is the smaller change and is what
 the route's own name claims; D76's single-statement check on the object-edit path is the precedent for

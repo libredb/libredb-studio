@@ -650,6 +650,12 @@ control that only emits invalid input. That is the defect class
   strategy declines, so the button is dead while only the background pre-warm works. When the engine
   has no analyze equivalent, return the estimate for both modes — `sqlite-queryplan.ts` and
   `couchbase-json.ts` both do exactly that.
+- **The `estimate` mode must never execute the statement.** The editor sends it in the background
+  beside every run of a SELECT, so an executing estimate runs every SELECT twice. `postgres-json.ts`
+  once ignored the mode and answered `EXPLAIN (ANALYZE, ...)` for both, and on PostgreSQL a single RUN
+  of `SELECT nextval('s')` advanced the sequence by two (#1311). Only `analyze` may build an executing
+  form; `tests/unit/lib/explain/registry.test.ts` checks every registered strategy's estimate for
+  `ANALYZE`, and its format list is a `Record` so a new format cannot be left out of it.
 - **Decide what is explainable with `classifySelectPrefix()`**
   ([`explain/select-prefix.ts`](../src/lib/explain/select-prefix.ts)), never with a fresh regex. It
   accepts a leading CTE and leading SQL comments as well as a bare `SELECT`, which every dialect here

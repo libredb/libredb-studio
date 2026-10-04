@@ -2474,6 +2474,59 @@ describe("useQueryExecution", () => {
     expect(body.explain).toEqual({ mode: "estimate" });
   });
 
+  /**
+   * An EXPLAIN prefixes ONE statement. The whole text of `SELECT 1 AS a; INSERT ...`
+   * used to go to the plan request because it starts with a SELECT, and the INSERT
+   * after it ran a second time there: measured on Materialize 26.44.1, AlloyDB Omni
+   * 17.9 and Cloudberry 2.1.0 (#1311). The run itself takes the multi-statement route
+   * and is unaffected.
+   */
+  test("no background plan for a multi-statement run that starts with a SELECT", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/multi-query": {
+        ok: true,
+        json: { ...mockQueryResult, multiStatement: true, statementCount: 2, executedCount: 2, statements: [] },
+      },
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1 AS a; INSERT INTO users (name) VALUES ('dup')", undefined, false, {
+        skipSafety: true,
+      });
+    });
+
+    const planCalls = fetchMock.mock.calls.filter((call) => {
+      const init = call[1] as RequestInit | undefined;
+      return typeof init?.body === "string" && JSON.parse(init.body).explain !== undefined;
+    });
+    expect(planCalls).toHaveLength(0);
+    expect(
+      fetchMock.mock.calls.some((call) => typeof call[0] === "string" && call[0].includes("/api/db/multi-query")),
+    ).toBe(true);
+  });
+
+  test("the Explain button refuses a multi-statement text and sends nothing", async () => {
+    const fetchMock = mockGlobalFetch({
+      "/api/db/query": { ok: true, json: mockQueryResult },
+    });
+
+    const { result } = renderHook(() => useQueryExecution(createDefaultParams()));
+
+    await act(async () => {
+      await result.current.executeQuery("SELECT 1 AS a; INSERT INTO users (name) VALUES ('dup')", undefined, true);
+    });
+
+    expect(fetchMock.mock.calls.some((call) => typeof call[0] === "string" && call[0].includes("/api/db/"))).toBe(
+      false,
+    );
+    expect(mockToastError).toHaveBeenCalledWith("Not Supported", {
+      description: "Only a single statement can be explained.",
+    });
+  });
+
   test("the stored plan carries the format the response names, not the static one", async () => {
     // The server built the statement, so only it knows which form the engine
     // accepted. A MySQL-wire relative that refused `FORMAT=JSON` answers a plain
@@ -3292,6 +3345,62 @@ describe("useQueryExecution", () => {
       });
 
       expect(explainCalls(calls)[0].init.signal?.aborted).toBe(true);
+    });
+
+    /**
+     * Aborting the fetch drops the response; it does not stop the statement on the
+     * server. The plan request used to carry no `queryId`, so `/api/db/cancel` had
+     * nothing to name: measured on PostgreSQL 18.6, after Cancel the user's backend was
+     * idle while the plan's `EXPLAIN (ANALYZE ...) SELECT pg_sleep(30)` stayed `active`
+     * until it ended on its own (#1311). The plan gets an id of its own, because the
+     * server tracks one statement per id, and Cancel names both.
+     */
+    test("cancelling a run cancels its background plan on the server too", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users");
+      });
+      await flush();
+
+      const runId = mainCalls(calls)[0].body.queryId;
+      const planId = explainCalls(calls)[0].body.queryId;
+      expect(typeof runId).toBe("string");
+      expect(typeof planId).toBe("string");
+      expect(planId).not.toBe(runId);
+
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+
+      const cancelled = calls.filter((c) => c.url.includes("/api/db/cancel")).map((c) => c.body.queryId);
+      expect(cancelled).toEqual([runId, planId]);
+    });
+
+    // The Explain button's own run IS the plan request (`analyze`), it sends no second
+    // one, and it carries the run's id, so Cancel names exactly that.
+    test("an Explain run sends one cancellable request and cancels only that", async () => {
+      const calls = installDeferredFetch();
+      const { params } = statefulParams();
+      const { result } = renderHook(() => useQueryExecution(params));
+
+      act(() => {
+        result.current.executeQuery("SELECT * FROM users", undefined, true);
+      });
+      await flush();
+
+      const queryCalls = calls.filter((c) => c.url.includes("/api/db/query"));
+      expect(queryCalls).toHaveLength(1);
+      expect(queryCalls[0].body.explain).toEqual({ mode: "analyze" });
+
+      await act(async () => {
+        await result.current.cancelQuery();
+      });
+
+      const cancelled = calls.filter((c) => c.url.includes("/api/db/cancel")).map((c) => c.body.queryId);
+      expect(cancelled).toEqual([queryCalls[0].body.queryId]);
     });
 
     test("unmounting aborts whatever is still in flight", async () => {
