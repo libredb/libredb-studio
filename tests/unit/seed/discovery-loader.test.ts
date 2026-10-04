@@ -17,7 +17,6 @@ import type { DiscoveredService, DiscoveryExport } from "@/lib/seed/discovery-ex
 import {
   getDiscoveredConnections,
   getDiscoveryStatus,
-  isDiscoveryEnabled,
   resetDiscoveryCache,
   type DiscoveryDeps,
   type DiscoveryStatus,
@@ -137,14 +136,9 @@ describe("discovery-loader", () => {
       else process.env.SEED_DISCOVERY_PATH = value;
       const { reads, readFile: read } = countingRead();
 
-      expect(isDiscoveryEnabled()).toBe(false);
       expect(await getDiscoveryStatus(deps({ readFile: read }))).toBeNull();
       expect(await getDiscoveredConnections(deps({ readFile: read }))).toEqual([]);
       expect(reads).toEqual([]);
-    });
-
-    it("is on when SEED_DISCOVERY_PATH names a file", () => {
-      expect(isDiscoveryEnabled()).toBe(true);
     });
   });
 

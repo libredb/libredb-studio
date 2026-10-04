@@ -118,10 +118,6 @@ function maxAgeMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_AGE_MS;
 }
 
-export function isDiscoveryEnabled(): boolean {
-  return discoveryPath() !== undefined;
-}
-
 /** Drops the cached export, any recompute in flight and the default probe's cached answers. Tests call this between cases. */
 export function resetDiscoveryCache(): void {
   cache = null;
